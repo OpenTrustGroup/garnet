@@ -3,9 +3,9 @@
   <imports>
     <localimport file="minimal"/>
     <localimport file="third_party"/>
-    <import remote="https://fuchsia.googlesource.com/zircon"
+    <import remote="ssh://review.gerrithub.io:29418/OpenTrustGroup/zircon"
             manifest="manifest"
             name="zircon"
-            revision="fbcb6930843c046e865e39876382af6cbaf0ea2a"/>
+            remotebranch="gzos"/>
   </imports>
 </manifest>

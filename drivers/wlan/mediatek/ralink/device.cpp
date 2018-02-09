@@ -3,15 +3,16 @@
 // found in the LICENSE file.
 
 #include "device.h"
-#include "garnet/drivers/wlan/common/channel.h"
-#include "garnet/drivers/wlan/common/cipher.h"
-#include "logging.h"
 #include "ralink.h"
 
 #include <ddk/protocol/usb.h>
 #include <ddk/protocol/wlan.h>
 #include <fbl/algorithm.h>
 #include <fbl/auto_call.h>
+#include <wlan/common/channel.h>
+#include <wlan/common/cipher.h>
+#include <wlan/common/logging.h>
+#include <wlan/common/mac_frame.h>
 #include <zircon/assert.h>
 #include <zircon/hw/usb.h>
 #include <zx/vmo.h>
@@ -38,7 +39,7 @@
 
 namespace {
 
-zx_status_t sleep_for(zx_duration_t t) {
+zx_status_t sleep_for(zx::duration t) {
     return zx::nanosleep(zx::deadline_after(t));
 }
 
@@ -70,7 +71,7 @@ int8_t extract_tx_power(int byte_offset, bool is_5ghz, uint16_t eeprom_word) {
 
 namespace ralink {
 
-constexpr zx_duration_t Device::kDefaultBusyWait;
+constexpr zx::duration Device::kDefaultBusyWait;
 
 Device::Device(zx_device_t* device, usb_protocol_t* usb, uint8_t bulk_in,
                std::vector<uint8_t>&& bulk_out)
@@ -487,14 +488,14 @@ zx_status_t Device::LoadFirmware() {
         errorf("failed to send load firmware command\n");
         return status;
     }
-    sleep_for(ZX_MSEC(10));
+    sleep_for(zx::msec(10));
 
     H2mMailboxCsr hmcsr;
     status = WriteRegister(hmcsr);
     CHECK_WRITE(H2M_MAILBOX_CSR, status);
 
     SysCtrl sc;
-    status = BusyWait(&sc, [&sc]() { return sc.mcu_ready(); }, ZX_MSEC(1));
+    status = BusyWait(&sc, [&sc]() { return sc.mcu_ready(); }, zx::msec(1));
     if (status != ZX_OK) {
         if (status == ZX_ERR_TIMED_OUT) { errorf("system MCU not ready\n"); }
         return status;
@@ -521,7 +522,7 @@ zx_status_t Device::LoadFirmware() {
         errorf("error booting MCU err=%d\n", status);
         return status;
     }
-    sleep_for(ZX_MSEC(1));
+    sleep_for(zx::msec(1));
 
     return ZX_OK;
 }
@@ -535,12 +536,12 @@ zx_status_t Device::EnableRadio() {
         errorf("error waking MCU err=%d\n", status);
         return status;
     }
-    sleep_for(ZX_MSEC(1));
+    sleep_for(zx::msec(1));
 
     // Wait for WPDMA to be ready
     WpdmaGloCfg wgc;
     auto wpdma_pred = [&wgc]() { return !wgc.tx_dma_busy() && !wgc.rx_dma_busy(); };
-    status = BusyWait(&wgc, wpdma_pred, ZX_MSEC(10));
+    status = BusyWait(&wgc, wpdma_pred, zx::msec(10));
     if (status != ZX_OK) {
         if (status == ZX_ERR_TIMED_OUT) { errorf("WPDMA busy\n"); }
         return status;
@@ -564,7 +565,7 @@ zx_status_t Device::EnableRadio() {
     CHECK_WRITE(USB_DMA_CFG, status);
 
     // Wait for WPDMA again
-    status = BusyWait(&wgc, wpdma_pred, ZX_MSEC(10));
+    status = BusyWait(&wgc, wpdma_pred, zx::msec(10));
     if (status != ZX_OK) {
         if (status == ZX_ERR_TIMED_OUT) { errorf("WPDMA busy\n"); }
         return status;
@@ -578,7 +579,7 @@ zx_status_t Device::EnableRadio() {
 
     // Wait for MAC status ready
     MacStatusReg msr;
-    status = BusyWait(&msr, [&msr]() { return !msr.tx_status() && !msr.rx_status(); }, ZX_MSEC(10));
+    status = BusyWait(&msr, [&msr]() { return !msr.tx_status() && !msr.rx_status(); }, zx::msec(10));
     if (status != ZX_OK) {
         if (status == ZX_ERR_TIMED_OUT) { errorf("BBP busy\n"); }
         return status;
@@ -602,7 +603,7 @@ zx_status_t Device::EnableRadio() {
         errorf("error booting MCU err=%d\n", status);
         return status;
     }
-    sleep_for(ZX_MSEC(1));
+    sleep_for(zx::msec(1));
 
     status = WaitForBbp();
     if (status != ZX_OK) {
@@ -631,7 +632,7 @@ zx_status_t Device::EnableRadio() {
     status = WriteRegister(msc);
     CHECK_WRITE(MAC_SYS_CTRL, status);
 
-    sleep_for(ZX_USEC(50));
+    sleep_for(zx::usec(50));
 
     status = ReadRegister(&wgc);
     CHECK_READ(WPDMA_GLO_CFG, status);
@@ -830,9 +831,9 @@ zx_status_t Device::InitRegisters() {
     CHECK_READ(AUTO_RSP_CFG, status);
     arc.set_auto_rsp_en(1);
     arc.set_bac_ackpolicy_en(1);
-    arc.set_cts_40m_mode(0);
+    arc.set_cts_40m_mode(1);
     arc.set_cts_40m_ref(0);
-    arc.set_cck_short_en(1);
+    arc.set_cck_short_en(0);
     arc.set_ctrl_wrap_en(0);
     arc.set_bac_ack_policy(0);
     arc.set_ctrl_pwr_bit(0);
@@ -875,9 +876,9 @@ zx_status_t Device::InitRegisters() {
     status = ReadRegister(&mm20pc);
     CHECK_READ(MM20_PROT_CFG, status);
     mm20pc.set_prot_rate(0x4004);
-    mm20pc.set_prot_ctrl(0);
+    mm20pc.set_prot_ctrl(1);
     mm20pc.set_prot_nav(1);
-    mm20pc.set_txop_allow_cck_tx(1);
+    mm20pc.set_txop_allow_cck_tx(0);
     mm20pc.set_txop_allow_ofdm_tx(1);
     mm20pc.set_txop_allow_mm20_tx(1);
     mm20pc.set_txop_allow_mm40_tx(0);
@@ -891,9 +892,9 @@ zx_status_t Device::InitRegisters() {
     status = ReadRegister(&mm40pc);
     CHECK_READ(MM40_PROT_CFG, status);
     mm40pc.set_prot_rate(0x4084);
-    mm40pc.set_prot_ctrl(0);
+    mm40pc.set_prot_ctrl(1);
     mm40pc.set_prot_nav(1);
-    mm40pc.set_txop_allow_cck_tx(1);
+    mm40pc.set_txop_allow_cck_tx(0);
     mm40pc.set_txop_allow_ofdm_tx(1);
     mm40pc.set_txop_allow_mm20_tx(1);
     mm40pc.set_txop_allow_mm40_tx(1);
@@ -907,9 +908,9 @@ zx_status_t Device::InitRegisters() {
     status = ReadRegister(&gf20pc);
     CHECK_READ(GF20_PROT_CFG, status);
     gf20pc.set_prot_rate(0x4004);
-    gf20pc.set_prot_ctrl(0);
+    gf20pc.set_prot_ctrl(1);
     gf20pc.set_prot_nav(1);
-    gf20pc.set_txop_allow_cck_tx(1);
+    gf20pc.set_txop_allow_cck_tx(0);
     gf20pc.set_txop_allow_ofdm_tx(1);
     gf20pc.set_txop_allow_mm20_tx(1);
     gf20pc.set_txop_allow_mm40_tx(0);
@@ -923,9 +924,9 @@ zx_status_t Device::InitRegisters() {
     status = ReadRegister(&gf40pc);
     CHECK_READ(GF40_PROT_CFG, status);
     gf40pc.set_prot_rate(0x4084);
-    gf40pc.set_prot_ctrl(0);
+    gf40pc.set_prot_ctrl(1);
     gf40pc.set_prot_nav(1);
-    gf40pc.set_txop_allow_cck_tx(1);
+    gf40pc.set_txop_allow_cck_tx(0);
     gf40pc.set_txop_allow_ofdm_tx(1);
     gf40pc.set_txop_allow_mm20_tx(1);
     gf40pc.set_txop_allow_mm40_tx(1);
@@ -977,9 +978,9 @@ zx_status_t Device::InitRegisters() {
     TxRtsCfg txrtscfg;
     status = ReadRegister(&txrtscfg);
     CHECK_READ(TX_RTS_CFG, status);
-    txrtscfg.set_rts_rty_limit(32);
+    txrtscfg.set_rts_rty_limit(7);
     txrtscfg.set_rts_thres(2353);  // IEEE80211_MAX_RTS_THRESHOLD in Linux
-    txrtscfg.set_rts_fbk_en(0);
+    txrtscfg.set_rts_fbk_en(1);
     status = WriteRegister(txrtscfg);
     CHECK_WRITE(TX_RTS_CFG, status);
 
@@ -1006,6 +1007,7 @@ zx_status_t Device::InitRegisters() {
     status = WriteRegister(ppc);
     CHECK_WRITE(PWR_PIN_CFG, status);
 
+    // TODO(porce): Factor out encryption key clearing
     for (int i = 0; i < 4; i++) {
         status = WriteRegister(SHARED_KEY_MODE_BASE + i * sizeof(uint32_t), 0);
         CHECK_WRITE(SHARED_KEY_MODE, status);
@@ -1556,7 +1558,7 @@ zx_status_t Device::InitRfcsr() {
     status = WriteRfcsr(r2);
     CHECK_WRITE(RF2, status);
 
-    sleep_for(ZX_MSEC(1));
+    sleep_for(zx::msec(1));
     r2.set_rescal_en(0);
     status = WriteRfcsr(r2);
     CHECK_WRITE(RF2, status);
@@ -1571,7 +1573,7 @@ zx_status_t Device::InitRfcsr() {
     }
 
     if (rt_type_ == RT5592) {
-        sleep_for(ZX_MSEC(1));
+        sleep_for(zx::msec(1));
         AdjustFreqOffset();
         if (rt_rev_ >= REV_RT5592C) {
             status = WriteBbp(BbpRegister<103>(0xc0));
@@ -1608,7 +1610,7 @@ zx_status_t Device::McuCommand(uint8_t command, uint8_t token, uint8_t arg0, uin
     hc.set_command(command);
     status = WriteRegister(hc);
     CHECK_WRITE(HOST_CMD, status);
-    sleep_for(ZX_MSEC(1));
+    sleep_for(zx::msec(1));
 
     return status;
 }
@@ -1690,7 +1692,7 @@ zx_status_t Device::WaitForBbp() {
     H2mMailboxCsr hmc;
     status = WriteRegister(hmc);
     CHECK_WRITE(H2M_MAILBOX_CSR, status);
-    sleep_for(ZX_MSEC(1));
+    sleep_for(zx::msec(1));
 
     uint8_t val;
     for (unsigned int i = 0; i < kMaxBusyReads; i++) {
@@ -1835,10 +1837,11 @@ zx_status_t Device::DetectAutoRun(bool* autorun) {
 
 zx_status_t Device::WaitForMacCsr() {
     AsicVerId avi;
-    return BusyWait(&avi, [&avi]() { return avi.val() && avi.val() != ~0u; }, ZX_MSEC(1));
+    return BusyWait(&avi, [&avi]() { return avi.val() && avi.val() != ~0u; }, zx::msec(1));
 }
 
 zx_status_t Device::SetRxFilter() {
+    // TODO(porce): Support dynamic filter configuration
     RxFiltrCfg rfc;
     zx_status_t status = ReadRegister(&rfc);
     CHECK_READ(RX_FILTR_CFG, status);
@@ -1856,8 +1859,8 @@ zx_status_t Device::SetRxFilter() {
     rfc.set_drop_cts(1);
     rfc.set_drop_rts(1);
     rfc.set_drop_pspoll(1);
-    rfc.set_drop_ba(0);
-    rfc.set_drop_bar(1);
+    rfc.set_drop_ba(0);   // TODO(porce): Investigate the merit of
+    rfc.set_drop_bar(1);  // independent filtering of BA and BAR
     rfc.set_drop_ctrl_rsv(1);
     status = WriteRegister(rfc);
     CHECK_WRITE(RX_FILTR_CFG, status);
@@ -2749,7 +2752,7 @@ zx_status_t Device::ConfigureChannel(const wlan_channel_t& chan) {
     status = WriteBbp(b3);
     CHECK_WRITE(BBP3, status);
 
-    sleep_for(ZX_MSEC(1));
+    sleep_for(zx::msec(1));
 
     // Clear channel stats by reading the registers
     ChIdleSta cis;
@@ -2883,7 +2886,7 @@ zx_status_t Device::ConfigureTxPower(const wlan_channel_t& chan) {
 }
 
 template <typename R, typename Predicate>
-zx_status_t Device::BusyWait(R* reg, Predicate pred, zx_duration_t delay) {
+zx_status_t Device::BusyWait(R* reg, Predicate pred, zx::duration delay) {
     zx_status_t status;
     unsigned int busy;
     for (busy = 0; busy < kMaxBusyReads; busy++) {
@@ -3409,7 +3412,6 @@ zx_status_t Device::WlanmacStart(fbl::unique_ptr<ddk::WlanmacIfcProxy> proxy) {
     chan.primary = 1;
     chan.cbw = CBW20;
     status = WlanmacSetChannel(0, &chan);
-    if (status != ZX_OK) { warnf("could not set channel err=%d\n", status); }
 
     infof("wlan started\n");
     return ZX_OK;
@@ -3454,28 +3456,60 @@ void DumpTxwi(TxPacket* packet) {
            txwi1.tx_packet_id());
 }
 
+zx_status_t Device::ConfigureBssBeacon(uint32_t options, wlan_tx_packet_t* bcn_pkt) {
+    size_t req_len = usb_tx_pkt_len(bcn_pkt);
+    if (req_len > kMaxBeaconSizeByte) {
+        errorf("Beacon exceeds limit of %zu bytes: %zu\n", kMaxBeaconSizeByte, req_len);
+        return ZX_ERR_BUFFER_TOO_SMALL;
+    }
+    auto buf = fbl::unique_ptr<uint8_t[]>(new uint8_t[req_len]);
+    auto usb_packet = reinterpret_cast<TxPacket*>(buf.get());
+    auto status = FillUsbTxPacket(usb_packet, bcn_pkt);
+    if (status != ZX_OK) {
+        errorf("could not fill usb request packet: %d\n", status);
+        return status;
+    }
+
+    BcnOffset0 bcnOffset0;
+    status = ReadRegister(&bcnOffset0);
+    CHECK_READ(BCN_OFFSET_0, status);
+
+    // The Beacon layout in shared memory does not include TxInfo. Hence, skip it.
+    auto data = buf.get() + sizeof(TxInfo);
+    uint8_t* data_end = data + req_len - sizeof(TxInfo);
+    uint16_t index = BEACON_BASE + bcnOffset0.bcn0_offset() * kBeaconOffsetFactorByte;
+
+    // Write Beacon in chunks to the device.
+    const size_t max_chunk_size = 64;
+    for (; data_end - data > 0; data += max_chunk_size, index += max_chunk_size) {
+        size_t written;
+        size_t writing = std::min(max_chunk_size, static_cast<size_t>(data_end - data));
+        status = usb_control(&usb_, (USB_DIR_OUT | USB_TYPE_VENDOR), kMultiWrite, 0, index, data,
+                             writing, ZX_TIME_INFINITE, &written);
+        if (status != ZX_OK || written < writing) {
+            std::printf("error writing Beacon to offset 0x%4x: %d\n", index, status);
+            return ZX_ERR_IO;
+        }
+    }
+    return ZX_OK;
+}
+
 zx_status_t Device::WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* pkt) {
     ZX_DEBUG_ASSERT(pkt != nullptr && pkt->packet_head != nullptr);
 
-    size_t len = pkt->packet_head->len;
-    if (pkt->packet_tail != nullptr) {
-        if (pkt->packet_tail->len < pkt->tail_offset) { return ZX_ERR_INVALID_ARGS; }
-        len += pkt->packet_tail->len - pkt->tail_offset;
+    // Intercept Beacon frames and instead of sending them, write them into the corresponding
+    // shared memory region.
+    // TODO(hahnr): Delete once beacon configuration goes through dedicated DDK path.
+    auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(pkt->packet_head->data);
+    if (frame_hdr->fc.IsMgmt() && frame_hdr->fc.subtype() == 0x08) {
+        return ConfigureBssBeacon(options, pkt);
     }
 
-    // Our USB packet looks like:
-    //   TxInfo (4 bytes)
-    //   TXWI fields (16-20 bytes, depending on device)
-    //   packet (len bytes)
-    //   alignment zero padding (round up to a 4-byte boundary)
-    //   terminal zero padding (4 bytes)
-    size_t txwi_len = (rt_type_ == RT5592) ? 20 : 16;
-    size_t align_pad_len = ((len + 3) & ~3) - len;
-    size_t terminal_pad_len = 4;
-    size_t req_len = sizeof(TxInfo) + txwi_len + len + align_pad_len + terminal_pad_len;
+    size_t req_length = usb_tx_pkt_len(pkt);
 
-    if (req_len > kWriteBufSize) {
-        errorf("usb request buffer size insufficient for tx packet -- %zu bytes needed\n", req_len);
+    if (req_length > kWriteBufSize) {
+        errorf("usb request buffer size insufficient for tx packet -- %zu bytes needed\n",
+               req_length);
         return ZX_ERR_BUFFER_TOO_SMALL;
     }
 
@@ -3495,7 +3529,7 @@ zx_status_t Device::WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* pkt) {
     ZX_DEBUG_ASSERT(req != nullptr);
 
     TxPacket* packet;
-    zx_status_t status = usb_request_mmap(req, reinterpret_cast<void**>(&packet));
+    auto status = usb_request_mmap(req, reinterpret_cast<void**>(&packet));
     if (status != ZX_OK) {
         errorf("could not map usb request: %d\n", status);
         std::lock_guard<std::mutex> guard(lock_);
@@ -3503,18 +3537,43 @@ zx_status_t Device::WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* pkt) {
         return status;
     }
 
-    std::memset(packet, 0, sizeof(TxInfo) + txwi_len);
+    status = FillUsbTxPacket(packet, pkt);
+    if (status != ZX_OK) {
+        errorf("could not fill usb request packet: %d\n", status);
+        return status;
+    }
+
+    // Send the whole thing
+    req->header.length = req_length;
+    usb_request_queue(&usb_, req);
+
+#if RALINK_DUMP_TX
+    DumpWlanTxInfo(pkt->info);
+    DumpTxwi(packet);
+#endif  // RALINK_DUMP_TX
+
+    return ZX_OK;
+}
+
+zx_status_t Device::FillUsbTxPacket(TxPacket* usb_packet, wlan_tx_packet_t* wlan_packet) {
+    ZX_DEBUG_ASSERT(wlan_packet != nullptr && wlan_packet->packet_head != nullptr);
+
+    size_t pkt_length = tx_pkt_len(wlan_packet);
+    size_t txwi_length = txwi_len();
+    size_t align_pad_length = align_pad_len(wlan_packet);
+
+    std::memset(usb_packet, 0, sizeof(TxInfo) + txwi_length);
 
     // The length field in TxInfo includes everything from the TXWI fields to the alignment pad
-    packet->tx_info.set_tx_pkt_length(txwi_len + len + align_pad_len);
+    usb_packet->tx_info.set_tx_pkt_length(txwi_length + pkt_length + align_pad_length);
 
     // TODO(tkilbourn): set these more appropriately
-    const bool protected_frame = (pkt->info.tx_flags & WLAN_TX_INFO_FLAGS_PROTECTED);
+    const bool protected_frame = (wlan_packet->info.tx_flags & WLAN_TX_INFO_FLAGS_PROTECTED);
     uint8_t wiv = !protected_frame;
-    packet->tx_info.set_wiv(wiv);
-    packet->tx_info.set_qsel(2);
+    usb_packet->tx_info.set_wiv(wiv);
+    usb_packet->tx_info.set_qsel(2);
 
-    Txwi0& txwi0 = packet->txwi0;
+    Txwi0& txwi0 = usb_packet->txwi0;
     txwi0.set_frag(0);
     txwi0.set_mmps(0);
     txwi0.set_cfack(0);
@@ -3526,20 +3585,20 @@ zx_status_t Device::WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* pkt) {
     txwi0.set_txop(Txwi0::kHtTxop);
 
     uint8_t phy_mode = ddk_phy_to_ralink_phy(WLAN_PHY_OFDM);  // Default
-    if (pkt->info.valid_fields & WLAN_TX_INFO_VALID_PHY) {
-        phy_mode = ddk_phy_to_ralink_phy(pkt->info.phy);
+    if (wlan_packet->info.valid_fields & WLAN_TX_INFO_VALID_PHY) {
+        phy_mode = ddk_phy_to_ralink_phy(wlan_packet->info.phy);
     }
     txwi0.set_phy_mode(phy_mode);
 
     uint8_t mcs = kMaxOfdmMcs;  // this is the same as the max HT mcs
-    if (pkt->info.valid_fields & WLAN_TX_INFO_VALID_MCS) {
-        mcs = mcs_to_ralink_mcs(phy_mode, pkt->info.mcs);
+    if (wlan_packet->info.valid_fields & WLAN_TX_INFO_VALID_MCS) {
+        mcs = mcs_to_ralink_mcs(phy_mode, wlan_packet->info.mcs);
     }
     txwi0.set_mcs(mcs);
 
     uint8_t cbw = CBW20;
-    if (pkt->info.valid_fields & WLAN_TX_INFO_VALID_CHAN_WIDTH) {
-        cbw = pkt->info.cbw;
+    if (wlan_packet->info.valid_fields & WLAN_TX_INFO_VALID_CHAN_WIDTH) {
+        cbw = wlan_packet->info.cbw;
         // TODO(porce): Investigate how to configure txwi differently
         // for CBW40ABOVE and CBW40BELOW
     }
@@ -3549,10 +3608,9 @@ zx_status_t Device::WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* pkt) {
     txwi0.set_stbc(0);  // TODO(porce): Define the value.
 
     // The frame header is always in the packet head.
-    auto frame = static_cast<const uint8_t*>(pkt->packet_head->data);
-    auto addr1 = frame + 4;  // 4 = FC + Duration fields
-    auto wcid = LookupTxWcid(addr1, protected_frame);
-    Txwi1& txwi1 = packet->txwi1;
+    auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_packet->packet_head->data);
+    auto wcid = LookupTxWcid(frame_hdr->addr1.byte, protected_frame);
+    Txwi1& txwi1 = usb_packet->txwi1;
     txwi1.set_ack(0);
     txwi1.set_nseq(0);
 
@@ -3561,32 +3619,23 @@ zx_status_t Device::WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* pkt) {
     // Separate the workflow for the BlockAck originator case from the responder case.
     txwi1.set_ba_win_size(64);
     txwi1.set_wcid(wcid);
-    txwi1.set_mpdu_total_byte_count(len);
+    txwi1.set_mpdu_total_byte_count(pkt_length);
     txwi1.set_tx_packet_id(10);
 
-    Txwi2& txwi2 = packet->txwi2;
+    Txwi2& txwi2 = usb_packet->txwi2;
     txwi2.set_iv(0);
 
-    Txwi3& txwi3 = packet->txwi3;
+    Txwi3& txwi3 = usb_packet->txwi3;
     txwi3.set_eiv(0);
 
     // A TxPacket is laid out with 4 TXWI headers, so if there are more than that, we have to
     // consider them when determining the start of the payload.
-    size_t payload_offset = txwi_len - 16;
-    uint8_t* payload_ptr = &packet->payload[payload_offset];
+    size_t payload_offset = txwi_length - 16;
+    uint8_t* payload_ptr = &usb_packet->payload[payload_offset];
 
     // Write out the payload
-    WritePayload(payload_ptr, pkt);
-    std::memset(&payload_ptr[len], 0, align_pad_len + terminal_pad_len);
-
-    // Send the whole thing
-    req->header.length = req_len;
-    usb_request_queue(&usb_, req);
-
-#if RALINK_DUMP_TX
-    DumpWlanTxInfo(pkt->info);
-    DumpTxwi(packet);
-#endif  // RALINK_DUMP_TX
+    WritePayload(payload_ptr, wlan_packet);
+    std::memset(&payload_ptr[pkt_length], 0, align_pad_length + terminal_pad_len());
 
     return ZX_OK;
 }
@@ -3677,17 +3726,23 @@ setchan_failure:
     return status;
 }
 
+// TODO(hahnr): Remove.
 zx_status_t Device::WlanmacSetBss(uint32_t options, const uint8_t mac[6], uint8_t type) {
+    ZX_DEBUG_ASSERT(false);
+    return ZX_OK;
+}
+
+zx_status_t Device::WlanmacConfigureBss(uint32_t options, wlan_bss_config_t* config) {
     if (options != 0) { return ZX_ERR_INVALID_ARGS; }
 
     MacBssidDw0 bss0;
     MacBssidDw1 bss1;
-    bss0.set_mac_addr_0(mac[0]);
-    bss0.set_mac_addr_1(mac[1]);
-    bss0.set_mac_addr_2(mac[2]);
-    bss0.set_mac_addr_3(mac[3]);
-    bss1.set_mac_addr_4(mac[4]);
-    bss1.set_mac_addr_5(mac[5]);
+    bss0.set_mac_addr_0(config->bssid[0]);
+    bss0.set_mac_addr_1(config->bssid[1]);
+    bss0.set_mac_addr_2(config->bssid[2]);
+    bss0.set_mac_addr_3(config->bssid[3]);
+    bss1.set_mac_addr_4(config->bssid[4]);
+    bss1.set_mac_addr_5(config->bssid[5]);
     bss1.set_multi_bss_mode(MultiBssIdMode::k1BssIdMode);
 
     auto status = WriteRegister(bss0);
@@ -3695,13 +3750,54 @@ zx_status_t Device::WlanmacSetBss(uint32_t options, const uint8_t mac[6], uint8_
     status = WriteRegister(bss1);
     CHECK_WRITE(BSSID_DW1, status);
 
-    memcpy(bssid_, mac, 6);
+    memcpy(bssid_, config->bssid, 6);
+
+    // Additional configurations when BSS is managed by this device.
+    // This will allow offloading Beacon management to hardware.
+    if (!config->remote) {
+        BcnOffset0 offset;
+        offset.clear();
+        offset.set_bcn0_offset(0xE0);
+        auto status = WriteRegister(offset);
+        CHECK_WRITE(BCN_OFFSET_0, status);
+
+        BcnTimeCfg bcnTimeCfg;
+        bcnTimeCfg.set_bcn_intval(1600);
+        bcnTimeCfg.set_tsf_timer_en(1);
+        bcnTimeCfg.set_tsf_sync_mode(3);
+        bcnTimeCfg.set_tbtt_timer_en(1);
+        bcnTimeCfg.set_bcn_tx_en(1);
+        status = WriteRegister(bcnTimeCfg);
+        CHECK_WRITE(BCN_TIME_CFG, status);
+
+        TbttSyncCfg tsc;
+        tsc.set_tbtt_adjust(0);
+        tsc.set_bcn_exp_win(32);
+        tsc.set_bcn_aifsn(1);
+        tsc.set_bcn_cwmin(0);
+        status = WriteRegister(tsc);
+        CHECK_WRITE(TBTT_SYNC_CFG, status);
+
+        // TODO(hahnr): Implement a less naive configuration for basic rate and xifs time.
+        LegacyBasicRate lbr;
+        lbr.set_rate_1mbps(1);
+        lbr.set_rate_2mbps(1);
+        lbr.set_rate_5_5mbps(1);
+        lbr.set_rate_11mbps(1);
+        status = WriteRegister(lbr);
+        CHECK_WRITE(LEGACY_BASIC_RATE, status);
+
+        XifsTimeCfg xtc;
+        xtc.set_cck_sifs_time(16);
+        xtc.set_ofdm_sifs_time(16);
+        xtc.set_ofdm_xifs_time(4);
+        xtc.set_eifs_time(342);
+        xtc.set_bb_rxend_en(1);
+        status = WriteRegister(xtc);
+        CHECK_WRITE(XIFS_TIME_CFG, status);
+    }
 
     return ZX_OK;
-}
-
-zx_status_t Device::WlanmacConfigureBss(uint32_t options, wlan_bss_config_t* config) {
-    return WlanmacSetBss(options, config->bssid, config->bss_type);
 }
 
 // Maps IEEE cipher suites to vendor specific cipher representations, called KeyMode.
@@ -3962,6 +4058,38 @@ void Device::WriteRequestComplete(usb_request_t* request, void* cookie) {
 
     auto dev = static_cast<Device*>(cookie);
     dev->HandleTxComplete(request);
+}
+
+size_t Device::tx_pkt_len(wlan_tx_packet_t* pkt) {
+    auto len = pkt->packet_head->len;
+    if (pkt->packet_tail != nullptr) {
+        if (pkt->packet_tail->len < pkt->tail_offset) { return ZX_ERR_INVALID_ARGS; }
+        len += pkt->packet_tail->len - pkt->tail_offset;
+    }
+    return len;
+}
+
+size_t Device::txwi_len() {
+    return (rt_type_ == RT5592) ? 20 : 16;
+}
+
+size_t Device::align_pad_len(wlan_tx_packet_t* pkt) {
+    auto len = tx_pkt_len(pkt);
+    return ((len + 3) & ~3) - len;
+}
+
+size_t Device::terminal_pad_len() {
+    return 4;
+}
+
+size_t Device::usb_tx_pkt_len(wlan_tx_packet_t* pkt) {
+    // Our USB packet looks like:
+    //   TxInfo (4 bytes)
+    //   TXWI fields (16-20 bytes, depending on device)
+    //   packet (len bytes)
+    //   alignment zero padding (round up to a 4-byte boundary)
+    //   terminal zero padding (4 bytes)
+    return sizeof(TxInfo) + txwi_len() + tx_pkt_len(pkt) + align_pad_len(pkt) + terminal_pad_len();
 }
 
 }  // namespace ralink

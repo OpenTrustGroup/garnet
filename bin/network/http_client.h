@@ -51,6 +51,8 @@ class URLLoaderImpl::HTTPClient {
  private:
   using TransferBuffer = char[64 * 1024];
 
+  void SetHostName(const std::string& server);
+
   void OnResolve(const asio::error_code& err,
                  tcp::resolver::iterator endpoint_iterator);
   bool OnVerifyCertificate(bool preverified, asio::ssl::verify_context& ctx);
@@ -150,6 +152,8 @@ zx_status_t URLLoaderImpl::HTTPClient<T>::CreateRequest(
     return ZX_ERR_INVALID_ARGS;
   }
 
+  SetHostName(server);
+
   std::ostream request_header_stream(&request_header_buf_);
 
   bool has_accept = false;
@@ -181,6 +185,17 @@ zx_status_t URLLoaderImpl::HTTPClient<T>::CreateRequest(
 
   return ZX_OK;
 }
+
+template <>
+void URLLoaderImpl::HTTPClient<ssl_socket_t>::SetHostName(
+    const std::string& server) {
+  ::SSL_set_tlsext_host_name(socket_.native_handle(), server.c_str());
+  asio::detail::throw_error(asio::error_code(), "set_tlsext_host_name");
+}
+
+template <>
+void URLLoaderImpl::HTTPClient<nonssl_socket_t>::SetHostName(
+    const std::string& server) {}
 
 template <typename T>
 void URLLoaderImpl::HTTPClient<T>::Start(const std::string& server,
@@ -379,7 +394,7 @@ zx_status_t URLLoaderImpl::HTTPClient<T>::SendStreamedBody() {
           response_body_stream_.write(0, buffer, todo, &written);
       if (result == ZX_ERR_SHOULD_WAIT) {
         result = response_body_stream_.wait_one(
-            ZX_SOCKET_WRITABLE | ZX_SOCKET_PEER_CLOSED, ZX_TIME_INFINITE,
+            ZX_SOCKET_WRITABLE | ZX_SOCKET_PEER_CLOSED, zx::time::infinite(),
             nullptr);
         if (result == ZX_OK)
           continue;  // retry now that the socket is ready
@@ -436,9 +451,10 @@ zx_status_t URLLoaderImpl::HTTPClient<T>::SendBufferedBody() {
     } while (done < size);
 
     if (loader_->response_body_mode_ == URLRequest::ResponseBodyMode::BUFFER) {
-    response_->body->set_buffer(std::move(vmo));
+      response_->body->set_buffer(std::move(vmo));
     } else {
-      FXL_DCHECK(loader_->response_body_mode_ == URLRequest::ResponseBodyMode::SIZED_BUFFER);
+      FXL_DCHECK(loader_->response_body_mode_ ==
+                 URLRequest::ResponseBodyMode::SIZED_BUFFER);
       response_->body->set_sized_buffer(
           fsl::SizedVmo(std::move(vmo), size).ToTransport());
     }
@@ -540,7 +556,11 @@ void URLLoaderImpl::HTTPClient<T>::OnReadHeaders(const asio::error_code& err) {
 
 template <typename T>
 void URLLoaderImpl::HTTPClient<T>::OnBufferBody(const asio::error_code& err) {
-  if (err && err != asio::ssl::error::stream_truncated) {
+  // asio::error::eof happens if the other side closed their connection.
+  if (err && err != asio::ssl::error::stream_truncated &&
+      err != asio::error::eof) {
+    // TODO: if EOF, should probably confirm we read all of the bytes (see
+    // Content-Length header).
     FXL_VLOG(1) << "OnBufferBody: " << err.message() << " (" << err << ")";
     // TODO(somebody who knows asio/network errors): real translation
     SendError(network::NETWORK_ERR_FAILED);

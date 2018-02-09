@@ -7,8 +7,8 @@
 
 #include <memory>
 
+#include "garnet/lib/ui/scenic/engine/engine.h"
 #include "lib/ui/scenic/fidl/scene_manager.fidl.h"
-#include "garnet/bin/ui/scene_manager/engine/engine.h"
 
 namespace scene_manager {
 

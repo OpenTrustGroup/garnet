@@ -4,11 +4,13 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 
 #include <zircon/compiler.h>
 
 #include "garnet/drivers/bluetooth/lib/common/device_address.h"
+#include "garnet/drivers/bluetooth/lib/common/device_class.h"
 #include "garnet/drivers/bluetooth/lib/common/uint128.h"
 #include "garnet/drivers/bluetooth/lib/hci/hci_constants.h"
 
@@ -115,6 +117,36 @@ constexpr OpCode LinkControlOpCode(const uint16_t ocf) {
   return DefineOpCode(kLinkControlOGF, ocf);
 }
 
+// ===============================
+// Inquiry Command (v1.1) (BR/EDR)
+constexpr OpCode kInquiry = LinkControlOpCode(0x0001);
+
+struct InquiryCommandParams {
+  // LAP (Lower Address Part)
+  // In the range 0x9E8B00 - 0x9E8B3F, defined by the Bluetooth SIG in
+  // Baseband Assigned Numbers.
+  // Currently the only valid LAPs are kGIAC and kLIAC in hci_constants.h
+  std::array<uint8_t, 3> lap;
+
+  // Time before the inquiry is halted. Defined in 1.28s units.
+  // Range: 0x01 to kInquiryLengthMax in hci_constants.h
+  uint8_t inquiry_length;
+
+  // Maximum number of responses before inquiry is halted.
+  // Set to 0x00 for unlimited.
+  uint8_t num_responses;
+} __PACKED;
+
+// Note: NO Command Complete; Sends Inquiry Complete at the end of the
+// inquiry to indicate it's completion. No Inquiry Complete event is sent if
+// Inquiry is cancelled.
+
+// ======================================
+// Inquiry Cancel Command (v1.1) (BR/EDR)
+constexpr OpCode kInquiryCancel = LinkControlOpCode(0x0002);
+
+// Inquiry Cancel Command has no command parameters.
+
 // =======================================
 // Disconnect Command (v1.1) (BR/EDR & LE)
 constexpr OpCode kDisconnect = LinkControlOpCode(0x0006);
@@ -216,7 +248,7 @@ struct ReadClassOfDeviceReturnParams {
   // See enum Status in hci_constants.h.
   Status status;
 
-  uint8_t class_of_device[3];
+  common::DeviceClass class_of_device;
 } __PACKED;
 
 // =============================================
@@ -224,7 +256,7 @@ struct ReadClassOfDeviceReturnParams {
 constexpr OpCode kWriteClassOfDevice = ControllerAndBasebandOpCode(0x0024);
 
 struct WriteClassOfDeviceCommandParams {
-  uint8_t class_of_device[3];
+  common::DeviceClass class_of_device;
 } __PACKED;
 
 // ===============================================================
@@ -487,6 +519,45 @@ struct ReadDataBlockSizeReturnParams {
 // Reserved for vendor-specific debug events
 // (Vol 2, Part E, Section 5.4.4)
 constexpr EventCode kVendorDebugEventCode = 0xFF;
+
+// ======================================
+// Inquiry Complete Event (v1.1) (BR/EDR)
+constexpr EventCode kInquiryCompleteEventCode = 0x01;
+
+using InquiryCompleteEventParams = SimpleReturnParams;
+
+// ====================================
+// Inquiry Result Event (v1.1) (BR/EDR)
+constexpr EventCode kInquiryResultEventCode = 0x02;
+
+struct InquiryResult {
+  // The address for the device which responded.
+  common::DeviceAddressBytes bd_addr;
+
+  // The Page Scan Repetition Mode being used by the remote device.
+  PageScanRepetitionMode page_scan_repetition_mode;
+
+  // Reserved (no meaning as of v1.2)
+  uint8_t page_scan_period_mode;
+
+  // Reserved (no meaning as of v1.2)
+  uint8_t page_scan_mode;
+
+  // Class of device
+  common::DeviceClass class_of_device;
+
+  // 15 MSB of the Clock Offset
+  uint16_t clock_offset;
+} __PACKED;
+
+struct InquiryResultEventParams {
+  FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(InquiryResultEventParams);
+
+  // The number of responses included.
+  uint8_t num_responses;
+
+  InquiryResult responses[];
+} __PACKED;
 
 // =================================================
 // Disconnection Complete Event (v1.1) (BR/EDR & LE)

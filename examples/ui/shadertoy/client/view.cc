@@ -39,8 +39,8 @@ View::View(app::ApplicationContext* application_context,
       // create a Shadertoy.  What is the best way to achieve this?
       shadertoy_factory_(application_context_->ConnectToEnvironmentService<
                          mozart::example::ShadertoyFactory>()),
-      start_time_(zx_time_get(ZX_CLOCK_MONOTONIC)) {
-  shadertoy_factory_.set_connection_error_handler([this] {
+      start_time_(zx_clock_get(ZX_CLOCK_MONOTONIC)) {
+  shadertoy_factory_.set_error_handler([this] {
     FXL_LOG(INFO) << "Lost connection to ShadertoyFactory.";
     loop_->QuitNow();
   });
@@ -51,7 +51,7 @@ View::View(app::ApplicationContext* application_context,
   auto image_pipe_request = image_pipe_handle.NewRequest();
   shadertoy_factory_->NewImagePipeShadertoy(shadertoy_.NewRequest(),
                                             std::move(image_pipe_handle));
-  shadertoy_.set_connection_error_handler([this] {
+  shadertoy_.set_error_handler([this] {
     FXL_LOG(INFO) << "Lost connection to Shadertoy.";
     loop_->QuitNow();
   });
@@ -187,11 +187,11 @@ bool View::OnInputEvent(mozart::InputEventPtr event) {
       switch (animation_state_) {
         case kFourCorners:
           animation_state_ = kChangingToSwirling;
-          transition_start_time_ = zx_time_get(ZX_CLOCK_MONOTONIC);
+          transition_start_time_ = zx_clock_get(ZX_CLOCK_MONOTONIC);
           return true;
         case kSwirling:
           animation_state_ = kChangingToFourCorners;
-          transition_start_time_ = zx_time_get(ZX_CLOCK_MONOTONIC);
+          transition_start_time_ = zx_clock_get(ZX_CLOCK_MONOTONIC);
           return true;
         default:
           // This will never happen, because we checked above that we're not

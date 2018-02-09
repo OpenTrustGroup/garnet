@@ -29,6 +29,7 @@ template <uint8_t A> class RfcsrRegister;
 template <uint16_t A> class EepromField;
 enum KeyMode : uint8_t;
 enum KeyType : uint8_t;
+struct TxPacket;
 
 class Device : public ddk::Device<Device, ddk::Unbindable>, public ddk::WlanmacProtocol<Device> {
    public:
@@ -169,15 +170,23 @@ class Device : public ddk::Device<Device, ddk::Unbindable>, public ddk::WlanmacP
     zx_status_t ConfigureTxPower(const wlan_channel_t& chan);
 
     template <typename R, typename Predicate>
-    zx_status_t BusyWait(R* reg, Predicate pred, zx_duration_t delay = kDefaultBusyWait);
+    zx_status_t BusyWait(R* reg, Predicate pred, zx::duration delay = kDefaultBusyWait);
 
     void HandleRxComplete(usb_request_t* request);
     void HandleTxComplete(usb_request_t* request);
 
+    zx_status_t FillUsbTxPacket(TxPacket* usb_packet, wlan_tx_packet_t* wlan_packet);
     uint8_t LookupTxWcid(const uint8_t* addr1, bool protected_frame);
+    zx_status_t ConfigureBssBeacon(uint32_t options, wlan_tx_packet_t* bcn_pkt);
 
     static void ReadRequestComplete(usb_request_t* request, void* cookie);
     static void WriteRequestComplete(usb_request_t* request, void* cookie);
+
+    size_t tx_pkt_len(wlan_tx_packet_t* pkt);
+    size_t txwi_len();
+    size_t align_pad_len(wlan_tx_packet_t* pkt);
+    size_t terminal_pad_len();
+    size_t usb_tx_pkt_len(wlan_tx_packet_t* pkt);
 
     usb_protocol_t usb_;
     fbl::unique_ptr<ddk::WlanmacIfcProxy> wlanmac_proxy_ __TA_GUARDED(lock_);
@@ -188,7 +197,7 @@ class Device : public ddk::Device<Device, ddk::Unbindable>, public ddk::WlanmacP
     constexpr static size_t kEepromSize = 0x0100;
     std::array<uint16_t, kEepromSize> eeprom_ = {};
 
-    constexpr static zx_duration_t kDefaultBusyWait = ZX_USEC(100);
+    constexpr static zx::duration kDefaultBusyWait = zx::usec(100);
 
     // constants read out of the device
     uint16_t rt_type_ = 0;

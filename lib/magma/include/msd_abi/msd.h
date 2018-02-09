@@ -58,17 +58,6 @@ void msd_connection_set_notification_channel(struct msd_connection_t* connection
 // Creates a context for the given connection. returns null on failure.
 struct msd_context_t* msd_connection_create_context(struct msd_connection_t* connection);
 
-// Provides a buffer to be scanned out on the next vblank event.
-// The first |wait_semaphore_count| of |semaphores| will be waited upon prior to scanning
-// out the buffer.  The following |signal_semaphore_count| semaphores will be signalled when
-// |buf| is no longer being displayed and is safe to be reused.
-// |callback| will be invoked when the vblank occurs and |callback_data| will be passed back.
-void msd_connection_present_buffer(struct msd_connection_t* connection, struct msd_buffer_t* buf,
-                                   struct magma_system_image_descriptor* image_desc,
-                                   uint32_t wait_semaphore_count, uint32_t signal_semaphore_count,
-                                   struct msd_semaphore_t** semaphores,
-                                   msd_present_buffer_callback_t callback, void* callback_data);
-
 // Returns 0 on success.
 // Blocks until all currently outstanding work on the given buffer completes.
 // If more work that references this buffer is queued while waiting, this may return before that
@@ -96,6 +85,12 @@ magma_status_t msd_context_execute_command_buffer(struct msd_context_t* ctx,
 // Signals that the given |buffer| is no longer in use on the given |context|.
 // May be used to free up resources such as a cached address space mapping for the given buffer.
 void msd_context_release_buffer(struct msd_context_t* context, struct msd_buffer_t* buffer);
+
+// Signals that the given |buffer| is no longer in use on the given |connection|. This must be
+// called for every connection associated with a buffer before the buffer is destroyed, or for every
+// buffer associated with a connection before the connection is destroyed.
+void msd_connection_release_buffer(struct msd_connection_t* connection,
+                                   struct msd_buffer_t* buffer);
 
 // Creates a buffer that owns the provided handle
 // The resulting msd_buffer_t is owned by the caller and must be destroyed

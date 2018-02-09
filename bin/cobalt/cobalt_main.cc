@@ -5,12 +5,15 @@
 #include <stdlib.h>
 
 #include <chrono>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
 #include <utility>
 
-#include "garnet/bin/cobalt/config.h"
+#include "config/cobalt_config.pb.h"
+#include "config/encodings.pb.h"
+#include "config/metrics.pb.h"
 #include "grpc++/grpc++.h"
 #include "lib/app/cpp/application_context.h"
 #include "lib/cobalt/fidl/cobalt.fidl.h"
@@ -82,6 +85,8 @@ const std::chrono::seconds kMinIntervalDefault(1);
 const std::chrono::seconds kInitialRpcDeadline(10);
 const std::chrono::seconds kDeadlinePerSendAttempt(60);
 
+const char* kConfigBinProtoPath = "/pkg/data/cobalt_config.binproto";
+
 // Maps a ShippingManager::Status to a cobalt::Status.
 cobalt::Status ToCobaltStatus(ShippingManager::Status s) {
   switch (s) {
@@ -126,10 +131,9 @@ class CobaltEncoderImpl : public CobaltEncoder {
                          const int64_t observation,
                          const AddIntObservationCallback& callback) override;
 
-  void AddDoubleObservation(uint32_t metric_id,
-                            uint32_t encoding_id,
-                            const double observation,
-                            const AddIntObservationCallback& callback) override;
+  void AddDoubleObservation(
+      uint32_t metric_id, uint32_t encoding_id, const double observation,
+      const AddDoubleObservationCallback& callback) override;
 
   void AddIndexObservation(
       uint32_t metric_id,
@@ -141,6 +145,11 @@ class CobaltEncoderImpl : public CobaltEncoder {
       uint32_t metric_id,
       fidl::Array<ObservationValuePtr> observation,
       const AddMultipartObservationCallback& callback) override;
+
+  void AddIntBucketDistribution(
+      uint32_t metric_id, uint32_t encoding_id,
+      fidl::Map<uint32_t, uint64_t> distribution,
+      const AddIntBucketDistributionCallback& callback) override;
 
   void SendObservations(const SendObservationsCallback& callback) override;
 
@@ -196,10 +205,8 @@ void CobaltEncoderImpl::AddIntObservation(
 }
 
 void CobaltEncoderImpl::AddDoubleObservation(
-    uint32_t metric_id,
-    uint32_t encoding_id,
-    const double observation,
-    const AddIntObservationCallback& callback) {
+    uint32_t metric_id, uint32_t encoding_id, const double observation,
+    const AddDoubleObservationCallback& callback) {
   auto result = encoder_.EncodeDouble(metric_id, encoding_id, observation);
   AddEncodedObservation(&result, callback);
 }
@@ -250,6 +257,14 @@ void CobaltEncoderImpl::AddMultipartObservation(
   }
   auto result = encoder_.Encode(metric_id, value);
   AddEncodedObservation(&result, callback);
+}
+
+void CobaltEncoderImpl::AddIntBucketDistribution(
+    uint32_t metric_id, uint32_t encoding_id,
+    fidl::Map<uint32_t, uint64_t> distribution,
+    const AddIntBucketDistributionCallback& callback) {
+  FXL_LOG(ERROR) << "AddIntBucketDistribution not implemented yet!";
+  callback(Status::INTERNAL_ERROR);
 }
 
 void CobaltEncoderImpl::SendObservations(
@@ -420,16 +435,34 @@ CobaltApp::CobaltApp(fxl::RefPtr<fxl::TaskRunner> task_runner,
                                                 &shipping_manager_)) {
   shipping_manager_.Start();
 
+  // Open the cobalt config file.
+  std::ifstream config_file_stream;
+  config_file_stream.open(kConfigBinProtoPath);
+  FXL_CHECK(config_file_stream)
+      << "Could not open cobalt config proto file: " << kConfigBinProtoPath;
+
+  // Parse the cobalt config file.
+  cobalt::CobaltConfig cobalt_config;
+  FXL_CHECK(cobalt_config.ParseFromIstream(&config_file_stream))
+      << "Could not parse the cobalt config proto file: "
+      << kConfigBinProtoPath;
+
   // Parse the metric config string
+  cobalt::RegisteredMetrics registered_metrics;
+  registered_metrics.mutable_element()->Swap(
+      cobalt_config.mutable_metric_configs());
   auto metric_parse_result =
-      MetricRegistry::FromString(cobalt::kMetricConfigText, nullptr);
+      MetricRegistry::FromProto(&registered_metrics, nullptr);
   // TODO(rudominer) Checkfailing is probably not the right thing to do.
   FXL_CHECK(cobalt::config::kOK == metric_parse_result.second);
   metric_registry_.reset(metric_parse_result.first.release());
 
   // Parse the encoding config string
+  cobalt::RegisteredEncodings registered_encodings;
+  registered_encodings.mutable_element()->Swap(
+      cobalt_config.mutable_encoding_configs());
   auto encoding_parse_result =
-      EncodingRegistry::FromString(cobalt::kEncodingConfigText, nullptr);
+      EncodingRegistry::FromProto(&registered_encodings, nullptr);
   FXL_CHECK(cobalt::config::kOK == encoding_parse_result.second);
   encoding_registry_.reset(encoding_parse_result.first.release());
 

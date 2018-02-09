@@ -40,14 +40,6 @@ void msd_context_destroy(msd_context_t* ctx)
     delete context;
 }
 
-void msd_connection_present_buffer(msd_connection_t* abi_connection, msd_buffer_t* abi_buffer,
-                                   magma_system_image_descriptor* image_desc,
-                                   uint32_t wait_semaphore_count, uint32_t signal_semaphore_count,
-                                   msd_semaphore_t** semaphores,
-                                   msd_present_buffer_callback_t callback, void* callback_data)
-{
-}
-
 bool MsdArmConnection::ExecuteAtom(
     volatile magma_arm_mali_atom* atom,
     std::deque<std::shared_ptr<magma::PlatformSemaphore>>* semaphores)
@@ -116,7 +108,9 @@ magma_status_t msd_context_execute_command_buffer(msd_context_t* ctx, msd_buffer
         return DRET_MSG(MAGMA_STATUS_INVALID_ARGS, "Connection not valid");
 
     std::deque<std::shared_ptr<magma::PlatformSemaphore>> semaphores;
-    auto command_buffer = MsdArmAbiBuffer::cast(cmd_buf)->ptr();
+    // Command buffers aren't shared cross-connection, so use the base
+    // pointer.
+    auto command_buffer = MsdArmAbiBuffer::cast(cmd_buf)->base_ptr();
     void* command_buffer_addr;
     if (!command_buffer->platform_buffer()->MapCpu(&command_buffer_addr))
         return DRET_MSG(MAGMA_STATUS_INTERNAL_ERROR, "Can't map buffer");
@@ -127,7 +121,7 @@ magma_status_t msd_context_execute_command_buffer(msd_context_t* ctx, msd_buffer
 
     command_buffer->platform_buffer()->UnmapCpu();
 
-    auto buffer = MsdArmAbiBuffer::cast(exec_resources[0])->ptr();
+    auto buffer = connection->GetBuffer(MsdArmAbiBuffer::cast(exec_resources[0]));
     void* addr;
     if (!buffer->platform_buffer()->MapCpu(&addr))
         return DRET_MSG(MAGMA_STATUS_INTERNAL_ERROR, "Can't map buffer");
@@ -192,7 +186,7 @@ MsdArmConnection::MsdArmConnection(msd_client_id_t client_id, Owner* owner)
 {
 }
 
-MsdArmConnection::~MsdArmConnection() {}
+MsdArmConnection::~MsdArmConnection() { DASSERT(buffers_.empty()); }
 
 bool MsdArmConnection::AddMapping(std::unique_ptr<GpuMapping> mapping)
 {
@@ -223,7 +217,7 @@ bool MsdArmConnection::AddMapping(std::unique_ptr<GpuMapping> mapping)
     }
     auto buffer = mapping->buffer().lock();
     DASSERT(buffer);
-    if (!buffer->platform_buffer()->PinPages(0, page_count))
+    if (!buffer->platform_buffer()->PinPages(mapping->page_offset(), page_count))
         return DRETF(false, "Pages can't be pinned");
 
     uint64_t access_flags = 0;
@@ -246,7 +240,8 @@ bool MsdArmConnection::AddMapping(std::unique_ptr<GpuMapping> mapping)
           kMagmaArmMaliGpuMapFlagInnerShareable | kMagmaArmMaliGpuMapFlagBothShareable))
         return DRETF(false, "Unsupported map flags %lx\n", mapping->flags());
 
-    if (!address_space_->Insert(gpu_va, buffer->platform_buffer(), 0, mapping->size(),
+    if (!address_space_->Insert(gpu_va, buffer->platform_buffer(),
+                                mapping->page_offset() * PAGE_SIZE, mapping->size(),
                                 access_flags)) {
         buffer->platform_buffer()->UnpinPages(start_page, page_count);
         return DRETF(false, "Pages can't be inserted into address space");
@@ -266,7 +261,7 @@ bool MsdArmConnection::RemoveMapping(uint64_t gpu_va)
 
     uint64_t page_count = magma::round_up(it->second->size(), PAGE_SIZE) >> PAGE_SHIFT;
     auto buffer = it->second->buffer().lock();
-    if (buffer && !buffer->platform_buffer()->UnpinPages(0, page_count))
+    if (buffer && !buffer->platform_buffer()->UnpinPages(it->second->page_offset(), page_count))
         DLOG("Unable to unpin pages");
     gpu_mappings_.erase(gpu_va);
     return true;
@@ -311,14 +306,32 @@ void MsdArmConnection::MarkDestroyed()
     return_channel_ = 0;
 }
 
+std::shared_ptr<MsdArmBuffer> MsdArmConnection::GetBuffer(MsdArmAbiBuffer* buffer)
+{
+    auto it = buffers_.find(buffer);
+    if (it != buffers_.end())
+        return it->second;
+
+    auto cloned_buffer = buffer->CloneBuffer();
+    buffers_[buffer] = cloned_buffer;
+    return cloned_buffer;
+}
+
+void MsdArmConnection::ReleaseBuffer(MsdArmAbiBuffer* buffer)
+{
+    // A per-connection buffer may not have been retrieved, so this may erase
+    // nothing.
+    buffers_.erase(buffer);
+}
+
 void msd_connection_map_buffer_gpu(msd_connection_t* abi_connection, msd_buffer_t* abi_buffer,
                                    uint64_t gpu_va, uint64_t page_offset, uint64_t page_count,
                                    uint64_t flags)
 {
     MsdArmConnection* connection = MsdArmAbiConnection::cast(abi_connection)->ptr().get();
-    std::shared_ptr<MsdArmBuffer> buffer = MsdArmAbiBuffer::cast(abi_buffer)->ptr();
+    std::shared_ptr<MsdArmBuffer> buffer = connection->GetBuffer(MsdArmAbiBuffer::cast(abi_buffer));
 
-    auto mapping = std::make_unique<GpuMapping>(gpu_va, buffer->platform_buffer()->size(), flags,
+    auto mapping = std::make_unique<GpuMapping>(gpu_va, page_offset, page_count * PAGE_SIZE, flags,
                                                 connection, buffer);
     connection->AddMapping(std::move(mapping));
 }
@@ -340,4 +353,11 @@ void msd_connection_set_notification_channel(msd_connection_t* abi_connection,
 {
     auto connection = MsdArmAbiConnection::cast(abi_connection)->ptr();
     connection->SetNotificationChannel(send_callback, notification_channel);
+}
+
+void msd_connection_release_buffer(msd_connection_t* abi_connection,
+                                   msd_buffer_t* abi_buffer)
+{
+    MsdArmConnection* connection = MsdArmAbiConnection::cast(abi_connection)->ptr().get();
+    connection->ReleaseBuffer(MsdArmAbiBuffer::cast(abi_buffer));
 }

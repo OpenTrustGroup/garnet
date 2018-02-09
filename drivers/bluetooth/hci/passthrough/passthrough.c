@@ -1,4 +1,4 @@
-// Copyright 2016 The Fuchsia Authors. All rights reserved.
+// Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -20,6 +20,23 @@ typedef struct {
 
   bt_hci_protocol_t hci;
 } passthrough_t;
+
+static zx_status_t passthrough_hci_get_protocol(void* ctx,
+                                                uint32_t proto_id,
+                                                void* out_proto) {
+  if (proto_id != ZX_PROTOCOL_BT_HCI) {
+    return ZX_ERR_NOT_SUPPORTED;
+  }
+
+  passthrough_t* passthrough = ctx;
+  bt_hci_protocol_t* hci_proto = out_proto;
+
+  // Forward the underlying bt-transport ops.
+  hci_proto->ops = passthrough->hci.ops;
+  hci_proto->ctx = passthrough->hci.ctx;
+
+  return ZX_OK;
+}
 
 static zx_status_t passthrough_hci_ioctl(void* ctx,
                                          uint32_t op,
@@ -64,6 +81,7 @@ static void passthrough_hci_release(void* ctx) {
 
 static zx_protocol_device_t passthrough_device_proto = {
     .version = DEVICE_OPS_VERSION,
+    .get_protocol = passthrough_hci_get_protocol,
     .ioctl = passthrough_hci_ioctl,
     .unbind = passthrough_hci_unbind,
     .release = passthrough_hci_release,
@@ -113,5 +131,5 @@ static zx_driver_ops_t passthrough_hci_driver_ops = {
 // This should be the last driver queried, so we match any transport.
 // clang-format off
 ZIRCON_DRIVER_BEGIN(bt_passthrough_hci, passthrough_hci_driver_ops, "fuchsia", "*0.1", 1)
-    BI_MATCH_IF(EQ, BIND_PROTOCOL, ZX_PROTOCOL_BT_HCI_TRANSPORT),
+    BI_MATCH_IF(EQ, BIND_PROTOCOL, ZX_PROTOCOL_BT_TRANSPORT),
 ZIRCON_DRIVER_END(bt_passthrough_hci)

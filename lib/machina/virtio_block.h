@@ -6,26 +6,15 @@
 #define GARNET_LIB_MACHINA_VIRTIO_BLOCK_H_
 
 #include <fbl/mutex.h>
+#include <fbl/unique_ptr.h>
 #include <virtio/block.h>
 
+#include "garnet/lib/machina/block_dispatcher.h"
 #include "garnet/lib/machina/virtio.h"
 
 typedef struct file_state file_state_t;
 
 namespace machina {
-
-// Component to service block requests.
-class VirtioBlockRequestDispatcher {
- public:
-  virtual ~VirtioBlockRequestDispatcher() = default;
-
-  virtual zx_status_t Flush() = 0;
-  virtual zx_status_t Read(off_t disk_offset, void* buf, size_t size) = 0;
-  virtual zx_status_t Write(off_t disk_offset,
-                            const void* buf,
-                            size_t size) = 0;
-  virtual zx_status_t Submit() = 0;
-};
 
 // Stores the state of a block device.
 class VirtioBlock : public VirtioDevice {
@@ -35,11 +24,8 @@ class VirtioBlock : public VirtioDevice {
   VirtioBlock(const PhysMem& phys_mem);
   ~VirtioBlock() override = default;
 
-  // Opens a file to use as backing for the block device.
-  //
-  // Default to opening the file as read-write, but fall back to read-only
-  // if that is not possible.
-  zx_status_t Init(const char* path);
+  // Set the dispatcher to use to interface with the back-end.
+  zx_status_t SetDispatcher(fbl::unique_ptr<BlockDispatcher> dispatcher);
 
   // Starts a thread to monitor the queue for incomming block requests.
   zx_status_t Start();
@@ -53,22 +39,17 @@ class VirtioBlock : public VirtioDevice {
                                  uint16_t head,
                                  uint32_t* used);
 
-  // The 'read-only' feature flag.
   bool is_read_only() { return has_device_features(VIRTIO_BLK_F_RO); }
-  void set_read_only() { add_device_features(VIRTIO_BLK_F_RO); }
 
   // The queue used for handling block reauests.
   virtio_queue_t& queue() { return queue_; }
 
  private:
-  // Size of file backing the block device.
-  uint64_t size_ = 0;
   // Queue for handling block requests.
   virtio_queue_t queue_;
   // Device configuration fields.
   virtio_blk_config_t config_ = {};
-
-  fbl::unique_ptr<VirtioBlockRequestDispatcher> dispatcher_;
+  fbl::unique_ptr<BlockDispatcher> dispatcher_;
 };
 
 }  // namespace machina

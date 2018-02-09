@@ -5,7 +5,7 @@
 #ifndef LIB_FIDL_CPP_BINDINGS_INTERNAL_CONNECTOR_H_
 #define LIB_FIDL_CPP_BINDINGS_INTERNAL_CONNECTOR_H_
 
-#include <async/auto_wait.h>
+#include <async/cpp/auto_wait.h>
 #include <zx/channel.h>
 
 #include <functional>
@@ -48,7 +48,7 @@ class Connector : public MessageReceiver {
   // Sets the error handler to receive notifications when an error is
   // encountered while reading from the channel or waiting to read from the
   // channel.
-  void set_connection_error_handler(std::function<void()> error_handler) {
+  void set_error_handler(std::function<void()> error_handler) {
     connection_error_handler_ = std::move(error_handler);
   }
 
@@ -62,7 +62,7 @@ class Connector : public MessageReceiver {
 
   // Releases the channel, not triggering the error state. Connector is put into
   // a quiescent state.
-  zx::channel PassChannel();
+  zx::channel TakeChannel();
 
   // Is the connector bound to a channel?
   bool is_valid() const { return !!channel_; }
@@ -80,6 +80,9 @@ class Connector : public MessageReceiver {
   bool Accept(Message* message) override;
 
   zx_handle_t handle() const { return channel_.get(); }
+
+  // The underlying channel.
+  const zx::channel& channel() const { return channel_; }
 
  private:
   async_wait_result_t OnHandleReady(async_t* async,

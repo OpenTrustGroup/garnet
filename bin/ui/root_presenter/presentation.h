@@ -9,6 +9,9 @@
 #include <memory>
 
 #include "garnet/bin/ui/root_presenter/display_flipper.h"
+#include "garnet/bin/ui/root_presenter/display_usage_switcher.h"
+#include "garnet/bin/ui/root_presenter/displays/display_metrics.h"
+#include "garnet/bin/ui/root_presenter/displays/display_model.h"
 #include "lib/fidl/cpp/bindings/binding.h"
 #include "lib/fxl/functional/closure.h"
 #include "lib/fxl/macros.h"
@@ -22,6 +25,17 @@
 #include "lib/ui/scenic/client/resources.h"
 #include "lib/ui/views/fidl/view_manager.fidl.h"
 #include "lib/ui/views/fidl/views.fidl.h"
+#if defined(countof)
+// Workaround for compiler error due to Zircon defining countof() as a macro.
+// Redefines countof() using GLM_COUNTOF(), which currently provides a more
+// sophisticated implementation anyway.
+#undef countof
+#include <glm/glm.hpp>
+#define countof(X) GLM_COUNTOF(X)
+#else
+// No workaround required.
+#include <glm/glm.hpp>
+#endif
 
 namespace root_presenter {
 
@@ -68,6 +82,18 @@ class Presentation : private mozart::ViewTreeListener,
   void OnDeviceRemoved(uint32_t device_id);
 
  private:
+  friend class DisplayFlipper;
+  friend class DisplayUsageSwitcher;
+
+  // Gets the DisplayMetrics for the given |model|. If |display_usage_override|
+  // is not UNKNOWN, uses that value for purpose of calculating metrics.
+  static DisplayMetrics CalculateDisplayMetrics(
+      const DisplayModel& display_model,
+      mozart::DisplayUsage display_usage_override);
+  // Sets |display_metrics_| and updates view_manager and Scenic. Returns false
+  // if the updates were skipped (if initialization hasn't happened yet).
+  bool SetDisplayMetrics(const DisplayMetrics& metrics);
+
   // |ViewContainerListener|:
   void OnChildAttached(uint32_t child_key,
                        mozart::ViewInfoPtr child_view_info,
@@ -92,6 +118,9 @@ class Presentation : private mozart::ViewTreeListener,
   // |Presentation|
   void SetRendererParams(
       ::fidl::Array<scenic::RendererParamPtr> params) override;
+
+  // |Presentation|
+  void SetDisplayUsage(mozart::DisplayUsage usage) override;
 
   void CreateViewTree(
       mozart::ViewOwnerPtr view_owner,
@@ -126,6 +155,7 @@ class Presentation : private mozart::ViewTreeListener,
   scenic_lib::Scene scene_;
   scenic_lib::Camera camera_;
   scenic_lib::AmbientLight ambient_light_;
+  glm::vec3 light_direction_;
   scenic_lib::DirectionalLight directional_light_;
   scenic_lib::EntityNode root_view_host_node_;
   zx::eventpair root_view_host_import_token_;
@@ -135,10 +165,18 @@ class Presentation : private mozart::ViewTreeListener,
   zx::eventpair content_view_host_import_token_;
   scenic_lib::RoundedRectangle cursor_shape_;
   scenic_lib::Material cursor_material_;
-  scenic::DisplayInfoPtr display_info_;
-  float logical_width_ = 0.f;
-  float logical_height_ = 0.f;
-  float device_pixel_ratio_ = 1.f;
+
+  DisplayModel display_model_;
+  bool display_model_initialized_ = false;
+  // The display usage value set when |display_model_| was initialized.
+  mozart::DisplayUsage display_usage_default_ = mozart::DisplayUsage::UNKNOWN;
+  // Set by SetDisplayUsage. This value is used instead of
+  // |display_usage_default_| unless it's UNKNOWN.
+  mozart::DisplayUsage display_usage_override_ = mozart::DisplayUsage::UNKNOWN;
+
+  // |display_metrics_| must be recalculated anytime |display_model_| changes
+  // using CalculateDisplayMetrics().
+  DisplayMetrics display_metrics_;
 
   mozart::ViewPtr root_view_;
 
@@ -166,8 +204,11 @@ class Presentation : private mozart::ViewTreeListener,
   };
   AnimationState animation_state_ = kDefault;
 
-  // State related to flipping the display
+  // Rotates the display 180 degrees in response to events.
   DisplayFlipper display_flipper_;
+
+  // Toggles through different display usage values.
+  DisplayUsageSwitcher display_usage_switcher_;
 
   // Presentation time at which this presentation last entered either
   // kCameraMovingAway or kCameraReturning state.

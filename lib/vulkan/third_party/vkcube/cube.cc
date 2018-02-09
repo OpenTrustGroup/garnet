@@ -49,7 +49,7 @@
 #include "platform_trace.h"
 
 #ifdef MAGMA_ENABLE_TRACING
-#include <async/loop.h>
+#include <async/cpp/loop.h>
 #include <trace-provider/provider.h>
 #endif
 
@@ -2105,6 +2105,9 @@ static void demo_init_vk(struct demo* demo)
 #ifndef NDEBUG
         "VK_LAYER_LUNARG_standard_validation",
 #endif
+#if defined(CUBE_USE_IMAGE_PIPE)
+        "VK_LAYER_GOOGLE_image_pipe_swapchain",
+#endif
     };
 
     const char* instance_validation_layers_alt2[] = {
@@ -2116,11 +2119,15 @@ static void demo_init_vk(struct demo* demo)
         "VK_LAYER_LUNARG_swapchain",
         "VK_LAYER_GOOGLE_unique_objects",
 #endif
+#if defined(CUBE_USE_IMAGE_PIPE)
+        "VK_LAYER_GOOGLE_image_pipe_swapchain",
+#endif
     };
 
     /* Look for validation layers */
     VkBool32 validation_found = 0;
-    if (demo->validate) {
+    if (true) {
+
         err = vkEnumerateInstanceLayerProperties(&instance_layer_count, NULL);
         assert(!err);
 
@@ -2768,7 +2775,7 @@ void demo_run_image_pipe(struct demo* demo, int argc, char** argv)
                                        fidl::InterfaceHandle<scenic::ImagePipe> interface_handle) {
                 demo->width = width;
                 demo->height = height;
-                demo->fuchsia_state->image_pipe_handle = interface_handle.PassHandle().release();
+                demo->fuchsia_state->image_pipe_handle = interface_handle.TakeChannel().release();
                 if (demo->prepared) {
                     demo_resize(demo);
                 } else {
@@ -2798,7 +2805,7 @@ void demo_run_image_pipe(struct demo* demo, int argc, char** argv)
         demo->width = info->width;
         demo->height = info->height;
         demo->fuchsia_state->image_pipe_handle =
-            demo->fuchsia_state->pipe.PassInterfaceHandle().PassHandle().release();
+            demo->fuchsia_state->pipe.Unbind().TakeChannel().release();
 
         demo_init_vk_swapchain(demo);
         demo_prepare(demo);

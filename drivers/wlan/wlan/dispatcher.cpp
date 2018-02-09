@@ -3,18 +3,19 @@
 // found in the LICENSE file.
 
 #include "dispatcher.h"
-#include "ap_mlme.h"
-#include "client_mlme.h"
-#include "frame_handler.h"
-#include "packet.h"
-#include "serialize.h"
 
-#include "garnet/drivers/wlan/common/channel.h"
 #include "lib/wlan/fidl/wlan_mlme.fidl-common.h"
 #include "lib/wlan/fidl/wlan_mlme_ext.fidl-common.h"
 
 #include <ddk/protocol/wlan.h>
 #include <fbl/unique_ptr.h>
+#include <wlan/common/channel.h>
+#include <wlan/common/mac_frame.h>
+#include <wlan/mlme/ap_mlme.h>
+#include <wlan/mlme/client_mlme.h>
+#include <wlan/mlme/frame_handler.h>
+#include <wlan/mlme/packet.h>
+#include <wlan/mlme/serialize.h>
 #include <zircon/types.h>
 
 #include <cinttypes>
@@ -222,6 +223,7 @@ zx_status_t Dispatcher::HandleDataPacket(const Packet* packet) {
     }
     size_t llc_len = packet->len() - llc_offset;
     auto frame = ImmutableDataFrame<LlcHeader>(hdr, llc, llc_len);
+
     return mlme_->HandleFrame(frame, *rxinfo);
 }
 
@@ -363,8 +365,16 @@ zx_status_t Dispatcher::HandleActionPacket(const Packet* packet, const MgmtFrame
         return mlme_->HandleFrame(frame, *rxinfo);
         break;
     }
-    case action::BaAction::kAddBaResponse:
-    // fall-through
+    case action::BaAction::kAddBaResponse: {
+        auto addba_resp = packet->field<AddBaResponseFrame>(hdr->len());
+        if (addba_resp == nullptr) {
+            errorf("addba_resp packet too small (len=%zd)\n", payload_len);
+            return ZX_ERR_IO;
+        }
+        auto frame = ImmutableMgmtFrame<AddBaResponseFrame>(hdr, addba_resp, payload_len);
+        return mlme_->HandleFrame(frame, *rxinfo);
+        break;
+    }
     case action::BaAction::kDelBa:
     // fall-through
     default:

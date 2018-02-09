@@ -6,7 +6,7 @@
 
 #include <iostream>
 
-#include <linenoise.h>
+#include <linenoise/linenoise.h>
 
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/functional/auto_call.h"
@@ -30,7 +30,7 @@ App::App()
           ->ConnectToEnvironmentService<bluetooth::control::AdapterManager>();
   FXL_DCHECK(adapter_manager_);
 
-  adapter_manager_.set_connection_error_handler([] {
+  adapter_manager_.set_error_handler([] {
     CLI_LOG() << "AdapterManager disconnected";
     fsl::MessageLoop::GetCurrent()->PostQuitTask();
   });
@@ -40,21 +40,9 @@ App::App()
   // Register with the AdapterManager as its delegate.
   bluetooth::control::AdapterManagerDelegatePtr delegate;
   fidl::InterfaceRequest<bluetooth::control::AdapterManagerDelegate>
-      delegate_request = fidl::GetProxy(&delegate);
+      delegate_request = delegate.NewRequest();
   manager_delegate_.Bind(std::move(delegate_request));
-
   adapter_manager_->SetDelegate(std::move(delegate));
-
-  adapter_manager_->IsBluetoothAvailable([this](bool available) {
-    if (!available)
-      return;
-
-    adapter_manager_->GetActiveAdapter(fidl::GetProxy(&active_adapter_));
-    bluetooth::control::AdapterDelegatePtr delegate;
-    auto request = fidl::GetProxy(&delegate);
-    adapter_delegate_.Bind(std::move(request));
-    active_adapter_->SetDelegate(std::move(delegate));
-  });
 }
 
 void App::ReadNextInput() {
@@ -107,11 +95,15 @@ void App::OnActiveAdapterChanged(
   CLI_LOG() << "\n>>>> Active adapter: (id=" << active_adapter->identifier
             << ")\n";
 
-  adapter_manager_->GetActiveAdapter(fidl::GetProxy(&active_adapter_));
+  adapter_manager_->GetActiveAdapter(active_adapter_.NewRequest());
+
   bluetooth::control::AdapterDelegatePtr delegate;
-  fidl::InterfaceRequest<bluetooth::control::AdapterDelegate> request =
-      fidl::GetProxy(&delegate);
-  adapter_delegate_.Bind(std::move(request));
+
+  if (adapter_delegate_.is_bound()) {
+    adapter_delegate_.Unbind();
+  }
+  adapter_delegate_.Bind(delegate.NewRequest());
+
   active_adapter_->SetDelegate(std::move(delegate));
 }
 

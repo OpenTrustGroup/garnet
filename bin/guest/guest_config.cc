@@ -8,10 +8,15 @@
 #include <unistd.h>
 #include <iostream>
 
+#include <zircon/device/block.h>
+
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/string_number_conversions.h"
 #include "third_party/rapidjson/rapidjson/document.h"
+
+// 32 hex characters + 4 hyphens.
+constexpr size_t kGuidStringLen = 36;
 
 static void print_usage(fxl::CommandLine& cl) {
   // clang-format off
@@ -21,7 +26,10 @@ static void print_usage(fxl::CommandLine& cl) {
   std::cerr << "\t--kernel=[kernel.bin]           Use file 'kernel.bin' as the kernel\n";
   std::cerr << "\t--ramdisk=[ramdisk.bin]         Use file 'ramdisk.bin' as a ramdisk\n";
   std::cerr << "\t--block=[block_spec]            Adds a block device with the given parameters\n";
+  std::cerr << "\t--block-wait                    Wait for block devices (specified by GUID) to become\n";
+  std::cerr << "\t                                available instead of failing.\n";
   std::cerr << "\t--cmdline=[cmdline]             Use string 'cmdline' as the kernel command line\n";
+  std::cerr << "\t--nographic                     Disable GPU device and graphics output\n";
   std::cerr << "\t--balloon-interval=[seconds]    Poll the virtio-balloon device every 'seconds' seconds\n";
   std::cerr << "\t                                and adjust the balloon size based on the amount of\n";
   std::cerr << "\t                                unused guest memory\n";
@@ -33,12 +41,16 @@ static void print_usage(fxl::CommandLine& cl) {
   std::cerr << "\n";
   std::cerr << " Block devices can be specified by path:\n";
   std::cerr << "    /pkg/data/disk.img\n";
+  std::cerr << " Or by GPT Partition GUID:\n";
+  std::cerr << "    guid:14db42cf-beb7-46a2-9ef8-89b13bb80528,rw\n";
+  std::cerr << " Or by GPT Partition Type GUID:\n";
+  std::cerr << "    type-guid:4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709,rw\n";
   std::cerr << "\n";
   std::cerr << " Additional Options:\n";
   std::cerr << "    rw/ro: Create a read/write or read-only device.\n";
   std::cerr << "    fdio:  Use the FDIO back-end for the block device.\n";
   std::cerr << "    fifo:  Use the FIFO back-end for the block device. This only works if the\n";
-  std::cerr << "           target is a real block device (/dev/class/block/XYZ).\n";
+  std::cerr << "           target is a real block device (GUID or /dev/class/block/XYZ)\n";
   std::cerr << "\n";
   std::cerr << " Ex:\n";
   std::cerr << "\n";
@@ -122,9 +134,9 @@ static GuestConfigParser::OptionHandler set_flag(bool* out,
     bool flag_value = default_flag_value;
     if (!option_value.empty()) {
       if (option_value == "true") {
-        flag_value = true;
+        flag_value = default_flag_value;
       } else if (option_value == "false") {
-        flag_value = false;
+        flag_value = !default_flag_value;
       } else {
         FXL_LOG(ERROR) << "Option: '" << key
                        << "' expects either 'true' or 'false'; received '"
@@ -138,21 +150,61 @@ static GuestConfigParser::OptionHandler set_flag(bool* out,
   };
 }
 
+static zx_status_t parse_guid(const std::string& guid_str,
+                              machina::BlockDispatcher::Guid& guid) {
+  if (!guid.empty()) {
+    return ZX_ERR_INVALID_ARGS;
+  }
+  if (guid_str.size() != kGuidStringLen) {
+    return ZX_ERR_INVALID_ARGS;
+  }
+
+  int ret = sscanf(
+      guid_str.c_str(),
+      "%2hhx%2hhx%2hhx%2hhx-%2hhx%2hhx-%2hhx%2hhx-%2hhx%2hhx-%2hhx%2hhx%2hhx%"
+      "2hhx%2hhx%2hhx",
+      &guid.bytes[3], &guid.bytes[2], &guid.bytes[1], &guid.bytes[0],
+      &guid.bytes[5], &guid.bytes[4], &guid.bytes[7], &guid.bytes[6],
+      &guid.bytes[8], &guid.bytes[9], &guid.bytes[10], &guid.bytes[11],
+      &guid.bytes[12], &guid.bytes[13], &guid.bytes[14], &guid.bytes[15]);
+  return (ret == 16) ? ZX_OK : ZX_ERR_INVALID_ARGS;
+}
+
 static zx_status_t parse_block_spec(const std::string& spec, BlockSpec* out) {
   std::string token;
   std::istringstream tokenStream(spec);
   while (std::getline(tokenStream, token, ',')) {
     if (token == "fdio") {
-      out->mode = BlockSpec::Mode::FDIO;
+      out->data_plane = machina::BlockDispatcher::DataPlane::FDIO;
     } else if (token == "fifo") {
-      out->mode = BlockSpec::Mode::FIFO;
+      out->data_plane = machina::BlockDispatcher::DataPlane::FIFO;
     } else if (token == "rw") {
-      out->writable = true;
+      out->mode = machina::BlockDispatcher::Mode::RW;
     } else if (token == "ro") {
-      out->writable = false;
+      out->mode = machina::BlockDispatcher::Mode::RO;
     } else if (token.size() > 0 && token[0] == '/') {
       out->path = std::move(token);
+    } else if (token.compare(0, 5, "guid:") == 0) {
+      std::string guid_str = token.substr(5);
+      zx_status_t status = parse_guid(guid_str, out->guid);
+      if (status != ZX_OK) {
+        return status;
+      }
+      out->guid.type = machina::BlockDispatcher::GuidType::GPT_PARTITION_GUID;
+    } else if (token.compare(0, 10, "type-guid:") == 0) {
+      std::string guid_str = token.substr(10);
+      zx_status_t status = parse_guid(guid_str, out->guid);
+      if (status != ZX_OK) {
+        return status;
+      }
+      out->guid.type =
+          machina::BlockDispatcher::GuidType::GPT_PARTITION_TYPE_GUID;
     }
+  }
+
+  // Path and GUID are mutually exclusive, but one must be provided.
+  if (out->path.empty() == out->guid.empty()) {
+    return ZX_ERR_INVALID_ARGS;
   }
   return ZX_OK;
 }
@@ -176,6 +228,8 @@ GuestConfigParser::GuestConfigParser(GuestConfig* config)
            parse_number(&config_->balloon_interval_seconds_)},
           {"balloon-threshold",
            parse_number(&config_->balloon_pages_threshold_)},
+          {"nographic", set_flag(&config_->enable_gpu_, false)},
+          {"block-wait", set_flag(&config_->block_wait_, true)},
       } {}
 
 GuestConfigParser::~GuestConfigParser() = default;

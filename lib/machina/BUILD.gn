@@ -6,6 +6,8 @@ import("//build/package.gni")
 
 shared_library("machina") {
   sources = [
+    "block_dispatcher.cc",
+    "block_dispatcher.h",
     "framebuffer_scanout.cc",
     "framebuffer_scanout.h",
     "gpu_bitmap.cc",
@@ -26,6 +28,8 @@ shared_library("machina") {
     "virtio_balloon.h",
     "virtio_block.cc",
     "virtio_block.h",
+    "virtio_console.cc",
+    "virtio_console.h",
     "virtio_gpu.cc",
     "virtio_gpu.h",
     "virtio_input.cc",
@@ -64,25 +68,25 @@ shared_library("machina") {
   }
 
   public_deps = [
-    "//zircon/system/ulib/zx",
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/hid",
+    "//zircon/public/lib/hypervisor",
+    "//zircon/public/lib/virtio",
+    "//zircon/public/lib/zx",
   ]
 
   defines = [ "_ALL_SOURCE=1" ]
 
   deps = [
     "//garnet/public/lib/fxl",
-    "//zircon/system/ulib/async:loop",
-    "//zircon/system/ulib/block-client",
-    "//zircon/system/ulib/fbl",
-    "//zircon/system/ulib/hypervisor",
-    "//zircon/system/ulib/zxcpp",
-  ]
-
-  libs = [
-    "fdio",
-    "hid",
-    "sync",
-    "virtio",
+    "//zircon/public/lib/async-cpp",
+    "//zircon/public/lib/async-loop-cpp",
+    "//zircon/public/lib/fdio",
+    "//zircon/public/lib/sync",
+    "//zircon/public/lib/block-client",
+    "//zircon/public/lib/fbl",
+    "//zircon/public/lib/hypervisor",
+    "//zircon/public/lib/zxcpp",
   ]
 
   # TODO(ZX-1411): Add visibility annotations to code and remove this.
@@ -112,7 +116,8 @@ executable("machina_unittests") {
   deps = [
     ":machina",
     "//third_party/gtest",
-    "//zircon/system/ulib/fbl",
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/fbl",
   ]
 }
 

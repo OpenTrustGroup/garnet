@@ -4,16 +4,21 @@
 members =  [
   "bin/device_settings",
   "bin/wlanstack",
+  "drivers/wlan/testing/util",
   "examples/bluetooth/ble_battery_service",
   "examples/fidl/*_rust",
   "examples/network/wget-rs",
+  "lib/rust/crates/eapol",
+  "lib/rust/crates/fuchsia-wlan-dev",
   "lib/rust/crates/wlan-rsn",
+  "lib/rust/fidl_crates/garnet_lib_wlan_fidl",
   "public/lib/fidl/rust/fidl",
   "public/rust/crates/ddk-rs",
   "public/rust/crates/ddk-rs/examples/ddk_toy",
   "public/rust/crates/ddk-rs/examples/microorb",
   "public/rust/crates/fdio",
   "public/rust/crates/fuchsia-app",
+  "public/rust/crates/fuchsia-llui",
   "public/rust/crates/fuchsia-vfs",
   "public/rust/crates/fuchsia-vfs/fuchsia-vfs-watcher",
   "public/rust/crates/fuchsia-zircon",
@@ -37,13 +42,16 @@ members =  [
 # at the path specified must be compatible with all crates in the tree.
 [patch.crates-io]
 ddk-rs = { path = "public/rust/crates/ddk-rs" }
+eapol = { path = "lib/rust/crates/eapol" }
 fdio = { path = "public/rust/crates/fdio" }
 fidl = { path = "public/lib/fidl/rust/fidl" }
 fuchsia-app = { path = "public/rust/crates/fuchsia-app" }
 fuchsia-vfs-watcher = { path = "public/rust/crates/fuchsia-vfs/fuchsia-vfs-watcher" }
+fuchsia-wlan-dev = { path = "lib/rust/crates/fuchsia-wlan-dev" }
 fuchsia-zircon = { path = "public/rust/crates/fuchsia-zircon" }
 fuchsia-zircon-sys = { path = "public/rust/crates/fuchsia-zircon/fuchsia-zircon-sys" }
 garnet_examples_fidl_services = { path = "public/rust/fidl_crates/garnet_examples_fidl_services" }
+garnet_lib_wlan_fidl = { path = "lib/rust/fidl_crates/garnet_lib_wlan_fidl" }
 garnet_public_lib_app_fidl = { path = "public/rust/fidl_crates/garnet_public_lib_app_fidl" }
 garnet_public_lib_app_fidl_service_provider = { path = "public/rust/fidl_crates/garnet_public_lib_app_fidl_service_provider" }
 garnet_public_lib_bluetooth_fidl = { path = "public/rust/fidl_crates/garnet_public_lib_bluetooth_fidl" }

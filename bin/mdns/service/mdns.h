@@ -11,34 +11,127 @@
 #include <vector>
 
 #include "garnet/bin/mdns/service/dns_message.h"
-#include "garnet/bin/mdns/service/instance_prober.h"
-#include "garnet/bin/mdns/service/instance_responder.h"
 #include "garnet/bin/mdns/service/mdns_agent.h"
 #include "garnet/bin/mdns/service/mdns_transceiver.h"
-#include "garnet/bin/mdns/service/resource_renewer.h"
 #include "garnet/bin/mdns/service/socket_address.h"
 #include "lib/fxl/functional/closure.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/tasks/task_runner.h"
 #include "lib/fxl/time/time_point.h"
-#include "lib/mdns/fidl/mdns.fidl.h"
 
 namespace mdns {
+
+class InstanceProber;
+class InstanceRequestor;
+class InstanceResponder;
+class ResourceRenewer;
 
 // Implements mDNS.
 class Mdns : public MdnsAgent::Host {
  public:
+  // Describes an initial instance publication or query response.
+  struct Publication {
+    static std::unique_ptr<Publication> Create(
+        IpPort port,
+        const std::vector<std::string>& text = std::vector<std::string>());
+
+    IpPort port_;
+    std::vector<std::string> text_;
+    uint32_t ptr_ttl_seconds = 4500;  // default 75 minutes
+    uint32_t srv_ttl_seconds = 120;   // default 2 minutes
+    uint32_t txt_ttl_seconds = 4500;  // default 75 minutes
+  };
+
+  // Abstract base class for client-supplied subscriber.
+  class Subscriber {
+   public:
+    virtual ~Subscriber();
+
+    // Unsubscribes from the service. If this |Subscriber| is already
+    // unsubscribed, this method does nothing.
+    void Unsubscribe();
+
+    // Called when a new instance is discovered.
+    virtual void InstanceDiscovered(const std::string& service,
+                                    const std::string& instance,
+                                    const SocketAddress& v4_address,
+                                    const SocketAddress& v6_address,
+                                    const std::vector<std::string>& text) = 0;
+
+    // Called when a previously discovered instance changes addresses or text.
+    virtual void InstanceChanged(const std::string& service,
+                                 const std::string& instance,
+                                 const SocketAddress& v4_address,
+                                 const SocketAddress& v6_address,
+                                 const std::vector<std::string>& text) = 0;
+
+    // Called when an instance is lost.
+    virtual void InstanceLost(const std::string& service,
+                              const std::string& instance) = 0;
+
+    // Called to indicate that instance changes are complete for now.
+    virtual void UpdatesComplete() = 0;
+
+   protected:
+    Subscriber() {}
+
+   private:
+    void Connect(std::shared_ptr<InstanceRequestor> instance_requestor);
+
+    std::shared_ptr<InstanceRequestor> instance_subscriber_;
+
+    friend class Mdns;
+  };
+
+  // Abstract base class for client-supplied publisher.
+  class Publisher {
+   public:
+    virtual ~Publisher();
+
+    // Sets subtypes for the service instance.  If this |Publisher| is
+    // unpublished, this method does nothing.
+    void SetSubtypes(std::vector<std::string> subtypes);
+
+    // Initiates announcement of the service instance.  If this |Publisher| is
+    // unpublished, this method does nothing.
+    void Reannounce();
+
+    // Unpublishes the service instance. If this |Publisher| is already
+    // unpublished, this method does nothing.
+    void Unpublish();
+
+    // Reports whether the publication attempt was successful. Publication can
+    // fail if the service instance is currently be published by another device
+    // on the subnet.
+    virtual void ReportSuccess(bool success) = 0;
+
+    // Provides instance information for initial announcements and query
+    // responses relating to the service instance specified in |AddResponder|.
+    // |query| indicates whether data is requested for an initial announcement
+    // (false) or in response to a query (true). If the publication relates to
+    // a subtype of the service, |subtype| contains the subtype, otherwise it is
+    // empty. If the publication provided by the callback is null, no
+    // announcement or response is transmitted.
+    virtual void GetPublication(
+        bool query,
+        const std::string& subtype,
+        const std::function<void(std::unique_ptr<Publication>)>& callback) = 0;
+
+   protected:
+    Publisher() {}
+
+   private:
+    void Connect(std::shared_ptr<InstanceResponder> instance_responder);
+
+    std::shared_ptr<InstanceResponder> instance_responder_;
+
+    friend class Mdns;
+  };
+
   using ResolveHostNameCallback =
       std::function<void(const std::string& host_name,
                          const IpAddress& v4_address,
                          const IpAddress& v6_address)>;
-  using ServiceInstanceCallback =
-      std::function<void(const std::string& service,
-                         const std::string& instance,
-                         const SocketAddress& v4_address,
-                         const SocketAddress& v6_address,
-                         const std::vector<std::string>& text)>;
-  using PublishCallback = std::function<void(MdnsResult result)>;
 
   Mdns();
 
@@ -54,7 +147,8 @@ class Mdns : public MdnsAgent::Host {
   void SetVerbose(bool verbose);
 
   // Starts the transceiver.
-  void Start(const std::string& host_name);
+  void Start(std::unique_ptr<InterfaceMonitor> interface_monitor,
+             const std::string& host_name);
 
   // Stops the transceiver.
   void Stop();
@@ -68,44 +162,30 @@ class Mdns : public MdnsAgent::Host {
                        fxl::TimePoint timeout,
                        const ResolveHostNameCallback& callback);
 
-  // Starts publishing the indicated service instance. Returns false if and only
-  // if the instance was already published.
+  // Subscribes to the specified service. The subscription is cancelled when
+  // the subscriber is deleted or its |Unsubscribe| method is called.
+  // Multiple subscriptions may be created for a given service name.
+  void SubscribeToService(const std::string& service_name,
+                          Subscriber* subscriber);
+
+  // Publishes a service instance. Returns false if and only if the instance was
+  // already published locally. The instance is unpublished when the publisher
+  // is deleted or its |Unpublish| method is called.
   bool PublishServiceInstance(const std::string& service_name,
                               const std::string& instance_name,
-                              IpPort port,
-                              const std::vector<std::string>& text,
-                              const PublishCallback& callback);
+                              Publisher* publisher);
 
-  // Stops publishing the indicated service instance. Returns true if and only
-  // if the instance existed.
-  bool UnpublishServiceInstance(const std::string& service_name,
-                                const std::string& instance_name);
-
-  // Registers interest in the specified service.
-  std::shared_ptr<MdnsAgent> SubscribeToService(
-      const std::string& service_name,
-      const ServiceInstanceCallback& callback);
-
-  // Adds a responder. Returns false if and only if the instance was already
-  // published. Returns false if and only if the instance was already published.
-  bool AddResponder(const std::string& service_name,
-                    const std::string& instance_name,
-                    fidl::InterfaceHandle<MdnsResponder> responder);
-
-  // Sets subtypes for a service instance currently being published due to a
-  // call to |PublishServiceInstance| or |AddResponder|.  Returns true if and
-  // only if the instance exists.
-  bool SetSubtypes(const std::string& service_name,
-                   const std::string& instance_name,
-                   std::vector<std::string> subtypes);
-
-  // Initiates announcement of a service instance currently being published due
-  // to a call to |PublishServiceInstance| or |AddResponder|. Returns true if
-  // and only if the instance exists.
-  bool ReannounceInstance(const std::string& service_name,
-                          const std::string& instance_name);
+  // Writes log messages describing lifetime traffic.
+  void LogTraffic();
 
  private:
+  enum class State {
+    kNotStarted,
+    kWaitingForInterfaces,
+    kAddressProbeInProgress,
+    kActive,
+  };
+
   struct TaskQueueEntry {
     TaskQueueEntry(MdnsAgent* agent, fxl::Closure task, fxl::TimePoint time)
         : agent_(agent), task_(task), time_(time) {}
@@ -195,15 +275,15 @@ class Mdns : public MdnsAgent::Host {
   uint32_t next_host_name_deduplicator_ = 2;
   std::string host_name_;
   std::string host_full_name_;
-  bool started_ = false;
+  State state_ = State::kNotStarted;
   std::priority_queue<TaskQueueEntry> task_queue_;
   fxl::TimePoint posted_task_time_ = fxl::TimePoint::Max();
   std::unordered_map<ReplyAddress, DnsMessage, ReplyAddressHash>
       outbound_messages_by_reply_address_;
   std::vector<std::shared_ptr<MdnsAgent>> agents_awaiting_start_;
   std::unordered_map<const MdnsAgent*, std::shared_ptr<MdnsAgent>> agents_;
-  std::unordered_map<std::string, std::shared_ptr<InstanceProber>>
-      instance_probers_by_instance_full_name_;
+  std::unordered_map<std::string, std::shared_ptr<InstanceRequestor>>
+      instance_subscribers_by_service_name_;
   std::unordered_map<std::string, std::shared_ptr<InstanceResponder>>
       instance_publishers_by_instance_full_name_;
   std::shared_ptr<DnsResource> address_placeholder_;

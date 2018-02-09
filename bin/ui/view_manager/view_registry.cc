@@ -10,6 +10,8 @@
 
 #include "garnet/bin/ui/view_manager/view_impl.h"
 #include "garnet/bin/ui/view_manager/view_tree_impl.h"
+#include "garnet/lib/ui/scenic/util/unwrap.h"
+#include "garnet/public/lib/escher/util/type_utils.h"
 #include "lib/app/cpp/connect.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/functional/make_copyable.h"
@@ -23,9 +25,6 @@
 
 namespace view_manager {
 namespace {
-// The height at which hit tests originate.
-// TODO(MZ-163): This shouldn't be hardcoded here.
-constexpr float kHitTestOriginZ = 10000.f;
 
 bool Validate(const mozart::DisplayMetrics& value) {
   return std::isnormal(value.device_pixel_ratio) &&
@@ -114,12 +113,12 @@ ViewRegistry::ViewRegistry(app::ApplicationContext* application_context)
   // TODO(MZ-128): Register session listener and destroy views if their
   // content nodes become unavailable.
 
-  scene_manager_.set_connection_error_handler([] {
+  scene_manager_.set_error_handler([] {
     FXL_LOG(ERROR) << "Exiting due to scene manager connection error.";
     exit(1);
   });
 
-  session_.set_connection_error_handler([] {
+  session_.set_error_handler([] {
     FXL_LOG(ERROR) << "Exiting due to session connection error.";
     exit(1);
   });
@@ -143,8 +142,8 @@ void ViewRegistry::CreateView(
     mozart::ViewListenerPtr view_listener,
     zx::eventpair parent_export_token,
     const fidl::String& label) {
-  FXL_DCHECK(view_request.is_pending());
-  FXL_DCHECK(view_owner_request.is_pending());
+  FXL_DCHECK(view_request.is_valid());
+  FXL_DCHECK(view_owner_request.is_valid());
   FXL_DCHECK(view_listener);
   FXL_DCHECK(parent_export_token);
 
@@ -204,7 +203,7 @@ void ViewRegistry::CreateViewTree(
     fidl::InterfaceRequest<mozart::ViewTree> view_tree_request,
     mozart::ViewTreeListenerPtr view_tree_listener,
     const fidl::String& label) {
-  FXL_DCHECK(view_tree_request.is_pending());
+  FXL_DCHECK(view_tree_request.is_valid());
   FXL_DCHECK(view_tree_listener);
 
   auto view_tree_token = mozart::ViewTreeToken::New();
@@ -431,7 +430,7 @@ void ViewRegistry::TransferViewOwner(
     mozart::ViewTokenPtr view_token,
     fidl::InterfaceRequest<mozart::ViewOwner> transferred_view_owner_request) {
   FXL_DCHECK(view_token);
-  FXL_DCHECK(transferred_view_owner_request.is_pending());
+  FXL_DCHECK(transferred_view_owner_request.is_valid());
 
   ViewState* view_state = view_token ? FindView(view_token->value) : nullptr;
   if (view_state) {
@@ -493,7 +492,7 @@ void ViewRegistry::TransferOrUnregisterViewStub(
     fidl::InterfaceRequest<mozart::ViewOwner> transferred_view_owner_request) {
   FXL_DCHECK(view_stub);
 
-  if (transferred_view_owner_request.is_pending()) {
+  if (transferred_view_owner_request.is_valid()) {
     ReleaseViewStubChildHost(view_stub.get());
 
     if (view_stub->state()) {
@@ -714,7 +713,8 @@ void ViewRegistry::ConnectToViewTreeService(ViewTreeState* tree_state,
 // VIEW INSPECTOR
 
 void ViewRegistry::HitTest(const mozart::ViewTreeToken& view_tree_token,
-                           const mozart::PointF& point,
+                           const mozart::Point3F& ray_origin,
+                           const mozart::Point3F& ray_direction,
                            HitTestCallback callback) {
   FXL_VLOG(1) << "HitTest: tree=" << view_tree_token;
 
@@ -725,23 +725,21 @@ void ViewRegistry::HitTest(const mozart::ViewTreeToken& view_tree_token,
     return;
   }
 
-  // TODO(MZ-163): We're making 2D assumptions all over view manager.
-  // We should redesign the relevant input related APIs to handle 3D content
-  // and revisit this.
-  session_.HitTest(
-      view_tree->GetRoot()->host_node()->id(),
-      (float[3]){point.x, point.y, kHitTestOriginZ}, (float[3]){0.f, 0.f, -1.f},
-      [ this,
-        callback = std::move(callback) ](fidl::Array<scenic::HitPtr> hits) {
+  session_.HitTestDeviceRay(
+      (float[3]){ray_origin.x, ray_origin.y, ray_origin.z},
+      (float[3]){ray_direction.x, ray_direction.y, ray_direction.z},
+      [this, callback = std::move(callback), ray_origin,
+       ray_direction](fidl::Array<scenic::HitPtr> hits) {
         std::vector<ViewHit> view_hits;
         view_hits.reserve(hits.size());
         for (auto& hit : hits) {
           auto it = views_by_token_.find(hit->tag_value);
           if (it != views_by_token_.end()) {
             ViewState* view_state = it->second;
-            view_hits.emplace_back(
-                ViewHit{*view_state->view_token(),
-                        ToTransform(std::move(hit->inverse_transform))});
+
+            view_hits.emplace_back(ViewHit{
+                *view_state->view_token(), ray_origin, ray_direction,
+                hit->distance, ToTransform(std::move(hit->inverse_transform))});
           }
         }
         callback(std::move(view_hits));
@@ -825,7 +823,7 @@ void ViewRegistry::GetSoftKeyboardContainer(
     mozart::ViewTokenPtr view_token,
     fidl::InterfaceRequest<mozart::SoftKeyboardContainer> container) {
   FXL_DCHECK(view_token);
-  FXL_DCHECK(container.is_pending());
+  FXL_DCHECK(container.is_valid());
   FXL_VLOG(1) << "GetSoftKeyboardContainer: view_token=" << view_token;
 
   auto provider = FindViewServiceProvider(view_token->value,
@@ -839,7 +837,7 @@ void ViewRegistry::GetImeService(
     mozart::ViewTokenPtr view_token,
     fidl::InterfaceRequest<mozart::ImeService> ime_service) {
   FXL_DCHECK(view_token);
-  FXL_DCHECK(ime_service.is_pending());
+  FXL_DCHECK(ime_service.is_valid());
   FXL_VLOG(1) << "GetImeService: view_token=" << view_token;
 
   auto provider =
@@ -939,7 +937,7 @@ void ViewRegistry::CreateInputConnection(
     mozart::ViewTokenPtr view_token,
     fidl::InterfaceRequest<mozart::InputConnection> request) {
   FXL_DCHECK(view_token);
-  FXL_DCHECK(request.is_pending());
+  FXL_DCHECK(request.is_valid());
   FXL_VLOG(1) << "CreateInputConnection: view_token=" << view_token;
 
   const uint32_t view_token_value = view_token->value;
@@ -965,7 +963,7 @@ void ViewRegistry::CreateInputDispatcher(
     mozart::ViewTreeTokenPtr view_tree_token,
     fidl::InterfaceRequest<mozart::InputDispatcher> request) {
   FXL_DCHECK(view_tree_token);
-  FXL_DCHECK(request.is_pending());
+  FXL_DCHECK(request.is_valid());
   FXL_VLOG(1) << "CreateInputDispatcher: view_tree_token=" << view_tree_token;
 
   const uint32_t view_tree_token_value = view_tree_token->value;

@@ -12,7 +12,7 @@ namespace test {
 
 void SceneManagerTest::SetUp() {
   display_manager_.SetDefaultDisplayForTests(
-      std::make_unique<Display>(DisplayMetrics(1280, 800, 1.f, 1.f, 0.f)));
+      std::make_unique<Display>(1280, 800));
 
   auto r = std::make_unique<ReleaseFenceSignallerForTest>(
       &command_buffer_sequencer_);
@@ -32,7 +32,7 @@ void SceneManagerTest::SetUp() {
   fxl::ManualResetWaitableEvent wait;
   thread_->TaskRunner()->PostTask([this, &interface_request, &wait]() {
     this->manager_binding_->Bind(std::move(interface_request));
-    this->manager_binding_->set_connection_error_handler(
+    this->manager_binding_->set_error_handler(
         [this]() { this->manager_impl_.reset(); });
     wait.Signal();
   });

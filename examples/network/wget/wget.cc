@@ -50,7 +50,7 @@ class ResponsePrinter {
 
       if (result == ZX_ERR_SHOULD_WAIT) {
         body.wait_one(ZX_SOCKET_READABLE | ZX_SOCKET_PEER_CLOSED,
-                      ZX_TIME_INFINITE, nullptr);
+                      zx::time::infinite(), nullptr);
       } else if (result == ZX_ERR_PEER_CLOSED) {
         // not an error
         break;
@@ -88,7 +88,7 @@ class WGetApp {
     }
     printf("Loading: %s\n", url.c_str());
 
-    network_service_->CreateURLLoader(GetProxy(&url_loader_));
+    network_service_->CreateURLLoader(url_loader_.NewRequest());
 
     network::URLRequestPtr request(network::URLRequest::New());
     request->url = url;

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "msd_intel_device.h"
+#include "msd_intel_gen_query.h"
 #include "device_id.h"
 #include "forcewake.h"
 #include "global_context.h"
@@ -167,7 +168,7 @@ bool MsdIntelDevice::Init(void* device_handle)
 
     DLOG("Init device_handle %p", device_handle);
 
-    platform_device_ = MsdIntelPciDevice::Create(device_handle);
+    platform_device_ = MsdIntelPciDevice::CreateShim(device_handle);
     if (!platform_device_)
         return DRETF(false, "failed to create pci device");
 
@@ -183,15 +184,6 @@ bool MsdIntelDevice::Init(void* device_handle)
 
     device_id_ = pci_dev_id;
     DLOG("device_id 0x%x revision 0x%x", device_id_, revision);
-
-    uint16_t gmch_graphics_ctrl;
-    if (!platform_device_->ReadPciConfig16(registers::GmchGraphicsControl::kOffset,
-                                           &gmch_graphics_ctrl))
-        return DRETF(false, "ReadPciConfig16 failed");
-
-    uint32_t gtt_size = registers::GmchGraphicsControl::gtt_size(gmch_graphics_ctrl);
-
-    DLOG("gtt_size: %uMB", gtt_size >> 20);
 
     std::unique_ptr<magma::PlatformMmio> mmio(
         platform_device_->CpuMapPciMmio(0, magma::PlatformMmio::CACHE_POLICY_UNCACHED_DEVICE));
@@ -221,9 +213,6 @@ bool MsdIntelDevice::Init(void* device_handle)
     PerProcessGtt::InitPrivatePat(register_io_.get());
 
     gtt_ = std::shared_ptr<Gtt>(Gtt::CreateShim(this));
-
-    if (!gtt_->Init(gtt_size))
-        return DRETF(false, "failed to Init gtt");
 
     // Arbitrary
     constexpr uint32_t kFirstSequenceNumber = 0x1000;
@@ -395,7 +384,7 @@ int MsdIntelDevice::DeviceThreadLoop()
 
     DLOG("DeviceThreadLoop starting thread 0x%lx", device_thread_id_->id());
 
-    constexpr uint32_t kTimeoutMs = 300;
+    constexpr uint32_t kTimeoutMs = 1000;
 
     std::unique_lock<std::mutex> lock(device_request_mutex_, std::defer_lock);
 
@@ -695,9 +684,14 @@ magma_status_t msd_device_query(msd_device_t* device, uint64_t id, uint64_t* val
             *value_out = MsdIntelDevice::cast(device)->device_id();
             return MAGMA_STATUS_OK;
 
-        case MAGMA_QUERY_VENDOR_PARAM_0:
+        case kMsdIntelGenQuerySubsliceAndEuTotal:
             *value_out = MsdIntelDevice::cast(device)->subslice_total();
             *value_out = (*value_out << 32) | MsdIntelDevice::cast(device)->eu_total();
+            return MAGMA_STATUS_OK;
+
+        case kMsdIntelGenQueryGttSize:
+            // TODO(MA-411): advertise 48-bit support
+            *value_out = 1ul << 32;
             return MAGMA_STATUS_OK;
     }
     return DRET_MSG(MAGMA_STATUS_INVALID_ARGS, "unhandled id %" PRIu64, id);

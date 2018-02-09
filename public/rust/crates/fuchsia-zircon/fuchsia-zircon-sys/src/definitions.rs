@@ -4,7 +4,7 @@
 
 #[link(name = "zircon")]
 extern {
-    pub fn zx_time_get(
+    pub fn zx_clock_get(
         clock_id: u32
         ) -> zx_time_t;
 
@@ -235,8 +235,8 @@ extern {
         handle: zx_handle_t,
         kind: u32,
         buffer: *mut u8,
-        len: u32,
-        actual: *mut u32
+        len: u64,
+        actual: *mut u64
         ) -> zx_status_t;
 
     pub fn zx_thread_write_state(

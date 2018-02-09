@@ -1,0 +1,61 @@
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//garnet/public/lib/fidl/fidl2.gni")
+
+template("fidl_example") {
+  fidl2(target_name) {
+    forward_variables_from(invoker, [
+      "deps",
+      "public_deps",
+      "skip_build",
+    ])
+
+    sources = [
+      "//zircon/system/host/fidl/examples/${target_name}.fidl2"
+    ]
+  }
+}
+
+fidl_example("alignment") {}
+fidl_example("enums") {}
+fidl_example("example-0") {}
+fidl_example("example-1") {}
+fidl_example("example-2") {}
+fidl_example("example-3") {}
+fidl_example("example-4") {
+  # TODO(TO-748): Build this example.
+  skip_build = true
+}
+fidl_example("example-5") {}
+fidl_example("example-6") {}
+fidl_example("example-7") {}
+fidl_example("example-8") {}
+fidl_example("example-9") {}
+fidl_example("interface-ordinals") {}
+fidl_example("test") {}
+fidl_example("types") {
+  # TODO(TO-746): Build this example.
+  skip_build = true
+}
+
+group("examples") {
+  deps = [
+    ":alignment",
+    ":enums",
+    ":example-0",
+    ":example-1",
+    ":example-2",
+    ":example-3",
+    ":example-4",
+    ":example-5",
+    ":example-6",
+    ":example-7",
+    ":example-8",
+    ":example-9",
+    ":interface-ordinals",
+    ":test",
+    ":types",
+  ]
+}

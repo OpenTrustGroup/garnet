@@ -15,10 +15,6 @@
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/macros.h"
 
-namespace netstack {
-class NetInterface;
-}  // namespace netstack
-
 namespace mdns {
 
 // Handles mDNS communication for a single NIC. This class is abstract and has
@@ -31,11 +27,10 @@ class MdnsInterfaceTransceiver {
       std::function<void(std::unique_ptr<DnsMessage>, const ReplyAddress&)>;
 
   // Creates the variant of |MdnsInterfaceTransceiver| appropriate for the
-  // address family specified in |if_info|. |index| is the index of the
-  // interface.
-  static std::unique_ptr<MdnsInterfaceTransceiver> Create(
-      const netstack::NetInterface* if_info,
-      uint32_t index);
+  // address family specified in |address|. |name| is the name of the interface,
+  // and |index| is its index.
+  static std::unique_ptr<MdnsInterfaceTransceiver>
+  Create(IpAddress address, const std::string& name, uint32_t index);
 
   virtual ~MdnsInterfaceTransceiver();
 
@@ -49,14 +44,8 @@ class MdnsInterfaceTransceiver {
   // Stops the interface transceiver.
   void Stop();
 
-  // Sets the host full name. This method may be called multiple times if
-  // conflicts are detected.
-  void SetHostFullName(const std::string& host_full_name);
-
-  // Sets an alternate address for the interface. |host_full_name| may be empty,
-  // in which case |SetHostFullName| will be called later.
-  void SetAlternateAddress(const std::string& host_full_name,
-                           const IpAddress& alternate_address);
+  // Sets an alternate address for the interface.
+  void SetAlternateAddress(const IpAddress& alternate_address);
 
   // Sends a messaage to the specified address. A V6 interface will send to
   // |MdnsAddresses::kV6Multicast| if |reply_address| is
@@ -65,11 +54,22 @@ class MdnsInterfaceTransceiver {
   // adjacent. The same constraints will apply when this method returns.
   void SendMessage(DnsMessage* message, const SocketAddress& address);
 
+  // Sends a message containing only an address resource for this interface.
+  void SendAddress(const std::string& host_full_name);
+
+  // Sends a message containing only an address resource for this interface with
+  // zero ttl, indicating that the address is no longer valid.
+  void SendAddressGoodbye(const std::string& host_full_name);
+
+  // Writes log messages describing lifetime traffic.
+  void LogTraffic();
+
  protected:
   static constexpr int kTimeToLive_ = 255;
   static constexpr size_t kMaxPacketSize = 1500;
 
-  MdnsInterfaceTransceiver(const netstack::NetInterface* if_info,
+  MdnsInterfaceTransceiver(IpAddress address,
+                           const std::string& name,
                            uint32_t index);
 
   uint32_t index() const { return index_; }
@@ -93,6 +93,17 @@ class MdnsInterfaceTransceiver {
 
   void InboundReady(zx_status_t status, uint32_t events);
 
+  // Returns an address resource (A/AAAA) record with the given name and the
+  // address contained in |alternate_address_|, which must be valid.
+  std::shared_ptr<DnsResource> GetAddressResource(
+      const std::string& host_full_name);
+
+  // Returns an address resource (A/AAAA) record with the given name and the
+  // address contained in |address_|, which must be valid.
+  std::shared_ptr<DnsResource> GetAlternateAddressResource(
+      const std::string& host_full_name);
+
+  // Makes an address resource (A/AAAA) record with the given name and address.
   std::shared_ptr<DnsResource> MakeAddressResource(
       const std::string& host_full_name,
       const IpAddress& address);
@@ -105,8 +116,8 @@ class MdnsInterfaceTransceiver {
 
   IpAddress address_;
   IpAddress alternate_address_;
-  uint32_t index_;
   std::string name_;
+  uint32_t index_;
   fxl::UniqueFD socket_fd_;
   fsl::FDWaiter fd_waiter_;
   std::vector<uint8_t> inbound_buffer_;
@@ -114,6 +125,10 @@ class MdnsInterfaceTransceiver {
   InboundMessageCallback inbound_message_callback_;
   std::shared_ptr<DnsResource> address_resource_;
   std::shared_ptr<DnsResource> alternate_address_resource_;
+  uint64_t messages_received_ = 0;
+  uint64_t bytes_received_ = 0;
+  uint64_t messages_sent_ = 0;
+  uint64_t bytes_sent_ = 0;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(MdnsInterfaceTransceiver);
 };

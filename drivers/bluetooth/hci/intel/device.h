@@ -13,21 +13,31 @@
 
 namespace btintel {
 
-class Device : public ddk::Device<Device, ddk::Unbindable, ddk::Ioctlable>,
-               public ddk::BtHciProtocol<Device> {
+class Device;
+
+using DeviceType =
+    ddk::Device<Device, ddk::GetProtocolable, ddk::Unbindable, ddk::Ioctlable>;
+
+class Device : public DeviceType, public ddk::BtHciProtocol<Device> {
  public:
   Device(zx_device_t* device, bt_hci_protocol_t* hci);
 
   ~Device() = default;
 
-  // Load the firmware and add the device.
+  // Bind the device, invisibly.
+  zx_status_t Bind();
+
+  // Load the firmware and complete device initialization.
+  // if firmware is loaded, the device will be made visible.
+  // otherwise the device will be removed and devhost will
+  // unbind.
   // If |secure| is true, use the "secure" firmware method.
-  zx_status_t Bind(bool secure);
+  zx_status_t LoadFirmware(bool secure);
 
   // ddk::Device methods
   void DdkUnbind();
   void DdkRelease();
-
+  zx_status_t DdkGetProtocol(uint32_t proto_id, void* out_proto);
   zx_status_t DdkIoctl(uint32_t op,
                        const void* in_buf,
                        size_t in_len,
@@ -36,9 +46,15 @@ class Device : public ddk::Device<Device, ddk::Unbindable, ddk::Ioctlable>,
                        size_t* actual);
 
  private:
-  // Adds the device (or makes it visible if invisible)
-  // |success_note| is appended to a kernel log message for success
-  zx_status_t AddDevice(const char* success_note);
+
+  // Removes the device and leaves an error on the kernel log
+  // prepended with |note|.
+  // Returns |status|.
+  zx_status_t Remove(zx_status_t status, const char* note);
+
+  // Makes the device visible and leaves |note| on the kernel log.
+  // Returns ZX_OK.
+  zx_status_t Appear(const char *note);
 
   // Maps the firmware refrenced by |name| into memory.
   // Returns the vmo that the firmware is loaded into or ZX_HANDLE_INVALID if it
@@ -50,7 +66,7 @@ class Device : public ddk::Device<Device, ddk::Unbindable, ddk::Ioctlable>,
                           uintptr_t* fw_addr,
                           size_t* fw_size);
 
-  bt_hci_protocol_t* hci_;
+  bt_hci_protocol_t hci_;
   bool firmware_loaded_;
 };
 

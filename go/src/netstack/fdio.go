@@ -49,6 +49,8 @@ const (
 
 var (
 	ioctlNetcGetIfInfo   = fdio.IoctlNum(fdio.IoctlKindDefault, fdio.IoctlFamilyNetconfig, 0)
+	ioctlNetcGetNumIfs   = fdio.IoctlNum(fdio.IoctlKindDefault, fdio.IoctlFamilyNetconfig, 1)
+	ioctlNetcGetIfInfoAt = fdio.IoctlNum(fdio.IoctlKindDefault, fdio.IoctlFamilyNetconfig, 2)
 	ioctlNetcGetNodename = fdio.IoctlNum(fdio.IoctlKindDefault, fdio.IoctlFamilyNetconfig, 8)
 )
 
@@ -111,6 +113,8 @@ type iostate struct {
 	lastError *tcpip.Error // if not-nil, next error returned via getsockopt
 
 	writeLoopDone chan struct{}
+
+	withNewSocket bool // remove when we remove old FDIO support
 }
 
 func (ios *iostate) acquire() {
@@ -499,7 +503,7 @@ func (ios *iostate) loopControl(s *socketServer, cookie int64) {
 	}
 }
 
-func (s *socketServer) newIostate(h zx.Handle, iosOrig *iostate, netProto tcpip.NetworkProtocolNumber, transProto tcpip.TransportProtocolNumber, wq *waiter.Queue, ep tcpip.Endpoint, withNewSocket bool) (reterr error) {
+func (s *socketServer) newIostate(h zx.Handle, iosOrig *iostate, netProto tcpip.NetworkProtocolNumber, transProto tcpip.TransportProtocolNumber, wq *waiter.Queue, ep tcpip.Endpoint, withNewSocket bool, isAccept bool) (reterr error) {
 	var peerS zx.Handle
 	var ios *iostate
 	if iosOrig == nil {
@@ -510,6 +514,7 @@ func (s *socketServer) newIostate(h zx.Handle, iosOrig *iostate, netProto tcpip.
 			ep:            ep,
 			refs:          1,
 			writeLoopDone: make(chan struct{}),
+			withNewSocket: withNewSocket,
 		}
 		if ep != nil || withNewSocket {
 			switch transProto {
@@ -522,6 +527,9 @@ func (s *socketServer) newIostate(h zx.Handle, iosOrig *iostate, netProto tcpip.
 				}
 				if withNewSocket {
 					t |= zx.SocketHasControl
+					if !isAccept {
+						t |= zx.SocketHasAccept
+					}
 				}
 				s0, s1, err := zx.NewSocket(t)
 				if err != nil {
@@ -562,25 +570,43 @@ func (s *socketServer) newIostate(h zx.Handle, iosOrig *iostate, netProto tcpip.
 	s.io[newCookie] = ios
 	s.mu.Unlock()
 
-	// Before we add a dispatcher for this iostate, respond to the client describing what
-	// kind of object this is.
-	ro := fdio.RioDescription{
-		Status: errStatus(nil),
-		Type:   uint32(fdio.ProtocolSocket),
+	defer func() {
+		if reterr != nil {
+			ios.dataHandle.Close()
+			if ios.peerDataHandle != 0 {
+				ios.peerDataHandle.Close()
+			}
+			peerS.Close()
+
+			s.mu.Lock()
+			delete(s.io, newCookie)
+			s.mu.Unlock()
+		}
+	}()
+
+	if withNewSocket && isAccept {
+		if err := zx.Socket(h).Share(peerS); err != nil {
+			return err
+		}
+	} else {
+		// Before we add a dispatcher for this iostate, respond to the client describing what
+		// kind of object this is.
+		ro := fdio.RioDescription{
+			Status: errStatus(nil),
+			Type:   uint32(fdio.ProtocolSocket),
+		}
+		ro.SetOp(fdio.OpOnOpen)
+		if peerS != 0 {
+			ro.Handle = peerS
+		}
+		ro.Write(h, 0)
 	}
-	ro.SetOp(fdio.OpOnOpen)
-	if peerS != 0 {
-		ro.Handle = peerS
-	}
-	ro.Write(h, 0)
 
 	if withNewSocket {
 		go ios.loopControl(s, int64(newCookie))
 	} else if err := s.dispatcher.AddHandler(h, fdio.ServerHandler(s.fdioHandler), int64(newCookie)); err != nil {
-		s.mu.Lock()
-		delete(s.io, newCookie)
-		s.mu.Unlock()
 		h.Close()
+		return err
 	}
 
 	switch transProto {
@@ -645,7 +671,7 @@ func (s *socketServer) opSocket(h zx.Handle, ios *iostate, msg *fdio.Msg, path s
 			log.Printf("socket: setsockopt v6only option failed: %v", err)
 		}
 	}
-	err = s.newIostate(h, nil, n, transProto, wq, ep, withNewSocket)
+	err = s.newIostate(h, nil, n, transProto, wq, ep, withNewSocket, false)
 	if err != nil {
 		if debug {
 			log.Printf("socket: new iostate: %v", err)
@@ -711,7 +737,7 @@ func (s *socketServer) opAccept(h zx.Handle, ios *iostate, msg *fdio.Msg, path s
 		return mxerror.Errorf(zx.ErrInternal, "accept: %v", err)
 	}
 
-	err = s.newIostate(h, nil, ios.netProto, ios.transProto, newwq, newep, false)
+	err = s.newIostate(h, nil, ios.netProto, ios.transProto, newwq, newep, false, true)
 	return err
 }
 
@@ -917,35 +943,72 @@ func (s *socketServer) opBind(ios *iostate, msg *fdio.Msg) (status zx.Status) {
 	return zx.ErrOk
 }
 
+func (s *socketServer) buildIfInfos() *c_netc_get_if_info {
+	rep := &c_netc_get_if_info{}
+
+	s.ns.mu.Lock()
+	defer s.ns.mu.Unlock()
+	index := uint32(0)
+	for nicid, ifs := range s.ns.ifStates {
+		if ifs.nic.Addr == header.IPv4Loopback {
+			continue
+		}
+		rep.info[index].index = uint16(index + 1)
+		rep.info[index].flags |= NETC_IFF_UP
+		copy(rep.info[index].name[:], []byte(fmt.Sprintf("en%d", nicid)))
+		writeSockaddrStorage(&rep.info[index].addr, tcpip.FullAddress{NIC: nicid, Addr: ifs.nic.Addr})
+		writeSockaddrStorage(&rep.info[index].netmask, tcpip.FullAddress{NIC: nicid, Addr: tcpip.Address(ifs.nic.Netmask)})
+
+		// Long-hand for: broadaddr = ifs.nic.Addr | ^ifs.nic.Netmask
+		broadaddr := []byte(ifs.nic.Addr)
+		for i := range broadaddr {
+			broadaddr[i] |= ^ifs.nic.Netmask[i]
+		}
+		writeSockaddrStorage(&rep.info[index].broadaddr, tcpip.FullAddress{NIC: nicid, Addr: tcpip.Address(broadaddr)})
+		index++
+	}
+	rep.n_info = index
+	return rep
+}
+
+// We remember the interface list from the last time ioctlNetcGetNumIfs was called. This avoids
+// a race condition if the interface list changes between calls to ioctlNetcGetIfInfoAt.
+var lastIfInfo *c_netc_get_if_info
+
 func (s *socketServer) opIoctl(ios *iostate, msg *fdio.Msg) zx.Status {
 	// TODO: deprecated in favor of FIDL service. Remove.
 	switch msg.IoctlOp() {
 	case ioctlNetcGetIfInfo:
-		rep := c_netc_get_if_info{}
-
-		s.ns.mu.Lock()
-		defer s.ns.mu.Unlock()
-		index := uint32(0)
-		for nicid, ifs := range s.ns.ifStates {
-			if ifs.nic.Addr == header.IPv4Loopback {
-				continue
-			}
-			rep.info[index].index = uint16(index + 1)
-			rep.info[index].flags |= NETC_IFF_UP
-			copy(rep.info[index].name[:], []byte(fmt.Sprintf("en%d", nicid)))
-			writeSockaddrStorage(&rep.info[index].addr, tcpip.FullAddress{NIC: nicid, Addr: ifs.nic.Addr})
-			writeSockaddrStorage(&rep.info[index].netmask, tcpip.FullAddress{NIC: nicid, Addr: tcpip.Address(ifs.nic.Netmask)})
-
-			// Long-hand for: broadaddr = ifs.nic.Addr | ^ifs.nic.Netmask
-			broadaddr := []byte(ifs.nic.Addr)
-			for i := range broadaddr {
-				broadaddr[i] |= ^ifs.nic.Netmask[i]
-			}
-			writeSockaddrStorage(&rep.info[index].broadaddr, tcpip.FullAddress{NIC: nicid, Addr: tcpip.Address(broadaddr)})
-			index++
-		}
-		rep.n_info = index
+		rep := s.buildIfInfos()
 		rep.Encode(msg)
+		return zx.ErrOk
+	case ioctlNetcGetNumIfs:
+		lastIfInfo = s.buildIfInfos()
+		binary.LittleEndian.PutUint32(msg.Data[:msg.Arg], lastIfInfo.n_info)
+		msg.Datalen = 4
+		return zx.ErrOk
+	case ioctlNetcGetIfInfoAt:
+		if lastIfInfo == nil {
+			if debug {
+				log.Printf("ioctlNetcGetIfInfoAt: called before ioctlNetcGetNumIfs")
+			}
+			return zx.ErrBadState
+		}
+		d := msg.Data[:msg.Datalen]
+		if len(d) != 4 {
+			if debug {
+				log.Printf("ioctlNetcGetIfInfoAt: bad input length %d", len(d))
+			}
+			return zx.ErrInvalidArgs
+		}
+		requestedIndex := binary.LittleEndian.Uint32(d)
+		if requestedIndex >= lastIfInfo.n_info {
+			if debug {
+				log.Printf("ioctlNetcGetIfInfoAt: index out of range (%d vs %d)", requestedIndex, lastIfInfo.n_info)
+			}
+			return zx.ErrInvalidArgs
+		}
+		lastIfInfo.info[requestedIndex].Encode(msg)
 		return zx.ErrOk
 	case ioctlNetcGetNodename:
 		s.ns.mu.Lock()
@@ -998,6 +1061,54 @@ func (s *socketServer) opGetPeerName(ios *iostate, msg *fdio.Msg) (status zx.Sta
 	return fdioSockAddrReply(a, msg)
 }
 
+func (s *socketServer) loopListen(ios *iostate) {
+	// When an incoming connection is available, wait for the listening socket to
+	// enter a shareable state, then share it with zircon.
+	inEntry, inCh := waiter.NewChannelEntry(nil)
+	ios.wq.EventRegister(&inEntry, waiter.EventIn)
+	defer ios.wq.EventUnregister(&inEntry)
+	for range inCh {
+		obs, err := ios.dataHandle.WaitOne(
+			zx.SignalSocketShare|zx.SignalSocketPeerClosed|LOCAL_SIGNAL_CLOSING,
+			zx.TimensecInfinite)
+		switch mxerror.Status(err) {
+		case zx.ErrOk:
+			switch {
+			case obs&zx.SignalSocketShare != 0:
+				// NOP
+			case obs&LOCAL_SIGNAL_CLOSING != 0:
+				return
+			case obs&zx.SignalSocketPeerClosed != 0:
+				return
+			}
+		case zx.ErrBadHandle, zx.ErrCanceled, zx.ErrPeerClosed:
+			return
+		default:
+			log.Printf("listen: wait failed: %v", err)
+		}
+
+		newep, newwq, e := ios.ep.Accept()
+		if e == tcpip.ErrWouldBlock {
+			log.Printf("listen: internal error. Accept returned ErrWouldBlock")
+			continue
+		}
+		if e != nil {
+			if debug {
+				log.Printf("listen: accept failed: %v", e)
+			}
+			return
+		}
+
+		err = s.newIostate(ios.dataHandle, nil, ios.netProto, ios.transProto, newwq, newep, true, true)
+		if err != nil {
+			if debug {
+				log.Printf("listen: newIostate failed: %v", e)
+			}
+			return
+		}
+	}
+}
+
 func (s *socketServer) opListen(ios *iostate, msg *fdio.Msg) (status zx.Status) {
 	d := msg.Data[:msg.Datalen]
 	if len(d) != 4 {
@@ -1019,26 +1130,32 @@ func (s *socketServer) opListen(ios *iostate, msg *fdio.Msg) (status zx.Status) 
 		}
 		return mxNetError(err)
 	}
-	go func() {
-		// When an incoming connection is queued up (that is,
-		// calling accept would return a new connection),
-		// signal the fdio socket that it exists. This allows
-		// the socket API client to implement a blocking accept.
-		inEntry, inCh := waiter.NewChannelEntry(nil)
-		ios.wq.EventRegister(&inEntry, waiter.EventIn)
-		defer ios.wq.EventUnregister(&inEntry)
-		for range inCh {
-			err := zx.Handle(ios.dataHandle).SignalPeer(0, ZXSIO_SIGNAL_INCOMING)
-			switch mxerror.Status(err) {
-			case zx.ErrOk:
+
+	if ios.withNewSocket {
+		go s.loopListen(ios)
+	} else {
+		go func() {
+			// When an incoming connection is queued up (that is,
+			// calling accept would return a new connection),
+			// signal the fdio socket that it exists. This allows
+			// the socket API client to implement a blocking accept.
+			inEntry, inCh := waiter.NewChannelEntry(nil)
+			ios.wq.EventRegister(&inEntry, waiter.EventIn)
+			defer ios.wq.EventUnregister(&inEntry)
+			for range inCh {
+				err := zx.Handle(ios.dataHandle).SignalPeer(0, ZXSIO_SIGNAL_INCOMING)
+				switch mxerror.Status(err) {
+				case zx.ErrOk:
+					continue
+				case zx.ErrBadHandle, zx.ErrCanceled, zx.ErrPeerClosed:
+					return
+				default:
+					log.Printf("socket signal ZXSIO_SIGNAL_INCOMING: %v", err)
+				}
 				continue
-			case zx.ErrBadHandle, zx.ErrCanceled, zx.ErrPeerClosed:
-				return
-			default:
-				log.Printf("socket signal ZXSIO_SIGNAL_INCOMING: %v", err)
 			}
-		}
-	}()
+		}()
+	}
 
 	msg.Datalen = 0
 	msg.SetOff(0)
@@ -1175,71 +1292,72 @@ func (s *socketServer) opGetAddrInfo(ios *iostate, msg *fdio.Msg) zx.Status {
 		}
 	}
 
-	var addr tcpip.Address
+	var addrs []tcpip.Address
 	if val.node_is_null == 1 {
-		addr = "\x00\x00\x00\x00"
+		addrs = append(addrs, "\x00\x00\x00\x00")
 	} else {
-		dnsLookupIPs, err := dnsClient.LookupIP(node)
+		addrs, err = dnsClient.LookupIP(node)
 		if err != nil {
 			if node == "localhost" {
-				addr = "\x7f\x00\x00\x01"
+				addrs = append(addrs, "\x7f\x00\x00\x01")
 			} else {
-				addr = tcpip.Parse(node)
+				addrs = append(addrs, tcpip.Parse(node))
 
 				if debug2 {
-					log.Printf("getaddrinfo: addr=%v, err=%v", addr, err)
+					log.Printf("getaddrinfo: addr=%v, err=%v", addrs, err)
 				}
-			}
-		} else {
-			for _, ip := range dnsLookupIPs {
-				if ip4 := ip.To4(); ip4 != "" {
-					addr = ip4
-				} else {
-					addr = ip
-				}
-				break
 			}
 		}
 	}
 	if debug2 {
-		log.Printf("getaddrinfo: addr=%v", addr)
+		log.Printf("getaddrinfo: addrs=%v", addrs)
 	}
 
-	// TODO: error if hints.ai_family does not match address size
-
-	rep := c_mxrio_gai_reply{}
-	rep.res[0].ai.ai_socktype = hints.ai_socktype
-	rep.res[0].ai.ai_protocol = hints.ai_protocol
-	// The 0xdeadbeef constant indicates the other side needs to
-	// adjust ai_addr with the value passed below.
-	rep.res[0].ai.ai_addr = 0xdeadbeef
-	switch len(addr) {
-	case 0:
+	if len(addrs) == 0 || len(addrs[0]) == 0 {
 		rep := c_mxrio_gai_reply{retval: EAI_NONAME}
 		rep.Encode(msg)
 		return zx.ErrOk
-	case 4:
-		rep.res[0].ai.ai_family = AF_INET
-		rep.res[0].ai.ai_addrlen = c_socklen(c_sockaddr_in_len)
-		sockaddr := c_sockaddr_in{sin_family: AF_INET}
-		sockaddr.sin_port.setPort(port)
-		copy(sockaddr.sin_addr[:], addr)
-		writeSockaddrStorage4(&rep.res[0].addr, &sockaddr)
-	case 16:
-		rep.res[0].ai.ai_family = AF_INET6
-		rep.res[0].ai.ai_addrlen = c_socklen(c_sockaddr_in6_len)
-		sockaddr := c_sockaddr_in6{sin6_family: AF_INET6}
-		sockaddr.sin6_port.setPort(port)
-		copy(sockaddr.sin6_addr[:], addr)
-		writeSockaddrStorage6(&rep.res[0].addr, &sockaddr)
-	default:
-		if debug {
-			log.Printf("getaddrinfo: len(addr)=%d, wrong size", len(addr))
-		}
-		// TODO: failing to resolve is a valid reply. fill out retval
-		return zx.ErrBadState
 	}
-	rep.nres = 1
+
+	rep := c_mxrio_gai_reply{}
+	for i := 0; i < len(addrs) && rep.nres < ZXRIO_GAI_REPLY_MAX; i++ {
+		res := &rep.res[rep.nres]
+		res.ai.ai_socktype = hints.ai_socktype
+		res.ai.ai_protocol = hints.ai_protocol
+		// The 0xdeadbeef constant indicates the other side needs to
+		// adjust ai_addr with the value passed below.
+		res.ai.ai_addr = 0xdeadbeef
+		switch len(addrs[i]) {
+		case 4:
+			if hints.ai_family != AF_UNSPEC && hints.ai_family != AF_INET {
+				continue
+			}
+			rep.nres++
+			res.ai.ai_family = AF_INET
+			res.ai.ai_addrlen = c_socklen(c_sockaddr_in_len)
+			sockaddr := c_sockaddr_in{sin_family: AF_INET}
+			sockaddr.sin_port.setPort(port)
+			copy(sockaddr.sin_addr[:], addrs[i])
+			writeSockaddrStorage4(&res.addr, &sockaddr)
+		case 16:
+			if hints.ai_family != AF_UNSPEC && hints.ai_family != AF_INET6 {
+				continue
+			}
+			rep.nres++
+			res.ai.ai_family = AF_INET6
+			res.ai.ai_addrlen = c_socklen(c_sockaddr_in6_len)
+			sockaddr := c_sockaddr_in6{sin6_family: AF_INET6}
+			sockaddr.sin6_port.setPort(port)
+			copy(sockaddr.sin6_addr[:], addrs[i])
+			writeSockaddrStorage6(&res.addr, &sockaddr)
+		default:
+			if debug {
+				log.Printf("getaddrinfo: len(addr)=%d, wrong size", len(addrs[i]))
+			}
+			// TODO: failing to resolve is a valid reply. fill out retval
+			return zx.ErrBadState
+		}
+	}
 	rep.Encode(msg)
 	return zx.ErrOk
 }
@@ -1325,14 +1443,14 @@ func (s *socketServer) fdioHandler(msg *fdio.Msg, rh zx.Handle, cookieVal int64)
 		var err error
 		switch {
 		case strings.HasPrefix(path, "none-v2"): // ZXRIO_SOCKET_DIR_NONE
-			err = s.newIostate(msg.Handle[0], nil, ipv4.ProtocolNumber, tcp.ProtocolNumber, nil, nil, true)
+			err = s.newIostate(msg.Handle[0], nil, ipv4.ProtocolNumber, tcp.ProtocolNumber, nil, nil, true, false)
 		case strings.HasPrefix(path, "socket-v2/"): // ZXRIO_SOCKET_DIR_SOCKET
 			err = s.opSocket(msg.Handle[0], ios, msg, path)
 		case strings.HasPrefix(path, "accept-v2"): // ZXRIO_SOCKET_DIR_ACCEPT
 			log.Printf("open: unimplemented")
 			err = mxerror.Errorf(zx.ErrNotSupported, "open: unimplemented path=%q", path)
 		case strings.HasPrefix(path, "none"): // ZXRIO_SOCKET_DIR_NONE
-			err = s.newIostate(msg.Handle[0], nil, ipv4.ProtocolNumber, tcp.ProtocolNumber, nil, nil, false)
+			err = s.newIostate(msg.Handle[0], nil, ipv4.ProtocolNumber, tcp.ProtocolNumber, nil, nil, false, false)
 		case strings.HasPrefix(path, "socket/"): // ZXRIO_SOCKET_DIR_SOCKET
 			err = s.opSocket(msg.Handle[0], ios, msg, path)
 		case strings.HasPrefix(path, "accept"): // ZXRIO_SOCKET_DIR_ACCEPT
@@ -1357,7 +1475,7 @@ func (s *socketServer) fdioHandler(msg *fdio.Msg, rh zx.Handle, cookieVal int64)
 		return fdio.ErrIndirect.Status
 	case fdio.OpClone:
 		ios.acquire()
-		err := s.newIostate(msg.Handle[0], ios, ios.netProto, tcp.ProtocolNumber, nil, nil, false)
+		err := s.newIostate(msg.Handle[0], ios, ios.netProto, tcp.ProtocolNumber, nil, nil, false, false)
 		if err != nil {
 			ios.release(func() { s.iosCloseHandler(ios, cookie) })
 			ro := fdio.RioDescription{

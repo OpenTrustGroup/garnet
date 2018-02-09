@@ -31,8 +31,8 @@ class Router : public MessageReceiverWithResponder {
   // Sets the error handler to receive notifications when an error is
   // encountered while reading from the channel or waiting to read from the
   // channel.
-  void set_connection_error_handler(std::function<void()> error_handler) {
-    connector_.set_connection_error_handler(std::move(error_handler));
+  void set_error_handler(std::function<void()> error_handler) {
+    connector_.set_error_handler(std::move(error_handler));
   }
 
   // Returns true if an error was encountered while reading from the channel or
@@ -44,7 +44,7 @@ class Router : public MessageReceiverWithResponder {
 
   void CloseChannel() { connector_.CloseChannel(); }
 
-  zx::channel PassChannel() { return connector_.PassChannel(); }
+  zx::channel TakeChannel() { return connector_.TakeChannel(); }
 
   // MessageReceiver implementation:
   bool Accept(Message* message) override;
@@ -69,6 +69,9 @@ class Router : public MessageReceiverWithResponder {
   void EnableTestingMode();
 
   zx_handle_t handle() const { return connector_.handle(); }
+
+  // The underlying channel.
+  const zx::channel& channel() const { return connector_.channel(); }
 
  private:
   typedef std::map<uint64_t, MessageReceiver*> ResponderMap;

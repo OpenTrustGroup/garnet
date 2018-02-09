@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <vector>
 
 #include <fbl/string_buffer.h>
 #include <fbl/unique_fd.h>
@@ -32,6 +33,7 @@
 #include "garnet/lib/machina/uart.h"
 #include "garnet/lib/machina/virtio_balloon.h"
 #include "garnet/lib/machina/virtio_block.h"
+#include "garnet/lib/machina/virtio_console.h"
 #include "garnet/lib/machina/virtio_gpu.h"
 #include "garnet/lib/machina/virtio_input.h"
 #include "garnet/lib/machina/virtio_net.h"
@@ -250,19 +252,6 @@ int main(int argc, char** argv) {
     return status;
   }
 
-  zx_vcpu_create_args_t args = {
-    guest_ip,
-#if __x86_64__
-    0 /* cr3 */,
-#endif  // __x86_64__
-  };
-  Vcpu vcpu;
-  status = vcpu.Create(&guest, &args);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to create VCPU";
-    return status;
-  }
-
   // Setup UARTs.
   machina::Uart uart[kNumUarts];
   for (size_t i = 0; i < kNumUarts; i++) {
@@ -281,12 +270,35 @@ int main(int argc, char** argv) {
     return status;
   }
 
+  auto initialize_vcpu = [boot_ptr, &interrupt_controller](Guest* guest,
+                                                           uintptr_t guest_ip,
+                                                           uint64_t id, Vcpu* vcpu) {
+    zx_status_t status = vcpu->Create(guest, guest_ip, id);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to create VCPU.";
+      return status;
+    }
+    // Register VCPU with ID 0.
+    status = interrupt_controller.RegisterVcpu(id, vcpu);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to register VCPU with interrupt controller.";
+      return status;
+    }
+    // Setup initial VCPU state.
+    zx_vcpu_state_t vcpu_state = {};
 #if __aarch64__
-  status = interrupt_controller.RegisterVcpu(0, &vcpu);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to register VCPU with GIC distributor";
-    return status;
-  }
+    vcpu_state.x[0] = boot_ptr;
+#elif __x86_64__
+    vcpu_state.rsi = boot_ptr;
+#endif
+    // Begin VCPU execution.
+    return vcpu->Start(&vcpu_state);
+  };
+
+  guest.RegisterVcpuFactory(initialize_vcpu);
+
+
+#if __aarch64__
   machina::Pl031 pl031;
   status = pl031.Init(&guest);
   if (status != ZX_OK) {
@@ -294,12 +306,6 @@ int main(int argc, char** argv) {
     return status;
   }
 #elif __x86_64__
-  // Register VCPU with local APIC ID 0.
-  status = interrupt_controller.RegisterVcpu(0, &vcpu);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to register VCPU with IO APIC.";
-    return status;
-  }
   // Setup IO ports.
   machina::IoPort io_port;
   status = io_port.Init(&guest);
@@ -336,93 +342,117 @@ int main(int argc, char** argv) {
   }
 
   // Setup block device.
-  machina::VirtioBlock block(guest.phys_mem());
-  if (!options.block_devices().empty()) {
-    if (options.block_devices().size() > 1) {
-      FXL_LOG(ERROR) << "Multiple block devices are not yet supported";
-      return ZX_ERR_NOT_SUPPORTED;
+  std::vector<fbl::unique_ptr<machina::VirtioBlock>> block_devices;
+  for (const auto& block_spec : options.block_devices()) {
+    fbl::unique_ptr<machina::BlockDispatcher> dispatcher;
+    if (!block_spec.path.empty()) {
+      status = machina::BlockDispatcher::CreateFromPath(
+          block_spec.path.c_str(), block_spec.mode, block_spec.data_plane,
+          guest.phys_mem(), &dispatcher);
+    } else if (!block_spec.guid.empty()) {
+      status = machina::BlockDispatcher::CreateFromGuid(
+          block_spec.guid, options.block_wait() ? ZX_TIME_INFINITE : 0,
+          block_spec.mode, block_spec.data_plane, guest.phys_mem(),
+          &dispatcher);
+    } else {
+      FXL_LOG(ERROR) << "Block spec missing path or GUID attributes";
+      return ZX_ERR_INVALID_ARGS;
     }
-    const BlockSpec& block_spec = options.block_devices()[0];
-    status = block.Init(block_spec.path.c_str());
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to create block dispatcher " << status;
+      return status;
+    }
+
+    auto block = fbl::make_unique<machina::VirtioBlock>(guest.phys_mem());
+    status = block->SetDispatcher(fbl::move(dispatcher));
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to set block dispatcher " << status;
+      return status;
+    }
+    status = block->Start();
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to start block device " << status;
+      return status;
+    }
+    status = bus.Connect(block->pci_device());
     if (status != ZX_OK) {
       return status;
     }
-    status = block.Start();
-    if (status != ZX_OK) {
-      return status;
-    }
-    status = bus.Connect(block.pci_device());
-    if (status != ZX_OK) {
-      return status;
-    }
+    block_devices.push_back(fbl::move(block));
   }
 
-  // Setup input device.
+  // Setup console
+  machina::VirtioConsole console(guest.phys_mem());
+  status = console.Start();
+  if (status != ZX_OK) {
+    return status;
+  }
+  status = bus.Connect(console.pci_device());
+  if (status != ZX_OK) {
+    return status;
+  }
+
   machina::InputDispatcher input_dispatcher(kInputQueueDepth);
   machina::HidEventSource hid_event_source(&input_dispatcher);
   machina::VirtioInput input(&input_dispatcher, guest.phys_mem(),
                              "machina-input", "serial-number");
-  status = input.Start();
-  if (status != ZX_OK) {
-    return status;
-  }
-  status = bus.Connect(input.pci_device());
-  if (status != ZX_OK) {
-    return status;
-  }
-
-  // Setup GPU device.
   machina::VirtioGpu gpu(guest.phys_mem());
   fbl::unique_ptr<machina::GpuScanout> gpu_scanout;
-  status = setup_zircon_framebuffer(&gpu, &gpu_scanout);
-  if (status == ZX_OK) {
-    // If we were able to acquire the zircon framebuffer then no compositor
-    // is present. In this case we should read input events directly from the
-    // input devics.
-    status = hid_event_source.Start();
+
+  if (options.enable_gpu()) {
+    // Setup input device.
+    status = input.Start();
     if (status != ZX_OK) {
       return status;
     }
-  } else {
-    // Expose a view that can be composited by mozart. Input events will be
-    // injected by the view events.
-    status = setup_scenic_framebuffer(&gpu, &input_dispatcher);
+    status = bus.Connect(input.pci_device());
     if (status != ZX_OK) {
       return status;
     }
-  }
-  status = gpu.Init();
-  if (status != ZX_OK) {
-    return status;
-  }
-  status = bus.Connect(gpu.pci_device());
-  if (status != ZX_OK) {
-    return status;
+
+    // Setup GPU device.
+    status = setup_zircon_framebuffer(&gpu, &gpu_scanout);
+    if (status == ZX_OK) {
+      // If we were able to acquire the zircon framebuffer then no compositor
+      // is present. In this case we should read input events directly from the
+      // input devics.
+      status = hid_event_source.Start();
+      if (status != ZX_OK) {
+        return status;
+      }
+    } else {
+      // Expose a view that can be composited by mozart. Input events will be
+      // injected by the view events.
+      status = setup_scenic_framebuffer(&gpu, &input_dispatcher);
+      if (status != ZX_OK) {
+        return status;
+      }
+    }
+    status = gpu.Init();
+    if (status != ZX_OK) {
+      return status;
+    }
+    status = bus.Connect(gpu.pci_device());
+    if (status != ZX_OK) {
+      return status;
+    }
   }
 
   // Setup net device.
   machina::VirtioNet net(guest.phys_mem());
-  status = net.Start();
-  if (status != ZX_OK) {
-    return status;
+  status = net.Start("/dev/class/ethernet/000");
+  if (status == ZX_OK) {
+    // If we started the net device, then connect to the PCI bus.
+    status = bus.Connect(net.pci_device());
+    if (status != ZX_OK) {
+      return status;
+    }
   }
-  status = bus.Connect(net.pci_device());
+
+  status = guest.StartVcpu(guest_ip, 0 /* id */);
   if (status != ZX_OK) {
     return status;
   }
 
-  // Setup initial VCPU state.
-  zx_vcpu_state_t vcpu_state = {};
-#if __aarch64__
-  vcpu_state.x[0] = boot_ptr;
-#elif __x86_64__
-  vcpu_state.rsi = boot_ptr;
-#endif
-  // Begin VCPU execution.
-  status = vcpu.Start(&vcpu_state);
-  if (status != ZX_OK) {
-    return status;
-  }
-
-  return vcpu.Join();
+  return guest.Join();
 }

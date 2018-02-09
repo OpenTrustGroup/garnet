@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "garnet/bin/mdns/service/mdns.h"
 #include "garnet/bin/mdns/service/socket_address.h"
 #include "lib/mdns/fidl/mdns.fidl.h"
 
@@ -21,7 +22,7 @@ class MdnsFidlUtil {
       const SocketAddress& v6_address,
       const std::vector<std::string>& text);
 
-  static bool UpdateServiceInstance(
+  static void UpdateServiceInstance(
       const MdnsServiceInstancePtr& service_instance,
       const SocketAddress& v4_address,
       const SocketAddress& v6_address,
@@ -39,13 +40,10 @@ class MdnsFidlUtil {
   static netstack::SocketAddressPtr CreateSocketAddressIPv6(
       const SocketAddress& socket_address);
 
-  static bool UpdateSocketAddressIPv4(
-      const netstack::SocketAddressPtr& net_address,
-      const SocketAddress& socket_address);
+  static IpAddress IpAddressFrom(const netstack::NetAddress* addr);
 
-  static bool UpdateSocketAddressIPv6(
-      const netstack::SocketAddressPtr& net_address,
-      const SocketAddress& socket_address);
+  static std::unique_ptr<Mdns::Publication> Convert(
+      const MdnsPublicationPtr& publication_ptr);
 };
 
 }  // namespace mdns

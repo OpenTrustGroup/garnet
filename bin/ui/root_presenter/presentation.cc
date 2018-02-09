@@ -26,6 +26,8 @@
 #include "lib/ui/input/cpp/formatting.h"
 #include "lib/ui/views/cpp/formatting.h"
 
+#include "garnet/bin/ui/root_presenter/displays/display_configuration.h"
+
 namespace root_presenter {
 namespace {
 
@@ -75,7 +77,7 @@ Presentation::Presentation(mozart::ViewManager* view_manager,
       view_container_listener_binding_(this),
       view_listener_binding_(this),
       weak_factory_(this) {
-  session_.set_connection_error_handler([this] {
+  session_.set_error_handler([this] {
     FXL_LOG(ERROR)
         << "Root presenter: Scene manager session died unexpectedly.";
     Shutdown();
@@ -88,7 +90,9 @@ Presentation::Presentation(mozart::ViewManager* view_manager,
   scene_.AddLight(directional_light_);
   ambient_light_.SetColor(0.3f, 0.3f, 0.3f);
   directional_light_.SetColor(0.7f, 0.7f, 0.7f);
-  directional_light_.SetDirection(1.f, 1.f, -2.f);
+  light_direction_ = glm::vec3(1.f, 1.f, -2.f);
+  directional_light_.SetDirection(light_direction_.x, light_direction_.y,
+                                  light_direction_.z);
 
   layer_.SetRenderer(renderer_);
   layer_stack_.AddLayer(layer_);
@@ -108,7 +112,7 @@ void Presentation::Present(
     fidl::InterfaceRequest<mozart::Presentation> presentation_request,
     fxl::Closure shutdown_callback) {
   FXL_DCHECK(view_owner);
-  FXL_DCHECK(!display_info_);
+  FXL_DCHECK(!display_model_initialized_);
 
   shutdown_callback_ = std::move(shutdown_callback);
 
@@ -127,35 +131,25 @@ void Presentation::CreateViewTree(
     mozart::ViewOwnerPtr view_owner,
     fidl::InterfaceRequest<mozart::Presentation> presentation_request,
     scenic::DisplayInfoPtr display_info) {
-  FXL_DCHECK(!display_info_);
   FXL_DCHECK(display_info);
 
   if (presentation_request) {
     presentation_binding_.Bind(std::move(presentation_request));
   }
 
-  display_info_ = std::move(display_info);
-  device_pixel_ratio_ = display_info_->device_pixel_ratio;
-  logical_width_ = display_info_->physical_width / device_pixel_ratio_;
-  logical_height_ = display_info_->physical_height / device_pixel_ratio_;
-
-  scene_.SetScale(device_pixel_ratio_, device_pixel_ratio_, 1.f);
-  layer_.SetSize(static_cast<float>(display_info_->physical_width),
-                 static_cast<float>(display_info_->physical_height));
-
   // Register the view tree.
   mozart::ViewTreeListenerPtr tree_listener;
   tree_listener_binding_.Bind(tree_listener.NewRequest());
   view_manager_->CreateViewTree(tree_.NewRequest(), std::move(tree_listener),
                                 "Presentation");
-  tree_.set_connection_error_handler([this] {
+  tree_.set_error_handler([this] {
     FXL_LOG(ERROR) << "Root presenter: View tree connection error.";
     Shutdown();
   });
 
   // Prepare the view container for the root.
   tree_->GetContainer(tree_container_.NewRequest());
-  tree_container_.set_connection_error_handler([this] {
+  tree_container_.set_error_handler([this] {
     FXL_LOG(ERROR) << "Root presenter: Tree view container connection error.";
     Shutdown();
   });
@@ -168,12 +162,12 @@ void Presentation::CreateViewTree(
   tree_->GetServiceProvider(tree_service_provider.NewRequest());
   input_dispatcher_ = app::ConnectToService<mozart::InputDispatcher>(
       tree_service_provider.get());
-  input_dispatcher_.set_connection_error_handler([this] {
+  input_dispatcher_.set_error_handler([this] {
     // This isn't considered a fatal error right now since it is still useful
     // to be able to test a view system that has graphics but no input.
     FXL_LOG(WARNING)
         << "Input dispatcher connection error, input will not work.";
-    input_dispatcher_.reset();
+    input_dispatcher_.Unbind();
   });
 
   // Create root view.
@@ -190,15 +184,20 @@ void Presentation::CreateViewTree(
   // Attach root view to view tree.
   tree_container_->AddChild(kRootViewKey, std::move(root_view_owner),
                             std::move(root_view_host_import_token_));
-  auto root_properties = mozart::ViewProperties::New();
-  root_properties->display_metrics = mozart::DisplayMetrics::New();
-  root_properties->display_metrics->device_pixel_ratio = device_pixel_ratio_;
-  root_properties->view_layout = mozart::ViewLayout::New();
-  root_properties->view_layout->size = mozart::SizeF::New();
-  root_properties->view_layout->size->width = logical_width_;
-  root_properties->view_layout->size->height = logical_height_;
-  root_properties->view_layout->inset = mozart::InsetF::New();
-  tree_container_->SetChildProperties(kRootViewKey, std::move(root_properties));
+
+  FXL_DCHECK(!display_model_initialized_);
+
+  display_configuration::InitializeModelForDisplay(
+      display_info->width_in_px, display_info->height_in_px, &display_model_);
+  display_model_initialized_ = true;
+  display_usage_default_ = display_model_.environment_info().usage;
+
+  if (display_usage_override_ != mozart::DisplayUsage::UNKNOWN)
+    display_model_.environment_info().usage = display_usage_override_;
+
+  DisplayMetrics metrics = display_model_.GetMetrics();
+  display_configuration::LogDisplayMetrics(metrics);
+  SetDisplayMetrics(metrics);
 
   // Add content view to root view.
   mozart::ViewContainerListenerPtr view_container_listener;
@@ -210,6 +209,79 @@ void Presentation::CreateViewTree(
                                       mozart::ViewProperties::New());
 
   PresentScene();
+}
+
+std::string DisplayUsageName(mozart::DisplayUsage usage) {
+  switch (usage) {
+    case mozart::DisplayUsage::UNKNOWN:
+      return "UNKNOWN";
+    case mozart::DisplayUsage::HANDHELD:
+      return "HANDHELD";
+    case mozart::DisplayUsage::CLOSE:
+      return "CLOSE";
+    case mozart::DisplayUsage::NEAR:
+      return "NEAR";
+    case mozart::DisplayUsage::MIDRANGE:
+      return "MIDRANGE";
+    case mozart::DisplayUsage::FAR:
+      return "FAR";
+  }
+}
+
+void Presentation::SetDisplayUsage(mozart::DisplayUsage usage) {
+  if (display_usage_override_ == usage) {
+    FXL_DCHECK(display_model_.environment_info().usage ==
+               display_usage_override_);
+    return;
+  }
+  display_usage_override_ = usage;
+  if (display_model_.environment_info().usage == display_usage_override_)
+    return;
+
+  if (display_usage_override_ == mozart::DisplayUsage::UNKNOWN) {
+    display_model_.environment_info().usage = display_usage_default_;
+  } else {
+    display_model_.environment_info().usage = display_usage_override_;
+  }
+
+  DisplayMetrics new_metrics = display_model_.GetMetrics();
+  display_configuration::LogDisplayMetrics(new_metrics);
+  SetDisplayMetrics(new_metrics);
+
+  mozart::DisplayUsage new_usage = display_model_.environment_info().usage;
+  FXL_LOG(INFO) << "Presentation::SetDisplayUsage: changing display usage to "
+                << DisplayUsageName(new_usage);
+}
+
+bool Presentation::SetDisplayMetrics(const DisplayMetrics& metrics) {
+  if (display_metrics_ == metrics)
+    return true;
+
+  if (!display_model_initialized_)
+    return false;
+
+  display_metrics_ = metrics;
+
+  auto root_properties = mozart::ViewProperties::New();
+  root_properties->display_metrics = mozart::DisplayMetrics::New();
+
+  // TODO(MZ-411): Handle densities that differ in x and y.
+  FXL_DCHECK(display_metrics_.x_scale_in_px_per_pp() ==
+             display_metrics_.y_scale_in_px_per_pp());
+  root_properties->display_metrics->device_pixel_ratio =
+      display_metrics_.x_scale_in_px_per_pp();
+  root_properties->view_layout = mozart::ViewLayout::New();
+  root_properties->view_layout->size = mozart::SizeF::New();
+  root_properties->view_layout->size->width = display_metrics_.width_in_pp();
+  root_properties->view_layout->size->height = display_metrics_.height_in_pp();
+  root_properties->view_layout->inset = mozart::InsetF::New();
+  tree_container_->SetChildProperties(kRootViewKey, std::move(root_properties));
+
+  scene_.SetScale(display_metrics_.x_scale_in_px_per_pp(),
+                  display_metrics_.y_scale_in_px_per_pp(), 1.f);
+  layer_.SetSize(static_cast<float>(display_metrics_.width_in_px()),
+                 static_cast<float>(display_metrics_.height_in_px()));
+  return true;
 }
 
 void Presentation::OnDeviceAdded(mozart::InputDeviceImpl* input_device) {
@@ -251,13 +323,13 @@ void Presentation::OnReport(uint32_t device_id,
     return;
   }
 
-  if (!display_info_)
+  if (!display_model_initialized_)
     return;
 
   mozart::DeviceState* state = device_states_by_id_[device_id].second.get();
   mozart::Size size;
-  size.width = logical_width_;
-  size.height = logical_height_;
+  size.width = display_metrics_.width_in_px();
+  size.height = display_metrics_.height_in_px();
   state->Update(std::move(input_report), size);
 }
 
@@ -269,8 +341,11 @@ void Presentation::OnEvent(mozart::InputEventPtr event) {
 
   // First, allow DisplayFlipper to handle event.
   if (dispatch_event) {
-    invalidate |= display_flipper_.OnEvent(event, &scene_, display_info_,
-                                           &dispatch_event);
+    invalidate |= display_flipper_.OnEvent(event, this, &dispatch_event);
+  }
+
+  if (dispatch_event) {
+    invalidate |= display_usage_switcher_.OnEvent(event, this, &dispatch_event);
   }
 
   if (dispatch_event) {
@@ -306,7 +381,8 @@ void Presentation::OnEvent(mozart::InputEventPtr event) {
         if (pointer->phase == mozart::PointerEvent::Phase::DOWN) {
           // If we're not already panning/rotating the camera, then start, but
           // only if the touch-down is in the bottom 10% of the screen.
-          if (!trackball_pointer_down_ && pointer->y > 0.9f * logical_height_) {
+          if (!trackball_pointer_down_ &&
+              pointer->y > 0.9f * display_metrics_.height_in_pp()) {
             trackball_pointer_down_ = true;
             trackball_device_id_ = pointer->device_id;
             trackball_pointer_id_ = pointer->pointer_id;
@@ -318,7 +394,7 @@ void Presentation::OnEvent(mozart::InputEventPtr event) {
           if (trackball_pointer_down_ &&
               trackball_device_id_ == pointer->device_id &&
               trackball_device_id_ == pointer->device_id) {
-            float pan_rate = -2.5f / logical_width_;
+            float pan_rate = -2.5f / display_metrics_.width_in_pp();
             float pan_change = pan_rate * (pointer->x - trackball_previous_x_);
             trackball_previous_x_ = pointer->x;
 
@@ -376,7 +452,7 @@ void Presentation::HandleAltBackspace() {
       return;
   }
 
-  animation_start_time_ = zx_time_get(ZX_CLOCK_MONOTONIC);
+  animation_start_time_ = zx_clock_get(ZX_CLOCK_MONOTONIC);
   UpdateAnimation(animation_start_time_);
 }
 
@@ -385,8 +461,8 @@ bool Presentation::UpdateAnimation(uint64_t presentation_time) {
     return false;
   }
 
-  const float half_width = display_info_->physical_width * 0.5f;
-  const float half_height = display_info_->physical_height * 0.5f;
+  const float half_width = display_metrics_.width_in_px() * 0.5f;
+  const float half_height = display_metrics_.height_in_px() * 0.5f;
 
   // Always look at the middle of the stage.
   float target[3] = {half_width, half_height, 0};
@@ -516,9 +592,12 @@ void Presentation::PresentScene() {
         scene_.AddChild(*state.node);
         state.created = true;
       }
-      state.node->SetTranslation(state.position.x + kCursorWidth * .5f,
-                                 state.position.y + kCursorHeight * .5f,
-                                 kCursorElevation);
+      state.node->SetTranslation(
+          state.position.x * display_metrics_.x_scale_in_pp_per_px() +
+              kCursorWidth * .5f,
+          state.position.y * display_metrics_.y_scale_in_pp_per_px() +
+              kCursorHeight * .5f,
+          kCursorElevation);
     } else if (state.created) {
       state.node->Detach();
       state.created = false;

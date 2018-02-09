@@ -22,6 +22,7 @@ usage() {
     echo "    -d Directory to clone toybox into."
     echo "    -s Directory to clone dash into."
     echo "    -o Initrd output path."
+    echo "    -p Disk image output path."
     echo ""
     exit 1
 }
@@ -74,7 +75,6 @@ build_dash() {
   pushd $dash_src
   ./autogen.sh
   ./configure CC="${CROSS_COMPILE}gcc" LDFLAGS="-static" --host=arm64-linux-gnueabi
-  make clean  # Required for rebuilds that change arch.
   make -j100
   popd
 
@@ -155,7 +155,7 @@ declare FORCE="${FORCE:-false}"
 declare BUILD_INITRD="${BUILD_INITRD:-false}"
 declare BUILD_ROOTFS="${BUILD_ROOTFS:-false}"
 
-while getopts "fird:s:o:" opt; do
+while getopts "fird:s:o:p:" opt; do
   case "${opt}" in
   f) FORCE="true" ;;
   i) BUILD_INITRD="true" ;;
@@ -163,6 +163,7 @@ while getopts "fird:s:o:" opt; do
   d) TOYBOX_SRC_DIR="${OPTARG}" ;;
   s) DASH_SRC_DIR="${OPTARG}" ;;
   o) INITRD_OUT="${OPTARG}" ;;
+  p) DISK_OUT="${OPTARG}" ;;
   *) usage ;;
   esac
 done
@@ -170,6 +171,9 @@ shift $((OPTIND - 1))
 
 case "${1}" in
 arm64)
+  type aarch64-linux-gnu-gcc ||
+    { echo "Required package gcc-aarch64-linux-gnu is not installed."
+      echo "(sudo apt install gcc-aarch64-linux-gnu)"; exit 1; };
   declare -x ARCH=arm64;
   declare -x CROSS_COMPILE=aarch64-linux-gnu-;;
 x86)
@@ -238,4 +242,7 @@ fi
 if [[ "${BUILD_ROOTFS}" = "true" ]]; then
   package_rootfs "${TOYBOX_SYSROOT}" "${TOYBOX_ROOTFS}"
   echo "filesystem image at ${TOYBOX_ROOTFS}"
+  if [ -n "${DISK_OUT}" ]; then
+    mv "${TOYBOX_ROOTFS}" "${DISK_OUT}"
+  fi
 fi

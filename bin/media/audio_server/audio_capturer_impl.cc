@@ -52,7 +52,7 @@ AudioCapturerImpl::AudioCapturerImpl(
   mix_wakeup_ = ::dispatcher::WakeupEvent::Create();
   mix_timer_ = ::dispatcher::Timer::Create();
 
-  binding_.set_connection_error_handler([this]() { Shutdown(); });
+  binding_.set_error_handler([this]() { Shutdown(); });
   source_link_refs_.reserve(16u);
 
   // TODO(johngro) : Initialize this with the native configuration of the source
@@ -81,13 +81,13 @@ void AudioCapturerImpl::Shutdown() {
 
   // Close any client connections.
   if (binding_.is_bound()) {
-    binding_.set_connection_error_handler(nullptr);
-    binding_.Close();
+    binding_.set_error_handler(nullptr);
+    binding_.Unbind();
   }
 
   if (async_callback_.is_bound()) {
-    async_callback_.set_connection_error_handler(nullptr);
-    async_callback_.reset();
+    async_callback_.set_error_handler(nullptr);
+    async_callback_.Unbind();
   }
 
   // Deactivate our mixing domain and synchronize with any in-flight operations.
@@ -534,7 +534,7 @@ void AudioCapturerImpl::StartAsyncCapture(
   // 4) Kick the work thread to get the ball rolling.
   FXL_DCHECK(async_callback_.is_bound() == false);
   async_callback_.Bind(std::move(callback_target));
-  async_callback_.set_connection_error_handler(
+  async_callback_.set_error_handler(
       [this]() { StopAsyncCapture(); });
   async_frames_per_packet_ = frames_per_packet;
   state_.store(State::OperatingAsync);
@@ -695,7 +695,7 @@ zx_status_t AudioCapturerImpl::Process() {
     // TODO(johngro) : If we have only one capture source, and our frame rate
     // matches their frame rate, align our start time exactly with one of their
     // sample boundaries.
-    int64_t now = zx_time_get(ZX_CLOCK_MONOTONIC);
+    int64_t now = zx_clock_get(ZX_CLOCK_MONOTONIC);
     if (!frames_to_clock_mono_.invertable()) {
       // TODO(johngro) : It would be nice if we could alter the offsets in a
       // timeline function without needing to change the scale factor.  This
@@ -920,7 +920,7 @@ bool AudioCapturerImpl::MixToIntermediate(uint32_t mix_frames) {
     // (split across the ring boundary).  Figure out the starting PTSs of these
     // regions (expressed in fractional start frames) in the process.
     const auto& rb = rb_snap.ring_buffer;
-    zx_time_t now = zx_time_get(ZX_CLOCK_MONOTONIC);
+    zx_time_t now = zx_clock_get(ZX_CLOCK_MONOTONIC);
     int64_t end_fence_frames = bk->clock_mono_to_src_frames_fence.Apply(now);
     int64_t start_fence_frames =
         end_fence_frames - rb_snap.end_fence_to_start_fence_frames;
@@ -1267,7 +1267,7 @@ void AudioCapturerImpl::FinishAsyncStopThunk() {
     async_callback_->OnPacketCaptured(std::move(pkt));
   }
 
-  async_callback_.reset();
+  async_callback_.Unbind();
 
   // If we have a valid callback to make, call it now.
   if (pending_async_stop_cbk_ != nullptr) {

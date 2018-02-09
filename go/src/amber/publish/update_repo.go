@@ -63,7 +63,23 @@ func InitRepo(r string, k string) (*UpdateRepo, error) {
 		return nil, e
 	}
 
-	return &UpdateRepo{repo: repo, path: r}, nil
+	u := &UpdateRepo{repo: repo, path: r}
+
+	// do a commit of the empty repository so that we are
+	// always have a valid repository
+	if e := os.MkdirAll(u.stagedFilesPath(), os.ModePerm); e != nil {
+		return nil, e
+	}
+
+	if e := repo.AddTargets([]string{}, nil); e != nil {
+		return nil, e
+	}
+
+	if e := u.CommitUpdates(); e != nil {
+		return nil, e
+	}
+
+	return u, nil
 }
 
 func (u *UpdateRepo) AddPackageFile(src string, name string) error {
@@ -97,12 +113,17 @@ func (u *UpdateRepo) AddContentBlob(src string) (string, error) {
 	}
 
 	rootStr := hex.EncodeToString(root)
-	dst := filepath.Join(u.path, "repository", "blobs", rootStr)
-	if _, err = os.Stat(dst); err == nil {
-		return rootStr, os.ErrExist
-	}
+	return u.AddContentBlobWithMerkle(src, rootStr)
+}
 
-	return rootStr, copyFile(dst, src)
+// AddContentBlobWithMerkle adds the blob specified by src with the precomputed
+// merkle root `merkle` to the repository.
+func (u *UpdateRepo) AddContentBlobWithMerkle(src, merkle string) (string, error) {
+	dst := filepath.Join(u.path, "repository", "blobs", merkle)
+	if _, err := os.Stat(dst); err == nil {
+		return merkle, os.ErrExist
+	}
+	return merkle, copyFile(dst, src)
 }
 
 func (u *UpdateRepo) RemoveContentBlob(merkle string) error {
@@ -127,7 +148,7 @@ func (u *UpdateRepo) createTUFMeta(path string, name string) error {
 	// compute merkle root
 	root, err := computeMerkle(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("merkle computation failed: %s", err)
 	}
 
 	// add merkle root as custom JSON
@@ -135,7 +156,10 @@ func (u *UpdateRepo) createTUFMeta(path string, name string) error {
 	json := json.RawMessage(jsonStr)
 
 	// add file with custom JSON to repository
-	return u.repo.AddTarget(name, json)
+	if err := u.repo.AddTarget(name, json); err != nil {
+		return fmt.Errorf("failed adding target to TUF repo: %s", err)
+	}
+	return nil
 }
 
 func (u *UpdateRepo) stagedFilesPath() string {
@@ -171,9 +195,11 @@ func copyFile(dst string, src string) error {
 	return err
 }
 
+// populateKeys copies the keys necessary for publishing from a source path.
+// Note that we don't copy a root key anywhere. The root key is only needed for
+// signing these keys and we assume it is maintained outside the repo somewhere.
 func populateKeys(destPath string, srcPath string) error {
 	for _, k := range keySet {
-
 		if err := copyFile(filepath.Join(destPath, k), filepath.Join(srcPath, k)); err != nil {
 			return err
 		}

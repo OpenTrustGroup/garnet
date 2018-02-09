@@ -10,18 +10,18 @@
 #include <unordered_map>
 #include <vector>
 
+#include <zircon/device/block.h>
 #include <zircon/types.h>
 
-struct BlockSpec {
-  enum class Mode {
-    FDIO,
-    FIFO,
-    AUTO,
-  };
+#include "garnet/lib/machina/block_dispatcher.h"
 
+struct BlockSpec {
   std::string path;
-  Mode mode = Mode::AUTO;
-  bool writable = true;
+  machina::BlockDispatcher::Guid guid;
+
+  machina::BlockDispatcher::Mode mode = machina::BlockDispatcher::Mode::RW;
+  machina::BlockDispatcher::DataPlane data_plane =
+      machina::BlockDispatcher::DataPlane::FDIO;
 };
 
 class GuestConfig {
@@ -38,6 +38,8 @@ class GuestConfig {
   }
   uint32_t balloon_pages_threshold() const { return balloon_pages_threshold_; }
   bool balloon_demand_page() const { return balloon_demand_page_; }
+  bool enable_gpu() const { return enable_gpu_; }
+  bool block_wait() const { return block_wait_; }
 
  private:
   friend class GuestConfigParser;
@@ -48,6 +50,8 @@ class GuestConfig {
   uint32_t balloon_interval_seconds_ = 0;
   uint32_t balloon_pages_threshold_ = 0;
   bool balloon_demand_page_ = false;
+  bool enable_gpu_ = true;
+  bool block_wait_ = false;
 };
 
 class GuestConfigParser {

@@ -25,7 +25,7 @@
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 
-#include "garnet/bin/ui/scene_manager/tests/util.h"
+#include "garnet/lib/ui/scenic/tests/util.h"
 #include "lib/ui/scenic/client/host_memory.h"
 #include "lib/ui/scenic/fidl/ops.fidl.h"
 #include "lib/ui/scenic/fidl/scene_manager.fidl.h"
@@ -46,7 +46,7 @@ App::App()
   // Connect to the SceneManager service.
   scene_manager_ =
       application_context_->ConnectToEnvironmentService<scenic::SceneManager>();
-  scene_manager_.set_connection_error_handler([this] {
+  scene_manager_.set_error_handler([this] {
     FXL_LOG(INFO) << "Lost connection to SceneManager service.";
     loop_->QuitNow();
   });
@@ -202,7 +202,7 @@ void App::Init(scenic::DisplayInfoPtr display_info) {
 
   // TODO: set up SessionListener.
   session_ = std::make_unique<scenic_lib::Session>(scene_manager_.get());
-  session_->set_connection_error_handler([this] {
+  session_->set_error_handler([this] {
     FXL_LOG(INFO) << "Session terminated.";
     loop_->QuitNow();
   });
@@ -214,12 +214,11 @@ void App::Init(scenic::DisplayInfoPtr display_info) {
       fxl::TimeDelta::FromSeconds(kSessionDuration));
 
   // Set up initial scene.
-  const float display_width = static_cast<float>(display_info->physical_width);
-  const float display_height =
-      static_cast<float>(display_info->physical_height);
+  const float display_width = static_cast<float>(display_info->width_in_px);
+  const float display_height = static_cast<float>(display_info->height_in_px);
   CreateExampleScene(display_width, display_height);
 
-  start_time_ = zx_time_get(ZX_CLOCK_MONOTONIC);
+  start_time_ = zx_clock_get(ZX_CLOCK_MONOTONIC);
   camera_anim_start_time_ = start_time_;
   Update(start_time_);
 }

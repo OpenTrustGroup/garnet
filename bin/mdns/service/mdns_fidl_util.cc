@@ -36,50 +36,24 @@ MdnsServiceInstancePtr MdnsFidlUtil::CreateServiceInstance(
 }
 
 // static
-bool MdnsFidlUtil::UpdateServiceInstance(
+void MdnsFidlUtil::UpdateServiceInstance(
     const MdnsServiceInstancePtr& service_instance,
     const SocketAddress& v4_address,
     const SocketAddress& v6_address,
     const std::vector<std::string>& text) {
-  bool changed = false;
+  service_instance->text = fidl::Array<fidl::String>::From(text);
 
   if (v4_address.is_valid()) {
-    if (!service_instance->v4_address) {
-      service_instance->v4_address = CreateSocketAddressIPv4(v4_address);
-    } else if (UpdateSocketAddressIPv4(service_instance->v4_address,
-                                       v4_address)) {
-      changed = true;
-    }
-  } else if (service_instance->v4_address) {
+    service_instance->v4_address = CreateSocketAddressIPv4(v4_address);
+  } else {
     service_instance->v4_address.reset();
-    changed = true;
   }
 
   if (v6_address.is_valid()) {
-    if (!service_instance->v6_address) {
-      service_instance->v6_address = CreateSocketAddressIPv6(v6_address);
-    } else if (UpdateSocketAddressIPv6(service_instance->v6_address,
-                                       v6_address)) {
-      changed = true;
-    }
-  } else if (service_instance->v6_address) {
+    service_instance->v6_address = CreateSocketAddressIPv6(v6_address);
+  } else {
     service_instance->v6_address.reset();
-    changed = true;
   }
-
-  if (service_instance->text.size() != text.size()) {
-    service_instance->text.resize(text.size());
-    changed = true;
-  }
-
-  for (size_t i = 0; i < text.size(); ++i) {
-    if (service_instance->text[i] != text[i]) {
-      service_instance->text[i] = text[i];
-      changed = true;
-    }
-  }
-
-  return changed;
 }
 
 // static
@@ -161,59 +135,43 @@ netstack::SocketAddressPtr MdnsFidlUtil::CreateSocketAddressIPv6(
 }
 
 // static
-bool MdnsFidlUtil::UpdateSocketAddressIPv4(
-    const netstack::SocketAddressPtr& net_address,
-    const SocketAddress& socket_address) {
-  FXL_DCHECK(net_address);
-  FXL_DCHECK(socket_address.is_v4());
+IpAddress MdnsFidlUtil::IpAddressFrom(const netstack::NetAddress* addr) {
+  FXL_DCHECK(addr != nullptr);
+  switch (addr->family) {
+    case netstack::NetAddressFamily::IPV4:
+      if (!addr->ipv4) {
+        return IpAddress();
+      }
 
-  bool changed = false;
+      FXL_DCHECK(addr->ipv4.size() == sizeof(in_addr));
+      return IpAddress(*reinterpret_cast<const in_addr*>(addr->ipv4.data()));
+    case netstack::NetAddressFamily::IPV6:
+      if (!addr->ipv6) {
+        return IpAddress();
+      }
 
-  if (net_address->port != socket_address.port().as_uint16_t()) {
-    net_address->port = socket_address.port().as_uint16_t();
-    changed = true;
+      FXL_DCHECK(addr->ipv6.size() == sizeof(in6_addr));
+      return IpAddress(*reinterpret_cast<const in6_addr*>(addr->ipv6.data()));
+    default:
+      return IpAddress();
   }
-
-  FXL_DCHECK(net_address->addr->ipv4.size() ==
-             socket_address.address().byte_count());
-  if (std::memcmp(net_address->addr->ipv4.data(),
-                  socket_address.address().as_bytes(),
-                  net_address->addr->ipv4.size()) != 0) {
-    std::memcpy(net_address->addr->ipv4.data(),
-                socket_address.address().as_bytes(),
-                net_address->addr->ipv4.size());
-    changed = true;
-  }
-
-  return changed;
 }
 
 // static
-bool MdnsFidlUtil::UpdateSocketAddressIPv6(
-    const netstack::SocketAddressPtr& net_address,
-    const SocketAddress& socket_address) {
-  FXL_DCHECK(net_address);
-  FXL_DCHECK(socket_address.is_v4());
-
-  bool changed = false;
-
-  if (net_address->port != socket_address.port().as_uint16_t()) {
-    net_address->port = socket_address.port().as_uint16_t();
-    changed = true;
+std::unique_ptr<Mdns::Publication> MdnsFidlUtil::Convert(
+    const MdnsPublicationPtr& publication_ptr) {
+  if (!publication_ptr) {
+    return nullptr;
   }
 
-  FXL_DCHECK(net_address->addr->ipv6.size() ==
-             socket_address.address().byte_count());
-  if (std::memcmp(net_address->addr->ipv6.data(),
-                  socket_address.address().as_bytes(),
-                  net_address->addr->ipv6.size()) != 0) {
-    std::memcpy(net_address->addr->ipv6.data(),
-                socket_address.address().as_bytes(),
-                net_address->addr->ipv6.size());
-    changed = true;
-  }
+  auto publication = Mdns::Publication::Create(
+      IpPort::From_uint16_t(publication_ptr->port),
+      publication_ptr->text.To<std::vector<std::string>>());
+  publication->ptr_ttl_seconds = publication_ptr->ptr_ttl_seconds;
+  publication->srv_ttl_seconds = publication_ptr->srv_ttl_seconds;
+  publication->txt_ttl_seconds = publication_ptr->txt_ttl_seconds;
 
-  return changed;
+  return publication;
 }
 
 }  // namespace mdns

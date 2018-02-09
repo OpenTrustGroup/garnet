@@ -227,7 +227,7 @@ void TtsSpeaker::SendPendingAudio() {
 
   if (!clock_started_) {
     auto start = media::TimelineTransform::New();
-    start->reference_time = zx_time_get(ZX_CLOCK_MONOTONIC) + ZX_MSEC(50);
+    start->reference_time = zx_clock_get(ZX_CLOCK_MONOTONIC) + ZX_MSEC(50);
     start->subject_time = 0;
     start->reference_delta = 1u;
     start->subject_delta = 1u;
@@ -304,7 +304,7 @@ int TtsSpeaker::ProduceAudioCbk(const cst_wave* wave,
     zx_signals_t pending;
     zx_status_t res;
 
-    res = wakeup_event_.wait_one(ZX_USER_SIGNAL_0, ZX_TIME_INFINITE, &pending);
+    res = wakeup_event_.wait_one(ZX_USER_SIGNAL_0, zx::time::infinite(), &pending);
     if ((res != ZX_OK) || abort_playback_.load()) {
       return CST_AUDIO_STREAM_STOP;
     }

@@ -6,45 +6,30 @@ import("//build/config/fuchsia/rules.gni")
 
 group("testing") {
   public_deps = [
-    ":wlan-testdev",
-    ":wlan-testutil",
+    ":wlanphy-testdev",
+    "//garnet/drivers/wlan/testing/util",
   ]
 }
 
-driver_module("wlan-testdev") {
+driver_module("wlanphy-testdev") {
   sources = [
     "binding.c",
     "driver.cpp",
-    "test-device.cpp",
-    "test-device.h",
-  ]
-
-  defines = [ "_LIBCPP_ENABLE_THREAD_SAFETY_ANNOTATIONS" ]
-
-  cflags = [
-    "-Wthread-safety",
-    "-Winconsistent-missing-override",
+    "iface-device.cpp",
+    "iface-device.h",
+    "phy-device.h",
+    "phy-device.cpp",
   ]
 
   deps = [
-    "//zircon/system/ulib/ddktl",
-    "//zircon/system/ulib/fbl",
-    "//zircon/system/ulib/zx",
+    "//garnet/lib/wlan/fidl:fidl_data_only",
+    "//garnet/lib/wlan/protocol",
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/ddktl",
+    "//zircon/public/lib/fbl",
+    "//zircon/public/lib/zx",
   ]
 
-  libs = [
-    "ddk",
-    "driver",
-  ]
-}
-
-executable("wlan-testutil") {
-  sources = [
-    "wlan-testutil.cpp",
-  ]
-
-  deps = [
-    "//zircon/system/ulib/fbl",
-    "//zircon/system/ulib/zx",
-  ]
+  configs += [ "//build/config/fuchsia:enable_zircon_asserts" ]
 }

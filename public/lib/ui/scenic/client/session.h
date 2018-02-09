@@ -48,8 +48,8 @@ class Session : private scenic::SessionListener {
   ~Session();
 
   // Sets a callback which is invoked if the session dies.
-  void set_connection_error_handler(fxl::Closure closure) {
-    session_.set_connection_error_handler(std::move(closure));
+  void set_error_handler(fxl::Closure closure) {
+    session_.set_error_handler(std::move(closure));
   }
 
   // Sets a callback which is invoked when events are received.
@@ -92,6 +92,13 @@ class Session : private scenic::SessionListener {
                const float ray_origin[3],
                const float ray_direction[3],
                HitTestCallback callback);
+
+  // Performs a hit test along the specified ray into the engine's first
+  // compositor.
+  void HitTestDeviceRay(
+      const float ray_origin[3],
+      const float ray_direction[3],
+      const scenic::Session::HitTestDeviceRayCallback& callback);
 
  private:
   // |scenic::SessionListener|

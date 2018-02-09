@@ -5,297 +5,151 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"io/ioutil"
-	"math/rand"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 
-	tuf "github.com/flynn/go-tuf"
+	"github.com/google/go-cmp/cmp"
 )
 
-func TestCopyFile(t *testing.T) {
-	fileSize := 8193
-	src, fileContent := writeRandFile(t, fileSize)
-	defer os.Remove(src)
+const lineFormat string = "%s=%s\n"
 
-	dst := filepath.Join(os.TempDir(), fmt.Sprintf("publish-test-dest-%x", fileContent[fileSize-8:]))
-	defer os.Remove(dst)
-
-	if err := copyFile(dst, src); err != nil {
-		t.Fatalf("File copy errored out! %v", err)
+func TestReadManifestWithEmptyLine(t *testing.T) {
+	r, err := ioutil.TempFile("", "read-manifest-test")
+	if err != nil {
+		t.Fatalf("failed creating temp file: %s", err)
 	}
-	fInfo, err := os.Stat(dst)
-	if err != nil || fInfo.Size() != int64(fileSize) {
-		t.Fatalf("Copied file does not exist or is wrong size")
+	defer os.Remove(r.Name())
+
+	content := entryMap()
+
+	count := 0
+	for k, v := range content {
+		if count == 1 {
+			if _, err = r.WriteString("\n"); err != nil {
+				t.Fatalf("Write error inserting blank line")
+			}
+		}
+
+		if _, err := fmt.Fprintf(r, lineFormat, k, v); err != nil {
+			t.Fatalf("Writing line failed: %s", err)
+		}
+
+		count += 1
 	}
 
-	copyContent, err := ioutil.ReadFile(dst)
+	r.Close()
 
-	if len(copyContent) != fileSize || err != nil {
-		t.Fatalf("Copied file could not be read")
+	entries, err := readManifest(r.Name())
+	if err != nil {
+		t.Fatalf("manifest read failed: %s", err)
 	}
 
-	if bytes.Compare(copyContent, fileContent) != 0 {
-		t.Fatalf("Copied file content does not match")
+	verifyEntries(entries, content, t)
+}
+
+func TestReadManifest(t *testing.T) {
+	r, err := ioutil.TempFile("", "read-manifest-test")
+	if err != nil {
+		t.Fatalf("failed creating temp file: %s", err)
+	}
+	defer os.Remove(r.Name())
+
+	content := entryMap()
+	writeManifest(r, content, t)
+	r.Close()
+
+	entries, err := readManifest(r.Name())
+	if err != nil {
+		t.Fatalf("manifest read failed: %s", err)
+	}
+
+	verifyEntries(entries, content, t)
+}
+
+func TestReadEmptyManifest(t *testing.T) {
+	r, err := ioutil.TempFile("", "read-manifest-test")
+	if err != nil {
+		t.Fatalf("failed creating temp file: %s", err)
+	}
+	defer os.Remove(r.Name())
+
+	r.Close()
+
+	entries, err := readManifest(r.Name())
+	if err != nil {
+		t.Fatalf("manifest read failed: %s", err)
+	}
+
+	if len(entries) != 0 {
+		t.Error("Parsing of empty file produced manifest entries.")
+		for _, v := range entries {
+			t.Errorf("remote path: %q, local path: %q\n", v.remotePath, v.localPath)
+		}
+		t.Fail()
 	}
 }
 
-func TestCopyMakingDirs(t *testing.T) {
-	fileSize := 8193
-	src, _ := writeRandFile(t, fileSize)
-	defer os.Remove(src)
-
-	nonPath := filepath.Join(os.TempDir(), "abc", "789")
-	defer os.Remove(filepath.Join(os.TempDir(), "abc"))
-	defer os.Remove(filepath.Join(os.TempDir(), "abc", "789"))
-
-	err := copyFile(nonPath, src)
-	if err != nil {
-		t.Fatalf("Non-existent path rejected when requesting directory creation")
-	}
+func entryMap() map[string]string {
+	content := make(map[string]string)
+	content["foo"] = "bar"
+	content["remote/path/to/file1"] = "local/path/to/file1"
+	content["dangling"] = ""
+	content["last"] = "final/entry"
+	return content
 }
 
-func TestCopyInvalidSrcDst(t *testing.T) {
-	dst, err := ioutil.TempFile("", "publish-test-file")
-
-	if err != nil {
-		t.Fatalf("Could not create temporary destiation file")
-	}
-	dst.Close()
-	defer os.Remove(dst.Name())
-
-	// try making the source file a directory
-	srcDir, err := ioutil.TempDir("", "publish-test-srcdir")
-	if err != nil {
-		t.Fatalf("Could not create temporary directory")
-	}
-	defer os.Remove(srcDir)
-
-	err = copyFile(dst.Name(), srcDir)
-	if err == nil {
-		t.Fatalf("No error returned from copy")
-	}
-	if err != os.ErrInvalid {
-		t.Fatalf("Copy rejected directory as source, but returned unexpected error %v", err)
-	}
-
-	err = copyFile(srcDir, dst.Name())
-	if err == nil {
-		t.Fatalf("Copy accepted directory as destination")
-	}
-}
-
-func TestPopulateKeys(t *testing.T) {
-	srcDir := createFakeKeys(t)
-	defer os.RemoveAll(srcDir)
-
-	dstDir, err := ioutil.TempDir("", "publish-test-keys-dst")
-	if err != nil {
-		t.Fatalf("Couldn't create test destination directory.")
-	}
-	defer os.RemoveAll(dstDir)
-
-	err = populateKeys(dstDir, srcDir)
-	if err != nil {
-		t.Fatalf("Error returned from populate keys: %v", err)
-	}
-
-	for _, k := range keySet {
-		_, err := os.Stat(filepath.Join(dstDir, k))
-		if err != nil {
-			t.Fatalf("Couldn't stat destination file '%s' %v", k, err)
+// writeManifest writes the given map to a file, inserting an equals sign
+// between key and value and adding a new line. The func 'cb' which is passed
+// will be called after each line is written and be handled the 0-based line
+// index that was just written and a reference to the output file.
+func writeManifest(f *os.File, lines map[string]string, t *testing.T) {
+	for k, v := range lines {
+		if _, err := fmt.Fprintf(f, lineFormat, k, v); err != nil {
+			t.Fatalf("Writing line failed: %s", err)
 		}
 	}
 }
 
-func TestInitRepo(t *testing.T) {
-	srcDir := createFakeKeys(t)
-	defer os.RemoveAll(srcDir)
-
-	f, err := os.Create(filepath.Join(srcDir, rootJSONName))
-	if err != nil {
-		t.Fatalf("Couldn't create fake root json manifest %v", err)
+func entryListToMap(entries []manifestEntry) map[string]string {
+	m := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		m[entry.remotePath] = entry.localPath
 	}
-	f.Close()
-
-	repoDir, err := ioutil.TempDir("", "publish-test-repo")
-	if err != nil {
-		t.Fatalf("Couldn't create test repo directory.")
-	}
-	defer os.RemoveAll(repoDir)
-
-	checkPaths := []string{filepath.Join(repoDir, "repository", "root.json")}
-	for _, k := range keySet {
-		checkPaths = append(checkPaths, filepath.Join(repoDir, "keys", k))
-	}
-
-	_, err = initRepo(repoDir, srcDir)
-	if err != nil {
-		t.Fatalf("Repo init returned error %v", err)
-	}
-
-	for _, path := range checkPaths {
-		_, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("Expected path '%s' had error %v", path, err)
-		}
-	}
+	return m
 }
 
-func TestAddTUFFile(t *testing.T) {
-	storePath, err := ioutil.TempDir("", "publish-test-repo")
-	if err != nil {
-		t.Fatalf("Couldn't creating test directory %v", err)
+// verifyEntries checks that the items in the entries list appear in the map
+// passed in and that both the list and the map contain the same number of
+// items.
+func verifyEntries(entries []manifestEntry, orig map[string]string,
+	t *testing.T) {
+	if len(entries) != len(orig) {
+		t.Errorf("%s\n", cmp.Diff(orig, entryListToMap(entries), []cmp.Option{}...))
+		t.Fatalf("Unexpected line count, expected %d, found %d", len(entries),
+			len(orig))
 	}
 
-	store := tuf.FileSystemStore(storePath, func(role string, confirm bool) ([]byte, error) { return []byte(""), nil })
-	repo, err := tuf.NewRepo(store, "sha512")
-	if err != nil {
-		t.Fatalf("Repository couldn't be created")
-	}
-
-	err = repo.Init(true)
-	if err != nil {
-		t.Fatalf("Error initializing repository %v", err)
-	}
-	defer os.RemoveAll(storePath)
-
-	keys := []string{"root", "timestamp", "snapshot", "targets"}
-
-	for _, key := range keys {
-		_, err = repo.GenKey(key)
-		if err != nil {
-			t.Fatalf("Error generating key '%s' %v", key, err)
+	for _, entry := range entries {
+		val, ok := orig[entry.remotePath]
+		if !ok {
+			t.Fatalf("Unexpected content in parsed file, %q", entry.remotePath)
 		}
-	}
 
-	rf, _ := writeRandFile(t, 8193)
-	defer os.Remove(rf)
-
-	targetName := "test-test"
-	err = addTUFFile(repo, storePath, rf, "test-test")
-
-	if err != nil {
-		t.Fatalf("Problem adding repo file %v", err)
-	}
-
-	contents, err := os.Open(filepath.Join(storePath, "repository", "targets"))
-	if err != nil {
-		t.Fatalf("Unable to read targets directory %v", err)
-	}
-
-	found := false
-	contentList, err := contents.Readdir(0)
-	if err != nil {
-		t.Fatalf("Couldn't read targets directory")
-	}
-
-	for _, info := range contentList {
-		n := info.Name()
-		if strings.Contains(n, targetName) &&
-			strings.LastIndex(n, targetName) == len(n)-len(targetName) {
-			found = true
-			break
+		if val != entry.localPath {
+			t.Fatalf("Local path values do not match, found: %q, expected %q",
+				entry.localPath, val)
 		}
-	}
-	if !found {
-		t.Fatalf("Didn't find expected file")
+
+		delete(orig, entry.remotePath)
 	}
 
-	// do a basic sanity check that a merkle element is included in the
-	// targets field
-	targs, err := os.Open(filepath.Join(storePath, "repository", "targets.json"))
-	if err != nil {
-		t.Fatalf("Couldn't open targets metadata %v", err)
-	}
-	defer targs.Close()
-	buf := make([]byte, 512*1024)
-	l, err := targs.Read(buf)
-	if err != nil {
-		t.Fatalf("Couldn't read targets metadata %v", err)
-	}
-	if l == len(buf) {
-		t.Log("Metadata filed entire buffer")
-	}
-
-	bufStr := string(buf)
-	if !strings.Contains(bufStr, "{\"custom\":{\"merkle\"") {
-		t.Fatalf("Targets JSON doesn't contain merkle entry")
-	}
-}
-
-func TestAddBlob(t *testing.T) {
-	storePath, err := ioutil.TempDir("", "publish-test-repo")
-	if err != nil {
-		t.Fatalf("Couldn't creating test directory %v", err)
-	}
-
-	store := tuf.FileSystemStore(storePath, func(role string, confirm bool) ([]byte, error) { return []byte(""), nil })
-	repo, err := tuf.NewRepo(store, "sha512")
-	if err != nil {
-		t.Fatalf("Repository couldn't be created")
-	}
-
-	err = repo.Init(true)
-	if err != nil {
-		t.Fatalf("Error initializing repository %v", err)
-	}
-
-	defer os.RemoveAll(storePath)
-	rf, _ := writeRandFile(t, 8193)
-	defer os.Remove(rf)
-
-	addRegFile(rf, storePath)
-	blobs, err := os.Open(filepath.Join(storePath, "repository", "blobs"))
-	if err != nil {
-		t.Fatalf("Couldn't open blobs directory for reading %v", err)
-	}
-	defer blobs.Close()
-
-	files, err := blobs.Readdir(0)
-	if err != nil {
-		t.Fatalf("Error reading blobs directory %v", err)
-	}
-	if len(files) != 1 {
-		t.Fatalf("Unexpected number of blobs in blobs directory")
-	}
-
-	// TODO(jmatt) Verify name is merkle root?
-}
-
-func writeRandFile(t *testing.T, size int) (string, []byte) {
-	fileContent := make([]byte, size)
-	rand.Seed(time.Now().UnixNano())
-	rand.Read(fileContent)
-
-	src, err := ioutil.TempFile("", "publish-test")
-	if err != nil {
-		t.Fatalf("Could not make temporary source file, %v", err)
-	}
-
-	defer src.Close()
-	if _, err = src.Write(fileContent); err != nil {
-		t.Fatalf("Unable to write to temp file %v", err)
-	}
-	return src.Name(), fileContent
-}
-
-func createFakeKeys(t *testing.T) string {
-	srcDir, err := ioutil.TempDir("", "publish-test-keys-src")
-	if err != nil {
-		t.Fatalf("Couldn't create test source directory.")
-	}
-	for _, k := range keySet {
-		f, err := os.OpenFile(filepath.Join(srcDir, k), os.O_RDWR|os.O_CREATE, 0666)
-		if err != nil {
-			t.Fatalf("Unable to create source file '%s' %v", k, err)
+	if len(orig) != 0 {
+		t.Errorf("Some entires not found in manifest file")
+		for k, _ := range orig {
+			t.Errorf("Entry %q remains\n", k)
 		}
-		f.Close()
+		t.Fail()
 	}
-	return srcDir
 }

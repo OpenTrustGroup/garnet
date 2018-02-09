@@ -17,26 +17,27 @@
 #ifndef DFS_PATTERN_DETECTOR_H
 #define DFS_PATTERN_DETECTOR_H
 
-#include <linux/types.h>
+#include <stdint.h>
+
 #include <linux/list.h>
 #include <linux/nl80211.h>
 
 /* tolerated deviation of radar time stamp in usecs on both sides
  * TODO: this might need to be HW-dependent
  */
-#define PRI_TOLERANCE	16
+#define PRI_TOLERANCE   16
 
 /**
  * struct ath_dfs_pool_stats - DFS Statistics for global pools
  */
 struct ath_dfs_pool_stats {
-	u32 pool_reference;
-	u32 pulse_allocated;
-	u32 pulse_alloc_error;
-	u32 pulse_used;
-	u32 pseq_allocated;
-	u32 pseq_alloc_error;
-	u32 pseq_used;
+    uint32_t pool_reference;
+    uint32_t pulse_allocated;
+    uint32_t pulse_alloc_error;
+    uint32_t pulse_used;
+    uint32_t pseq_allocated;
+    uint32_t pseq_alloc_error;
+    uint32_t pseq_used;
 };
 
 /**
@@ -48,11 +49,11 @@ struct ath_dfs_pool_stats {
  * @chirp: chirp detected in pulse
  */
 struct pulse_event {
-	u64 ts;
-	u16 freq;
-	u8 width;
-	u8 rssi;
-	bool chirp;
+    uint64_t ts;
+    uint16_t freq;
+    uint8_t width;
+    uint8_t rssi;
+    bool chirp;
 };
 
 /**
@@ -69,16 +70,16 @@ struct pulse_event {
  * @chirp: chirp required for the radar pattern
  */
 struct radar_detector_specs {
-	u8 type_id;
-	u8 width_min;
-	u8 width_max;
-	u16 pri_min;
-	u16 pri_max;
-	u8 num_pri;
-	u8 ppb;
-	u8 ppb_thresh;
-	u8 max_pri_tolerance;
-	bool chirp;
+    uint8_t type_id;
+    uint8_t width_min;
+    uint8_t width_max;
+    uint16_t pri_min;
+    uint16_t pri_max;
+    uint8_t num_pri;
+    uint8_t ppb;
+    uint8_t ppb_thresh;
+    uint8_t max_pri_tolerance;
+    bool chirp;
 };
 
 /**
@@ -93,21 +94,21 @@ struct radar_detector_specs {
  * @channel_detectors: list connecting channel_detector elements
  */
 struct dfs_pattern_detector {
-	void (*exit)(struct dfs_pattern_detector *dpd);
-	bool (*set_dfs_domain)(struct dfs_pattern_detector *dpd,
-			   enum nl80211_dfs_regions region);
-	bool (*add_pulse)(struct dfs_pattern_detector *dpd,
-			  struct pulse_event *pe);
+    void (*exit)(struct dfs_pattern_detector* dpd);
+    bool (*set_dfs_domain)(struct dfs_pattern_detector* dpd,
+                           enum nl80211_dfs_regions region);
+    bool (*add_pulse)(struct dfs_pattern_detector* dpd,
+                      struct pulse_event* pe);
 
-	struct ath_dfs_pool_stats (*get_stats)(struct dfs_pattern_detector *dpd);
-	enum nl80211_dfs_regions region;
-	u8 num_radar_types;
-	u64 last_pulse_ts;
-	/* needed for ath_dbg() */
-	struct ath_common *common;
+    struct ath_dfs_pool_stats (*get_stats)(struct dfs_pattern_detector* dpd);
+    enum nl80211_dfs_regions region;
+    uint8_t num_radar_types;
+    uint64_t last_pulse_ts;
+    /* needed for ath_dbg() */
+    struct ath_common* common;
 
-	const struct radar_detector_specs *radar_spec;
-	struct list_head channel_detectors;
+    const struct radar_detector_specs* radar_spec;
+    struct list_head channel_detectors;
 };
 
 /**
@@ -115,7 +116,7 @@ struct dfs_pattern_detector {
  * @param region: DFS domain to be used, can be NL80211_DFS_UNSET at creation
  * @return instance pointer on success, NULL otherwise
  */
-extern struct dfs_pattern_detector *
-dfs_pattern_detector_init(struct ath_common *common,
-			  enum nl80211_dfs_regions region);
+extern struct dfs_pattern_detector*
+dfs_pattern_detector_init(struct ath_common* common,
+                          enum nl80211_dfs_regions region);
 #endif /* DFS_PATTERN_DETECTOR_H */

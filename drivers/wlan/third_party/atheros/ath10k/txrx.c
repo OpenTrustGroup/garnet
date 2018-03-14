@@ -32,23 +32,23 @@ static void ath10k_report_offchan_tx(struct ath10k* ar, struct sk_buff* skb) {
         return;
     }
 
-    /* If the original wait_for_completion() timed out before
+    /* If the original completion_wait() timed out before
      * {data,mgmt}_tx_completed() was called then we could complete
      * offchan_tx_completed for a different skb. Prevent this by using
      * offchan_tx_skb.
      */
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     if (ar->offchan_tx_skb != skb) {
         ath10k_warn("completed old offchannel frame\n");
         goto out;
     }
 
-    complete(&ar->offchan_tx_completed);
+    completion_signal(&ar->offchan_tx_completed);
     ar->offchan_tx_skb = NULL; /* just for sanity */
 
     ath10k_dbg(ar, ATH10K_DBG_HTT, "completed offchannel skb %pK\n", skb);
 out:
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 }
 
 int ath10k_txrx_tx_unref(struct ath10k_htt* htt,
@@ -71,12 +71,12 @@ int ath10k_txrx_tx_unref(struct ath10k_htt* htt,
         return -EINVAL;
     }
 
-    spin_lock_bh(&htt->tx_lock);
+    mtx_lock(&htt->tx_lock);
     msdu = idr_find(&htt->pending_tx, tx_done->msdu_id);
     if (!msdu) {
         ath10k_warn("received tx completion for invalid msdu_id: %d\n",
                     tx_done->msdu_id);
-        spin_unlock_bh(&htt->tx_lock);
+        mtx_unlock(&htt->tx_lock);
         return -ENOENT;
     }
 
@@ -93,7 +93,7 @@ int ath10k_txrx_tx_unref(struct ath10k_htt* htt,
     if (htt->num_pending_tx == 0) {
         wake_up(&htt->empty_tx_wq);
     }
-    spin_unlock_bh(&htt->tx_lock);
+    mtx_unlock(&htt->tx_lock);
 
     dma_unmap_single(dev, skb_cb->paddr, msdu->len, DMA_TO_DEVICE);
 
@@ -131,7 +131,7 @@ struct ath10k_peer* ath10k_peer_find(struct ath10k* ar, int vdev_id,
                                      const uint8_t* addr) {
     struct ath10k_peer* peer;
 
-    lockdep_assert_held(&ar->data_lock);
+    ASSERT_MTX_HELD(&ar->data_lock);
 
     list_for_each_entry(peer, &ar->peers, list) {
         if (peer->vdev_id != vdev_id) {
@@ -150,7 +150,7 @@ struct ath10k_peer* ath10k_peer_find(struct ath10k* ar, int vdev_id,
 struct ath10k_peer* ath10k_peer_find_by_id(struct ath10k* ar, int peer_id) {
     struct ath10k_peer* peer;
 
-    lockdep_assert_held(&ar->data_lock);
+    ASSERT_MTX_HELD(&ar->data_lock);
 
     list_for_each_entry(peer, &ar->peers, list)
     if (test_bit(peer_id, peer->peer_ids)) {
@@ -167,9 +167,9 @@ static int ath10k_wait_for_peer_common(struct ath10k* ar, int vdev_id,
     time_left = wait_event_timeout(ar->peer_mapping_wq, ({
         bool mapped;
 
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
         mapped = !!ath10k_peer_find(ar, vdev_id, addr);
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
 
         (mapped == expect_mapped ||
          test_bit(ATH10K_FLAG_CRASH_FLUSH, &ar->dev_flags));
@@ -201,7 +201,7 @@ void ath10k_peer_map_event(struct ath10k_htt* htt,
         return;
     }
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     peer = ath10k_peer_find(ar, ev->vdev_id, ev->addr);
     if (!peer) {
         peer = kzalloc(sizeof(*peer), GFP_ATOMIC);
@@ -222,7 +222,7 @@ void ath10k_peer_map_event(struct ath10k_htt* htt,
     ar->peer_map[ev->peer_id] = peer;
     set_bit(ev->peer_id, peer->peer_ids);
 exit:
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 }
 
 void ath10k_peer_unmap_event(struct ath10k_htt* htt,
@@ -236,7 +236,7 @@ void ath10k_peer_unmap_event(struct ath10k_htt* htt,
         return;
     }
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     peer = ath10k_peer_find_by_id(ar, ev->peer_id);
     if (!peer) {
         ath10k_warn("peer-unmap-event: unknown peer id %d\n",
@@ -257,5 +257,5 @@ void ath10k_peer_unmap_event(struct ath10k_htt* htt,
     }
 
 exit:
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 }

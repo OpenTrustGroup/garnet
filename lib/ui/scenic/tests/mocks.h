@@ -5,7 +5,6 @@
 #ifndef GARNET_LIB_UI_SCENIC_TESTS_MOCKS_H_
 #define GARNET_LIB_UI_SCENIC_TESTS_MOCKS_H_
 
-#include "garnet/bin/ui/scene_manager/scene_manager_impl.h"
 #include "garnet/lib/ui/scenic/displays/display_manager.h"
 #include "garnet/lib/ui/scenic/engine/engine.h"
 #include "garnet/lib/ui/scenic/engine/session.h"
@@ -20,25 +19,25 @@ class SessionForTest : public Session {
   SessionForTest(SessionId id,
                  Engine* engine,
                  scene_manager::EventReporter* event_reporter,
-                 scene_manager::ErrorReporter* error_reporter);
+                 mz::ErrorReporter* error_reporter);
 
   virtual void TearDown() override;
 };
 
 class SessionHandlerForTest : public SessionHandler {
  public:
-  SessionHandlerForTest(
-      Engine* engine,
-      SessionId session_id,
-      ::fidl::InterfaceRequest<scenic::Session> request,
-      ::fidl::InterfaceHandle<scenic::SessionListener> listener);
+  SessionHandlerForTest(mz::CommandDispatcherContext context,
+                        Engine* engine,
+                        SessionId session_id,
+                        mz::EventReporter* event_reporter,
+                        mz::ErrorReporter* error_reporter);
 
   // scenic::Session interface methods.
-  void Enqueue(::fidl::Array<scenic::OpPtr> ops) override;
+  void Enqueue(::f1dl::Array<ui_mozart::CommandPtr> ops) override;
   void Present(uint64_t presentation_time,
-               ::fidl::Array<zx::event> acquire_fences,
-               ::fidl::Array<zx::event> release_fences,
-               const PresentCallback& callback) override;
+               ::f1dl::Array<zx::event> acquire_fences,
+               ::f1dl::Array<zx::event> release_fences,
+               const ui_mozart::Session::PresentCallback& callback) override;
 
   // Return the number of Enqueue()/Present()/Connect() messages that have
   // been processed.
@@ -65,18 +64,27 @@ class ReleaseFenceSignallerForTest : public escher::ReleaseFenceSignaller {
   uint32_t num_calls_to_add_cpu_release_fence_ = 0;
 };
 
+class SessionManagerForTest : public SessionManager {
+ public:
+  SessionManagerForTest(UpdateScheduler* update_scheduler);
+
+ private:
+  std::unique_ptr<SessionHandler> CreateSessionHandler(
+      mz::CommandDispatcherContext context,
+      Engine* engine,
+      SessionId session_id,
+      mz::EventReporter* event_reporter,
+      mz::ErrorReporter* error_reporter) const override;
+};
+
 class EngineForTest : public Engine {
  public:
   EngineForTest(DisplayManager* display_manager,
                 std::unique_ptr<escher::ReleaseFenceSignaller> r,
                 escher::Escher* escher = nullptr);
-  using Engine::FindSession;
 
  private:
-  std::unique_ptr<SessionHandler> CreateSessionHandler(
-      SessionId id,
-      ::fidl::InterfaceRequest<scenic::Session> request,
-      ::fidl::InterfaceHandle<scenic::SessionListener> listener) override;
+  std::unique_ptr<SessionManager> InitializeSessionManager() override;
 };
 
 }  // namespace test

@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <limits>
 
-#include "garnet/bin/media/audio_server/audio_renderer_impl.h"
 #include "garnet/bin/media/audio_server/constants.h"
 #include "garnet/bin/media/audio_server/platform/generic/mixers/mixer_utils.h"
 #include "lib/fxl/logging.h"
@@ -44,6 +43,7 @@ class PointSamplerImpl : public PointSampler {
                          Gain::AScale amplitude_scale);
 };
 
+// TODO(mpuryear): MTWN-75 factor to minimize LinearSamplerImpl code duplication
 template <typename SType>
 class NxNPointSamplerImpl : public PointSampler {
  public:
@@ -127,6 +127,10 @@ inline bool PointSamplerImpl<DChCount, SType, SChCount>::Mix(
 
       soff += avail * frac_step_size;
       doff += avail;
+      // Note: if "accumulate" is NOT set, we should have cleared the buffer
+      // (but didn't). This likely isn't worth our effort- StandardOutputBase::
+      // Process always zeroes a buffer before using it to mix.
+      // TODO(mpuryear): MTWN-76 zero the buff, or doc it as expected behavior
     }
   }
 
@@ -225,6 +229,10 @@ inline bool NxNPointSamplerImpl<SType>::Mix(int32_t* dst,
 
       soff += avail * frac_step_size;
       doff += avail;
+      // Note: if "accumulate" is NOT set, we should have cleared the buffer
+      // (but didn't). This likely isn't worth the effort to address, because
+      // StandardOutputBase::Process zeroes buffers before using them to mix.
+      // TODO(mpuryear): MTWN-76 zero the buff, or doc it as expected behavior
     }
   }
 
@@ -316,10 +324,8 @@ static inline MixerPtr SelectNxNPSM(
     const AudioMediaTypeDetailsPtr& src_format) {
   switch (src_format->sample_format) {
     case AudioSampleFormat::UNSIGNED_8:
-      FXL_LOG(INFO) << "Selected NxN PointSampler (u8)";
       return MixerPtr(new NxNPointSamplerImpl<uint8_t>(src_format->channels));
     case AudioSampleFormat::SIGNED_16:
-      FXL_LOG(INFO) << "Selected NxN PointSampler (s16)";
       return MixerPtr(new NxNPointSamplerImpl<int16_t>(src_format->channels));
     default:
       return nullptr;

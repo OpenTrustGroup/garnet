@@ -1,0 +1,76 @@
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/host.gni")
+import("//build/package.gni")
+
+executable("bin") {
+  output_name = "zxdb"
+
+  sources = []
+  deps = [
+    "//garnet/bin/zxdb/client",
+    "//garnet/bin/zxdb/console",
+    "//garnet/lib/debug_ipc:client",
+  ]
+
+  if (current_toolchain == host_toolchain) {
+    sources += [ "main_host.cc" ]
+  } else {
+    sources += [ "main_target.cc" ]
+    deps += [ "//garnet/bin/debug_agent:lib" ]
+  }
+}
+
+package("zxdb") {
+  system_image = true
+  deps = [
+    ":bin",
+  ]
+  binaries = [
+    {
+      name = "zxdb"
+    },
+  ]
+}
+
+install_host_tools("host") {
+  deps = [
+    ":bin",
+  ]
+  outputs = [
+    "zxdb",
+  ]
+}
+
+executable("unittests") {
+  testonly = true
+  output_name = "zxdb_tests"
+
+  sources = [
+  ]
+
+  deps = [
+    "//garnet/bin/zxdb/console:tests",
+    "//third_party/googletest:gtest_main",
+    "//third_party/googletest:gtest",
+  ]
+}
+
+package("zxdb_tests") {
+  testonly = true
+  system_image = true
+
+  package_name = "zxdb_tests"
+
+  deps = [
+    ":unittests",
+  ]
+
+  tests = [
+    {
+      name = "zxdb_tests"
+    },
+  ]
+}

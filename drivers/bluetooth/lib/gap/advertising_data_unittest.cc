@@ -114,12 +114,15 @@ TEST(GAP_AdvertisingDataTest, ParseFIDL) {
   fidl_ad->service_uuids.push_back(kId1AsString);
   fidl_ad->service_uuids.push_back(kId3AsString);
 
-  auto array = fidl::Array<uint8_t>::New(4);
+  auto array = f1dl::Array<uint8_t>::New(4);
   for (size_t i = 0; i < array.size(); i++) {
     array[i] = static_cast<uint8_t>(i * 3);
   }
 
-  fidl_ad->service_data.insert(kId1AsString, std::move(array));
+  auto service_data_entry = ::btfidl::low_energy::ServiceDataEntry::New();
+  service_data_entry->uuid = kId1AsString;
+  service_data_entry->data = std::move(array);
+  fidl_ad->service_data.push_back(std::move(service_data_entry));
 
   AdvertisingData data;
 
@@ -330,9 +333,8 @@ TEST(GAP_AdvertisingDataTest, ReaderMalformedData) {
 }
 
 TEST(GAP_AdvertisingDataTest, ReaderParseFields) {
-  auto bytes = common::CreateStaticByteBuffer(
-      0x02, 0x01, 0x00,
-      0x05, 0x09, 'T', 'e', 's', 't');
+  auto bytes = common::CreateStaticByteBuffer(0x02, 0x01, 0x00, 0x05, 0x09, 'T',
+                                              'e', 's', 't');
   AdvertisingDataReader reader(bytes);
   EXPECT_TRUE(reader.is_valid());
   EXPECT_TRUE(reader.HasMoreData());

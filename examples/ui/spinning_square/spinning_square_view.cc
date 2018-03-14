@@ -21,7 +21,7 @@ constexpr float kSecondsPerNanosecond = .000'000'001f;
 
 SpinningSquareView::SpinningSquareView(
     mozart::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<mozart::ViewOwner> view_owner_request)
+    f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request)
     : BaseView(std::move(view_manager),
                std::move(view_owner_request),
                "Spinning Square"),
@@ -41,7 +41,7 @@ SpinningSquareView::SpinningSquareView(
 SpinningSquareView::~SpinningSquareView() {}
 
 void SpinningSquareView::OnSceneInvalidated(
-    scenic::PresentationInfoPtr presentation_info) {
+    ui_mozart::PresentationInfoPtr presentation_info) {
   if (!has_logical_size())
     return;
 

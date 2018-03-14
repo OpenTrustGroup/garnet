@@ -27,24 +27,41 @@ void GpuScanout::FlushRegion(const virtio_gpu_rect_t& rect) {
   dest_rect.height = rect.height;
 
   surface_.DrawBitmap(res->bitmap(), source_rect, dest_rect);
-  return;
 }
 
-zx_status_t GpuScanout::SetResource(GpuResource* res,
-                                    const virtio_gpu_set_scanout_t* request) {
+void GpuScanout::SetResource(GpuResource* res,
+                             const virtio_gpu_set_scanout_t* request) {
   GpuResource* old_res = resource_;
   resource_ = res;
   if (resource_ == nullptr) {
-    if (old_res != nullptr)
+    if (old_res != nullptr) {
       old_res->DetachFromScanout();
-    return ZX_OK;
+    }
+    return;
   }
+
   resource_->AttachToScanout(this);
   rect_.x = request->r.x;
   rect_.y = request->r.y;
   rect_.width = request->r.width;
   rect_.height = request->r.height;
-  return ZX_OK;
+}
+
+void GpuScanout::WhenReady(OnReadyCallback callback) {
+  ready_callback_ = fbl::move(callback);
+  InvokeReadyCallback();
+}
+
+void GpuScanout::SetReady(bool ready) {
+  ready_ = ready;
+  InvokeReadyCallback();
+}
+
+void GpuScanout::InvokeReadyCallback() {
+  if (ready_ && ready_callback_) {
+    ready_callback_();
+    ready_callback_ = nullptr;
+  }
 }
 
 }  // namespace machina

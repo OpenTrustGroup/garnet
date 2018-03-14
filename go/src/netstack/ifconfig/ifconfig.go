@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 
 	"github.com/google/netstack/tcpip"
@@ -76,6 +77,19 @@ func (a *netstackClientApp) setStatus(iface netstack.NetInterface, up bool) {
 	a.netstack.SetInterfaceStatus(iface.Id, up)
 }
 
+func (a *netstackClientApp) addIfaceAddress(iface netstack.NetInterface, cidr string) {
+	netAddr, netSubnet, err := net.ParseCIDR(os.Args[3])
+	if err != nil {
+		fmt.Printf("Error parsing CIDR notation: %s, error: %v\n", os.Args[3], err)
+		usage()
+	}
+	prefixLen, _ := netSubnet.Mask.Size()
+	result, _ := a.netstack.SetInterfaceAddress(iface.Id, toNetAddress(netAddr), uint64(prefixLen))
+	if result.Status != netstack.Status_Ok {
+		fmt.Printf("Error setting interface address: %s\n", result.Message)
+	}
+}
+
 func hwAddrToString(hwaddr []uint8) string {
 	str := ""
 	for i := 0; i < len(hwaddr); i++ {
@@ -105,6 +119,24 @@ func flagsToString(flags uint32) string {
 		str += "UP"
 	}
 	return str
+}
+
+func isIPv4(ip net.IP) bool {
+	return ip.DefaultMask() != nil
+}
+
+func toNetAddress(addr net.IP) net_address.NetAddress {
+	out := net_address.NetAddress{Family: net_address.NetAddressFamily_Unspecified}
+	if isIPv4(addr) {
+		out.Family = net_address.NetAddressFamily_Ipv4
+		out.Ipv4 = &[4]uint8{}
+		copy(out.Ipv4[:], addr[len(addr)-4:])
+	} else {
+		out.Family = net_address.NetAddressFamily_Ipv6
+		out.Ipv6 = &[16]uint8{}
+		copy(out.Ipv6[:], addr[:])
+	}
+	return out
 }
 
 // bytesToString returns a human-friendly display of the given byte count.
@@ -137,6 +169,7 @@ func usage() {
 	fmt.Printf("Usage:\n")
 	fmt.Printf("  %s [<interface>]\n", os.Args[0])
 	fmt.Printf("  %s [<interface>] [up|down]\n", os.Args[0])
+	fmt.Printf("  %s [<interface>] [add|del] [<address>]/[<mask>]\n", os.Args[0])
 }
 
 func main() {
@@ -157,17 +190,25 @@ func main() {
 		return
 	}
 
-	if len(os.Args) == 2 {
+	switch len(os.Args) {
+	case 2:
 		a.printIface(*iface)
-	} else if len(os.Args) == 3 {
-		if os.Args[2] == "up" {
+	case 3, 4:
+		switch os.Args[2] {
+		case "up":
 			a.setStatus(*iface, true)
-		} else if os.Args[2] == "down" {
+		case "down":
 			a.setStatus(*iface, false)
-		} else {
+		case "add":
+			a.addIfaceAddress(*iface, os.Args[3])
+		case "del":
+			fmt.Printf("Deleting addresses from an interface is not yet supported.")
+			usage()
+		default:
 			usage()
 		}
-	} else {
+
+	default:
 		usage()
 	}
 }

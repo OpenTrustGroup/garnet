@@ -7,7 +7,6 @@
 #include "garnet/bin/media/net_media_service/net_media_player_net_stub.h"
 #include "garnet/bin/media/net_media_service/net_media_service_impl.h"
 #include "lib/fxl/macros.h"
-#include "lib/media/fidl/media_service.fidl.h"
 #include "lib/media/fidl/net_media_player.fidl.h"
 #include "lib/netconnector/cpp/net_stub_responder.h"
 
@@ -18,15 +17,15 @@ class NetMediaPlayerImpl : public NetMediaServiceImpl::Product<NetMediaPlayer>,
                            public NetMediaPlayer {
  public:
   static std::shared_ptr<NetMediaPlayerImpl> Create(
-      const fidl::String& service_name,
-      fidl::InterfaceHandle<MediaPlayer> media_player,
-      fidl::InterfaceRequest<NetMediaPlayer> net_media_player_request,
+      const f1dl::String& service_name,
+      f1dl::InterfaceHandle<MediaPlayer> media_player,
+      f1dl::InterfaceRequest<NetMediaPlayer> net_media_player_request,
       NetMediaServiceImpl* owner);
 
   ~NetMediaPlayerImpl() override;
 
   // NetMediaPlayer implementation.
-  void SetUrl(const fidl::String& url) override;
+  void SetUrl(const f1dl::String& url) override;
 
   void Play() override;
 
@@ -39,12 +38,11 @@ class NetMediaPlayerImpl : public NetMediaServiceImpl::Product<NetMediaPlayer>,
 
  private:
   NetMediaPlayerImpl(
-      const fidl::String& service_name,
-      fidl::InterfaceHandle<MediaPlayer> media_player,
-      fidl::InterfaceRequest<NetMediaPlayer> net_media_player_request,
+      const f1dl::String& service_name,
+      f1dl::InterfaceHandle<MediaPlayer> media_player,
+      f1dl::InterfaceRequest<NetMediaPlayer> net_media_player_request,
       NetMediaServiceImpl* owner);
 
-  MediaServicePtr media_service_;
   MediaPlayerPtr media_player_;
   netconnector::NetStubResponder<NetMediaPlayer, NetMediaPlayerNetStub>
       responder_;

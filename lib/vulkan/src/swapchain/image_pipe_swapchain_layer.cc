@@ -101,7 +101,9 @@ class ImagePipeSwapchain {
   SupportedImageProperties supported_properties_;
   scenic::ImagePipeSyncPtr image_pipe_;
   std::vector<VkImage> images_;
+  std::vector<zx::event> acquire_events_;
   std::vector<VkDeviceMemory> memories_;
+  std::vector<VkSemaphore> semaphores_;
   std::vector<uint32_t> acquired_ids_;
   std::vector<uint32_t> available_ids_;
   std::vector<PendingImageInfo> pending_images_;
@@ -228,20 +230,19 @@ VkResult ImagePipeSwapchain::Initialize(
       return result;
     }
     images_.push_back(image);
-    constexpr VkImageSubresource subres = {
-        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-        .mipLevel = 0,
-        .arrayLayer = 0,
-    };
-    VkSubresourceLayout layout;
-    pDisp->GetImageSubresourceLayout(device, image, &subres, &layout);
 
     VkMemoryRequirements memory_requirements;
     pDisp->GetImageMemoryRequirements(device, image, &memory_requirements);
 
+    VkExportMemoryAllocateInfoKHR export_allocate_info = {
+        .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO_KHR,
+        .pNext = nullptr,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_FUCHSIA_VMO_BIT_KHR
+    };
+
     VkMemoryAllocateInfo alloc_info{
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .pNext = nullptr,
+        .pNext = &export_allocate_info,
         .allocationSize = memory_requirements.size,
         .memoryTypeIndex = 0,
     };
@@ -276,7 +277,7 @@ VkResult ImagePipeSwapchain::Initialize(
     auto image_info = scenic::ImageInfo::New();
     image_info->width = width;
     image_info->height = height;
-    image_info->stride = layout.rowPitch;
+    image_info->stride = 0; // Meaningless for optimal tiling.
     image_info->pixel_format = scenic::ImageInfo::PixelFormat::BGRA_8;
     image_info->color_space = scenic::ImageInfo::ColorSpace::SRGB;
     image_info->tiling = scenic::ImageInfo::Tiling::GPU_OPTIMAL;
@@ -286,6 +287,23 @@ VkResult ImagePipeSwapchain::Initialize(
                           0);
 
     available_ids_.push_back(i);
+
+    VkExportSemaphoreCreateInfoKHR export_create_info = {
+        .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO_KHR,
+        .pNext = nullptr,
+        .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_FUCHSIA_FENCE_BIT_KHR};
+    VkSemaphoreCreateInfo create_semaphore_info{
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = &export_create_info,
+        .flags = 0};
+    VkSemaphore semaphore;
+    result = pDisp->CreateSemaphore(device, &create_semaphore_info, pAllocator,
+                                    &semaphore);
+    if (result != VK_SUCCESS) {
+      FXL_DLOG(ERROR) << "vkCreateSemaphore failed: " << result;
+      return result;
+    }
+    semaphores_.push_back(semaphore);
   }
   device_ = device;
   return VK_SUCCESS;
@@ -325,6 +343,8 @@ void ImagePipeSwapchain::Cleanup(VkDevice device,
     pDisp->DestroyImage(device, image, pAllocator);
   for (auto memory : memories_)
     pDisp->FreeMemory(device, memory, pAllocator);
+  for (auto semaphore : semaphores_)
+    pDisp->DestroySemaphore(device, semaphore, pAllocator);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -395,6 +415,47 @@ VkResult ImagePipeSwapchain::AcquireNextImage(uint64_t timeout_ns,
   *pImageIndex = available_ids_[0];
   available_ids_.erase(available_ids_.begin());
   acquired_ids_.push_back(*pImageIndex);
+
+  if (semaphore != VK_NULL_HANDLE) {
+    if (acquire_events_.size() == 0)
+      acquire_events_.resize(images_.size());
+
+    if (!acquire_events_[*pImageIndex]) {
+      zx_status_t status = zx::event::create(0, &acquire_events_[*pImageIndex]);
+      if (status != ZX_OK) {
+        FXL_DLOG(ERROR) << "zx::event::create failed: " << status;
+        return VK_SUCCESS;
+      }
+    }
+
+    zx::event event;
+    zx_status_t status =
+        acquire_events_[*pImageIndex].duplicate(ZX_RIGHT_SAME_RIGHTS, &event);
+    if (status != ZX_OK) {
+      FXL_DLOG(ERROR) << "failed to duplicate acquire semaphore: " << status;
+      return VK_SUCCESS;
+    }
+
+    event.signal(0, ZX_EVENT_SIGNALED);
+
+    VkImportSemaphoreFuchsiaHandleInfoKHR import_info = {
+        .sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FUCHSIA_HANDLE_INFO_KHR,
+        .pNext = nullptr,
+        .semaphore = semaphore,
+        .flags = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT_KHR,
+        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_FUCHSIA_FENCE_BIT_KHR,
+        .handle = event.release()};
+
+    VkLayerDispatchTable* pDisp =
+        GetLayerDataPtr(get_dispatch_key(device_), layer_data_map)
+            ->device_dispatch_table;
+    VkResult result =
+        pDisp->ImportSemaphoreFuchsiaHandleKHR(device_, &import_info);
+    if (result != VK_SUCCESS) {
+      FXL_DLOG(ERROR) << "semaphore import failed: " << result;
+      return VK_SUCCESS;
+    }
+  }
   return VK_SUCCESS;
 }
 
@@ -406,7 +467,6 @@ VKAPI_ATTR VkResult VKAPI_CALL AcquireNextImageKHR(VkDevice device,
                                                    uint32_t* pImageIndex) {
   // TODO(MA-264) handle this correctly
   FXL_CHECK(fence == VK_NULL_HANDLE);
-  FXL_CHECK(semaphore == VK_NULL_HANDLE);
 
   auto swapchain = reinterpret_cast<ImagePipeSwapchain*>(vk_swapchain);
   return swapchain->AcquireNextImage(timeout, semaphore, pImageIndex);
@@ -423,18 +483,33 @@ VkResult ImagePipeSwapchain::Present(VkQueue queue,
       GetLayerDataPtr(get_dispatch_key(queue), layer_data_map)
           ->device_dispatch_table;
 
-  auto acquire_fences = fidl::Array<zx::event>::New(waitSemaphoreCount);
-  for (uint32_t i = 0; i < waitSemaphoreCount; i++) {
-    VkSemaphoreGetFuchsiaHandleInfoKHR info = {
-        VK_STRUCTURE_TYPE_SEMAPHORE_GET_FUCHSIA_HANDLE_INFO_KHR,
-        nullptr,
-        pWaitSemaphores[i],
-        VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_FUCHSIA_FENCE_BIT_KHR,
-    };
-    VkResult result = pDisp->GetSemaphoreFuchsiaHandleKHR(
-        device_, &info, acquire_fences[i].reset_and_get_address());
-    if (result != VK_SUCCESS)
-      return VK_ERROR_SURFACE_LOST_KHR;
+  std::vector<VkPipelineStageFlags> flag_bits(
+      waitSemaphoreCount, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+  VkSubmitInfo submit_info = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+                              .waitSemaphoreCount = waitSemaphoreCount,
+                              .pWaitSemaphores = pWaitSemaphores,
+                              .pWaitDstStageMask = flag_bits.data(),
+                              .signalSemaphoreCount = 1,
+                              .pSignalSemaphores = &semaphores_[index]};
+  VkResult result = pDisp->QueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE);
+  if (result != VK_SUCCESS) {
+    FXL_DLOG(ERROR) << "vkQueueSubmit failed with result " << result;
+    return VK_ERROR_SURFACE_LOST_KHR;
+  }
+
+  auto acquire_fences = f1dl::Array<zx::event>::New(1);
+
+  VkSemaphoreGetFuchsiaHandleInfoKHR semaphore_info = {
+      .sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FUCHSIA_HANDLE_INFO_KHR,
+      .pNext = nullptr,
+      .semaphore = semaphores_[index],
+      .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_FUCHSIA_FENCE_BIT_KHR};
+  result = pDisp->GetSemaphoreFuchsiaHandleKHR(
+      device_, &semaphore_info, acquire_fences[0].reset_and_get_address());
+  if (result != VK_SUCCESS) {
+    FXL_DLOG(ERROR) << "GetSemaphoreFuchsiaHandleKHR failed with result "
+                    << result;
+    return VK_ERROR_SURFACE_LOST_KHR;
   }
 
   auto iter = std::find(acquired_ids_.begin(), acquired_ids_.end(), index);
@@ -459,10 +534,10 @@ VkResult ImagePipeSwapchain::Present(VkQueue queue,
 
   pending_images_.push_back({std::move(image_release_fence), index});
 
-  fidl::Array<zx::event> release_fences;
+  f1dl::Array<zx::event> release_fences;
   release_fences.push_back(std::move(release_fence));
 
-  scenic::PresentationInfoPtr info;
+  ui_mozart::PresentationInfoPtr info;
   image_pipe_->PresentImage(ImageIdFromIndex(index), 0,
                             std::move(acquire_fences),
                             std::move(release_fences), &info);
@@ -507,7 +582,7 @@ CreateMagmaSurfaceKHR(VkInstance instance,
   surface->supported_properties = {{pCreateInfo->width, pCreateInfo->height},
                                    formats};
   surface->image_pipe =
-      scenic::ImagePipeSyncPtr::Create(fidl::InterfaceHandle<scenic::ImagePipe>(
+      scenic::ImagePipeSyncPtr::Create(f1dl::InterfaceHandle<scenic::ImagePipe>(
           zx::channel(pCreateInfo->imagePipeHandle)));
   *pSurface = reinterpret_cast<VkSurfaceKHR>(surface);
   return VK_SUCCESS;

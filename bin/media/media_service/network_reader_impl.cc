@@ -20,18 +20,20 @@ const char* NetworkReaderImpl::kRangeHeaderName = "Range";
 
 // static
 std::shared_ptr<NetworkReaderImpl> NetworkReaderImpl::Create(
-    const fidl::String& url,
-    fidl::InterfaceRequest<SeekingReader> request,
-    MediaServiceImpl* owner) {
+    const f1dl::String& url,
+    f1dl::InterfaceRequest<SeekingReader> request,
+    MediaComponentFactory* owner) {
   return std::shared_ptr<NetworkReaderImpl>(
       new NetworkReaderImpl(url, std::move(request), owner));
 }
 
 NetworkReaderImpl::NetworkReaderImpl(
-    const fidl::String& url,
-    fidl::InterfaceRequest<SeekingReader> request,
-    MediaServiceImpl* owner)
-    : MediaServiceImpl::Product<SeekingReader>(this, std::move(request), owner),
+    const f1dl::String& url,
+    f1dl::InterfaceRequest<SeekingReader> request,
+    MediaComponentFactory* owner)
+    : MediaComponentFactory::Product<SeekingReader>(this,
+                                                    std::move(request),
+                                                    owner),
       url_(url) {
   network::NetworkServicePtr network_service =
       owner->ConnectToEnvironmentService<network::NetworkService>();
@@ -113,7 +115,7 @@ void NetworkReaderImpl::ReadAt(uint64_t position,
       header->name = kRangeHeaderName;
       header->value = value.str();
 
-      request->headers = fidl::Array<network::HttpHeaderPtr>::New(1);
+      request->headers = f1dl::Array<network::HttpHeaderPtr>::New(1);
       request->headers[0] = std::move(header);
     }
 

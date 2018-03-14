@@ -6,6 +6,7 @@
 
 #include "lib/escher/forward_declarations.h"
 #include "lib/escher/geometry/types.h"
+#include "lib/escher/hmd/pose_buffer.h"
 
 namespace escher {
 
@@ -32,9 +33,24 @@ class Camera {
   const mat4& transform() const { return transform_; }
   const mat4& projection() const { return projection_; }
 
+  void SetPoseBuffer(const hmd::PoseBuffer& pose_buffer) {
+    pose_buffer_ = pose_buffer;
+  }
+  const hmd::PoseBuffer& pose_buffer() const { return pose_buffer_; }
+
+  void SetLatchedPoseBuffer(const BufferPtr& latched_pose_buffer) {
+    latched_pose_buffer_ = latched_pose_buffer;
+  }
+  const BufferPtr& latched_pose_buffer() const { return latched_pose_buffer_; }
+
  private:
   mat4 transform_;
   mat4 projection_;
+  hmd::PoseBuffer pose_buffer_;
+
+  // Contains the latched pose and vp matrices latched out of pose_buffer_.
+  // See pose_buffer_latching_shader.h for details on buffer layout.
+  BufferPtr latched_pose_buffer_;
 };
 
 // Debugging.

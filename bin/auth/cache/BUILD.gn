@@ -25,12 +25,12 @@ source_set("unittests") {
     ":lib",
     "//garnet/public/lib/fxl:fxl_printers",
     "//garnet/public/lib/fxl",
-    "//third_party/gtest",
+    "//third_party/googletest:gtest",
   ]
 }
 
 group("cache") {
-  deps = [
+  public_deps = [
     ":lib",
   ]
 }

@@ -19,7 +19,7 @@
 #define _WMI_H_
 
 #include <stdint.h>
-#include <net/mac80211.h>
+#include <string.h>
 
 /*
  * This file specifies the WMI interface for the Unified Software
@@ -2062,8 +2062,8 @@ struct wmi_10x_service_ready_event {
     struct wlan_host_mem_req mem_reqs[0];
 } __packed;
 
-#define WMI_SERVICE_READY_TIMEOUT_HZ (5 * HZ)
-#define WMI_UNIFIED_READY_TIMEOUT_HZ (5 * HZ)
+#define WMI_SERVICE_READY_TIMEOUT (ZX_SEC(5))
+#define WMI_UNIFIED_READY_TIMEOUT (ZX_SEC(5))
 
 struct wmi_ready_event {
     uint32_t sw_version;
@@ -6574,6 +6574,9 @@ struct wmi_pdev_chan_info_req_cmd {
     uint32_t type;
     uint32_t reserved;
 } __packed;
+
+#define WMI_MSGS \
+    MSG(ATH10K_MSG_TYPE_WMI, ATH10K_MSG_TYPE_HTC, sizeof(struct wmi_cmd_hdr))
 
 struct ath10k;
 struct ath10k_vif;

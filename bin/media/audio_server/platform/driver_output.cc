@@ -142,7 +142,8 @@ bool DriverOutput::StartMixJob(MixJob* job, fxl::TimePoint process_start) {
       underflow_cooldown_deadline_ = zx_deadline_after(kUnderflowCooldown);
     }
 
-    int64_t fill_target = cm2rd_pos.Apply(now + kDefaultHighWaterNsec);
+    int64_t fill_target =
+      fifo_frames + cm2rd_pos.Apply(now + kDefaultHighWaterNsec);
 
     // Are we in the middle of an underflow cooldown?  If so, check to see if we
     // have recovered yet.
@@ -165,12 +166,15 @@ bool DriverOutput::StartMixJob(MixJob* job, fxl::TimePoint process_start) {
 
     int64_t frames_in_flight = frames_sent_ - rd_ptr_frames;
     FXL_DCHECK((frames_in_flight >= 0) && (frames_in_flight <= rb.frames()));
-    FXL_DCHECK(frames_sent_ < fill_target);
+    FXL_DCHECK(frames_sent_ <= fill_target);
+    int64_t desired_frames = fill_target - frames_sent_;
+
+    // If we woke up too early to have any work to do, just get out now.
+    if (desired_frames == 0) {
+      return false;
+    }
 
     uint32_t rb_space = rb.frames() - static_cast<uint32_t>(frames_in_flight);
-    int64_t desired_frames = fill_target - frames_sent_;
-    FXL_DCHECK(desired_frames >= 0);
-
     if (desired_frames > rb.frames()) {
       FXL_LOG(ERROR) << "Fatal underflow: want to produce " << desired_frames
                      << " but the ring buffer is only " << rb.frames()
@@ -336,6 +340,16 @@ void DriverOutput::OnDriverConfigComplete() {
                    << static_cast<uint32_t>(state_);
     return;
   }
+
+  // Now that our driver is completely configured, we should have all the info
+  // we need in order to compute the minimum clock lead time requrirement for
+  // this output.
+  int64_t fifo_depth_nsec = TimelineRate::Scale(driver_->fifo_depth_frames(),
+                                                ZX_SEC(1),
+                                                driver_->frames_per_sec());
+  min_clock_lead_time_nsec_ = driver_->external_delay_nsec() +
+                              fifo_depth_nsec +
+                              kDefaultHighWaterNsec;
 
   // Fill our brand new ring buffer with silence
   FXL_CHECK(driver_ring_buffer() != nullptr);

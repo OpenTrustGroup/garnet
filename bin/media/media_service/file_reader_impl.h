@@ -9,7 +9,7 @@
 #include <zx/socket.h>
 
 #include "garnet/bin/media/fidl/fidl_default_waiter.h"
-#include "garnet/bin/media/media_service/media_service_impl.h"
+#include "garnet/bin/media/media_service/media_component_factory.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/macros.h"
 #include "lib/media/fidl/seeking_reader.fidl.h"
@@ -17,13 +17,13 @@
 namespace media {
 
 // Fidl agent that reads from a file.
-class FileReaderImpl : public MediaServiceImpl::Product<SeekingReader>,
+class FileReaderImpl : public MediaComponentFactory::Product<SeekingReader>,
                        public SeekingReader {
  public:
   static std::shared_ptr<FileReaderImpl> Create(
-      const fidl::String& path,
-      fidl::InterfaceRequest<SeekingReader> request,
-      MediaServiceImpl* owner);
+      zx::channel file_channel,
+      f1dl::InterfaceRequest<SeekingReader> request,
+      MediaComponentFactory* owner);
 
   ~FileReaderImpl() override;
 
@@ -35,9 +35,9 @@ class FileReaderImpl : public MediaServiceImpl::Product<SeekingReader>,
  private:
   static constexpr size_t kBufferSize = 8192;
 
-  FileReaderImpl(const fidl::String& path,
-                 fidl::InterfaceRequest<SeekingReader> request,
-                 MediaServiceImpl* owner);
+  FileReaderImpl(fxl::UniqueFD fd,
+                 f1dl::InterfaceRequest<SeekingReader> request,
+                 MediaComponentFactory* owner);
 
   // Callback function for WriteToSocket's async wait.
   static void WriteToSocketStatic(zx_status_t status,

@@ -7,22 +7,38 @@ package ir
 import (
 	"fidl/compiler/backend/types"
 	"fmt"
+	"io"
 	"log"
 	"strings"
+	"text/template"
 )
 
-type Type struct {
-	Decl string
+type Decl interface {
+	ForwardDeclaration(*template.Template, io.Writer) error
+	Declaration(*template.Template, io.Writer) error
+	Traits(*template.Template, io.Writer) error
+	Definition(*template.Template, io.Writer) error
 }
 
-func (t *Type) Decorate(identifer string) string {
-	return t.Decl + " " + identifer
+type Type struct {
+	Decl     string
+	Dtor     string
+	DeclType types.DeclType
+}
+
+type Const struct {
+	Extern    bool
+	Decorator string
+	Type      Type
+	Name      string
+	Value     string
 }
 
 type Enum struct {
-	Name    string
-	Type    string
-	Members []EnumMember
+	Namespace string
+	Type      string
+	Name      string
+	Members   []EnumMember
 }
 
 type EnumMember struct {
@@ -31,32 +47,43 @@ type EnumMember struct {
 }
 
 type Union struct {
-	Name    string
-	Members []UnionMember
+	Namespace string
+	Name      string
+	Members   []UnionMember
+	Size      int
 }
 
 type UnionMember struct {
-	Type Type
-	Name string
-}
-
-type Struct struct {
-	Name    string
-	CName   string
-	Members []StructMember
-}
-
-type StructMember struct {
 	Type        Type
 	Name        string
 	StorageName string
+	Offset      int
+}
+
+type Struct struct {
+	Namespace string
+	Name      string
+	CName     string
+	Members   []StructMember
+	Size      int
+}
+
+type StructMember struct {
+	Type         Type
+	Name         string
+	DefaultValue string
+	Offset       int
 }
 
 type Interface struct {
-	Name      string
-	ProxyName string
-	StubName  string
-	Methods   []Method
+	Namespace     string
+	Name          string
+	ServiceName   string
+	ProxyName     string
+	StubName      string
+	SyncName      string
+	SyncProxyName string
+	Methods       []Method
 }
 
 type Method struct {
@@ -65,24 +92,108 @@ type Method struct {
 	Name                string
 	HasRequest          bool
 	Request             []Parameter
+	RequestSize         int
+	RequestTypeName     string
 	HasResponse         bool
 	Response            []Parameter
+	ResponseSize        int
+	ResponseTypeName    string
 	CallbackType        string
 	ResponseHandlerType string
 	ResponderType       string
 }
 
 type Parameter struct {
-	Type Type
-	Name string
+	Type   Type
+	Name   string
+	Offset int
 }
 
 type Root struct {
 	PrimaryHeader string
-	Enums         []Enum
-	Interfaces    []Interface
-	Structs       []Struct
-	Unions        []Union
+	CHeader       string
+	Namespace     string
+	Decls         []Decl
+}
+
+func (c *Const) ForwardDeclaration(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "ConstForwardDeclaration", c)
+}
+
+func (c *Const) Declaration(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "ConstDeclaration", c)
+}
+
+func (c *Const) Traits(tmpls *template.Template, wr io.Writer) error {
+	return nil
+}
+
+func (c *Const) Definition(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "ConstDefinition", c)
+}
+
+func (e *Enum) ForwardDeclaration(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "EnumForwardDeclaration", e)
+}
+
+func (e *Enum) Declaration(tmpls *template.Template, wr io.Writer) error {
+	return nil
+}
+
+func (e *Enum) Traits(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "EnumTraits", e)
+}
+
+func (e *Enum) Definition(tmpls *template.Template, wr io.Writer) error {
+	return nil
+}
+
+func (u *Union) ForwardDeclaration(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "UnionForwardDeclaration", u)
+}
+
+func (u *Union) Declaration(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "UnionDeclaration", u)
+}
+
+func (u *Union) Traits(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "UnionTraits", u)
+}
+
+func (u *Union) Definition(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "UnionDefinition", u)
+}
+
+func (s *Struct) ForwardDeclaration(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "StructForwardDeclaration", s)
+}
+
+func (s *Struct) Declaration(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "StructDeclaration", s)
+}
+
+func (s *Struct) Traits(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "StructTraits", s)
+}
+
+func (s *Struct) Definition(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "StructDefinition", s)
+}
+
+func (i *Interface) ForwardDeclaration(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "InterfaceForwardDeclaration", i)
+}
+
+func (i *Interface) Declaration(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "InterfaceDeclaration", i)
+}
+
+func (i *Interface) Traits(tmpls *template.Template, wr io.Writer) error {
+	return nil
+}
+
+func (i *Interface) Definition(tmpls *template.Template, wr io.Writer) error {
+	return tmpls.ExecuteTemplate(wr, "InterfaceDefinition", i)
 }
 
 var reservedWords = map[string]bool{
@@ -203,7 +314,7 @@ func isReservedWord(str string) bool {
 	return ok
 }
 
-func compileIdentifier(val types.Identifier) string {
+func changeIfReserved(val types.Identifier) string {
 	str := string(val)
 	if isReservedWord(str) {
 		return str + "_"
@@ -211,19 +322,23 @@ func compileIdentifier(val types.Identifier) string {
 	return str
 }
 
-func compileCompoundIdentifier(val types.CompoundIdentifier) string {
+type compiler struct {
+	namespace string
+	decls     *types.DeclMap
+}
+
+func (c *compiler) compileCompoundIdentifier(val types.CompoundIdentifier) string {
 	strs := []string{}
 	for _, v := range val {
-		strs = append(strs, compileIdentifier(v))
+		strs = append(strs, changeIfReserved(v))
 	}
 	return strings.Join(strs, "::")
 }
 
-func compileLiteral(val types.Literal) string {
+func (c *compiler) compileLiteral(val types.Literal) string {
 	switch val.Kind {
 	case types.StringLiteral:
-		// TODO(abarth): Escape more characters (e.g., newline).
-		return fmt.Sprintf("\"%q\"", val.Value)
+		return fmt.Sprintf("%q", val.Value)
 	case types.NumericLiteral:
 		return val.Value
 	case types.TrueLiteral:
@@ -238,19 +353,19 @@ func compileLiteral(val types.Literal) string {
 	}
 }
 
-func compileConstant(val types.Constant) string {
+func (c *compiler) compileConstant(val types.Constant) string {
 	switch val.Kind {
 	case types.IdentifierConstant:
-		return compileCompoundIdentifier(val.Identifier)
+		return c.compileCompoundIdentifier(val.Identifier)
 	case types.LiteralConstant:
-		return compileLiteral(val.Literal)
+		return c.compileLiteral(val.Literal)
 	default:
 		log.Fatal("Unknown constant kind:", val.Kind)
 		return ""
 	}
 }
 
-func compilePrimitiveSubtype(val types.PrimitiveSubtype) string {
+func (c *compiler) compilePrimitiveSubtype(val types.PrimitiveSubtype) string {
 	if t, ok := primitiveTypes[val]; ok {
 		return t
 	}
@@ -258,56 +373,118 @@ func compilePrimitiveSubtype(val types.PrimitiveSubtype) string {
 	return ""
 }
 
-func compileType(val types.Type) Type {
+func (c *compiler) compileType(val types.Type) Type {
 	r := Type{}
 	switch val.Kind {
 	case types.ArrayType:
-		t := compileType(*val.ElementType)
-		r.Decl = fmt.Sprintf("::fidl::Array<%s, %s>", t.Decl, compileConstant(*val.ElementCount))
+		t := c.compileType(*val.ElementType)
+		r.Decl = fmt.Sprintf("::fidl::Array<%s, %v>", t.Decl, *val.ElementCount)
+		r.Dtor = fmt.Sprintf("~Array", r.Decl)
 	case types.VectorType:
-		t := compileType(*val.ElementType)
+		t := c.compileType(*val.ElementType)
 		r.Decl = fmt.Sprintf("::fidl::VectorPtr<%s>", t.Decl)
+		r.Dtor = fmt.Sprintf("~VectorPtr", r.Decl)
 	case types.StringType:
 		r.Decl = "::fidl::StringPtr"
+		r.Dtor = "~StringPtr"
 	case types.HandleType:
 		r.Decl = fmt.Sprintf("::zx::%s", val.HandleSubtype)
+		r.Dtor = fmt.Sprintf("~%s", val.HandleSubtype)
 	case types.RequestType:
-		t := compileCompoundIdentifier(val.RequestSubtype)
+		t := c.compileCompoundIdentifier(val.RequestSubtype)
 		r.Decl = fmt.Sprintf("::fidl::InterfaceRequest<%s>", t)
+		r.Dtor = fmt.Sprintf("~InterfaceRequest", r.Decl)
 	case types.PrimitiveType:
-		r.Decl = compilePrimitiveSubtype(val.PrimitiveSubtype)
+		r.Decl = c.compilePrimitiveSubtype(val.PrimitiveSubtype)
 	case types.IdentifierType:
-		t := compileCompoundIdentifier(val.Identifier)
-		// TODO(abarth): Need to distguish between interfaces and structs.
-		r.Decl = fmt.Sprintf("::fidl::InterfaceHandle<%s>", t)
+		t := c.compileCompoundIdentifier(val.Identifier)
+		// val.Identifier is a CompoundIdentifier, but we don't have the
+		// ability to look up the declaration type for identifiers in other
+		// libraries. For now, just use the first component of the identifier
+		// and assume that the identifier is in this library.
+		declType, ok := (*c.decls)[val.Identifier[0]]
+		if !ok {
+			log.Fatal("Unknown identifier:", val.Identifier)
+		}
+		switch declType {
+		case types.ConstDeclType:
+			fallthrough
+		case types.EnumDeclType:
+			fallthrough
+		case types.StructDeclType:
+			fallthrough
+		case types.UnionDeclType:
+			if val.Nullable {
+				r.Decl = fmt.Sprintf("::std::unique_ptr<%s>", t)
+				r.Dtor = fmt.Sprintf("~unique_ptr")
+			} else {
+				r.Decl = t
+				r.Dtor = fmt.Sprintf("~%s", t)
+			}
+		case types.InterfaceDeclType:
+			r.Decl = fmt.Sprintf("::fidl::InterfaceHandle<%s>", t)
+			r.Dtor = fmt.Sprintf("~InterfaceHandle")
+		default:
+			log.Fatal("Unknown declaration type:", declType)
+		}
+		r.DeclType = declType
 	default:
 		log.Fatal("Unknown type kind:", val.Kind)
 	}
 	return r
 }
 
-func compileEnum(val types.Enum) Enum {
-	e := Enum{
-		compileIdentifier(val.Name),
-		compilePrimitiveSubtype(val.Type),
+func (c *compiler) compileConst(val types.Const) Const {
+	if val.Type.Kind == types.StringType {
+		r := Const{
+			true,
+			"const",
+			Type{
+				Decl: "char",
+			},
+			changeIfReserved(val.Name[0]) + "[]",
+			c.compileConstant(val.Value),
+		}
+		return r
+	} else {
+		r := Const{
+			false,
+			"constexpr",
+			c.compileType(val.Type),
+			changeIfReserved(val.Name[0]),
+			c.compileConstant(val.Value),
+		}
+		if r.Type.DeclType == types.EnumDeclType {
+			r.Value = fmt.Sprintf("%s::%s", r.Type.Decl, r.Value)
+		}
+		return r
+	}
+}
+
+func (c *compiler) compileEnum(val types.Enum) Enum {
+	r := Enum{
+		c.namespace,
+		c.compilePrimitiveSubtype(val.Type),
+		changeIfReserved(val.Name[0]),
 		[]EnumMember{},
 	}
 	for _, v := range val.Members {
-		e.Members = append(e.Members, EnumMember{
-			compileIdentifier(v.Name),
-			compileConstant(v.Value),
+		r.Members = append(r.Members, EnumMember{
+			changeIfReserved(v.Name),
+			c.compileConstant(v.Value),
 		})
 	}
-	return e
+	return r
 }
 
-func compileParameterArray(val []types.Parameter) []Parameter {
+func (c *compiler) compileParameterArray(val []types.Parameter) []Parameter {
 	r := []Parameter{}
 
 	for _, v := range val {
 		p := Parameter{
-			compileType(v.Type),
-			compileIdentifier(v.Name),
+			c.compileType(v.Type),
+			changeIfReserved(v.Name),
+			v.Offset,
 		}
 		r = append(r, p)
 	}
@@ -315,28 +492,36 @@ func compileParameterArray(val []types.Parameter) []Parameter {
 	return r
 }
 
-func compileInterface(val types.Interface) Interface {
+func (c *compiler) compileInterface(val types.Interface) Interface {
 	r := Interface{
-		compileIdentifier(val.Name),
-		compileIdentifier(val.Name + "Proxy"),
-		compileIdentifier(val.Name + "Stub"),
+		c.namespace,
+		changeIfReserved(val.Name[0]),
+		val.GetAttribute("ServiceName"),
+		changeIfReserved(val.Name[0] + "_Proxy"),
+		changeIfReserved(val.Name[0] + "_Stub"),
+		changeIfReserved(val.Name[0] + "_Sync"),
+		changeIfReserved(val.Name[0] + "_SyncProxy"),
 		[]Method{},
 	}
 
 	for _, v := range val.Methods {
-		name := compileIdentifier(v.Name)
+		name := changeIfReserved(v.Name)
 		callbackType := ""
 		if v.HasResponse {
-			callbackType = compileIdentifier(v.Name + "Callback")
+			callbackType = changeIfReserved(v.Name + "Callback")
 		}
 		m := Method{
 			v.Ordinal,
 			fmt.Sprintf("k%s_%s_Ordinal", r.Name, v.Name),
 			name,
 			v.HasRequest,
-			compileParameterArray(v.Request),
+			c.compileParameterArray(v.Request),
+			v.RequestSize,
+			fmt.Sprintf("%s%sRequestTable", r.Name, v.Name),
 			v.HasResponse,
-			compileParameterArray(v.Response),
+			c.compileParameterArray(v.Response),
+			v.ResponseSize,
+			fmt.Sprintf("%s%sResponseTable", r.Name, v.Name),
 			callbackType,
 			fmt.Sprintf("%s_%s_ResponseHandler", r.Name, v.Name),
 			fmt.Sprintf("%s_%s_Responder", r.Name, v.Name),
@@ -347,68 +532,99 @@ func compileInterface(val types.Interface) Interface {
 	return r
 }
 
-func compileStructMember(val types.StructMember) StructMember {
+func (c *compiler) compileStructMember(val types.StructMember) StructMember {
+	defaultValue := ""
+	if val.MaybeDefaultValue != nil {
+		defaultValue = c.compileConstant(*val.MaybeDefaultValue)
+	}
+
 	return StructMember{
-		compileType(val.Type),
-		compileIdentifier(val.Name),
-		compileIdentifier(val.Name + "_"),
+		c.compileType(val.Type),
+		changeIfReserved(val.Name),
+		defaultValue,
+		val.Offset,
 	}
 }
 
-func compileStruct(val types.Struct) Struct {
-	name := compileIdentifier(val.Name)
+func (c *compiler) compileStruct(val types.Struct) Struct {
+	name := changeIfReserved(val.Name[0])
 	r := Struct{
+		c.namespace,
 		name,
 		"::" + name,
 		[]StructMember{},
+		val.Size,
 	}
 
 	for _, v := range val.Members {
-		r.Members = append(r.Members, compileStructMember(v))
+		r.Members = append(r.Members, c.compileStructMember(v))
 	}
 
 	return r
 }
 
-func compileUnionMember(val types.UnionMember) UnionMember {
+func (c *compiler) compileUnionMember(val types.UnionMember) UnionMember {
 	return UnionMember{
-		compileType(val.Type),
-		compileIdentifier(val.Name),
+		c.compileType(val.Type),
+		changeIfReserved(val.Name),
+		changeIfReserved(val.Name + "_"),
+		val.Offset,
 	}
 }
 
-func compileUnion(val types.Union) Union {
+func (c *compiler) compileUnion(val types.Union) Union {
 	r := Union{
-		compileIdentifier(val.Name),
+		c.namespace,
+		changeIfReserved(val.Name[0]),
 		[]UnionMember{},
+		val.Size,
 	}
 
 	for _, v := range val.Members {
-		r.Members = append(r.Members, compileUnionMember(v))
+		r.Members = append(r.Members, c.compileUnionMember(v))
 	}
 
 	return r
 }
 
-func Compile(fidlData types.Root) Root {
+func Compile(r types.Root) Root {
 	root := Root{}
-
-	// TODO(abarth): Constants.
-
-	for _, v := range fidlData.Enums {
-		root.Enums = append(root.Enums, compileEnum(v))
+	c := compiler{
+		changeIfReserved(r.Name),
+		&r.Decls,
 	}
 
-	for _, v := range fidlData.Interfaces {
-		root.Interfaces = append(root.Interfaces, compileInterface(v))
+	root.Namespace = c.namespace
+
+	decls := map[types.Identifier]Decl{}
+
+	for _, v := range r.Consts {
+		d := c.compileConst(v)
+		decls[v.Name[0]] = &d
 	}
 
-	for _, v := range fidlData.Structs {
-		root.Structs = append(root.Structs, compileStruct(v))
+	for _, v := range r.Enums {
+		d := c.compileEnum(v)
+		decls[v.Name[0]] = &d
 	}
 
-	for _, v := range fidlData.Unions {
-		root.Unions = append(root.Unions, compileUnion(v))
+	for _, v := range r.Interfaces {
+		d := c.compileInterface(v)
+		decls[v.Name[0]] = &d
+	}
+
+	for _, v := range r.Structs {
+		d := c.compileStruct(v)
+		decls[v.Name[0]] = &d
+	}
+
+	for _, v := range r.Unions {
+		d := c.compileUnion(v)
+		decls[v.Name[0]] = &d
+	}
+
+	for _, v := range r.DeclOrder {
+		root.Decls = append(root.Decls, decls[v[0]])
 	}
 
 	return root

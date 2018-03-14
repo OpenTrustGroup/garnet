@@ -5,6 +5,7 @@
 #ifndef PLATFORM_BUFFER_H
 #define PLATFORM_BUFFER_H
 
+#include "magma_common_defs.h"
 #include "magma_util/dlog.h"
 #include <memory>
 
@@ -42,6 +43,8 @@ public:
     virtual bool MapCpu(void** addr_out, uintptr_t alignment = 0) = 0;
     virtual bool UnmapCpu() = 0;
 
+    virtual bool MapAtCpuAddr(uint64_t addr) = 0;
+
     virtual bool PinPages(uint32_t start_page_index, uint32_t page_count) = 0;
     virtual bool UnpinPages(uint32_t start_page_index, uint32_t page_count) = 0;
 
@@ -51,7 +54,11 @@ public:
 
     virtual bool CleanCache(uint64_t offset, uint64_t size, bool invalidate) = 0;
 
+    virtual bool SetCachePolicy(magma_cache_policy_t cache_policy) = 0;
+
     static bool IdFromHandle(uint32_t handle, uint64_t* id_out);
+
+    static uint64_t MinimumMappableAddress();
 };
 
 } // namespace magma

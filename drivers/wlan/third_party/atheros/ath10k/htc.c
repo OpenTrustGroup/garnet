@@ -85,9 +85,9 @@ static void ath10k_htc_prepare_tx_skb(struct ath10k_htc_ep* ep,
     hdr->flags = 0;
     hdr->flags |= ATH10K_HTC_FLAG_NEED_CREDIT_UPDATE;
 
-    spin_lock_bh(&ep->htc->tx_lock);
+    mtx_lock(&ep->htc->tx_lock);
     hdr->seq_no = ep->seq_no++;
-    spin_unlock_bh(&ep->htc->tx_lock);
+    mtx_unlock(&ep->htc->tx_lock);
 }
 
 int ath10k_htc_send(struct ath10k_htc* htc,
@@ -114,12 +114,12 @@ int ath10k_htc_send(struct ath10k_htc* htc,
 
     if (ep->tx_credit_flow_enabled) {
         credits = DIV_ROUND_UP(skb->len, htc->target_credit_size);
-        spin_lock_bh(&htc->tx_lock);
+        mtx_lock(&htc->tx_lock);
         if (ep->tx_credits < credits) {
             ath10k_dbg(ar, ATH10K_DBG_HTC,
                        "htc insufficient credits ep %d required %d available %d\n",
                        eid, credits, ep->tx_credits);
-            spin_unlock_bh(&htc->tx_lock);
+            mtx_unlock(&htc->tx_lock);
             ret = -EAGAIN;
             goto err_pull;
         }
@@ -127,7 +127,7 @@ int ath10k_htc_send(struct ath10k_htc* htc,
         ath10k_dbg(ar, ATH10K_DBG_HTC,
                    "htc ep %d consumed %d credits (total %d)\n",
                    eid, credits, ep->tx_credits);
-        spin_unlock_bh(&htc->tx_lock);
+        mtx_unlock(&htc->tx_lock);
     }
 
     ath10k_htc_prepare_tx_skb(ep, skb);
@@ -157,12 +157,12 @@ err_unmap:
     dma_unmap_single(dev, skb_cb->paddr, skb->len, DMA_TO_DEVICE);
 err_credits:
     if (ep->tx_credit_flow_enabled) {
-        spin_lock_bh(&htc->tx_lock);
+        mtx_lock(&htc->tx_lock);
         ep->tx_credits += credits;
         ath10k_dbg(ar, ATH10K_DBG_HTC,
                    "htc ep %d reverted %d credits back (total %d)\n",
                    eid, credits, ep->tx_credits);
-        spin_unlock_bh(&htc->tx_lock);
+        mtx_unlock(&htc->tx_lock);
 
         if (ep->ep_ops.ep_tx_credits) {
             ep->ep_ops.ep_tx_credits(htc->ar);
@@ -209,7 +209,7 @@ ath10k_htc_process_credit_report(struct ath10k_htc* htc,
 
     n_reports = len / sizeof(*report);
 
-    spin_lock_bh(&htc->tx_lock);
+    mtx_lock(&htc->tx_lock);
     for (i = 0; i < n_reports; i++, report++) {
         if (report->eid >= ATH10K_HTC_EP_COUNT) {
             break;
@@ -222,12 +222,12 @@ ath10k_htc_process_credit_report(struct ath10k_htc* htc,
                    report->eid, report->credits, ep->tx_credits);
 
         if (ep->ep_ops.ep_tx_credits) {
-            spin_unlock_bh(&htc->tx_lock);
+            mtx_unlock(&htc->tx_lock);
             ep->ep_ops.ep_tx_credits(htc->ar);
-            spin_lock_bh(&htc->tx_lock);
+            mtx_lock(&htc->tx_lock);
         }
     }
-    spin_unlock_bh(&htc->tx_lock);
+    mtx_unlock(&htc->tx_lock);
 }
 
 static int
@@ -489,7 +489,7 @@ static void ath10k_htc_control_rx_complete(struct ath10k* ar,
              * sending unsolicited messages on the ep 0
              */
             ath10k_warn("HTC rx ctrl still processing\n");
-            complete(&htc->ctl_resp);
+            completion_signal(&htc->ctl_resp);
             goto out;
         }
 
@@ -500,7 +500,7 @@ static void ath10k_htc_control_rx_complete(struct ath10k* ar,
         memcpy(htc->control_resp_buffer, skb->data,
                htc->control_resp_len);
 
-        complete(&htc->ctl_resp);
+        completion_signal(&htc->ctl_resp);
         break;
     case ATH10K_HTC_MSG_SEND_SUSPEND_COMPLETE:
         htc->htc_ops.target_send_suspend_complete(ar);
@@ -579,13 +579,10 @@ static uint8_t ath10k_htc_get_credit_allocation(struct ath10k_htc* htc,
 int ath10k_htc_wait_target(struct ath10k_htc* htc) {
     struct ath10k* ar = htc->ar;
     int i, status = 0;
-    unsigned long time_left;
     struct ath10k_htc_msg* msg;
     uint16_t message_id;
 
-    time_left = wait_for_completion_timeout(&htc->ctl_resp,
-                                            ATH10K_HTC_WAIT_TIMEOUT_HZ);
-    if (!time_left) {
+    if (completion_wait(&htc->ctl_resp, ATH10K_HTC_WAIT_TIMEOUT) == ZX_ERR_TIMED_OUT) {
         /* Workaround: In some cases the PCI HIF doesn't
          * receive interrupt for the control response message
          * even if the buffer was completed. It is suspected
@@ -598,11 +595,7 @@ int ath10k_htc_wait_target(struct ath10k_htc* htc) {
             ath10k_hif_send_complete_check(htc->ar, i, 1);
         }
 
-        time_left =
-            wait_for_completion_timeout(&htc->ctl_resp,
-                                        ATH10K_HTC_WAIT_TIMEOUT_HZ);
-
-        if (!time_left) {
+        if (completion_wait(&htc->ctl_resp, ATH10K_HTC_WAIT_TIMEOUT) == ZX_ERR_TIMED_OUT) {
             status = -ETIMEDOUT;
         }
     }
@@ -669,7 +662,6 @@ int ath10k_htc_connect_service(struct ath10k_htc* htc,
     struct sk_buff* skb;
     unsigned int max_msg_size = 0;
     int length, status;
-    unsigned long time_left;
     bool disable_credit_flow_ctrl = false;
     uint16_t message_id, service_id, flags = 0;
     uint8_t tx_alloc = 0;
@@ -716,7 +708,7 @@ int ath10k_htc_connect_service(struct ath10k_htc* htc,
     req_msg->flags = flags;
     req_msg->service_id = conn_req->service_id;
 
-    reinit_completion(&htc->ctl_resp);
+    completion_reset(&htc->ctl_resp);
 
     status = ath10k_htc_send(htc, ATH10K_HTC_EP_0, skb);
     if (status) {
@@ -725,9 +717,7 @@ int ath10k_htc_connect_service(struct ath10k_htc* htc,
     }
 
     /* wait for response */
-    time_left = wait_for_completion_timeout(&htc->ctl_resp,
-                                            ATH10K_HTC_CONN_SVC_TIMEOUT_HZ);
-    if (!time_left) {
+    if (completion_wait(&htc->ctl_resp, ATH10K_HTC_CONN_SVC_TIMEOUT) == ZX_ERR_TIMED_OUT) {
         ath10k_err("Service connect timeout\n");
         return -ETIMEDOUT;
     }
@@ -877,7 +867,7 @@ int ath10k_htc_init(struct ath10k* ar) {
     struct ath10k_htc_svc_conn_req conn_req;
     struct ath10k_htc_svc_conn_resp conn_resp;
 
-    spin_lock_init(&htc->tx_lock);
+    mtx_init(&htc->tx_lock, mtx_plain);
 
     ath10k_htc_reset_endpoint_states(htc);
 
@@ -899,7 +889,7 @@ int ath10k_htc_init(struct ath10k* ar) {
         return status;
     }
 
-    init_completion(&htc->ctl_resp);
+    htc->ctl_resp = COMPLETION_INIT;
 
     return 0;
 }

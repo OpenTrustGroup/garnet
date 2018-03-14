@@ -4,6 +4,7 @@
 
 #include "garnet/bin/mdns/service/mdns_fidl_util.h"
 
+#include "lib/fidl/cpp/bindings/type_converters.h"
 #include "lib/fxl/logging.h"
 
 namespace mdns {
@@ -22,7 +23,7 @@ MdnsServiceInstancePtr MdnsFidlUtil::CreateServiceInstance(
 
   service_instance->service_name = service_name;
   service_instance->instance_name = instance_name;
-  service_instance->text = fidl::Array<fidl::String>::From(text);
+  service_instance->text = fxl::To<f1dl::Array<f1dl::String>>(text);
 
   if (v4_address.is_valid()) {
     service_instance->v4_address = CreateSocketAddressIPv4(v4_address);
@@ -41,7 +42,7 @@ void MdnsFidlUtil::UpdateServiceInstance(
     const SocketAddress& v4_address,
     const SocketAddress& v6_address,
     const std::vector<std::string>& text) {
-  service_instance->text = fidl::Array<fidl::String>::From(text);
+  service_instance->text = fxl::To<f1dl::Array<f1dl::String>>(text);
 
   if (v4_address.is_valid()) {
     service_instance->v4_address = CreateSocketAddressIPv4(v4_address);
@@ -68,7 +69,7 @@ netstack::SocketAddressPtr MdnsFidlUtil::CreateSocketAddressIPv4(
   netstack::SocketAddressPtr result = netstack::SocketAddress::New();
   result->addr = netstack::NetAddress::New();
   result->addr->family = netstack::NetAddressFamily::IPV4;
-  result->addr->ipv4 = fidl::Array<uint8_t>::New(4);
+  result->addr->ipv4 = f1dl::Array<uint8_t>::New(4);
   result->port = 0;
 
   FXL_DCHECK(result->addr->ipv4.size() == ip_address.byte_count());
@@ -90,7 +91,7 @@ netstack::SocketAddressPtr MdnsFidlUtil::CreateSocketAddressIPv6(
   netstack::SocketAddressPtr result = netstack::SocketAddress::New();
   result->addr = netstack::NetAddress::New();
   result->addr->family = netstack::NetAddressFamily::IPV6;
-  result->addr->ipv6 = fidl::Array<uint8_t>::New(16);
+  result->addr->ipv6 = f1dl::Array<uint8_t>::New(16);
   result->port = 0;
 
   FXL_DCHECK(result->addr->ipv6.size() == ip_address.byte_count());
@@ -166,7 +167,7 @@ std::unique_ptr<Mdns::Publication> MdnsFidlUtil::Convert(
 
   auto publication = Mdns::Publication::Create(
       IpPort::From_uint16_t(publication_ptr->port),
-      publication_ptr->text.To<std::vector<std::string>>());
+      fxl::To<std::vector<std::string>>(publication_ptr->text));
   publication->ptr_ttl_seconds = publication_ptr->ptr_ttl_seconds;
   publication->srv_ttl_seconds = publication_ptr->srv_ttl_seconds;
   publication->txt_ttl_seconds = publication_ptr->txt_ttl_seconds;

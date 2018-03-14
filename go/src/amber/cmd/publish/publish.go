@@ -36,7 +36,7 @@ var (
 	manifestFile = flag.Bool("m", false, "Publish a the contents of a manifest as as content blobs.")
 	filePath     = flag.String("f", "", "Path of the file to publish")
 	name         = flag.String("n", "", "Name/path used for the published file. This only applies to '-p', package files If not supplied, the relative path supplied to '-f' will be used.")
-	repoPath     = flag.String("r", filepath.Join(os.Getenv("FUCHSIA_BUILD_DIR"), serverBase), "Path to the TUF repository directory.")
+	repoPath     = flag.String("r", "", "Path to the TUF repository directory.")
 	keySrc       = flag.String("k", fuchsiaBuildDir, "Directory containing the signing keys.")
 )
 
@@ -47,9 +47,12 @@ func main() {
 	}
 	flag.Parse()
 
-	if *repoPath == serverBase {
-		log.Fatal("Either set $FUCHSIA_BUILD_DIR or supply a path with -r.")
-		return
+	if *repoPath == "" {
+		if buildDir, ok := os.LookupEnv("FUCHSIA_BUILD_DIR"); ok {
+			*repoPath = filepath.Join(buildDir, serverBase)
+		} else {
+			log.Fatal("Either set $FUCHSIA_BUILD_DIR or supply a path with -r.")
+		}
 	}
 
 	modeCheck := false
@@ -71,8 +74,10 @@ func main() {
 		return
 	}
 
-	if e := os.MkdirAll(*repoPath, os.ModePerm); e != nil {
-		log.Fatalf("Repository path %q does not exist and could not be created.\n",
+	// allow mkdir to fail, but check if the path exists afterward.
+	os.MkdirAll(*repoPath, os.ModePerm)
+	if _, err := os.Stat(*repoPath); err != nil {
+		log.Fatalf("Repository path %q does not exist or could not be read.\n",
 			*repoPath)
 	}
 
@@ -220,25 +225,23 @@ func readManifest(manifestPath string) ([]manifestEntry, error) {
 
 	for {
 		l, err := rdr.ReadString('\n')
-		if err == io.EOF {
-			if len(strings.TrimSpace(l)) == 0 {
-				return entries, nil
-			}
-			err = nil
-		}
-
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return entries, err
 		}
 
 		l = strings.TrimSpace(l)
-		parts := strings.SplitN(l, "=", 2)
-		if len(parts) < 2 {
-			continue
+		parts := strings.Split(l, "=")
+		if len(parts) == 2 {
+			entries = append(entries,
+				manifestEntry{remotePath: parts[0], localPath: parts[1]})
+		} else if len(parts) > 2 {
+			fmt.Printf("Line %q had unexpected token count %d, expected 2\n", l,
+				len(parts))
 		}
 
-		entries = append(entries,
-			manifestEntry{remotePath: parts[0], localPath: parts[1]})
+		if err == io.EOF {
+			break
+		}
 	}
 
 	return entries, nil

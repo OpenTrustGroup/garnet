@@ -23,13 +23,20 @@ static void print_usage(fxl::CommandLine& cl) {
   std::cerr << "usage: " << cl.argv0() << " [OPTIONS]\n";
   std::cerr << "\n";
   std::cerr << "OPTIONS:\n";
-  std::cerr << "\t--kernel=[kernel.bin]           Use file 'kernel.bin' as the kernel\n";
-  std::cerr << "\t--ramdisk=[ramdisk.bin]         Use file 'ramdisk.bin' as a ramdisk\n";
+  std::cerr << "\t--zircon=[kernel.bin]           Load a Zircon kernel from 'kernel.bin'\n";
+  std::cerr << "\t--linux=[kernel.bin]            Load a Linux kernel from 'kernel.bin'\n";
+  std::cerr << "\t--ramdisk=[ramdisk.bin]         Use file 'ramdisk.bin' as an initial RAM disk\n";
+  std::cerr << "\t--memory=[bytes]                Allocate 'bytes' of physical memory for the guest. The\n";
+  std::cerr << "\t                                suffixes 'k', 'M', and 'G' are accepted (currently x64 only)\n";
   std::cerr << "\t--block=[block_spec]            Adds a block device with the given parameters\n";
   std::cerr << "\t--block-wait                    Wait for block devices (specified by GUID) to become\n";
   std::cerr << "\t                                available instead of failing.\n";
-  std::cerr << "\t--cmdline=[cmdline]             Use string 'cmdline' as the kernel command line\n";
-  std::cerr << "\t--nographic                     Disable GPU device and graphics output\n";
+  std::cerr << "\t--cmdline=[cmdline]             Use string 'cmdline' as the kernel command line. This will\n";
+  std::cerr << "\t                                overwrite any existing command line created using --cmdline\n";
+  std::cerr << "\t                                or --cmdline-append.\n";
+  std::cerr << "\t--cmdline-append=[cmdline]      Appends string 'cmdline' to the existing kernel command\n";
+  std::cerr << "\t                                line\n";
+  std::cerr << "\t--nogpu                         Disable GPU device and graphics output\n";
   std::cerr << "\t--balloon-interval=[seconds]    Poll the virtio-balloon device every 'seconds' seconds\n";
   std::cerr << "\t                                and adjust the balloon size based on the amount of\n";
   std::cerr << "\t                                unused guest memory\n";
@@ -107,6 +114,66 @@ static GuestConfigParser::OptionHandler append_option(
     return ZX_OK;
   };
 }
+
+static GuestConfigParser::OptionHandler append_string(std::string* out,
+                                                      const char* delim) {
+  return [out, delim](const std::string& key, const std::string& value) {
+    if (value.empty()) {
+      FXL_LOG(ERROR) << "Option: '" << key << "' expects a value (--" << key
+                     << "=<value>)";
+      return ZX_ERR_INVALID_ARGS;
+    }
+    out->append(delim);
+    out->append(value);
+    return ZX_OK;
+  };
+}
+
+#if __x86_64__
+constexpr size_t kMinMemorySize = 1 << 20;
+
+static GuestConfigParser::OptionHandler parse_mem_size(size_t* out) {
+  return [out](const std::string& key, const std::string& value) {
+    if (value.empty()) {
+      FXL_LOG(ERROR) << "Option: '" << key << "' expects a value (--" << key
+                     << "=<value>)";
+      return ZX_ERR_INVALID_ARGS;
+    }
+    char modifier = 'b';
+    size_t size;
+    int ret = sscanf(value.c_str(), "%zd%c", &size, &modifier);
+    if (ret < 1) {
+      FXL_LOG(ERROR) << "Value is not a size string: " << value;
+      return ZX_ERR_INVALID_ARGS;
+    }
+    switch (modifier) {
+      case 'b':
+        break;
+      case 'k':
+        size *= (1 << 10);
+        break;
+      case 'M':
+        size *= (1 << 20);
+        break;
+      case 'G':
+        size *= (1 << 30);
+        break;
+      default:
+        FXL_LOG(ERROR) << "Invalid size modifier " << modifier;
+        return ZX_ERR_INVALID_ARGS;
+    }
+
+    if (size < kMinMemorySize) {
+      FXL_LOG(ERROR) << "Requested memory " << size
+                     << " is less than the minimum supported size "
+                     << kMinMemorySize;
+      return ZX_ERR_INVALID_ARGS;
+    }
+    *out = size;
+    return ZX_OK;
+  };
+}
+#endif
 
 template <typename NumberType>
 static GuestConfigParser::OptionHandler parse_number(NumberType* out) {
@@ -199,6 +266,8 @@ static zx_status_t parse_block_spec(const std::string& spec, BlockSpec* out) {
       }
       out->guid.type =
           machina::BlockDispatcher::GuidType::GPT_PARTITION_TYPE_GUID;
+    } else if (token == "volatile") {
+      out->volatile_writes = true;
     }
   }
 
@@ -209,28 +278,38 @@ static zx_status_t parse_block_spec(const std::string& spec, BlockSpec* out) {
   return ZX_OK;
 }
 
-GuestConfig::GuestConfig()
-    : kernel_path_("/pkg/data/kernel"), ramdisk_path_("/pkg/data/ramdisk") {}
+static GuestConfigParser::OptionHandler save_kernel(std::string* out,
+                                                    Kernel* kernel,
+                                                    Kernel set_kernel) {
+  return [out, kernel, set_kernel](const std::string& key,
+                                   const std::string& value) {
+    zx_status_t status = save_option(out)(key, value);
+    if (status == ZX_OK) {
+      *kernel = set_kernel;
+    }
+    return status;
+  };
+}
 
-GuestConfig::~GuestConfig() = default;
-
-GuestConfigParser::GuestConfigParser(GuestConfig* config)
-    : config_(config),
-      options_{
-          {"kernel", save_option(&config_->kernel_path_)},
-          {"ramdisk", save_option(&config_->ramdisk_path_)},
-          {"block",
-           append_option<BlockSpec>(&config_->block_specs_, parse_block_spec)},
-          {"cmdline", save_option(&config_->cmdline_)},
-          {"balloon-demand-page",
-           set_flag(&config_->balloon_demand_page_, true)},
-          {"balloon-interval",
-           parse_number(&config_->balloon_interval_seconds_)},
-          {"balloon-threshold",
-           parse_number(&config_->balloon_pages_threshold_)},
-          {"nographic", set_flag(&config_->enable_gpu_, false)},
-          {"block-wait", set_flag(&config_->block_wait_, true)},
-      } {}
+GuestConfigParser::GuestConfigParser(GuestConfig* cfg) : cfg_(cfg), opts_ {
+  {"zircon", save_kernel(&cfg_->kernel_path_, &cfg_->kernel_, Kernel::ZIRCON)},
+      {"linux",
+       save_kernel(&cfg_->kernel_path_, &cfg_->kernel_, Kernel::LINUX)},
+      {"ramdisk", save_option(&cfg_->ramdisk_path_)},
+      {"block",
+       append_option<BlockSpec>(&cfg_->block_specs_, parse_block_spec)},
+      {"cmdline", save_option(&cfg_->cmdline_)},
+      {"cmdline-append", append_string(&cfg_->cmdline_, " ")},
+#if __x86_64__
+      {"memory", parse_mem_size(&cfg_->memory_)},
+#endif
+      {"balloon-demand-page", set_flag(&cfg_->balloon_demand_page_, true)},
+      {"balloon-interval", parse_number(&cfg_->balloon_interval_seconds_)},
+      {"balloon-threshold", parse_number(&cfg_->balloon_pages_threshold_)},
+      {"nogpu", set_flag(&cfg_->enable_gpu_, false)},
+      {"block-wait", set_flag(&cfg_->block_wait_, true)},
+}
+{}
 
 GuestConfigParser::~GuestConfigParser() = default;
 
@@ -244,8 +323,8 @@ zx_status_t GuestConfigParser::ParseArgcArgv(int argc, char** argv) {
   }
 
   for (const fxl::CommandLine::Option& option : cl.options()) {
-    auto entry = options_.find(option.name);
-    if (entry == options_.end()) {
+    auto entry = opts_.find(option.name);
+    if (entry == opts_.end()) {
       FXL_LOG(ERROR) << "Unknown option --" << option.name;
       print_usage(cl);
       return ZX_ERR_INVALID_ARGS;
@@ -268,8 +347,8 @@ zx_status_t GuestConfigParser::ParseConfig(const std::string& data) {
   }
 
   for (auto& member : document.GetObject()) {
-    auto entry = options_.find(member.name.GetString());
-    if (entry == options_.end()) {
+    auto entry = opts_.find(member.name.GetString());
+    if (entry == opts_.end()) {
       FXL_LOG(ERROR) << "Unknown field in configuration object: "
                      << member.name.GetString();
       return ZX_ERR_INVALID_ARGS;

@@ -6,8 +6,6 @@
 
 #include <memory>
 
-#include "garnet/bin/media/audio_server/audio_pipe.h"
-#include "garnet/bin/media/audio_server/audio_renderer_impl.h"
 #include "garnet/bin/media/audio_server/constants.h"
 #include "garnet/bin/media/audio_server/gain.h"
 #include "lib/media/fidl/media_types.fidl.h"
@@ -79,6 +77,7 @@ class Mixer {
   // distortion.  If this becomes a problem, we should consider switching to
   // some form of (N,M) stepping system where we count by frac_step_size for N
   // output samples, then frac_step_size+1 for M samples, etc...
+  // MTWN-49 represents this work.
   //
   // @param amplitude_scale
   // The scale factor for the amplitude to be applied when mixing.  Currently,
@@ -93,6 +92,9 @@ class Mixer {
   // @return True if the mixer is finished with this source data and will not
   // need it in the future.  False if the mixer has not consumed the entire
   // source buffer and will need more of it in the future.
+  //
+  // TODO(mpuryear): Change frac_src_frames parameter to be (integer)
+  // src_frames, as number of src_frames was never intended to be fractional.
   virtual bool Mix(int32_t* dst,
                    uint32_t dst_frames,
                    uint32_t* dst_offset,

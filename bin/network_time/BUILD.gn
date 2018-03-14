@@ -11,15 +11,19 @@ package("network_time") {
 
   binary = "network_time"
 
-  resources = [ {
-        path = rebase_path("roughtime-servers.json")
-        dest = "roughtime-servers.json"
-      } ]
+  resources = [
+    {
+      path = rebase_path("roughtime-servers.json")
+      dest = "roughtime-servers.json"
+    },
+  ]
 
-  meta = [ {
-        path = rebase_path("meta/sandbox")
-        dest = "sandbox"
-      } ]
+  meta = [
+    {
+      path = rebase_path("meta/sandbox")
+      dest = "sandbox"
+    },
+  ]
 }
 
 package("network_time_tests") {
@@ -30,14 +34,15 @@ package("network_time_tests") {
     ":tests",
   ]
 
-  tests = [ {
-        name = "network_time_tests"
-      } ]
+  tests = [
+    {
+      name = "network_time_tests"
+    },
+  ]
 }
 
 source_set("lib") {
   sources = [
-    "logging.h",
     "roughtime_server.cc",
     "roughtime_server.h",
     "time_server_config.cc",
@@ -48,6 +53,7 @@ source_set("lib") {
 
   deps = [
     "//garnet/public/lib/fxl",
+    "//garnet/public/lib/syslog/cpp",
     "//third_party/boringssl",
     "//third_party/rapidjson",
     "//third_party/roughtime:client_lib",
@@ -64,6 +70,7 @@ executable("bin") {
 
   deps = [
     ":lib",
+    "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
   ]
 }
@@ -83,7 +90,7 @@ executable("tests") {
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/test_runner/cpp:gtest_main",
     "//third_party/boringssl",
-    "//third_party/gtest",
+    "//third_party/googletest:gtest",
     "//third_party/roughtime:client_lib",
   ]
 }

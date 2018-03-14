@@ -5,11 +5,32 @@
 package templates
 
 const Enum = `
-{{- define "EnumDeclaration" -}}
+{{- define "EnumForwardDeclaration" }}
 enum class {{ .Name }} : {{ .Type }} {
   {{- range .Members }}
   {{ .Name }} = {{ .Value }},
   {{- end }}
 };
-{{ end }}
+{{- end }}
+
+{{- define "EnumTraits" }}
+template <>
+struct CodingTraits<{{ .Namespace }}::{{ .Name }}> {
+  static constexpr size_t encoded_size = sizeof({{ .Namespace }}::{{ .Name }});
+  static void Encode(Encoder* encoder, {{ .Namespace }}::{{ .Name }}* value, size_t offset) {
+    {{ .Type }} underlying = static_cast<{{ .Type }}>(*value);
+    fidl::Encode(encoder, &underlying, offset);
+  }
+  static void Decode(Decoder* decoder, {{ .Namespace }}::{{ .Name }}* value, size_t offset) {
+    {{ .Type }} underlying = static_cast<{{ .Type }}>(*value);
+    fidl::Decode(decoder, &underlying, offset);
+  }
+};
+
+inline zx_status_t Clone({{ .Namespace }}::{{ .Name }} value,
+                         {{ .Namespace }}::{{ .Name }}* result) {
+  *result = value;
+  return ZX_OK;
+}
+{{- end }}
 `

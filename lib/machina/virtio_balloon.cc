@@ -10,22 +10,12 @@
 
 namespace machina {
 
-static zx_status_t decommit_pages(zx_handle_t vmo,
-                                  uint64_t addr,
-                                  uint64_t len) {
-  return zx_vmo_op_range(vmo, ZX_VMO_OP_DECOMMIT, addr, len, nullptr, 0);
-}
-
-static zx_status_t commit_pages(zx_handle_t vmo, uint64_t addr, uint64_t len) {
-  return zx_vmo_op_range(vmo, ZX_VMO_OP_COMMIT, addr, len, nullptr, 0);
-}
-
-/* Structure passed to the inflate/deflate queue handler. */
+// Structure passed to the inflate/deflate queue handler.
 typedef struct queue_ctx {
-  // Operation to perform on the queue (inflate or deflate).
-  zx_status_t (*op)(zx_handle_t vmo, uint64_t addr, uint64_t len);
   // The VMO to invoke |op| on.
   zx_handle_t vmo;
+  // Operation to perform on the queue (inflate or deflate).
+  uint32_t op;
 } queue_ctx_t;
 
 /* Handle balloon inflate/deflate requests.
@@ -51,7 +41,7 @@ static zx_status_t queue_range_op(void* addr,
                                   uint16_t flags,
                                   uint32_t* used,
                                   void* ctx) {
-  queue_ctx_t* balloon_op_ctx = static_cast<queue_ctx_t*>(ctx);
+  queue_ctx_t* balloon_ctx = static_cast<queue_ctx_t*>(ctx);
   uint32_t* pfns = static_cast<uint32_t*>(addr);
   uint32_t pfn_count = len / 4;
 
@@ -68,9 +58,10 @@ static zx_status_t queue_range_op(void* addr,
 
     // If we have an existing region; invoke the inflate/deflate op.
     if (region_length > 0) {
-      zx_status_t status = balloon_op_ctx->op(
-          balloon_op_ctx->vmo, region_base * VirtioBalloon::kPageSize,
-          region_length * VirtioBalloon::kPageSize);
+      zx_status_t status =
+          zx_vmo_op_range(balloon_ctx->vmo, balloon_ctx->op,
+                          region_base * VirtioBalloon::kPageSize,
+                          region_length * VirtioBalloon::kPageSize, nullptr, 0);
       if (status != ZX_OK)
         return status;
     }
@@ -82,9 +73,10 @@ static zx_status_t queue_range_op(void* addr,
 
   // Handle the last region.
   if (region_length > 0) {
-    zx_status_t status = balloon_op_ctx->op(
-        balloon_op_ctx->vmo, region_base * VirtioBalloon::kPageSize,
-        region_length * VirtioBalloon::kPageSize);
+    zx_status_t status =
+        zx_vmo_op_range(balloon_ctx->vmo, balloon_ctx->op,
+                        region_base * VirtioBalloon::kPageSize,
+                        region_length * VirtioBalloon::kPageSize, nullptr, 0);
     if (status != ZX_OK)
       return status;
   }
@@ -98,18 +90,18 @@ zx_status_t VirtioBalloon::HandleDescriptor(uint16_t queue_sel) {
     case VIRTIO_BALLOON_Q_STATSQ:
       return ZX_OK;
     case VIRTIO_BALLOON_Q_INFLATEQ:
-      ctx.op = &decommit_pages;
+      ctx.op = ZX_VMO_OP_DECOMMIT;
       break;
     case VIRTIO_BALLOON_Q_DEFLATEQ:
       if (deflate_on_demand_)
         return ZX_OK;
-      ctx.op = &commit_pages;
+      ctx.op = ZX_VMO_OP_COMMIT;
       break;
     default:
       return ZX_ERR_INVALID_ARGS;
   }
-  ctx.vmo = phys_mem().vmo();
-  return virtio_queue_handler(&queues_[queue_sel], &queue_range_op, &ctx);
+  ctx.vmo = phys_mem().vmo().get();
+  return queues_[queue_sel].HandleDescriptor(&queue_range_op, &ctx);
 }
 
 zx_status_t VirtioBalloon::HandleQueueNotify(uint16_t queue_sel) {
@@ -131,15 +123,15 @@ VirtioBalloon::VirtioBalloon(const PhysMem& phys_mem)
                       VIRTIO_BALLOON_F_DEFLATE_ON_OOM);
 }
 
-void VirtioBalloon::WaitForStatsBuffer(virtio_queue_t* stats_queue) {
+void VirtioBalloon::WaitForStatsBuffer(VirtioQueue* stats_queue) {
   if (!stats_.has_buffer) {
-    virtio_queue_wait(stats_queue, &stats_.desc_index);
+    stats_queue->Wait(&stats_.desc_index);
     stats_.has_buffer = true;
   }
 }
 
 zx_status_t VirtioBalloon::RequestStats(StatsHandler handler) {
-  virtio_queue_t* stats_queue = &queues_[VIRTIO_BALLOON_Q_STATSQ];
+  VirtioQueue* stats_queue = &queues_[VIRTIO_BALLOON_Q_STATSQ];
 
   // stats.mutex needs to be held during the entire time the guest is
   // processing the buffer since we need to make sure no other threads
@@ -154,19 +146,22 @@ zx_status_t VirtioBalloon::RequestStats(StatsHandler handler) {
   // We have a buffer. We need to return it to the driver. It'll populate
   // a new buffer with stats and then send it back to us.
   stats_.has_buffer = false;
-  virtio_queue_return(stats_queue, stats_.desc_index, 0);
+  stats_queue->Return(stats_.desc_index, 0);
   zx_status_t status = NotifyGuest();
-  if (status != ZX_OK)
+  if (status != ZX_OK) {
     return status;
+  }
   WaitForStatsBuffer(stats_queue);
 
   virtio_desc_t desc;
-  status = virtio_queue_read_desc(stats_queue, stats_.desc_index, &desc);
-  if (status != ZX_OK)
+  status = stats_queue->ReadDesc(stats_.desc_index, &desc);
+  if (status != ZX_OK) {
     return status;
+  }
 
-  if ((desc.len % sizeof(virtio_balloon_stat_t)) != 0)
+  if ((desc.len % sizeof(virtio_balloon_stat_t)) != 0) {
     return ZX_ERR_IO_DATA_INTEGRITY;
+  }
 
   // Invoke the handler on the stats.
   auto stats = static_cast<const virtio_balloon_stat_t*>(desc.addr);

@@ -13,8 +13,8 @@ namespace media {
 std::shared_ptr<LpcmReformatterImpl> LpcmReformatterImpl::Create(
     MediaTypePtr input_media_type,
     AudioSampleFormat output_sample_format,
-    fidl::InterfaceRequest<MediaTypeConverter> request,
-    MediaServiceImpl* owner) {
+    f1dl::InterfaceRequest<MediaTypeConverter> request,
+    MediaComponentFactory* owner) {
   return std::shared_ptr<LpcmReformatterImpl>(
       new LpcmReformatterImpl(std::move(input_media_type), output_sample_format,
                               std::move(request), owner));
@@ -23,31 +23,25 @@ std::shared_ptr<LpcmReformatterImpl> LpcmReformatterImpl::Create(
 LpcmReformatterImpl::LpcmReformatterImpl(
     MediaTypePtr input_media_type,
     AudioSampleFormat output_sample_format,
-    fidl::InterfaceRequest<MediaTypeConverter> request,
-    MediaServiceImpl* owner)
-    : MediaServiceImpl::Product<MediaTypeConverter>(this,
-                                                    std::move(request),
-                                                    owner),
+    f1dl::InterfaceRequest<MediaTypeConverter> request,
+    MediaComponentFactory* owner)
+    : MediaComponentFactory::Product<MediaTypeConverter>(this,
+                                                         std::move(request),
+                                                         owner),
       graph_(owner->multiproc_task_runner()),
       consumer_(FidlPacketConsumer::Create()),
       producer_(FidlPacketProducer::Create()) {
   FXL_DCHECK(input_media_type);
 
-  FLOG(log_channel_, BoundAs(FLOG_BINDING_KOID(binding()), "lpcm_reformatter"));
-
   std::unique_ptr<StreamType> input_stream_type =
-      input_media_type.To<std::unique_ptr<StreamType>>();
+      fxl::To<std::unique_ptr<StreamType>>(input_media_type);
   RCHECK(input_stream_type->medium() == StreamType::Medium::kAudio);
   RCHECK(input_stream_type->audio() != nullptr);
 
-  reformatter_ = LpcmReformatter::Create(*input_stream_type->audio(),
-                                         Convert(output_sample_format));
+  reformatter_ = LpcmReformatter::Create(
+      *input_stream_type->audio(),
+      fxl::To<AudioStreamType::SampleFormat>(output_sample_format));
   FXL_DCHECK(reformatter_);
-
-  FLOG(log_channel_,
-       Config(std::move(input_media_type),
-              MediaType::From(reformatter_->output_stream_type()),
-              FLOG_ADDRESS(consumer_.get()), FLOG_ADDRESS(producer_.get())));
 
   NodeRef consumer_ref = graph_.Add(consumer_);
   NodeRef reformatter_ref = graph_.Add(reformatter_);
@@ -71,17 +65,17 @@ LpcmReformatterImpl::~LpcmReformatterImpl() {}
 
 void LpcmReformatterImpl::GetOutputType(const GetOutputTypeCallback& callback) {
   FXL_DCHECK(reformatter_);
-  callback(MediaType::From(reformatter_->output_stream_type()));
+  callback(fxl::To<MediaTypePtr>(reformatter_->output_stream_type()));
 }
 
 void LpcmReformatterImpl::GetPacketConsumer(
-    fidl::InterfaceRequest<MediaPacketConsumer> request) {
+    f1dl::InterfaceRequest<MediaPacketConsumer> request) {
   Retain();
   consumer_->Bind(std::move(request), [this]() { Release(); });
 }
 
 void LpcmReformatterImpl::GetPacketProducer(
-    fidl::InterfaceRequest<MediaPacketProducer> request) {
+    f1dl::InterfaceRequest<MediaPacketProducer> request) {
   producer_->Bind(std::move(request));
 }
 

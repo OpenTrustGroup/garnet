@@ -8,21 +8,24 @@ source_set("lib") {
   visibility = [ ":*" ]
 
   sources = [
-    "efi.cc",
+    "kernel.cc",
+    "kernel.h",
     "guest_config.cc",
     "guest_config.h",
     "guest_view.cc",
     "guest_view.h",
     "linux.cc",
+    "linux.h",
     "zircon.cc",
+    "zircon.h",
   ]
 
   public_deps = [
     "//garnet/lib/machina",
+    "//garnet/public/lib/fsl",
     "//garnet/public/lib/ui/view_framework:view_provider",
     "//third_party/rapidjson",
     "//zircon/public/lib/fbl",
-    "//zircon/public/lib/hypervisor",
     "//zircon/third_party/lib/fdt",
   ]
 
@@ -33,7 +36,7 @@ executable("bin") {
   output_name = "guest"
 
   sources = [
-    "guest.cc",
+    "main.cc",
   ]
 
   deps = [
@@ -54,7 +57,7 @@ executable("guest_unittests") {
 
   deps = [
     ":lib",
-    "//third_party/gtest",
+    "//third_party/googletest:gtest",
     "//zircon/public/lib/fbl",
   ]
 }
@@ -67,7 +70,9 @@ package("guest_tests") {
     ":guest_unittests",
   ]
 
-  tests = [ {
-        name = "guest_unittests"
-      } ]
+  tests = [
+    {
+      name = "guest_unittests"
+    },
+  ]
 }

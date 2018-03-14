@@ -6,16 +6,16 @@
 
 #include "garnet/lib/machina/address.h"
 
-static const uint32_t kE820Ram = 1;
-static const uint32_t kE820Reserved = 2;
+static constexpr uint32_t kE820Ram = 1;
+static constexpr uint32_t kE820Reserved = 2;
 
 // clang-format off
 
-static const uint64_t kAddr32kb     = 0x0000000000008000;
-static const uint64_t kAddr64kb     = 0x0000000000010000;
-static const uint64_t kAddr1mb      = 0x0000000000100000;
-static const uint64_t kAddr3500mb   = 0x00000000e0000000;
-static const uint64_t kAddr4000mb   = 0x0000000100000000;
+static constexpr uint64_t kAddr32kb     = 0x0000000000008000;
+static constexpr uint64_t kAddr64kb     = 0x0000000000010000;
+static constexpr uint64_t kAddr1mb      = 0x0000000000100000;
+static constexpr uint64_t kAddr3500mb   = 0x00000000e0000000;
+static constexpr uint64_t kAddr4000mb   = 0x0000000100000000;
 
 // clang-format on
 
@@ -35,11 +35,12 @@ size_t e820_size(size_t size) {
   return e820_entries(size) * sizeof(e820entry_t);
 }
 
-zx_status_t create_e820(uintptr_t addr, size_t size, uintptr_t e820_off) {
-  if (e820_off + e820_size(size) > size)
+zx_status_t create_e820(const machina::PhysMem& phys_mem, uintptr_t e820_off) {
+  if (e820_off + e820_size(phys_mem.size()) > phys_mem.size()) {
     return ZX_ERR_BUFFER_TOO_SMALL;
+  }
 
-  e820entry_t* entry = (e820entry_t*)(addr + e820_off);
+  e820entry_t* entry = phys_mem.as<e820entry_t>(e820_off);
   // 0 to 32kb is reserved.
   entry[0].addr = 0;
   entry[0].size = kAddr32kb;
@@ -54,16 +55,18 @@ zx_status_t create_e820(uintptr_t addr, size_t size, uintptr_t e820_off) {
   entry[2].type = kE820Reserved;
   // 1mb to min(size, 3500mb) is available.
   entry[3].addr = kAddr1mb;
-  entry[3].size = (size < kAddr3500mb ? size : kAddr3500mb) - kAddr1mb;
+  entry[3].size =
+      (phys_mem.size() < kAddr3500mb ? phys_mem.size() : kAddr3500mb) -
+      kAddr1mb;
   entry[3].type = kE820Ram;
   // 3500mb to 4000mb is reserved.
   entry[4].addr = kAddr3500mb;
   entry[4].size = kAddr4000mb - kAddr3500mb;
   entry[4].type = kE820Reserved;
-  if (size > kAddr4000mb) {
+  if (phys_mem.size() > kAddr4000mb) {
     // If size > 4000mb, then make that region available.
     entry[5].addr = kAddr4000mb;
-    entry[5].size = size - kAddr4000mb;
+    entry[5].size = phys_mem.size() - kAddr4000mb;
     entry[5].type = kE820Ram;
   }
 

@@ -73,9 +73,15 @@ Server::Server(const std::string& peer_id,
       att::kWriteRequest, fbl::BindMember(this, &Server::OnWriteRequest));
   write_cmd_id_ = att_->RegisterHandler(
       att::kWriteCommand, fbl::BindMember(this, &Server::OnWriteCommand));
+  read_blob_req_id_ = att_->RegisterHandler(
+      att::kReadBlobRequest, fbl::BindMember(this, &Server::OnReadBlobRequest));
+  find_by_type_value_ = att_->RegisterHandler(
+      att::kFindByTypeValueRequest,
+      fbl::BindMember(this, &Server::OnFindByTypeValueRequest));
 }
 
 Server::~Server() {
+  att_->UnregisterHandler(read_blob_req_id_);
   att_->UnregisterHandler(write_cmd_id_);
   att_->UnregisterHandler(write_req_id_);
   att_->UnregisterHandler(read_req_id_);
@@ -218,6 +224,83 @@ void Server::OnFindInformation(att::Bearer::TransactionId tid,
 
     // advance
     out_entries = out_entries.mutable_view(entry_size);
+  }
+
+  att_->Reply(tid, std::move(buffer));
+}
+
+void Server::OnFindByTypeValueRequest(att::Bearer::TransactionId tid,
+                                      const att::PacketReader& packet) {
+  FXL_DCHECK(packet.opcode() == att::kFindByTypeValueRequest);
+
+  if (packet.payload_size() < sizeof(att::FindByTypeValueRequestParams)) {
+    att_->ReplyWithError(tid, att::kInvalidHandle, att::ErrorCode::kInvalidPDU);
+    return;
+  }
+
+  const auto& params = packet.payload<att::FindByTypeValueRequestParams>();
+  att::Handle start = le16toh(params.start_handle);
+  att::Handle end = le16toh(params.end_handle);
+  common::UUID type = common::UUID(params.type);
+  constexpr size_t kParamsSize = sizeof(att::FindByTypeValueRequestParams);
+
+  common::BufferView value = packet.payload_data().view(
+      kParamsSize, packet.payload_size() - kParamsSize);
+
+  if (start == att::kInvalidHandle || start > end) {
+    att_->ReplyWithError(tid, att::kInvalidHandle,
+                         att::ErrorCode::kInvalidHandle);
+    return;
+  }
+
+  auto iter = db_->GetIterator(start, end, &type, false);
+  if (iter.AtEnd()) {
+    att_->ReplyWithError(tid, att::kInvalidHandle,
+                         att::ErrorCode::kAttributeNotFound);
+    return;
+  }
+
+  std::list<const att::Attribute*> results;
+
+  // Filter for identical values
+  for (; !iter.AtEnd(); iter.Advance()) {
+    const auto* attr = iter.get();
+    FXL_DCHECK(attr);
+
+    // Only support static values for this Request type
+    if (attr->value()) {
+      if (*attr->value() == value) {
+        results.push_back(attr);
+      }
+    }
+  }
+
+  // No attributes match the value
+  if (results.size() == 0) {
+    att_->ReplyWithError(tid, att::kInvalidHandle,
+                         att::ErrorCode::kAttributeNotFound);
+    return;
+  }
+
+  constexpr size_t kRspStructSize = sizeof(att::HandlesInformationList);
+  size_t pdu_size = sizeof(att::Header) + kRspStructSize * results.size();
+  auto buffer = common::NewSlabBuffer(pdu_size);
+  FXL_CHECK(buffer);
+
+  att::PacketWriter writer(att::kFindByTypeValueResponse, buffer.get());
+
+  // Points to the next entry in the target PDU.
+  auto next_entry = writer.mutable_payload_data();
+  for (const auto& attr : results) {
+    auto* entry = reinterpret_cast<att::HandlesInformationList*>(
+        next_entry.mutable_data());
+    entry->handle = htole16(attr->handle());
+    if (attr->group().active()) {
+      entry->group_end_handle = htole16(attr->group().end_handle());
+    } else {
+      entry->group_end_handle = htole16(attr->handle());
+    }
+    next_entry = next_entry.mutable_view(kRspStructSize);
   }
 
   att_->Reply(tid, std::move(buffer));
@@ -405,6 +488,72 @@ void Server::OnReadByType(att::Bearer::TransactionId tid,
   }
 
   att_->Reply(tid, std::move(buffer));
+}
+
+void Server::OnReadBlobRequest(att::Bearer::TransactionId tid,
+                               const att::PacketReader& packet) {
+  FXL_DCHECK(packet.opcode() == att::kReadBlobRequest);
+
+  if (packet.payload_size() != sizeof(att::ReadBlobRequestParams)) {
+    att_->ReplyWithError(tid, att::kInvalidHandle, att::ErrorCode::kInvalidPDU);
+    return;
+  }
+
+  const auto& params = packet.payload<att::ReadBlobRequestParams>();
+  att::Handle handle = le16toh(params.handle);
+  uint16_t offset = le16toh(params.offset);
+
+  const auto* attr = db_->FindAttribute(handle);
+  if (!attr) {
+    att_->ReplyWithError(tid, handle, att::ErrorCode::kInvalidHandle);
+    return;
+  }
+
+  // TODO(armansito): Check against the connection security level here and
+  // succeed if it is sufficient.
+  if (!attr->read_reqs().allowed_without_security()) {
+    att_->ReplyWithError(tid, handle, att::ErrorCode::kReadNotPermitted);
+    return;
+  }
+
+  constexpr size_t kHeaderSize = sizeof(att::Header);
+
+  auto self = weak_ptr_factory_.GetWeakPtr();
+  auto callback = [self, tid, offset, handle](att::ErrorCode ecode,
+                                              const auto& value) {
+    if (!self) return;
+
+    if (ecode != att::ErrorCode::kNoError) {
+      self->att_->ReplyWithError(tid, handle, ecode);
+      return;
+    }
+
+    size_t value_size = std::min(value.size(), self->att_->mtu() - kHeaderSize);
+    auto buffer = common::NewSlabBuffer(value_size + kHeaderSize);
+    FXL_CHECK(buffer);
+
+    att::PacketWriter writer(att::kReadBlobResponse, buffer.get());
+    writer.mutable_payload_data().Write(value.view(0, value_size));
+
+    self->att_->Reply(tid, std::move(buffer));
+  };
+
+  // Use the cached value if there is one.
+  if (attr->value()) {
+    if (offset >= attr->value()->size()) {
+      att_->ReplyWithError(tid, handle, att::ErrorCode::kInvalidOffset);
+      return;
+    }
+    size_t value_size =
+        std::min(attr->value()->size(), self->att_->mtu() - kHeaderSize);
+    callback(att::ErrorCode::kNoError, attr->value()->view(offset, value_size));
+    return;
+  }
+
+  // TODO(bwb): Add a timeout to this as per NET-434
+  if (!attr->ReadAsync(peer_id_, offset, callback)) {
+    att_->ReplyWithError(tid, handle, att::ErrorCode::kReadNotPermitted);
+  }
 }
 
 void Server::OnReadRequest(att::Bearer::TransactionId tid,

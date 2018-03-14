@@ -9,10 +9,11 @@
 #include <vector>
 
 #include <fbl/unique_ptr.h>
-#include <hypervisor/phys_mem.h>
 #include <zircon/types.h>
 
 namespace machina {
+
+class PhysMem;
 
 class BlockDispatcher {
  public:
@@ -42,6 +43,12 @@ class BlockDispatcher {
     // If |false|, |bytes| contains a valid GUID.
     bool empty() const { return type == GuidType::NONE; }
   };
+
+  // Creates a new dispatcher that stores writes in RAM. Untouched blocks
+  // are delegated to the provided dispatcher.
+  static zx_status_t CreateVolatileWrapper(
+      fbl::unique_ptr<BlockDispatcher> dispatcher,
+      fbl::unique_ptr<BlockDispatcher>* out);
 
   static zx_status_t CreateFromPath(
       const char* path,

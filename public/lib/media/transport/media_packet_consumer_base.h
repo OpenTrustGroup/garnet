@@ -10,9 +10,7 @@
 #include "lib/fxl/logging.h"
 #include "lib/fxl/synchronization/thread_checker.h"
 #include "lib/fxl/tasks/task_runner.h"
-#include "lib/media/fidl/logs/media_packet_consumer_channel.fidl.h"
 #include "lib/media/fidl/media_transport.fidl.h"
-#include "lib/media/flog/flog.h"
 #include "lib/media/timeline/timeline_rate.h"
 #include "lib/media/transport/shared_buffer_set.h"
 
@@ -60,10 +58,10 @@ class MediaPacketConsumerBase : public MediaPacketConsumer {
   };
 
   // Binds to this MediaPacketConsumer.
-  void Bind(fidl::InterfaceRequest<MediaPacketConsumer> request);
+  void Bind(f1dl::InterfaceRequest<MediaPacketConsumer> request);
 
   // Binds to this MediaPacketConsumer.
-  void Bind(fidl::InterfaceHandle<MediaPacketConsumer>* handle);
+  void Bind(f1dl::InterfaceHandle<MediaPacketConsumer>* handle);
 
   // Determines if the consumer is bound to a channel.
   bool is_bound();
@@ -192,7 +190,7 @@ class MediaPacketConsumerBase : public MediaPacketConsumer {
   // Does nothing if pts_rate_ is zero.
   void SetPacketPtsRate(const MediaPacketPtr& packet);
 
-  fidl::Binding<MediaPacketConsumer> binding_;
+  f1dl::Binding<MediaPacketConsumer> binding_;
   bool accept_revised_media_type_ = false;
   MediaPacketDemand demand_;
   bool demand_update_required_ = false;
@@ -205,8 +203,6 @@ class MediaPacketConsumerBase : public MediaPacketConsumer {
   bool is_reset_ = true;
 
   FXL_DECLARE_THREAD_CHECKER(thread_checker_);
-
-  FLOG_INSTANCE_CHANNEL(logs::MediaPacketConsumerChannel, log_channel_);
 };
 
 }  // namespace media

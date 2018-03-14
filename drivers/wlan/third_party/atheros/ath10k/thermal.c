@@ -36,9 +36,9 @@ ath10k_thermal_get_cur_throttle_state(struct thermal_cooling_device* cdev,
                                       unsigned long* state) {
     struct ath10k* ar = cdev->devdata;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
     *state = ar->thermal.throttle_state;
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 
     return 0;
 }
@@ -53,10 +53,10 @@ ath10k_thermal_set_cur_throttle_state(struct thermal_cooling_device* cdev,
                     throttle_state, ATH10K_THERMAL_THROTTLE_MAX);
         return -EINVAL;
     }
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
     ar->thermal.throttle_state = throttle_state;
     ath10k_thermal_set_throttling(ar);
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return 0;
 }
 
@@ -71,9 +71,8 @@ static ssize_t ath10k_thermal_show_temp(struct device* dev,
                                         char* buf) {
     struct ath10k* ar = dev_get_drvdata(dev);
     int ret, temperature;
-    unsigned long time_left;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     /* Can't get temperature when the card is off */
     if (ar->state != ATH10K_STATE_ON) {
@@ -81,7 +80,7 @@ static ssize_t ath10k_thermal_show_temp(struct device* dev,
         goto out;
     }
 
-    reinit_completion(&ar->thermal.wmi_sync);
+    completion_reset(&ar->thermal.wmi_sync);
     ret = ath10k_wmi_pdev_get_temperature(ar);
     if (ret) {
         ath10k_warn("failed to read temperature %d\n", ret);
@@ -93,30 +92,28 @@ static ssize_t ath10k_thermal_show_temp(struct device* dev,
         goto out;
     }
 
-    time_left = wait_for_completion_timeout(&ar->thermal.wmi_sync,
-                                            ATH10K_THERMAL_SYNC_TIMEOUT_HZ);
-    if (!time_left) {
+    if (completion_wait(&ar->thermal.wmi_sync, ATH10K_THERMAL_SYNC_TIMEOUT) == ZX_ERR_TIMED_OUT) {
         ath10k_warn("failed to synchronize thermal read\n");
         ret = -ETIMEDOUT;
         goto out;
     }
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     temperature = ar->thermal.temperature;
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     /* display in millidegree celcius */
     ret = snprintf(buf, PAGE_SIZE, "%d\n", temperature * 1000);
 out:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
 void ath10k_thermal_event_temperature(struct ath10k* ar, int temperature) {
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     ar->thermal.temperature = temperature;
-    spin_unlock_bh(&ar->data_lock);
-    complete(&ar->thermal.wmi_sync);
+    mtx_unlock(&ar->data_lock);
+    completion_signal(&ar->thermal.wmi_sync);
 }
 
 static SENSOR_DEVICE_ATTR(temp1_input, 0444, ath10k_thermal_show_temp,
@@ -132,7 +129,7 @@ void ath10k_thermal_set_throttling(struct ath10k* ar) {
     uint32_t period, duration, enabled;
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (!ar->wmi.ops->gen_pdev_set_quiet_mode) {
         return;

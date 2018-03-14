@@ -11,26 +11,24 @@
 #include "garnet/bin/media/demux/demux.h"
 #include "garnet/bin/media/fidl/fidl_packet_producer.h"
 #include "garnet/bin/media/framework/graph.h"
-#include "garnet/bin/media/media_service/media_service_impl.h"
+#include "garnet/bin/media/media_service/media_component_factory.h"
 #include "garnet/bin/media/util/fidl_publisher.h"
 #include "garnet/bin/media/util/incident.h"
 #include "lib/fidl/cpp/bindings/binding.h"
 #include "lib/fxl/tasks/task_runner.h"
-#include "lib/media/fidl/logs/media_demux_channel.fidl.h"
 #include "lib/media/fidl/media_source.fidl.h"
 #include "lib/media/fidl/seeking_reader.fidl.h"
-#include "lib/media/flog/flog.h"
 
 namespace media {
 
 // Fidl agent that decodes a stream.
-class MediaDemuxImpl : public MediaServiceImpl::Product<MediaSource>,
+class MediaDemuxImpl : public MediaComponentFactory::Product<MediaSource>,
                        public MediaSource {
  public:
   static std::shared_ptr<MediaDemuxImpl> Create(
-      fidl::InterfaceHandle<SeekingReader> reader,
-      fidl::InterfaceRequest<MediaSource> request,
-      MediaServiceImpl* owner);
+      f1dl::InterfaceHandle<SeekingReader> reader,
+      f1dl::InterfaceRequest<MediaSource> request,
+      MediaComponentFactory* owner);
 
   ~MediaDemuxImpl() override;
 
@@ -39,7 +37,7 @@ class MediaDemuxImpl : public MediaServiceImpl::Product<MediaSource>,
 
   void GetPacketProducer(
       uint32_t stream_index,
-      fidl::InterfaceRequest<MediaPacketProducer> producer) override;
+      f1dl::InterfaceRequest<MediaPacketProducer> producer) override;
 
   void GetStatus(uint64_t version_last_seen,
                  const GetStatusCallback& callback) override;
@@ -49,9 +47,9 @@ class MediaDemuxImpl : public MediaServiceImpl::Product<MediaSource>,
   void Seek(int64_t position, const SeekCallback& callback) override;
 
  private:
-  MediaDemuxImpl(fidl::InterfaceHandle<SeekingReader> reader,
-                 fidl::InterfaceRequest<MediaSource> request,
-                 MediaServiceImpl* owner);
+  MediaDemuxImpl(f1dl::InterfaceHandle<SeekingReader> reader,
+                 f1dl::InterfaceRequest<MediaSource> request,
+                 MediaComponentFactory* owner);
 
   class Stream {
    public:
@@ -71,7 +69,7 @@ class MediaDemuxImpl : public MediaServiceImpl::Product<MediaSource>,
 
     // Binds the producer.
     void BindPacketProducer(
-        fidl::InterfaceRequest<MediaPacketProducer> producer);
+        f1dl::InterfaceRequest<MediaPacketProducer> producer);
 
     // Tells the producer to flush its connection.
     void FlushConnection(
@@ -100,8 +98,6 @@ class MediaDemuxImpl : public MediaServiceImpl::Product<MediaSource>,
   FidlPublisher<GetStatusCallback> status_publisher_;
   MediaMetadataPtr metadata_;
   ProblemPtr problem_;
-
-  FLOG_INSTANCE_CHANNEL(logs::MediaDemuxChannel, log_channel_);
 };
 
 }  // namespace media

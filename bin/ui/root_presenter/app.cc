@@ -22,13 +22,13 @@ App::App(const fxl::CommandLine& command_line)
   input_reader_.Start();
 
   application_context_->outgoing_services()->AddService<mozart::Presenter>(
-      [this](fidl::InterfaceRequest<mozart::Presenter> request) {
+      [this](f1dl::InterfaceRequest<mozart::Presenter> request) {
         presenter_bindings_.AddBinding(this, std::move(request));
       });
 
   application_context_->outgoing_services()
       ->AddService<mozart::InputDeviceRegistry>(
-          [this](fidl::InterfaceRequest<mozart::InputDeviceRegistry> request) {
+          [this](f1dl::InterfaceRequest<mozart::InputDeviceRegistry> request) {
             input_receiver_bindings_.AddBinding(this, std::move(request));
           });
 }
@@ -36,16 +36,15 @@ App::App(const fxl::CommandLine& command_line)
 App::~App() {}
 
 void App::Present(
-    fidl::InterfaceHandle<mozart::ViewOwner> view_owner_handle,
-    fidl::InterfaceRequest<mozart::Presentation> presentation_request) {
+    f1dl::InterfaceHandle<mozart::ViewOwner> view_owner_handle,
+    f1dl::InterfaceRequest<mozart::Presentation> presentation_request) {
   InitializeServices();
 
   auto presentation =
-      std::make_unique<Presentation>(view_manager_.get(), scene_manager_.get());
+      std::make_unique<Presentation>(view_manager_.get(), mozart_.get());
   presentation->Present(
-      view_owner_handle.Bind(),
-      std::move(presentation_request),
-      [ this, presentation = presentation.get() ] {
+      view_owner_handle.Bind(), std::move(presentation_request),
+      [this, presentation = presentation.get()] {
         auto it = std::find_if(
             presentations_.begin(), presentations_.end(),
             [presentation](const std::unique_ptr<Presentation>& other) {
@@ -63,7 +62,7 @@ void App::Present(
 
 void App::RegisterDevice(
     mozart::DeviceDescriptorPtr descriptor,
-    fidl::InterfaceRequest<mozart::InputDevice> input_device_request) {
+    f1dl::InterfaceRequest<mozart::InputDevice> input_device_request) {
   uint32_t device_id = ++next_device_token_;
 
   FXL_VLOG(1) << "RegisterDevice " << device_id << " " << *descriptor;
@@ -112,9 +111,9 @@ void App::InitializeServices() {
       Reset();
     });
 
-    view_manager_->GetSceneManager(scene_manager_.NewRequest());
-    scene_manager_.set_error_handler([this] {
-      FXL_LOG(ERROR) << "SceneManager died, destroying view trees.";
+    view_manager_->GetMozart(mozart_.NewRequest());
+    mozart_.set_error_handler([this] {
+      FXL_LOG(ERROR) << "Mozart died, destroying view trees.";
       Reset();
     });
   }
@@ -123,7 +122,7 @@ void App::InitializeServices() {
 void App::Reset() {
   presentations_.clear();  // must be first, holds pointers to services
   view_manager_.Unbind();
-  scene_manager_.Unbind();
+  mozart_.Unbind();
 }
 
 }  // namespace root_presenter

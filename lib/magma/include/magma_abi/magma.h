@@ -52,11 +52,19 @@ magma_status_t magma_read_notification_channel(struct magma_connection_t* connec
 magma_status_t magma_clean_cache(magma_buffer_t buffer, uint64_t offset, uint64_t size,
                                  magma_cache_operation_t operation);
 
+// This must be set before the buffer is mapped anywhere.
+magma_status_t magma_set_cache_policy(magma_buffer_t buffer, magma_cache_policy_t policy);
+
 magma_status_t magma_map(struct magma_connection_t* connection, magma_buffer_t buffer,
                          void** addr_out);
 // alignment must be a power of 2 and at least PAGE_SIZE.
 magma_status_t magma_map_aligned(struct magma_connection_t* connection, magma_buffer_t buffer,
                                  uint64_t alignment, void** addr_out);
+
+// Attempt to map the buffer at a specific address. Fails if the buffer was
+// previously mapped or if something already is at that address.
+magma_status_t magma_map_specific(struct magma_connection_t* connection, magma_buffer_t buffer,
+                                  uint64_t addr);
 magma_status_t magma_unmap(struct magma_connection_t* connection, magma_buffer_t buffer);
 
 // Maps |page_count| pages of |buffer| from |page_offset| onto the GPU in the connection's address
@@ -89,6 +97,10 @@ void magma_release_command_buffer(struct magma_connection_t* connection,
 // Transfers ownership of |command_buffer|.
 void magma_submit_command_buffer(struct magma_connection_t* connection,
                                  magma_buffer_t command_buffer, uint32_t context_id);
+
+void magma_execute_immediate_commands(struct magma_connection_t* connection, uint32_t context_id,
+                                      uint64_t command_count,
+                                      struct magma_system_inline_command_buffer* command_buffers);
 
 void magma_wait_rendering(struct magma_connection_t* connection, magma_buffer_t buffer);
 

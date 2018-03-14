@@ -6,8 +6,6 @@ import("//build/rust/rust_binary.gni")
 import("//build/package.gni")
 
 rust_binary("bin") {
-  with_tests = true
-
   name = "device_settings_manager"
 
   deps = [
@@ -27,6 +25,9 @@ package("device_settings_manager") {
   meta = [{
     path = rebase_path("meta/sandbox")
     dest = "sandbox"
+  }, {
+    path = rebase_path("//garnet/bin/appmgr/legacy_flat_exported_dir")
+    dest = "legacy_flat_exported_dir"
   }]
 }
 
@@ -38,7 +39,4 @@ package ("device_settings_manager_tests") {
     ":bin"
   ]
 
-  tests = [ {
-      name = "device_settings_manager-bin-test"
-  } ]
 }

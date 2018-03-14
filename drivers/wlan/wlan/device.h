@@ -4,18 +4,16 @@
 
 #pragma once
 
-#include "dispatcher.h"
+#include "proxy_helpers.h"
 
 #include <ddk/driver.h>
-#include <ddktl/device.h>
-#include <ddktl/protocol/ethernet.h>
-#include <ddktl/protocol/wlan.h>
 #include <fbl/intrusive_double_list.h>
 #include <fbl/ref_ptr.h>
 #include <fbl/slab_allocator.h>
 #include <fbl/unique_ptr.h>
 #include <wlan/common/macaddr.h>
 #include <wlan/mlme/device_interface.h>
+#include <wlan/mlme/dispatcher.h>
 #include <wlan/mlme/packet.h>
 #include <zircon/compiler.h>
 #include <zx/channel.h>
@@ -30,33 +28,29 @@ namespace wlan {
 
 class Timer;
 
-class Device;
-using WlanBaseDevice = ddk::Device<Device, ddk::Unbindable, ddk::Ioctlable>;
-
-class Device : public WlanBaseDevice,
-               public ddk::EthmacProtocol<Device>,
-               public ddk::WlanmacIfc<Device>,
-               public DeviceInterface {
+class Device : public DeviceInterface {
    public:
-    Device(zx_device_t* device, wlanmac_protocol_t* wlanmac_proto);
+    Device(zx_device_t* device, wlanmac_protocol_t wlanmac_proto);
     ~Device();
 
     zx_status_t Bind();
 
-    // ddk::Device methods
-    void DdkUnbind();
-    void DdkRelease();
-    zx_status_t DdkIoctl(uint32_t op, const void* in_buf, size_t in_len, void* out_buf,
-                         size_t out_len, size_t* out_actual);
+    // ddk device methods
+    void WlanUnbind();
+    void WlanRelease();
+    zx_status_t WlanIoctl(uint32_t op, const void* in_buf, size_t in_len, void* out_buf,
+                          size_t out_len, size_t* out_actual);
+    void EthUnbind();
+    void EthRelease();
 
-    // ddk::WlanmacIfc methods
+    // ddk wlanmac_ifc_t methods
     void WlanmacStatus(uint32_t status);
     void WlanmacRecv(uint32_t flags, const void* data, size_t length, wlan_rx_info_t* info);
     void WlanmacCompleteTx(wlan_tx_packet_t* pkt, zx_status_t status);
 
-    // ddk::EthmacProtocol methods
+    // ddk ethmac_protocol_ops methods
     zx_status_t EthmacQuery(uint32_t options, ethmac_info_t* info);
-    zx_status_t EthmacStart(fbl::unique_ptr<ddk::EthmacIfcProxy> proxy) __TA_EXCLUDES(lock_);
+    zx_status_t EthmacStart(ethmac_ifc_t* ifc, void* cookie) __TA_EXCLUDES(lock_);
     void EthmacStop() __TA_EXCLUDES(lock_);
     zx_status_t EthmacQueueTx(uint32_t options, ethmac_netbuf_t* netbuf);
     zx_status_t EthmacSetParam(uint32_t param, int32_t value, void* data);
@@ -69,6 +63,7 @@ class Device : public WlanBaseDevice,
     zx_status_t SetChannel(wlan_channel_t chan) override final;
     zx_status_t SetStatus(uint32_t status) override final;
     zx_status_t ConfigureBss(wlan_bss_config_t* cfg) override final;
+    zx_status_t ConfigureBeacon(fbl::unique_ptr<Packet> beacon) override final;
     zx_status_t SetKey(wlan_key_config_t* key_config) override final;
     fbl::RefPtr<DeviceState> GetState() override final;
     const wlanmac_info_t& GetWlanInfo() const override final;
@@ -78,6 +73,9 @@ class Device : public WlanBaseDevice,
         kShutdown,
         kPacketQueued,
     };
+
+    zx_status_t AddWlanDevice();
+    zx_status_t AddEthDevice();
 
     fbl::unique_ptr<Packet> PreparePacket(const void* data, size_t length, Packet::Peer peer);
     template <typename T>
@@ -98,8 +96,12 @@ class Device : public WlanBaseDevice,
     zx_status_t GetChannel(zx::channel* out) __TA_EXCLUDES(lock_);
     void SetStatusLocked(uint32_t status);
 
-    ddk::WlanmacProtocolProxy wlanmac_proxy_;
-    fbl::unique_ptr<ddk::EthmacIfcProxy> ethmac_proxy_;
+    zx_device_t* parent_;
+    zx_device_t* zxdev_;
+    zx_device_t* ethdev_;
+
+    WlanmacProxy wlanmac_proxy_;
+    fbl::unique_ptr<EthmacIfcProxy> ethmac_proxy_;
 
     wlanmac_info_t wlanmac_info_ = {};
     fbl::RefPtr<DeviceState> state_;

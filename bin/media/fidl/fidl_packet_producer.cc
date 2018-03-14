@@ -5,12 +5,18 @@
 #include "garnet/bin/media/fidl/fidl_packet_producer.h"
 
 #include "garnet/bin/media/fidl/fidl_type_conversions.h"
+#include "garnet/bin/media/util/thread_aware_shared_ptr.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
-#include "lib/media/fidl/logs/media_packet_producer_channel.fidl.h"
 
 namespace media {
+
+// static
+std::shared_ptr<FidlPacketProducer> FidlPacketProducer::Create() {
+  return ThreadAwareSharedPtr(new FidlPacketProducer(),
+                              fsl::MessageLoop::GetCurrent()->task_runner());
+}
 
 FidlPacketProducer::FidlPacketProducer() : binding_(this) {
   task_runner_ = fsl::MessageLoop::GetCurrent()->task_runner();
@@ -22,7 +28,7 @@ FidlPacketProducer::~FidlPacketProducer() {
 }
 
 void FidlPacketProducer::Bind(
-    fidl::InterfaceRequest<MediaPacketProducer> request) {
+    f1dl::InterfaceRequest<MediaPacketProducer> request) {
   binding_.Bind(std::move(request));
   binding_.set_error_handler([this]() {
     binding_.set_error_handler(nullptr);
@@ -82,7 +88,7 @@ Demand FidlPacketProducer::SupplyPacket(PacketPtr packet) {
 }
 
 void FidlPacketProducer::Connect(
-    fidl::InterfaceHandle<MediaPacketConsumer> consumer,
+    f1dl::InterfaceHandle<MediaPacketConsumer> consumer,
     const ConnectCallback& callback) {
   FXL_DCHECK(consumer);
   MediaPacketProducerBase::Connect(consumer.Bind(), callback);
@@ -132,7 +138,7 @@ void FidlPacketProducer::SendPacket(PacketPtr packet) {
 
   ProducePacket(packet->payload(), packet->size(), packet->pts(),
                 packet->pts_rate(), packet->keyframe(), packet->end_of_stream(),
-                MediaType::From(packet->revised_stream_type()),
+                fxl::To<MediaTypePtr>(packet->revised_stream_type()),
                 fxl::MakeCopyable([ this, packet = std::move(packet) ]() {
                   ActiveSinkStage* stage_ptr = stage();
                   if (stage_ptr) {

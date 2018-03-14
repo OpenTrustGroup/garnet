@@ -6,10 +6,9 @@
 
 #include <ddk/driver.h>
 #include <ddk/usb-request.h>
-#include <ddktl/device.h>
-#include <ddktl/protocol/wlan.h>
 #include <driver/usb.h>
 #include <fbl/unique_ptr.h>
+#include <wlan/protocol/mac.h>
 #include <zircon/compiler.h>
 #include <zx/time.h>
 
@@ -31,26 +30,47 @@ enum KeyMode : uint8_t;
 enum KeyType : uint8_t;
 struct TxPacket;
 
-class Device : public ddk::Device<Device, ddk::Unbindable>, public ddk::WlanmacProtocol<Device> {
+class WlanmacIfcProxy {
    public:
-    Device(zx_device_t* device, usb_protocol_t* usb, uint8_t bulk_in,
+    WlanmacIfcProxy(wlanmac_ifc_t* ifc, void* cookie) : ifc_(ifc), cookie_(cookie) {}
+
+    void Status(uint32_t status) { ifc_->status(cookie_, status); }
+    void Recv(uint32_t flags, const void* data, size_t length, wlan_rx_info_t* info) {
+        ifc_->recv(cookie_, flags, data, length, info);
+    }
+    void CompleteTx(wlan_tx_packet_t* pkt, zx_status_t status) {
+        ifc_->complete_tx(cookie_, pkt, status);
+    }
+
+   private:
+    wlanmac_ifc_t* ifc_;
+    void* cookie_;
+};
+
+class Device {
+   public:
+    Device(zx_device_t* device, usb_protocol_t usb, uint8_t bulk_in,
            std::vector<uint8_t>&& bulk_out);
     ~Device();
 
     zx_status_t Bind();
 
-    // ddk::Device methods
-    void DdkUnbind();
-    void DdkRelease();
+    // ddk device methods
+    void Unbind();
+    void Release();
+    zx_status_t Ioctl(uint32_t op, const void* in_buf, size_t in_len, void* out_buf,
+                        size_t out_len, size_t* out_actual);
+    void MacUnbind();
+    void MacRelease();
 
-    // ddk::WlanmacProtocol methods
+    // ddk wlanmac_protocol_ops methods
     zx_status_t WlanmacQuery(uint32_t options, wlanmac_info_t* info);
-    zx_status_t WlanmacStart(fbl::unique_ptr<ddk::WlanmacIfcProxy> proxy);
+    zx_status_t WlanmacStart(wlanmac_ifc_t* ifc, void* cookie);
     void WlanmacStop();
     zx_status_t WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* pkt);
     zx_status_t WlanmacSetChannel(uint32_t options, wlan_channel_t* chan);
-    zx_status_t WlanmacSetBss(uint32_t options, const uint8_t mac[6], uint8_t type);
     zx_status_t WlanmacConfigureBss(uint32_t options, wlan_bss_config_t* config);
+    zx_status_t WlanmacConfigureBeacon(uint32_t options, wlan_tx_packet_t* pkt);
     zx_status_t WlanmacSetKey(uint32_t options, wlan_key_config_t* key_config);
 
    private:
@@ -92,6 +112,14 @@ class Device : public ddk::Device<Device, ddk::Unbindable>, public ddk::WlanmacP
 
     // Configure RfVal tables
     zx_status_t InitializeRfVal();
+
+    zx_status_t AddPhyDevice();
+    zx_status_t AddMacDevice();
+
+    zx_status_t PhyQuery(uint8_t* buf, size_t len, size_t* actual) const;
+    zx_status_t CreateIface(const void* in_buf, size_t in_len, void* out_buf,
+                            size_t out_len, size_t* out_actual);
+    zx_status_t DestroyIface(const void* in_buf, size_t in_len);
 
     // read and write general registers
     zx_status_t ReadRegister(uint16_t offset, uint32_t* value);
@@ -177,7 +205,6 @@ class Device : public ddk::Device<Device, ddk::Unbindable>, public ddk::WlanmacP
 
     zx_status_t FillUsbTxPacket(TxPacket* usb_packet, wlan_tx_packet_t* wlan_packet);
     uint8_t LookupTxWcid(const uint8_t* addr1, bool protected_frame);
-    zx_status_t ConfigureBssBeacon(uint32_t options, wlan_tx_packet_t* bcn_pkt);
 
     static void ReadRequestComplete(usb_request_t* request, void* cookie);
     static void WriteRequestComplete(usb_request_t* request, void* cookie);
@@ -187,9 +214,14 @@ class Device : public ddk::Device<Device, ddk::Unbindable>, public ddk::WlanmacP
     size_t align_pad_len(wlan_tx_packet_t* pkt);
     size_t terminal_pad_len();
     size_t usb_tx_pkt_len(wlan_tx_packet_t* pkt);
+    uint8_t GetRxAckPolicy(const wlan_tx_packet_t& wlan_packet);
+
+    zx_device_t* parent_;
+    zx_device_t* zxdev_;
+    zx_device_t* wlanmac_dev_;
 
     usb_protocol_t usb_;
-    fbl::unique_ptr<ddk::WlanmacIfcProxy> wlanmac_proxy_ __TA_GUARDED(lock_);
+    fbl::unique_ptr<WlanmacIfcProxy> wlanmac_proxy_ __TA_GUARDED(lock_);
 
     uint8_t rx_endpt_ = 0;
     std::vector<uint8_t> tx_endpts_;
@@ -230,6 +262,7 @@ class Device : public ddk::Device<Device, ddk::Unbindable>, public ddk::WlanmacP
 
     std::mutex lock_;
     std::vector<usb_request_t*> free_write_reqs_ __TA_GUARDED(lock_);
+    uint16_t iface_id_ = 0;
 };
 
 }  // namespace ralink

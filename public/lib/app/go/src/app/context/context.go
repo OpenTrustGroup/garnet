@@ -5,9 +5,9 @@
 package context
 
 import (
-	"svc/svcns"
 	"fidl/bindings"
 	"fmt"
+	"svc/svcns"
 
 	"syscall/zx"
 	"syscall/zx/fdio"
@@ -28,8 +28,8 @@ type Context struct {
 
 // TODO: define these in syscall/zx/mxruntime
 const (
-	HandleServiceRequest mxruntime.HandleType = 0x3B
-	HandleAppServices    mxruntime.HandleType = 0x43
+	HandleDirectoryRequest mxruntime.HandleType = 0x3B
+	HandleAppServices      mxruntime.HandleType = 0x43
 )
 
 func getServiceRoot() zx.Handle {
@@ -39,11 +39,11 @@ func getServiceRoot() zx.Handle {
 	}
 
 	// TODO: Use "/svc" once that actually works.
-	err = fdio.ServiceConnect("/svc/.", c0.Handle)
+	err = fdio.ServiceConnect("/svc/.", zx.Handle(c0))
 	if err != nil {
 		return zx.HANDLE_INVALID
 	}
-	return c1.Handle
+	return zx.Handle(c1)
 }
 
 func New(serviceRoot, serviceRequest, appServices zx.Handle) *Context {
@@ -107,7 +107,7 @@ func (c *Context) ConnectToEnvServiceAt(name string, h zx.Handle) {
 
 func CreateFromStartupInfo() *Context {
 	serviceRequest := mxruntime.GetStartupHandle(
-		mxruntime.HandleInfo{Type: HandleServiceRequest, Arg: 0})
+		mxruntime.HandleInfo{Type: HandleDirectoryRequest, Arg: 0})
 	appServices := mxruntime.GetStartupHandle(
 		mxruntime.HandleInfo{Type: HandleAppServices, Arg: 0})
 	return New(getServiceRoot(), serviceRequest, appServices)

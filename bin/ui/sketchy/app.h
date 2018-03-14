@@ -10,7 +10,7 @@
 #include "lib/escher/escher.h"
 #include "lib/fidl/cpp/bindings/binding_set.h"
 #include "lib/fsl/tasks/message_loop.h"
-#include "lib/ui/fun/sketchy/fidl/canvas.fidl-common.h"
+#include "lib/ui/fun/sketchy/fidl/canvas.fidl.h"
 
 namespace sketchy_service {
 
@@ -21,9 +21,9 @@ class App {
  private:
   fsl::MessageLoop* loop_;
   std::unique_ptr<app::ApplicationContext> context_;
-  scenic::SceneManagerPtr scene_manager_;
+  ui_mozart::MozartPtr mozart_;
   std::unique_ptr<scenic_lib::Session> session_;
-  fidl::BindingSet<sketchy::Canvas> bindings_;
+  f1dl::BindingSet<sketchy::Canvas> bindings_;
   std::unique_ptr<CanvasImpl> canvas_;
 };
 

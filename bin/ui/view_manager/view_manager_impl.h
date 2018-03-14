@@ -5,9 +5,9 @@
 #ifndef GARNET_BIN_UI_VIEW_MANAGER_VIEW_MANAGER_IMPL_H_
 #define GARNET_BIN_UI_VIEW_MANAGER_VIEW_MANAGER_IMPL_H_
 
-#include "lib/ui/views/fidl/view_manager.fidl.h"
 #include "garnet/bin/ui/view_manager/view_registry.h"
 #include "lib/fxl/macros.h"
+#include "lib/ui/views/fidl/view_manager.fidl.h"
 
 namespace view_manager {
 
@@ -19,17 +19,17 @@ class ViewManagerImpl : public mozart::ViewManager {
 
  private:
   // |ViewManager|:
-  void GetSceneManager(fidl::InterfaceRequest<scenic::SceneManager>
-                           scene_manager_request) override;
-  void CreateView(fidl::InterfaceRequest<mozart::View> view_request,
-                  fidl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
-                  fidl::InterfaceHandle<mozart::ViewListener> view_listener,
+  void GetMozart(
+      f1dl::InterfaceRequest<ui_mozart::Mozart> mozart_request) override;
+  void CreateView(f1dl::InterfaceRequest<mozart::View> view_request,
+                  f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
+                  f1dl::InterfaceHandle<mozart::ViewListener> view_listener,
                   zx::eventpair parent_export_token,
-                  const fidl::String& label) override;
+                  const f1dl::String& label) override;
   void CreateViewTree(
-      fidl::InterfaceRequest<mozart::ViewTree> view_tree_request,
-      fidl::InterfaceHandle<mozart::ViewTreeListener> view_tree_listener,
-      const fidl::String& label) override;
+      f1dl::InterfaceRequest<mozart::ViewTree> view_tree_request,
+      f1dl::InterfaceHandle<mozart::ViewTreeListener> view_tree_listener,
+      const f1dl::String& label) override;
 
   ViewRegistry* registry_;
 

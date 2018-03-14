@@ -7,7 +7,6 @@
 # intermediate file.
 
 import("//build/config/fuchsia/sdk.gni")
-import("//build/cpp/sdk_source_set.gni")
 import("//build/gn/packages.gni")
 
 declare_args() {
@@ -85,17 +84,22 @@ template("fidl") {
         [ "{{source_gen_dir}}/{{source_name_part}}_fidl.py" ]
     if (generate_fidl_for_rust) {
       rust_gen_path = rebase_path("${root_build_dir}/host_x64/fidl-rust")
-      generator_rust_outputs =
-          # "{{source_gen_dir}}/${target_name}/src/{{source_name_part}}.rs" would be
-          # a cleaner directory structure for the generated crate, but would require
-          # changes to the generator
-          [ "{{source_gen_dir}}/{{source_name_part}}.rs" ]
+
+      # "{{source_gen_dir}}/${target_name}/src/{{source_name_part}}.rs" would be
+      # a cleaner directory structure for the generated crate, but would require
+      # changes to the generator
+      generator_rust_outputs = [ "{{source_gen_dir}}/{{source_name_part}}.rs" ]
     }
   }
   generator_python_zip_output = "$target_out_dir/${target_name}_python.pyzip"
   if (generate_fidl_for_rust) {
     generator_rust_crate_output = "$target_gen_dir/${target_name}"
+  }
+
+  generate_map = generate_fidl_for_rust || generate_fidl_for_dart
+  if (generate_map) {
     map_target = "${target_name}_map"
+    map_path = "${target_gen_dir}/${target_name}_map.txt"
   }
 
   if (defined(invoker.sources)) {
@@ -109,10 +113,7 @@ template("fidl") {
         "//garnet/public/lib/fidl/compiler/legacy_generators(//build/toolchain:host_x64)",
       ]
       if (generate_fidl_for_rust) {
-        deps += [
-          ":$map_target",
-          "//garnet/public/lib/fidl/compiler:fidl-rust(//build/toolchain:host_x64)",
-        ]
+        deps += [ "//garnet/public/lib/fidl/compiler:fidl-rust(//build/toolchain:host_x64)" ]
       }
       if (generate_fidl_for_go) {
         deps += [ "//garnet/public/lib/fidl/compiler:fidl-go(//build/toolchain:host_x64)" ]
@@ -126,8 +127,10 @@ template("fidl") {
       inputs = invoker.sources
       outputs = generator_cpp_outputs + generator_python_outputs
 
+      legacy_languages_to_generate = "c++,python"
       if (generate_fidl_for_dart) {
         outputs += generator_dart_outputs
+        legacy_languages_to_generate += ",dart"
       }
       if (generate_fidl_for_rust) {
         outputs += generator_rust_outputs
@@ -154,15 +157,17 @@ template("fidl") {
         "--no-gen-imports",
         "--generators",
         generators,
+        "--gen-arg",
+        "legacy-languages=" + legacy_languages_to_generate,
       ]
 
-      if (generate_fidl_for_rust) {
-        # Plumb map to generator (for Rust)
+      if (generate_map) {
+        # Plumb map to generator (for Rust and Dart)
         args += [
           "--gen-arg",
-          "map-file=" + rebase_path("${generator_rust_crate_output}_map.txt",
-                                    root_build_dir),
+          "map-file=" + rebase_path(map_path, root_build_dir),
         ]
+        deps += [ ":$map_target" ]
       }
 
       if (defined(invoker.generate_type_info) && invoker.generate_type_info) {
@@ -215,7 +220,7 @@ template("fidl") {
     cpp_deps += [ ":$generator_target_name" ]
   }
 
-  sdk_source_set(target_name) {
+  source_set(target_name) {
     if (defined(invoker.visibility)) {
       visibility = invoker.visibility
     }
@@ -381,7 +386,9 @@ template("fidl") {
         args += [ "--inputs=$rebase_inputs" ]
       }
     }
+  }
 
+  if (generate_map) {
     # Creates a map from fidl file to GN build target which supplies it. Used primarily
     # for resolving dependencies in the Rust binding generation.
     save_target = target_name
@@ -418,15 +425,14 @@ template("fidl") {
         rebase_map_public_deps = rebase_path(map_public_deps, root_build_dir)
       }
 
-      output_fn = "${generator_rust_crate_output}_map.txt"
       outputs = [
-        output_fn,
+        map_path,
       ]
 
       if (defined(invoker.sources)) {
         arg_sources = invoker.sources
       }
-      rebase_output = rebase_path(output_fn, root_build_dir)
+      rebase_output = rebase_path(map_path, root_build_dir)
       target_dir = get_label_info("${save_target}", "label_no_toolchain")
       args = [
         "--target=$target_dir",
@@ -477,11 +483,10 @@ template("fidl") {
       }
     }
 
-    sdk_source_set(cpp_sources_target_name) {
+    source_set(cpp_sources_target_name) {
       if (defined(invoker.testonly)) {
         testonly = invoker.testonly
       }
-      source_dir = target_gen_dir
       sources = process_file_template(
               invoker.sources,
               [
@@ -519,7 +524,11 @@ template("fidl") {
       generator_label = ":$generator_target_name($target_toolchain)"
 
       package_label = target_label
-      source_dir = get_label_info(generator_label, "target_gen_dir")
+      package_root = get_label_info(generator_label, "target_gen_dir")
+      source_dir = "."
+
+      # Can be left empty as analysis is disabled.
+      sources = []
 
       # Disable analysis. FIDL targets in a same build file will share a gen (and
       # therefore source) directory which confuses the analyzer trying to process

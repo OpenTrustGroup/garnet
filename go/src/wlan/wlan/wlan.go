@@ -11,7 +11,6 @@ import (
 	mlme_ext "garnet/public/lib/wlan/fidl/wlan_mlme_ext"
 	"garnet/public/lib/wlan/fidl/wlan_service"
 	"log"
-	"netstack/link/eth"
 	"os"
 	"syscall"
 	"syscall/zx"
@@ -49,7 +48,7 @@ type Client struct {
 	cfg      *Config
 	apCfg    *APConfig
 	ap       *AP
-	staAddr  [6]byte
+	staAddr  [6]uint8
 	txid     uint64
 	eapolC   *eapol.Client
 	wlanInfo *mlme_ext.DeviceQueryResponse
@@ -72,14 +71,6 @@ func NewClient(path string, config *Config, apConfig *APConfig) (*Client, error)
 	if m == nil {
 		return nil, fmt.Errorf("wlan: no fdio for %s fd: %d", path, f.Fd())
 	}
-	info, err := eth.IoctlGetInfo(m)
-	if err != nil {
-		return nil, err
-	}
-
-	if info.Features&eth.FeatureWlan == 0 {
-		return nil, nil
-	}
 
 	log.Printf("found wlan device %q", path)
 	ch, err := ioctlGetChannel(m)
@@ -91,11 +82,10 @@ func NewClient(path string, config *Config, apConfig *APConfig) (*Client, error)
 		mlmeC:    make(chan *mlmeResult, 1),
 		path:     path,
 		f:        f,
-		mlmeChan: zx.Channel{ch},
+		mlmeChan: zx.Channel(ch),
 		cfg:      config,
 		apCfg:    apConfig,
 		state:    nil,
-		staAddr:  info.MAC,
 	}
 	success = true
 	return c, nil
@@ -104,6 +94,56 @@ func NewClient(path string, config *Config, apConfig *APConfig) (*Client, error)
 func (c *Client) Close() {
 	c.f.Close()
 	c.mlmeChan.Close()
+}
+
+func ConvertWapToAp(ap AP) wlan_service.Ap {
+	bssid := make([]uint8, len(ap.BSSID))
+	copy(bssid, ap.BSSID[:])
+	// Currently we indicate the AP is secure if it supports RSN.
+	// TODO: Check if AP supports other types of security mechanism (e.g. WEP)
+	is_secure := ap.BSSDesc.Rsn != nil
+	// TODO: Revisit this RSSI conversion.
+	last_rssi := int8(ap.LastRSSI)
+	return wlan_service.Ap{bssid, ap.SSID, int32(last_rssi), is_secure}
+}
+
+func (c *Client) Status() wlan_service.WlanStatus {
+	var state = wlan_service.State_Unknown
+
+	switch c.state.(type) {
+	case *startBSSState:
+		state = wlan_service.State_Bss
+	case *queryState:
+		state = wlan_service.State_Querying
+	case *scanState:
+		state = wlan_service.State_Scanning
+	case *joinState:
+		state = wlan_service.State_Joining
+	case *authState:
+		state = wlan_service.State_Authenticating
+	case *assocState:
+		state = wlan_service.State_Associating
+	case *associatedState:
+		state = wlan_service.State_Associated
+	default:
+		state = wlan_service.State_Unknown
+	}
+
+	var current_ap *wlan_service.Ap = nil
+
+	if c.ap != nil &&
+		state != wlan_service.State_Scanning &&
+		state != wlan_service.State_Bss &&
+		state != wlan_service.State_Querying {
+		ap := ConvertWapToAp(*c.ap)
+		current_ap = &ap
+	}
+
+	return wlan_service.WlanStatus{
+		wlan_service.Error{wlan_service.ErrCode_Ok, "OK"},
+		state,
+		current_ap,
+	}
 }
 
 func (c *Client) PostCommand(cmd Command, arg interface{}, respC chan *CommandResult) {
@@ -233,7 +273,7 @@ func (c *Client) watchMLMEChan(timeout time.Duration) *mlmeResult {
 		deadline = zx.Sys_deadline_after(
 			zx.Duration(timeout.Nanoseconds()))
 	}
-	obs, err := c.mlmeChan.Handle.WaitOne(
+	obs, err := c.mlmeChan.Handle().WaitOne(
 		zx.SignalChannelReadable|zx.SignalChannelPeerClosed,
 		deadline)
 	return &mlmeResult{obs, err}

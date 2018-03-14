@@ -7,7 +7,6 @@
 #include <trace/event.h>
 #include <zx/time.h>
 
-#include "garnet/lib/scenic/pose_buffer.h"
 #include "garnet/lib/ui/scenic/engine/hit_tester.h"
 #include "garnet/lib/ui/scenic/engine/session_handler.h"
 #include "garnet/lib/ui/scenic/resources/buffer.h"
@@ -32,10 +31,10 @@
 #include "garnet/lib/ui/scenic/resources/shapes/rectangle_shape.h"
 #include "garnet/lib/ui/scenic/resources/shapes/rounded_rectangle_shape.h"
 #include "garnet/lib/ui/scenic/resources/variable.h"
-#include "garnet/lib/ui/scenic/util/print_op.h"
 #include "garnet/lib/ui/scenic/util/unwrap.h"
 #include "garnet/lib/ui/scenic/util/wrap.h"
 
+#include "lib/escher/hmd/pose_buffer.h"
 #include "lib/escher/shape/mesh.h"
 #include "lib/escher/shape/rounded_rect_factory.h"
 #include "lib/escher/util/type_utils.h"
@@ -53,8 +52,8 @@ constexpr std::array<scenic::Value::Tag, 2> kFloatValueTypes{
 
 // Converts the provided vector of scene_manager hits into a fidl array of
 // HitPtrs.
-fidl::Array<scenic::HitPtr> WrapHits(const std::vector<Hit>& hits) {
-  fidl::Array<scenic::HitPtr> wrapped_hits;
+f1dl::Array<scenic::HitPtr> WrapHits(const std::vector<Hit>& hits) {
+  f1dl::Array<scenic::HitPtr> wrapped_hits;
   wrapped_hits.resize(hits.size());
   for (size_t i = 0; i < hits.size(); ++i) {
     const Hit& hit = hits[i];
@@ -74,7 +73,7 @@ fidl::Array<scenic::HitPtr> WrapHits(const std::vector<Hit>& hits) {
 Session::Session(SessionId id,
                  Engine* engine,
                  EventReporter* event_reporter,
-                 ErrorReporter* error_reporter)
+                 mz::ErrorReporter* error_reporter)
     : id_(id),
       engine_(engine),
       error_reporter_(error_reporter),
@@ -570,7 +569,7 @@ bool Session::ApplySetCameraPoseBufferOp(
     return false;
   }
 
-  if (buffer->size() < op->num_entries * sizeof(scenic_lib::Pose)) {
+  if (buffer->size() < op->num_entries * sizeof(escher::hmd::Pose)) {
     error_reporter_->ERROR()
         << "scene_manager::Session::ApplySetCameraPoseBufferOp(): "
            "buffer is not large enough";
@@ -584,7 +583,10 @@ bool Session::ApplySetCameraPoseBufferOp(
            "invalid camera ID";
     return false;
   }
-  // Do the actual thing here in a later change
+
+  camera->SetPoseBuffer(buffer, op->num_entries, op->base_time,
+                        op->time_interval);
+
   return true;
 }
 
@@ -1116,8 +1118,8 @@ void Session::TearDown() {
   error_reporter_ = nullptr;
 }
 
-ErrorReporter* Session::error_reporter() const {
-  return error_reporter_ ? error_reporter_ : ErrorReporter::Default();
+mz::ErrorReporter* Session::error_reporter() const {
+  return error_reporter_ ? error_reporter_ : mz::ErrorReporter::Default();
 }
 
 bool Session::AssertValueIsOfType(const scenic::ValuePtr& value,
@@ -1144,11 +1146,12 @@ bool Session::AssertValueIsOfType(const scenic::ValuePtr& value,
   return false;
 }
 
-bool Session::ScheduleUpdate(uint64_t presentation_time,
-                             ::fidl::Array<scenic::OpPtr> ops,
-                             ::fidl::Array<zx::event> acquire_fences,
-                             ::fidl::Array<zx::event> release_events,
-                             const scenic::Session::PresentCallback& callback) {
+bool Session::ScheduleUpdate(
+    uint64_t presentation_time,
+    ::f1dl::Array<scenic::OpPtr> ops,
+    ::f1dl::Array<zx::event> acquire_fences,
+    ::f1dl::Array<zx::event> release_events,
+    const ui_mozart::Session::PresentCallback& callback) {
   if (is_valid()) {
     uint64_t last_scheduled_presentation_time =
         last_applied_update_presentation_time_;
@@ -1169,15 +1172,15 @@ bool Session::ScheduleUpdate(uint64_t presentation_time,
     }
     auto acquire_fence_set =
         std::make_unique<escher::FenceSetListener>(std::move(acquire_fences));
-    // TODO: Consider calling ScheduleSessionUpdate immediately if
+    // TODO: Consider calling ScheduleUpdateForSession immediately if
     // acquire_fence_set is already ready (which is the case if there are
     // zero acquire fences).
 
     acquire_fence_set->WaitReadyAsync(
         [weak = weak_factory_.GetWeakPtr(), presentation_time] {
           if (weak)
-            weak->engine_->ScheduleSessionUpdate(presentation_time,
-                                                 SessionPtr(weak.get()));
+            weak->engine_->session_manager()->ScheduleUpdateForSession(
+                presentation_time, SessionPtr(weak.get()));
         });
 
     scheduled_updates_.push(Update{presentation_time, std::move(ops),
@@ -1193,7 +1196,8 @@ void Session::ScheduleImagePipeUpdate(uint64_t presentation_time,
     scheduled_image_pipe_updates_.push(
         {presentation_time, std::move(image_pipe)});
 
-    engine_->ScheduleSessionUpdate(presentation_time, SessionPtr(this));
+    engine_->session_manager()->ScheduleUpdateForSession(presentation_time,
+                                                         SessionPtr(this));
   }
 }
 
@@ -1217,7 +1221,7 @@ bool Session::ApplyScheduledUpdates(uint64_t presentation_time,
          scheduled_updates_.front().acquire_fences->ready()) {
     if (ApplyUpdate(&scheduled_updates_.front())) {
       needs_render = true;
-      auto info = scenic::PresentationInfo::New();
+      auto info = ui_mozart::PresentationInfo::New();
       info->presentation_time = presentation_time;
       info->presentation_interval = presentation_interval;
       scheduled_updates_.front().present_callback(std::move(info));
@@ -1304,7 +1308,7 @@ bool Session::ApplyUpdate(Session::Update* update) {
 void Session::HitTest(uint32_t node_id,
                       scenic::vec3Ptr ray_origin,
                       scenic::vec3Ptr ray_direction,
-                      const scenic::Session::HitTestCallback& callback) {
+                      const ui_mozart::Session::HitTestCallback& callback) {
   if (auto node = resources_.FindResource<Node>(node_id)) {
     HitTester hit_tester;
     std::vector<Hit> hits = hit_tester.HitTest(
@@ -1325,7 +1329,7 @@ void Session::HitTest(uint32_t node_id,
 void Session::HitTestDeviceRay(
     scenic::vec3Ptr ray_origin,
     scenic::vec3Ptr ray_direction,
-    const scenic::Session::HitTestCallback& callback) {
+    const ui_mozart::Session::HitTestCallback& callback) {
   escher::ray4 ray =
       escher::ray4{{Unwrap(ray_origin), 1.f}, {Unwrap(ray_direction), 0.f}};
 
@@ -1338,7 +1342,7 @@ void Session::HitTestDeviceRay(
 }
 
 void Session::BeginTearDown() {
-  engine()->TearDownSession(id());
+  engine()->session_manager()->TearDownSession(id());
   FXL_DCHECK(!is_valid());
 }
 

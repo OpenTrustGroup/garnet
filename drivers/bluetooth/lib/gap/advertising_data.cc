@@ -14,13 +14,13 @@
 #include "lib/fxl/strings/string_printf.h"
 #include "lib/fxl/strings/utf_codecs.h"
 
-// A partial fidl::TypeConverter template specialization for copying the
+// A partial f1dl::TypeConverter template specialization for copying the
 // contents of a type that derives from common::ByteBuffer into a
-// fidl::Array<unsigned char>. If the input array is empty, the output array
+// f1dl::Array<unsigned char>. If the input array is empty, the output array
 // will be empty. Used by Array<uint8_t>::From() in AsLEAdvertisingData()
 template <typename T>
-struct fidl::TypeConverter<fidl::Array<unsigned char>, T> {
-  static fidl::Array<unsigned char> Convert(const T& input) {
+struct f1dl::TypeConverter<f1dl::Array<unsigned char>, T> {
+  static f1dl::Array<unsigned char> Convert(const T& input) {
     static_assert(std::is_base_of<::btlib::common::ByteBuffer, T>::value, "");
 
     Array<unsigned char> result = Array<unsigned char>::New(input.size());
@@ -269,13 +269,17 @@ bool AdvertisingData::FromBytes(const common::ByteBuffer& data,
   }
 
   for (const auto& pair : manufacturer_data_) {
-    fidl_data->manufacturer_specific_data.insert(
-        pair.first, fidl::Array<unsigned char>::From(pair.second));
+    auto entry = ::btfidl::low_energy::ManufacturerSpecificDataEntry::New();
+    entry->company_id = pair.first;
+    entry->data = f1dl::Array<unsigned char>::From(pair.second);
+    fidl_data->manufacturer_specific_data.push_back(std::move(entry));
   }
 
   for (const auto& pair : service_data_) {
-    fidl_data->service_data.insert(
-        pair.first.ToString(), fidl::Array<unsigned char>::From(pair.second));
+    auto entry = ::btfidl::low_energy::ServiceDataEntry::New();
+    entry->uuid = pair.first.ToString();
+    entry->data = f1dl::Array<unsigned char>::From(pair.second);
+    fidl_data->service_data.push_back(std::move(entry));
   }
 
   for (const auto& uuid : service_uuids_) {
@@ -306,16 +310,16 @@ void AdvertisingData::FromFidl(
   }
 
   for (const auto& it : fidl_ad->manufacturer_specific_data) {
-    fidl::Array<uint8_t>& data = it.GetValue();
+    f1dl::Array<uint8_t>& data = it->data;
     common::BufferView manuf_view(data.data(), data.size());
-    out_ad->SetManufacturerData(it.GetKey(), manuf_view);
+    out_ad->SetManufacturerData(it->company_id, manuf_view);
   }
 
   for (const auto& it : fidl_ad->service_data) {
-    fidl::Array<uint8_t>& data = it.GetValue();
+    f1dl::Array<uint8_t>& data = it->data;
     common::BufferView servdata_view(data.data(), data.size());
     common::UUID servdata_uuid;
-    if (StringToUuid(it.GetKey().get(), &servdata_uuid)) {
+    if (StringToUuid(it->uuid.get(), &servdata_uuid)) {
       out_ad->SetServiceData(servdata_uuid, servdata_view);
     } else {
       FXL_LOG(WARNING) << "FIDL Service Data has malformed UUID";
@@ -447,9 +451,12 @@ common::Optional<uint16_t> AdvertisingData::appearance() const {
 
 size_t AdvertisingData::CalculateBlockSize() const {
   size_t len = 0;
-  if (tx_power_) len += 3;
-  if (appearance_) len += 4;
-  if (local_name_) len += 2 + local_name_->size();
+  if (tx_power_)
+    len += 3;
+  if (appearance_)
+    len += 4;
+  if (local_name_)
+    len += 2 + local_name_->size();
 
   for (const auto& manuf_pair : manufacturer_data_) {
     len += 2 + 2 + manuf_pair.second.size();
@@ -470,17 +477,20 @@ size_t AdvertisingData::CalculateBlockSize() const {
   for (const auto& uuid : service_uuids_) {
     switch (uuid.CompactSize()) {
       case 2: {
-        if (small_uuids == 0) len += 2;
+        if (small_uuids == 0)
+          len += 2;
         small_uuids++;
         break;
       }
       case 4: {
-        if (medium_uuids == 0) len += 2;
+        if (medium_uuids == 0)
+          len += 2;
         medium_uuids++;
         break;
       }
       case 16: {
-        if (big_uuids == 0) len += 2;
+        if (big_uuids == 0)
+          len += 2;
         big_uuids++;
         break;
       }

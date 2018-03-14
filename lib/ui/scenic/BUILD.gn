@@ -25,7 +25,6 @@ source_set("scenic") {
     "displays/display_watcher.h",
     "engine/engine.cc",
     "engine/engine.h",
-    "engine/event_reporter.h",
     "engine/frame_scheduler.cc",
     "engine/frame_scheduler.h",
     "engine/frame_timings.cc",
@@ -41,8 +40,11 @@ source_set("scenic") {
     "engine/session.h",
     "engine/session_handler.cc",
     "engine/session_handler.h",
+    "engine/session_manager.cc",
+    "engine/session_manager.h",
     "engine/unresolved_imports.cc",
     "engine/unresolved_imports.h",
+    "engine/update_scheduler.h",
     "resources/buffer.cc",
     "resources/buffer.h",
     "resources/camera.cc",
@@ -117,6 +119,8 @@ source_set("scenic") {
     "resources/shapes/shape.h",
     "resources/variable.cc",
     "resources/variable.h",
+    "scenic_system.cc",
+    "scenic_system.h",
     "swapchain/display_swapchain.cc",
     "swapchain/display_swapchain.h",
     "swapchain/magma_buffer.cc",
@@ -128,8 +132,6 @@ source_set("scenic") {
     "swapchain/swapchain.h",
     "swapchain/vulkan_display_swapchain.cc",
     "swapchain/vulkan_display_swapchain.h",
-    "util/error_reporter.cc",
-    "util/error_reporter.h",
     "util/event_timestamper.cc",
     "util/event_timestamper.h",
     "util/print_op.cc",
@@ -142,12 +144,13 @@ source_set("scenic") {
 
   defines = []
   if (scene_manager_vulkan_swapchain) {
-    defines += ["SCENE_MANAGER_VULKAN_SWAPCHAIN"]
+    defines += [ "SCENE_MANAGER_VULKAN_SWAPCHAIN" ]
   }
 
   public_configs = [ ":common_include_dirs" ]
 
   public_deps = [
+    "//garnet/lib/ui/mozart",
     "//garnet/public/lib/app/cpp",
     "//garnet/public/lib/escher",
     "//garnet/public/lib/fidl/cpp/bindings",
@@ -156,11 +159,13 @@ source_set("scenic") {
     "//garnet/public/lib/ui/geometry/cpp",
     "//garnet/public/lib/ui/geometry/fidl",
     "//garnet/public/lib/ui/scenic/fidl",
+    "//garnet/public/lib/ui/scenic/fidl:fidl_cpp_sources__common",
+    "//garnet/public/lib/vulkan",
   ]
 
   deps = [
     "//garnet/lib/magma:libmagma",
-    "//garnet/public/lib/vulkan",
+    "//garnet/public/lib/ui/scenic:fidl_helpers",
     "//zircon/public/lib/trace",
   ]
 }

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <unordered_set>
 
@@ -13,7 +14,6 @@
 #include "lib/fsl/threading/create_thread.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/macros.h"
-#include "lib/fxl/synchronization/mutex.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
 #include "lib/fxl/tasks/task_runner.h"
 
@@ -56,7 +56,7 @@ class FactoryServiceBase {
 
    protected:
     Product(Interface* impl,
-            fidl::InterfaceRequest<Interface> request,
+            f1dl::InterfaceRequest<Interface> request,
             Factory* owner)
         : ProductBase(owner), binding_(impl, std::move(request)) {
       FXL_DCHECK(impl);
@@ -69,7 +69,7 @@ class FactoryServiceBase {
     }
 
     // Returns the binding established via the request in the constructor.
-    const fidl::Binding<Interface>& binding() { return binding_; }
+    const f1dl::Binding<Interface>& binding() { return binding_; }
 
     // Increments the retention count.
     void Retain() { ++retention_count_; }
@@ -99,7 +99,7 @@ class FactoryServiceBase {
 
    private:
     size_t retention_count_ = 0;
-    fidl::Binding<Interface> binding_;
+    f1dl::Binding<Interface> binding_;
   };
 
   FactoryServiceBase(
@@ -116,7 +116,7 @@ class FactoryServiceBase {
 
   // Connects to a service registered with the application environment.
   template <typename Interface>
-  fidl::InterfacePtr<Interface> ConnectToEnvironmentService(
+  f1dl::InterfacePtr<Interface> ConnectToEnvironmentService(
       const std::string& interface_name = Interface::Name_) {
     return application_context_->ConnectToEnvironmentService<Interface>(
         interface_name);
@@ -126,15 +126,18 @@ class FactoryServiceBase {
   // Adds a product to the factory's collection of products. Threadsafe.
   template <typename ProductImpl>
   void AddProduct(std::shared_ptr<ProductImpl> product) {
-    fxl::MutexLocker locker(&mutex_);
+    std::lock_guard<std::mutex> locker(mutex_);
     products_.insert(std::static_pointer_cast<ProductBase>(product));
   }
 
   // Removes a product from the factory's collection of products. Threadsafe.
   void RemoveProduct(std::shared_ptr<ProductBase> product) {
-    fxl::MutexLocker locker(&mutex_);
+    std::lock_guard<std::mutex> locker(mutex_);
     bool erased = products_.erase(product);
     FXL_DCHECK(erased);
+    if (products_.empty()) {
+      OnLastProductRemoved();
+    }
   }
 
   // Creates a new product (by calling |product_creator|) on a new thread. The
@@ -152,10 +155,14 @@ class FactoryServiceBase {
     thread.detach();
   }
 
+  // Called when the number of products transitions from one to zero. The
+  // default implementation does nothing.
+  virtual void OnLastProductRemoved() {}
+
  private:
   std::unique_ptr<app::ApplicationContext> application_context_;
   fxl::RefPtr<fxl::TaskRunner> task_runner_;
-  mutable fxl::Mutex mutex_;
+  mutable std::mutex mutex_;
   std::unordered_set<std::shared_ptr<ProductBase>> products_
       FXL_GUARDED_BY(mutex_);
 

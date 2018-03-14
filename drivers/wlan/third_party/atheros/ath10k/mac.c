@@ -242,7 +242,7 @@ static int ath10k_send_key(struct ath10k_vif* arvif,
         .macaddr = macaddr,
     };
 
-    lockdep_assert_held(&arvif->ar->conf_mutex);
+    ASSERT_MTX_HELD(&arvif->ar->conf_mutex);
 
     switch (key->cipher) {
     case WLAN_CIPHER_SUITE_CCMP:
@@ -284,11 +284,10 @@ static int ath10k_install_key(struct ath10k_vif* arvif,
                               const uint8_t* macaddr, uint32_t flags) {
     struct ath10k* ar = arvif->ar;
     int ret;
-    unsigned long time_left;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    reinit_completion(&ar->install_key_done);
+    completion_reset(&ar->install_key_done);
 
     if (arvif->nohwcrypt) {
         return 1;
@@ -299,8 +298,7 @@ static int ath10k_install_key(struct ath10k_vif* arvif,
         return ret;
     }
 
-    time_left = wait_for_completion_timeout(&ar->install_key_done, 3 * HZ);
-    if (time_left == 0) {
+    if (completion_wait(&ar->install_key_done, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
         return -ETIMEDOUT;
     }
 
@@ -315,7 +313,7 @@ static int ath10k_install_peer_wep_keys(struct ath10k_vif* arvif,
     int i;
     uint32_t flags;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (WARN_ON(arvif->vif->type != NL80211_IFTYPE_AP &&
                 arvif->vif->type != NL80211_IFTYPE_ADHOC &&
@@ -323,9 +321,9 @@ static int ath10k_install_peer_wep_keys(struct ath10k_vif* arvif,
         return -EINVAL;
     }
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     peer = ath10k_peer_find(ar, arvif->vdev_id, addr);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     if (!peer) {
         return -ENOENT;
@@ -369,9 +367,9 @@ static int ath10k_install_peer_wep_keys(struct ath10k_vif* arvif,
             return -EINVAL;
         }
 
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
         peer->keys[i] = arvif->wep_keys[i];
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
     }
 
     /* In some cases (notably with static WEP IBSS with multiple keys)
@@ -412,11 +410,11 @@ static int ath10k_clear_peer_keys(struct ath10k_vif* arvif,
     int i;
     uint32_t flags = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     peer = ath10k_peer_find(ar, arvif->vdev_id, addr);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     if (!peer) {
         return -ENOENT;
@@ -438,9 +436,9 @@ static int ath10k_clear_peer_keys(struct ath10k_vif* arvif,
             ath10k_warn("failed to remove peer wep key %d: %d\n",
                         i, ret);
 
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
         peer->keys[i] = NULL;
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
     }
 
     return first_errno;
@@ -451,7 +449,7 @@ bool ath10k_mac_is_peer_wep_key_set(struct ath10k* ar, const uint8_t* addr,
     struct ath10k_peer* peer;
     int i;
 
-    lockdep_assert_held(&ar->data_lock);
+    ASSERT_MTX_HELD(&ar->data_lock);
 
     /* We don't know which vdev this peer belongs to,
      * since WMI doesn't give us that information.
@@ -482,13 +480,13 @@ static int ath10k_clear_vdev_key(struct ath10k_vif* arvif,
     int i;
     uint32_t flags = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     for (;;) {
         /* since ath10k_install_key we can't hold data_lock all the
          * time, so we try to remove the keys incrementally
          */
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
         i = 0;
         list_for_each_entry(peer, &ar->peers, list) {
             for (i = 0; i < ARRAY_SIZE(peer->keys); i++) {
@@ -503,7 +501,7 @@ static int ath10k_clear_vdev_key(struct ath10k_vif* arvif,
                 break;
             }
         }
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
 
         if (i == ARRAY_SIZE(peer->keys)) {
             break;
@@ -528,7 +526,7 @@ static int ath10k_mac_vif_update_wep_key(struct ath10k_vif* arvif,
     struct ath10k_peer* peer;
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     list_for_each_entry(peer, &ar->peers, list) {
         if (ether_addr_equal(peer->addr, arvif->vif->addr)) {
@@ -714,7 +712,7 @@ static int ath10k_peer_create(struct ath10k* ar,
     int num_peers = 0;
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     num_peers = ar->num_peers;
 
@@ -740,11 +738,11 @@ static int ath10k_peer_create(struct ath10k* ar,
         return ret;
     }
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
 
     peer = ath10k_peer_find(ar, vdev_id, addr);
     if (!peer) {
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
         ath10k_warn("failed to find peer %pM on vdev %i after creation\n",
                     addr, vdev_id);
         ath10k_wmi_peer_delete(ar, vdev_id, addr);
@@ -754,7 +752,7 @@ static int ath10k_peer_create(struct ath10k* ar,
     peer->vif = vif;
     peer->sta = sta;
 
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     ar->num_peers++;
 
@@ -816,7 +814,7 @@ static int ath10k_mac_set_rts(struct ath10k_vif* arvif, uint32_t value) {
 static int ath10k_peer_delete(struct ath10k* ar, uint32_t vdev_id, const uint8_t* addr) {
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ret = ath10k_wmi_peer_delete(ar, vdev_id, addr);
     if (ret) {
@@ -838,9 +836,9 @@ static void ath10k_peer_cleanup(struct ath10k* ar, uint32_t vdev_id) {
     int peer_id;
     int i;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     list_for_each_entry_safe(peer, tmp, &ar->peers, list) {
         if (peer->vdev_id != vdev_id) {
             continue;
@@ -869,16 +867,16 @@ static void ath10k_peer_cleanup(struct ath10k* ar, uint32_t vdev_id) {
         kfree(peer);
         ar->num_peers--;
     }
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 }
 
 static void ath10k_peer_cleanup_all(struct ath10k* ar) {
     struct ath10k_peer* peer, *tmp;
     int i;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     list_for_each_entry_safe(peer, tmp, &ar->peers, list) {
         list_del(&peer->list);
         kfree(peer);
@@ -888,7 +886,7 @@ static void ath10k_peer_cleanup_all(struct ath10k* ar) {
         ar->peer_map[i] = NULL;
     }
 
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     ar->num_peers = 0;
     ar->num_stations = 0;
@@ -902,7 +900,7 @@ static int ath10k_mac_tdls_peer_update(struct ath10k* ar, uint32_t vdev_id,
     struct wmi_tdls_peer_capab_arg cap = {};
     struct wmi_channel_arg chan_arg = {};
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     arg.vdev_id = vdev_id;
     arg.peer_state = state;
@@ -933,7 +931,7 @@ static int ath10k_mac_tdls_peer_update(struct ath10k* ar, uint32_t vdev_id,
 void ath10k_mac_vif_beacon_free(struct ath10k_vif* arvif) {
     struct ath10k* ar = arvif->ar;
 
-    lockdep_assert_held(&ar->data_lock);
+    ASSERT_MTX_HELD(&ar->data_lock);
 
     if (!arvif->beacon) {
         return;
@@ -957,7 +955,7 @@ void ath10k_mac_vif_beacon_free(struct ath10k_vif* arvif) {
 static void ath10k_mac_vif_beacon_cleanup(struct ath10k_vif* arvif) {
     struct ath10k* ar = arvif->ar;
 
-    lockdep_assert_held(&ar->data_lock);
+    ASSERT_MTX_HELD(&ar->data_lock);
 
     ath10k_mac_vif_beacon_free(arvif);
 
@@ -969,17 +967,14 @@ static void ath10k_mac_vif_beacon_cleanup(struct ath10k_vif* arvif) {
 }
 
 static inline int ath10k_vdev_setup_sync(struct ath10k* ar) {
-    unsigned long time_left;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (test_bit(ATH10K_FLAG_CRASH_FLUSH, &ar->dev_flags)) {
         return -ESHUTDOWN;
     }
 
-    time_left = wait_for_completion_timeout(&ar->vdev_setup_done,
-                                            ATH10K_VDEV_SETUP_TIMEOUT_HZ);
-    if (time_left == 0) {
+    if (completion_wait(&ar->vdev_setup_done, ATH10K_VDEV_SETUP_TIMEOUT) == ZX_ERR_TIMED_OUT) {
         return -ETIMEDOUT;
     }
 
@@ -992,7 +987,7 @@ static int ath10k_monitor_vdev_start(struct ath10k* ar, int vdev_id) {
     struct wmi_vdev_start_request_arg arg = {};
     int ret = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ieee80211_iter_chan_contexts_atomic(ar->hw,
                                         ath10k_mac_get_any_chandef_iter,
@@ -1020,7 +1015,7 @@ static int ath10k_monitor_vdev_start(struct ath10k* ar, int vdev_id) {
     arg.channel.max_reg_power = channel->max_reg_power * 2;
     arg.channel.max_antenna_gain = channel->max_antenna_gain * 2;
 
-    reinit_completion(&ar->vdev_setup_done);
+    completion_reset(&ar->vdev_setup_done);
 
     ret = ath10k_wmi_vdev_start(ar, &arg);
     if (ret) {
@@ -1061,14 +1056,14 @@ vdev_stop:
 static int ath10k_monitor_vdev_stop(struct ath10k* ar) {
     int ret = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ret = ath10k_wmi_vdev_down(ar, ar->monitor_vdev_id);
     if (ret)
         ath10k_warn("failed to put down monitor vdev %i: %d\n",
                     ar->monitor_vdev_id, ret);
 
-    reinit_completion(&ar->vdev_setup_done);
+    completion_reset(&ar->vdev_setup_done);
 
     ret = ath10k_wmi_vdev_stop(ar, ar->monitor_vdev_id);
     if (ret)
@@ -1088,7 +1083,7 @@ static int ath10k_monitor_vdev_stop(struct ath10k* ar) {
 static int ath10k_monitor_vdev_create(struct ath10k* ar) {
     int bit, ret = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (ar->free_vdev_map == 0) {
         ath10k_warn("failed to find free vdev id for monitor vdev\n");
@@ -1118,7 +1113,7 @@ static int ath10k_monitor_vdev_create(struct ath10k* ar) {
 static int ath10k_monitor_vdev_delete(struct ath10k* ar) {
     int ret = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ret = ath10k_wmi_vdev_delete(ar, ar->monitor_vdev_id);
     if (ret) {
@@ -1137,7 +1132,7 @@ static int ath10k_monitor_vdev_delete(struct ath10k* ar) {
 static int ath10k_monitor_start(struct ath10k* ar) {
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ret = ath10k_monitor_vdev_create(ar);
     if (ret) {
@@ -1161,7 +1156,7 @@ static int ath10k_monitor_start(struct ath10k* ar) {
 static int ath10k_monitor_stop(struct ath10k* ar) {
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ret = ath10k_monitor_vdev_stop(ar);
     if (ret) {
@@ -1227,7 +1222,7 @@ static int ath10k_monitor_recalc(struct ath10k* ar) {
     bool allowed;
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     needed = ath10k_mac_monitor_vdev_is_needed(ar);
     allowed = ath10k_mac_monitor_vdev_is_allowed(ar);
@@ -1264,7 +1259,7 @@ static int ath10k_monitor_recalc(struct ath10k* ar) {
 static bool ath10k_mac_can_set_cts_prot(struct ath10k_vif* arvif) {
     struct ath10k* ar = arvif->ar;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (!arvif->is_started) {
         ath10k_dbg(ar, ATH10K_DBG_MAC, "defer cts setup, vdev is not ready yet\n");
@@ -1278,7 +1273,7 @@ static int ath10k_mac_set_cts_prot(struct ath10k_vif* arvif) {
     struct ath10k* ar = arvif->ar;
     uint32_t vdev_param;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     vdev_param = ar->wmi.vdev_param->protection_mode;
 
@@ -1293,7 +1288,7 @@ static int ath10k_recalc_rtscts_prot(struct ath10k_vif* arvif) {
     struct ath10k* ar = arvif->ar;
     uint32_t vdev_param, rts_cts = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     vdev_param = ar->wmi.vdev_param->enable_rtscts;
 
@@ -1316,7 +1311,7 @@ static int ath10k_recalc_rtscts_prot(struct ath10k_vif* arvif) {
 static int ath10k_start_cac(struct ath10k* ar) {
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     set_bit(ATH10K_CAC_RUNNING, &ar->dev_flags);
 
@@ -1334,7 +1329,7 @@ static int ath10k_start_cac(struct ath10k* ar) {
 }
 
 static int ath10k_stop_cac(struct ath10k* ar) {
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     /* CAC is not running - do nothing */
     if (!test_bit(ATH10K_CAC_RUNNING, &ar->dev_flags)) {
@@ -1372,7 +1367,7 @@ static bool ath10k_mac_has_radar_enabled(struct ath10k* ar) {
 static void ath10k_recalc_radar_detection(struct ath10k* ar) {
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ath10k_stop_cac(ar);
 
@@ -1400,9 +1395,9 @@ static int ath10k_vdev_stop(struct ath10k_vif* arvif) {
     struct ath10k* ar = arvif->ar;
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    reinit_completion(&ar->vdev_setup_done);
+    completion_reset(&ar->vdev_setup_done);
 
     ret = ath10k_wmi_vdev_stop(ar, arvif->vdev_id);
     if (ret) {
@@ -1435,9 +1430,9 @@ static int ath10k_vdev_start_restart(struct ath10k_vif* arvif,
     struct wmi_vdev_start_request_arg arg = {};
     int ret = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    reinit_completion(&ar->vdev_setup_done);
+    completion_reset(&ar->vdev_setup_done);
 
     arg.vdev_id = arvif->vdev_id;
     arg.dtim_period = arvif->dtim_period;
@@ -1734,7 +1729,7 @@ static void ath10k_control_beaconing(struct ath10k_vif* arvif,
     struct ath10k* ar = arvif->ar;
     int ret = 0;
 
-    lockdep_assert_held(&arvif->ar->conf_mutex);
+    ASSERT_MTX_HELD(&arvif->ar->conf_mutex);
 
     if (!info->enable_beacon) {
         ret = ath10k_wmi_vdev_down(ar, arvif->vdev_id);
@@ -1744,9 +1739,9 @@ static void ath10k_control_beaconing(struct ath10k_vif* arvif,
 
         arvif->is_up = false;
 
-        spin_lock_bh(&arvif->ar->data_lock);
+        mtx_lock(&arvif->ar->data_lock);
         ath10k_mac_vif_beacon_free(arvif);
-        spin_unlock_bh(&arvif->ar->data_lock);
+        mtx_unlock(&arvif->ar->data_lock);
 
         return;
     }
@@ -1783,7 +1778,7 @@ static void ath10k_control_ibss(struct ath10k_vif* arvif,
     uint32_t vdev_param;
     int ret = 0;
 
-    lockdep_assert_held(&arvif->ar->conf_mutex);
+    ASSERT_MTX_HELD(&arvif->ar->conf_mutex);
 
     if (!info->ibss_joined) {
         if (is_zero_ether_addr(arvif->bssid)) {
@@ -1809,7 +1804,7 @@ static int ath10k_mac_vif_recalc_ps_wake_threshold(struct ath10k_vif* arvif) {
     uint32_t value;
     int ret;
 
-    lockdep_assert_held(&arvif->ar->conf_mutex);
+    ASSERT_MTX_HELD(&arvif->ar->conf_mutex);
 
     if (arvif->u.sta.uapsd) {
         value = WMI_STA_PS_TX_WAKE_THRESHOLD_NEVER;
@@ -1834,7 +1829,7 @@ static int ath10k_mac_vif_recalc_ps_poll_count(struct ath10k_vif* arvif) {
     uint32_t value;
     int ret;
 
-    lockdep_assert_held(&arvif->ar->conf_mutex);
+    ASSERT_MTX_HELD(&arvif->ar->conf_mutex);
 
     if (arvif->u.sta.uapsd) {
         value = WMI_STA_PS_PSPOLL_COUNT_UAPSD;
@@ -1858,7 +1853,7 @@ static int ath10k_mac_num_vifs_started(struct ath10k* ar) {
     struct ath10k_vif* arvif;
     int num = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     list_for_each_entry(arvif, &ar->arvifs, list)
     if (arvif->is_started) {
@@ -1878,7 +1873,7 @@ static int ath10k_mac_vif_setup_ps(struct ath10k_vif* arvif) {
     int ps_timeout;
     bool enable_ps;
 
-    lockdep_assert_held(&arvif->ar->conf_mutex);
+    ASSERT_MTX_HELD(&arvif->ar->conf_mutex);
 
     if (arvif->vif->type != NL80211_IFTYPE_STATION) {
         return 0;
@@ -1941,7 +1936,7 @@ static int ath10k_mac_vif_disable_keepalive(struct ath10k_vif* arvif) {
     struct wmi_sta_keepalive_arg arg = {};
     int ret;
 
-    lockdep_assert_held(&arvif->ar->conf_mutex);
+    ASSERT_MTX_HELD(&arvif->ar->conf_mutex);
 
     if (arvif->vdev_type != WMI_VDEV_TYPE_STA) {
         return 0;
@@ -1974,7 +1969,7 @@ static void ath10k_mac_vif_ap_csa_count_down(struct ath10k_vif* arvif) {
     struct ieee80211_vif* vif = arvif->vif;
     int ret;
 
-    lockdep_assert_held(&arvif->ar->conf_mutex);
+    ASSERT_MTX_HELD(&arvif->ar->conf_mutex);
 
     if (WARN_ON(!test_bit(WMI_SERVICE_BEACON_OFFLOAD, ar->wmi.svc_map))) {
         return;
@@ -2014,9 +2009,9 @@ static void ath10k_mac_vif_ap_csa_work(struct work_struct* work) {
                                             ap_csa_work);
     struct ath10k* ar = arvif->ar;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
     ath10k_mac_vif_ap_csa_count_down(arvif);
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 }
 
 static void ath10k_mac_handle_beacon_iter(void* data, uint8_t* mac,
@@ -2116,7 +2111,7 @@ static void ath10k_peer_assoc_h_basic(struct ath10k* ar,
     struct ath10k_vif* arvif = (void*)vif->drv_priv;
     uint32_t aid;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (vif->type == NL80211_IFTYPE_STATION) {
         aid = vif->bss_conf.aid;
@@ -2143,7 +2138,7 @@ static void ath10k_peer_assoc_h_crypto(struct ath10k* ar,
     const uint8_t* rsnie = NULL;
     const uint8_t* wpaie = NULL;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (WARN_ON(ath10k_mac_vif_chan(vif, &def))) {
         return;
@@ -2199,7 +2194,7 @@ static void ath10k_peer_assoc_h_rates(struct ath10k* ar,
     uint8_t rate;
     int i;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (WARN_ON(ath10k_mac_vif_chan(vif, &def))) {
         return;
@@ -2262,7 +2257,7 @@ static void ath10k_peer_assoc_h_ht(struct ath10k* ar,
     uint8_t max_nss;
     uint32_t stbc;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (WARN_ON(ath10k_mac_vif_chan(vif, &def))) {
         return;
@@ -2368,7 +2363,7 @@ static int ath10k_peer_assoc_qos_ap(struct ath10k* ar,
     uint32_t max_sp = 0;
     int ret = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (sta->wme && sta->uapsd_queues) {
         ath10k_dbg(ar, ATH10K_DBG_MAC, "mac uapsd_queues 0x%x max_sp %d\n",
@@ -2723,7 +2718,7 @@ static int ath10k_peer_assoc_prepare(struct ath10k* ar,
                                      struct ieee80211_vif* vif,
                                      struct ieee80211_sta* sta,
                                      struct wmi_peer_assoc_complete_arg* arg) {
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     memset(arg, 0, sizeof(*arg));
 
@@ -2851,7 +2846,7 @@ static void ath10k_bss_assoc(struct ieee80211_hw* hw,
     struct ieee80211_sta* ap_sta;
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ath10k_dbg(ar, ATH10K_DBG_MAC, "mac vdev %i assoc bssid %pM aid %d\n",
                arvif->vdev_id, arvif->bssid, arvif->aid);
@@ -2941,7 +2936,7 @@ static void ath10k_bss_disassoc(struct ieee80211_hw* hw,
     struct ieee80211_sta_vht_cap vht_cap = {};
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ath10k_dbg(ar, ATH10K_DBG_MAC, "mac vdev %i disassoc bssid %pM\n",
                arvif->vdev_id, arvif->bssid);
@@ -2973,7 +2968,7 @@ static int ath10k_station_assoc(struct ath10k* ar,
     struct wmi_peer_assoc_complete_arg peer_arg;
     int ret = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ret = ath10k_peer_assoc_prepare(ar, vif, sta, &peer_arg);
     if (ret) {
@@ -3038,7 +3033,7 @@ static int ath10k_station_disassoc(struct ath10k* ar,
     struct ath10k_vif* arvif = (void*)vif->drv_priv;
     int ret = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (!sta->wme) {
         arvif->num_legacy_stations--;
@@ -3076,7 +3071,7 @@ static int ath10k_update_channel_list(struct ath10k* ar) {
     int ret;
     int i;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     bands = hw->wiphy->bands;
     for (band = 0; band < NUM_NL80211_BANDS; band++) {
@@ -3189,7 +3184,7 @@ static void ath10k_regd_update(struct ath10k* ar) {
     enum wmi_dfs_region wmi_dfs_reg;
     enum nl80211_dfs_regions nl_dfs_reg;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ret = ath10k_update_channel_list(ar);
     if (ret) {
@@ -3252,11 +3247,11 @@ static void ath10k_reg_notifier(struct wiphy* wiphy,
                         request->dfs_region);
     }
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
     if (ar->state == ATH10K_STATE_ON) {
         ath10k_regd_update(ar);
     }
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 
     if (ar->phy_capability & WHAL_WLAN_11A_CAPABILITY)
         ath10k_mac_update_channel_list(ar,
@@ -3275,7 +3270,7 @@ enum ath10k_mac_tx_path {
 };
 
 void ath10k_mac_tx_lock(struct ath10k* ar, int reason) {
-    lockdep_assert_held(&ar->htt.tx_lock);
+    ASSERT_MTX_HELD(&ar->htt.tx_lock);
 
     WARN_ON(reason >= ATH10K_TX_PAUSE_MAX);
     ar->tx_paused |= BIT(reason);
@@ -3295,7 +3290,7 @@ static void ath10k_mac_tx_unlock_iter(void* data, uint8_t* mac,
 }
 
 void ath10k_mac_tx_unlock(struct ath10k* ar, int reason) {
-    lockdep_assert_held(&ar->htt.tx_lock);
+    ASSERT_MTX_HELD(&ar->htt.tx_lock);
 
     WARN_ON(reason >= ATH10K_TX_PAUSE_MAX);
     ar->tx_paused &= ~BIT(reason);
@@ -3315,7 +3310,7 @@ void ath10k_mac_tx_unlock(struct ath10k* ar, int reason) {
 void ath10k_mac_vif_tx_lock(struct ath10k_vif* arvif, int reason) {
     struct ath10k* ar = arvif->ar;
 
-    lockdep_assert_held(&ar->htt.tx_lock);
+    ASSERT_MTX_HELD(&ar->htt.tx_lock);
 
     WARN_ON(reason >= BITS_PER_LONG);
     arvif->tx_paused |= BIT(reason);
@@ -3325,7 +3320,7 @@ void ath10k_mac_vif_tx_lock(struct ath10k_vif* arvif, int reason) {
 void ath10k_mac_vif_tx_unlock(struct ath10k_vif* arvif, int reason) {
     struct ath10k* ar = arvif->ar;
 
-    lockdep_assert_held(&ar->htt.tx_lock);
+    ASSERT_MTX_HELD(&ar->htt.tx_lock);
 
     WARN_ON(reason >= BITS_PER_LONG);
     arvif->tx_paused &= ~BIT(reason);
@@ -3346,7 +3341,7 @@ static void ath10k_mac_vif_handle_tx_pause(struct ath10k_vif* arvif,
         enum wmi_tlv_tx_pause_action action) {
     struct ath10k* ar = arvif->ar;
 
-    lockdep_assert_held(&ar->htt.tx_lock);
+    ASSERT_MTX_HELD(&ar->htt.tx_lock);
 
     switch (action) {
     case WMI_TLV_TX_PAUSE_ACTION_STOP:
@@ -3390,12 +3385,12 @@ void ath10k_mac_handle_tx_pause_vdev(struct ath10k* ar, uint32_t vdev_id,
         .action = action,
     };
 
-    spin_lock_bh(&ar->htt.tx_lock);
+    mtx_lock(&ar->htt.tx_lock);
     ieee80211_iterate_active_interfaces_atomic(ar->hw,
             IEEE80211_IFACE_ITER_RESUME_ALL,
             ath10k_mac_handle_tx_pause_iter,
             &arg);
-    spin_unlock_bh(&ar->htt.tx_lock);
+    mtx_unlock(&ar->htt.tx_lock);
 }
 
 static enum ath10k_hw_txrx_mode
@@ -3545,13 +3540,13 @@ static void ath10k_tx_h_add_p2p_noa_ie(struct ath10k* ar,
     }
 
     if (unlikely(ieee80211_is_probe_resp(hdr->frame_control))) {
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
         if (arvif->u.ap.noa_data)
             if (!pskb_expand_head(skb, 0, arvif->u.ap.noa_len,
                                   GFP_ATOMIC))
                 skb_put_data(skb, arvif->u.ap.noa_data,
                              arvif->u.ap.noa_len);
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
     }
 }
 
@@ -3595,7 +3590,7 @@ static int ath10k_mac_tx_wmi_mgmt(struct ath10k* ar, struct sk_buff* skb) {
     struct sk_buff_head* q = &ar->wmi_mgmt_tx_queue;
     int ret = 0;
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
 
     if (skb_queue_len(q) == ATH10K_MAX_NUM_MGMT_PENDING) {
         ath10k_warn("wmi mgmt tx queue is full\n");
@@ -3607,7 +3602,7 @@ static int ath10k_mac_tx_wmi_mgmt(struct ath10k* ar, struct sk_buff* skb) {
     ieee80211_queue_work(ar->hw, &ar->wmi_mgmt_tx_work);
 
 unlock:
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     return ret;
 }
@@ -3748,7 +3743,6 @@ void ath10k_offchan_tx_work(struct work_struct* work) {
     const uint8_t* peer_addr;
     int vdev_id;
     int ret;
-    unsigned long time_left;
     bool tmp_peer_created = false;
 
     /* FW requirement: We must create a peer before FW will send out
@@ -3765,7 +3759,7 @@ void ath10k_offchan_tx_work(struct work_struct* work) {
             break;
         }
 
-        mutex_lock(&ar->conf_mutex);
+        mtx_lock(&ar->conf_mutex);
 
         ath10k_dbg(ar, ATH10K_DBG_MAC, "mac offchannel skb %pK\n",
                    skb);
@@ -3773,10 +3767,10 @@ void ath10k_offchan_tx_work(struct work_struct* work) {
         hdr = (struct ieee80211_hdr*)skb->data;
         peer_addr = ieee80211_get_DA(hdr);
 
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
         vdev_id = ar->scan.vdev_id;
         peer = ath10k_peer_find(ar, vdev_id, peer_addr);
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
 
         if (peer)
             /* FIXME: should this use ath10k_warn()? */
@@ -3793,10 +3787,10 @@ void ath10k_offchan_tx_work(struct work_struct* work) {
             tmp_peer_created = (ret == 0);
         }
 
-        spin_lock_bh(&ar->data_lock);
-        reinit_completion(&ar->offchan_tx_completed);
+        mtx_lock(&ar->data_lock);
+        completion_reset(&ar->offchan_tx_completed);
         ar->offchan_tx_skb = skb;
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
 
         /* It's safe to access vif and sta - conf_mutex guarantees that
          * sta_state() and remove_interface() are locked exclusively
@@ -3821,11 +3815,9 @@ void ath10k_offchan_tx_work(struct work_struct* work) {
             /* not serious */
         }
 
-        time_left =
-            wait_for_completion_timeout(&ar->offchan_tx_completed, 3 * HZ);
-        if (time_left == 0)
-            ath10k_warn("timed out waiting for offchannel skb %pK\n",
-                        skb);
+        if (completion_wait(&ar->offchan_tx_completed, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
+            ath10k_warn("timed out waiting for offchannel skb %pK\n", skb);
+        }
 
         if (!peer && tmp_peer_created) {
             ret = ath10k_peer_delete(ar, vdev_id, peer_addr);
@@ -3834,7 +3826,7 @@ void ath10k_offchan_tx_work(struct work_struct* work) {
                             peer_addr, vdev_id, ret);
         }
 
-        mutex_unlock(&ar->conf_mutex);
+        mtx_unlock(&ar->conf_mutex);
     }
 }
 
@@ -3893,20 +3885,20 @@ static void ath10k_mac_txq_unref(struct ath10k* ar, struct ieee80211_txq* txq) {
     }
 
     artxq = (void*)txq->drv_priv;
-    spin_lock_bh(&ar->txqs_lock);
+    mtx_lock(&ar->txqs_lock);
     if (!list_empty(&artxq->list)) {
         list_del_init(&artxq->list);
     }
-    spin_unlock_bh(&ar->txqs_lock);
+    mtx_unlock(&ar->txqs_lock);
 
-    spin_lock_bh(&ar->htt.tx_lock);
+    mtx_lock(&ar->htt.tx_lock);
     idr_for_each_entry(&ar->htt.pending_tx, msdu, msdu_id) {
         cb = ATH10K_SKB_CB(msdu);
         if (cb->txq == txq) {
             cb->txq = NULL;
         }
     }
-    spin_unlock_bh(&ar->htt.tx_lock);
+    mtx_unlock(&ar->htt.tx_lock);
 }
 
 struct ieee80211_txq* ath10k_mac_txq_lookup(struct ath10k* ar,
@@ -3914,7 +3906,7 @@ struct ieee80211_txq* ath10k_mac_txq_lookup(struct ath10k* ar,
         uint8_t tid) {
     struct ath10k_peer* peer;
 
-    lockdep_assert_held(&ar->data_lock);
+    ASSERT_MTX_HELD(&ar->data_lock);
 
     peer = ar->peer_map[peer_id];
     if (!peer) {
@@ -3971,9 +3963,9 @@ int ath10k_mac_tx_push_txq(struct ieee80211_hw* hw,
     bool is_mgmt, is_presp;
     int ret;
 
-    spin_lock_bh(&ar->htt.tx_lock);
+    mtx_lock(&ar->htt.tx_lock);
     ret = ath10k_htt_tx_inc_pending(htt);
-    spin_unlock_bh(&ar->htt.tx_lock);
+    mtx_unlock(&ar->htt.tx_lock);
 
     if (ret) {
         return ret;
@@ -3981,9 +3973,9 @@ int ath10k_mac_tx_push_txq(struct ieee80211_hw* hw,
 
     skb = ieee80211_tx_dequeue(hw, txq);
     if (!skb) {
-        spin_lock_bh(&ar->htt.tx_lock);
+        mtx_lock(&ar->htt.tx_lock);
         ath10k_htt_tx_dec_pending(htt);
-        spin_unlock_bh(&ar->htt.tx_lock);
+        mtx_unlock(&ar->htt.tx_lock);
 
         return -ENOENT;
     }
@@ -3999,34 +3991,34 @@ int ath10k_mac_tx_push_txq(struct ieee80211_hw* hw,
         hdr = (struct ieee80211_hdr*)skb->data;
         is_presp = ieee80211_is_probe_resp(hdr->frame_control);
 
-        spin_lock_bh(&ar->htt.tx_lock);
+        mtx_lock(&ar->htt.tx_lock);
         ret = ath10k_htt_tx_mgmt_inc_pending(htt, is_mgmt, is_presp);
 
         if (ret) {
             ath10k_htt_tx_dec_pending(htt);
-            spin_unlock_bh(&ar->htt.tx_lock);
+            mtx_unlock(&ar->htt.tx_lock);
             return ret;
         }
-        spin_unlock_bh(&ar->htt.tx_lock);
+        mtx_unlock(&ar->htt.tx_lock);
     }
 
     ret = ath10k_mac_tx(ar, vif, txmode, txpath, skb);
     if (unlikely(ret)) {
         ath10k_warn("failed to push frame: %d\n", ret);
 
-        spin_lock_bh(&ar->htt.tx_lock);
+        mtx_lock(&ar->htt.tx_lock);
         ath10k_htt_tx_dec_pending(htt);
         if (is_mgmt) {
             ath10k_htt_tx_mgmt_dec_pending(htt);
         }
-        spin_unlock_bh(&ar->htt.tx_lock);
+        mtx_unlock(&ar->htt.tx_lock);
 
         return ret;
     }
 
-    spin_lock_bh(&ar->htt.tx_lock);
+    mtx_lock(&ar->htt.tx_lock);
     artxq->num_fw_queued++;
-    spin_unlock_bh(&ar->htt.tx_lock);
+    mtx_unlock(&ar->htt.tx_lock);
 
     return skb_len;
 }
@@ -4043,7 +4035,7 @@ void ath10k_mac_tx_push_pending(struct ath10k* ar) {
         return;
     }
 
-    spin_lock_bh(&ar->txqs_lock);
+    mtx_lock(&ar->txqs_lock);
     rcu_read_lock();
 
     last = list_last_entry(&ar->txqs, struct ath10k_txq, list);
@@ -4075,7 +4067,7 @@ void ath10k_mac_tx_push_pending(struct ath10k* ar) {
     }
 
     rcu_read_unlock();
-    spin_unlock_bh(&ar->txqs_lock);
+    mtx_unlock(&ar->txqs_lock);
 }
 
 /************/
@@ -4083,7 +4075,7 @@ void ath10k_mac_tx_push_pending(struct ath10k* ar) {
 /************/
 
 void __ath10k_scan_finish(struct ath10k* ar) {
-    lockdep_assert_held(&ar->data_lock);
+    ASSERT_MTX_HELD(&ar->data_lock);
 
     switch (ar->scan.state) {
     case ATH10K_SCAN_IDLE:
@@ -4107,15 +4099,15 @@ void __ath10k_scan_finish(struct ath10k* ar) {
         ar->scan.roc_freq = 0;
         ath10k_offchan_tx_purge(ar);
         cancel_delayed_work(&ar->scan.timeout);
-        complete(&ar->scan.completed);
+        completion_signal(&ar->scan.completed);
         break;
     }
 }
 
 void ath10k_scan_finish(struct ath10k* ar) {
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     __ath10k_scan_finish(ar);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 }
 
 static int ath10k_scan_stop(struct ath10k* ar) {
@@ -4126,7 +4118,7 @@ static int ath10k_scan_stop(struct ath10k* ar) {
     };
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ret = ath10k_wmi_stop_scan(ar, &arg);
     if (ret) {
@@ -4134,12 +4126,14 @@ static int ath10k_scan_stop(struct ath10k* ar) {
         goto out;
     }
 
-    ret = wait_for_completion_timeout(&ar->scan.completed, 3 * HZ);
-    if (ret == 0) {
+    zx_status_t status = completion_wait(&ar->scan.completed, ZX_SEC(3));
+    if (status == ZX_ERR_TIMED_OUT) {
         ath10k_warn("failed to receive scan abortion completion: timed out\n");
         ret = -ETIMEDOUT;
-    } else if (ret > 0) {
+    } else if (status == ZX_OK) {
         ret = 0;
+    } else {
+        ZX_DEBUG_ASSERT(0);
     }
 
 out:
@@ -4150,11 +4144,11 @@ out:
      * being overflown with data and/or it can recover on its own before
      * next scan request is submitted.
      */
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     if (ar->scan.state != ATH10K_SCAN_IDLE) {
         __ath10k_scan_finish(ar);
     }
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     return ret;
 }
@@ -4162,9 +4156,9 @@ out:
 static void ath10k_scan_abort(struct ath10k* ar) {
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
 
     switch (ar->scan.state) {
     case ATH10K_SCAN_IDLE:
@@ -4180,42 +4174,41 @@ static void ath10k_scan_abort(struct ath10k* ar) {
         break;
     case ATH10K_SCAN_RUNNING:
         ar->scan.state = ATH10K_SCAN_ABORTING;
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
 
         ret = ath10k_scan_stop(ar);
         if (ret) {
             ath10k_warn("failed to abort scan: %d\n", ret);
         }
 
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
         break;
     }
 
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 }
 
 void ath10k_scan_timeout_work(struct work_struct* work) {
     struct ath10k* ar = container_of(work, struct ath10k,
                                      scan.timeout.work);
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
     ath10k_scan_abort(ar);
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 }
 
 static int ath10k_start_scan(struct ath10k* ar,
                              const struct wmi_start_scan_arg* arg) {
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ret = ath10k_wmi_start_scan(ar, arg);
     if (ret) {
         return ret;
     }
 
-    ret = wait_for_completion_timeout(&ar->scan.started, 1 * HZ);
-    if (ret == 0) {
+    if (completion_wait(&ar->scan.started, ZX_SEC(1)) == ZX_ERR_TIMED_OUT) {
         ret = ath10k_scan_stop(ar);
         if (ret) {
             ath10k_warn("failed to stop scan: %d\n", ret);
@@ -4228,12 +4221,12 @@ static int ath10k_start_scan(struct ath10k* ar,
      * this point.  This is probably due to some issue in the
      * firmware, but no need to wedge the driver due to that...
      */
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     if (ar->scan.state == ATH10K_SCAN_IDLE) {
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
         return -EINVAL;
     }
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     return 0;
 }
@@ -4268,14 +4261,14 @@ static void ath10k_mac_op_tx(struct ieee80211_hw* hw,
     is_mgmt = (txpath == ATH10K_MAC_TX_HTT_MGMT);
 
     if (is_htt) {
-        spin_lock_bh(&ar->htt.tx_lock);
+        mtx_lock(&ar->htt.tx_lock);
         is_presp = ieee80211_is_probe_resp(hdr->frame_control);
 
         ret = ath10k_htt_tx_inc_pending(htt);
         if (ret) {
             ath10k_warn("failed to increase tx pending count: %d, dropping\n",
                         ret);
-            spin_unlock_bh(&ar->htt.tx_lock);
+            mtx_unlock(&ar->htt.tx_lock);
             ieee80211_free_txskb(ar->hw, skb);
             return;
         }
@@ -4285,23 +4278,23 @@ static void ath10k_mac_op_tx(struct ieee80211_hw* hw,
             ath10k_dbg(ar, ATH10K_DBG_MAC, "failed to increase tx mgmt pending count: %d, dropping\n",
                        ret);
             ath10k_htt_tx_dec_pending(htt);
-            spin_unlock_bh(&ar->htt.tx_lock);
+            mtx_unlock(&ar->htt.tx_lock);
             ieee80211_free_txskb(ar->hw, skb);
             return;
         }
-        spin_unlock_bh(&ar->htt.tx_lock);
+        mtx_unlock(&ar->htt.tx_lock);
     }
 
     ret = ath10k_mac_tx(ar, vif, txmode, txpath, skb);
     if (ret) {
         ath10k_warn("failed to transmit frame: %d\n", ret);
         if (is_htt) {
-            spin_lock_bh(&ar->htt.tx_lock);
+            mtx_lock(&ar->htt.tx_lock);
             ath10k_htt_tx_dec_pending(htt);
             if (is_mgmt) {
                 ath10k_htt_tx_mgmt_dec_pending(htt);
             }
-            spin_unlock_bh(&ar->htt.tx_lock);
+            mtx_unlock(&ar->htt.tx_lock);
         }
         return;
     }
@@ -4316,7 +4309,7 @@ static void ath10k_mac_op_wake_tx_queue(struct ieee80211_hw* hw,
     int ret = 0;
     int max = 16;
 
-    spin_lock_bh(&ar->txqs_lock);
+    mtx_lock(&ar->txqs_lock);
     if (list_empty(&artxq->list)) {
         list_add_tail(&artxq->list, &ar->txqs);
     }
@@ -4334,7 +4327,7 @@ static void ath10k_mac_op_wake_tx_queue(struct ieee80211_hw* hw,
     if (ret != -ENOENT) {
         list_add_tail(&f_artxq->list, &ar->txqs);
     }
-    spin_unlock_bh(&ar->txqs_lock);
+    mtx_unlock(&ar->txqs_lock);
 
     ath10k_htt_tx_txq_update(hw, f_txq);
     ath10k_htt_tx_txq_update(hw, txq);
@@ -4355,7 +4348,7 @@ void ath10k_drain_tx(struct ath10k* ar) {
 void ath10k_halt(struct ath10k* ar) {
     struct ath10k_vif* arvif;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     clear_bit(ATH10K_CAC_RUNNING, &ar->dev_flags);
     ar->filter_flags = 0;
@@ -4374,21 +4367,21 @@ void ath10k_halt(struct ath10k* ar) {
     ath10k_core_stop(ar);
     ath10k_hif_power_down(ar);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     list_for_each_entry(arvif, &ar->arvifs, list)
     ath10k_mac_vif_beacon_cleanup(arvif);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 }
 
 static int ath10k_get_antenna(struct ieee80211_hw* hw, uint32_t* tx_ant, uint32_t* rx_ant) {
     struct ath10k* ar = hw->priv;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     *tx_ant = ar->cfg_tx_chainmask;
     *rx_ant = ar->cfg_rx_chainmask;
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 
     return 0;
 }
@@ -4600,7 +4593,7 @@ static void ath10k_mac_setup_ht_vht_cap(struct ath10k* ar) {
 static int __ath10k_set_antenna(struct ath10k* ar, uint32_t tx_ant, uint32_t rx_ant) {
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ath10k_check_chain_mask(ar, tx_ant, "tx");
     ath10k_check_chain_mask(ar, rx_ant, "rx");
@@ -4639,9 +4632,9 @@ static int ath10k_set_antenna(struct ieee80211_hw* hw, uint32_t tx_ant, uint32_t
     struct ath10k* ar = hw->priv;
     int ret;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
     ret = __ath10k_set_antenna(ar, tx_ant, rx_ant);
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
@@ -4657,7 +4650,7 @@ static int ath10k_start(struct ieee80211_hw* hw) {
      */
     ath10k_drain_tx(ar);
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     switch (ar->state) {
     case ATH10K_STATE_OFF:
@@ -4792,7 +4785,7 @@ static int ath10k_start(struct ieee80211_hw* hw) {
     ath10k_spectral_start(ar);
     ath10k_thermal_set_throttling(ar);
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return 0;
 
 err_core_stop:
@@ -4805,7 +4798,7 @@ err_off:
     ar->state = ATH10K_STATE_OFF;
 
 err:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
@@ -4814,12 +4807,12 @@ static void ath10k_stop(struct ieee80211_hw* hw) {
 
     ath10k_drain_tx(ar);
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
     if (ar->state != ATH10K_STATE_OFF) {
         ath10k_halt(ar);
         ar->state = ATH10K_STATE_OFF;
     }
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 
     cancel_work_sync(&ar->set_coverage_class_work);
     cancel_delayed_work_sync(&ar->scan.timeout);
@@ -4830,7 +4823,7 @@ static int ath10k_config_ps(struct ath10k* ar) {
     struct ath10k_vif* arvif;
     int ret = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     list_for_each_entry(arvif, &ar->arvifs, list) {
         ret = ath10k_mac_vif_setup_ps(arvif);
@@ -4847,7 +4840,7 @@ static int ath10k_mac_txpower_setup(struct ath10k* ar, int txpower) {
     int ret;
     uint32_t param;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ath10k_dbg(ar, ATH10K_DBG_MAC, "mac txpower %d\n", txpower);
 
@@ -4874,7 +4867,7 @@ static int ath10k_mac_txpower_recalc(struct ath10k* ar) {
     struct ath10k_vif* arvif;
     int ret, txpower = -1;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     list_for_each_entry(arvif, &ar->arvifs, list) {
         if (arvif->txpower <= 0) {
@@ -4907,7 +4900,7 @@ static int ath10k_config(struct ieee80211_hw* hw, uint32_t changed) {
     struct ieee80211_conf* conf = &hw->conf;
     int ret = 0;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     if (changed & IEEE80211_CONF_CHANGE_PS) {
         ath10k_config_ps(ar);
@@ -4921,7 +4914,7 @@ static int ath10k_config(struct ieee80211_hw* hw, uint32_t changed) {
         }
     }
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
@@ -5003,7 +4996,7 @@ static int ath10k_add_interface(struct ieee80211_hw* hw,
 
     vif->driver_flags |= IEEE80211_VIF_SUPPORTS_UAPSD;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     memset(arvif, 0, sizeof(*arvif));
     ath10k_mac_txq_init(vif->txq);
@@ -5149,9 +5142,9 @@ static int ath10k_add_interface(struct ieee80211_hw* hw,
     }
 
     ar->free_vdev_map &= ~(1LL << arvif->vdev_id);
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     list_add(&arvif->list, &ar->arvifs);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     /* It makes no sense to have firmware do keepalives. mac80211 already
      * takes care of this with idle connection polling.
@@ -5202,13 +5195,13 @@ static int ath10k_add_interface(struct ieee80211_hw* hw,
             goto err_vdev_delete;
         }
 
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
 
         peer = ath10k_peer_find(ar, arvif->vdev_id, vif->addr);
         if (!peer) {
             ath10k_warn("failed to lookup peer %pM on vdev %i\n",
                         vif->addr, arvif->vdev_id);
-            spin_unlock_bh(&ar->data_lock);
+            mtx_unlock(&ar->data_lock);
             ret = -ENOENT;
             goto err_peer_delete;
         }
@@ -5216,7 +5209,7 @@ static int ath10k_add_interface(struct ieee80211_hw* hw,
         arvif->peer_id = find_first_bit(peer->peer_ids,
                                         ATH10K_MAX_NUM_PEER_IDS);
 
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
     } else {
         arvif->peer_id = HTT_INVALID_PEERID;
     }
@@ -5286,13 +5279,13 @@ static int ath10k_add_interface(struct ieee80211_hw* hw,
         }
     }
 
-    spin_lock_bh(&ar->htt.tx_lock);
+    mtx_lock(&ar->htt.tx_lock);
     if (!ar->tx_paused) {
         ieee80211_wake_queue(ar->hw, arvif->vdev_id);
     }
-    spin_unlock_bh(&ar->htt.tx_lock);
+    mtx_unlock(&ar->htt.tx_lock);
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return 0;
 
 err_peer_delete:
@@ -5304,9 +5297,9 @@ err_peer_delete:
 err_vdev_delete:
     ath10k_wmi_vdev_delete(ar, arvif->vdev_id);
     ar->free_vdev_map |= 1LL << arvif->vdev_id;
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     list_del(&arvif->list);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
 err:
     if (arvif->beacon_buf) {
@@ -5315,7 +5308,7 @@ err:
         arvif->beacon_buf = NULL;
     }
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 
     return ret;
 }
@@ -5339,11 +5332,11 @@ static void ath10k_remove_interface(struct ieee80211_hw* hw,
     cancel_work_sync(&arvif->ap_csa_work);
     cancel_delayed_work_sync(&arvif->connection_loss_work);
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     ath10k_mac_vif_beacon_cleanup(arvif);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     ret = ath10k_spectral_vif_stop(arvif);
     if (ret)
@@ -5351,9 +5344,9 @@ static void ath10k_remove_interface(struct ieee80211_hw* hw,
                     arvif->vdev_id, ret);
 
     ar->free_vdev_map |= 1LL << arvif->vdev_id;
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     list_del(&arvif->list);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     if (arvif->vdev_type == WMI_VDEV_TYPE_AP ||
             arvif->vdev_type == WMI_VDEV_TYPE_IBSS) {
@@ -5385,12 +5378,12 @@ static void ath10k_remove_interface(struct ieee80211_hw* hw,
             ath10k_warn("failed to remove AP self-peer on vdev %i: %d\n",
                         arvif->vdev_id, ret);
 
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
         ar->num_peers--;
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
     }
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     for (i = 0; i < ARRAY_SIZE(ar->peer_map); i++) {
         peer = ar->peer_map[i];
         if (!peer) {
@@ -5403,7 +5396,7 @@ static void ath10k_remove_interface(struct ieee80211_hw* hw,
             peer->vif = NULL;
         }
     }
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     ath10k_peer_cleanup(ar, arvif->vdev_id);
     ath10k_mac_txq_unref(ar, vif->txq);
@@ -5421,13 +5414,13 @@ static void ath10k_remove_interface(struct ieee80211_hw* hw,
         ath10k_warn("failed to recalc tx power: %d\n", ret);
     }
 
-    spin_lock_bh(&ar->htt.tx_lock);
+    mtx_lock(&ar->htt.tx_lock);
     ath10k_mac_vif_tx_unlock_all(arvif);
-    spin_unlock_bh(&ar->htt.tx_lock);
+    mtx_unlock(&ar->htt.tx_lock);
 
     ath10k_mac_txq_unref(ar, vif->txq);
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 }
 
 /*
@@ -5449,7 +5442,7 @@ static void ath10k_configure_filter(struct ieee80211_hw* hw,
     struct ath10k* ar = hw->priv;
     int ret;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     changed_flags &= SUPPORTED_FILTERS;
     *total_flags &= SUPPORTED_FILTERS;
@@ -5460,7 +5453,7 @@ static void ath10k_configure_filter(struct ieee80211_hw* hw,
         ath10k_warn("failed to recalc monitor: %d\n", ret);
     }
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 }
 
 static void ath10k_bss_info_changed(struct ieee80211_hw* hw,
@@ -5472,7 +5465,7 @@ static void ath10k_bss_info_changed(struct ieee80211_hw* hw,
     int ret = 0;
     uint32_t vdev_param, pdev_param, slottime, preamble;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     if (changed & BSS_CHANGED_IBSS) {
         ath10k_control_ibss(arvif, info, vif->addr);
@@ -5647,7 +5640,7 @@ static void ath10k_bss_info_changed(struct ieee80211_hw* hw,
                         arvif->vdev_id, ret);
     }
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 }
 
 static void ath10k_mac_op_set_coverage_class(struct ieee80211_hw* hw, int16_t value) {
@@ -5673,13 +5666,13 @@ static int ath10k_hw_scan(struct ieee80211_hw* hw,
     int ret = 0;
     int i;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     switch (ar->scan.state) {
     case ATH10K_SCAN_IDLE:
-        reinit_completion(&ar->scan.started);
-        reinit_completion(&ar->scan.completed);
+        completion_reset(&ar->scan.started);
+        completion_reset(&ar->scan.completed);
         ar->scan.state = ATH10K_SCAN_STARTING;
         ar->scan.is_roc = false;
         ar->scan.vdev_id = arvif->vdev_id;
@@ -5691,7 +5684,7 @@ static int ath10k_hw_scan(struct ieee80211_hw* hw,
         ret = -EBUSY;
         break;
     }
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     if (ret) {
         goto exit;
@@ -5727,9 +5720,9 @@ static int ath10k_hw_scan(struct ieee80211_hw* hw,
     ret = ath10k_start_scan(ar, &arg);
     if (ret) {
         ath10k_warn("failed to start hw scan: %d\n", ret);
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
         ar->scan.state = ATH10K_SCAN_IDLE;
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
     }
 
     /* Add a 200ms margin to account for event/command processing */
@@ -5738,7 +5731,7 @@ static int ath10k_hw_scan(struct ieee80211_hw* hw,
                                          200));
 
 exit:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
@@ -5746,9 +5739,9 @@ static void ath10k_cancel_hw_scan(struct ieee80211_hw* hw,
                                   struct ieee80211_vif* vif) {
     struct ath10k* ar = hw->priv;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
     ath10k_scan_abort(ar);
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 
     cancel_delayed_work_sync(&ar->scan.timeout);
 }
@@ -5826,7 +5819,7 @@ static int ath10k_set_key(struct ieee80211_hw* hw, enum set_key_cmd cmd,
         return -ENOSPC;
     }
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     if (sta) {
         peer_addr = sta->addr;
@@ -5849,9 +5842,9 @@ static int ath10k_set_key(struct ieee80211_hw* hw, enum set_key_cmd cmd,
     /* the peer should not disappear in mid-way (unless FW goes awry) since
      * we already hold conf_mutex. we just make sure its there now.
      */
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     peer = ath10k_peer_find(ar, arvif->vdev_id, peer_addr);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     if (!peer) {
         if (cmd == SET_KEY) {
@@ -5930,7 +5923,7 @@ static int ath10k_set_key(struct ieee80211_hw* hw, enum set_key_cmd cmd,
 
     ath10k_set_key_h_def_keyidx(ar, arvif, cmd, key);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     peer = ath10k_peer_find(ar, arvif->vdev_id, peer_addr);
     if (peer && cmd == SET_KEY) {
         peer->keys[key->keyidx] = key;
@@ -5941,10 +5934,10 @@ static int ath10k_set_key(struct ieee80211_hw* hw, enum set_key_cmd cmd,
     {
         ath10k_warn("Peer %pM disappeared!\n", peer_addr);
     }
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
 exit:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
@@ -5955,7 +5948,7 @@ static void ath10k_set_default_unicast_key(struct ieee80211_hw* hw,
     struct ath10k_vif* arvif = (void*)vif->drv_priv;
     int ret;
 
-    mutex_lock(&arvif->ar->conf_mutex);
+    mtx_lock(&arvif->ar->conf_mutex);
 
     if (arvif->ar->state != ATH10K_STATE_ON) {
         goto unlock;
@@ -5979,7 +5972,7 @@ static void ath10k_set_default_unicast_key(struct ieee80211_hw* hw,
     arvif->def_wep_key_idx = keyidx;
 
 unlock:
-    mutex_unlock(&arvif->ar->conf_mutex);
+    mtx_unlock(&arvif->ar->conf_mutex);
 }
 
 static void ath10k_sta_rc_update_wk(struct work_struct* wk) {
@@ -6007,7 +6000,7 @@ static void ath10k_sta_rc_update_wk(struct work_struct* wk) {
     ht_mcs_mask = arvif->bitrate_mask.control[band].ht_mcs;
     vht_mcs_mask = arvif->bitrate_mask.control[band].vht_mcs;
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
 
     changed = arsta->changed;
     arsta->changed = 0;
@@ -6016,9 +6009,9 @@ static void ath10k_sta_rc_update_wk(struct work_struct* wk) {
     nss = arsta->nss;
     smps = arsta->smps;
 
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     nss = max_t(uint32_t, 1, nss);
     nss = min(nss, max(ath10k_mac_max_ht_nss(ht_mcs_mask),
@@ -6068,14 +6061,14 @@ static void ath10k_sta_rc_update_wk(struct work_struct* wk) {
                         sta->addr);
     }
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 }
 
 static int ath10k_mac_inc_num_stations(struct ath10k_vif* arvif,
                                        struct ieee80211_sta* sta) {
     struct ath10k* ar = arvif->ar;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (arvif->vdev_type == WMI_VDEV_TYPE_STA && !sta->tdls) {
         return 0;
@@ -6094,7 +6087,7 @@ static void ath10k_mac_dec_num_stations(struct ath10k_vif* arvif,
                                         struct ieee80211_sta* sta) {
     struct ath10k* ar = arvif->ar;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (arvif->vdev_type == WMI_VDEV_TYPE_STA && !sta->tdls) {
         return;
@@ -6184,7 +6177,7 @@ static int ath10k_sta_state(struct ieee80211_hw* hw,
         cancel_work_sync(&arsta->update_wk);
     }
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     if (old_state == IEEE80211_STA_NOTEXIST &&
             new_state == IEEE80211_STA_NONE) {
@@ -6231,13 +6224,13 @@ static int ath10k_sta_state(struct ieee80211_hw* hw,
             goto exit;
         }
 
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
 
         peer = ath10k_peer_find(ar, arvif->vdev_id, sta->addr);
         if (!peer) {
             ath10k_warn("failed to lookup peer %pM on vdev %i\n",
                         vif->addr, arvif->vdev_id);
-            spin_unlock_bh(&ar->data_lock);
+            mtx_unlock(&ar->data_lock);
             ath10k_peer_delete(ar, arvif->vdev_id, sta->addr);
             ath10k_mac_dec_num_stations(arvif, sta);
             ret = -ENOENT;
@@ -6247,7 +6240,7 @@ static int ath10k_sta_state(struct ieee80211_hw* hw,
         arsta->peer_id = find_first_bit(peer->peer_ids,
                                         ATH10K_MAX_NUM_PEER_IDS);
 
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
 
         if (!sta->tdls) {
             goto exit;
@@ -6294,7 +6287,7 @@ static int ath10k_sta_state(struct ieee80211_hw* hw,
 
         ath10k_mac_dec_num_stations(arvif, sta);
 
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
         for (i = 0; i < ARRAY_SIZE(ar->peer_map); i++) {
             peer = ar->peer_map[i];
             if (!peer) {
@@ -6315,7 +6308,7 @@ static int ath10k_sta_state(struct ieee80211_hw* hw,
                 ar->num_peers--;
             }
         }
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
 
         for (i = 0; i < ARRAY_SIZE(sta->txq); i++) {
             ath10k_mac_txq_unref(ar, sta->txq[i]);
@@ -6389,7 +6382,7 @@ static int ath10k_sta_state(struct ieee80211_hw* hw,
                         sta->addr, arvif->vdev_id, ret);
     }
 exit:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
@@ -6401,7 +6394,7 @@ static int ath10k_conf_tx_uapsd(struct ath10k* ar, struct ieee80211_vif* vif,
     uint32_t value = 0;
     int ret = 0;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (arvif->vdev_type != WMI_VDEV_TYPE_STA) {
         return 0;
@@ -6510,7 +6503,7 @@ static int ath10k_conf_tx(struct ieee80211_hw* hw,
     struct wmi_wmm_params_arg* p = NULL;
     int ret;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     switch (ac) {
     case IEEE80211_AC_VO:
@@ -6568,7 +6561,7 @@ static int ath10k_conf_tx(struct ieee80211_hw* hw,
     }
 
 exit:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
@@ -6585,14 +6578,14 @@ static int ath10k_remain_on_channel(struct ieee80211_hw* hw,
     int ret = 0;
     uint32_t scan_time_msec;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     switch (ar->scan.state) {
     case ATH10K_SCAN_IDLE:
-        reinit_completion(&ar->scan.started);
-        reinit_completion(&ar->scan.completed);
-        reinit_completion(&ar->scan.on_channel);
+        completion_reset(&ar->scan.started);
+        completion_reset(&ar->scan.completed);
+        completion_reset(&ar->scan.on_channel);
         ar->scan.state = ATH10K_SCAN_STARTING;
         ar->scan.is_roc = true;
         ar->scan.vdev_id = arvif->vdev_id;
@@ -6606,7 +6599,7 @@ static int ath10k_remain_on_channel(struct ieee80211_hw* hw,
         ret = -EBUSY;
         break;
     }
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     if (ret) {
         goto exit;
@@ -6630,14 +6623,13 @@ static int ath10k_remain_on_channel(struct ieee80211_hw* hw,
     ret = ath10k_start_scan(ar, &arg);
     if (ret) {
         ath10k_warn("failed to start roc scan: %d\n", ret);
-        spin_lock_bh(&ar->data_lock);
+        mtx_lock(&ar->data_lock);
         ar->scan.state = ATH10K_SCAN_IDLE;
-        spin_unlock_bh(&ar->data_lock);
+        mtx_unlock(&ar->data_lock);
         goto exit;
     }
 
-    ret = wait_for_completion_timeout(&ar->scan.on_channel, 3 * HZ);
-    if (ret == 0) {
+    if (completion_wait(&ar->scan.on_channel, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
         ath10k_warn("failed to switch to channel for roc scan\n");
 
         ret = ath10k_scan_stop(ar);
@@ -6654,22 +6646,22 @@ static int ath10k_remain_on_channel(struct ieee80211_hw* hw,
 
     ret = 0;
 exit:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
 static int ath10k_cancel_remain_on_channel(struct ieee80211_hw* hw) {
     struct ath10k* ar = hw->priv;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     ar->scan.roc_notify = false;
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     ath10k_scan_abort(ar);
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 
     cancel_delayed_work_sync(&ar->scan.timeout);
 
@@ -6686,7 +6678,7 @@ static int ath10k_set_rts_threshold(struct ieee80211_hw* hw, uint32_t value) {
     struct ath10k_vif* arvif;
     int ret = 0;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
     list_for_each_entry(arvif, &ar->arvifs, list) {
         ath10k_dbg(ar, ATH10K_DBG_MAC, "mac vdev %d rts threshold %d\n",
                    arvif->vdev_id, value);
@@ -6698,7 +6690,7 @@ static int ath10k_set_rts_threshold(struct ieee80211_hw* hw, uint32_t value) {
             break;
         }
     }
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 
     return ret;
 }
@@ -6730,7 +6722,7 @@ static void ath10k_flush(struct ieee80211_hw* hw, struct ieee80211_vif* vif,
         return;
     }
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     if (ar->state == ATH10K_STATE_WEDGED) {
         goto skip;
@@ -6739,9 +6731,9 @@ static void ath10k_flush(struct ieee80211_hw* hw, struct ieee80211_vif* vif,
     time_left = wait_event_timeout(ar->htt.empty_tx_wq, ({
         bool empty;
 
-        spin_lock_bh(&ar->htt.tx_lock);
+        mtx_lock(&ar->htt.tx_lock);
         empty = (ar->htt.num_pending_tx == 0);
-        spin_unlock_bh(&ar->htt.tx_lock);
+        mtx_unlock(&ar->htt.tx_lock);
 
         skip = (ar->state == ATH10K_STATE_WEDGED) ||
         test_bit(ATH10K_FLAG_CRASH_FLUSH,
@@ -6755,7 +6747,7 @@ static void ath10k_flush(struct ieee80211_hw* hw, struct ieee80211_vif* vif,
                     skip, ar->state, time_left);
 
 skip:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 }
 
 /* TODO: Implement this function properly
@@ -6774,7 +6766,7 @@ static void ath10k_reconfig_complete(struct ieee80211_hw* hw,
         return;
     }
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     /* If device failed to restart it will be in a different state, e.g.
      * ATH10K_STATE_WEDGED
@@ -6785,7 +6777,7 @@ static void ath10k_reconfig_complete(struct ieee80211_hw* hw,
         ieee80211_wake_queues(ar->hw);
     }
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 }
 
 static void
@@ -6794,7 +6786,7 @@ ath10k_mac_update_bss_chan_survey(struct ath10k* ar,
     int ret;
     enum wmi_bss_survey_req_type type = WMI_BSS_SURVEY_REQ_TYPE_READ_CLEAR;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     if (!test_bit(WMI_SERVICE_BSS_CHANNEL_INFO_64, ar->wmi.svc_map) ||
             (ar->rx_channel != channel)) {
@@ -6806,7 +6798,7 @@ ath10k_mac_update_bss_chan_survey(struct ath10k* ar,
         return;
     }
 
-    reinit_completion(&ar->bss_survey_done);
+    completion_reset(&ar->bss_survey_done);
 
     ret = ath10k_wmi_pdev_bss_chan_info_request(ar, type);
     if (ret) {
@@ -6814,8 +6806,7 @@ ath10k_mac_update_bss_chan_survey(struct ath10k* ar,
         return;
     }
 
-    ret = wait_for_completion_timeout(&ar->bss_survey_done, 3 * HZ);
-    if (!ret) {
+    if (completion_wait(&ar->bss_survey_done, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
         ath10k_warn("bss channel survey timed out\n");
         return;
     }
@@ -6828,7 +6819,7 @@ static int ath10k_get_survey(struct ieee80211_hw* hw, int idx,
     struct survey_info* ar_survey = &ar->survey[idx];
     int ret = 0;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     sband = hw->wiphy->bands[NL80211_BAND_2GHZ];
     if (sband && idx >= sband->n_channels) {
@@ -6847,9 +6838,9 @@ static int ath10k_get_survey(struct ieee80211_hw* hw, int idx,
 
     ath10k_mac_update_bss_chan_survey(ar, &sband->channels[idx]);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     memcpy(survey, ar_survey, sizeof(*survey));
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     survey->channel = &sband->channels[idx];
 
@@ -6858,7 +6849,7 @@ static int ath10k_get_survey(struct ieee80211_hw* hw, int idx,
     }
 
 exit:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
@@ -6999,7 +6990,7 @@ static int ath10k_mac_set_fixed_rate_params(struct ath10k_vif* arvif,
     uint32_t vdev_param;
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ath10k_dbg(ar, ATH10K_DBG_MAC, "mac set fixed rate params vdev %i rate 0x%02hhx nss %hhu sgi %hhu\n",
                arvif->vdev_id, rate, nss, sgi);
@@ -7075,9 +7066,9 @@ static void ath10k_mac_set_bitrate_mask_iter(void* data,
         return;
     }
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     arsta->changed |= IEEE80211_RC_SUPP_RATES_CHANGED;
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     ieee80211_queue_work(ar->hw, &arsta->update_wk);
 }
@@ -7134,17 +7125,17 @@ static int ath10k_mac_op_set_bitrate_mask(struct ieee80211_hw* hw,
             return -EINVAL;
         }
 
-        mutex_lock(&ar->conf_mutex);
+        mtx_lock(&ar->conf_mutex);
 
         arvif->bitrate_mask = *mask;
         ieee80211_iterate_stations_atomic(ar->hw,
                                           ath10k_mac_set_bitrate_mask_iter,
                                           arvif);
 
-        mutex_unlock(&ar->conf_mutex);
+        mtx_unlock(&ar->conf_mutex);
     }
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     ret = ath10k_mac_set_fixed_rate_params(arvif, rate, nss, sgi, ldpc);
     if (ret) {
@@ -7154,7 +7145,7 @@ static int ath10k_mac_op_set_bitrate_mask(struct ieee80211_hw* hw,
     }
 
 exit:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 
     return ret;
 }
@@ -7167,7 +7158,7 @@ static void ath10k_sta_rc_update(struct ieee80211_hw* hw,
     struct ath10k_sta* arsta = (struct ath10k_sta*)sta->drv_priv;
     uint32_t bw, smps;
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
 
     ath10k_dbg(ar, ATH10K_DBG_MAC,
                "mac sta rc update for %pM changed %08x bw %d nss %d smps %d\n",
@@ -7230,7 +7221,7 @@ static void ath10k_sta_rc_update(struct ieee80211_hw* hw,
 
     arsta->changed |= changed;
 
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     ieee80211_queue_work(hw, &arsta->update_wk);
 }
@@ -7301,8 +7292,8 @@ ath10k_mac_update_rx_channel(struct ath10k* ar,
     /* Both locks are required because ar->rx_channel is modified. This
      * allows readers to hold either lock.
      */
-    lockdep_assert_held(&ar->conf_mutex);
-    lockdep_assert_held(&ar->data_lock);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->data_lock);
 
     WARN_ON(ctx && vifs);
     WARN_ON(vifs && !n_vifs);
@@ -7350,7 +7341,7 @@ ath10k_mac_update_vif_chan(struct ath10k* ar,
     int ret;
     int i;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     /* First stop monitor interface. Some FW versions crash if there's a
      * lone monitor interface.
@@ -7390,9 +7381,9 @@ ath10k_mac_update_vif_chan(struct ath10k* ar,
      * should be available for the channel switch now.
      */
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     ath10k_mac_update_rx_channel(ar, NULL, vifs, n_vifs);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     for (i = 0; i < n_vifs; i++) {
         arvif = (void*)vifs[i].vif->drv_priv;
@@ -7443,16 +7434,16 @@ ath10k_mac_op_add_chanctx(struct ieee80211_hw* hw,
                "mac chanctx add freq %hu width %d ptr %pK\n",
                ctx->def.chan->center_freq, ctx->def.width, ctx);
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     ath10k_mac_update_rx_channel(ar, ctx, NULL, 0);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     ath10k_recalc_radar_detection(ar);
     ath10k_monitor_recalc(ar);
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 
     return 0;
 }
@@ -7466,16 +7457,16 @@ ath10k_mac_op_remove_chanctx(struct ieee80211_hw* hw,
                "mac chanctx remove freq %hu width %d ptr %pK\n",
                ctx->def.chan->center_freq, ctx->def.width, ctx);
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
-    spin_lock_bh(&ar->data_lock);
+    mtx_lock(&ar->data_lock);
     ath10k_mac_update_rx_channel(ar, NULL, NULL, 0);
-    spin_unlock_bh(&ar->data_lock);
+    mtx_unlock(&ar->data_lock);
 
     ath10k_recalc_radar_detection(ar);
     ath10k_monitor_recalc(ar);
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 }
 
 struct ath10k_mac_change_chanctx_arg {
@@ -7525,7 +7516,7 @@ ath10k_mac_op_change_chanctx(struct ieee80211_hw* hw,
     struct ath10k* ar = hw->priv;
     struct ath10k_mac_change_chanctx_arg arg = { .ctx = ctx };
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     ath10k_dbg(ar, ATH10K_DBG_MAC,
                "mac chanctx change freq %hu width %d ptr %pK changed %x\n",
@@ -7574,7 +7565,7 @@ radar:
      */
 
 unlock:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 }
 
 static int
@@ -7585,14 +7576,14 @@ ath10k_mac_op_assign_vif_chanctx(struct ieee80211_hw* hw,
     struct ath10k_vif* arvif = (void*)vif->drv_priv;
     int ret;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     ath10k_dbg(ar, ATH10K_DBG_MAC,
                "mac chanctx assign ptr %pK vdev_id %i\n",
                ctx, arvif->vdev_id);
 
     if (WARN_ON(arvif->is_started)) {
-        mutex_unlock(&ar->conf_mutex);
+        mtx_unlock(&ar->conf_mutex);
         return -EBUSY;
     }
 
@@ -7631,7 +7622,7 @@ ath10k_mac_op_assign_vif_chanctx(struct ieee80211_hw* hw,
                         arvif->vdev_id, ret);
     }
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return 0;
 
 err_stop:
@@ -7640,7 +7631,7 @@ err_stop:
     ath10k_mac_vif_setup_ps(arvif);
 
 err:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
@@ -7652,7 +7643,7 @@ ath10k_mac_op_unassign_vif_chanctx(struct ieee80211_hw* hw,
     struct ath10k_vif* arvif = (void*)vif->drv_priv;
     int ret;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     ath10k_dbg(ar, ATH10K_DBG_MAC,
                "mac chanctx unassign ptr %pK vdev_id %i\n",
@@ -7678,7 +7669,7 @@ ath10k_mac_op_unassign_vif_chanctx(struct ieee80211_hw* hw,
 
     arvif->is_started = false;
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
 }
 
 static int
@@ -7688,14 +7679,14 @@ ath10k_mac_op_switch_vif_chanctx(struct ieee80211_hw* hw,
                                  enum ieee80211_chanctx_switch_mode mode) {
     struct ath10k* ar = hw->priv;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     ath10k_dbg(ar, ATH10K_DBG_MAC,
                "mac chanctx switch n_vifs %d mode %d\n",
                n_vifs, mode);
     ath10k_mac_update_vif_chan(ar, vifs, n_vifs);
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return 0;
 }
 

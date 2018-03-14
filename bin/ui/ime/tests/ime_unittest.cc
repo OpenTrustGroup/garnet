@@ -19,7 +19,7 @@ TEST(TestInputState, DeleteBackward) {
 
   revision = 0 + 1;
   base = extent = -1;
-  text = fidl::String("");
+  text = f1dl::String("");
 
   DeleteBackward(state);
   EXPECT_EQ(2U, revision);
@@ -32,7 +32,7 @@ TEST(TestInputState, DeleteBackward) {
   EXPECT_EQ(0, base);
   EXPECT_EQ(0, extent);
 
-  text = fidl::String("abcdefghi");
+  text = f1dl::String("abcdefghi");
   DeleteBackward(state);
   EXPECT_EQ(4U, revision);
   EXPECT_EQ(0, base);
@@ -44,7 +44,7 @@ TEST(TestInputState, DeleteBackward) {
   EXPECT_EQ(5U, revision);
   EXPECT_EQ(0, base);
   EXPECT_EQ(0, extent);
-  EXPECT_EQ("bcdefghi", text.To<std::string>());
+  EXPECT_EQ("bcdefghi", *text);
 
   base = 2;
   extent = 4;
@@ -52,25 +52,25 @@ TEST(TestInputState, DeleteBackward) {
   EXPECT_EQ(6U, revision);
   EXPECT_EQ(2, base);
   EXPECT_EQ(2, extent);
-  EXPECT_EQ("bcfghi", text.To<std::string>());
+  EXPECT_EQ("bcfghi", *text);
 
   DeleteBackward(state);
   EXPECT_EQ(7U, revision);
   EXPECT_EQ(1, base);
   EXPECT_EQ(1, extent);
-  EXPECT_EQ("bfghi", text.To<std::string>());
+  EXPECT_EQ("bfghi", *text);
 
   DeleteBackward(state);
   EXPECT_EQ(8U, revision);
   EXPECT_EQ(0, base);
   EXPECT_EQ(0, extent);
-  EXPECT_EQ("fghi", text.To<std::string>());
+  EXPECT_EQ("fghi", *text);
 
   DeleteBackward(state);
   EXPECT_EQ(9U, revision);
   EXPECT_EQ(0, base);
   EXPECT_EQ(0, extent);
-  EXPECT_EQ("fghi", text.To<std::string>());
+  EXPECT_EQ("fghi", *text);
 
   base = -1;
   extent = -1;
@@ -78,13 +78,13 @@ TEST(TestInputState, DeleteBackward) {
   EXPECT_EQ(10U, revision);
   EXPECT_EQ(3, base);
   EXPECT_EQ(3, extent);
-  EXPECT_EQ("fgh", text.To<std::string>());
+  EXPECT_EQ("fgh", *text);
 
   DeleteBackward(state);
   EXPECT_EQ(11U, revision);
   EXPECT_EQ(2, base);
   EXPECT_EQ(2, extent);
-  EXPECT_EQ("fg", text.To<std::string>());
+  EXPECT_EQ("fg", *text);
 }
 
 }  // namespace test

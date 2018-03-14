@@ -5,14 +5,11 @@
 import("//build/sdk/sdk.gni")
 
 sdk("zircon_sysroot") {
-
   export = true
 
   old_school = true
 
-  domains = [
-    "c-pp",
-  ]
+  domains = [ "c-pp" ]
 
   deps = [
     "//zircon/public/lib/backtrace:backtrace_sdk",
@@ -23,19 +20,17 @@ sdk("zircon_sysroot") {
   ]
 }
 
-sdk("minimal") {
-
+sdk("zircon_legacy") {
   deps = [
-    "//garnet/public/lib/app/cpp:cpp_sdk",
-    "//garnet/public/lib/app/fidl:fidl_sdk",
-    "//garnet/public/lib/fidl/cpp/bindings:bindings_sdk",
-    "//garnet/public/lib/fidl/cpp/bindings:serialization_sdk",
-    "//garnet/public/lib/fsl:fsl_sdk",
-    "//garnet/public/lib/fxl:fxl_sdk",
-    "//garnet/public/lib/media/fidl:fidl_sdk",
-    "//garnet/public/lib/media/transport:transport_sdk",
-    "//garnet/public/lib/network/fidl:fidl_sdk",
-    "//garnet/public/lib/ui/view_framework:view_framework_sdk",
-    "//garnet/public/lib/ui/view_framework:view_provider_sdk",
+    "//zircon/public/lib/async:async_sdk",
+    "//zircon/public/lib/async-default:async-default_sdk",
+  ]
+}
+
+sdk("garnet") {
+  deps = [
+    "//garnet/bin/far:bin_sdk($host_toolchain)",
+    "//garnet/go/src/pm:pm_bin_sdk($host_toolchain)",
+    "//garnet/public/lib/media/c:c_sdk",
   ]
 }

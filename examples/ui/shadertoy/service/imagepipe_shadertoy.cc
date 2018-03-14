@@ -20,7 +20,7 @@ namespace shadertoy {
 
 ShadertoyStateForImagePipe::ShadertoyStateForImagePipe(
     App* app,
-    ::fidl::InterfaceHandle<scenic::ImagePipe> image_pipe)
+    ::f1dl::InterfaceHandle<scenic::ImagePipe> image_pipe)
     : ShadertoyState(app),
       image_pipe_(image_pipe.Bind()) {
   image_pipe_.set_error_handler([this] { this->Close(); });
@@ -147,16 +147,16 @@ void ShadertoyStateForImagePipe::DrawFrame(uint64_t presentation_time,
 
   // Present the image and request another frame.
   auto present_image_callback = [weak = weak_ptr_factory()->GetWeakPtr()](
-                                    scenic::PresentationInfoPtr info) {
+                                    ui_mozart::PresentationInfoPtr info) {
     // Need this cast in order to call protected member of superclass.
     if (auto self = static_cast<ShadertoyStateForImagePipe*>(weak.get())) {
       self->OnFramePresented(info);
     }
   };
 
-  auto acquire_fences = fidl::Array<zx::event>::New(1);
+  auto acquire_fences = f1dl::Array<zx::event>::New(1);
   acquire_fences[0] = std::move(acquire_fence);
-  auto release_fences = fidl::Array<zx::event>::New(1);
+  auto release_fences = f1dl::Array<zx::event>::New(1);
   release_fences[0] = std::move(release_fence);
   image_pipe_->PresentImage(fb.image_pipe_id, presentation_time,
                             std::move(acquire_fences),

@@ -4,16 +4,16 @@
 
 #include "garnet/bin/appmgr/namespace_builder.h"
 
-#include <zircon/processargs.h>
 #include <fdio/limits.h>
 #include <fdio/util.h>
+#include <zircon/processargs.h>
 
 #include <fcntl.h>
 #include <stdlib.h>
 #include <unistd.h>
 
-#include "lib/fxl/files/unique_fd.h"
 #include "lib/fsl/io/fd.h"
+#include "lib/fxl/files/unique_fd.h"
 
 namespace app {
 
@@ -27,10 +27,6 @@ void NamespaceBuilder::AddFlatNamespace(FlatNamespacePtr ns) {
       AddDirectoryIfNotPresent(ns->paths[i], std::move(ns->directories[i]));
     }
   }
-}
-
-void NamespaceBuilder::AddRoot() {
-  PushDirectoryFromPath("/");
 }
 
 void NamespaceBuilder::AddPackage(zx::channel package) {
@@ -48,13 +44,14 @@ void NamespaceBuilder::AddServices(zx::channel services) {
   PushDirectoryFromChannel("/svc", std::move(services));
 }
 
-void NamespaceBuilder::AddDev() {
-  PushDirectoryFromPath("/dev");
-}
-
 void NamespaceBuilder::AddSandbox(const SandboxMetadata& sandbox) {
-  for (const auto& path : sandbox.dev())
+  for (const auto& path : sandbox.dev()) {
+    if (path == "class") {
+      FXL_LOG(WARNING) << "Ignoring request for all device classes";
+      continue;
+    }
     PushDirectoryFromPath("/dev/" + path);
+  }
 
   for (const auto& path : sandbox.system())
     PushDirectoryFromPath("/system/" + path);
@@ -73,14 +70,25 @@ void NamespaceBuilder::AddSandbox(const SandboxMetadata& sandbox) {
       // TODO(abarth): These permissions should depend on the envionment
       // in some way so that a shell running at a user-level scope doesn't
       // have access to all the device drivers and such.
-      AddRoot();
-      AddDev();
+      PushDirectoryFromPath("/blobstore");
+      PushDirectoryFromPath("/boot");
+      PushDirectoryFromPath("/data");
+      PushDirectoryFromPath("/dev");
+      PushDirectoryFromPath("/install");
+      PushDirectoryFromPath("/pkgfs");
+      PushDirectoryFromPath("/system");
+      PushDirectoryFromPath("/tmp");
+      PushDirectoryFromPath("/volume");
     } else if (feature == "system-temp") {
       PushDirectoryFromPath("/tmp");
     } else if (feature == "vulkan") {
       PushDirectoryFromPath("/dev/class/display");
       PushDirectoryFromPath("/dev/class/gpu");
       PushDirectoryFromPath("/system/data/vulkan");
+      // TODO(abarth): Teach the gpu devices to provide a protocol for fetching
+      // the device specific vulkan library by message, rather than loading it
+      // from the filesystem.
+      PushDirectoryFromPath("/system/lib");
     }
   }
 }
@@ -90,8 +98,6 @@ void NamespaceBuilder::AddDeprecatedDefaultDirectories() {
   PushDirectoryFromPathIfNotPresent("/data");
   PushDirectoryFromPathIfNotPresent("/system");
   PushDirectoryFromPathIfNotPresent("/tmp");
-  // TODO(jmatt): Remove access to /pkgfs once F5-3 is resolved
-  PushDirectoryFromPathIfNotPresent("/pkgfs/packages");
 }
 
 void NamespaceBuilder::PushDirectoryFromPath(std::string path) {

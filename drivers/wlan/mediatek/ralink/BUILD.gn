@@ -19,10 +19,11 @@ driver_module("ralink_driver") {
 
   deps = [
     "//garnet/lib/wlan/common",
-    "//zircon/public/lib/ddk",
+    "//garnet/lib/wlan/fidl:fidl_data_only",
+    "//garnet/lib/wlan/mlme",
+    "//garnet/lib/wlan/protocol",
     "//zircon/public/lib/driver",
     "//zircon/public/lib/sync",
-    "//zircon/public/lib/ddktl",
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/zx",
   ]

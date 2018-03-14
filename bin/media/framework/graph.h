@@ -15,7 +15,6 @@
 #include "garnet/bin/media/framework/stages/stage_impl.h"
 #include "garnet/bin/media/framework/stages/transform_stage.h"
 #include "lib/fxl/functional/closure.h"
-#include "lib/fxl/synchronization/mutex.h"
 #include "lib/fxl/tasks/task_runner.h"
 
 namespace media {
@@ -197,7 +196,7 @@ class Graph {
   // frame.
   void FlushOutput(const OutputRef& output, bool hold_frame);
 
-  // Flushes the output and the subgraph downstream of it. |hold_frame|
+  // Flushes the node and the subgraph downstream of it. |hold_frame|
   // indicates whether a video renderer should hold and display the newest
   // frame.
   void FlushAllOutputs(NodeRef node, bool hold_frame);

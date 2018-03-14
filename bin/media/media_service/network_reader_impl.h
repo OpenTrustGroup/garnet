@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#include "garnet/bin/media/media_service/media_service_impl.h"
+#include "garnet/bin/media/media_service/media_component_factory.h"
 #include "garnet/bin/media/util/incident.h"
 #include "lib/fidl/cpp/bindings/binding.h"
 #include "lib/media/fidl/seeking_reader.fidl.h"
@@ -15,13 +15,13 @@
 namespace media {
 
 // Fidl agent that reads from an HTTP service.
-class NetworkReaderImpl : public MediaServiceImpl::Product<SeekingReader>,
+class NetworkReaderImpl : public MediaComponentFactory::Product<SeekingReader>,
                           public SeekingReader {
  public:
   static std::shared_ptr<NetworkReaderImpl> Create(
-      const fidl::String& url,
-      fidl::InterfaceRequest<SeekingReader> request,
-      MediaServiceImpl* owner);
+      const f1dl::String& url,
+      f1dl::InterfaceRequest<SeekingReader> request,
+      MediaComponentFactory* owner);
 
   ~NetworkReaderImpl() override;
 
@@ -39,9 +39,9 @@ class NetworkReaderImpl : public MediaServiceImpl::Product<SeekingReader>,
   static constexpr uint32_t kStatusPartialContent = 206u;
   static constexpr uint32_t kStatusNotFound = 404u;
 
-  NetworkReaderImpl(const fidl::String& url,
-                    fidl::InterfaceRequest<SeekingReader> request,
-                    MediaServiceImpl* owner);
+  NetworkReaderImpl(const f1dl::String& url,
+                    f1dl::InterfaceRequest<SeekingReader> request,
+                    MediaComponentFactory* owner);
 
   std::string url_;
   network::URLLoaderPtr url_loader_;

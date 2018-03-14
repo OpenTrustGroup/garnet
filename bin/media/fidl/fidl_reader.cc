@@ -13,7 +13,7 @@
 
 namespace media {
 
-FidlReader::FidlReader(fidl::InterfaceHandle<SeekingReader> seeking_reader)
+FidlReader::FidlReader(f1dl::InterfaceHandle<SeekingReader> seeking_reader)
     : seeking_reader_(seeking_reader.Bind()) {
   task_runner_ = fsl::MessageLoop::GetCurrent()->task_runner();
   FXL_DCHECK(task_runner_);
@@ -22,7 +22,7 @@ FidlReader::FidlReader(fidl::InterfaceHandle<SeekingReader> seeking_reader)
 
   seeking_reader_->Describe(
       [this](MediaResult result, uint64_t size, bool can_seek) {
-        result_ = Convert(result);
+        result_ = fxl::To<Result>(result);
         if (result_ == Result::kOk) {
           size_ = size;
           can_seek_ = can_seek;
@@ -96,7 +96,7 @@ void FidlReader::ContinueReadAt() {
 
     seeking_reader_->ReadAt(read_at_position_,
                             [this](MediaResult result, zx::socket socket) {
-                              result_ = Convert(result);
+                              result_ = fxl::To<Result>(result);
                               if (result_ != Result::kOk) {
                                 CompleteReadAt(result_);
                                 return;
@@ -150,7 +150,10 @@ void FidlReader::CompleteReadAt(Result result, size_t bytes_read) {
 void FidlReader::FailReadAt(zx_status_t status) {
   switch (status) {
     case ZX_ERR_PEER_CLOSED:
-      result_ = Result::kInternalError;
+      result_ = Result::kPeerClosed;
+      break;
+    case ZX_ERR_CANCELED:
+      result_ = Result::kCancelled;
       break;
     // TODO(dalesat): Expect more statuses here.
     default:
@@ -174,7 +177,10 @@ void FidlReader::ReadFromSocketStatic(zx_status_t status,
   reader->wait_id_ = 0;
 
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "AsyncWait failed, status " << status;
+    if (status != ZX_ERR_CANCELED) {
+      FXL_LOG(ERROR) << "AsyncWait failed, status " << status;
+    }
+
     reader->FailReadAt(status);
     return;
   }

@@ -15,16 +15,70 @@ import (
 
 type FidlGenerator struct{}
 
-func writeFile(outputFilename string,
-	templateName string,
-	tmpls *template.Template,
-	tree ir.Root) error {
-	f, err := os.Create(outputFilename)
+func generateHeader(headerPath string, tmpls *template.Template, tree ir.Root) error {
+	f, err := os.Create(headerPath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	return tmpls.ExecuteTemplate(f, templateName, tree)
+
+	err = tmpls.ExecuteTemplate(f, "GenerateHeaderPreamble", tree)
+	if err != nil {
+		return err
+	}
+
+	for _, d := range tree.Decls {
+		err = d.ForwardDeclaration(tmpls, f)
+	}
+
+	for _, d := range tree.Decls {
+		err = d.Declaration(tmpls, f)
+	}
+
+	err = tmpls.ExecuteTemplate(f, "GenerateHeaderPostamble", tree)
+	if err != nil {
+		return err
+	}
+
+	err = tmpls.ExecuteTemplate(f, "GenerateTraitsPreamble", tree)
+	if err != nil {
+		return err
+	}
+
+	for _, d := range tree.Decls {
+		err = d.Traits(tmpls, f)
+	}
+
+	err = tmpls.ExecuteTemplate(f, "GenerateTraitsPostamble", tree)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func generateImplementation(implementationPath string, tmpls *template.Template, tree ir.Root) error {
+	f, err := os.Create(implementationPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	err = tmpls.ExecuteTemplate(f, "GenerateImplementationPreamble", tree)
+	if err != nil {
+		return err
+	}
+
+	for _, d := range tree.Decls {
+		err = d.Definition(tmpls, f)
+	}
+
+	err = tmpls.ExecuteTemplate(f, "GenerateImplementationPostamble", tree)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (_ FidlGenerator) GenerateFidl(fidl types.Root, config *types.Config) error {
@@ -35,11 +89,13 @@ func (_ FidlGenerator) GenerateFidl(fidl types.Root, config *types.Config) error
 		return err
 	}
 
-	headerPath := config.FidlStem + ".h"
+	headerPath := config.FidlStem + ".cc.h"
 	implementationPath := config.FidlStem + ".cc"
-	tree.PrimaryHeader = relStem + ".h"
+	tree.PrimaryHeader = relStem + ".cc.h"
+	tree.CHeader = relStem + ".c.h"
 
 	tmpls := template.New("CPPTemplates")
+	template.Must(tmpls.Parse(templates.Const))
 	template.Must(tmpls.Parse(templates.Enum))
 	template.Must(tmpls.Parse(templates.Header))
 	template.Must(tmpls.Parse(templates.Implementation))
@@ -47,12 +103,12 @@ func (_ FidlGenerator) GenerateFidl(fidl types.Root, config *types.Config) error
 	template.Must(tmpls.Parse(templates.Struct))
 	template.Must(tmpls.Parse(templates.Union))
 
-	err = writeFile(headerPath, "GenerateHeaderFile", tmpls, tree)
+	err = generateHeader(headerPath, tmpls, tree)
 	if err != nil {
 		return err
 	}
 
-	err = writeFile(implementationPath, "GenerateImplementationFile", tmpls, tree)
+	err = generateImplementation(implementationPath, tmpls, tree)
 	if err != nil {
 		return err
 	}

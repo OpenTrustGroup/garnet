@@ -30,10 +30,10 @@ def _ParseCLIArgs():
                       '(default "-")', default='-')
   parser.add_argument("-o", "--output-dir", dest="output_dir", default=".",
                       help="output directory for generated files")
-  parser.add_argument("-g", "--generators", dest="generators_string",
+  parser.add_argument("-g", "--legacy-languages", dest="generators_string",
                       metavar="GENERATORS",
                       default="c++,dart,python",
-                      help="comma-separated list of generators")
+                      help="comma-separated list of languages to generate for")
   parser.add_argument("-s", "--src-root-path", dest="src_root_path",
                       default=".",
                       help="relative path to the root of the source tree.")
@@ -45,6 +45,7 @@ def _ParseCLIArgs():
   parser.add_argument("--generate-type-info", dest="generate_type_info",
                       action="store_true",
                       help="generate mojom type descriptors")
+  parser.add_argument("--map-file", dest="map_file")
   parser.set_defaults(generate_type_info=False)
 
   return parser.parse_known_args()
@@ -172,6 +173,9 @@ def main():
                          if arg.startswith(prefix)]
       if args.generate_type_info:
         filtered_args.append("--generate_type_info")
+
+      if args.map_file:
+        filtered_args.append("--map_file=%s" % args.map_file)
 
       generator.GenerateFiles(filtered_args)
 

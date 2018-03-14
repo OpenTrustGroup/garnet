@@ -7,7 +7,7 @@
 #include <memory>
 #include <vector>
 
-#include "garnet/bin/media/media_service/media_service_impl.h"
+#include "garnet/bin/media/media_service/media_component_factory.h"
 #include "garnet/bin/media/util/callback_joiner.h"
 #include "garnet/bin/media/util/fidl_publisher.h"
 #include "lib/fidl/cpp/bindings/binding.h"
@@ -19,30 +19,30 @@ namespace media {
 
 // Fidl agent that controls timing in a graph.
 class MediaTimelineControllerImpl
-    : public MediaServiceImpl::Product<MediaTimelineController>,
+    : public MediaComponentFactory::Product<MediaTimelineController>,
       public MediaTimelineController,
       public MediaTimelineControlPoint,
       public TimelineConsumer {
  public:
   static std::shared_ptr<MediaTimelineControllerImpl> Create(
-      fidl::InterfaceRequest<MediaTimelineController> request,
-      MediaServiceImpl* owner);
+      f1dl::InterfaceRequest<MediaTimelineController> request,
+      MediaComponentFactory* owner);
 
   ~MediaTimelineControllerImpl() override;
 
   // MediaTimelineController implementation.
   void AddControlPoint(
-      fidl::InterfaceHandle<MediaTimelineControlPoint> control_point) override;
+      f1dl::InterfaceHandle<MediaTimelineControlPoint> control_point) override;
 
   void GetControlPoint(
-      fidl::InterfaceRequest<MediaTimelineControlPoint> control_point) override;
+      f1dl::InterfaceRequest<MediaTimelineControlPoint> control_point) override;
 
   // MediaTimelineControlPoint implementation.
   void GetStatus(uint64_t version_last_seen,
                  const GetStatusCallback& callback) override;
 
   void GetTimelineConsumer(
-      fidl::InterfaceRequest<TimelineConsumer> timeline_consumer) override;
+      f1dl::InterfaceRequest<TimelineConsumer> timeline_consumer) override;
 
   void SetProgramRange(uint64_t program,
                        int64_t min_pts,
@@ -145,14 +145,14 @@ class MediaTimelineControllerImpl
   };
 
   MediaTimelineControllerImpl(
-      fidl::InterfaceRequest<MediaTimelineController> request,
-      MediaServiceImpl* owner);
+      f1dl::InterfaceRequest<MediaTimelineController> request,
+      MediaComponentFactory* owner);
 
   // Takes action when a control point changes its end-of-stream value.
   void HandleControlPointEndOfStreamChange();
 
-  fidl::Binding<MediaTimelineControlPoint> control_point_binding_;
-  fidl::Binding<TimelineConsumer> consumer_binding_;
+  f1dl::Binding<MediaTimelineControlPoint> control_point_binding_;
+  f1dl::Binding<TimelineConsumer> consumer_binding_;
   FidlPublisher<GetStatusCallback> status_publisher_;
   std::vector<std::unique_ptr<ControlPointState>> control_point_states_;
   TimelineFunction current_timeline_function_;

@@ -9,8 +9,8 @@
 #include "garnet/lib/wlan/fidl/phy.fidl.h"
 
 #include <ddk/debug.h>
-#include <wlan/protocol/device.h>
 #include <wlan/protocol/ioctl.h>
+#include <wlan/protocol/phy.h>
 
 #include <algorithm>
 #include <stdio.h>
@@ -29,9 +29,6 @@ static zx_protocol_device_t wlanphy_test_device_ops = {
     .release = [](void* ctx) { DEV(ctx)->Release(); },
     .read = nullptr,
     .write = nullptr,
-#if DDK_WITH_IOTXN
-    .iotxn_queue = nullptr,
-#endif
     .get_size = nullptr,
     .ioctl = [](void* ctx, uint32_t op, const void* in_buf, size_t in_len, void* out_buf,
                 size_t out_len, size_t* out_actual) -> zx_status_t {
@@ -68,6 +65,8 @@ zx_status_t PhyDevice::Bind() {
 
 void PhyDevice::Unbind() {
     zxlogf(INFO, "wlan::testing::PhyDevice::Unbind()\n");
+    std::lock_guard<std::mutex> guard(lock_);
+    dead_ = true;
     device_remove(zxdev_);
 }
 
@@ -103,18 +102,22 @@ zx_status_t PhyDevice::Ioctl(uint32_t op, const void* in_buf, size_t in_len, voi
 
 zx_status_t PhyDevice::Query(uint8_t* buf, size_t len, size_t* actual) {
     zxlogf(INFO, "wlan::testing::PhyDevice::Query()\n");
-    auto info = wlan::phy::WlanInfo::New();
-    info->supported_phys = fidl::Array<wlan::phy::SupportedPhy>::New(0);
-    info->driver_features = fidl::Array<wlan::phy::DriverFeature>::New(0);
-    info->mac_roles = fidl::Array<wlan::phy::MacRole>::New(0);
-    info->caps = fidl::Array<wlan::phy::Capability>::New(0);
-    info->bands = fidl::Array<wlan::phy::BandInfoPtr>::New(0);
+    std::lock_guard<std::mutex> guard(lock_);
+    if (dead_) {
+        return ZX_ERR_PEER_CLOSED;
+    }
+
+    auto info = wlan::phy::WlanPhyInfo::New();
+    info->supported_phys = f1dl::Array<wlan::phy::SupportedPhy>::New(0);
+    info->driver_features = f1dl::Array<wlan::phy::DriverFeature>::New(0);
+    info->mac_roles = f1dl::Array<wlan::phy::MacRole>::New(0);
+    info->caps = f1dl::Array<wlan::phy::Capability>::New(0);
+    info->bands = f1dl::Array<wlan::phy::BandInfoPtr>::New(0);
 
     info->supported_phys.push_back(wlan::phy::SupportedPhy::DSSS);
     info->supported_phys.push_back(wlan::phy::SupportedPhy::CCK);
     info->supported_phys.push_back(wlan::phy::SupportedPhy::OFDM);
-    info->supported_phys.push_back(wlan::phy::SupportedPhy::HT_MIXED);
-    info->supported_phys.push_back(wlan::phy::SupportedPhy::HT_GREENFIELD);
+    info->supported_phys.push_back(wlan::phy::SupportedPhy::HT);
 
     info->mac_roles.push_back(wlan::phy::MacRole::CLIENT);
     info->mac_roles.push_back(wlan::phy::MacRole::AP);
@@ -128,12 +131,12 @@ zx_status_t PhyDevice::Query(uint8_t* buf, size_t len, size_t* actual) {
     band24->description = "2.4 GHz";
     band24->ht_caps->ht_capability_info = 0x01fe;
     band24->ht_caps->supported_mcs_set =
-        fidl::Array<uint8_t>{0xff, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00,
+        f1dl::Array<uint8_t>{0xff, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00,
                              0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00};
-    band24->basic_rates = fidl::Array<uint8_t>{2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108};
+    band24->basic_rates = f1dl::Array<uint8_t>{2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108};
     band24->supported_channels->base_freq = 2417;
     band24->supported_channels->channels =
-        fidl::Array<uint8_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+        f1dl::Array<uint8_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
 
     info->bands.push_back(std::move(band24));
 
@@ -143,12 +146,12 @@ zx_status_t PhyDevice::Query(uint8_t* buf, size_t len, size_t* actual) {
     band5->description = "5 GHz";
     band5->ht_caps->ht_capability_info = 0x01fe;
     band5->ht_caps->supported_mcs_set =
-        fidl::Array<uint8_t>{0xff, 0xff, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00,
+        f1dl::Array<uint8_t>{0xff, 0xff, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00,
                              0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00};
-    band5->basic_rates = fidl::Array<uint8_t>{12, 18, 24, 36, 48, 72, 96, 108};
+    band5->basic_rates = f1dl::Array<uint8_t>{12, 18, 24, 36, 48, 72, 96, 108};
     band5->supported_channels->base_freq = 5000;
     band5->supported_channels->channels =
-        fidl::Array<uint8_t>{36, 38,  40,  42,  44,  46,  48,  50,  52,  54,  56,  58,
+        f1dl::Array<uint8_t>{36, 38,  40,  42,  44,  46,  48,  50,  52,  54,  56,  58,
                              60,  62,  64,  100, 102, 104, 106, 108, 110, 112, 114, 116,
                              118, 120, 122, 124, 126, 128, 130, 132, 134, 136, 138, 140,
                              149, 151, 153, 155, 157, 159, 161, 165, 184, 188, 192, 196};
@@ -168,6 +171,9 @@ zx_status_t PhyDevice::CreateIface(const void* in_buf, size_t in_len, void* out_
     }
     zxlogf(INFO, "CreateRequest: role=%u\n", req->role);
     std::lock_guard<std::mutex> guard(lock_);
+    if (dead_) {
+        return ZX_ERR_PEER_CLOSED;
+    }
 
     // We leverage wrapping of unsigned ints to cycle back through ids to find an unused one.
     bool found_unused = false;
@@ -186,7 +192,7 @@ zx_status_t PhyDevice::CreateIface(const void* in_buf, size_t in_len, void* out_
 
     // Build the response now, so if the return buffer is too small we find out before we create the
     // device.
-    auto info = wlan::iface::WlanIface::New();
+    auto info = wlan::iface::WlanIfaceInfo::New();
     info->id = id;
     if (out_len < info->GetSerializedSize()) { return ZX_ERR_BUFFER_TOO_SMALL; }
     if (!info->Serialize(out_buf, info->GetSerializedSize(), out_actual)) { return ZX_ERR_IO; }
@@ -222,10 +228,14 @@ zx_status_t PhyDevice::DestroyIface(const void* in_buf, size_t in_len) {
     zxlogf(INFO, "DestroyRequest: id=%u\n", req->id);
 
     std::lock_guard<std::mutex> guard(lock_);
+    if (dead_) {
+        return ZX_ERR_PEER_CLOSED;
+    }
+
     auto intf = ifaces_.find(req->id);
     if (intf == ifaces_.end()) { return ZX_ERR_NOT_FOUND; }
 
-    intf->second->Unbind();
+    device_remove(intf->second->zxdev());
     // Remove the device from our map. We do NOT free the memory, since the devhost owns it and will
     // call release when it's safe to free the memory.
     ifaces_.erase(req->id);

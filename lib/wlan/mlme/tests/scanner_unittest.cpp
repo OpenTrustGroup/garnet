@@ -2,14 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <wlan/mlme/scanner.h>
+#include <wlan/mlme/client/scanner.h>
 
 #include <wlan/mlme/clock.h>
 #include <wlan/mlme/device_interface.h>
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/mlme.h>
 #include <wlan/mlme/packet.h>
-#include <wlan/mlme/serialize.h>
+#include <wlan/mlme/service.h>
 #include <wlan/mlme/timer.h>
 
 #include <fbl/ref_ptr.h>
@@ -17,7 +17,7 @@
 #include <gtest/gtest.h>
 #include <cstring>
 
-#include "lib/wlan/fidl/wlan_mlme.fidl-common.h"
+#include "lib/wlan/fidl/wlan_mlme.fidl.h"
 
 namespace wlan {
 namespace {
@@ -63,6 +63,8 @@ struct MockDevice : public DeviceInterface {
     }
 
     zx_status_t ConfigureBss(wlan_bss_config_t* cfg) override final { return ZX_OK; }
+
+    zx_status_t ConfigureBeacon(fbl::unique_ptr<Packet> packet) override final { return ZX_OK; }
 
     zx_status_t SetKey(wlan_key_config_t* key_config) override final { return ZX_OK; }
 

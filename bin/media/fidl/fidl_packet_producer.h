@@ -24,14 +24,12 @@ class FidlPacketProducer
   using ConnectionStateChangedCallback = std::function<void()>;
   using FlushConnectionCallback = std::function<void()>;
 
-  static std::shared_ptr<FidlPacketProducer> Create() {
-    return std::shared_ptr<FidlPacketProducer>(new FidlPacketProducer());
-  }
+  static std::shared_ptr<FidlPacketProducer> Create();
 
   ~FidlPacketProducer() override;
 
   // Binds.
-  void Bind(fidl::InterfaceRequest<MediaPacketProducer> request);
+  void Bind(f1dl::InterfaceRequest<MediaPacketProducer> request);
 
   // Sets a callback called whenever the connection state changes.
   void SetConnectionStateChangedCallback(
@@ -47,7 +45,7 @@ class FidlPacketProducer
   Demand SupplyPacket(PacketPtr packet) override;
 
   // MediaPacketProducer implementation.
-  void Connect(fidl::InterfaceHandle<MediaPacketConsumer> consumer,
+  void Connect(f1dl::InterfaceHandle<MediaPacketConsumer> consumer,
                const ConnectCallback& callback) override;
 
   void Disconnect() override;
@@ -81,7 +79,7 @@ class FidlPacketProducer
   // additional packet was outstanding.
   Demand CurrentDemand(uint32_t additional_packets_outstanding = 0);
 
-  fidl::Binding<MediaPacketProducer> binding_;
+  f1dl::Binding<MediaPacketProducer> binding_;
 
   fxl::RefPtr<fxl::TaskRunner> task_runner_;
   ConnectionStateChangedCallback connectionStateChangedCallback_;

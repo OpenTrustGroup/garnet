@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_ESCHER_FLIB_FENCE_SET_LISTENER_H_
+#define LIB_ESCHER_FLIB_FENCE_SET_LISTENER_H_
 
 #include <zx/event.h>
 
-#include <async/cpp/auto_wait.h>
+#include <lib/async/cpp/auto_wait.h>
 #include "lib/escher/flib/fence.h"
 #include "lib/fidl/cpp/bindings/array.h"
 #include "lib/fxl/functional/closure.h"
@@ -20,7 +21,7 @@ class FenceSetListener {
  public:
   // Takes ownership of the fences.
   // |fence_listeners| must be valid handles.
-  explicit FenceSetListener(::fidl::Array<zx::event> fence_listeners);
+  explicit FenceSetListener(::f1dl::Array<zx::event> fence_listeners);
 
   // Invokes the callback when all the fences have been signalled. The callback
   // will be invoked on the current message loop.
@@ -38,7 +39,7 @@ class FenceSetListener {
 
   void ClearHandlers();
 
-  ::fidl::Array<zx::event> fences_;
+  ::f1dl::Array<zx::event> fences_;
   uint32_t num_signalled_fences_ = 0;
 
   // async::AutoWait-ers, each corresponding to an |zx::event| with the same
@@ -51,3 +52,5 @@ class FenceSetListener {
 };
 
 }  // namespace escher
+
+#endif  // LIB_ESCHER_FLIB_FENCE_SET_LISTENER_H_

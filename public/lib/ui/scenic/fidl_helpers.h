@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "lib/ui/scenic/fidl/session.fidl.h"
+#include "lib/ui/mozart/fidl/commands.fidl.h"
 
 namespace scenic_lib {
 
@@ -15,6 +15,9 @@ constexpr float kZeroesFloat3[3] = {0.f, 0.f, 0.f};
 constexpr float kOnesFloat3[3] = {1.f, 1.f, 1.f};
 // A quaterion that has no rotation.
 constexpr float kQuaternionDefault[4] = {0.f, 0.f, 0.f, 1.f};
+
+// Helper function for wrapping Scenic ops as Mozart commands.
+ui_mozart::CommandPtr NewCommand(scenic::OpPtr op);
 
 // Resource creation.
 scenic::OpPtr NewCreateMemoryOp(uint32_t id,
@@ -35,7 +38,7 @@ scenic::OpPtr NewCreateImageOp(uint32_t id,
                                uint32_t stride);
 scenic::OpPtr NewCreateImagePipeOp(
     uint32_t id,
-    ::fidl::InterfaceRequest<scenic::ImagePipe> request);
+    ::f1dl::InterfaceRequest<scenic::ImagePipe> request);
 scenic::OpPtr NewCreateBufferOp(uint32_t id,
                                 uint32_t memory_id,
                                 uint32_t memory_offset,

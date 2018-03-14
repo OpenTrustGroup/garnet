@@ -6,45 +6,42 @@
 
 #include <memory>
 
-#include "garnet/bin/media/fidl/fidl_conversion_pipeline_builder.h"
-#include "garnet/bin/media/media_service/media_service_impl.h"
+#include "garnet/bin/media/media_service/fidl_conversion_pipeline_builder.h"
+#include "garnet/bin/media/media_service/media_component_factory.h"
 #include "garnet/bin/media/util/incident.h"
 #include "lib/fidl/cpp/bindings/binding.h"
-#include "lib/media/fidl/logs/media_sink_channel.fidl.h"
 #include "lib/media/fidl/media_sink.fidl.h"
 #include "lib/media/fidl/timeline_controller.fidl.h"
-#include "lib/media/flog/flog.h"
 
 namespace media {
 
 // Fidl agent that consumes a stream and delivers it to a destination specified
 // by URL.
-class MediaSinkImpl : public MediaServiceImpl::Product<MediaSink>,
+class MediaSinkImpl : public MediaComponentFactory::Product<MediaSink>,
                       public MediaSink {
  public:
   static std::shared_ptr<MediaSinkImpl> Create(
-      fidl::InterfaceHandle<MediaRenderer> renderer_handle,
-      fidl::InterfaceRequest<MediaSink> sink_request,
-      MediaServiceImpl* owner);
+      f1dl::InterfaceHandle<MediaRenderer> renderer_handle,
+      f1dl::InterfaceRequest<MediaSink> sink_request,
+      MediaComponentFactory* owner);
 
   ~MediaSinkImpl() override;
 
   // MediaSink implementation.
   void GetTimelineControlPoint(
-      fidl::InterfaceRequest<MediaTimelineControlPoint> req) override;
+      f1dl::InterfaceRequest<MediaTimelineControlPoint> req) override;
 
   void ConsumeMediaType(MediaTypePtr media_type,
                         const ConsumeMediaTypeCallback& callback) override;
 
  private:
-  MediaSinkImpl(fidl::InterfaceHandle<MediaRenderer> renderer_handle,
-                fidl::InterfaceRequest<MediaSink> sink_request,
-                MediaServiceImpl* owner);
+  MediaSinkImpl(f1dl::InterfaceHandle<MediaRenderer> renderer_handle,
+                f1dl::InterfaceRequest<MediaSink> sink_request,
+                MediaComponentFactory* owner);
 
   // Builds the conversion pipeline.
   void BuildConversionPipeline();
 
-  MediaServicePtr media_service_;
   MediaRendererPtr renderer_;
   ConsumeMediaTypeCallback consume_media_type_callback_;
   MediaTypePtr original_media_type_;
@@ -52,8 +49,6 @@ class MediaSinkImpl : public MediaServiceImpl::Product<MediaSink>,
   std::unique_ptr<std::vector<std::unique_ptr<StreamTypeSet>>>
       supported_stream_types_;
   Incident got_supported_stream_types_;
-
-  FLOG_INSTANCE_CHANNEL(logs::MediaSinkChannel, log_channel_);
 };
 
 }  // namespace media

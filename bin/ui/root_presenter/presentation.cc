@@ -48,10 +48,10 @@ constexpr float kCursorElevation = 800;
 }  // namespace
 
 Presentation::Presentation(mozart::ViewManager* view_manager,
-                           scenic::SceneManager* scene_manager)
+                           ui_mozart::Mozart* mozart)
     : view_manager_(view_manager),
-      scene_manager_(scene_manager),
-      session_(scene_manager_),
+      mozart_(mozart),
+      session_(mozart_),
       compositor_(&session_),
       layer_stack_(&session_),
       layer_(&session_),
@@ -109,27 +109,27 @@ Presentation::~Presentation() {}
 
 void Presentation::Present(
     mozart::ViewOwnerPtr view_owner,
-    fidl::InterfaceRequest<mozart::Presentation> presentation_request,
+    f1dl::InterfaceRequest<mozart::Presentation> presentation_request,
     fxl::Closure shutdown_callback) {
   FXL_DCHECK(view_owner);
   FXL_DCHECK(!display_model_initialized_);
 
   shutdown_callback_ = std::move(shutdown_callback);
 
-  scene_manager_->GetDisplayInfo(fxl::MakeCopyable([
-    weak = weak_factory_.GetWeakPtr(), view_owner = std::move(view_owner),
-    presentation_request = std::move(presentation_request)
-  ](scenic::DisplayInfoPtr display_info) mutable {
-    if (weak)
-      weak->CreateViewTree(std::move(view_owner),
-                           std::move(presentation_request),
-                           std::move(display_info));
-  }));
+  mozart_->GetDisplayInfo(fxl::MakeCopyable(
+      [weak = weak_factory_.GetWeakPtr(), view_owner = std::move(view_owner),
+       presentation_request = std::move(presentation_request)](
+          scenic::DisplayInfoPtr display_info) mutable {
+        if (weak)
+          weak->CreateViewTree(std::move(view_owner),
+                               std::move(presentation_request),
+                               std::move(display_info));
+      }));
 }
 
 void Presentation::CreateViewTree(
     mozart::ViewOwnerPtr view_owner,
-    fidl::InterfaceRequest<mozart::Presentation> presentation_request,
+    f1dl::InterfaceRequest<mozart::Presentation> presentation_request,
     scenic::DisplayInfoPtr display_info) {
   FXL_DCHECK(display_info);
 
@@ -171,7 +171,7 @@ void Presentation::CreateViewTree(
   });
 
   // Create root view.
-  fidl::InterfaceHandle<mozart::ViewOwner> root_view_owner;
+  f1dl::InterfaceHandle<mozart::ViewOwner> root_view_owner;
   auto root_view_owner_request = root_view_owner.NewRequest();
   mozart::ViewListenerPtr root_view_listener;
   view_listener_binding_.Bind(root_view_listener.NewRequest());
@@ -333,6 +333,26 @@ void Presentation::OnReport(uint32_t device_id,
   state->Update(std::move(input_report), size);
 }
 
+void Presentation::CaptureKeyboardEvent(
+    mozart::KeyboardEventPtr event_to_capture,
+    f1dl::InterfaceHandle<mozart::KeyboardCaptureListener> listener_handle) {
+  mozart::KeyboardCaptureListenerPtr listener;
+  listener.Bind(std::move(listener_handle));
+  // Auto-remove listeners if the interface closes.
+  listener.set_error_handler([this, listener = listener.get()] {
+    captured_keybindings_.erase(
+        std::remove_if(captured_keybindings_.begin(),
+                       captured_keybindings_.end(),
+                       [listener](const KeyboardCaptureItem& item) -> bool {
+                         return item.listener.get() == listener;
+                       }),
+        captured_keybindings_.end());
+  });
+
+  captured_keybindings_.push_back(
+      KeyboardCaptureItem{std::move(event_to_capture), std::move(listener)});
+}
+
 void Presentation::OnEvent(mozart::InputEventPtr event) {
   FXL_VLOG(1) << "OnEvent " << *(event);
 
@@ -423,6 +443,16 @@ void Presentation::OnEvent(mozart::InputEventPtr event) {
           !trackball_pointer_down_) {
         HandleAltBackspace();
         invalidate = true;
+      } else {
+        for (size_t i = 0; i < captured_keybindings_.size(); i++) {
+          const auto& event = captured_keybindings_[i].event;
+          if ((kbd->modifiers & event->modifiers) &&
+              (event->phase == kbd->phase) &&
+              (event->code_point == kbd->code_point)) {
+            captured_keybindings_[i].listener->OnEvent(kbd.Clone());
+            invalidate = true;
+          }
+        }
       }
     }
   }
@@ -604,16 +634,16 @@ void Presentation::PresentScene() {
     }
   }
 
-  session_.Present(
-      0, [weak = weak_factory_.GetWeakPtr()](scenic::PresentationInfoPtr info) {
-        if (auto self = weak.get()) {
-          uint64_t next_presentation_time =
-              info->presentation_time + info->presentation_interval;
-          if (self->UpdateAnimation(next_presentation_time)) {
-            self->PresentScene();
-          }
-        }
-      });
+  session_.Present(0, [weak = weak_factory_.GetWeakPtr()](
+                          ui_mozart::PresentationInfoPtr info) {
+    if (auto self = weak.get()) {
+      uint64_t next_presentation_time =
+          info->presentation_time + info->presentation_interval;
+      if (self->UpdateAnimation(next_presentation_time)) {
+        self->PresentScene();
+      }
+    }
+  });
 }
 
 void Presentation::Shutdown() {
@@ -621,11 +651,11 @@ void Presentation::Shutdown() {
 }
 
 void Presentation::SetRendererParams(
-    ::fidl::Array<scenic::RendererParamPtr> params) {
+    ::f1dl::Array<scenic::RendererParamPtr> params) {
   for (auto& param : params) {
     renderer_.SetParam(std::move(param));
   }
-  session_.Present(0, [](scenic::PresentationInfoPtr info) {});
+  session_.Present(0, [](ui_mozart::PresentationInfoPtr info) {});
 }
 
 }  // namespace root_presenter

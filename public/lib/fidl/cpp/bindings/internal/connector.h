@@ -5,14 +5,14 @@
 #ifndef LIB_FIDL_CPP_BINDINGS_INTERNAL_CONNECTOR_H_
 #define LIB_FIDL_CPP_BINDINGS_INTERNAL_CONNECTOR_H_
 
-#include <async/cpp/auto_wait.h>
+#include <lib/async/cpp/auto_wait.h>
 #include <zx/channel.h>
 
 #include <functional>
 
 #include "lib/fidl/cpp/bindings/message.h"
 
-namespace fidl {
+namespace f1dl {
 namespace internal {
 
 // The Connector class is responsible for performing read/write operations on a
@@ -68,12 +68,11 @@ class Connector : public MessageReceiver {
   bool is_valid() const { return !!channel_; }
 
   // Waits for the next message on the channel, blocking until one arrives,
-  // |deadline| is exceeded, or an error happens. Returns |true| if a message has
-  // been delivered, |false| otherwise.
-  // When returning |false| closes the channel, unless the reason for
-  // for returning |false| was |ZX_ERR_SHOULD_WAIT| or
-  // |ZX_ERR_TIMED_OUT|.
-  // Use |encountered_error| to see if an error occurred.
+  // |deadline| is exceeded, or an error happens. Returns |true| if a message
+  // has been delivered, |false| otherwise. When returning |false| closes the
+  // channel, unless the reason for for returning |false| was
+  // |ZX_ERR_SHOULD_WAIT| or |ZX_ERR_TIMED_OUT|. Use |encountered_error| to see
+  // if an error occurred.
   bool WaitForIncomingMessageUntil(zx::time deadline);
 
   // MessageReceiver implementation:
@@ -113,6 +112,6 @@ class Connector : public MessageReceiver {
 };
 
 }  // namespace internal
-}  // namespace fidl
+}  // namespace f1dl
 
 #endif  // LIB_FIDL_CPP_BINDINGS_INTERNAL_CONNECTOR_H_

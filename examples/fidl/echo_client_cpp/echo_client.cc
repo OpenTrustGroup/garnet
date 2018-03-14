@@ -14,7 +14,7 @@ namespace echo {
 
 class ResponsePrinter {
  public:
-  void Run(const fidl::String& value) const {
+  void Run(const f1dl::String& value) const {
     printf("***** Response: %s\n", value.get().c_str());
 
     fsl::MessageLoop::GetCurrent()->QuitNow();
@@ -30,7 +30,7 @@ class EchoClientApp {
   bool Start(std::string server_url, std::string msg) {
     auto launch_info = app::ApplicationLaunchInfo::New();
     launch_info->url = server_url;
-    launch_info->service_request = echo_provider_.NewRequest();
+    launch_info->directory_request = echo_provider_.NewRequest();
 
     context_->launcher()->CreateApplication(std::move(launch_info),
                                             controller_.NewRequest());
@@ -38,7 +38,7 @@ class EchoClientApp {
     echo_provider_.ConnectToService(echo_.NewRequest());
     FXL_DCHECK(echo_);
 
-    echo_->EchoString(msg, [this](fidl::String value) {
+    echo_->EchoString(msg, [this](f1dl::String value) {
       ResponsePrinter printer;
       printer.Run(std::move(value));
     });
@@ -59,7 +59,7 @@ int main(int argc, const char** argv) {
   std::string msg = "hello world";
 
   for (int i = 1; i < argc - 1; ++i) {
-    if (!strcmp("-u", argv[i])) {
+    if (!strcmp("--server", argv[i])) {
       server_url = argv[++i];
     } else if (!strcmp("-m", argv[i])) {
       msg = argv[++i];

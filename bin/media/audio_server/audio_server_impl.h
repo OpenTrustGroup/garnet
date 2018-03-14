@@ -4,15 +4,18 @@
 
 #pragma once
 
-#include <list>
-#include <set>
+#include <fbl/intrusive_double_list.h>
+#include <fbl/unique_ptr.h>
+
+#include <mutex>
 
 #include "garnet/bin/media/audio_server/audio_device_manager.h"
+#include "garnet/bin/media/audio_server/audio_packet_ref.h"
 #include "garnet/bin/media/audio_server/fwd_decls.h"
+#include "garnet/bin/media/audio_server/pending_flush_token.h"
 #include "lib/app/cpp/application_context.h"
 #include "lib/fidl/cpp/bindings/binding_set.h"
 #include "lib/fxl/macros.h"
-#include "lib/fxl/synchronization/mutex.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
 #include "lib/fxl/tasks/task_runner.h"
 #include "lib/media/fidl/audio_capturer.fidl.h"
@@ -31,16 +34,18 @@ class AudioServerImpl : public AudioServer {
   // TODO(mpuryear): through the codebase, particularly in examples and headers,
   // change 'audio_renderer' variables to 'audio_renderer_request' (media, etc).
   void CreateRenderer(
-      fidl::InterfaceRequest<AudioRenderer> audio_renderer,
-      fidl::InterfaceRequest<MediaRenderer> media_renderer) final;
+      f1dl::InterfaceRequest<AudioRenderer> audio_renderer,
+      f1dl::InterfaceRequest<MediaRenderer> media_renderer) final;
+  void CreateRendererV2(
+      f1dl::InterfaceRequest<AudioRenderer2> audio_renderer) final;
   void CreateCapturer(
-      fidl::InterfaceRequest<AudioCapturer> audio_capturer_request,
+      f1dl::InterfaceRequest<AudioCapturer> audio_capturer_request,
       bool loopback) final;
   void SetMasterGain(float db_gain) final;
   void GetMasterGain(const GetMasterGainCallback& cbk) final;
 
   // Called (indirectly) by AudioOutputs to schedule the callback for a
-  // MediaPacked which was queued to an AudioRenderer via. a media pipe.
+  // packet was queued to an AudioRenderer.
   //
   // TODO(johngro): This bouncing through thread contexts is inefficient and
   // will increase the latency requirements for clients (its going to take them
@@ -49,8 +54,8 @@ class AudioServerImpl : public AudioServer {
   // threads other than the thread which executed the method itself, we will
   // want to switch to creating the callback message directly, instead of
   // indirecting through the server.
-  void SchedulePacketCleanup(
-      std::unique_ptr<MediaPacketConsumerBase::SuppliedPacket> supplied_packet);
+  void SchedulePacketCleanup(fbl::unique_ptr<AudioPacketRef> packet);
+  void ScheduleFlushCleanup(fbl::unique_ptr<PendingFlushToken> token);
 
   // Schedule a closure to run on the server's main message loop.
   void ScheduleMessageLoopTask(const fxl::Closure& task) {
@@ -62,14 +67,11 @@ class AudioServerImpl : public AudioServer {
   AudioDeviceManager& GetDeviceManager() { return device_manager_; }
 
  private:
-  using CleanupQueue =
-      std::list<std::unique_ptr<MediaPacketConsumerBase::SuppliedPacket>>;
-
   void Shutdown();
   void DoPacketCleanup();
 
   std::unique_ptr<app::ApplicationContext> application_context_;
-  fidl::BindingSet<AudioServer> bindings_;
+  f1dl::BindingSet<AudioServer> bindings_;
 
   // A reference to our message loop's task runner.  Allows us to post events to
   // be handled by our main application thread from things like the output
@@ -80,8 +82,10 @@ class AudioServerImpl : public AudioServer {
   AudioDeviceManager device_manager_;
 
   // State for dealing with cleanup tasks.
-  fxl::Mutex cleanup_queue_mutex_;
-  std::unique_ptr<CleanupQueue> cleanup_queue_
+  std::mutex cleanup_queue_mutex_;
+  fbl::DoublyLinkedList<fbl::unique_ptr<AudioPacketRef>> packet_cleanup_queue_
+      FXL_GUARDED_BY(cleanup_queue_mutex_);
+  fbl::DoublyLinkedList<fbl::unique_ptr<PendingFlushToken>> flush_cleanup_queue_
       FXL_GUARDED_BY(cleanup_queue_mutex_);
   bool cleanup_scheduled_ FXL_GUARDED_BY(cleanup_queue_mutex_) = false;
   bool shutting_down_ = false;

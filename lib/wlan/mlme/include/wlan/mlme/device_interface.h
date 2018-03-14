@@ -6,11 +6,11 @@
 
 #include <wlan/mlme/mac_frame.h>
 
-#include <ddk/protocol/wlan.h>
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
 #include <fbl/unique_ptr.h>
 #include <wlan/common/macaddr.h>
+#include <wlan/protocol/mac.h>
 #include <zircon/types.h>
 
 #include <cstdint>
@@ -34,12 +34,9 @@ class DeviceState : public fbl::RefCounted<DeviceState> {
     bool online() { return online_; }
     void set_online(bool online) { online_ = online; }
 
-    uint16_t next_seq() { return seq_no_++ & kMaxSequenceNumber; }
-
    private:
     common::MacAddr addr_;
     wlan_channel_t chan_ = {};
-    uint16_t seq_no_ = 0;
     bool online_ = false;
 };
 
@@ -57,6 +54,7 @@ class DeviceInterface {
     virtual zx_status_t SetChannel(wlan_channel_t chan) = 0;
     virtual zx_status_t SetStatus(uint32_t status) = 0;
     virtual zx_status_t ConfigureBss(wlan_bss_config_t* cfg) = 0;
+    virtual zx_status_t ConfigureBeacon(fbl::unique_ptr<Packet> packet) = 0;
     virtual zx_status_t SetKey(wlan_key_config_t* key_config) = 0;
 
     virtual fbl::RefPtr<DeviceState> GetState() = 0;

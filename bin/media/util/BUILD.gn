@@ -2,12 +2,14 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//garnet/public/build/test.gni")
+import("//build/test.gni")
 
 source_set("util") {
   sources = [
     "factory_service_base.h",
     "fidl_publisher.h",
+    "file_channel.cc",
+    "file_channel.h",
     "multiproc_task_runner.cc",
     "multiproc_task_runner.h",
     "timeline_control_point.cc",
@@ -17,7 +19,6 @@ source_set("util") {
   public_deps = [
     ":host_compatible",
     "//garnet/public/lib/app/cpp",
-    "//garnet/public/lib/media/flog",
   ]
 
   deps = [
@@ -34,8 +35,11 @@ source_set("host_compatible") {
     "callback_joiner.h",
     "incident.cc",
     "incident.h",
+    "thread_aware_shared_ptr.h",
     "priority_queue_of_unique_ptr.h",
     "safe_clone.h",
+    "threadsafe_callback_joiner.cc",
+    "threadsafe_callback_joiner.h",
   ]
 
   deps = [
@@ -53,5 +57,6 @@ test("tests") {
 
   deps = [
     ":util",
+    "//third_party/googletest:gtest_main",
   ]
 }

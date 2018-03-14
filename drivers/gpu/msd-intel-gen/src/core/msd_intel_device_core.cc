@@ -107,6 +107,8 @@ bool MsdIntelDeviceCore::Init(void* device_handle)
 
     register_io_ = std::unique_ptr<RegisterIo>(new RegisterIo(std::move(mmio)));
 
+    ReadDisplaySize();
+
     gtt_ = Gtt::CreateCore(this);
 
     if (!gtt_->Init(gtt_size))
@@ -155,6 +157,23 @@ void MsdIntelDeviceCore::Destroy()
         wait_thread_.join();
         DLOG("joined");
     }
+}
+
+void MsdIntelDeviceCore::ReadDisplaySize()
+{
+    // Read the main display's resolution from the register state, assuming
+    // that the display was set up by some previous modesetting code
+    // (typically the firmware's boot-time modesetting).
+    uint32_t pipe_number = 0;
+    registers::PipeRegs pipe(pipe_number);
+    auto surface_size = pipe.PlaneSurfaceSize().ReadFrom(register_io());
+    display_size_.width = surface_size.width_minus_1().get() + 1;
+    display_size_.height = surface_size.height_minus_1().get() + 1;
+    reported_display_size_ = display_size_;
+#if MSD_INTEL_REPORTED_WIDTH && MSD_INTEL_REPORTED_HEIGHT
+    reported_display_size_.width = MSD_INTEL_REPORTED_WIDTH;
+    reported_display_size_.height = MSD_INTEL_REPORTED_HEIGHT;
+#endif
 }
 
 void MsdIntelDeviceCore::PresentBuffer(
@@ -370,8 +389,29 @@ magma::Status MsdIntelDeviceCore::ProcessFlip(
     uint32_t pipe_number = 0;
     registers::PipeRegs pipe(pipe_number);
 
-    auto surface_size = pipe.PlaneSurfaceSize().ReadFrom(register_io());
-    uint32_t width = surface_size.width_minus_1().get() + 1;
+    // We assume the size of the incoming buffers match the reported display size.
+    auto display_size_pipe = pipe.PlaneSurfaceSize().FromValue(0);
+    display_size_pipe.width_minus_1().set(reported_display_size_.width - 1);
+    display_size_pipe.height_minus_1().set(reported_display_size_.height - 1);
+    display_size_pipe.WriteTo(register_io());
+
+    auto scaler_reg = pipe.PipeScalerControl().FromValue(0);
+    if (reported_display_size_.width == display_size_.width &&
+        reported_display_size_.height == display_size_.height) {
+        scaler_reg.enable().set(0);
+    } else {
+        scaler_reg.enable().set(1);
+        scaler_reg.mode().set(registers::PipeScalerControl::DYNAMIC);
+        scaler_reg.binding().set(registers::PipeScalerControl::PLANE_1);
+        scaler_reg.filter_select().set(registers::PipeScalerControl::BILINEAR);
+    }
+    scaler_reg.WriteTo(register_io());
+
+    // Writing this register arms the scaler.
+    auto window_size = pipe.PipeScalerWindowSize().ReadFrom(register_io());
+    window_size.x_size().set(display_size_.width);
+    window_size.y_size().set(display_size_.height);
+    window_size.WriteTo(register_io());
 
     // Controls whether the plane surface update happens immediately or on the next vblank.
     constexpr bool kUpdateOnVblank = true;
@@ -394,11 +434,13 @@ magma::Status MsdIntelDeviceCore::ProcessFlip(
     uint32_t stride;
     if (image_desc.tiling == MAGMA_IMAGE_TILING_OPTIMAL) {
         // Stride must be an integer number of tiles
-        stride = magma::round_up(width * sizeof(uint32_t), kTileSize) / kTileSize;
+        stride =
+            magma::round_up(reported_display_size_.width * sizeof(uint32_t), kTileSize) / kTileSize;
         plane_control.tiled_surface().set(plane_control.TILING_X);
     } else {
         // Stride must be an integer number of cache lines
-        stride = magma::round_up(width * sizeof(uint32_t), kCacheLineSize) / kCacheLineSize;
+        stride = magma::round_up(reported_display_size_.width * sizeof(uint32_t), kCacheLineSize) /
+                 kCacheLineSize;
         plane_control.tiled_surface().set(plane_control.TILING_NONE);
     }
     plane_control.WriteTo(register_io());
@@ -460,5 +502,28 @@ magma::Status MsdIntelDeviceCore::ProcessInterrupts(uint64_t interrupt_time_ns,
         ProcessFlipComplete(interrupt_time_ns);
     }
 
+    return MAGMA_STATUS_OK;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+
+msd_connection_t* msd_device_open(msd_device_t* dev, msd_client_id_t client_id)
+{
+    // Return a dummy connection.
+    return reinterpret_cast<msd_connection_t*>(0xdeadbeef);
+}
+
+void msd_device_destroy(msd_device_t* dev) { delete MsdIntelDeviceCore::cast(dev); }
+
+magma_status_t msd_device_query(msd_device_t* device, uint64_t id, uint64_t* value_out)
+{
+    return DRET_MSG(MAGMA_STATUS_INTERNAL_ERROR, "msd_device_query not implemented for core");
+}
+
+void msd_device_dump_status(msd_device_t* device) {}
+
+magma_status_t msd_device_display_get_size(msd_device_t* dev, magma_display_size* size_out)
+{
+    *size_out = MsdIntelDeviceCore::cast(dev)->display_size();
     return MAGMA_STATUS_OK;
 }

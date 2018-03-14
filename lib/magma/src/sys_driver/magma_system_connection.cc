@@ -105,6 +105,25 @@ magma::Status MagmaSystemConnection::ExecuteCommandBuffer(uint32_t command_buffe
     return context->ExecuteCommandBuffer(std::move(command_buffer));
 }
 
+magma::Status MagmaSystemConnection::ExecuteImmediateCommands(uint32_t context_id,
+                                                              uint64_t commands_size,
+                                                              void* commands,
+                                                              uint64_t semaphore_count,
+                                                              uint64_t* semaphore_ids)
+{
+    if (!has_render_capability_)
+        return DRET_MSG(MAGMA_STATUS_ACCESS_DENIED,
+                        "Attempting to execute a command buffer without render capability");
+
+    auto context = LookupContext(context_id);
+    if (!context)
+        return DRET_MSG(MAGMA_STATUS_INVALID_ARGS,
+                        "Attempting to execute command buffer on invalid context");
+
+    return context->ExecuteImmediateCommands(commands_size, commands, semaphore_count,
+                                             semaphore_ids);
+}
+
 magma::Status MagmaSystemConnection::WaitRendering(uint64_t buffer_id)
 {
     if (!has_render_capability_)
@@ -201,6 +220,12 @@ bool MagmaSystemConnection::CommitBuffer(uint64_t id, uint64_t page_offset, uint
     auto iter = buffer_map_.find(id);
     if (iter == buffer_map_.end())
         return DRETF(false, "Attempting to commit invalid buffer id");
+    if (page_count + page_offset < page_count) {
+        return DRETF(false, "Offset overflows");
+    }
+    if (page_count + page_offset > iter->second.buffer->size() / PAGE_SIZE) {
+        return DRETF(false, "Page offset too large for buffer");
+    }
     msd_connection_commit_buffer(msd_connection(), iter->second.buffer->msd_buf(), page_offset,
                                  page_count);
 

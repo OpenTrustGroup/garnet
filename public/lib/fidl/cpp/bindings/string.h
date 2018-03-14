@@ -13,107 +13,65 @@
 #include "lib/fidl/cpp/bindings/internal/array_internal.h"
 #include "lib/fidl/cpp/bindings/type_converter.h"
 
-namespace fidl {
+namespace f1dl {
 
 // A UTF-8 encoded character string that can be null. Provides functions that
 // are similar to std::string, along with access to the underlying std::string
 // object.
 class String {
  public:
-  // Provide iterator access to the underlying std::string.
-  using ConstIterator = typename std::string::const_iterator;
-  using Iterator = typename std::string::iterator;
-
-  typedef internal::String_Data Data_;
+  //////////////////////////////////////////////////////////////////////////////
+  // FIDL2 INTERFACE
+  //////////////////////////////////////////////////////////////////////////////
 
   String() : is_null_(true) {}
-  String(const std::string& str) : value_(str), is_null_(false) {}
+  String(const std::string& str) : str_(str), is_null_(false) {}
   String(const char* chars) : is_null_(!chars) {
     if (chars)
-      value_ = chars;
+      str_ = chars;
   }
   String(const char* chars, size_t num_chars)
-      : value_(chars, num_chars), is_null_(false) {}
-  String(const fidl::String& str)
-      : value_(str.value_), is_null_(str.is_null_) {}
+      : str_(chars, num_chars), is_null_(false) {}
 
-  template <size_t N>
-  String(const char chars[N]) : value_(chars, N - 1), is_null_(false) {}
+  const std::string& get() const { return str_; }
 
-  template <typename U>
-  static String From(const U& other) {
-    return TypeConverter<String, U>::Convert(other);
-  }
-
-  template <typename U>
-  U To() const {
-    return TypeConverter<U, String>::Convert(*this);
-  }
-
-  String& operator=(const fidl::String& str) {
-    value_ = str.value_;
-    is_null_ = str.is_null_;
-    return *this;
-  }
-  String& operator=(const std::string& str) {
-    value_ = str;
+  void reset(std::string str) {
+    str_ = std::move(str);
     is_null_ = false;
-    return *this;
-  }
-  String& operator=(const char* chars) {
-    is_null_ = !chars;
-    if (chars) {
-      value_ = chars;
-    } else {
-      value_.clear();
-    }
-    return *this;
   }
 
   void reset() {
-    value_.clear();
+    str_.clear();
     is_null_ = true;
   }
 
-  // Tests as true if non-null, false if null.
-  explicit operator bool() const { return !is_null_; }
+  void swap(String& other) {
+    using std::swap;
+    swap(str_, other.str_);
+    swap(is_null_, other.is_null_);
+  }
 
   bool is_null() const { return is_null_; }
 
-  size_t size() const { return value_.size(); }
+  explicit operator bool() const { return !is_null_; }
 
-  bool empty() const { return value_.empty(); }
+  std::string* operator->() { return &str_; }
+  const std::string* operator->() const { return &str_; }
 
-  const char* data() const { return value_.data(); }
+  const std::string& operator*() const { return str_; }
 
-  const char& at(size_t offset) const { return value_.at(offset); }
-  char& at(size_t offset) { return value_.at(offset); }
+  operator const std::string&() const { return str_; }
 
-  const char& operator[](size_t offset) const { return value_[offset]; }
-  char& operator[](size_t offset) { return value_[offset]; }
+  //////////////////////////////////////////////////////////////////////////////
+  // FIDL1 INTERFACE
+  //////////////////////////////////////////////////////////////////////////////
 
-  const std::string& get() const { return value_; }
-  operator const std::string&() const { return value_; }
+  typedef internal::String_Data Data_;
 
-  void Swap(String* other) {
-    std::swap(is_null_, other->is_null_);
-    value_.swap(other->value_);
-  }
-
-  void Swap(std::string* other) {
-    is_null_ = false;
-    value_.swap(*other);
-  }
-
-  // std::string iterators into the string. The behavior is undefined
-  // if the string is null.
-  Iterator begin() { return value_.begin(); }
-  Iterator end() { return value_.end(); }
-  ConstIterator begin() const { return value_.begin(); }
-  ConstIterator end() const { return value_.end(); }
+  String(const f1dl::String& str) : str_(str.str_), is_null_(str.is_null_) {}
 
  private:
-  std::string value_;
+  std::string str_;
   bool is_null_;
 };
 
@@ -151,8 +109,6 @@ inline bool operator<(const String& a, const String& b) {
   return a.get() < b.get();
 }
 
-// TODO(darin): Add similar variants of operator<,<=,>,>=
-
 template <>
 struct TypeConverter<String, std::string> {
   static String Convert(const std::string& input) { return String(input); }
@@ -186,6 +142,6 @@ struct TypeConverter<String, const char*> {
   static String Convert(const char* input) { return String(input); }
 };
 
-}  // namespace fidl
+}  // namespace f1dl
 
 #endif  // LIB_FIDL_CPP_BINDINGS_STRING_H_

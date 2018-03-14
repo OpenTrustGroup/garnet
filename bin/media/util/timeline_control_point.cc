@@ -6,7 +6,6 @@
 
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
-#include "lib/media/timeline/fidl_type_conversions.h"
 #include "lib/media/timeline/timeline.h"
 #include "lib/media/timeline/timeline_function.h"
 
@@ -26,17 +25,17 @@ TimelineControlPoint::TimelineControlPoint()
   task_runner_ = fsl::MessageLoop::GetCurrent()->task_runner();
   FXL_DCHECK(task_runner_);
 
-  fxl::MutexLocker locker(&mutex_);
+  std::lock_guard<std::mutex> locker(mutex_);
   ClearPendingTimelineFunction(false);
 
   status_publisher_.SetCallbackRunner(
       [this](const GetStatusCallback& callback, uint64_t version) {
         MediaTimelineControlPointStatusPtr status;
         {
-          fxl::MutexLocker locker(&mutex_);
+          std::lock_guard<std::mutex> locker(mutex_);
           status = MediaTimelineControlPointStatus::New();
           status->timeline_transform =
-              TimelineTransform::From(current_timeline_function_);
+              static_cast<TimelineTransformPtr>(current_timeline_function_);
           status->end_of_stream = ReachedEndOfStream();
         }
         callback(version, std::move(status));
@@ -57,13 +56,12 @@ TimelineControlPoint::~TimelineControlPoint() {
 }
 
 void TimelineControlPoint::Bind(
-    fidl::InterfaceRequest<MediaTimelineControlPoint> request) {
+    f1dl::InterfaceRequest<MediaTimelineControlPoint> request) {
   if (control_point_binding_.is_bound()) {
     control_point_binding_.Unbind();
   }
 
   control_point_binding_.Bind(std::move(request));
-  FLOG(log_channel_, BoundAs(FLOG_BINDING_KOID(control_point_binding_)));
 }
 
 void TimelineControlPoint::Reset() {
@@ -76,7 +74,7 @@ void TimelineControlPoint::Reset() {
   }
 
   {
-    fxl::MutexLocker locker(&mutex_);
+    std::lock_guard<std::mutex> locker(mutex_);
     current_timeline_function_ = TimelineFunction();
     ClearPendingTimelineFunction(false);
     generation_ = 1;
@@ -89,7 +87,7 @@ void TimelineControlPoint::SnapshotCurrentFunction(int64_t reference_time,
                                                    TimelineFunction* out,
                                                    uint32_t* generation) {
   FXL_DCHECK(out);
-  fxl::MutexLocker locker(&mutex_);
+  std::lock_guard<std::mutex> locker(mutex_);
   ApplyPendingChanges(reference_time);
   *out = current_timeline_function_;
   if (generation) {
@@ -97,14 +95,13 @@ void TimelineControlPoint::SnapshotCurrentFunction(int64_t reference_time,
   }
 
   if (ReachedEndOfStream() && !end_of_stream_published_) {
-    FLOG(log_channel_, ReachedEndOfStream());
     end_of_stream_published_ = true;
     task_runner_->PostTask([this]() { status_publisher_.SendUpdates(); });
   }
 }
 
 void TimelineControlPoint::SetEndOfStreamPts(int64_t end_of_stream_pts) {
-  fxl::MutexLocker locker(&mutex_);
+  std::lock_guard<std::mutex> locker(mutex_);
   if (end_of_stream_pts_ != end_of_stream_pts) {
     end_of_stream_pts_ = end_of_stream_pts;
     end_of_stream_published_ = false;
@@ -112,7 +109,7 @@ void TimelineControlPoint::SetEndOfStreamPts(int64_t end_of_stream_pts) {
 }
 
 void TimelineControlPoint::ClearEndOfStream() {
-  fxl::MutexLocker locker(&mutex_);
+  std::lock_guard<std::mutex> locker(mutex_);
   if (end_of_stream_pts_ != kUnspecifiedTime) {
     end_of_stream_pts_ = kUnspecifiedTime;
     end_of_stream_published_ = false;
@@ -120,8 +117,6 @@ void TimelineControlPoint::ClearEndOfStream() {
 }
 
 bool TimelineControlPoint::ReachedEndOfStream() {
-  mutex_.AssertHeld();
-
   return end_of_stream_pts_ != kUnspecifiedTime &&
          current_timeline_function_(Timeline::local_now()) >=
              end_of_stream_pts_;
@@ -133,7 +128,7 @@ void TimelineControlPoint::GetStatus(uint64_t version_last_seen,
 }
 
 void TimelineControlPoint::GetTimelineConsumer(
-    fidl::InterfaceRequest<TimelineConsumer> timeline_consumer) {
+    f1dl::InterfaceRequest<TimelineConsumer> timeline_consumer) {
   if (consumer_binding_.is_bound()) {
     consumer_binding_.Unbind();
   }
@@ -144,22 +139,15 @@ void TimelineControlPoint::GetTimelineConsumer(
 void TimelineControlPoint::SetProgramRange(uint64_t program,
                                            int64_t min_pts,
                                            int64_t max_pts) {
-  FLOG(log_channel_, SetProgramRangeRequested(program, min_pts, max_pts));
   if (program_range_set_callback_) {
     program_range_set_callback_(program, min_pts, max_pts);
   }
 }
 
 void TimelineControlPoint::Prime(const PrimeCallback& callback) {
-  FLOG(log_channel_, PrimeRequested());
-
   if (prime_requested_callback_) {
-    prime_requested_callback_([this, callback]() {
-      FLOG(log_channel_, CompletingPrime());
-      callback();
-    });
+    prime_requested_callback_([this, callback]() { callback(); });
   } else {
-    FLOG(log_channel_, CompletingPrime());
     callback();
   }
 }
@@ -167,9 +155,7 @@ void TimelineControlPoint::Prime(const PrimeCallback& callback) {
 void TimelineControlPoint::SetTimelineTransform(
     TimelineTransformPtr timeline_transform,
     const SetTimelineTransformCallback& callback) {
-  FLOG(log_channel_, ScheduleTimelineTransform(timeline_transform.Clone()));
-
-  fxl::MutexLocker locker(&mutex_);
+  std::lock_guard<std::mutex> locker(mutex_);
 
   SetTimelineTransformLocked(std::move(timeline_transform));
 
@@ -178,17 +164,13 @@ void TimelineControlPoint::SetTimelineTransform(
 
 void TimelineControlPoint::SetTimelineTransformNoReply(
     TimelineTransformPtr timeline_transform) {
-  FLOG(log_channel_, ScheduleTimelineTransform(timeline_transform.Clone()));
-
-  fxl::MutexLocker locker(&mutex_);
+  std::lock_guard<std::mutex> locker(mutex_);
 
   SetTimelineTransformLocked(std::move(timeline_transform));
 }
 
 void TimelineControlPoint::SetTimelineTransformLocked(
     TimelineTransformPtr timeline_transform) {
-  mutex_.AssertHeld();
-
   RCHECK(timeline_transform);
   RCHECK(timeline_transform->reference_delta != 0);
 
@@ -220,15 +202,10 @@ void TimelineControlPoint::SetTimelineTransformLocked(
 }
 
 void TimelineControlPoint::ApplyPendingChanges(int64_t reference_time) {
-  mutex_.AssertHeld();
-
   if (!TimelineFunctionPending() ||
       pending_timeline_function_.reference_time() > reference_time) {
     return;
   }
-
-  FLOG(log_channel_, ApplyTimelineTransform(
-                         TimelineTransform::From(pending_timeline_function_)));
 
   current_timeline_function_ = pending_timeline_function_;
   ClearPendingTimelineFunction(true);
@@ -239,8 +216,6 @@ void TimelineControlPoint::ApplyPendingChanges(int64_t reference_time) {
 }
 
 void TimelineControlPoint::ClearPendingTimelineFunction(bool completed) {
-  mutex_.AssertHeld();
-
   pending_timeline_function_ =
       TimelineFunction(kUnspecifiedTime, kUnspecifiedTime, 1, 0);
   if (set_timeline_transform_callback_) {
@@ -252,12 +227,10 @@ void TimelineControlPoint::ClearPendingTimelineFunction(bool completed) {
 }
 
 void TimelineControlPoint::PostReset() {
-  mutex_.AssertHeld();
   task_runner_->PostTask([this]() { Reset(); });
 }
 
 bool TimelineControlPoint::ProgressingInternal() {
-  mutex_.AssertHeld();
   return !end_of_stream_published_ &&
          (current_timeline_function_.subject_delta() != 0 ||
           pending_timeline_function_.subject_delta() != 0);

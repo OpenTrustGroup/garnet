@@ -14,26 +14,26 @@ namespace scene_manager {
 namespace test {
 
 TEST_F(SessionTest, ScheduleUpdateOutOfOrder) {
-  scenic::Session::PresentCallback callback = [](auto) {};
-  EXPECT_TRUE(session_->ScheduleUpdate(1, ::fidl::Array<scenic::OpPtr>(),
-                                       ::fidl::Array<zx::event>(),
-                                       ::fidl::Array<zx::event>(), callback));
-  EXPECT_FALSE(session_->ScheduleUpdate(0, ::fidl::Array<scenic::OpPtr>(),
-                                        ::fidl::Array<zx::event>(),
-                                        ::fidl::Array<zx::event>(), callback));
+  ui_mozart::Session::PresentCallback callback = [](auto) {};
+  EXPECT_TRUE(session_->ScheduleUpdate(1, ::f1dl::Array<scenic::OpPtr>(),
+                                       ::f1dl::Array<zx::event>(),
+                                       ::f1dl::Array<zx::event>(), callback));
+  EXPECT_FALSE(session_->ScheduleUpdate(0, ::f1dl::Array<scenic::OpPtr>(),
+                                        ::f1dl::Array<zx::event>(),
+                                        ::f1dl::Array<zx::event>(), callback));
   ExpectLastReportedError(
       "scene_manager::Session: Present called with out-of-order presentation "
       "time. presentation_time=0, last scheduled presentation time=1.");
 }
 
 TEST_F(SessionTest, ScheduleUpdateInOrder) {
-  scenic::Session::PresentCallback callback = [](auto) {};
-  EXPECT_TRUE(session_->ScheduleUpdate(1, ::fidl::Array<scenic::OpPtr>(),
-                                       ::fidl::Array<zx::event>(),
-                                       ::fidl::Array<zx::event>(), callback));
-  EXPECT_TRUE(session_->ScheduleUpdate(1, ::fidl::Array<scenic::OpPtr>(),
-                                       ::fidl::Array<zx::event>(),
-                                       ::fidl::Array<zx::event>(), callback));
+  ui_mozart::Session::PresentCallback callback = [](auto) {};
+  EXPECT_TRUE(session_->ScheduleUpdate(1, ::f1dl::Array<scenic::OpPtr>(),
+                                       ::f1dl::Array<zx::event>(),
+                                       ::f1dl::Array<zx::event>(), callback));
+  EXPECT_TRUE(session_->ScheduleUpdate(1, ::f1dl::Array<scenic::OpPtr>(),
+                                       ::f1dl::Array<zx::event>(),
+                                       ::f1dl::Array<zx::event>(), callback));
   ExpectLastReportedError(nullptr);
 }
 

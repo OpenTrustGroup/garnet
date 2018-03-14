@@ -72,20 +72,18 @@ public:
 
         ASSERT_EQ(magma_create_buffer(connection_, PAGE_SIZE, &size, &job_buffer), 0);
         uint64_t job_va;
-        InitJobBuffer(job_buffer, &job_va);
+        InitJobBuffer(job_buffer, how, &job_va);
 
-        magma_buffer_t batch_buffer;
+        std::vector<uint8_t> vaddr(sizeof(magma_arm_mali_atom));
 
-        ASSERT_EQ(magma_create_buffer(connection_, PAGE_SIZE, &size, &batch_buffer), 0);
-        void* vaddr;
-        ASSERT_EQ(0, magma_map(connection_, batch_buffer, &vaddr));
+        ASSERT_TRUE(InitBatchBuffer(vaddr.data(), vaddr.size(), job_va, how));
 
-        ASSERT_TRUE(InitBatchBuffer(vaddr, size, job_va, how));
-
-        magma_buffer_t command_buffer;
-        ASSERT_EQ(magma_create_command_buffer(connection_, PAGE_SIZE, &command_buffer), 0);
-        EXPECT_TRUE(InitCommandBuffer(command_buffer, batch_buffer, size));
-        magma_submit_command_buffer(connection_, command_buffer, context_id_);
+        magma_system_inline_command_buffer command_buffer;
+        command_buffer.data = vaddr.data();
+        command_buffer.size = vaddr.size();
+        command_buffer.semaphores = nullptr;
+        command_buffer.semaphore_count = 0;
+        magma_execute_immediate_commands(connection_, context_id_, 1, &command_buffer);
 
         int notification_fd = magma_get_notification_channel_fd(connection_);
 
@@ -105,7 +103,8 @@ public:
                 break;
 
             case JOB_FAULT:
-                EXPECT_EQ(kArmMaliResultConfigFault, status.result_code);
+                EXPECT_NE(kArmMaliResultReadFault, status.result_code);
+                EXPECT_NE(kArmMaliResultSuccess, status.result_code);
                 break;
 
             case MMU_FAULT:
@@ -113,23 +112,15 @@ public:
                 break;
         }
 
-        EXPECT_EQ(magma_unmap(connection_, batch_buffer), 0);
-
-        magma_release_buffer(connection_, batch_buffer);
         magma_release_buffer(connection_, job_buffer);
     }
 
     bool InitBatchBuffer(void* vaddr, uint64_t size, uint64_t job_va, How how)
     {
         memset(vaddr, 0, size);
-        uint64_t* atom_count = static_cast<uint64_t*>(vaddr);
-        *atom_count = 1;
 
-        magma_arm_mali_atom* atom = reinterpret_cast<magma_arm_mali_atom*>(atom_count + 1);
-        if (how == JOB_FAULT) {
-            // An unaligned job chain address should fail with error 0x40.
-            atom->job_chain_addr = 1;
-        } else if (how == MMU_FAULT) {
+        magma_arm_mali_atom* atom = static_cast<magma_arm_mali_atom*>(vaddr);
+        if (how == MMU_FAULT) {
             atom->job_chain_addr = job_va - PAGE_SIZE;
             if (atom->job_chain_addr == 0)
                 atom->job_chain_addr = PAGE_SIZE * 2;
@@ -141,43 +132,25 @@ public:
         return true;
     }
 
-    bool InitCommandBuffer(magma_buffer_t buffer, magma_buffer_t batch_buffer,
-                           uint64_t batch_buffer_length)
-    {
-        void* vaddr;
-        if (magma_map(connection_, buffer, &vaddr) != 0)
-            return DRETF(false, "couldn't map command buffer");
-
-        auto command_buffer = reinterpret_cast<struct magma_system_command_buffer*>(vaddr);
-        command_buffer->batch_buffer_resource_index = 0;
-        command_buffer->batch_start_offset = 0;
-        command_buffer->num_resources = 1;
-
-        auto exec_resource =
-            reinterpret_cast<struct magma_system_exec_resource*>(command_buffer + 1);
-        exec_resource->buffer_id = magma_get_buffer_id(batch_buffer);
-        exec_resource->num_relocations = 0;
-        exec_resource->offset = 0;
-        exec_resource->length = batch_buffer_length;
-
-        EXPECT_EQ(magma_unmap(connection_, buffer), 0);
-
-        return true;
-    }
-
-    bool InitJobBuffer(magma_buffer_t buffer, uint64_t* job_va)
+    bool InitJobBuffer(magma_buffer_t buffer, How how, uint64_t* job_va)
     {
         void* vaddr;
         if (magma_map(connection_, buffer, &vaddr) != 0)
             return DRETF(false, "couldn't map job buffer");
-        *job_va = (uint64_t)vaddr;
+        *job_va = next_job_address_;
+        next_job_address_ += 0x5000;
         magma_map_buffer_gpu(connection_, buffer, 0, 1, *job_va,
                              MAGMA_GPU_MAP_FLAG_READ | MAGMA_GPU_MAP_FLAG_WRITE |
                                  kMagmaArmMaliGpuMapFlagInnerShareable);
+        magma_commit_buffer(connection_, buffer, 0, 1);
         JobDescriptorHeader* header = static_cast<JobDescriptorHeader*>(vaddr);
         memset(header, 0, sizeof(*header));
         header->job_descriptor_size = 1; // Next job address is 64-bit.
-        header->job_type = kJobDescriptorTypeNop;
+        if (how == JOB_FAULT) {
+            header->job_type = 127;
+        } else {
+            header->job_type = kJobDescriptorTypeNop;
+        }
         header->next_job = 0;
         magma_clean_cache(buffer, 0, PAGE_SIZE, MAGMA_CACHE_OPERATION_CLEAN);
         return true;
@@ -186,6 +159,7 @@ public:
 private:
     magma_connection_t* connection_;
     uint32_t context_id_;
+    uint64_t next_job_address_ = 0x1000000;
 };
 
 } // namespace

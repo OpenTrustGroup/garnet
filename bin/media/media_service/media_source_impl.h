@@ -6,30 +6,28 @@
 
 #include <vector>
 
-#include "garnet/bin/media/fidl/fidl_conversion_pipeline_builder.h"
 #include "garnet/bin/media/fidl/fidl_packet_producer.h"
 #include "garnet/bin/media/framework/types/stream_type.h"
-#include "garnet/bin/media/media_service/media_service_impl.h"
+#include "garnet/bin/media/media_service/fidl_conversion_pipeline_builder.h"
+#include "garnet/bin/media/media_service/media_component_factory.h"
 #include "garnet/bin/media/util/fidl_publisher.h"
 #include "garnet/bin/media/util/incident.h"
 #include "lib/fidl/cpp/bindings/binding.h"
 #include "lib/fxl/tasks/task_runner.h"
-#include "lib/media/fidl/logs/media_source_channel.fidl.h"
 #include "lib/media/fidl/media_source.fidl.h"
 #include "lib/media/fidl/seeking_reader.fidl.h"
-#include "lib/media/flog/flog.h"
 
 namespace media {
 
 // Fidl agent that produces streams from an origin specified by URL.
-class MediaSourceImpl : public MediaServiceImpl::Product<MediaSource>,
+class MediaSourceImpl : public MediaComponentFactory::Product<MediaSource>,
                         public MediaSource {
  public:
   static std::shared_ptr<MediaSourceImpl> Create(
-      fidl::InterfaceHandle<SeekingReader> reader,
-      const fidl::Array<MediaTypeSetPtr>& allowed_media_types,
-      fidl::InterfaceRequest<MediaSource> request,
-      MediaServiceImpl* owner);
+      f1dl::InterfaceHandle<SeekingReader> reader,
+      const f1dl::Array<MediaTypeSetPtr>& allowed_media_types,
+      f1dl::InterfaceRequest<MediaSource> request,
+      MediaComponentFactory* owner);
 
   ~MediaSourceImpl() override;
 
@@ -38,7 +36,7 @@ class MediaSourceImpl : public MediaServiceImpl::Product<MediaSource>,
 
   void GetPacketProducer(
       uint32_t stream_index,
-      fidl::InterfaceRequest<MediaPacketProducer> request) override;
+      f1dl::InterfaceRequest<MediaPacketProducer> request) override;
 
   void GetStatus(uint64_t version_last_seen,
                  const GetStatusCallback& callback) override;
@@ -48,18 +46,15 @@ class MediaSourceImpl : public MediaServiceImpl::Product<MediaSource>,
   void Seek(int64_t position, const SeekCallback& callback) override;
 
  private:
-  MediaSourceImpl(fidl::InterfaceHandle<SeekingReader> reader,
-                  const fidl::Array<MediaTypeSetPtr>& allowed_media_types,
-                  fidl::InterfaceRequest<MediaSource> request,
-                  MediaServiceImpl* owner);
+  MediaSourceImpl(f1dl::InterfaceHandle<SeekingReader> reader,
+                  const f1dl::Array<MediaTypeSetPtr>& allowed_media_types,
+                  f1dl::InterfaceRequest<MediaSource> request,
+                  MediaComponentFactory* owner);
 
   class Stream {
    public:
     Stream(size_t stream_index,
-#ifdef FLOG_ENABLED
-           flog::FlogProxy<logs::MediaSourceChannel>* log_channel,
-#endif
-           const MediaServicePtr& media_service,
+           MediaComponentFactory* factory,
            const ProducerGetter& producer_getter,
            std::unique_ptr<StreamType> stream_type,
            const std::unique_ptr<std::vector<std::unique_ptr<StreamTypeSet>>>&
@@ -72,7 +67,7 @@ class MediaSourceImpl : public MediaServiceImpl::Product<MediaSource>,
     MediaTypePtr media_type() const;
 
     // Gets the producer.
-    void GetPacketProducer(fidl::InterfaceRequest<MediaPacketProducer> request);
+    void GetPacketProducer(f1dl::InterfaceRequest<MediaPacketProducer> request);
 
     bool valid() { return !!producer_getter_; }
 
@@ -87,14 +82,12 @@ class MediaSourceImpl : public MediaServiceImpl::Product<MediaSource>,
 
   std::unique_ptr<std::vector<std::unique_ptr<StreamTypeSet>>>
       allowed_stream_types_;
-  MediaServicePtr media_service_;
   MediaSourcePtr demux_;
   Incident init_complete_;
   std::vector<std::unique_ptr<Stream>> streams_;
   MediaSourceStatusPtr demux_status_;
   FidlPublisher<GetStatusCallback> status_publisher_;
 
-  FLOG_INSTANCE_CHANNEL(logs::MediaSourceChannel, log_channel_);
   FXL_DISALLOW_COPY_AND_ASSIGN(MediaSourceImpl);
 };
 

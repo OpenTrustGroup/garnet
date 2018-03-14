@@ -40,6 +40,8 @@ type icmpOutput struct {
 
 type statsOutput struct {
 	icmp icmpOutput
+	tcp  netstack.TcpStats
+	udp  netstack.UdpStats
 }
 
 func (h icmpHistogram) String() string {
@@ -48,15 +50,43 @@ func (h icmpHistogram) String() string {
 
 func (o *statsOutput) String() string {
 	return fmt.Sprintf(
-		`Icmp:
-      %d ICMP messages received
-      %d input ICMP message failed.
-      ICMP input histogram:
-      %v
-      %d ICMP messages sent
-      %d ICMP messages failed
-      ICMP output histogram:
-      %v`,
+		`TCP:
+	%d ActiveConnectionOpenings
+	%d PassiveConnectionOpenings
+	%d FailedConnectionAttempts
+	%d ValidSegmentsReceived
+	%d InvalidSegmentsReceived
+	%d SegmentsSent
+	%d ResetsSent
+UDP:
+	%d packets received
+	%d packet receive errors
+	%d packets to unknown ports received
+	%d receive buffer errors
+	%d malformed packets received
+	%d packets sent
+ICMP:
+	%d ICMP messages received
+	%d input ICMP message failed.
+	ICMP input histogram:
+%v
+	%d ICMP messages sent
+	%d ICMP messages failed
+	ICMP output histogram:
+%v`,
+		o.tcp.ActiveConnectionOpenings,
+		o.tcp.PassiveConnectionOpenings,
+		o.tcp.FailedConnectionAttempts,
+		o.tcp.ValidSegmentsReceived,
+		o.tcp.InvalidSegmentsReceived,
+		o.tcp.SegmentsSent,
+		o.tcp.ResetsSent,
+		o.udp.PacketsReceived,
+		o.udp.UnknownPortErrors+o.udp.ReceiveBufferErrors+o.udp.MalformedPacketsReceived,
+		o.udp.UnknownPortErrors,
+		o.udp.ReceiveBufferErrors,
+		o.udp.MalformedPacketsReceived,
+		o.udp.PacketsSent,
 		o.icmp.received,
 		o.icmp.inputFailed,
 		o.icmp.inputHistogram,
@@ -93,7 +123,9 @@ func dumpStats(a *netstatApp) {
 			stats.add(nicStats)
 		}
 	}
-
+	as, _ := a.netstack.GetAggregateStats()
+	stats.tcp = as.TcpStats
+	stats.udp = as.UdpStats
 	fmt.Printf("%v\n", stats)
 }
 

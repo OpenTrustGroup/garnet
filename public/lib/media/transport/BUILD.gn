@@ -2,10 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/cpp/sdk_source_set.gni")
-import("//garnet/public/build/test.gni")
+import("//build/test.gni")
 
-sdk_source_set("transport") {
+source_set("transport") {
   sources = [
     "fifo_allocator.cc",
     "fifo_allocator.h",
@@ -23,13 +22,12 @@ sdk_source_set("transport") {
 
   public_deps = [
     "//garnet/public/lib/app/cpp",
-    "//garnet/public/lib/media/flog",
   ]
 
   deps = [
+    "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/media/fidl",
-    "//garnet/public/lib/media/fidl/flog",
     "//garnet/public/lib/media/timeline",
     "//garnet/public/lib/ui/geometry/fidl",
   ]
@@ -46,5 +44,6 @@ test("tests") {
   deps = [
     ":transport",
     "//garnet/public/lib/fsl",
+    "//third_party/googletest:gtest_main",
   ]
 }

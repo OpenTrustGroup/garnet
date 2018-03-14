@@ -7,16 +7,16 @@
 set -e
 fuchsia_root=`pwd`
 tools_path=$fuchsia_root/buildtools
-zircon_build_dir=$fuchsia_root/out/build-zircon/build-zircon-pc-x86-64
+zircon_build_dir=$fuchsia_root/out/build-zircon/build-x64
 build=debug
 bootfs=$fuchsia_root/out/user.bootfs
 
 if [ "$1" == "--debug" ]; then
 	build=debug
-else 
+else
 if [ "$1" == "--release" ]; then
 	build=release
-else 
+else
 if [ "$1" != "" ]; then
 	echo Unrecognized arg: $1
 	exit 1
@@ -24,13 +24,12 @@ fi
 fi
 fi
 
-build_dir=$fuchsia_root/out/$build-x86-64
+build_dir=$fuchsia_root/out/$build-x64
 
 args="msd_intel_wait_for_flip=true"
 args="$args magma_enable_tracing=false"
 
 packages="magma-dev"
-#packages="$modules,tracing,runtime_config,escher"
 
 rm -f $bootfs
 cd $fuchsia_root

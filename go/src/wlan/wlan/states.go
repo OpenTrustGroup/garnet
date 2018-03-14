@@ -155,6 +155,7 @@ func (s *queryState) handleMLMEMsg(msg interface{}, c *Client) (state, error) {
 			PrintDeviceQueryResponse(v)
 		}
 		c.wlanInfo, _ = msg.(*mlme_ext.DeviceQueryResponse)
+		c.staAddr = c.wlanInfo.MacAddr
 
 		// Enter AP mode if ap config was supplied and is active. Else fall back to client mode.
 		// TODO(tkilbourn): confirm that the device capabilities include the desired mode
@@ -310,6 +311,9 @@ func (s *scanState) handleCommand(cmd *commandRequest, c *Client) (state, error)
 			}
 		} else {
 			c.cfg = newCfg
+			if c.cfg != nil && c.cfg.SSID != "" {
+				s.pause = false
+			}
 			if debug {
 				log.Printf("New cfg: SSID %v, interval %v",
 					c.cfg.SSID, c.cfg.ScanInterval)
@@ -739,11 +743,13 @@ func (s *associatedState) handleCommand(cmd *commandRequest, c *Client) (state, 
 			res.Err = &wlan_service.Error{wlan_service.ErrCode_Internal, "Could not send MLME request"}
 		}
 		cmd.respC <- res
-	case CmdScan:
-		if s.scanner == nil {
-			s.scanner = newScanState(c)
-		}
-		s.scanner.handleCommand(cmd, c)
+
+	// TODO(NET-488, NET-491): Lift up this workaround, and support scanning in Associated state.
+	// case CmdScan:
+	//	if s.scanner == nil {
+	//		s.scanner = newScanState(c)
+	//	}
+	//	s.scanner.handleCommand(cmd, c)
 	default:
 		cmd.respC <- &CommandResult{nil,
 			&wlan_service.Error{wlan_service.ErrCode_NotSupported,
@@ -776,6 +782,7 @@ func (s *associatedState) handleMLMEMsg(msg interface{}, c *Client) (state, erro
 		if debug {
 			PrintSignalReportIndication(v)
 		}
+		c.ap.LastRSSI = v.Rssi
 		return s, nil
 	case *mlme_ext.EapolIndication:
 		if c.eapolC != nil {

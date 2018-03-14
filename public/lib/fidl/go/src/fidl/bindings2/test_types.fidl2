@@ -1,0 +1,112 @@
+library foo;
+
+struct TestSimple {
+    int64 x;
+};
+
+struct TestSimpleBool {
+    bool x;
+};
+
+struct TestAlignment1 {
+    int8 x;
+    int8 y;
+    uint32 z;
+};
+
+struct TestAlignment2 {
+    uint32 a;
+    uint32 b;
+    int8 c;
+    int8 d;
+    int8 e;
+    uint8 f;
+    uint32 g;
+    uint16 h;
+    uint16 i;
+};
+
+struct TestFloat1 {
+    float32 a;
+};
+
+struct TestFloat2 {
+    float64 a;
+};
+
+struct TestFloat3 {
+    float32 a;
+    float64 b;
+    uint64 c;
+    float32 d;
+};
+
+struct TestArray1 {
+    array<int8>:5 a;
+};
+
+struct TestArray2 {
+    float64 a;
+    array<float32>:1 b;
+};
+
+struct TestArray3 {
+    int32 a;
+    array<uint16>:3 b;
+    uint64 c;
+};
+
+struct TestArray4 {
+    array<bool>:9 a;
+};
+
+struct TestString1 {
+    string a;
+    string? b;
+};
+
+struct TestString2 {
+    array<string>:2 a;
+};
+
+struct TestString3 {
+    array<string:4>:2 a;
+    array<string:4?>:2 b;
+};
+
+struct TestVector1 {
+    vector<int8> a;
+    vector<int16>? b;
+    vector<int32>:2 c;
+    vector<int64>:2? d;
+};
+
+struct TestVector2 {
+    array<vector<int8>>:2 a;
+    vector<vector<int8>>:2 b;
+    vector<vector<string:5>:2?>:2 c;
+};
+
+struct TestStruct1 {
+    TestSimple a;
+    TestSimple? b;
+};
+
+struct TestStruct2 {
+    TestArray1 a;
+    TestFloat1 b;
+    TestVector1 c;
+    TestString1? d;
+};
+
+struct TestHandle1 {
+    handle a;
+    handle? b;
+    handle<vmo> c;
+    handle<vmo>? d;
+};
+
+struct TestHandle2 {
+    vector<handle>:1 a;
+    vector<handle<vmo>?>:1 b;
+};

@@ -29,7 +29,7 @@ constexpr uint32_t kShapeHeight = 288;
 
 View::View(app::ApplicationContext* application_context,
            mozart::ViewManagerPtr view_manager,
-           fidl::InterfaceRequest<mozart::ViewOwner> view_owner_request)
+           f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request)
     : BaseView(std::move(view_manager),
                std::move(view_owner_request),
                "Shadertoy Example"),
@@ -47,7 +47,7 @@ View::View(app::ApplicationContext* application_context,
 
   // Create an ImagePipe and pass one end of it to the ShadertoyFactory in
   // order to obtain a Shadertoy.
-  fidl::InterfaceHandle<scenic::ImagePipe> image_pipe_handle;
+  f1dl::InterfaceHandle<scenic::ImagePipe> image_pipe_handle;
   auto image_pipe_request = image_pipe_handle.NewRequest();
   shadertoy_factory_->NewImagePipeShadertoy(shadertoy_.NewRequest(),
                                             std::move(image_pipe_handle));
@@ -120,7 +120,7 @@ float View::UpdateTransition(zx_time_t presentation_time) {
   return glm::smoothstep(0.f, 1.f, transition_param);
 }
 
-void View::OnSceneInvalidated(scenic::PresentationInfoPtr presentation_info) {
+void View::OnSceneInvalidated(ui_mozart::PresentationInfoPtr presentation_info) {
   if (!has_logical_size())
     return;
 

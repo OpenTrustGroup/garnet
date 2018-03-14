@@ -17,6 +17,11 @@ namespace auth {
 using auth::TokenManager;
 using auth::TokenManagerFactory;
 
+// TODO: once namespacing happens for persistent storage, remove
+const std::string kAuthDbPath = "/data/auth";
+
+const std::string kAuthDbPostfix = "token_store.db";
+
 class TokenManagerFactoryImpl : public TokenManagerFactory {
  public:
   TokenManagerFactoryImpl(app::ApplicationContext* context);
@@ -25,13 +30,13 @@ class TokenManagerFactoryImpl : public TokenManagerFactory {
 
  private:
   // |TokenManagerFactory|
-  void GetTokenManager(const fidl::String& user_id,
-                       fidl::Array<AuthProviderConfigPtr> auth_provider_configs,
-                       fidl::InterfaceRequest<TokenManager> request) override;
+  void GetTokenManager(const f1dl::String& user_id,
+                       f1dl::Array<AuthProviderConfigPtr> auth_provider_configs,
+                       f1dl::InterfaceRequest<TokenManager> request) override;
 
   app::ApplicationContext* const app_context_;
 
-  fidl::BindingSet<TokenManager, std::unique_ptr<TokenManager>>
+  f1dl::BindingSet<TokenManager, std::unique_ptr<TokenManager>>
       token_manager_bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TokenManagerFactoryImpl);

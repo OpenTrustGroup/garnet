@@ -14,8 +14,10 @@ enum Protocol {
 
 enum Status {
   OK,
-  // TODO: be more specific about the kind of dns error?
+  UNKNOWN_ERROR,
   DNS_ERROR,
+  PARSE_ERROR,
+  IPV4_ONLY,
 };
 
 struct NetErr {
@@ -56,6 +58,14 @@ struct TcpStats {
   uint64 resets_sent;
 };
 
+struct UdpStats {
+  uint64 packets_received;
+  uint64 unknown_port_errors;
+  uint64 receive_buffer_errors;
+  uint64 malformed_packets_received;
+  uint64 packets_sent;
+};
+
 // Mirrors tcpip.Stats in third_party/netstack/tcpip/tcpip.go.
 struct AggregateStats {
   uint64 unknown_protocol_received_packets;
@@ -63,6 +73,7 @@ struct AggregateStats {
   uint64 malformed_received_packets;
   uint64 dropped_packets;
   TcpStats tcp_stats;
+  UdpStats udp_stats;
 };
 
 // https://linux.die.net/man/7/netdevice
@@ -128,4 +139,9 @@ interface Netstack {
 
   SetRouteTable@9(array<RouteTableEntry> rt);
 
+  // Sets the address for the interface with the given nicid.
+  // Masks off addr.PrefixLen bits from addr.Addr to set the subnet.
+  // TODO: prefix length is 64-bit to work around TO-830.
+  // Change the argument type once FIDL2 migration is complete.
+  SetInterfaceAddress@10(uint32 nicid, NetAddress addr, uint64 prefixLen) => (NetErr result);
 };

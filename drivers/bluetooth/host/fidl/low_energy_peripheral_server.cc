@@ -66,7 +66,7 @@ void LowEnergyPeripheralServer::InstanceData::ReleaseConnection() {
 
 LowEnergyPeripheralServer::LowEnergyPeripheralServer(
     fxl::WeakPtr<::btlib::gap::Adapter> adapter,
-    fidl::InterfaceRequest<Peripheral> request)
+    f1dl::InterfaceRequest<Peripheral> request)
     : ServerBase(adapter, this, std::move(request)), weak_ptr_factory_(this) {}
 
 LowEnergyPeripheralServer::~LowEnergyPeripheralServer() {
@@ -81,7 +81,7 @@ LowEnergyPeripheralServer::~LowEnergyPeripheralServer() {
 void LowEnergyPeripheralServer::StartAdvertising(
     AdvertisingDataPtr advertising_data,
     AdvertisingDataPtr scan_result,
-    ::fidl::InterfaceHandle<PeripheralDelegate> delegate,
+    ::f1dl::InterfaceHandle<PeripheralDelegate> delegate,
     uint32_t interval,
     bool anonymous,
     const StartAdvertisingCallback& callback) {
@@ -123,11 +123,16 @@ void LowEnergyPeripheralServer::StartAdvertising(
         }
 
         auto delegate_ptr = delegate.Bind();
-        delegate_ptr.set_error_handler([self, ad_id] {
-          if (self) {
-            self->StopAdvertisingInternal(ad_id);
-          }
-        });
+
+        // Set the error handler for connectable advertisements only (i.e. if a
+        // delegate was provided).
+        if (delegate_ptr) {
+          delegate_ptr.set_error_handler([self, ad_id] {
+            if (self) {
+              self->StopAdvertisingInternal(ad_id);
+            }
+          });
+        }
 
         self->instances_[ad_id] = InstanceData(ad_id, std::move(delegate_ptr));
         callback(Status::New(), ad_id);
@@ -139,7 +144,7 @@ void LowEnergyPeripheralServer::StartAdvertising(
 }
 
 void LowEnergyPeripheralServer::StopAdvertising(
-    const ::fidl::String& id,
+    const ::f1dl::String& id,
     const StopAdvertisingCallback& callback) {
   if (StopAdvertisingInternal(id)) {
     callback(Status::New());

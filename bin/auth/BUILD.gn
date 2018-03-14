@@ -11,10 +11,12 @@ package("token_manager") {
 
   binary = "token_manager"
 
-  meta = [ {
-    path = rebase_path("meta/sandbox")
-    dest = "sandbox"
-  } ]
+  meta = [
+    {
+      path = rebase_path("meta/sandbox")
+      dest = "sandbox"
+    },
+  ]
 }
 
 package("tests") {
@@ -26,6 +28,7 @@ package("tests") {
   deps = [
     ":token_manager_unittests",
     "//garnet/bin/auth/test:e2e_dev",
+    "//garnet/bin/auth/test:e2e_google_local",
     "//garnet/bin/auth/token_manager/test:dev_auth_provider",
   ]
 
@@ -42,6 +45,12 @@ package("tests") {
     {
       name = "dev_token_manager_e2e_test"
 
+      # Disabled because it is timed out when fvm.blk is used instead of bootfs.
+      disabled = true
+    },
+    {
+      name = "google_token_manager_e2e_local_test"
+
       # Disabled because it fails when fvm.blk is used instead of bootfs.
       disabled = true
     },
@@ -52,10 +61,9 @@ executable("token_manager_unittests") {
   testonly = true
 
   deps = [
-    "//garnet/public/lib/fxl:fxl_printers",
-    "//garnet/public/lib/test_runner/cpp:gtest_main",
     "//garnet/bin/auth/cache:unittests",
     "//garnet/bin/auth/store:unittests",
-    "//garnet/bin/auth/test:unittests",
+    "//garnet/public/lib/fxl:fxl_printers",
+    "//garnet/public/lib/test_runner/cpp:gtest_main",
   ]
 }

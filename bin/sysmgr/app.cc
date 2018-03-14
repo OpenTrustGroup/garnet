@@ -119,7 +119,7 @@ void App::RegisterSingleton(std::string service_name,
           auto dup_launch_info = app::ApplicationLaunchInfo::New();
           dup_launch_info->url = launch_info->url;
           dup_launch_info->arguments = launch_info->arguments.Clone();
-          dup_launch_info->service_request = services.NewRequest();
+          dup_launch_info->directory_request = services.NewRequest();
           env_launcher_->CreateApplication(std::move(dup_launch_info),
                                            controller.NewRequest());
           controller.set_error_handler(
@@ -145,7 +145,7 @@ void App::RegisterAppLoaders(Config::ServiceMap app_loaders) {
           ->ConnectToEnvironmentService<app::ApplicationLoader>());
 
   env_services_.AddService<app::ApplicationLoader>(
-      [this](fidl::InterfaceRequest<app::ApplicationLoader> request) {
+      [this](f1dl::InterfaceRequest<app::ApplicationLoader> request) {
         app_loader_bindings_.AddBinding(app_loader_.get(), std::move(request));
       });
 }
@@ -156,7 +156,7 @@ void App::LaunchApplication(app::ApplicationLaunchInfoPtr launch_info) {
 }
 
 void App::GetApplicationEnvironmentServices(
-    fidl::InterfaceRequest<app::ServiceProvider> environment_services) {
+    f1dl::InterfaceRequest<app::ServiceProvider> environment_services) {
   env_services_.AddBinding(std::move(environment_services));
 }
 

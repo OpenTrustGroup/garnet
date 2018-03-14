@@ -6,38 +6,37 @@
 
 #include <unordered_map>
 
-#include "garnet/bin/media/media_service/media_service_impl.h"
+#include "garnet/bin/media/media_service/media_component_factory.h"
 #include "garnet/bin/media/util/callback_joiner.h"
 #include "garnet/bin/media/util/fidl_publisher.h"
 #include "lib/fidl/cpp/bindings/binding.h"
-#include "lib/media/fidl/logs/media_player_channel.fidl.h"
-#include "lib/media/fidl/media_service.fidl.h"
+#include "lib/media/fidl/media_player.fidl.h"
 #include "lib/media/fidl/media_source.fidl.h"
 #include "lib/media/fidl/media_transport.fidl.h"
 #include "lib/media/fidl/seeking_reader.fidl.h"
 #include "lib/media/fidl/timeline_controller.fidl.h"
-#include "lib/media/flog/flog.h"
 #include "lib/media/timeline/timeline.h"
 #include "lib/media/timeline/timeline_function.h"
 
 namespace media {
 
 // Fidl agent that renders streams derived from a SeekingReader.
-class MediaPlayerImpl : public MediaServiceImpl::Product<MediaPlayer>,
+class MediaPlayerImpl : public MediaComponentFactory::Product<MediaPlayer>,
                         public MediaPlayer {
  public:
   static std::shared_ptr<MediaPlayerImpl> Create(
-      fidl::InterfaceHandle<SeekingReader> reader,
-      fidl::InterfaceHandle<MediaRenderer> audio_renderer_handle,
-      fidl::InterfaceHandle<MediaRenderer> video_renderer_handle,
-      fidl::InterfaceRequest<MediaPlayer> request,
-      MediaServiceImpl* owner);
+      f1dl::InterfaceRequest<MediaPlayer> request,
+      MediaComponentFactory* owner);
 
   ~MediaPlayerImpl() override;
 
   // MediaPlayer implementation.
-  void GetStatus(uint64_t version_last_seen,
-                 const GetStatusCallback& callback) override;
+  void SetHttpSource(const f1dl::String& http_url) override;
+
+  void SetFileSource(zx::channel file_channel) override;
+
+  void SetReaderSource(
+      f1dl::InterfaceHandle<SeekingReader> reader_handle) override;
 
   void Play() override;
 
@@ -45,7 +44,20 @@ class MediaPlayerImpl : public MediaServiceImpl::Product<MediaPlayer>,
 
   void Seek(int64_t position) override;
 
-  void SetReader(fidl::InterfaceHandle<SeekingReader> reader_handle) override;
+  void GetStatus(uint64_t version_last_seen,
+                 const GetStatusCallback& callback) override;
+
+  void SetGain(float gain) override;
+
+  void CreateView(
+      f1dl::InterfaceHandle<mozart::ViewManager> view_manager,
+      f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request) override;
+
+  void SetAudioRenderer(
+      f1dl::InterfaceHandle<AudioRenderer> audio_renderer,
+      f1dl::InterfaceHandle<MediaRenderer> media_renderer) override;
+
+  void SetReader(f1dl::InterfaceHandle<SeekingReader> reader_handle) override;
 
  private:
   static constexpr int64_t kMinimumLeadTime = Timeline::ns_from_ms(30);
@@ -64,20 +76,24 @@ class MediaPlayerImpl : public MediaServiceImpl::Product<MediaPlayer>,
   // Media for which no renderer was supplied are not represented in
   // |streams_by_medium_|.
   struct Stream {
-    fidl::InterfaceHandle<MediaRenderer> renderer_handle_;
+    f1dl::InterfaceHandle<MediaRenderer> renderer_handle_;
     MediaSinkPtr sink_;
     bool connected_ = false;
   };
 
-  MediaPlayerImpl(fidl::InterfaceHandle<SeekingReader> reader_handle,
-                  fidl::InterfaceHandle<MediaRenderer> audio_renderer_handle,
-                  fidl::InterfaceHandle<MediaRenderer> video_renderer_handle,
-                  fidl::InterfaceRequest<MediaPlayer> request,
-                  MediaServiceImpl* owner);
+  MediaPlayerImpl(f1dl::InterfaceRequest<MediaPlayer> request,
+                  MediaComponentFactory* owner);
 
-  // If |reader_handle_| is set, creates the source and call |ConnectSinks|,
+  // Sets the video renderer.
+  // TODO(dalesat): Remove after topaz transition.
+  void SetVideoRenderer(f1dl::InterfaceHandle<MediaRenderer> video_renderer);
+
+  // If |reader_handle_| is set, creates the source and calls |ConnectSinks|,
   // otherwise does nothing.
   void MaybeCreateSource();
+
+  // Creates the renderer for |medium| if it doesn't exist already.
+  void MaybeCreateRenderer(MediaTypeMedium medium);
 
   // Creates sinks as needed and connects enabled streams.
   void ConnectSinks();
@@ -112,15 +128,17 @@ class MediaPlayerImpl : public MediaServiceImpl::Product<MediaPlayer>,
       uint64_t version = MediaTimelineControlPoint::kInitialStatus,
       MediaTimelineControlPointStatusPtr status = nullptr);
 
-  MediaServicePtr media_service_;
-  fidl::InterfaceHandle<SeekingReader> reader_handle_;
+  f1dl::InterfaceHandle<SeekingReader> reader_handle_;
   MediaSourcePtr source_;
-  fidl::Array<MediaTypePtr> stream_types_;
+  f1dl::Array<MediaTypePtr> stream_types_;
   std::unordered_map<MediaTypeMedium, Stream> streams_by_medium_;
   MediaTimelineControllerPtr timeline_controller_;
   MediaTimelineControlPointPtr timeline_control_point_;
   TimelineConsumerPtr timeline_consumer_;
   bool reader_transition_pending_ = false;
+  float gain_ = 1.0f;
+  f1dl::InterfacePtr<AudioRenderer> audio_renderer_;
+  std::shared_ptr<VideoRendererImpl> video_renderer_impl_;
 
   // The state we're currently in.
   State state_ = State::kWaiting;
@@ -149,8 +167,6 @@ class MediaPlayerImpl : public MediaServiceImpl::Product<MediaPlayer>,
 
   MediaSourceStatusPtr source_status_;
   FidlPublisher<GetStatusCallback> status_publisher_;
-
-  FLOG_INSTANCE_CHANNEL(logs::MediaPlayerChannel, log_channel_);
 };
 
 }  // namespace media

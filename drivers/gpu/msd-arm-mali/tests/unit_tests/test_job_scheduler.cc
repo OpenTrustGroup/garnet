@@ -45,7 +45,8 @@ public:
                                   bool synchronous) override
     {
     }
-    void ReleaseSpaceMappings(AddressSpace* address_space) override {}
+    void UnlockAddressSpace(AddressSpace*) override {}
+    void ReleaseSpaceMappings(const AddressSpace* address_space) override {}
 };
 
 class TestConnectionOwner : public MsdArmConnection::Owner {

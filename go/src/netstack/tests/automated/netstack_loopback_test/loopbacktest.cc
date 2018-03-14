@@ -20,18 +20,21 @@ namespace netstack {
 namespace {
 
 const int32_t kTimeout = 10000; // 10 seconds
+const int32_t kRepeatEach = 1; // How many times to repeat each test
+
+// InterThread communication helper
 
 const uint8_t kNotifySuccess = 1;
 const uint8_t kNotifyFail = 2;
 
 void NotifySuccess(int ntfyfd) {
   uint8_t c = kNotifySuccess;
-  EXPECT_EQ(write(ntfyfd, &c, 1), 1);
+  EXPECT_EQ(1, write(ntfyfd, &c, 1));
 }
 
 void NotifyFail(int ntfyfd) {
   uint8_t c = kNotifyFail;
-  EXPECT_EQ(write(ntfyfd, &c, 1), 1);
+  EXPECT_EQ(1, write(ntfyfd, &c, 1));
 }
 
 bool WaitSuccess(int ntfyfd, int timeout) {
@@ -40,46 +43,17 @@ bool WaitSuccess(int ntfyfd, int timeout) {
   EXPECT_GE(nfds, 0) << "poll failed: " << errno;
   if (nfds == 1) {
     uint8_t c = kNotifyFail;
-    EXPECT_EQ(read(ntfyfd, &c, 1), 1);
+    EXPECT_EQ(1, read(ntfyfd, &c, 1));
     return kNotifySuccess == c;
   } else {
-    EXPECT_EQ(nfds, 1);
+    EXPECT_EQ(1, nfds);
     return false;
   }
 }
 
-class NetStreamTest : public ::testing::Test {
- protected:
-  NetStreamTest() {}
+// NetStreamTest
 
-  virtual void SetUp() {
-    acptfd_ = socket(AF_INET, SOCK_STREAM, 0);
-    ASSERT_GE(acptfd_, 0);
-
-    addr_.sin_family = AF_INET;
-    addr_.sin_port = 0;
-    addr_.sin_addr.s_addr = INADDR_ANY;
-    int ret = bind(acptfd_, (const struct sockaddr*)&addr_, sizeof(addr_));
-    ASSERT_EQ(0, ret) << "bind failed: " << errno;
-
-    addrlen_ = sizeof(addr_);
-    ret = getsockname(acptfd_, (struct sockaddr*)&addr_, &addrlen_);
-    ASSERT_EQ(0, ret) << "getsockname failed: " << errno;
-
-    ASSERT_EQ(pipe(ntfyfd_), 0);
-  }
-
-  virtual void TearDown() {
-    EXPECT_EQ(close(acptfd_), 0);
-    EXPECT_EQ(close(ntfyfd_[0]), 0);
-    EXPECT_EQ(close(ntfyfd_[1]), 0);
-  }
-
-  int acptfd_;
-  struct sockaddr_in addr_;
-  socklen_t addrlen_;
-  int ntfyfd_[2];
-};
+// NetStreamTest.BlockingAcceptWrite
 
 void StreamConnectRead(struct sockaddr_in* addr, std::string* out, int ntfyfd) {
   int connfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -106,51 +80,109 @@ void StreamConnectRead(struct sockaddr_in* addr, std::string* out, int ntfyfd) {
   NotifySuccess(ntfyfd);
 }
 
-TEST_F(NetStreamTest, BlockingAcceptWrite) {
-  int ret = listen(acptfd_, 10);
+void BlockingAcceptWrite() {
+  int acptfd = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(acptfd, 0);
+
+  struct sockaddr_in addr;
+  addr.sin_family = AF_INET;
+  addr.sin_port = 0;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  int ret = bind(acptfd, (const struct sockaddr*)&addr, sizeof(addr));
+  ASSERT_EQ(0, ret) << "bind failed: " << errno;
+
+  socklen_t addrlen = sizeof(addr);
+  ret = getsockname(acptfd, (struct sockaddr*)&addr, &addrlen);
+  ASSERT_EQ(0, ret) << "getsockname failed: " << errno;
+
+  int ntfyfd[2];
+  ASSERT_EQ(0, pipe(ntfyfd));
+
+  ret = listen(acptfd, 10);
   ASSERT_EQ(0, ret) << "listen failed: " << errno;
 
   std::string out;
-  std::thread thrd(StreamConnectRead, &addr_, &out, ntfyfd_[1]);
+  std::thread thrd(StreamConnectRead, &addr, &out, ntfyfd[1]);
 
-  int connfd = accept(acptfd_, nullptr, nullptr);
+  int connfd = accept(acptfd, nullptr, nullptr);
   ASSERT_GE(connfd, 0) << "accept failed: " << errno;
 
   const char* msg = "hello";
-  ASSERT_EQ(write(connfd, msg, strlen(msg)), (ssize_t)strlen(msg));
-  ASSERT_EQ(close(connfd), 0);
+  ASSERT_EQ((ssize_t)strlen(msg), write(connfd, msg, strlen(msg)));
+  ASSERT_EQ(0, close(connfd));
 
-  ASSERT_EQ(WaitSuccess(ntfyfd_[0], kTimeout), true);
+  ASSERT_EQ(true, WaitSuccess(ntfyfd[0], kTimeout));
   thrd.join();
 
   EXPECT_STREQ(msg, out.c_str());
+
+  EXPECT_EQ(0, close(acptfd));
+  EXPECT_EQ(0, close(ntfyfd[0]));
+  EXPECT_EQ(0, close(ntfyfd[1]));
 }
 
-TEST_F(NetStreamTest, NonblockingAcceptWrite) {
-  int ret = listen(acptfd_, 10);
+TEST(NetStreamTest, BlockingAcceptWrite) {
+  for (int i = 0; i < kRepeatEach; i++) {
+    BlockingAcceptWrite();
+  }
+}
+
+// NetStreamTest.NonBlockingAcceptWrite
+
+void NonBlockingAcceptWrite() {
+  int acptfd = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(acptfd, 0);
+
+  struct sockaddr_in addr;
+  addr.sin_family = AF_INET;
+  addr.sin_port = 0;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  int ret = bind(acptfd, (const struct sockaddr*)&addr, sizeof(addr));
+  ASSERT_EQ(0, ret) << "bind failed: " << errno;
+
+  socklen_t addrlen = sizeof(addr);
+  ret = getsockname(acptfd, (struct sockaddr*)&addr, &addrlen);
+  ASSERT_EQ(0, ret) << "getsockname failed: " << errno;
+
+  int ntfyfd[2];
+  ASSERT_EQ(0, pipe(ntfyfd));
+
+  ret = listen(acptfd, 10);
   ASSERT_EQ(0, ret) << "listen failed: " << errno;
 
   std::string out;
-  std::thread thrd(StreamConnectRead, &addr_, &out, ntfyfd_[1]);
+  std::thread thrd(StreamConnectRead, &addr, &out, ntfyfd[1]);
 
-  int status = fcntl(acptfd_, F_GETFL, 0);
-  ASSERT_EQ(fcntl(acptfd_, F_SETFL, status | O_NONBLOCK), 0);
+  int status = fcntl(acptfd, F_GETFL, 0);
+  ASSERT_EQ(0, fcntl(acptfd, F_SETFL, status | O_NONBLOCK));
 
-  struct pollfd pfd = {acptfd_, POLLIN, 0};
-  ASSERT_EQ(poll(&pfd, 1, kTimeout), 1);
+  struct pollfd pfd = {acptfd, POLLIN, 0};
+  ASSERT_EQ(1, poll(&pfd, 1, kTimeout));
 
-  int connfd = accept(acptfd_, nullptr, nullptr);
+  int connfd = accept(acptfd, nullptr, nullptr);
   ASSERT_GE(connfd, 0) << "accept failed: " << errno;
 
   const char* msg = "hello";
-  ASSERT_EQ(write(connfd, msg, strlen(msg)), (ssize_t)strlen(msg));
-  ASSERT_EQ(close(connfd), 0);
+  ASSERT_EQ((ssize_t)strlen(msg), write(connfd, msg, strlen(msg)));
+  ASSERT_EQ(0, close(connfd));
 
-  ASSERT_EQ(WaitSuccess(ntfyfd_[0], kTimeout), true);
+  ASSERT_EQ(true, WaitSuccess(ntfyfd[0], kTimeout));
   thrd.join();
 
   EXPECT_STREQ(msg, out.c_str());
+
+  EXPECT_EQ(0, close(acptfd));
+  EXPECT_EQ(0, close(ntfyfd[0]));
+  EXPECT_EQ(0, close(ntfyfd[1]));
 }
+
+TEST(NetStreamTest, NonBlockingAcceptWrite) {
+  for (int i = 0; i < kRepeatEach; i++) {
+    NonBlockingAcceptWrite();
+  }
+}
+
+// NetStreamTest.NonBlockingConnectWrite
 
 void StreamAcceptRead(int acptfd, std::string* out, int ntfyfd) {
   int connfd = accept(acptfd, nullptr, nullptr);
@@ -166,46 +198,75 @@ void StreamAcceptRead(int acptfd, std::string* out, int ntfyfd) {
     out->append(buf, n);
   }
 
-  EXPECT_EQ(close(connfd), 0);
+  EXPECT_EQ(0, close(connfd));
   NotifySuccess(ntfyfd);
 }
 
-TEST_F(NetStreamTest, NonBlockingConnectWrite) {
-  int ret = listen(acptfd_, 10);
+void NonBlockingConnectWrite() {
+  int acptfd = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(acptfd, 0);
+
+  struct sockaddr_in addr;
+  addr.sin_family = AF_INET;
+  addr.sin_port = 0;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  int ret = bind(acptfd, (const struct sockaddr*)&addr, sizeof(addr));
+  ASSERT_EQ(0, ret) << "bind failed: " << errno;
+
+  socklen_t addrlen = sizeof(addr);
+  ret = getsockname(acptfd, (struct sockaddr*)&addr, &addrlen);
+  ASSERT_EQ(0, ret) << "getsockname failed: " << errno;
+
+  int ntfyfd[2];
+  ASSERT_EQ(0, pipe(ntfyfd));
+
+  ret = listen(acptfd, 10);
   ASSERT_EQ(0, ret) << "listen failed: " << errno;
 
   std::string out;
-  std::thread thrd(StreamAcceptRead, acptfd_, &out, ntfyfd_[1]);
+  std::thread thrd(StreamAcceptRead, acptfd, &out, ntfyfd[1]);
 
   int connfd = socket(AF_INET, SOCK_STREAM, 0);
   ASSERT_GE(connfd, 0) << "socket failed: " << errno;
 
   int status = fcntl(connfd, F_GETFL, 0);
-  ASSERT_EQ(fcntl(connfd, F_SETFL, status | O_NONBLOCK), 0);
+  ASSERT_EQ(0, fcntl(connfd, F_SETFL, status | O_NONBLOCK));
 
-  ret = connect(connfd, (const struct sockaddr*)&addr_, sizeof(addr_));
-  EXPECT_EQ(ret, -1);
+  ret = connect(connfd, (const struct sockaddr*)&addr, sizeof(addr));
+  EXPECT_EQ(-1, ret);
   if (ret == -1) {
     ASSERT_EQ(EINPROGRESS, errno) << "connect failed: " << errno;
 
     struct pollfd pfd = {connfd, POLLOUT, 0};
-    ASSERT_EQ(poll(&pfd, 1, kTimeout), 1);
+    ASSERT_EQ(1, poll(&pfd, 1, kTimeout));
 
     int val;
     socklen_t vallen = sizeof(val);
-    ASSERT_EQ(getsockopt(connfd, SOL_SOCKET, SO_ERROR, &val, &vallen), 0);
-    ASSERT_EQ(val, 0);
+    ASSERT_EQ(0, getsockopt(connfd, SOL_SOCKET, SO_ERROR, &val, &vallen));
+    ASSERT_EQ(0, val);
   }
 
   const char* msg = "hello";
-  ASSERT_EQ(write(connfd, msg, strlen(msg)), (ssize_t)strlen(msg));
-  ASSERT_EQ(close(connfd), 0);
+  ASSERT_EQ((ssize_t)strlen(msg), write(connfd, msg, strlen(msg)));
+  ASSERT_EQ(0, close(connfd));
 
-  ASSERT_EQ(WaitSuccess(ntfyfd_[0], kTimeout), true);
+  ASSERT_EQ(true, WaitSuccess(ntfyfd[0], kTimeout));
   thrd.join();
 
   EXPECT_STREQ(msg, out.c_str());
+
+  EXPECT_EQ(0, close(acptfd));
+  EXPECT_EQ(0, close(ntfyfd[0]));
+  EXPECT_EQ(0, close(ntfyfd[1]));
 }
+
+TEST(NetStreamTest, NonBlockingConnectWrite) {
+  for (int i = 0; i < kRepeatEach; i++) {
+    NonBlockingConnectWrite();
+  }
+}
+
+// NetStreamTest.NonBlockingConnectRead
 
 void StreamAcceptWrite(int acptfd, const char* msg, int ntfyfd) {
   int connfd = accept(acptfd, nullptr, nullptr);
@@ -215,39 +276,56 @@ void StreamAcceptWrite(int acptfd, const char* msg, int ntfyfd) {
     return;
   }
 
-  ASSERT_EQ(write(connfd, msg, strlen(msg)), (ssize_t)strlen(msg));
+  ASSERT_EQ((ssize_t)strlen(msg), write(connfd, msg, strlen(msg)));
 
-  EXPECT_EQ(close(connfd), 0);
+  EXPECT_EQ(0, close(connfd));
   NotifySuccess(ntfyfd);
 }
 
-TEST_F(NetStreamTest, NonBlockingConnectRead) {
-  int ret = listen(acptfd_, 10);
+void NonBlockingConnectRead() {
+  int acptfd = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(acptfd, 0);
+
+  struct sockaddr_in addr;
+  addr.sin_family = AF_INET;
+  addr.sin_port = 0;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  int ret = bind(acptfd, (const struct sockaddr*)&addr, sizeof(addr));
+  ASSERT_EQ(0, ret) << "bind failed: " << errno;
+
+  socklen_t addrlen = sizeof(addr);
+  ret = getsockname(acptfd, (struct sockaddr*)&addr, &addrlen);
+  ASSERT_EQ(0, ret) << "getsockname failed: " << errno;
+
+  int ntfyfd[2];
+  ASSERT_EQ(0, pipe(ntfyfd));
+
+  ret = listen(acptfd, 10);
   ASSERT_EQ(0, ret) << "listen failed: " << errno;
 
   const char* msg = "hello";
-  std::thread thrd(StreamAcceptWrite, acptfd_, msg, ntfyfd_[1]);
+  std::thread thrd(StreamAcceptWrite, acptfd, msg, ntfyfd[1]);
 
   int connfd = socket(AF_INET, SOCK_STREAM, 0);
   ASSERT_GE(connfd, 0) << "socket failed: " << errno;
 
   int status = fcntl(connfd, F_GETFL, 0);
-  ASSERT_EQ(fcntl(connfd, F_SETFL, status | O_NONBLOCK), 0);
+  ASSERT_EQ(0, fcntl(connfd, F_SETFL, status | O_NONBLOCK));
 
-  ret = connect(connfd, (const struct sockaddr*)&addr_, sizeof(addr_));
-  EXPECT_EQ(ret, -1);
+  ret = connect(connfd, (const struct sockaddr*)&addr, sizeof(addr));
+  EXPECT_EQ(-1, ret);
   if (ret == -1) {
     ASSERT_EQ(EINPROGRESS, errno) << "connect failed: " << errno;
 
     // Note: the success of connection can be detected with POLLOUT, but
     // we use POLLIN here to wait until some data is written by the peer.
     struct pollfd pfd = {connfd, POLLIN, 0};
-    ASSERT_EQ(poll(&pfd, 1, kTimeout), 1);
+    ASSERT_EQ(1, poll(&pfd, 1, kTimeout));
 
     int val;
     socklen_t vallen = sizeof(val);
-    ASSERT_EQ(getsockopt(connfd, SOL_SOCKET, SO_ERROR, &val, &vallen), 0);
-    ASSERT_EQ(val, 0);
+    ASSERT_EQ(0, getsockopt(connfd, SOL_SOCKET, SO_ERROR, &val, &vallen));
+    ASSERT_EQ(0, val);
   }
 
   std::string out;
@@ -256,40 +334,98 @@ TEST_F(NetStreamTest, NonBlockingConnectRead) {
   while ((n = read(connfd, buf, sizeof(buf))) > 0) {
     out.append(buf, n);
   }
-  ASSERT_EQ(close(connfd), 0);
+  ASSERT_EQ(0, close(connfd));
 
-  ASSERT_EQ(WaitSuccess(ntfyfd_[0], kTimeout), true);
+  ASSERT_EQ(true, WaitSuccess(ntfyfd[0], kTimeout));
   thrd.join();
 
   EXPECT_STREQ(msg, out.c_str());
+
+  EXPECT_EQ(0, close(acptfd));
+  EXPECT_EQ(0, close(ntfyfd[0]));
+  EXPECT_EQ(0, close(ntfyfd[1]));
 }
 
-// TODO: Enable this test when it works.
-TEST_F(NetStreamTest, DISABLED_NonBlockingConnectRefused) {
-  // No listen() on acptfd_.
+TEST(NetStreamTest, NonBlockingConnectRead) {
+  for (int i = 0; i < kRepeatEach; i++) {
+    NonBlockingConnectRead();
+  }
+}
+
+// NetStreamTest.NonBlockingConnectRefused
+
+void NonBlockingConnectRefused() {
+  int acptfd = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(acptfd, 0);
+
+  struct sockaddr_in addr;
+  addr.sin_family = AF_INET;
+  addr.sin_port = 0;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  int ret = bind(acptfd, (const struct sockaddr*)&addr, sizeof(addr));
+  ASSERT_EQ(0, ret) << "bind failed: " << errno;
+
+  socklen_t addrlen = sizeof(addr);
+  ret = getsockname(acptfd, (struct sockaddr*)&addr, &addrlen);
+  ASSERT_EQ(0, ret) << "getsockname failed: " << errno;
+
+  // No listen() on acptfd.
 
   int connfd = socket(AF_INET, SOCK_STREAM, 0);
   ASSERT_GE(connfd, 0) << "socket failed: " << errno;
 
   int status = fcntl(connfd, F_GETFL, 0);
-  ASSERT_EQ(fcntl(connfd, F_SETFL, status | O_NONBLOCK), 0);
+  ASSERT_EQ(0, fcntl(connfd, F_SETFL, status | O_NONBLOCK));
 
-  int ret = connect(connfd, (const struct sockaddr*)&addr_, sizeof(addr_));
-  EXPECT_EQ(ret, -1);
+  ret = connect(connfd, (const struct sockaddr*)&addr, sizeof(addr));
+  EXPECT_EQ(-1, ret);
   if (ret == -1) {
     ASSERT_EQ(EINPROGRESS, errno) << "connect failed: " << errno;
 
     struct pollfd pfd = {connfd, POLLOUT, 0};
-    ASSERT_EQ(poll(&pfd, 1, kTimeout), 1);
+    ASSERT_EQ(1, poll(&pfd, 1, kTimeout));
 
     int val;
     socklen_t vallen = sizeof(val);
-    ASSERT_EQ(getsockopt(connfd, SOL_SOCKET, SO_ERROR, &val, &vallen), 0);
-    ASSERT_EQ(val, ECONNREFUSED);
+    ASSERT_EQ(0, getsockopt(connfd, SOL_SOCKET, SO_ERROR, &val, &vallen));
+    ASSERT_EQ(ECONNREFUSED, val);
   }
 
-  ASSERT_EQ(close(connfd), 0);
+  ASSERT_EQ(0, close(connfd));
+
+  EXPECT_EQ(0, close(acptfd));
 }
+
+TEST(NetStreamTest, NonBlockingConnectRefused) {
+  for (int i = 0; i < kRepeatEach; i++) {
+    NonBlockingConnectRefused();
+  }
+}
+
+// NetStreamTest.GetTcpInfo
+
+void GetTcpInfo() {
+  int connfd = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(connfd, 0) << "socket failed: " << errno;
+
+  tcp_info info;
+  socklen_t info_len = sizeof(tcp_info);
+  int rv = getsockopt(connfd, SOL_TCP, TCP_INFO, (void *)&info, &info_len);
+  ASSERT_GE(rv, 0) << "getsockopt failed: " << errno;
+  ASSERT_EQ(sizeof(tcp_info), info_len);
+  ASSERT_EQ(0u, info.tcpi_rtt);
+  ASSERT_EQ(0u, info.tcpi_rttvar);
+
+  ASSERT_EQ(0, close(connfd));
+}
+
+TEST(NetStreamTest, GetTcpInfo) {
+  for (int i = 0; i < kRepeatEach; i++) {
+    GetTcpInfo();
+  }
+}
+
+// NetStreamTest.Shutdown
 
 void PollSignal(struct sockaddr_in* addr, short events, short* revents,
                 int ntfyfd) {
@@ -317,85 +453,64 @@ void PollSignal(struct sockaddr_in* addr, short events, short* revents,
   NotifySuccess(ntfyfd);
 }
 
-TEST_F(NetStreamTest, GetTcpInfo) {
-  // No listen() on acptfd_.
+void Shutdown() {
+  int acptfd = socket(AF_INET, SOCK_STREAM, 0);
+  ASSERT_GE(acptfd, 0);
 
-  int connfd = socket(AF_INET, SOCK_STREAM, 0);
-  ASSERT_GE(connfd, 0) << "socket failed: " << errno;
+  struct sockaddr_in addr;
+  addr.sin_family = AF_INET;
+  addr.sin_port = 0;
+  addr.sin_addr.s_addr = INADDR_ANY;
+  int ret = bind(acptfd, (const struct sockaddr*)&addr, sizeof(addr));
+  ASSERT_EQ(0, ret) << "bind failed: " << errno;
 
-  tcp_info info;
-  socklen_t info_len = sizeof(tcp_info);
-  int rv = getsockopt(connfd, SOL_TCP, TCP_INFO, (void *)&info, &info_len);
-  ASSERT_GE(rv, 0) << "getsockopt failed: " << errno;
-  ASSERT_EQ(sizeof(tcp_info), info_len);
-  ASSERT_EQ(0u, info.tcpi_rtt);
-  ASSERT_EQ(0u, info.tcpi_rttvar);
+  socklen_t addrlen = sizeof(addr);
+  ret = getsockname(acptfd, (struct sockaddr*)&addr, &addrlen);
+  ASSERT_EQ(0, ret) << "getsockname failed: " << errno;
 
-  ASSERT_EQ(close(connfd), 0);
-}
+  int ntfyfd[2];
+  ASSERT_EQ(0, pipe(ntfyfd));
 
-TEST_F(NetStreamTest, Shutdown) {
-  int ret = listen(acptfd_, 10);
+  ret = listen(acptfd, 10);
   ASSERT_EQ(0, ret) << "listen failed: " << errno;
 
   short events = POLLRDHUP;
   short revents;
-  std::thread thrd(PollSignal, &addr_, events, &revents, ntfyfd_[1]);
+  std::thread thrd(PollSignal, &addr, events, &revents, ntfyfd[1]);
 
-  int connfd = accept(acptfd_, nullptr, nullptr);
+  int connfd = accept(acptfd, nullptr, nullptr);
   ASSERT_GE(connfd, 0) << "accept failed: " << errno;
 
   ret = shutdown(connfd, SHUT_WR);
   ASSERT_EQ(0, ret) << "shutdown failed: " << errno;
 
-  ASSERT_EQ(WaitSuccess(ntfyfd_[0], kTimeout), true);
+  ASSERT_EQ(true, WaitSuccess(ntfyfd[0], kTimeout));
   thrd.join();
 
   EXPECT_EQ(POLLRDHUP, revents);
   ASSERT_EQ(0, close(connfd));
+
+  EXPECT_EQ(0, close(acptfd));
+  EXPECT_EQ(0, close(ntfyfd[0]));
+  EXPECT_EQ(0, close(ntfyfd[1]));
 }
 
-class NetDatagramTest : public ::testing::Test {
- protected:
-  NetDatagramTest() {}
-
-  virtual void SetUp() {
-    recvfd_ = socket(AF_INET, SOCK_DGRAM, 0);
-    ASSERT_GE(recvfd_, 0);
-
-    memset(&addr_, 0, sizeof(addr_));
-    addr_.sin_family = AF_INET;
-    addr_.sin_port = 0;
-    addr_.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-
-    int ret = bind(recvfd_, (const struct sockaddr*)&addr_, sizeof(addr_));
-    ASSERT_EQ(0, ret) << "bind failed: " << errno;
-
-    addrlen_ = sizeof(addr_);
-    ret = getsockname(recvfd_, (struct sockaddr*)&addr_, &addrlen_);
-    ASSERT_EQ(0, ret) << "getsockname failed: " << errno;
-
-    ASSERT_EQ(pipe(ntfyfd_), 0);
+TEST(NetStreamTest, Shutdown) {
+  for (int i = 0; i < kRepeatEach; i++) {
+    Shutdown();
   }
+}
 
-  virtual void TearDown() {
-    EXPECT_EQ(close(recvfd_), 0);
-    EXPECT_EQ(close(ntfyfd_[0]), 0);
-    EXPECT_EQ(close(ntfyfd_[1]), 0);
-  }
+// NetDatagramTest
 
-  int recvfd_;
-  struct sockaddr_in addr_;
-  socklen_t addrlen_;
-  int ntfyfd_[2];
-};
+// NetDatagramTest.DatagramSendto
 
 void DatagramRead(int recvfd, std::string* out,
                   struct sockaddr_in* addr, socklen_t *addrlen,
                   int ntfyfd, int timeout) {
   struct pollfd fds = { recvfd, POLLIN, 0 };
   int nfds = poll(&fds, 1, timeout);
-  EXPECT_EQ(nfds, 1) << "poll returned: " << nfds << " errno: " << errno;
+  EXPECT_EQ(1, nfds) << "poll returned: " << nfds << " errno: " << errno;
   if (nfds != 1) {
     NotifyFail(ntfyfd);
     return;
@@ -414,54 +529,131 @@ void DatagramRead(int recvfd, std::string* out,
   NotifySuccess(ntfyfd);
 }
 
-TEST_F(NetDatagramTest, LoopbackDatagramSendto) {
+void DatagramSendto() {
+  int recvfd = socket(AF_INET, SOCK_DGRAM, 0);
+  ASSERT_GE(recvfd, 0);
+
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = 0;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+  int ret = bind(recvfd, (const struct sockaddr*)&addr, sizeof(addr));
+  ASSERT_EQ(0, ret) << "bind failed: " << errno;
+
+  socklen_t addrlen = sizeof(addr);
+  ret = getsockname(recvfd, (struct sockaddr*)&addr, &addrlen);
+  ASSERT_EQ(0, ret) << "getsockname failed: " << errno;
+
+  int ntfyfd[2];
+  ASSERT_EQ(0, pipe(ntfyfd));
+
   std::string out;
-  std::thread thrd(DatagramRead, recvfd_,
-                   &out, &addr_, &addrlen_, ntfyfd_[1], kTimeout);
+  std::thread thrd(DatagramRead, recvfd,
+                   &out, &addr, &addrlen, ntfyfd[1], kTimeout);
 
   const char* msg = "hello";
 
   int sendfd = socket(AF_INET, SOCK_DGRAM, 0);
   ASSERT_GE(sendfd, 0) << "socket failed: " << errno;
-  ASSERT_EQ(sendto(sendfd, msg, strlen(msg), 0, (struct sockaddr*)&addr_,
-                   addrlen_), (ssize_t)strlen(msg)) << "sendto failed: "
+  ASSERT_EQ((ssize_t)strlen(msg), sendto(sendfd, msg, strlen(msg), 0, (struct sockaddr*)&addr,
+                   addrlen)) << "sendto failed: "
                                                       << errno;
-  ASSERT_EQ(close(sendfd), 0);
+  ASSERT_EQ(0, close(sendfd));
 
-  ASSERT_EQ(WaitSuccess(ntfyfd_[0], kTimeout), true);
+  ASSERT_EQ(true, WaitSuccess(ntfyfd[0], kTimeout));
   thrd.join();
 
   EXPECT_STREQ(msg, out.c_str());
+
+  EXPECT_EQ(0, close(recvfd));
+  EXPECT_EQ(0, close(ntfyfd[0]));
+  EXPECT_EQ(0, close(ntfyfd[1]));
 }
 
-TEST_F(NetDatagramTest, LoopbackDatagramConnectWrite) {
+TEST(NetDatagramTest, DatagramSendto) {
+  for (int i = 0; i < kRepeatEach; i++) {
+    DatagramSendto();
+  }
+}
+
+// NetDatagramTest.DatagramConnectWrite
+
+void DatagramConnectWrite() {
+  int recvfd = socket(AF_INET, SOCK_DGRAM, 0);
+  ASSERT_GE(recvfd, 0);
+
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = 0;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+  int ret = bind(recvfd, (const struct sockaddr*)&addr, sizeof(addr));
+  ASSERT_EQ(0, ret) << "bind failed: " << errno;
+
+  socklen_t addrlen = sizeof(addr);
+  ret = getsockname(recvfd, (struct sockaddr*)&addr, &addrlen);
+  ASSERT_EQ(0, ret) << "getsockname failed: " << errno;
+
+  int ntfyfd[2];
+  ASSERT_EQ(0, pipe(ntfyfd));
+
   std::string out;
-  std::thread thrd(DatagramRead, recvfd_,
-                   &out, &addr_, &addrlen_, ntfyfd_[1], kTimeout);
+  std::thread thrd(DatagramRead, recvfd,
+                   &out, &addr, &addrlen, ntfyfd[1], kTimeout);
 
   const char* msg = "hello";
 
   int sendfd = socket(AF_INET, SOCK_DGRAM, 0);
   ASSERT_GE(sendfd, 0);
-  ASSERT_EQ(connect(sendfd, (struct sockaddr*)&addr_, addrlen_), 0);
-  ASSERT_EQ(write(sendfd, msg, strlen(msg)), (ssize_t)strlen(msg));
-  ASSERT_EQ(close(sendfd), 0);
+  ASSERT_EQ(0, connect(sendfd, (struct sockaddr*)&addr, addrlen));
+  ASSERT_EQ((ssize_t)strlen(msg), write(sendfd, msg, strlen(msg)));
+  ASSERT_EQ(0, close(sendfd));
 
-  ASSERT_EQ(WaitSuccess(ntfyfd_[0], kTimeout), true);
+  ASSERT_EQ(true, WaitSuccess(ntfyfd[0], kTimeout));
   thrd.join();
 
   EXPECT_STREQ(msg, out.c_str());
+
+  EXPECT_EQ(0, close(recvfd));
+  EXPECT_EQ(0, close(ntfyfd[0]));
+  EXPECT_EQ(0, close(ntfyfd[1]));
 }
 
-TEST_F(NetDatagramTest, PartialRecv) {
+TEST(NetDatagramTest, DatagramConnectWrite) {
+  for (int i = 0; i < kRepeatEach; i++) {
+    DatagramConnectWrite();
+  }
+}
+
+// NetDatagramTest.Datagram.PartialRecv
+
+void DatagramPartialRecv() {
+  int recvfd = socket(AF_INET, SOCK_DGRAM, 0);
+  ASSERT_GE(recvfd, 0);
+
+  struct sockaddr_in addr;
+  memset(&addr, 0, sizeof(addr));
+  addr.sin_family = AF_INET;
+  addr.sin_port = 0;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+  int ret = bind(recvfd, (const struct sockaddr*)&addr, sizeof(addr));
+  ASSERT_EQ(0, ret) << "bind failed: " << errno;
+
+  socklen_t addrlen = sizeof(addr);
+  ret = getsockname(recvfd, (struct sockaddr*)&addr, &addrlen);
+  ASSERT_EQ(0, ret) << "getsockname failed: " << errno;
+
   const char kTestMsg[] = "hello";
   const int kTestMsgSize = sizeof(kTestMsg);
 
   int sendfd = socket(AF_INET, SOCK_DGRAM, 0);
   ASSERT_GE(sendfd, 0) << "socket failed: " << errno;
-  ASSERT_EQ(sendto(sendfd, kTestMsg, kTestMsgSize, 0,
-                   reinterpret_cast<sockaddr*>(&addr_), addrlen_),
-            kTestMsgSize);
+  ASSERT_EQ(kTestMsgSize, sendto(sendfd, kTestMsg, kTestMsgSize, 0,
+                                 reinterpret_cast<sockaddr*>(&addr), addrlen));
 
   char recv_buf[kTestMsgSize];
 
@@ -476,27 +668,34 @@ TEST_F(NetDatagramTest, PartialRecv) {
   msg.msg_iov = &iov;
   msg.msg_iovlen = 1;
 
-  int recv_result = recvmsg(recvfd_, &msg, 0);
-  ASSERT_EQ(recv_result, kPartialReadSize);
+  int recv_result = recvmsg(recvfd, &msg, 0);
+  ASSERT_EQ(kPartialReadSize, recv_result);
   ASSERT_EQ(std::string(kTestMsg, kPartialReadSize),
             std::string(recv_buf, kPartialReadSize));
-  EXPECT_EQ(msg.msg_flags, MSG_TRUNC);
+  EXPECT_EQ(MSG_TRUNC, msg.msg_flags);
 
   // Send the second packet.
-  ASSERT_EQ(sendto(sendfd, kTestMsg, kTestMsgSize, 0,
-                   reinterpret_cast<sockaddr*>(&addr_), addrlen_),
-            kTestMsgSize);
+  ASSERT_EQ(kTestMsgSize, sendto(sendfd, kTestMsg, kTestMsgSize, 0,
+                                 reinterpret_cast<sockaddr*>(&addr), addrlen));
 
   // Read the whole packet now.
   recv_buf[0] = 0;
   iov.iov_len = sizeof(recv_buf);
-  recv_result = recvmsg(recvfd_, &msg, 0);
-  ASSERT_EQ(recv_result, kTestMsgSize);
+  recv_result = recvmsg(recvfd, &msg, 0);
+  ASSERT_EQ(kTestMsgSize, recv_result);
   ASSERT_EQ(std::string(kTestMsg, kTestMsgSize),
             std::string(recv_buf, kTestMsgSize));
-  EXPECT_EQ(msg.msg_flags, 0);
+  EXPECT_EQ(0, msg.msg_flags);
 
-  ASSERT_EQ(close(sendfd), 0);
+  ASSERT_EQ(0, close(sendfd));
+
+  EXPECT_EQ(0, close(recvfd));
+}
+
+TEST(NetDatagramTest, DatagramPartialRecv) {
+  for (int i = 0; i < kRepeatEach; i++) {
+    DatagramPartialRecv();
+  }
 }
 
 // TODO port reuse

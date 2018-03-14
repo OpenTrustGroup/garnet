@@ -6,11 +6,13 @@
 
 #include <zircon/types.h>
 #include <zx/vmo.h>
+
+#include <mutex>
 #include <thread>
 
 #include "lib/app/cpp/application_context.h"
 #include "lib/fidl/cpp/bindings/string.h"
-#include "lib/fxl/synchronization/mutex.h"
+#include "lib/fxl/synchronization/thread_annotations.h"
 #include "lib/fxl/tasks/task_runner.h"
 #include "lib/media/fidl/audio_server.fidl.h"
 #include "third_party/flite/include/flite_fuchsia.h"
@@ -26,7 +28,7 @@ class TtsSpeaker : public std::enable_shared_from_this<TtsSpeaker> {
   zx_status_t Init(
       const std::unique_ptr<app::ApplicationContext>& application_context);
 
-  zx_status_t Speak(const fidl::String& words,
+  zx_status_t Speak(const f1dl::String& words,
                     const fxl::Closure& speak_complete_cbk);
   void Shutdown();
 
@@ -80,13 +82,13 @@ class TtsSpeaker : public std::enable_shared_from_this<TtsSpeaker> {
   // changes, therefor it should not need to be guarded by the ring buffer lock.
   uint64_t shared_buf_size_ = 0;
 
-  fxl::Mutex ring_buffer_lock_;
+  std::mutex ring_buffer_lock_;
   uint64_t wr_ptr_ FXL_GUARDED_BY(ring_buffer_lock_) = 0;
   uint64_t rd_ptr_ FXL_GUARDED_BY(ring_buffer_lock_) = 0;
   uint64_t tx_ptr_ = 0;
   zx::event wakeup_event_;
 
-  fidl::String words_;
+  f1dl::String words_;
   fxl::Closure speak_complete_cbk_;
   std::atomic<bool> abort_playback_;
   std::atomic<bool> synthesis_complete_;

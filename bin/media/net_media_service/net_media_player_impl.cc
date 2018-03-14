@@ -4,6 +4,9 @@
 
 #include "garnet/bin/media/net_media_service/net_media_player_impl.h"
 
+#include <fcntl.h>
+
+#include "garnet/bin/media/util/file_channel.h"
 #include "lib/fxl/logging.h"
 #include "lib/media/fidl/seeking_reader.fidl.h"
 #include "lib/url/gurl.h"
@@ -12,9 +15,9 @@ namespace media {
 
 // static
 std::shared_ptr<NetMediaPlayerImpl> NetMediaPlayerImpl::Create(
-    const fidl::String& service_name,
-    fidl::InterfaceHandle<MediaPlayer> media_player,
-    fidl::InterfaceRequest<NetMediaPlayer> net_media_player_request,
+    const f1dl::String& service_name,
+    f1dl::InterfaceHandle<MediaPlayer> media_player,
+    f1dl::InterfaceRequest<NetMediaPlayer> net_media_player_request,
     NetMediaServiceImpl* owner) {
   return std::shared_ptr<NetMediaPlayerImpl>(
       new NetMediaPlayerImpl(service_name, std::move(media_player),
@@ -22,9 +25,9 @@ std::shared_ptr<NetMediaPlayerImpl> NetMediaPlayerImpl::Create(
 }
 
 NetMediaPlayerImpl::NetMediaPlayerImpl(
-    const fidl::String& service_name,
-    fidl::InterfaceHandle<MediaPlayer> media_player,
-    fidl::InterfaceRequest<NetMediaPlayer> net_media_player_request,
+    const f1dl::String& service_name,
+    f1dl::InterfaceHandle<MediaPlayer> media_player,
+    f1dl::InterfaceRequest<NetMediaPlayer> net_media_player_request,
     NetMediaServiceImpl* owner)
     : NetMediaServiceImpl::Product<NetMediaPlayer>(
           this,
@@ -38,20 +41,13 @@ NetMediaPlayerImpl::NetMediaPlayerImpl(
     media_player_.Unbind();
     UnbindAndReleaseFromOwner();
   });
-
-  media_service_ = owner->ConnectToEnvironmentService<MediaService>();
-  media_service_.set_error_handler([this]() {
-    media_service_.Unbind();
-    UnbindAndReleaseFromOwner();
-  });
 }
 
 NetMediaPlayerImpl::~NetMediaPlayerImpl() {
-  media_service_.Unbind();
   media_player_.Unbind();
 }
 
-void NetMediaPlayerImpl::SetUrl(const fidl::String& url_as_string) {
+void NetMediaPlayerImpl::SetUrl(const f1dl::String& url_as_string) {
   url::GURL url = url::GURL(url_as_string);
 
   if (!url.is_valid()) {
@@ -59,15 +55,12 @@ void NetMediaPlayerImpl::SetUrl(const fidl::String& url_as_string) {
     return;
   }
 
-  SeekingReaderPtr reader;
-
   if (url.SchemeIsFile()) {
-    media_service_->CreateFileReader(url.path(), reader.NewRequest());
+    media_player_->SetFileSource(
+        ChannelFromFd(fxl::UniqueFD(open(url.path().c_str(), O_RDONLY))));
   } else {
-    media_service_->CreateNetworkReader(url_as_string, reader.NewRequest());
+    media_player_->SetHttpSource(url_as_string);
   }
-
-  media_player_->SetReader(std::move(reader));
 }
 
 void NetMediaPlayerImpl::Play() {

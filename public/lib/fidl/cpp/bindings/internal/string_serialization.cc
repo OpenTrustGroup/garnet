@@ -6,12 +6,12 @@
 
 #include <string.h>
 
-namespace fidl {
+namespace f1dl {
 
 size_t GetSerializedSize_(const String& input) {
   if (!input)
     return 0;
-  return internal::Align(sizeof(internal::String_Data) + input.size());
+  return internal::Align(sizeof(internal::String_Data) + input->size());
 }
 
 void SerializeString_(const String& input,
@@ -19,9 +19,9 @@ void SerializeString_(const String& input,
                       internal::String_Data** output) {
   if (input) {
     internal::String_Data* result =
-        internal::String_Data::New(input.size(), buf);
+        internal::String_Data::New(input->size(), buf);
     if (result)
-      memcpy(result->storage(), input.data(), input.size());
+      memcpy(result->storage(), input->data(), input->size());
     *output = result;
   } else {
     *output = nullptr;
@@ -30,11 +30,10 @@ void SerializeString_(const String& input,
 
 void Deserialize_(internal::String_Data* input, String* output) {
   if (input) {
-    String result(input->storage(), input->size());
-    result.Swap(output);
+    *output = String(input->storage(), input->size());
   } else {
-    output->reset();
+    *output = String();
   }
 }
 
-}  // namespace fidl
+}  // namespace f1dl

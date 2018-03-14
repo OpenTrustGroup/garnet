@@ -33,7 +33,7 @@ GpuImagePtr GpuImage::New(Session* session,
                           GpuMemoryPtr memory,
                           const scenic::ImageInfoPtr& image_info,
                           uint64_t memory_offset,
-                          ErrorReporter* error_reporter) {
+                          mz::ErrorReporter* error_reporter) {
   vk::Format pixel_format = vk::Format::eUndefined;
   size_t bytes_per_pixel;
   size_t pixel_alignment;
@@ -43,6 +43,10 @@ GpuImagePtr GpuImage::New(Session* session,
       bytes_per_pixel = 4u;
       pixel_alignment = 4u;
       break;
+    case scenic::ImageInfo::PixelFormat::YUY2:
+      error_reporter->ERROR()
+          << "GpuImage::CreateFromMemory(): PixelFormat must be BGRA_8.";
+      return nullptr;
   }
 
   if (image_info->width <= 0) {

@@ -19,7 +19,7 @@ class View : public mozart::BaseView {
  public:
   View(app::ApplicationContext* application_context,
        mozart::ViewManagerPtr view_manager,
-       fidl::InterfaceRequest<mozart::ViewOwner> view_owner_request);
+       f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request);
 
   ~View() override;
 
@@ -29,7 +29,7 @@ class View : public mozart::BaseView {
  private:
   // |BaseView|.
   void OnSceneInvalidated(
-      scenic::PresentationInfoPtr presentation_info) override;
+      ui_mozart::PresentationInfoPtr presentation_info) override;
 
   app::ApplicationContext* const application_context_;
   fsl::MessageLoop* loop_;

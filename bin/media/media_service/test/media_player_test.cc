@@ -5,10 +5,11 @@
 #include "garnet/bin/media/fidl/fidl_formatting.h"
 #include "garnet/bin/media/media_service/test/fake_renderer.h"
 #include "garnet/bin/media/media_service/test/fake_wav_reader.h"
+#include "lib/app/cpp/application_context.h"
 #include "lib/app/cpp/connect.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
-#include "lib/media/fidl/media_service.fidl.h"
+#include "lib/media/fidl/media_player.fidl.h"
 #include "lib/media/timeline/timeline_rate.h"
 
 namespace media {
@@ -20,11 +21,9 @@ class MediaPlayerTester {
       : application_context_(app::ApplicationContext::CreateFromStartupInfo()) {
     FXL_LOG(INFO) << "MediaPlayerTest starting";
 
-    FXL_LOG(INFO) << "connecting to MediaService";
-    MediaServicePtr media_service =
-        application_context_->ConnectToEnvironmentService<MediaService>();
-    FXL_LOG(INFO) << "connected to MediaService "
-                  << (media_service ? "ok" : "NULL PTR");
+    FXL_LOG(INFO) << "creating player";
+    media_player_ =
+        application_context_->ConnectToEnvironmentService<MediaPlayer>();
 
     fake_renderer_.SetPtsRate(TimelineRate(48000, 1));
 
@@ -47,19 +46,18 @@ class MediaPlayerTester {
                                   {16373, true, 0, 0x0000000000000000}});
 
     SeekingReaderPtr fake_reader_ptr;
-    fidl::InterfaceRequest<SeekingReader> reader_request =
+    f1dl::InterfaceRequest<SeekingReader> reader_request =
         fake_reader_ptr.NewRequest();
     fake_reader_.Bind(std::move(reader_request));
 
     MediaRendererPtr fake_renderer_ptr;
-    fidl::InterfaceRequest<MediaRenderer> renderer_request =
+    f1dl::InterfaceRequest<MediaRenderer> renderer_request =
         fake_renderer_ptr.NewRequest();
     fake_renderer_.Bind(std::move(renderer_request));
 
-    FXL_LOG(INFO) << "creating player";
-    media_service->CreatePlayer(std::move(fake_reader_ptr),
-                                std::move(fake_renderer_ptr), nullptr,
-                                media_player_.NewRequest());
+    media_player_->SetAudioRenderer(nullptr, std::move(fake_renderer_ptr));
+
+    media_player_->SetReader(std::move(fake_reader_ptr));
     FXL_LOG(INFO) << "player created " << (media_player_ ? "ok" : "NULL PTR");
 
     HandleStatusUpdates();

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"amber/pkg"
+	"amber/source"
 )
 
 var letters = []rune("1234567890abcdef")
@@ -34,6 +35,7 @@ type testSrc struct {
 	interval   time.Duration
 	pkgs       map[string]struct{}
 	replyDelay time.Duration
+	limit      uint64
 }
 
 func (t *testSrc) AvailableUpdates(pkgs []*pkg.Package) (map[pkg.Package]pkg.Package, error) {
@@ -59,7 +61,7 @@ func (t *testSrc) FetchPkg(pkg *pkg.Package) (*os.File, error) {
 	defer t.mu.Unlock()
 	if _, ok := t.getReqs[*pkg]; !ok {
 		fmt.Println("ERROR: unknown update pkg requested")
-		return nil, ErrNoUpdateContent
+		return nil, source.ErrNoUpdateContent
 	}
 
 	delete(t.getReqs, *pkg)
@@ -70,13 +72,17 @@ func (t *testSrc) CheckInterval() time.Duration {
 	return t.interval
 }
 
-func (t *testSrc) Equals(o Source) bool {
+func (t *testSrc) Equals(o source.Source) bool {
 	switch p := o.(type) {
 	case *testSrc:
 		return t == p
 	default:
 		return false
 	}
+}
+
+func (t *testSrc) CheckLimit() uint64 {
+	return t.limit
 }
 
 type testTicker struct {
@@ -111,8 +117,7 @@ func processPackage(r *GetResult, pkgs *pkg.PackageSet) error {
 	return nil
 }
 
-// TestDaemon tests daemon.go with a fake package source. The test runs for ~30
-// seconds.
+// TestDaemon tests daemon.go with a fake package source.
 func TestDaemon(t *testing.T) {
 	tickers := []testTicker{}
 	muTickers := sync.Mutex{}
@@ -121,37 +126,45 @@ func TestDaemon(t *testing.T) {
 	newTicker = func(d time.Duration) *time.Ticker {
 		t, tt := testBuildTicker(d, &tickerGroup, &muTickers)
 		tickers = append(tickers, tt)
+		tickerGroup.Done()
 		return t
 	}
 
-	tickerGroup.Add(1)
+	// wait for one signal from building the ticker itself and one
+	// from appending it to the tickers list
+	tickerGroup.Add(2)
 
-	sources := createTestSrcs()
+	testSrcs := createTestSrcs()
 	pkgSet := createMonitorPkgs()
-
-	d := NewDaemon(pkgSet, processPackage)
-	for _, src := range sources {
-		d.AddSource(src)
+	sources := make([]source.Source, 0, len(testSrcs))
+	for _, src := range testSrcs {
+		// allow very high request rates for this test since rate limiting isn't
+		// really the target of this test
+		src.limit = 3
+		src.interval = 1 * time.Nanosecond
+		sources = append(sources, src)
 	}
+	d := NewDaemon(pkgSet, processPackage, sources)
 
 	tickerGroup.Wait()
-
 	// protect against improper test rewrites
 	if len(tickers) != 1 {
-		t.Errorf("Unexpected number of tickers!", len(tickers))
+		t.Errorf("Unexpected number of tickers! %d", len(tickers))
 	}
 
 	// run 10 times with a slight separation so as not to exceed the
 	// throttle rate
 	runs := 10
 	for i := 0; i < runs; i++ {
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(10 * time.Nanosecond)
 		tickers[0].makeTick()
 	}
+	// one final sleep to allow the last request to sneak through
+	time.Sleep(10 * time.Millisecond)
 
 	d.CancelAll()
 
-	verifyReqCount(t, sources, pkgSet, runs+1)
+	verifyReqCount(t, testSrcs, pkgSet, runs+1)
 }
 
 func TestGetRequest(t *testing.T) {
@@ -168,7 +181,8 @@ func TestGetRequest(t *testing.T) {
 	tSrc := testSrc{UpdateReqs: make(map[string]int),
 		getReqs:  make(map[pkg.Package]*struct{}),
 		interval: srcRateLimit,
-		pkgs:     pkgs}
+		pkgs:     pkgs,
+		limit:    1}
 
 	pkgs = make(map[string]struct{})
 	pkgs[videoPkg.Name] = struct{}{}
@@ -176,8 +190,9 @@ func TestGetRequest(t *testing.T) {
 	tSrc2 := testSrc{UpdateReqs: make(map[string]int),
 		getReqs:  make(map[pkg.Package]*struct{}),
 		interval: srcRateLimit,
-		pkgs:     pkgs}
-	sources := []*testSrc{&tSrc, &tSrc2}
+		pkgs:     pkgs,
+		limit:    1}
+	sources := []source.Source{&tSrc, &tSrc2}
 
 	tickers := []testTicker{}
 	muTickers := sync.Mutex{}
@@ -191,14 +206,10 @@ func TestGetRequest(t *testing.T) {
 
 	tickerGroup.Add(1)
 
-	d := NewDaemon(NewPackageSet(), processPackage)
-	for _, src := range sources {
-		d.AddSource(src)
-	}
-
+	d := NewDaemon(pkg.NewPackageSet(), processPackage, sources)
 	tickerGroup.Wait()
 
-	pkgSet := NewPackageSet()
+	pkgSet := pkg.NewPackageSet()
 	pkgSet.Add(&emailPkg)
 	pkgSet.Add(&videoPkg)
 	pkgSet.Add(&srchPkg)
@@ -206,7 +217,7 @@ func TestGetRequest(t *testing.T) {
 	verifyGetResults(t, pkgSet, updateRes)
 
 	time.Sleep(srcRateLimit * 2)
-	pkgSet = NewPackageSet()
+	pkgSet = pkg.NewPackageSet()
 	pkgSet.Add(&videoPkg)
 	updateRes = d.GetUpdates(pkgSet)
 	verifyGetResults(t, pkgSet, updateRes)
@@ -219,7 +230,8 @@ func TestRateLimit(t *testing.T) {
 	tSrc := testSrc{UpdateReqs: make(map[string]int),
 		getReqs:  make(map[pkg.Package]*struct{}),
 		interval: srcRateLimit,
-		pkgs:     make(map[string]struct{})}
+		pkgs:     make(map[string]struct{}),
+		limit:    1}
 	wrapped := NewSourceKeeper(&tSrc)
 	dummy := []*pkg.Package{&pkg.Package{Name: "None", Version: "aaaaaa"}}
 
@@ -238,10 +250,10 @@ func TestRateLimit(t *testing.T) {
 }
 
 func TestRequestCollapse(t *testing.T) {
-	pkgSet := NewPackageSet()
-	emailPkg := Package{Name: "email", Version: "23af90ee"}
-	videoPkg := Package{Name: "video", Version: "f2b8006c"}
-	srchPkg := Package{Name: "search", Version: "fa08207e"}
+	pkgSet := pkg.NewPackageSet()
+	emailPkg := pkg.Package{Name: "email", Version: "23af90ee"}
+	videoPkg := pkg.Package{Name: "video", Version: "f2b8006c"}
+	srchPkg := pkg.Package{Name: "search", Version: "fa08207e"}
 	pkgSet.Add(&emailPkg)
 	pkgSet.Add(&videoPkg)
 	pkgSet.Add(&srchPkg)
@@ -254,18 +266,21 @@ func TestRequestCollapse(t *testing.T) {
 	srcRateLimit := time.Millisecond
 	replyDelay := 20 * time.Millisecond
 	tSrc := testSrc{UpdateReqs: make(map[string]int),
-		getReqs:  make(map[Package]*struct{}),
+		getReqs:  make(map[pkg.Package]*struct{}),
 		interval: srcRateLimit,
-		pkgs:     pkgs}
+		pkgs:     pkgs,
+		limit:    1}
 
 	pkgs = make(map[string]struct{})
 	pkgs[videoPkg.Name] = struct{}{}
 	pkgs[srchPkg.Name] = struct{}{}
 	tSrc2 := testSrc{UpdateReqs: make(map[string]int),
-		getReqs:  make(map[Package]*struct{}),
+		getReqs:  make(map[pkg.Package]*struct{}),
 		interval: srcRateLimit,
-		pkgs:     pkgs}
-	sources := []*testSrc{&tSrc, &tSrc2}
+		pkgs:     pkgs,
+		limit:    1}
+	sources := []source.Source{&tSrc, &tSrc2}
+	testSrcs := []*testSrc{&tSrc, &tSrc2}
 
 	tickers := []testTicker{}
 	muTickers := sync.Mutex{}
@@ -279,13 +294,12 @@ func TestRequestCollapse(t *testing.T) {
 
 	tickerGroup.Add(1)
 
-	d := NewDaemon(NewPackageSet(), processPackage)
-	for _, src := range sources {
+	for _, src := range testSrcs {
 		// introduce a reply delay so we can make sure to run
 		// simultaneously
 		src.replyDelay = replyDelay
-		d.AddSource(src)
 	}
+	d := NewDaemon(pkg.NewPackageSet(), processPackage, sources)
 
 	tickerGroup.Wait()
 
@@ -294,7 +308,7 @@ func TestRequestCollapse(t *testing.T) {
 	go d.GetUpdates(pkgSet)
 	time.Sleep(2 * srcRateLimit)
 	updateRes := d.GetUpdates(pkgSet)
-	verifyReqCount(t, sources, pkgSet, 1)
+	verifyReqCount(t, testSrcs, pkgSet, 1)
 	verifyGetResults(t, pkgSet, updateRes)
 
 	// verify that if we do two more requests sequentially that the total
@@ -302,28 +316,28 @@ func TestRequestCollapse(t *testing.T) {
 	d.GetUpdates(pkgSet)
 	time.Sleep(srcRateLimit)
 	d.GetUpdates(pkgSet)
-	verifyReqCount(t, sources, pkgSet, 3)
+	verifyReqCount(t, testSrcs, pkgSet, 3)
 
-	pkgSetA := NewPackageSet()
+	pkgSetA := pkg.NewPackageSet()
 	pkgSetA.Add(&emailPkg)
 	pkgSetA.Add(&srchPkg)
-	pkgSetB := NewPackageSet()
+	pkgSetB := pkg.NewPackageSet()
 	pkgSetB.Add(&videoPkg)
 	pkgSetB.Add(&srchPkg)
 	go d.GetUpdates(pkgSetA)
 	time.Sleep(srcRateLimit * 2)
 	res := d.GetUpdates(pkgSetB)
-	verifyReqCount(t, sources, pkgSet, 4)
+	verifyReqCount(t, testSrcs, pkgSet, 4)
 	verifyGetResults(t, pkgSetB, res)
 
 	d.CancelAll()
 }
 
-func createMonitorPkgs() *PackageSet {
-	pkgSet := NewPackageSet()
-	pkgSet.Add(&Package{Name: "email", Version: "23af90ee"})
-	pkgSet.Add(&Package{Name: "video", Version: "f2b8006c"})
-	pkgSet.Add(&Package{Name: "search", Version: "fa08207e"})
+func createMonitorPkgs() *pkg.PackageSet {
+	pkgSet := pkg.NewPackageSet()
+	pkgSet.Add(&pkg.Package{Name: "email", Version: "23af90ee"})
+	pkgSet.Add(&pkg.Package{Name: "video", Version: "f2b8006c"})
+	pkgSet.Add(&pkg.Package{Name: "search", Version: "fa08207e"})
 	return pkgSet
 }
 
@@ -332,22 +346,24 @@ func createTestSrcs() []*testSrc {
 	pkgs["email"] = struct{}{}
 	pkgs["video"] = struct{}{}
 	tSrc := testSrc{UpdateReqs: make(map[string]int),
-		getReqs:  make(map[Package]*struct{}),
+		getReqs:  make(map[pkg.Package]*struct{}),
 		interval: time.Millisecond * 3,
-		pkgs:     pkgs}
+		pkgs:     pkgs,
+		limit:    1}
 
 	pkgs = make(map[string]struct{})
 	pkgs["video"] = struct{}{}
 	pkgs["search"] = struct{}{}
 	tSrc2 := testSrc{UpdateReqs: make(map[string]int),
-		getReqs:  make(map[Package]*struct{}),
+		getReqs:  make(map[pkg.Package]*struct{}),
 		interval: time.Millisecond * 5,
-		pkgs:     pkgs}
+		pkgs:     pkgs,
+		limit:    1}
 	return []*testSrc{&tSrc, &tSrc2}
 }
 
-func verifyReqCount(t *testing.T, srcs []*testSrc, pkgs *PackageSet, runs int) {
-	pkgChecks := make(map[Package]int)
+func verifyReqCount(t *testing.T, srcs []*testSrc, pkgs *pkg.PackageSet, runs int) {
+	pkgChecks := make(map[pkg.Package]int)
 
 	for _, pkg := range pkgs.Packages() {
 		pkgChecks[*pkg] = 0
@@ -369,8 +385,8 @@ func verifyReqCount(t *testing.T, srcs []*testSrc, pkgs *PackageSet, runs int) {
 	}
 }
 
-func verifyGetResults(t *testing.T, pkgSet *PackageSet,
-	updates map[Package]*GetResult) {
+func verifyGetResults(t *testing.T, pkgSet *pkg.PackageSet,
+	updates map[pkg.Package]*GetResult) {
 	if len(updates) != len(pkgSet.Packages()) {
 		t.Errorf("Expected %d updates, but found %d\n",
 			len(pkgSet.Packages()), len(updates))

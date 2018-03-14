@@ -13,10 +13,9 @@
 #include "garnet/lib/ui/scenic/engine/resource_map.h"
 #include "garnet/lib/ui/scenic/resources/image.h"
 #include "garnet/lib/ui/scenic/resources/image_base.h"
-#include "garnet/lib/ui/scenic/resources/image_pipe.h"
 #include "garnet/lib/ui/scenic/resources/image_pipe_handler.h"
 #include "garnet/lib/ui/scenic/resources/resource.h"
-#include "lib/escher/flib/fence_listener.h"
+#include "lib/escher/flib/fence_set_listener.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fsl/tasks/message_loop_handler.h"
 #include "lib/fxl/memory/weak_ptr.h"
@@ -34,7 +33,7 @@ class ImagePipe : public ImageBase {
   ImagePipe(Session* session, scenic::ResourceId id);
   ImagePipe(Session* session,
             scenic::ResourceId id,
-            ::fidl::InterfaceRequest<scenic::ImagePipe> request);
+            ::f1dl::InterfaceRequest<scenic::ImagePipe> request);
 
   // Called by |ImagePipeHandler|, part of |ImagePipe| interface.
   void AddImage(uint32_t image_id,
@@ -46,8 +45,8 @@ class ImagePipe : public ImageBase {
 
   void PresentImage(uint32_t image_id,
                     uint64_t presentation_time,
-                    ::fidl::Array<zx::event> acquire_fences,
-                    ::fidl::Array<zx::event> release_fences,
+                    ::f1dl::Array<zx::event> acquire_fences,
+                    ::f1dl::Array<zx::event> release_fences,
                     const scenic::ImagePipe::PresentImageCallback& callback);
 
   void Accept(class ResourceVisitor* visitor) override;
@@ -80,7 +79,7 @@ class ImagePipe : public ImageBase {
                                MemoryPtr memory,
                                const scenic::ImageInfoPtr& image_info,
                                uint64_t memory_offset,
-                               ErrorReporter* error_reporter);
+                               mz::ErrorReporter* error_reporter);
 
   fxl::WeakPtrFactory<ImagePipe> weak_ptr_factory_;
 
@@ -90,7 +89,7 @@ class ImagePipe : public ImageBase {
     scenic::ResourceId image_id;
     uint64_t presentation_time;
     std::unique_ptr<escher::FenceSetListener> acquire_fences;
-    ::fidl::Array<zx::event> release_fences;
+    ::f1dl::Array<zx::event> release_fences;
 
     // Callback to report when the update has been applied in response to
     // an invocation of |ImagePipe.PresentImage()|.
@@ -101,7 +100,7 @@ class ImagePipe : public ImageBase {
 
   scenic::ResourceId current_image_id_ = 0;
   ImagePtr current_image_;
-  ::fidl::Array<zx::event> current_release_fences_;
+  ::f1dl::Array<zx::event> current_release_fences_;
 
   ResourceMap images_;
   bool is_valid_ = true;

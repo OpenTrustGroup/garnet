@@ -3,13 +3,13 @@
 // found in the LICENSE file.
 
 #include "gtest/gtest.h"
+#include "lib/fidl/compiler/interfaces/tests/sample_import.fidl.h"
+#include "lib/fidl/compiler/interfaces/tests/sample_interfaces.fidl.h"
 #include "lib/fidl/cpp/bindings/binding.h"
 #include "lib/fidl/cpp/bindings/tests/util/test_utils.h"
 #include "lib/fidl/cpp/bindings/tests/util/test_waiter.h"
-#include "lib/fidl/compiler/interfaces/tests/sample_import.fidl.h"
-#include "lib/fidl/compiler/interfaces/tests/sample_interfaces.fidl.h"
 
-namespace fidl {
+namespace f1dl {
 namespace test {
 namespace {
 
@@ -26,9 +26,10 @@ class ProviderImpl : public sample::Provider {
     callback_copy(a);
   }
 
-  void EchoStrings(const String& a,
-                   const String& b,
-                   const std::function<void(String, String)>& callback) override {
+  void EchoStrings(
+      const String& a,
+      const String& b,
+      const std::function<void(String, String)>& callback) override {
     callback(a, b);
   }
 
@@ -92,7 +93,7 @@ TEST_F(RequestResponseTest, EchoString) {
   ProviderImpl provider_impl(provider.NewRequest());
 
   std::string buf;
-  provider->EchoString(String::From("hello"), StringRecorder(&buf));
+  provider->EchoString("hello", StringRecorder(&buf));
 
   PumpMessages();
 
@@ -104,8 +105,7 @@ TEST_F(RequestResponseTest, EchoStrings) {
   ProviderImpl provider_impl(provider.NewRequest());
 
   std::string buf;
-  provider->EchoStrings(String::From("hello"), String::From(" world"),
-                        StringRecorder(&buf));
+  provider->EchoStrings("hello", " world", StringRecorder(&buf));
 
   PumpMessages();
 
@@ -143,4 +143,4 @@ TEST_F(RequestResponseTest, EchoEnum) {
 
 }  // namespace
 }  // namespace test
-}  // namespace fidl
+}  // namespace f1dl

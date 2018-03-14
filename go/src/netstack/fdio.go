@@ -112,7 +112,10 @@ type iostate struct {
 	refs      int
 	lastError *tcpip.Error // if not-nil, next error returned via getsockopt
 
-	writeLoopDone chan struct{}
+	writeLoopDone     chan struct{}
+	controlLoopDone   chan struct{}
+	listenLoopClosing chan struct{} // tell the listen loop to close
+	listenLoopDone    chan struct{} // report that the listen loops has closed
 
 	withNewSocket bool // remove when we remove old FDIO support
 }
@@ -236,27 +239,41 @@ func (ios *iostate) loopSocketRead(stk *stack.Stack) {
 	dataHandle := zx.Socket(ios.dataHandle)
 
 	// Warm up.
-	obs, err := dataHandle.WaitOne(
-		zx.SignalSocketWritable|zx.SignalSocketWriteDisabled|
-			zx.SignalSocketPeerClosed,
-		zx.TimensecInfinite)
-	switch mxerror.Status(err) {
-	case zx.ErrOk:
-		// NOP
-	case zx.ErrBadHandle, zx.ErrCanceled, zx.ErrPeerClosed:
-		return
-	default:
-		log.Printf("loopSocketRead: warmup failed: %v", err)
-	}
-	switch {
-	case obs&zx.SignalSocketPeerClosed != 0:
-		return
-	case obs&zx.SignalSocketWriteDisabled != 0:
-		err := ios.ep.Shutdown(tcpip.ShutdownRead)
-		if err != nil {
-			log.Printf("loopSocketRead: ShutdownRead failed: %v", err)
+	writable := false
+	connected := false
+	for !(writable && connected) {
+		sigs := zx.Signals(zx.SignalSocketWriteDisabled | zx.SignalSocketPeerClosed)
+		if !writable {
+			sigs |= zx.SignalSocketWritable
 		}
-		return
+		if !connected {
+			sigs |= ZXSIO_SIGNAL_CONNECTED
+		}
+		obs, err := dataHandle.WaitOne(sigs, zx.TimensecInfinite)
+		switch mxerror.Status(err) {
+		case zx.ErrOk:
+			// NOP
+		case zx.ErrBadHandle, zx.ErrCanceled, zx.ErrPeerClosed:
+			return
+		default:
+			log.Printf("loopSocketRead: warmup failed: %v", err)
+		}
+		if obs&zx.SignalSocketWritable != 0 {
+			writable = true
+		}
+		if obs&ZXSIO_SIGNAL_CONNECTED != 0 {
+			connected = true
+		}
+		if obs&zx.SignalSocketPeerClosed != 0 {
+			return
+		}
+		if obs&zx.SignalSocketWriteDisabled != 0 {
+			err := ios.ep.Shutdown(tcpip.ShutdownRead)
+			if err != nil {
+				log.Printf("loopSocketRead: ShutdownRead failed: %v", err)
+			}
+			return
+		}
 	}
 
 	waitEntry, notifyCh := waiter.NewChannelEntry(nil)
@@ -464,6 +481,8 @@ func (ios *iostate) loopDgramWrite(stk *stack.Stack) {
 }
 
 func (ios *iostate) loopControl(s *socketServer, cookie int64) {
+	defer func() { ios.controlLoopDone <- struct{}{} }()
+
 	dataHandle := zx.Socket(ios.dataHandle)
 
 	for {
@@ -513,7 +532,6 @@ func (s *socketServer) newIostate(h zx.Handle, iosOrig *iostate, netProto tcpip.
 			wq:            wq,
 			ep:            ep,
 			refs:          1,
-			writeLoopDone: make(chan struct{}),
 			withNewSocket: withNewSocket,
 		}
 		if ep != nil || withNewSocket {
@@ -585,7 +603,8 @@ func (s *socketServer) newIostate(h zx.Handle, iosOrig *iostate, netProto tcpip.
 	}()
 
 	if withNewSocket && isAccept {
-		if err := zx.Socket(h).Share(peerS); err != nil {
+		s := zx.Socket(h)
+		if err := s.Share(peerS); err != nil {
 			return err
 		}
 	} else {
@@ -593,20 +612,39 @@ func (s *socketServer) newIostate(h zx.Handle, iosOrig *iostate, netProto tcpip.
 		// kind of object this is.
 		ro := fdio.RioDescription{
 			Status: errStatus(nil),
-			Type:   uint32(fdio.ProtocolSocket),
 		}
+		ro.Info.Tag = fdio.ProtocolSocket
 		ro.SetOp(fdio.OpOnOpen)
-		if peerS != 0 {
-			ro.Handle = peerS
-		}
+		ro.Info.Socket().Handle = peerS
 		ro.Write(h, 0)
 	}
 
+	if ep != nil {
+		// This must be initialized before starting the control loop below, or it will race with iosCloseHandler.
+		ios.writeLoopDone = make(chan struct{})
+	}
+
 	if withNewSocket {
+		ios.controlLoopDone = make(chan struct{})
 		go ios.loopControl(s, int64(newCookie))
 	} else if err := s.dispatcher.AddHandler(h, fdio.ServerHandler(s.fdioHandler), int64(newCookie)); err != nil {
 		h.Close()
 		return err
+	}
+
+	if isAccept {
+		// Signal 'Connected' to the peer.
+		err := ios.dataHandle.SignalPeer(0, ZXSIO_SIGNAL_CONNECTED)
+		if err != nil {
+			log.Printf("socket signal-peer ZXSIO_SIGNAL_CONNECTED: %v", err)
+			return err
+		}
+		// Signal 'Connected' locally.
+		err = ios.dataHandle.Signal(0, ZXSIO_SIGNAL_CONNECTED)
+		if err != nil {
+			log.Printf("socket signal ZXSIO_SIGNAL_CONNECTED: %v", err)
+			return err
+		}
 	}
 
 	switch transProto {
@@ -718,7 +756,7 @@ func (s *socketServer) opAccept(h zx.Handle, ios *iostate, msg *fdio.Msg, path s
 		// If we just accepted the only queued incoming connection,
 		// clear the signal so the fdio client knows no incoming
 		// connection is available.
-		err := zx.Handle(ios.dataHandle).SignalPeer(ZXSIO_SIGNAL_INCOMING, 0)
+		err := ios.dataHandle.SignalPeer(ZXSIO_SIGNAL_INCOMING, 0)
 		switch mxerror.Status(err) {
 		case zx.ErrOk:
 			// NOP
@@ -1061,13 +1099,18 @@ func (s *socketServer) opGetPeerName(ios *iostate, msg *fdio.Msg) (status zx.Sta
 	return fdioSockAddrReply(a, msg)
 }
 
-func (s *socketServer) loopListen(ios *iostate) {
+func (s *socketServer) loopListen(ios *iostate, inCh chan struct{}) {
+	defer func() { ios.listenLoopDone <- struct{}{} }()
+
 	// When an incoming connection is available, wait for the listening socket to
 	// enter a shareable state, then share it with zircon.
-	inEntry, inCh := waiter.NewChannelEntry(nil)
-	ios.wq.EventRegister(&inEntry, waiter.EventIn)
-	defer ios.wq.EventUnregister(&inEntry)
-	for range inCh {
+	for {
+		select {
+		case <-inCh:
+			// NOP
+		case <-ios.listenLoopClosing:
+			return
+		}
 		obs, err := ios.dataHandle.WaitOne(
 			zx.SignalSocketShare|zx.SignalSocketPeerClosed|LOCAL_SIGNAL_CLOSING,
 			zx.TimensecInfinite)
@@ -1124,6 +1167,9 @@ func (s *socketServer) opListen(ios *iostate, msg *fdio.Msg) (status zx.Status) 
 		}
 		return zx.ErrBadState
 	}
+
+	inEntry, inCh := waiter.NewChannelEntry(nil)
+	ios.wq.EventRegister(&inEntry, waiter.EventIn)
 	if err := ios.ep.Listen(int(backlog)); err != nil {
 		if debug {
 			log.Printf("listen: %v", err)
@@ -1132,18 +1178,21 @@ func (s *socketServer) opListen(ios *iostate, msg *fdio.Msg) (status zx.Status) 
 	}
 
 	if ios.withNewSocket {
-		go s.loopListen(ios)
+		ios.listenLoopClosing = make(chan struct{})
+		ios.listenLoopDone = make(chan struct{})
+		go func() {
+			defer ios.wq.EventUnregister(&inEntry)
+			s.loopListen(ios, inCh)
+		}()
 	} else {
 		go func() {
+			defer ios.wq.EventUnregister(&inEntry)
 			// When an incoming connection is queued up (that is,
 			// calling accept would return a new connection),
 			// signal the fdio socket that it exists. This allows
 			// the socket API client to implement a blocking accept.
-			inEntry, inCh := waiter.NewChannelEntry(nil)
-			ios.wq.EventRegister(&inEntry, waiter.EventIn)
-			defer ios.wq.EventUnregister(&inEntry)
 			for range inCh {
-				err := zx.Handle(ios.dataHandle).SignalPeer(0, ZXSIO_SIGNAL_INCOMING)
+				err := ios.dataHandle.SignalPeer(0, ZXSIO_SIGNAL_INCOMING)
 				switch mxerror.Status(err) {
 				case zx.ErrOk:
 					continue
@@ -1211,16 +1260,19 @@ func (s *socketServer) opConnect(ios *iostate, msg *fdio.Msg) (status zx.Status)
 		go func() {
 			<-notifyCh
 			ios.wq.EventUnregister(&waitEntry)
-			sigs := zx.Signals(ZXSIO_SIGNAL_OUTGOING)
 			e = ios.ep.GetSockOpt(tcpip.ErrorOption{})
-			if err != nil {
+			if e != nil {
 				ios.mu.Lock()
 				ios.lastError = e
 				ios.mu.Unlock()
-			} else {
-				sigs |= ZXSIO_SIGNAL_CONNECTED
+				// Signal 'Outgoing' to the peer.
+				ios.dataHandle.SignalPeer(0, ZXSIO_SIGNAL_OUTGOING)
+				return
 			}
-			zx.Handle(ios.dataHandle).SignalPeer(0, sigs)
+			// Signal 'Outgoing' and 'Connected' to the peer.
+			ios.dataHandle.SignalPeer(0, ZXSIO_SIGNAL_OUTGOING|ZXSIO_SIGNAL_CONNECTED)
+			// Signal 'Connected' locally.
+			ios.dataHandle.Signal(0, ZXSIO_SIGNAL_CONNECTED)
 		}()
 		return zx.ErrShouldWait
 	}
@@ -1233,7 +1285,18 @@ func (s *socketServer) opConnect(ios *iostate, msg *fdio.Msg) (status zx.Status)
 		log.Printf("connect: connected")
 	}
 	if ios.transProto == tcp.ProtocolNumber {
-		err := zx.Handle(ios.dataHandle).SignalPeer(0, ZXSIO_SIGNAL_CONNECTED)
+		// Signal 'Connected' to the peer.
+		err := ios.dataHandle.SignalPeer(0, ZXSIO_SIGNAL_CONNECTED)
+		switch status := mxerror.Status(err); status {
+		case zx.ErrOk:
+			// NOP
+		case zx.ErrBadHandle, zx.ErrCanceled, zx.ErrPeerClosed:
+			return status
+		default:
+			log.Printf("connect: signal-peer failed: %v", err)
+		}
+		// Signal 'Connected' locally.
+		err = ios.dataHandle.Signal(0, ZXSIO_SIGNAL_CONNECTED)
 		switch status := mxerror.Status(err); status {
 		case zx.ErrOk:
 			// NOP
@@ -1385,26 +1448,37 @@ func (s *socketServer) iosCloseHandler(ios *iostate, cookie cookie) {
 	delete(s.io, cookie)
 	s.mu.Unlock()
 
-	if ios.ep != nil {
-		// Signal that we're about to close. This tells the write loop to finish flushing
-		// all the data from the dataHandle to the endpoint, and let us know when it's done.
-		err := zx.Handle(ios.dataHandle).Signal(0, LOCAL_SIGNAL_CLOSING)
-
-		go func() {
-			switch mxerror.Status(err) {
-			case zx.ErrOk:
-				<-ios.writeLoopDone
-			default:
-				log.Printf("close: signal failed: %v", err)
-			}
-
-			ios.ep.Close()
-			ios.dataHandle.Close()
-			if ios.peerDataHandle != 0 {
-				ios.peerDataHandle.Close()
-			}
-		}()
+	// Signal that we're about to close. This tells the various message loops to finish
+	// processing, and let us know when they're done.
+	err := ios.dataHandle.Signal(0, LOCAL_SIGNAL_CLOSING)
+	if ios.listenLoopClosing != nil {
+		ios.listenLoopClosing <- struct{}{}
 	}
+
+	go func() {
+		switch mxerror.Status(err) {
+		case zx.ErrOk:
+			if ios.writeLoopDone != nil {
+				<-ios.writeLoopDone
+			}
+			if ios.controlLoopDone != nil {
+				<-ios.controlLoopDone
+			}
+			if ios.listenLoopDone != nil {
+				<-ios.listenLoopDone
+			}
+		default:
+			log.Printf("close: signal failed: %v", err)
+		}
+
+		if ios.ep != nil {
+			ios.ep.Close()
+		}
+		ios.dataHandle.Close()
+		if ios.peerDataHandle != 0 {
+			ios.peerDataHandle.Close()
+		}
+	}()
 }
 
 func (s *socketServer) fdioHandler(msg *fdio.Msg, rh zx.Handle, cookieVal int64) zx.Status {
@@ -1422,15 +1496,13 @@ func (s *socketServer) fdioHandler(msg *fdio.Msg, rh zx.Handle, cookieVal int64)
 			// iostate has not been allocated if the open op is for "none" and "socket",
 			// continue to the switch below.
 			// TODO: return an error if the open op is for "accept".
-		} else if op == fdio.OpClose {
-			if rh == 0 || cookie == 0 {
-				// There are two special cases we can simply return here:
-				// 1. [rh == 0] the close op was synthesized by Dispatcher (because
-				//    the peer channel was closed).
-				// 2. [rh != 0 and cookie == 0] the close op was for the open handle
-				//    of netstack node in the namespace (which is not a socket).
-				return zx.ErrOk
-			}
+		} else if op == fdio.OpClose && (rh == 0 || cookie == 0) {
+			// There are two special cases we can simply return here:
+			// 1. [rh == 0] the close op was synthesized by Dispatcher (because
+			//    the peer channel was closed).
+			// 2. [rh != 0 and cookie == 0] the close op was for the open handle
+			//    of netstack node in the namespace (which is not a socket).
+			return zx.ErrOk
 		} else {
 			log.Printf("fdioHandler: request (op:%v) dropped because of the state mismatch", op)
 			return zx.ErrBadState
@@ -1466,7 +1538,6 @@ func (s *socketServer) fdioHandler(msg *fdio.Msg, rh zx.Handle, cookieVal int64)
 		if err != nil {
 			ro := fdio.RioDescription{
 				Status: errStatus(err),
-				Type:   uint32(fdio.ProtocolSocket),
 			}
 			ro.SetOp(fdio.OpOnOpen)
 			ro.Write(msg.Handle[0], 0)
@@ -1480,7 +1551,6 @@ func (s *socketServer) fdioHandler(msg *fdio.Msg, rh zx.Handle, cookieVal int64)
 			ios.release(func() { s.iosCloseHandler(ios, cookie) })
 			ro := fdio.RioDescription{
 				Status: errStatus(err),
-				Type:   uint32(fdio.ProtocolSocket),
 			}
 			ro.SetOp(fdio.OpOnOpen)
 			ro.Write(msg.Handle[0], 0)

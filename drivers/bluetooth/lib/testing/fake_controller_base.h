@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_FAKE_CONTROLLER_BASE_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_FAKE_CONTROLLER_BASE_H_
 
-#include <async/cpp/wait.h>
+#include <lib/async/cpp/wait.h>
 #include <zx/channel.h>
 
 #include "garnet/drivers/bluetooth/lib/common/byte_buffer.h"
@@ -21,12 +22,8 @@ namespace testing {
 // data packets to subclass implementations.
 class FakeControllerBase {
  public:
-  FakeControllerBase(zx::channel cmd_channel, zx::channel acl_data_channel);
+  FakeControllerBase();
   virtual ~FakeControllerBase();
-
-  // Kicks off the FakeController thread and message loop and starts processing
-  // transactions. |debug_name| will be assigned as the name of the thread.
-  void Start();
 
   // Stops the message loop and thread.
   void Stop();
@@ -44,9 +41,13 @@ class FakeControllerBase {
   // Immediately closes the ACL data channel endpoint.
   void CloseACLDataChannel();
 
-  bool IsStarted() const {
-    return cmd_channel_wait_.object() != ZX_HANDLE_INVALID;
-  }
+  // Starts listening for command/event packets on the given channel.
+  // Returns false if already listening on a command channel
+  bool StartCmdChannel(zx::channel chan);
+
+  // Starts listening for acl packets on the given channel.
+  // Returns false if already listening on a acl channel
+  bool StartAclChannel(zx::channel chan);
 
  protected:
   // Getters for our channel endpoints.
@@ -81,3 +82,5 @@ class FakeControllerBase {
 
 }  // namespace testing
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_FAKE_CONTROLLER_BASE_H_

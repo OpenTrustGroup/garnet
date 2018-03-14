@@ -13,7 +13,7 @@ executable("msd_arm_mali_nonhardware_tests") {
 
   public_deps = [
     ":tests_not_requiring_hardware",
-    "//third_party/gtest",
+    "//third_party/googletest:gtest",
     "//zircon/public/lib/ddk",
   ]
 }
@@ -57,10 +57,12 @@ group("test_deps") {
     "//garnet/drivers/gpu/msd-arm-mali/src",
     "//garnet/lib/magma/include:msd_abi",
     "//garnet/lib/magma/src/magma_util",
+    "//garnet/lib/magma/src/magma_util/platform:port",
+    "//garnet/lib/magma/src/sys_driver:sys_driver",
     "//garnet/lib/magma/tests/helper:command_buffer_helper",
     "//garnet/lib/magma/tests/helper:platform_device_helper",
     "//garnet/lib/magma/tests/mock:mmio",
     "//garnet/public/lib/fxl",
-    "//third_party/gtest",
+    "//third_party/googletest:gtest",
   ]
 }

@@ -12,20 +12,20 @@
 class VkCubeView : public mozart::BaseView {
 public:
     VkCubeView(mozart::ViewManagerPtr view_manager,
-               fidl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
+               f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
                std::function<void(float width, float height,
-                                  fidl::InterfaceHandle<scenic::ImagePipe> interface_request)>
+                                  f1dl::InterfaceHandle<scenic::ImagePipe> interface_request)>
                    resize_callback);
     ~VkCubeView() override;
 
 private:
     // |BaseView|:
-    void OnSceneInvalidated(scenic::PresentationInfoPtr presentation_info) override;
+    void OnSceneInvalidated(ui_mozart::PresentationInfoPtr presentation_info) override;
 
     mozart::SizeF size_;
     scenic_lib::ShapeNode pane_node_;
     std::function<void(float width, float height,
-                       fidl::InterfaceHandle<scenic::ImagePipe> interface_request)>
+                       f1dl::InterfaceHandle<scenic::ImagePipe> interface_request)>
         resize_callback_;
 
     FXL_DISALLOW_COPY_AND_ASSIGN(VkCubeView);

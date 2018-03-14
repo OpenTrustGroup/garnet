@@ -745,7 +745,7 @@ static int ath10k_sdio_mbox_proc_counter_intr(struct ath10k* ar) {
     uint8_t counter_int_status;
     int ret;
 
-    mutex_lock(&irq_data->mtx);
+    mtx_lock(&irq_data->mtx);
     counter_int_status = irq_data->irq_proc_reg->counter_int_status &
                          irq_data->irq_en_reg->cntr_int_status_en;
 
@@ -759,7 +759,7 @@ static int ath10k_sdio_mbox_proc_counter_intr(struct ath10k* ar) {
         ret = 0;
     }
 
-    mutex_unlock(&irq_data->mtx);
+    mtx_unlock(&irq_data->mtx);
 
     return ret;
 }
@@ -818,7 +818,7 @@ static int ath10k_sdio_mbox_proc_cpu_intr(struct ath10k* ar) {
     uint8_t cpu_int_status;
     int ret;
 
-    mutex_lock(&irq_data->mtx);
+    mtx_lock(&irq_data->mtx);
     cpu_int_status = irq_data->irq_proc_reg->cpu_int_status &
                      irq_data->irq_en_reg->cpu_int_status_en;
     if (!cpu_int_status) {
@@ -846,7 +846,7 @@ static int ath10k_sdio_mbox_proc_cpu_intr(struct ath10k* ar) {
     }
 
 out:
-    mutex_unlock(&irq_data->mtx);
+    mtx_unlock(&irq_data->mtx);
     return ret;
 }
 
@@ -860,7 +860,7 @@ static int ath10k_sdio_mbox_read_int_status(struct ath10k* ar,
     uint8_t htc_mbox = FIELD_PREP(ATH10K_HTC_MAILBOX_MASK, 1);
     int ret;
 
-    mutex_lock(&irq_data->mtx);
+    mtx_lock(&irq_data->mtx);
 
     *lookahead = 0;
     *host_int_status = 0;
@@ -910,7 +910,7 @@ static int ath10k_sdio_mbox_read_int_status(struct ath10k* ar,
     }
 
 out:
-    mutex_unlock(&irq_data->mtx);
+    mtx_unlock(&irq_data->mtx);
     return ret;
 }
 
@@ -1213,7 +1213,7 @@ static struct ath10k_sdio_bus_request
     struct ath10k_sdio* ar_sdio = ath10k_sdio_priv(ar);
     struct ath10k_sdio_bus_request* bus_req;
 
-    spin_lock_bh(&ar_sdio->lock);
+    mtx_lock(&ar_sdio->lock);
 
     if (list_empty(&ar_sdio->bus_req_freeq)) {
         bus_req = NULL;
@@ -1225,7 +1225,7 @@ static struct ath10k_sdio_bus_request
     list_del(&bus_req->list);
 
 out:
-    spin_unlock_bh(&ar_sdio->lock);
+    mtx_unlock(&ar_sdio->lock);
     return bus_req;
 }
 
@@ -1235,9 +1235,9 @@ static void ath10k_sdio_free_bus_req(struct ath10k* ar,
 
     memset(bus_req, 0, sizeof(*bus_req));
 
-    spin_lock_bh(&ar_sdio->lock);
+    mtx_lock(&ar_sdio->lock);
     list_add_tail(&bus_req->list, &ar_sdio->bus_req_freeq);
-    spin_unlock_bh(&ar_sdio->lock);
+    mtx_unlock(&ar_sdio->lock);
 }
 
 static void __ath10k_sdio_write_async(struct ath10k* ar,
@@ -1256,7 +1256,7 @@ static void __ath10k_sdio_write_async(struct ath10k* ar,
         ep = &ar->htc.endpoint[req->eid];
         ath10k_htc_notify_tx_completion(ep, skb);
     } else if (req->comp) {
-        complete(req->comp);
+        completion_signal(req->comp);
     }
 
     ath10k_sdio_free_bus_req(ar, req);
@@ -1268,21 +1268,21 @@ static void ath10k_sdio_write_async_work(struct work_struct* work) {
     struct ath10k* ar = ar_sdio->ar;
     struct ath10k_sdio_bus_request* req, *tmp_req;
 
-    spin_lock_bh(&ar_sdio->wr_async_lock);
+    mtx_lock(&ar_sdio->wr_async_lock);
 
     list_for_each_entry_safe(req, tmp_req, &ar_sdio->wr_asyncq, list) {
         list_del(&req->list);
-        spin_unlock_bh(&ar_sdio->wr_async_lock);
+        mtx_unlock(&ar_sdio->wr_async_lock);
         __ath10k_sdio_write_async(ar, req);
-        spin_lock_bh(&ar_sdio->wr_async_lock);
+        mtx_lock(&ar_sdio->wr_async_lock);
     }
 
-    spin_unlock_bh(&ar_sdio->wr_async_lock);
+    mtx_unlock(&ar_sdio->wr_async_lock);
 }
 
 static int ath10k_sdio_prep_async_req(struct ath10k* ar, uint32_t addr,
                                       struct sk_buff* skb,
-                                      struct completion* comp,
+                                      completion_t* comp,
                                       bool htc_msg, enum ath10k_htc_ep_id eid) {
     struct ath10k_sdio* ar_sdio = ath10k_sdio_priv(ar);
     struct ath10k_sdio_bus_request* bus_req;
@@ -1302,9 +1302,9 @@ static int ath10k_sdio_prep_async_req(struct ath10k* ar, uint32_t addr,
     bus_req->htc_msg = htc_msg;
     bus_req->comp = comp;
 
-    spin_lock_bh(&ar_sdio->wr_async_lock);
+    mtx_lock(&ar_sdio->wr_async_lock);
     list_add_tail(&bus_req->list, &ar_sdio->wr_asyncq);
-    spin_unlock_bh(&ar_sdio->wr_async_lock);
+    mtx_unlock(&ar_sdio->wr_async_lock);
 
     return 0;
 }
@@ -1348,7 +1348,7 @@ static int ath10k_sdio_hif_disable_intrs(struct ath10k* ar) {
     struct ath10k_sdio_irq_enable_regs* regs = irq_data->irq_en_reg;
     int ret;
 
-    mutex_lock(&irq_data->mtx);
+    mtx_lock(&irq_data->mtx);
 
     memset(regs, 0, sizeof(*regs));
     ret = ath10k_sdio_write(ar, MBOX_INT_STATUS_ENABLE_ADDRESS,
@@ -1357,7 +1357,7 @@ static int ath10k_sdio_hif_disable_intrs(struct ath10k* ar) {
         ath10k_warn("unable to disable sdio interrupts: %d\n", ret);
     }
 
-    mutex_unlock(&irq_data->mtx);
+    mtx_unlock(&irq_data->mtx);
 
     return ret;
 }
@@ -1460,7 +1460,7 @@ static int ath10k_sdio_hif_enable_intrs(struct ath10k* ar) {
     struct ath10k_sdio_irq_enable_regs* regs = irq_data->irq_en_reg;
     int ret;
 
-    mutex_lock(&irq_data->mtx);
+    mtx_lock(&irq_data->mtx);
 
     /* Enable all but CPU interrupts */
     regs->int_status_en = FIELD_PREP(MBOX_INT_STATUS_ENABLE_ERROR_MASK, 1) |
@@ -1494,7 +1494,7 @@ static int ath10k_sdio_hif_enable_intrs(struct ath10k* ar) {
         ath10k_warn("failed to update mbox interrupt status register : %d\n",
                     ret);
 
-    mutex_unlock(&irq_data->mtx);
+    mtx_unlock(&irq_data->mtx);
     return ret;
 }
 
@@ -1665,14 +1665,14 @@ static int ath10k_sdio_hif_start(struct ath10k* ar) {
     return 0;
 }
 
-#define SDIO_IRQ_DISABLE_TIMEOUT_HZ (3 * HZ)
+#define SDIO_IRQ_DISABLE_TIMEOUT (ZX_SEC(3))
 
 static void ath10k_sdio_irq_disable(struct ath10k* ar) {
     struct ath10k_sdio* ar_sdio = ath10k_sdio_priv(ar);
     struct ath10k_sdio_irq_data* irq_data = &ar_sdio->irq_data;
     struct ath10k_sdio_irq_enable_regs* regs = irq_data->irq_en_reg;
     struct sk_buff* skb;
-    struct completion irqs_disabled_comp;
+    completion_t irqs_disabled_comp;
     int ret;
 
     skb = dev_alloc_skb(sizeof(*regs));
@@ -1680,15 +1680,15 @@ static void ath10k_sdio_irq_disable(struct ath10k* ar) {
         return;
     }
 
-    mutex_lock(&irq_data->mtx);
+    mtx_lock(&irq_data->mtx);
 
     memset(regs, 0, sizeof(*regs)); /* disable all interrupts */
     memcpy(skb->data, regs, sizeof(*regs));
     skb_put(skb, sizeof(*regs));
 
-    mutex_unlock(&irq_data->mtx);
+    mtx_unlock(&irq_data->mtx);
 
-    init_completion(&irqs_disabled_comp);
+    irqs_disabled_comp = COMPLETION_INIT;
     ret = ath10k_sdio_prep_async_req(ar, MBOX_INT_STATUS_ENABLE_ADDRESS,
                                      skb, &irqs_disabled_comp, false, 0);
     if (ret) {
@@ -1700,9 +1700,7 @@ static void ath10k_sdio_irq_disable(struct ath10k* ar) {
     /* Wait for the completion of the IRQ disable request.
      * If there is a timeout we will try to disable irq's anyway.
      */
-    ret = wait_for_completion_timeout(&irqs_disabled_comp,
-                                      SDIO_IRQ_DISABLE_TIMEOUT_HZ);
-    if (!ret) {
+    if (completion_wait(&irqs_disabled_comp, SDIO_IRQ_DISABLE_TIMEOUT) == ZX_ERR_TIMED_OUT) {
         ath10k_warn("sdio irq disable request timed out\n");
     }
 
@@ -1727,7 +1725,7 @@ static void ath10k_sdio_hif_stop(struct ath10k* ar) {
 
     cancel_work_sync(&ar_sdio->wr_async_work);
 
-    spin_lock_bh(&ar_sdio->wr_async_lock);
+    mtx_lock(&ar_sdio->wr_async_lock);
 
     /* Free all bus requests that have not been handled */
     list_for_each_entry_safe(req, tmp_req, &ar_sdio->wr_asyncq, list) {
@@ -1744,7 +1742,7 @@ static void ath10k_sdio_hif_stop(struct ath10k* ar) {
         ath10k_sdio_free_bus_req(ar, req);
     }
 
-    spin_unlock_bh(&ar_sdio->wr_async_lock);
+    mtx_unlock(&ar_sdio->wr_async_lock);
 }
 
 #ifdef CONFIG_PM
@@ -1971,9 +1969,9 @@ static int ath10k_sdio_probe(struct sdio_func* func,
     ar_sdio->is_disabled = true;
     ar_sdio->ar = ar;
 
-    spin_lock_init(&ar_sdio->lock);
-    spin_lock_init(&ar_sdio->wr_async_lock);
-    mutex_init(&ar_sdio->irq_data.mtx);
+    mtx_init(&ar_sdio->lock, mtx_plain);
+    mtx_init(&ar_sdio->wr_async_lock, mtx_plain);
+    mtx_init(&ar_sdio->irq_data.mtx, mtx_plain);
 
     INIT_LIST_HEAD(&ar_sdio->bus_req_freeq);
     INIT_LIST_HEAD(&ar_sdio->wr_asyncq);

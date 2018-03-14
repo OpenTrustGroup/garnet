@@ -4,15 +4,16 @@
 
 #include "device.h"
 
+#include <ddk/device.h>
 #include <fbl/limits.h>
 #include <wlan/common/channel.h>
 #include <wlan/common/logging.h>
-#include <wlan/mlme/serialize.h>
+#include <wlan/mlme/service.h>
 #include <wlan/mlme/timer.h>
 #include <wlan/mlme/wlan.h>
+#include <wlan/protocol/ioctl.h>
 #include <zircon/assert.h>
 #include <zircon/compiler.h>
-#include <zircon/device/wlan.h>
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/port.h>
 #include <zx/thread.h>
@@ -27,8 +28,79 @@
 
 namespace wlan {
 
-Device::Device(zx_device_t* device, wlanmac_protocol_t* wlanmac_proto)
-    : WlanBaseDevice(device), wlanmac_proxy_(wlanmac_proto), dispatcher_(this) {
+#define DEV(c) static_cast<Device*>(c)
+static zx_protocol_device_t wlan_device_ops = {
+    .version = DEVICE_OPS_VERSION,
+    .get_protocol = nullptr,
+    .open = nullptr,
+    .open_at = nullptr,
+    .close = nullptr,
+    .unbind = [](void* ctx) { DEV(ctx)->WlanUnbind(); },
+    .release = [](void* ctx) { DEV(ctx)->WlanRelease(); },
+    .read = nullptr,
+    .write = nullptr,
+    .get_size = nullptr,
+    .ioctl = [](void* ctx, uint32_t op, const void* in_buf, size_t in_len, void* out_buf,
+                size_t out_len, size_t* out_actual) -> zx_status_t {
+                    return DEV(ctx)->WlanIoctl(op, in_buf, in_len, out_buf, out_len,
+                            out_actual);
+    },
+    .suspend = nullptr,
+    .resume = nullptr,
+    .rxrpc = nullptr,
+};
+
+static zx_protocol_device_t eth_device_ops = {
+    .version = DEVICE_OPS_VERSION,
+    .get_protocol = nullptr,
+    .open = nullptr,
+    .open_at = nullptr,
+    .close = nullptr,
+    .unbind = [](void* ctx) { DEV(ctx)->EthUnbind(); },
+    .release = [](void* ctx) { DEV(ctx)->EthRelease(); },
+    .read = nullptr,
+    .write = nullptr,
+    .get_size = nullptr,
+    .ioctl = nullptr,
+    .suspend = nullptr,
+    .resume = nullptr,
+    .rxrpc = nullptr,
+};
+
+static wlanmac_ifc_t wlanmac_ifc_ops = {
+    .status = [](void* cookie, uint32_t status) {
+        DEV(cookie)->WlanmacStatus(status);
+    },
+    .recv = [](void* cookie, uint32_t flags, const void* data, size_t length,
+               wlan_rx_info_t* info) {
+        DEV(cookie)->WlanmacRecv(flags, data, length, info);
+    },
+    .complete_tx = [](void* cookie, wlan_tx_packet_t* pkt, zx_status_t status) {
+        DEV(cookie)->WlanmacCompleteTx(pkt, status);
+    },
+};
+
+static ethmac_protocol_ops_t ethmac_ops = {
+    .query = [](void* ctx, uint32_t options, ethmac_info_t* info) -> zx_status_t {
+        return DEV(ctx)->EthmacQuery(options, info);
+    },
+    .stop = [](void* ctx) {
+        DEV(ctx)->EthmacStop();
+    },
+    .start = [](void* ctx, ethmac_ifc_t* ifc, void* cookie) -> zx_status_t {
+        return DEV(ctx)->EthmacStart(ifc, cookie);
+    },
+    .queue_tx = [](void* ctx, uint32_t options, ethmac_netbuf_t* netbuf) -> zx_status_t {
+        return DEV(ctx)->EthmacQueueTx(options, netbuf);
+    },
+    .set_param = [](void* ctx, uint32_t param, int32_t value, void* data) -> zx_status_t {
+        return DEV(ctx)->EthmacSetParam(param, value, data);
+    },
+};
+#undef DEV
+
+Device::Device(zx_device_t* device, wlanmac_protocol_t wlanmac_proto)
+    : parent_(device), wlanmac_proxy_(wlanmac_proto), dispatcher_(this) {
     debugfn();
     state_ = fbl::AdoptRef(new DeviceState);
 }
@@ -59,7 +131,15 @@ zx_status_t Device::Bind() __TA_NO_THREAD_SAFETY_ANALYSIS {
 
     work_thread_ = std::thread(&Device::MainLoop, this);
 
-    status = DdkAdd("wlan");
+    bool wlan_added = false;
+
+    status = AddWlanDevice();
+    if (status == ZX_OK) {
+        wlan_added = true;
+        status = AddEthDevice();
+    }
+
+    // Clean up if either device add failed.
     if (status != ZX_OK) {
         errorf("could not add device err=%d\n", status);
         zx_status_t shutdown_status = QueueDevicePortPacket(DevicePacket::kShutdown);
@@ -67,11 +147,37 @@ zx_status_t Device::Bind() __TA_NO_THREAD_SAFETY_ANALYSIS {
             ZX_PANIC("wlan: could not send shutdown loop message: %d\n", shutdown_status);
         }
         if (work_thread_.joinable()) { work_thread_.join(); }
+
+        // Remove the wlan device if it was successfully added.
+        if (wlan_added) {
+            device_remove(zxdev_);
+        }
     } else {
         debugf("device added\n");
     }
 
     return status;
+}
+
+zx_status_t Device::AddWlanDevice() {
+    device_add_args_t args = {};
+    args.version = DEVICE_ADD_ARGS_VERSION;
+    args.name = "wlan";
+    args.ctx = this;
+    args.ops = &wlan_device_ops;
+    args.proto_id = ZX_PROTOCOL_WLANIF;
+    return device_add(parent_, &args, &zxdev_);
+}
+
+zx_status_t Device::AddEthDevice() {
+    device_add_args_t args = {};
+    args.version = DEVICE_ADD_ARGS_VERSION;
+    args.name = "wlan-ethernet";
+    args.ctx = this;
+    args.ops = &eth_device_ops;
+    args.proto_id = ZX_PROTOCOL_ETHERNET_IMPL;
+    args.proto_ops = &ethmac_ops;
+    return device_add(zxdev_, &args, &ethdev_);
 }
 
 fbl::unique_ptr<Packet> Device::PreparePacket(const void* data, size_t length, Packet::Peer peer) {
@@ -104,30 +210,32 @@ zx_status_t Device::QueuePacket(fbl::unique_ptr<Packet> packet) {
     return ZX_OK;
 }
 
-void Device::DdkUnbind() {
+void Device::WlanUnbind() {
     debugfn();
     {
         std::lock_guard<std::mutex> lock(lock_);
         channel_.reset();
         dead_ = true;
+        if (port_.is_valid()) {
+            zx_status_t status = QueueDevicePortPacket(DevicePacket::kShutdown);
+            if (status != ZX_OK) {
+                ZX_PANIC("wlan: could not send shutdown loop message: %d\n", status);
+            }
+        }
     }
-    device_remove(zxdev());
+    device_remove(zxdev_);
 }
 
-void Device::DdkRelease() {
+void Device::WlanRelease() {
     debugfn();
-    if (port_.is_valid()) {
-        zx_status_t status = QueueDevicePortPacket(DevicePacket::kShutdown);
-        if (status != ZX_OK) {
-            ZX_PANIC("wlan: could not send shutdown loop message: %d\n", status);
-        }
-        if (work_thread_.joinable()) { work_thread_.join(); }
+    if (work_thread_.joinable()) {
+        work_thread_.join();
     }
     delete this;
 }
 
-zx_status_t Device::DdkIoctl(uint32_t op, const void* in_buf, size_t in_len, void* out_buf,
-                             size_t out_len, size_t* out_actual) {
+zx_status_t Device::WlanIoctl(uint32_t op, const void* in_buf, size_t in_len, void* out_buf,
+                              size_t out_len, size_t* out_actual) {
     debugfn();
     if (op != IOCTL_WLAN_GET_CHANNEL) { return ZX_ERR_NOT_SUPPORTED; }
     if (out_buf == nullptr || out_actual == nullptr || out_len < sizeof(zx_handle_t)) {
@@ -144,6 +252,18 @@ zx_status_t Device::DdkIoctl(uint32_t op, const void* in_buf, size_t in_len, voi
     return ZX_OK;
 }
 
+void Device::EthUnbind() {
+    debugfn();
+    device_remove(ethdev_);
+}
+
+void Device::EthRelease() {
+    debugfn();
+    // NOTE: we reuse the same ctx for the wlanif and the ethmac, so we do NOT free the memory here.
+    // Since ethdev_ is a child of zxdev_, this release will be called first, followed by
+    // WlanRelease. There's nothing else to clean up here.
+}
+
 zx_status_t Device::EthmacQuery(uint32_t options, ethmac_info_t* info) {
     debugfn();
     if (info == nullptr) return ZX_ERR_INVALID_ARGS;
@@ -154,17 +274,17 @@ zx_status_t Device::EthmacQuery(uint32_t options, ethmac_info_t* info) {
     return ZX_OK;
 }
 
-zx_status_t Device::EthmacStart(fbl::unique_ptr<ddk::EthmacIfcProxy> proxy) {
+zx_status_t Device::EthmacStart(ethmac_ifc_t* ifc, void* cookie) {
     debugfn();
-    ZX_DEBUG_ASSERT(proxy != nullptr);
+    ZX_DEBUG_ASSERT(ifc != nullptr);
 
     std::lock_guard<std::mutex> lock(lock_);
     if (ethmac_proxy_ != nullptr) { return ZX_ERR_ALREADY_BOUND; }
-    zx_status_t status = wlanmac_proxy_.Start(this);
+    zx_status_t status = wlanmac_proxy_.Start(&wlanmac_ifc_ops, this);
     if (status != ZX_OK) {
         errorf("could not start wlanmac: %d\n", status);
     } else {
-        ethmac_proxy_.swap(proxy);
+        ethmac_proxy_.reset(new EthmacIfcProxy(ifc, cookie));
     }
     return status;
 }
@@ -233,19 +353,15 @@ zx_status_t Device::SendEthernet(fbl::unique_ptr<Packet> packet) {
 
 zx_status_t Device::SendWlan(fbl::unique_ptr<Packet> packet) {
     ZX_DEBUG_ASSERT(packet->len() <= fbl::numeric_limits<uint16_t>::max());
-    ethmac_netbuf_t netbuf = {
-        .data = packet->mut_data(),
-        .len = static_cast<uint16_t>(packet->len()),
-    };
-    wlan_tx_packet_t pkt = {.packet_head = &netbuf};
-    if (packet->has_ext_data()) {
-        pkt.packet_tail = packet->ext_data();
-        pkt.tail_offset = packet->ext_offset();
+
+    wlan_tx_packet_t tx_pkt;
+    auto status = packet->AsWlanTxPacket(&tx_pkt);
+    if (status != ZX_OK) {
+        errorf("could not convert packet to wlan_tx_packet when sending wlan frame: %d\n", status);
+        return status;
     }
-    if (packet->has_ctrl_data<wlan_tx_info_t>()) {
-        std::memcpy(&pkt.info, packet->ctrl_data<wlan_tx_info_t>(), sizeof(pkt.info));
-    }
-    zx_status_t status = wlanmac_proxy_.QueueTx(0u, &pkt);
+
+    status = wlanmac_proxy_.QueueTx(0u, &tx_pkt);
     // TODO(tkilbourn): remove this once we implement WlanmacCompleteTx and allow wlanmac drivers to
     // complete transmits asynchronously.
     ZX_DEBUG_ASSERT(status != ZX_ERR_SHOULD_WAIT);
@@ -321,6 +437,16 @@ void Device::SetStatusLocked(uint32_t status) {
 
 zx_status_t Device::ConfigureBss(wlan_bss_config_t* cfg) {
     return wlanmac_proxy_.ConfigureBss(0u, cfg);
+}
+
+zx_status_t Device::ConfigureBeacon(fbl::unique_ptr<Packet> beacon) {
+    wlan_tx_packet_t tx_packet;
+    auto status = beacon->AsWlanTxPacket(&tx_packet);
+    if (status != ZX_OK) {
+        errorf("error turning Beacon into wlan_tx_packet: %d\n", status);
+        return status;
+    }
+    return wlanmac_proxy_.ConfigureBeacon(0u, &tx_packet);
 }
 
 zx_status_t Device::SetKey(wlan_key_config_t* key_config) {

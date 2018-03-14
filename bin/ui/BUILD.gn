@@ -14,6 +14,7 @@ package("mozart_tests") {
     "input_reader/tests",
     "scene_manager/tests",
     "view_manager/tests",
+    "//garnet/lib/ui/mozart/tests",
     "//garnet/lib/ui/scenic/tests",
     "//garnet/public/lib/ui/geometry/cpp:apptests",
   ]
@@ -33,6 +34,9 @@ package("mozart_tests") {
     },
     {
       name = "input_apptests"
+    },
+    {
+      name = "mozart_unittests"
     },
     {
       name = "view_manager_apptests"
@@ -78,16 +82,16 @@ package("view_manager") {
   binary = "view_manager"
 }
 
-package("scene_manager") {
+package("mozart") {
   deps = [
-    "scene_manager",
+    "mozart",
   ]
 
-  binary = "scene_manager"
+  binary = "mozart"
 
   meta = [
     {
-      path = rebase_path("scene_manager/meta/sandbox")
+      path = rebase_path("mozart/meta/sandbox")
       dest = "sandbox"
     },
   ]
@@ -99,11 +103,15 @@ package("mozart_tools") {
   deps = [
     "input",
     "print_input",
+    "set_root_view",
   ]
 
   binaries = [
     {
       name = "input"
+    },
+    {
+      name = "set_root_view"
     },
     {
       name = "print_input"

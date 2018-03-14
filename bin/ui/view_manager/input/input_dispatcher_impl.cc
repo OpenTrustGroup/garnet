@@ -10,7 +10,6 @@
 #include "lib/ui/views/cpp/formatting.h"
 #include "garnet/bin/ui/view_manager/internal/input_owner.h"
 #include "garnet/bin/ui/view_manager/internal/view_inspector.h"
-#include "lib/escher/scene/camera.h"
 #include "lib/escher/util/type_utils.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fsl/tasks/message_loop.h"
@@ -89,7 +88,7 @@ InputDispatcherImpl::InputDispatcherImpl(
     ViewInspector* inspector,
     InputOwner* owner,
     mozart::ViewTreeTokenPtr view_tree_token,
-    fidl::InterfaceRequest<mozart::InputDispatcher> request)
+    f1dl::InterfaceRequest<mozart::InputDispatcher> request)
     : inspector_(inspector),
       owner_(owner),
       view_tree_token_(std::move(view_tree_token)),

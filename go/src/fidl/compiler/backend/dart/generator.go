@@ -31,8 +31,10 @@ func (_ FidlGenerator) GenerateFidl(fidl types.Root, config *types.Config) error
 
 	tmpls := template.New("DartTemplates")
 	template.Must(tmpls.Parse(templates.Enum))
+	template.Must(tmpls.Parse(templates.Interface))
 	template.Must(tmpls.Parse(templates.Library))
 	template.Must(tmpls.Parse(templates.Struct))
+	template.Must(tmpls.Parse(templates.Union))
 
 	libraryPath := config.FidlStem + ".dart"
 	return writeFile(libraryPath, "GenerateLibraryFile", tmpls, tree)

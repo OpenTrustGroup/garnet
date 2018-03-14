@@ -50,12 +50,11 @@ const GenerateInterface = `
 pub mod {{$interface.Name}} {
 
 use fidl::{self, DecodeBuf, DecodablePtr, EncodeBuf, EncodablePtr, FidlService, Stub};
-use futures::{Async, Poll, Future, future};
+use futures::{Async, Poll, Future, FutureExt, future, task};
 use zircon;
-use tokio_core::reactor;
 use super::*;
 
-pub trait Server {
+pub trait Server: Send {
     {{range $message := $interface.Messages}}
         type {{$message.TyName}}: fidl::ServerFuture<
             {{- if ne $message.ResponseStruct.Name "" }}
@@ -84,6 +83,71 @@ pub trait Client {
         {{- else}}
             -> fidl::Result<()>
         {{end}};
+    {{end}}
+}
+
+/// A struct which implements Server by delegating methods to its fields.
+///
+/// This can be used to implement the Server trait without having named return
+/// types from the methods.
+#[derive(Debug, Copy, Clone)]
+pub struct Impl<State: Send,
+	 {{range $message := $interface.Messages}}
+		{{$message.TyName}}: Send + FnMut(&mut State
+				{{- range $index, $field := $message.RequestStruct.Fields -}}
+                , {{$field.Type}}
+            {{- end -}}
+			 ) -> {{$message.TyName}}Fut,
+		{{$message.TyName}}Fut: Send + fidl::ServerFuture<
+		  {{- if ne $message.ResponseStruct.Name "" }}
+				{{template "GenerateResponseType" $message.ResponseStruct}}
+		  {{- else }}
+				()
+		  {{end}}
+		>,
+	{{end}}
+> {
+    pub state: State,
+	 {{range $message := $interface.Messages}}
+		pub {{$message.Name}}: {{$message.TyName}},
+	 {{end}}
+}
+
+impl<State: Send,
+	 {{range $message := $interface.Messages}}
+		{{$message.TyName}}: Send + FnMut(&mut State
+		  {{- range $index, $field := $message.RequestStruct.Fields -}}
+				, {{$field.Type}}
+		  {{- end -}}
+		) -> {{$message.TyName}}Fut,
+		{{$message.TyName}}Fut: fidl::ServerFuture<
+		  {{- if ne $message.ResponseStruct.Name "" }}
+				{{template "GenerateResponseType" $message.ResponseStruct}}
+		  {{- else }}
+				()
+		  {{end}}
+		>,
+	{{end}}
+> Server for Impl<State,
+	{{range $message := $interface.Messages}}
+		{{$message.TyName}},
+		{{$message.TyName}}Fut,
+	{{end}}
+>
+{
+	 {{range $message := $interface.Messages}}
+        type {{$message.TyName}} = {{$message.TyName}}Fut;
+		  fn {{$message.Name}}(&mut self
+            {{- range $index, $field := $message.RequestStruct.Fields -}}
+                , {{$field.Name}}: {{$field.Type}}
+            {{- end -}}
+        ) -> Self::{{$message.TyName}} {
+			 (self.{{$message.Name}})(&mut self.state
+            {{- range $index, $field := $message.RequestStruct.Fields -}}
+                , {{$field.Name}}
+            {{- end -}}
+			 )
+		  }
     {{end}}
 }
 
@@ -125,12 +189,12 @@ Future for DispatchResponseFuture<
 {
     type Item = EncodeBuf;
     type Error = fidl::ErrorOrClose;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+	 fn poll(&mut self, cx: &mut task::Context) -> Poll<Self::Item, Self::Error> {
         match *self {
             {{range $message := $interface.Messages}}
                 {{if ne $message.ResponseStruct.Name ""}}
                     DispatchResponseFuture::{{- $message.TyName}}(ref mut inner) => {
-                        let res = try_ready!(inner.poll());
+                        let res = try_ready!(inner.poll(cx));
                         // Split apart response tuple into multiple response fields
                         let ({{- if ne 1 (len $message.ResponseStruct.Fields) -}} ( {{- end -}}
                             {{- range $index, $field := $message.ResponseStruct.Fields -}}
@@ -188,12 +252,12 @@ impl<
 > {
     type Item = ();
     type Error = fidl::ErrorOrClose;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+	 fn poll(&mut self, cx: &mut task::Context) -> Poll<Self::Item, Self::Error> {
         match *self {
             {{range $message := $interface.Messages}}
                 {{if eq $message.ResponseStruct.Name ""}}
                     DispatchFuture::{{- $message.TyName}}(ref mut inner) => {
-                        inner.poll().map_err(fidl::CloseChannel::into)
+                        inner.poll(cx).map_err(fidl::CloseChannel::into)
                     }
                 {{end}}
             {{end}}
@@ -362,18 +426,18 @@ impl fidl::FidlService for Service {
     type Proxy = Proxy;
 
     #[inline]
-    fn new_proxy(client_end: fidl::ClientEnd<Self>, handle: &reactor::Handle) -> Result<Self::Proxy, fidl::Error> {
-        let channel = ::tokio_fuchsia::Channel::from_channel(client_end.into_channel(), handle)
+    fn new_proxy(client_end: fidl::ClientEnd<Self>) -> Result<Self::Proxy, fidl::Error> {
+        let channel = ::fuchsia_async::Channel::from_channel(client_end.into_channel())
                         .map_err(fidl::Error::AsyncChannel)?;
-        Ok(Proxy(fidl::Client::new(channel, handle)))
+        Ok(Proxy(fidl::Client::new(channel)))
     }
 
     #[inline]
-    fn new_pair(handle: &reactor::Handle) -> Result<(Self::Proxy, fidl::ServerEnd<Self>), fidl::Error> {
+    fn new_pair() -> Result<(Self::Proxy, fidl::ServerEnd<Self>), fidl::Error> {
         let (s1, s2) = zircon::Channel::create().map_err(fidl::Error::ChannelPairCreate)?;
         let client_end = fidl::ClientEnd::new(s1);
         let server_end = fidl::ServerEnd::new(s2);
-        Ok((Self::new_proxy(client_end, handle)?, server_end))
+        Ok((Self::new_proxy(client_end)?, server_end))
     }
 
     const NAME: &'static str = NAME;
@@ -383,13 +447,13 @@ impl fidl::FidlService for Service {
 // Duplicate SERVICE trait members at the module level
 
 #[inline]
-pub fn new_proxy(client_end: fidl::ClientEnd<Service>, handle: &reactor::Handle) -> Result<Proxy, fidl::Error> {
-    Service::new_proxy(client_end, handle)
+pub fn new_proxy(client_end: fidl::ClientEnd<Service>) -> Result<Proxy, fidl::Error> {
+    Service::new_proxy(client_end)
 }
 
 #[inline]
-pub fn new_pair(handle: &reactor::Handle) -> Result<(Proxy, fidl::ServerEnd<Service>), fidl::Error> {
-    Service::new_pair(handle)
+pub fn new_pair() -> Result<(Proxy, fidl::ServerEnd<Service>), fidl::Error> {
+    Service::new_pair()
 }
 
 pub const NAME: &'static str = "{{$interface.ServiceName}}";

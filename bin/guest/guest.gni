@@ -7,9 +7,11 @@ import("//build/package.gni")
 # Defines a guest package.
 #
 # Parameters
-#   kernel (string, optional)
-#     Path to the guest kernel.
-#   ramdisk (string, optional)
+#   zircon (string, optional)
+#     Path to the Zircon kernel. Either "zircon" or "linux" must be specified.
+#   linux (string, optional)
+#     Path to the Linux kernel. Either "zircon" or "linux" must be specified.
+#   ramdisk (string, required)
 #     Path to a ramdisk file to be loaded into the guest.
 #   cmdline (string, optional)
 #     Kernel cmdline string.
@@ -17,11 +19,42 @@ import("//build/package.gni")
 #     List of block devices to use.
 #
 template("guest_app") {
-  if (defined(invoker.cli) && invoker.cli) {
-    assert(!defined(invoker.kernel) && !defined(invoker.ramdisk), "")
+  assert(defined(invoker.zircon) || defined(invoker.linux), "")
+  assert(defined(invoker.ramdisk), "")
+
+  guest_config_target_name = "${target_name}_guest_config"
+  guest_config_file = "${target_out_dir}/guest.cfg"
+
+  action(guest_config_target_name) {
+    script = "//garnet/bin/guest/generate_guest_config.py"
+    outputs = [
+      guest_config_file,
+    ]
+
+    args = []
+    if (defined(invoker.zircon)) {
+      args += ["--zircon", "/pkg/data/kernel"]
+    }
+    if (defined(invoker.linux)) {
+      args += ["--linux", "/pkg/data/kernel"]
+    }
+    if (defined(invoker.ramdisk)) {
+      args += ["--ramdisk", "/pkg/data/ramdisk"]
+    }
+    if (defined(invoker.cmdline)) {
+      args += ["--cmdline", invoker.cmdline]
+    }
+    if (defined(invoker.block_devices)) {
+      foreach(block_spec, invoker.block_devices) {
+        args += ["--block", block_spec]
+      }
+    }
+    args += [ rebase_path("$guest_config_file") ]
   }
+
   package(target_name) {
     deps = [
+      ":${guest_config_target_name}",
       "//garnet/bin/guest:bin",
     ]
     inputs = []
@@ -32,16 +65,20 @@ template("guest_app") {
 
     binary = "guest"
 
-    meta = [ {
-          path = rebase_path("//garnet/bin/guest/meta/sandbox")
-          dest = "sandbox"
-        } ]
+    meta = [
+      {
+        path = rebase_path("//garnet/bin/guest/meta/sandbox")
+        dest = "sandbox"
+      },
+    ]
 
     if (target_cpu == "arm64") {
-      resources = [ {
-            path = rebase_path("//garnet/lib/machina/arch/arm64/dts/board.dtb")
-            dest = "board.dtb"
-          } ]
+      resources = [
+        {
+          path = rebase_path("//garnet/lib/machina/arch/arm64/dts/board.dtb")
+          dest = "board.dtb"
+        },
+      ]
     } else if (current_cpu == "x64") {
       resources = [
         {
@@ -56,52 +93,43 @@ template("guest_app") {
     }
 
     # Add kernel resource.
-    if (defined(invoker.kernel)) {
-      kernel = rebase_path(invoker.kernel)
+    if (defined(invoker.zircon)) {
+      kernel = rebase_path(invoker.zircon)
       inputs += [ kernel ]
-      resources += [ {
-            path = kernel
-            dest = "kernel"
-          } ]
+      resources += [
+        {
+          path = kernel
+          dest = "kernel"
+        },
+      ]
     }
-
-    # Add ramdisk resource.
-    if (defined(invoker.ramdisk)) {
-      ramdisk = rebase_path(invoker.ramdisk)
-      inputs += [ ramdisk ]
-      resources += [ {
-            path = ramdisk
-            dest = "ramdisk"
-          } ]
-    }
-
-    config_args = []
-    if (defined(invoker.cmdline)) {
-      config_args += [
-        "--cmdline",
-        invoker.cmdline,
+    if (defined(invoker.linux)) {
+      kernel = rebase_path(invoker.linux)
+      inputs += [ kernel ]
+      resources += [
+        {
+          path = kernel
+          dest = "kernel"
+        },
       ]
     }
 
-    if (defined(invoker.block_devices)) {
-      foreach(block_spec, invoker.block_devices) {
-        config_args += [
-          "--block",
-          block_spec,
-        ]
-      }
-    }
+    # Add ramdisk resource.
+    ramdisk = rebase_path(invoker.ramdisk)
+    inputs += [ ramdisk ]
+    resources += [
+      {
+        path = ramdisk
+        dest = "ramdisk"
+      },
+    ]
 
-    # Add config file resource.
-    guest_config_file = "${target_out_dir}/guest.cfg"
-    guest_config = exec_script("//garnet/bin/guest/generate_guest_config.py",
-                               config_args,
-                               "string")
-    write_file(guest_config_file, guest_config)
-    resources += [ {
-          path = rebase_path(guest_config_file)
-          dest = "guest.cfg"
-        } ]
+    resources += [
+      {
+        path = rebase_path(guest_config_file)
+        dest = "guest.cfg"
+      },
+    ]
 
     # Pass-through any additional resources.
     if (defined(invoker.resources)) {

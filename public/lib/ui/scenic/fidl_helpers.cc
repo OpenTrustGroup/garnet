@@ -10,6 +10,12 @@
 
 namespace scenic_lib {
 
+ui_mozart::CommandPtr NewCommand(scenic::OpPtr op) {
+  ui_mozart::CommandPtr command = ui_mozart::Command::New();
+  command->set_scenic(std::move(op));
+  return command;
+}
+
 // Helper function for all resource creation functions.
 static scenic::OpPtr NewCreateResourceOp(uint32_t id,
                                          scenic::ResourcePtr resource) {
@@ -53,7 +59,7 @@ scenic::OpPtr NewCreateImageOp(uint32_t id,
 
 scenic::OpPtr NewCreateImagePipeOp(
     uint32_t id,
-    ::fidl::InterfaceRequest<scenic::ImagePipe> request) {
+    ::f1dl::InterfaceRequest<scenic::ImagePipe> request) {
   auto image_pipe = scenic::ImagePipeArgs::New();
   image_pipe->image_pipe_request = std::move(request);
 

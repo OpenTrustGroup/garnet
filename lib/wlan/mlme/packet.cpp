@@ -4,6 +4,7 @@
 
 #include <wlan/mlme/packet.h>
 
+#include <fbl/limits.h>
 #include <zircon/assert.h>
 
 #include <algorithm>
@@ -32,10 +33,27 @@ zx_status_t Packet::CopyFrom(const void* src, size_t len, size_t offset) {
     return ZX_OK;
 }
 
+zx_status_t Packet::AsWlanTxPacket(wlan_tx_packet_t* tx_pkt) {
+    ZX_DEBUG_ASSERT(len() <= fbl::numeric_limits<uint16_t>::max());
+    ethmac_netbuf_t netbuf = {
+        .data = mut_data(),
+        .len = static_cast<uint16_t>(len()),
+    };
+    *tx_pkt = {.packet_head = &netbuf};
+    if (has_ext_data()) {
+        tx_pkt->packet_tail = ext_data();
+        tx_pkt->tail_offset = ext_offset();
+    }
+    if (has_ctrl_data<wlan_tx_info_t>()) {
+        std::memcpy(&tx_pkt->info, ctrl_data<wlan_tx_info_t>(), sizeof(tx_pkt->info));
+    }
+    return ZX_OK;
+}
+
 fbl::unique_ptr<Buffer> GetBuffer(size_t len) {
     fbl::unique_ptr<Buffer> buffer;
     // TODO(tkilbourn): implement a better fallback system here
-    if (len > kLargeBuffers) {
+    if (len > kLargeBufferSize) {
         buffer = HugeBufferAllocator::New();
     } else if (len > kSmallBufferSize) {
         buffer = LargeBufferAllocator::New();

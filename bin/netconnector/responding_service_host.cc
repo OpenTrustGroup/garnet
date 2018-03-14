@@ -42,7 +42,7 @@ void RespondingServiceHost::RegisterSingleton(
           dup_launch_info->url = launch_info->url;
           dup_launch_info->arguments = launch_info->arguments.Clone();
           app::Services services;
-          dup_launch_info->service_request = services.NewRequest();
+          dup_launch_info->directory_request = services.NewRequest();
 
           app::ApplicationControllerPtr controller;
           launcher_->CreateApplication(std::move(dup_launch_info),
@@ -67,7 +67,7 @@ void RespondingServiceHost::RegisterSingleton(
 
 void RespondingServiceHost::RegisterProvider(
     const std::string& service_name,
-    fidl::InterfaceHandle<app::ServiceProvider> handle) {
+    f1dl::InterfaceHandle<app::ServiceProvider> handle) {
   app::ServiceProviderPtr service_provider = handle.Bind();
 
   service_provider.set_error_handler([this, service_name] {

@@ -30,7 +30,7 @@
 
 using cobalt::ObservationValue;
 using cobalt::ObservationValuePtr;
-using fidl::Array;
+using f1dl::Array;
 
 // Command-line flags
 
@@ -79,6 +79,10 @@ const uint32_t kNumStarsEncodingId = 4;
 // For the average-read-time test
 const uint32_t kAvgReadTimeMetricId = 6;
 const uint32_t kAvgReadTimeEncodingId = 4;
+
+// For the spaceship velocity test.
+const uint32_t kSpaceshipVelocityMetricId = 7;
+const uint32_t kSpaceshipVelocityEncodingId = 4;
 
 std::string StatusToString(cobalt::Status status) {
   switch (status) {
@@ -151,6 +155,8 @@ class CobaltTestApp {
 
   bool TestNumStarsInSky();
 
+  bool TestSpaceshipVelocity();
+
   bool TestAvgReadTime();
 
   bool TestModulePairs();
@@ -174,6 +180,14 @@ class CobaltTestApp {
                         uint32_t encoding_config_id,
                         int32_t val,
                         bool use_request_send_soon);
+
+  // Synchronously invokes AddIntBucketDistribution()
+  // |num_observations_per_batch_| times using the given parameters. Then
+  // invokes CheckForSuccessfulSend().
+  bool EncodeIntDistributionAndSend(
+      uint32_t metric_id, uint32_t encoding_config_id,
+      std::map<uint32_t, uint64_t> distribution_map,
+      bool use_request_send_soon);
 
   // Synchronously invokes AddDoubleObservation() |num_observations_per_batch_|
   // times using the given parameters.Then invokes CheckForSuccessfulSend().
@@ -249,7 +263,7 @@ void CobaltTestApp::Connect(uint32_t schedule_interval_seconds,
   app::Services services;
   auto launch_info = app::ApplicationLaunchInfo::New();
   launch_info->url = "cobalt";
-  launch_info->service_request = services.NewRequest();
+  launch_info->directory_request = services.NewRequest();
   {
     std::ostringstream stream;
     stream << "--schedule_interval_seconds=" << schedule_interval_seconds;
@@ -274,10 +288,10 @@ void CobaltTestApp::Connect(uint32_t schedule_interval_seconds,
   });
 
   cobalt::CobaltEncoderFactorySyncPtr factory;
-  services.ConnectToService(fidl::GetSynchronousProxy(&factory));
+  services.ConnectToService(f1dl::GetSynchronousProxy(&factory));
   factory->GetEncoder(kTestAppProjectId, GetSynchronousProxy(&encoder_));
 
-  services.ConnectToService(fidl::GetSynchronousProxy(&cobalt_controller_));
+  services.ConnectToService(f1dl::GetSynchronousProxy(&cobalt_controller_));
 }
 
 bool CobaltTestApp::RunTestsWithRequestSendSoon() {
@@ -317,7 +331,7 @@ bool CobaltTestApp::RunTestsWithBlockUntilEmpty() {
 bool CobaltTestApp::RunTestsUsingServiceFromEnvironment() {
   // Connect to the Cobalt FIDL service provided by the environment.
   cobalt::CobaltEncoderFactorySyncPtr factory;
-  context_->ConnectToEnvironmentService(fidl::GetSynchronousProxy(&factory));
+  context_->ConnectToEnvironmentService(f1dl::GetSynchronousProxy(&factory));
 
   factory->GetEncoder(kTestAppProjectId, GetSynchronousProxy(&encoder_));
 
@@ -345,6 +359,9 @@ bool CobaltTestApp::RequestSendSoonTests() {
     return false;
   }
   if (!TestNumStarsInSky()) {
+    return false;
+  }
+  if (!TestSpaceshipVelocity()) {
     return false;
   }
   if (!TestAvgReadTime()) {
@@ -400,6 +417,18 @@ bool CobaltTestApp::TestNumStarsInSky() {
   bool success = EncodeIntAndSend(kNumStarsMetricId, kNumStarsEncodingId, 42,
                                   use_request_send_soon);
   FXL_LOG(INFO) << "TestNumStarsInSky : " << (success ? "PASS" : "FAIL");
+  return success;
+}
+
+bool CobaltTestApp::TestSpaceshipVelocity() {
+  FXL_LOG(INFO) << "========================";
+  FXL_LOG(INFO) << "TestSpaceshipVelocity";
+  bool use_request_send_soon = true;
+  std::map<uint32_t, uint64_t> distribution = {{1, 20}, {3, 20}};
+  bool success = EncodeIntDistributionAndSend(
+      kSpaceshipVelocityMetricId, kSpaceshipVelocityEncodingId, distribution,
+      use_request_send_soon);
+  FXL_LOG(INFO) << "TestSpaceshipVelocity : " << (success ? "PASS" : "FAIL");
   return success;
 }
 
@@ -465,7 +494,15 @@ bool CobaltTestApp::EncodeStringAndSend(uint32_t metric_id,
                                         bool use_request_send_soon) {
   for (int i = 0; i < num_observations_per_batch_; i++) {
     cobalt::Status status = cobalt::Status::INTERNAL_ERROR;
-    encoder_->AddStringObservation(metric_id, encoding_config_id, val, &status);
+    if (i == 0) {
+      auto value = cobalt::Value::New();
+      value->set_string_value(val);
+      encoder_->AddObservation(metric_id, encoding_config_id, std::move(value),
+                               &status);
+    } else {
+      encoder_->AddStringObservation(metric_id, encoding_config_id, val,
+                                     &status);
+    }
     FXL_VLOG(1) << "AddStringObservation(" << val << ") => "
                 << StatusToString(status);
     if (status != cobalt::Status::OK) {
@@ -483,7 +520,14 @@ bool CobaltTestApp::EncodeIntAndSend(uint32_t metric_id,
                                      bool use_request_send_soon) {
   for (int i = 0; i < num_observations_per_batch_; i++) {
     cobalt::Status status = cobalt::Status::INTERNAL_ERROR;
-    encoder_->AddIntObservation(metric_id, encoding_config_id, val, &status);
+    if (i == 0) {
+      auto value = cobalt::Value::New();
+      value->set_int_value(val);
+      encoder_->AddObservation(metric_id, encoding_config_id, std::move(value),
+                               &status);
+    } else {
+      encoder_->AddIntObservation(metric_id, encoding_config_id, val, &status);
+    }
     FXL_VLOG(1) << "AddIntObservation(" << val << ") => "
                 << StatusToString(status);
     if (status != cobalt::Status::OK) {
@@ -495,13 +539,56 @@ bool CobaltTestApp::EncodeIntAndSend(uint32_t metric_id,
   return CheckForSuccessfulSend(use_request_send_soon);
 }
 
+bool CobaltTestApp::EncodeIntDistributionAndSend(
+    uint32_t metric_id, uint32_t encoding_config_id,
+    std::map<uint32_t, uint64_t> distribution_map, bool use_request_send_soon) {
+  for (int i = 0; i < num_observations_per_batch_; i++) {
+    cobalt::Status status = cobalt::Status::INTERNAL_ERROR;
+    f1dl::Array<cobalt::BucketDistributionEntryPtr> distribution;
+    for (auto it = distribution_map.begin(); distribution_map.end() != it;
+         it++) {
+      auto entry = cobalt::BucketDistributionEntry::New();
+      entry->index = it->first;
+      entry->count = it->second;
+      distribution.push_back(std::move(entry));
+    }
+
+    if (i == 0) {
+      auto value = cobalt::Value::New();
+      value->set_int_bucket_distribution(std::move(distribution));
+      encoder_->AddObservation(metric_id, encoding_config_id, std::move(value),
+                               &status);
+    } else {
+      encoder_->AddIntBucketDistribution(metric_id, encoding_config_id,
+                                         std::move(distribution), &status);
+    }
+    FXL_VLOG(1) << "AddIntBucketDistribution() => " << StatusToString(status);
+    if (status != cobalt::Status::OK) {
+      FXL_LOG(ERROR) << "AddIntBucketDistribution() => "
+                     << StatusToString(status);
+      return false;
+    }
+  }
+
+  FXL_LOG(INFO) << "About to Check!";
+  return CheckForSuccessfulSend(use_request_send_soon);
+}
+
 bool CobaltTestApp::EncodeDoubleAndSend(uint32_t metric_id,
                                         uint32_t encoding_config_id,
                                         double val,
                                         bool use_request_send_soon) {
   for (int i = 0; i < num_observations_per_batch_; i++) {
     cobalt::Status status = cobalt::Status::INTERNAL_ERROR;
-    encoder_->AddDoubleObservation(metric_id, encoding_config_id, val, &status);
+    if (i == 0) {
+      auto value = cobalt::Value::New();
+      value->set_double_value(val);
+      encoder_->AddObservation(metric_id, encoding_config_id, std::move(value),
+                               &status);
+    } else {
+      encoder_->AddDoubleObservation(metric_id, encoding_config_id, val,
+                                     &status);
+    }
     FXL_VLOG(1) << "AddDoubleObservation(" << val << ") => "
                 << StatusToString(status);
     if (status != cobalt::Status::OK) {
@@ -519,8 +606,15 @@ bool CobaltTestApp::EncodeIndexAndSend(uint32_t metric_id,
                                        bool use_request_send_soon) {
   for (int i = 0; i < num_observations_per_batch_; i++) {
     cobalt::Status status = cobalt::Status::INTERNAL_ERROR;
-    encoder_->AddIndexObservation(metric_id, encoding_config_id, index,
-                                  &status);
+    if (i == 0) {
+      auto value = cobalt::Value::New();
+      value->set_index_value(index);
+      encoder_->AddObservation(metric_id, encoding_config_id, std::move(value),
+                               &status);
+    } else {
+      encoder_->AddIndexObservation(metric_id, encoding_config_id, index,
+                                    &status);
+    }
     FXL_VLOG(1) << "AddIndexObservation(" << index << ") => "
                 << StatusToString(status);
     if (status != cobalt::Status::OK) {

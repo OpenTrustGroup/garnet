@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <async/cpp/auto_wait.h>
+#include <lib/async/cpp/auto_wait.h>
 
 #include "lib/app/cpp/application_context.h"
 #include "lib/app/cpp/connect.h"
@@ -100,13 +100,13 @@ class BufferHandler {
 
       buffer_->Reset();
 
-      auto acq = fidl::Array<zx::event>::New(1);
-      auto rel = fidl::Array<zx::event>::New(1);
+      auto acq = f1dl::Array<zx::event>::New(1);
+      auto rel = f1dl::Array<zx::event>::New(1);
       buffer_->dupAcquireFence(&acq.front());
       buffer_->dupReleaseFence(&rel.front());
 
       image_pipe->PresentImage(index_, 0, std::move(acq), std::move(rel),
-                               [](scenic::PresentationInfoPtr info) {});
+                               [](ui_mozart::PresentationInfoPtr info) {});
 
       uint8_t r, g, b;
       hsv_color(hsv_index, &r, &g, &b);

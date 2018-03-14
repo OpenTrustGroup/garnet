@@ -10,7 +10,6 @@
 
 #include "garnet/bin/ui/view_manager/view_impl.h"
 #include "garnet/bin/ui/view_manager/view_tree_impl.h"
-#include "garnet/lib/ui/scenic/util/unwrap.h"
 #include "garnet/public/lib/escher/util/type_utils.h"
 #include "lib/app/cpp/connect.h"
 #include "lib/fsl/tasks/message_loop.h"
@@ -59,7 +58,7 @@ void ApplyOverrides(mozart::ViewProperties* value,
     value->view_layout = overrides->view_layout.Clone();
 }
 
-std::string SanitizeLabel(const fidl::String& label) {
+std::string SanitizeLabel(const f1dl::String& label) {
   return label.get().substr(0, mozart::ViewManager::kLabelMaxLength);
 }
 
@@ -106,14 +105,14 @@ mozart::TransformPtr ToTransform(scenic::mat4Ptr matrix) {
 
 ViewRegistry::ViewRegistry(app::ApplicationContext* application_context)
     : application_context_(application_context),
-      scene_manager_(application_context_
-                         ->ConnectToEnvironmentService<scenic::SceneManager>()),
-      session_(scene_manager_.get()),
+      mozart_(application_context_
+                  ->ConnectToEnvironmentService<ui_mozart::Mozart>()),
+      session_(mozart_.get()),
       weak_factory_(this) {
   // TODO(MZ-128): Register session listener and destroy views if their
   // content nodes become unavailable.
 
-  scene_manager_.set_error_handler([] {
+  mozart_.set_error_handler([] {
     FXL_LOG(ERROR) << "Exiting due to scene manager connection error.";
     exit(1);
   });
@@ -126,22 +125,21 @@ ViewRegistry::ViewRegistry(app::ApplicationContext* application_context)
 
 ViewRegistry::~ViewRegistry() {}
 
-void ViewRegistry::GetSceneManager(
-    fidl::InterfaceRequest<scenic::SceneManager> scene_manager_request) {
+void ViewRegistry::GetMozart(
+    f1dl::InterfaceRequest<ui_mozart::Mozart> mozart_request) {
   // TODO(jeffbrown): We should have a better way to duplicate the
   // SceneManager connection without going back out through the environment.
-  application_context_->ConnectToEnvironmentService(
-      std::move(scene_manager_request));
+  application_context_->ConnectToEnvironmentService(std::move(mozart_request));
 }
 
 // CREATE / DESTROY VIEWS
 
 void ViewRegistry::CreateView(
-    fidl::InterfaceRequest<mozart::View> view_request,
-    fidl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
+    f1dl::InterfaceRequest<mozart::View> view_request,
+    f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
     mozart::ViewListenerPtr view_listener,
     zx::eventpair parent_export_token,
-    const fidl::String& label) {
+    const f1dl::String& label) {
   FXL_DCHECK(view_request.is_valid());
   FXL_DCHECK(view_owner_request.is_valid());
   FXL_DCHECK(view_listener);
@@ -200,9 +198,9 @@ void ViewRegistry::UnregisterView(ViewState* view_state) {
 // CREATE / DESTROY VIEW TREES
 
 void ViewRegistry::CreateViewTree(
-    fidl::InterfaceRequest<mozart::ViewTree> view_tree_request,
+    f1dl::InterfaceRequest<mozart::ViewTree> view_tree_request,
     mozart::ViewTreeListenerPtr view_tree_listener,
-    const fidl::String& label) {
+    const f1dl::String& label) {
   FXL_DCHECK(view_tree_request.is_valid());
   FXL_DCHECK(view_tree_listener);
 
@@ -283,7 +281,7 @@ void ViewRegistry::ReleaseViewStubChildHost(ViewStub* view_stub) {
 void ViewRegistry::AddChild(
     ViewContainerState* container_state,
     uint32_t child_key,
-    fidl::InterfaceHandle<mozart::ViewOwner> child_view_owner,
+    f1dl::InterfaceHandle<mozart::ViewOwner> child_view_owner,
     zx::eventpair host_import_token) {
   FXL_DCHECK(IsViewContainerStateRegisteredDebug(container_state));
   FXL_DCHECK(child_view_owner);
@@ -322,7 +320,7 @@ void ViewRegistry::AddChild(
 void ViewRegistry::RemoveChild(
     ViewContainerState* container_state,
     uint32_t child_key,
-    fidl::InterfaceRequest<mozart::ViewOwner> transferred_view_owner_request) {
+    f1dl::InterfaceRequest<mozart::ViewOwner> transferred_view_owner_request) {
   FXL_DCHECK(IsViewContainerStateRegisteredDebug(container_state));
   FXL_VLOG(1) << "RemoveChild: container=" << container_state
               << ", child_key=" << child_key;
@@ -407,8 +405,11 @@ void ViewRegistry::RequestFocus(ViewContainerState* container_state,
 
   // Immediately discard requests on unavailable views.
   ViewStub* child_stub = child_it->second.get();
-  if (child_stub->is_unavailable())
+  if (child_stub->is_unavailable() || child_stub->is_pending()) {
+    FXL_VLOG(1) << "RequestFocus called for view that is currently "
+                << (child_stub->is_unavailable() ? "unavailable" : "pending");
     return;
+  }
 
   // Set active focus chain for this view tree
   ViewTreeState* tree_state = child_stub->tree();
@@ -428,7 +429,7 @@ void ViewRegistry::OnViewResolved(ViewStub* view_stub,
 
 void ViewRegistry::TransferViewOwner(
     mozart::ViewTokenPtr view_token,
-    fidl::InterfaceRequest<mozart::ViewOwner> transferred_view_owner_request) {
+    f1dl::InterfaceRequest<mozart::ViewOwner> transferred_view_owner_request) {
   FXL_DCHECK(view_token);
   FXL_DCHECK(transferred_view_owner_request.is_valid());
 
@@ -489,7 +490,7 @@ void ViewRegistry::HijackView(ViewState* view_state) {
 
 void ViewRegistry::TransferOrUnregisterViewStub(
     std::unique_ptr<ViewStub> view_stub,
-    fidl::InterfaceRequest<mozart::ViewOwner> transferred_view_owner_request) {
+    f1dl::InterfaceRequest<mozart::ViewOwner> transferred_view_owner_request) {
   FXL_DCHECK(view_stub);
 
   if (transferred_view_owner_request.is_valid()) {
@@ -683,29 +684,29 @@ void ViewRegistry::PresentSession() {
   FXL_DCHECK(present_session_scheduled_);
 
   present_session_scheduled_ = false;
-  session_.Present(0, [this](scenic::PresentationInfoPtr info) {});
+  session_.Present(0, [this](ui_mozart::PresentationInfoPtr info) {});
 }
 
 // VIEW AND VIEW TREE SERVICE PROVIDERS
 
 void ViewRegistry::ConnectToViewService(ViewState* view_state,
-                                        const fidl::String& service_name,
+                                        const f1dl::String& service_name,
                                         zx::channel client_handle) {
   FXL_DCHECK(IsViewStateRegisteredDebug(view_state));
   if (service_name == mozart::InputConnection::Name_) {
     CreateInputConnection(view_state->view_token()->Clone(),
-                          fidl::InterfaceRequest<mozart::InputConnection>(
+                          f1dl::InterfaceRequest<mozart::InputConnection>(
                               std::move(client_handle)));
   }
 }
 
 void ViewRegistry::ConnectToViewTreeService(ViewTreeState* tree_state,
-                                            const fidl::String& service_name,
+                                            const f1dl::String& service_name,
                                             zx::channel client_handle) {
   FXL_DCHECK(IsViewTreeStateRegisteredDebug(tree_state));
   if (service_name == mozart::InputDispatcher::Name_) {
     CreateInputDispatcher(tree_state->view_tree_token()->Clone(),
-                          fidl::InterfaceRequest<mozart::InputDispatcher>(
+                          f1dl::InterfaceRequest<mozart::InputDispatcher>(
                               std::move(client_handle)));
   }
 }
@@ -729,7 +730,7 @@ void ViewRegistry::HitTest(const mozart::ViewTreeToken& view_tree_token,
       (float[3]){ray_origin.x, ray_origin.y, ray_origin.z},
       (float[3]){ray_direction.x, ray_direction.y, ray_direction.z},
       [this, callback = std::move(callback), ray_origin,
-       ray_direction](fidl::Array<scenic::HitPtr> hits) {
+       ray_direction](f1dl::Array<scenic::HitPtr> hits) {
         std::vector<ViewHit> view_hits;
         view_hits.reserve(hits.size());
         for (auto& hit : hits) {
@@ -821,7 +822,7 @@ app::ServiceProvider* ViewRegistry::FindViewServiceProvider(
 
 void ViewRegistry::GetSoftKeyboardContainer(
     mozart::ViewTokenPtr view_token,
-    fidl::InterfaceRequest<mozart::SoftKeyboardContainer> container) {
+    f1dl::InterfaceRequest<mozart::SoftKeyboardContainer> container) {
   FXL_DCHECK(view_token);
   FXL_DCHECK(container.is_valid());
   FXL_VLOG(1) << "GetSoftKeyboardContainer: view_token=" << view_token;
@@ -835,7 +836,7 @@ void ViewRegistry::GetSoftKeyboardContainer(
 
 void ViewRegistry::GetImeService(
     mozart::ViewTokenPtr view_token,
-    fidl::InterfaceRequest<mozart::ImeService> ime_service) {
+    f1dl::InterfaceRequest<mozart::ImeService> ime_service) {
   FXL_DCHECK(view_token);
   FXL_DCHECK(ime_service.is_valid());
   FXL_VLOG(1) << "GetImeService: view_token=" << view_token;
@@ -935,7 +936,7 @@ void ViewRegistry::DeliverEvent(const mozart::ViewToken* view_token,
 
 void ViewRegistry::CreateInputConnection(
     mozart::ViewTokenPtr view_token,
-    fidl::InterfaceRequest<mozart::InputConnection> request) {
+    f1dl::InterfaceRequest<mozart::InputConnection> request) {
   FXL_DCHECK(view_token);
   FXL_DCHECK(request.is_valid());
   FXL_VLOG(1) << "CreateInputConnection: view_token=" << view_token;
@@ -961,7 +962,7 @@ void ViewRegistry::OnInputConnectionDied(InputConnectionImpl* connection) {
 
 void ViewRegistry::CreateInputDispatcher(
     mozart::ViewTreeTokenPtr view_tree_token,
-    fidl::InterfaceRequest<mozart::InputDispatcher> request) {
+    f1dl::InterfaceRequest<mozart::InputDispatcher> request) {
   FXL_DCHECK(view_tree_token);
   FXL_DCHECK(request.is_valid());
   FXL_VLOG(1) << "CreateInputDispatcher: view_tree_token=" << view_tree_token;

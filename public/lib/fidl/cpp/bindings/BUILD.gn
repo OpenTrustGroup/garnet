@@ -2,8 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/cpp/sdk_source_set.gni")
-
 config("bindings_config") {
   configs = [
     # Needed as interface_ptr.h relies on async/cpp.
@@ -14,7 +12,7 @@ config("bindings_config") {
 
 # This target provides source files and dependencies required for serializing
 # fidl types.
-sdk_source_set("serialization") {
+source_set("serialization") {
   sources = [
     "array.h",
     "formatting.h",
@@ -47,9 +45,11 @@ sdk_source_set("serialization") {
     "string.h",
     "struct_ptr.h",
     "type_converter.h",
+    "type_converters.h",
   ]
 
   public_deps = [
+    "//garnet/public/lib/fxl",
     "//zircon/public/lib/zx",
   ]
 
@@ -59,7 +59,7 @@ sdk_source_set("serialization") {
   ]
 }
 
-sdk_source_set("bindings") {
+source_set("bindings") {
   sources = [
     "binding.h",
     "binding_set.h",
@@ -83,9 +83,11 @@ sdk_source_set("bindings") {
     "internal/router.h",
     "internal/shared_data.h",
     "internal/template_util.h",
+    "internal/type_converters.cc",
     "message.h",
     "message_validator.h",
     "synchronous_interface_ptr.h",
+    "type_converters.h",
   ]
 
   public_deps = [

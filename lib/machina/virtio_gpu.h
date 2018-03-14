@@ -11,7 +11,7 @@
 #include <zircon/compiler.h>
 #include <zircon/types.h>
 
-#include "garnet/lib/machina/virtio.h"
+#include "garnet/lib/machina/virtio_device.h"
 
 #define VIRTIO_GPU_Q_CONTROLQ 0
 #define VIRTIO_GPU_Q_CURSORQ 1
@@ -32,8 +32,8 @@ class VirtioGpu : public VirtioDevice {
   VirtioGpu(const PhysMem& phys_mem);
   ~VirtioGpu() override;
 
-  virtio_queue_t& control_queue() { return queues_[VIRTIO_GPU_Q_CONTROLQ]; }
-  virtio_queue_t& cursor_queue() { return queues_[VIRTIO_GPU_Q_CURSORQ]; }
+  VirtioQueue& control_queue() { return queues_[VIRTIO_GPU_Q_CONTROLQ]; }
+  VirtioQueue& cursor_queue() { return queues_[VIRTIO_GPU_Q_CURSORQ]; }
 
   // Begins processing any descriptors that become available in the queues.
   zx_status_t Init();
@@ -44,12 +44,12 @@ class VirtioGpu : public VirtioDevice {
   // be returned if this method is called multiple times.
   zx_status_t AddScanout(GpuScanout* scanout);
 
-  zx_status_t HandleGpuCommand(virtio_queue_t* queue,
+  zx_status_t HandleGpuCommand(VirtioQueue* queue,
                                uint16_t head,
                                uint32_t* used);
 
  protected:
-  static zx_status_t QueueHandler(virtio_queue_t* queue,
+  static zx_status_t QueueHandler(VirtioQueue* queue,
                                   uint16_t head,
                                   uint32_t* used,
                                   void* ctx);
@@ -103,7 +103,7 @@ class VirtioGpu : public VirtioDevice {
                      kNumHashTableBuckets>;
 
   ResourceTable resources_;
-  virtio_queue_t queues_[VIRTIO_GPU_Q_COUNT];
+  VirtioQueue queues_[VIRTIO_GPU_Q_COUNT];
   virtio_gpu_config_t config_ = {};
 };
 

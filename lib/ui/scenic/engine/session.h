@@ -7,15 +7,14 @@
 
 #include <vector>
 
+#include "garnet/lib/ui/mozart/util/error_reporter.h"
 #include "garnet/lib/ui/scenic/engine/engine.h"
 #include "garnet/lib/ui/scenic/engine/event_reporter.h"
 #include "garnet/lib/ui/scenic/engine/resource_map.h"
 #include "garnet/lib/ui/scenic/resources/memory.h"
-#include "garnet/lib/ui/scenic/util/error_reporter.h"
 #include "lib/escher/flib/fence_set_listener.h"
 #include "lib/fxl/memory/weak_ptr.h"
 #include "lib/fxl/tasks/task_runner.h"
-#include "lib/ui/scenic/fidl/session.fidl.h"
 
 namespace scene_manager {
 
@@ -43,7 +42,7 @@ class Session : public fxl::RefCountedThreadSafe<Session> {
   Session(SessionId id,
           Engine* engine,
           EventReporter* event_reporter = nullptr,
-          ErrorReporter* error_reporter = ErrorReporter::Default());
+          mz::ErrorReporter* error_reporter = mz::ErrorReporter::Default());
   virtual ~Session();
 
   // Apply the operation to the current session state.  Return true if
@@ -67,17 +66,17 @@ class Session : public fxl::RefCountedThreadSafe<Session> {
   // Session becomes invalid once TearDown is called.
   bool is_valid() const { return is_valid_; }
 
-  ErrorReporter* error_reporter() const;
+  mz::ErrorReporter* error_reporter() const;
 
   ResourceMap* resources() { return &resources_; }
 
   // Called by SessionHandler::Present().  Stashes the arguments without
   // applying them; they will later be applied by ApplyScheduledUpdates().
   bool ScheduleUpdate(uint64_t presentation_time,
-                      ::fidl::Array<scenic::OpPtr> ops,
-                      ::fidl::Array<zx::event> acquire_fences,
-                      ::fidl::Array<zx::event> release_fences,
-                      const scenic::Session::PresentCallback& callback);
+                      ::f1dl::Array<scenic::OpPtr> ops,
+                      ::f1dl::Array<zx::event> acquire_fences,
+                      ::f1dl::Array<zx::event> release_fences,
+                      const ui_mozart::Session::PresentCallback& callback);
 
   // Called by ImagePipe::PresentImage().  Stashes the arguments without
   // applying them; they will later be applied by ApplyScheduledUpdates().
@@ -98,12 +97,12 @@ class Session : public fxl::RefCountedThreadSafe<Session> {
   void HitTest(uint32_t node_id,
                scenic::vec3Ptr ray_origin,
                scenic::vec3Ptr ray_direction,
-               const scenic::Session::HitTestCallback& callback);
+               const ui_mozart::Session::HitTestCallback& callback);
 
   // Called by SessionHandler::HitTestDeviceRay().
   void HitTestDeviceRay(scenic::vec3Ptr ray_origin,
                         scenic::vec3Ptr ray_direction,
-                        const scenic::Session::HitTestCallback& callback);
+                        const ui_mozart::Session::HitTestCallback& callback);
 
  protected:
   friend class SessionHandler;
@@ -268,17 +267,17 @@ class Session : public fxl::RefCountedThreadSafe<Session> {
   struct Update {
     uint64_t presentation_time;
 
-    ::fidl::Array<scenic::OpPtr> ops;
+    ::f1dl::Array<scenic::OpPtr> ops;
     std::unique_ptr<escher::FenceSetListener> acquire_fences;
-    ::fidl::Array<zx::event> release_fences;
+    ::f1dl::Array<zx::event> release_fences;
 
     // Callback to report when the update has been applied in response to
     // an invocation of |Session.Present()|.
-    scenic::Session::PresentCallback present_callback;
+    ui_mozart::Session::PresentCallback present_callback;
   };
   bool ApplyUpdate(Update* update);
   std::queue<Update> scheduled_updates_;
-  ::fidl::Array<zx::event> fences_to_release_on_next_update_;
+  ::f1dl::Array<zx::event> fences_to_release_on_next_update_;
 
   uint64_t last_applied_update_presentation_time_ = 0;
   uint64_t last_presentation_time_ = 0;
@@ -292,11 +291,11 @@ class Session : public fxl::RefCountedThreadSafe<Session> {
     }
   };
   std::priority_queue<ImagePipeUpdate> scheduled_image_pipe_updates_;
-  ::fidl::Array<scenic::EventPtr> buffered_events_;
+  ::f1dl::Array<scenic::EventPtr> buffered_events_;
 
   const SessionId id_;
   Engine* const engine_;
-  ErrorReporter* error_reporter_ = nullptr;
+  mz::ErrorReporter* error_reporter_ = nullptr;
   EventReporter* event_reporter_ = nullptr;
 
   ResourceMap resources_;

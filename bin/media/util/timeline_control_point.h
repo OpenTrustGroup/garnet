@@ -4,14 +4,13 @@
 
 #pragma once
 
+#include <mutex>
+
 #include "garnet/bin/media/util/fidl_publisher.h"
 #include "lib/fidl/cpp/bindings/binding.h"
-#include "lib/fxl/synchronization/mutex.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
 #include "lib/fxl/tasks/task_runner.h"
-#include "lib/media/fidl/logs/media_timeline_control_point_channel.fidl.h"
 #include "lib/media/fidl/timeline_controller.fidl.h"
-#include "lib/media/flog/flog.h"
 #include "lib/media/timeline/timeline_function.h"
 
 namespace media {
@@ -30,7 +29,7 @@ class TimelineControlPoint : public MediaTimelineControlPoint,
   ~TimelineControlPoint() override;
 
   // Binds to the control point. If a binding exists already, it is closed.
-  void Bind(fidl::InterfaceRequest<MediaTimelineControlPoint> request);
+  void Bind(f1dl::InterfaceRequest<MediaTimelineControlPoint> request);
 
   // Determines whether the control point is currently bound.
   bool is_bound() { return control_point_binding_.is_bound(); }
@@ -56,7 +55,7 @@ class TimelineControlPoint : public MediaTimelineControlPoint,
   // Determines if presentation time is progressing or a pending change will
   // cause it to progress.
   bool Progressing() {
-    fxl::MutexLocker locker(&mutex_);
+    std::lock_guard<std::mutex> locker(mutex_);
     return ProgressingInternal();
   }
 
@@ -78,7 +77,7 @@ class TimelineControlPoint : public MediaTimelineControlPoint,
                  const GetStatusCallback& callback) override;
 
   void GetTimelineConsumer(
-      fidl::InterfaceRequest<TimelineConsumer> timeline_consumer) override;
+      f1dl::InterfaceRequest<TimelineConsumer> timeline_consumer) override;
 
   void SetProgramRange(uint64_t program,
                        int64_t min_pts,
@@ -123,14 +122,14 @@ class TimelineControlPoint : public MediaTimelineControlPoint,
   void SetTimelineTransformLocked(TimelineTransformPtr timeline_transform)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  fidl::Binding<MediaTimelineControlPoint> control_point_binding_;
-  fidl::Binding<TimelineConsumer> consumer_binding_;
+  f1dl::Binding<MediaTimelineControlPoint> control_point_binding_;
+  f1dl::Binding<TimelineConsumer> consumer_binding_;
   FidlPublisher<GetStatusCallback> status_publisher_;
   ProgramRangeSetCallback program_range_set_callback_;
   PrimeRequestedCallback prime_requested_callback_;
   ProgressStartedCallback progress_started_callback_;
 
-  fxl::Mutex mutex_;
+  std::mutex mutex_;
   fxl::RefPtr<fxl::TaskRunner> task_runner_ FXL_GUARDED_BY(mutex_);
   TimelineFunction current_timeline_function_ FXL_GUARDED_BY(mutex_);
   TimelineFunction pending_timeline_function_ FXL_GUARDED_BY(mutex_);
@@ -139,8 +138,6 @@ class TimelineControlPoint : public MediaTimelineControlPoint,
   uint32_t generation_ FXL_GUARDED_BY(mutex_) = 1;
   int64_t end_of_stream_pts_ FXL_GUARDED_BY(mutex_) = kUnspecifiedTime;
   bool end_of_stream_published_ FXL_GUARDED_BY(mutex_) = false;
-
-  FLOG_INSTANCE_CHANNEL(logs::MediaTimelineControlPointChannel, log_channel_);
 };
 
 }  // namespace media

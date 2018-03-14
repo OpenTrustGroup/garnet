@@ -74,6 +74,9 @@ impl Socket {
             return Err(io::ErrorKind::WouldBlock.into());
         }
         let res = self.socket.read(buf);
+        if res == Err(zircon::Status::PEER_CLOSED) {
+            return Ok(0);
+        }
         if res == Err(zircon::Status::SHOULD_WAIT) {
             self.evented.need_read();
         }
@@ -87,6 +90,9 @@ impl Socket {
             return Err(io::ErrorKind::WouldBlock.into());
         }
         let res = self.socket.write(buf);
+        if res == Err(zircon::Status::PEER_CLOSED) {
+            return Ok(0);
+        }
         if res == Err(zircon::Status::SHOULD_WAIT) {
             self.evented.need_write();
         }
@@ -169,28 +175,30 @@ mod tests {
     fn can_read_write() {
         let mut core = Core::new().unwrap();
         let handle = &core.handle();
-        let bytes = &[0,1,2,3];
+        let bytes = &[0, 1, 2, 3];
 
-        let (tx, rx) = zircon::Socket::create().unwrap();
+        let (tx, rx) = zircon::Socket::create(zircon::SocketOpts::STREAM).unwrap();
         let (tx, rx) = (
             Socket::from_socket(tx, handle).unwrap(),
             Socket::from_socket(rx, handle).unwrap(),
         );
 
-        let receive_future = rx.framed(Bytes).into_future().map(|(bytes_mut_opt, _rx)| {
-            let buf = bytes_mut_opt.unwrap();
-            assert_eq!(buf.as_ref(), bytes);
-        }).map_err(|(err, _rx)| err);
+        let receive_future = rx.framed(Bytes)
+            .into_future()
+            .map(|(bytes_mut_opt, _rx)| {
+                let buf = bytes_mut_opt.unwrap();
+                assert_eq!(buf.as_ref(), bytes);
+            })
+            .map_err(|(err, _rx)| err);
 
         // add a timeout to receiver so if test is broken it doesn't take forever
         let rcv_timeout = Timeout::new(Duration::from_millis(300), &handle).unwrap().map(|()| {
             panic!("did not receive message in time!");
         });
 
-        let receiver = receive_future
-                            .select(rcv_timeout)
-                            .map(|_| ())
-                            .map_err(|(err, _)| err);
+        let receiver = receive_future.select(rcv_timeout).map(|_| ()).map_err(
+            |(err, _)| err,
+        );
 
         // Sends a message after the timeout has passed
         let sender = Timeout::new(Duration::from_millis(100), &handle).unwrap()

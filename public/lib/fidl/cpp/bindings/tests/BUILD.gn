@@ -14,7 +14,7 @@ executable("lib_fidl_cpp_tests") {
   deps = [
     ":test_sources",
     "//garnet/public/lib/fxl",
-    "//third_party/gtest",
+    "//third_party/googletest:gtest",
   ]
 }
 
@@ -62,7 +62,7 @@ source_set("test_sources") {
   public_deps = [
     "//garnet/public/lib/fidl/compiler/interfaces/tests:test_interfaces",
     "//garnet/public/lib/fidl/cpp/bindings",
-    "//third_party/gtest",
+    "//third_party/googletest:gtest",
     "//zircon/public/lib/async-loop-cpp",
   ]
 }
@@ -172,11 +172,11 @@ package("fidl_tests") {
 
   deps = [
     ":lib_fidl_cpp_tests",
-    "//garnet/public/lib/fidl/cpp/bindings2:fidl_bindings2_unittests",
+    "//garnet/public/lib/fidl/cpp:fidl_cpp_unittests",
   ]
 
   tests = [{
-        name = "fidl_bindings2_unittests"
+        name = "fidl_cpp_unittests"
       }, {
         name = "lib_fidl_cpp_tests"
       } ]

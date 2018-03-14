@@ -71,8 +71,9 @@ executable("util-unittests") {
   ]
 
   deps = [
+    ":debugger_utils",
     "//garnet/public/lib/fxl",
-    "//third_party/gtest",
+    "//third_party/googletest:gtest",
   ]
 
   libs = [ "zircon" ]

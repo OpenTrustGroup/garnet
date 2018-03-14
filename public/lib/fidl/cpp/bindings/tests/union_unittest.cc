@@ -19,7 +19,7 @@
 #include "lib/fidl/compiler/interfaces/tests/test_structs.fidl.h"
 #include "lib/fidl/compiler/interfaces/tests/test_unions.fidl.h"
 
-namespace fidl {
+namespace f1dl {
 namespace test {
 
 TEST(UnionTest, PlainOldDataGetterSetter) {
@@ -122,7 +122,7 @@ TEST(UnionTest, PodSerialization) {
   size_t size = GetSerializedSize_(pod1);
   EXPECT_EQ(16U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::PodUnion_Data::New(&buf);
   SerializeUnion_(pod1.get(), &buf, &data);
 
@@ -141,7 +141,7 @@ TEST(UnionTest, EnumSerialization) {
   size_t size = GetSerializedSize_(pod1);
   EXPECT_EQ(16U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::PodUnion_Data::New(&buf);
   SerializeUnion_(pod1.get(), &buf, &data);
 
@@ -160,7 +160,7 @@ TEST(UnionTest, PodValidation) {
   size_t size = GetSerializedSize_(pod);
   EXPECT_EQ(16U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::PodUnion_Data::New(&buf);
   SerializeUnion_(pod.get(), &buf, &data);
   std::vector<zx_handle_t> handles;
@@ -168,9 +168,9 @@ TEST(UnionTest, PodValidation) {
   EXPECT_TRUE(handles.empty());
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             internal::PodUnion_Data::Validate(raw_buf, &bounds_checker, false,
                                               nullptr));
   free(raw_buf);
@@ -180,7 +180,7 @@ TEST(UnionTest, SerializeNotNull) {
   PodUnionPtr pod(PodUnion::New());
   pod->set_f_int8(0);
   size_t size = GetSerializedSize_(pod);
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::PodUnion_Data::New(&buf);
   SerializeUnion_(pod.get(), &buf, &data);
   EXPECT_FALSE(data->is_null());
@@ -190,7 +190,7 @@ TEST(UnionTest, SerializeIsNull) {
   PodUnionPtr pod;
   size_t size = GetSerializedSize_(pod);
   EXPECT_EQ(16U, size);
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::PodUnion_Data* data = internal::PodUnion_Data::New(&buf);
 
   // Check that dirty output buffers are handled correctly by serialization.
@@ -209,7 +209,7 @@ TEST(UnionTest, SerializeIsNull) {
     PodUnionPtr pod;
     size_t size = GetSerializedSize_(pod);
     EXPECT_EQ(16U, size);
-    fidl::internal::FixedBufferForTesting buf(size);
+    f1dl::internal::FixedBufferForTesting buf(size);
     auto* data = internal::PodUnion_Data::New(&buf);
     SerializeUnion_(pod.get(), &buf, &data);
     EXPECT_EQ(static_cast<internal::PodUnion_Data::PodUnion_Tag>(0), data->tag);
@@ -220,37 +220,37 @@ TEST(UnionTest, SerializeIsNull) {
 
 TEST(UnionTest, NullValidation) {
   void* buf = nullptr;
-  fidl::internal::BoundsChecker bounds_checker(buf, 0, 0);
+  f1dl::internal::BoundsChecker bounds_checker(buf, 0, 0);
   EXPECT_EQ(
-      fidl::internal::ValidationError::NONE,
+      f1dl::internal::ValidationError::NONE,
       internal::PodUnion_Data::Validate(buf, &bounds_checker, false, nullptr));
 }
 
 TEST(UnionTest, OutOfAlignmentValidation) {
   size_t size = sizeof(internal::PodUnion_Data);
   // Get an aligned object and shift the alignment.
-  fidl::internal::FixedBufferForTesting aligned_buf(size + 1);
+  f1dl::internal::FixedBufferForTesting aligned_buf(size + 1);
   void* raw_buf = aligned_buf.Leak();
   char* buf = reinterpret_cast<char*>(raw_buf) + 1;
 
   internal::PodUnion_Data* data =
       reinterpret_cast<internal::PodUnion_Data*>(buf);
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
   EXPECT_NE(
-      fidl::internal::ValidationError::NONE,
+      f1dl::internal::ValidationError::NONE,
       internal::PodUnion_Data::Validate(buf, &bounds_checker, false, nullptr));
   free(raw_buf);
 }
 
 TEST(UnionTest, OOBValidation) {
   size_t size = sizeof(internal::PodUnion_Data) - 1;
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::PodUnion_Data* data = internal::PodUnion_Data::New(&buf);
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
   void* raw_buf = buf.Leak();
-  EXPECT_NE(fidl::internal::ValidationError::NONE,
+  EXPECT_NE(f1dl::internal::ValidationError::NONE,
             internal::PodUnion_Data::Validate(raw_buf, &bounds_checker, false,
                                               nullptr));
   free(raw_buf);
@@ -258,7 +258,7 @@ TEST(UnionTest, OOBValidation) {
 
 TEST(UnionTest, UnknownTagDeserialization) {
   size_t size = sizeof(internal::PodUnion_Data);
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::PodUnion_Data* data = internal::PodUnion_Data::New(&buf);
   data->size = size;
   data->tag = static_cast<internal::PodUnion_Data::PodUnion_Tag>(100);
@@ -271,14 +271,14 @@ TEST(UnionTest, UnknownTagDeserialization) {
 
 TEST(UnionTest, UnknownTagValidation) {
   size_t size = sizeof(internal::PodUnion_Data);
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::PodUnion_Data* data = internal::PodUnion_Data::New(&buf);
   data->size = size;
   data->tag = static_cast<internal::PodUnion_Data::PodUnion_Tag>(100);
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
   void* raw_buf = buf.Leak();
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             internal::PodUnion_Data::Validate(raw_buf, &bounds_checker, false,
                                               nullptr));
   free(raw_buf);
@@ -324,7 +324,7 @@ TEST(UnionTest, StringSerialization) {
   pod1->set_f_string(hello);
 
   size_t size = GetSerializedSize_(pod1);
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::ObjectUnion_Data::New(&buf);
   SerializeUnion_(pod1.get(), &buf, &data);
 
@@ -341,15 +341,15 @@ TEST(UnionTest, StringSerialization) {
 
 TEST(UnionTest, NullStringValidation) {
   size_t size = sizeof(internal::ObjectUnion_Data);
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::ObjectUnion_Data* data = internal::ObjectUnion_Data::New(&buf);
   data->size = 16;
   data->tag = internal::ObjectUnion_Data::ObjectUnion_Tag::F_STRING;
   data->data.unknown = 0x0;
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
   void* raw_buf = buf.Leak();
-  EXPECT_NE(fidl::internal::ValidationError::NONE,
+  EXPECT_NE(f1dl::internal::ValidationError::NONE,
             internal::ObjectUnion_Data::Validate(raw_buf, &bounds_checker,
                                                  false, nullptr));
   free(raw_buf);
@@ -357,15 +357,15 @@ TEST(UnionTest, NullStringValidation) {
 
 TEST(UnionTest, StringPointerOverflowValidation) {
   size_t size = sizeof(internal::ObjectUnion_Data);
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::ObjectUnion_Data* data = internal::ObjectUnion_Data::New(&buf);
   data->size = 16;
   data->tag = internal::ObjectUnion_Data::ObjectUnion_Tag::F_STRING;
   data->data.unknown = 0xFFFFFFFFFFFFFFFF;
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
   void* raw_buf = buf.Leak();
-  EXPECT_NE(fidl::internal::ValidationError::NONE,
+  EXPECT_NE(f1dl::internal::ValidationError::NONE,
             internal::ObjectUnion_Data::Validate(raw_buf, &bounds_checker,
                                                  false, nullptr));
   free(raw_buf);
@@ -373,20 +373,20 @@ TEST(UnionTest, StringPointerOverflowValidation) {
 
 TEST(UnionTest, StringValidateOOB) {
   size_t size = 32;
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::ObjectUnion_Data* data = internal::ObjectUnion_Data::New(&buf);
   data->size = 16;
   data->tag = internal::ObjectUnion_Data::ObjectUnion_Tag::F_STRING;
 
   data->data.f_f_string.offset = 8;
   char* ptr = reinterpret_cast<char*>(&data->data.f_f_string);
-  fidl::internal::ArrayHeader* array_header =
-      reinterpret_cast<fidl::internal::ArrayHeader*>(ptr + *ptr);
+  f1dl::internal::ArrayHeader* array_header =
+      reinterpret_cast<f1dl::internal::ArrayHeader*>(ptr + *ptr);
   array_header->num_bytes = 20;  // This should go out of bounds.
   array_header->num_elements = 20;
-  fidl::internal::BoundsChecker bounds_checker(data, 32, 0);
+  f1dl::internal::BoundsChecker bounds_checker(data, 32, 0);
   void* raw_buf = buf.Leak();
-  EXPECT_NE(fidl::internal::ValidationError::NONE,
+  EXPECT_NE(f1dl::internal::ValidationError::NONE,
             internal::ObjectUnion_Data::Validate(raw_buf, &bounds_checker,
                                                  false, nullptr));
   free(raw_buf);
@@ -419,9 +419,9 @@ TEST(UnionTest, PodUnionInArraySerialization) {
   size_t size = GetSerializedSize_(array);
   EXPECT_EQ(40U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
-  fidl::internal::Array_Data<internal::PodUnion_Data>* data = nullptr;
-  fidl::internal::ArrayValidateParams validate_params(0, false, nullptr);
+  f1dl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::Array_Data<internal::PodUnion_Data>* data = nullptr;
+  f1dl::internal::ArrayValidateParams validate_params(0, false, nullptr);
   SerializeArray_(&array, &buf, &data, &validate_params);
 
   Array<PodUnionPtr> array2;
@@ -443,9 +443,9 @@ TEST(UnionTest, PodUnionInArrayValidation) {
 
   size_t size = GetSerializedSize_(array);
 
-  fidl::internal::FixedBufferForTesting buf(size);
-  fidl::internal::Array_Data<internal::PodUnion_Data>* data = nullptr;
-  fidl::internal::ArrayValidateParams validate_params(0, false, nullptr);
+  f1dl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::Array_Data<internal::PodUnion_Data>* data = nullptr;
+  f1dl::internal::ArrayValidateParams validate_params(0, false, nullptr);
   SerializeArray_(&array, &buf, &data, &validate_params);
 
   std::vector<zx_handle_t> handles;
@@ -453,10 +453,10 @@ TEST(UnionTest, PodUnionInArrayValidation) {
   EXPECT_TRUE(handles.empty());
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 1);
 
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             Array<PodUnionPtr>::Data_::Validate(raw_buf, &bounds_checker,
                                                 &validate_params, nullptr));
   free(raw_buf);
@@ -471,9 +471,9 @@ TEST(UnionTest, PodUnionInArraySerializationWithNull) {
   size_t size = GetSerializedSize_(array);
   EXPECT_EQ(40U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
-  fidl::internal::Array_Data<internal::PodUnion_Data>* data = nullptr;
-  fidl::internal::ArrayValidateParams validate_params(0, true, nullptr);
+  f1dl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::Array_Data<internal::PodUnion_Data>* data = nullptr;
+  f1dl::internal::ArrayValidateParams validate_params(0, true, nullptr);
   SerializeArray_(&array, &buf, &data, &validate_params);
 
   Array<PodUnionPtr> array2;
@@ -504,9 +504,9 @@ TEST(UnionTest, Serialization_UnionOfPods) {
 
   size_t size = GetSerializedSize_(*small_struct);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::SmallStruct_Data* data = nullptr;
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             Serialize_(small_struct.get(), &buf, &data));
 
   SmallStructPtr deserialized(SmallStruct::New());
@@ -524,9 +524,9 @@ TEST(UnionTest, Serialization_UnionOfObjects) {
 
   size_t size = GetSerializedSize_(*obj_struct);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::SmallObjStruct_Data* data = nullptr;
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             Serialize_(obj_struct.get(), &buf, &data));
 
   std::vector<zx_handle_t> handles;
@@ -547,9 +547,9 @@ TEST(UnionTest, Validation_UnionsInStruct) {
 
   size_t size = GetSerializedSize_(*small_struct);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::SmallStruct_Data* data = nullptr;
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             Serialize_(small_struct.get(), &buf, &data));
 
   std::vector<zx_handle_t> handles;
@@ -557,10 +557,10 @@ TEST(UnionTest, Validation_UnionsInStruct) {
   EXPECT_TRUE(handles.empty());
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
   EXPECT_EQ(
-      fidl::internal::ValidationError::NONE,
+      f1dl::internal::ValidationError::NONE,
       internal::SmallStruct_Data::Validate(raw_buf, &bounds_checker, nullptr));
   free(raw_buf);
 }
@@ -573,9 +573,9 @@ TEST(UnionTest, Validation_PodUnionInStruct_Failure) {
 
   size_t size = GetSerializedSize_(*small_struct);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::SmallStruct_Data* data = nullptr;
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             Serialize_(small_struct.get(), &buf, &data));
   data->pod_union.tag = static_cast<internal::PodUnion_Data::PodUnion_Tag>(100);
 
@@ -584,10 +584,10 @@ TEST(UnionTest, Validation_PodUnionInStruct_Failure) {
   EXPECT_TRUE(handles.empty());
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
   EXPECT_EQ(
-      fidl::internal::ValidationError::NONE,
+      f1dl::internal::ValidationError::NONE,
       internal::SmallStruct_Data::Validate(raw_buf, &bounds_checker, nullptr));
   free(raw_buf);
 }
@@ -599,14 +599,14 @@ TEST(UnionTest, Validation_NullUnion_Failure) {
 
   size_t size = GetSerializedSize_(*small_struct);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::SmallStructNonNullableUnion_Data* data =
       internal::SmallStructNonNullableUnion_Data::New(&buf);
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
-  EXPECT_NE(fidl::internal::ValidationError::NONE,
+  EXPECT_NE(f1dl::internal::ValidationError::NONE,
             internal::SmallStructNonNullableUnion_Data::Validate(
                 raw_buf, &bounds_checker, nullptr));
   free(raw_buf);
@@ -618,9 +618,9 @@ TEST(UnionTest, Validation_NullableUnion) {
 
   size_t size = GetSerializedSize_(*small_struct);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::SmallStruct_Data* data = nullptr;
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             Serialize_(small_struct.get(), &buf, &data));
 
   std::vector<zx_handle_t> handles;
@@ -628,10 +628,10 @@ TEST(UnionTest, Validation_NullableUnion) {
   EXPECT_TRUE(handles.empty());
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
   EXPECT_EQ(
-      fidl::internal::ValidationError::NONE,
+      f1dl::internal::ValidationError::NONE,
       internal::SmallStruct_Data::Validate(raw_buf, &bounds_checker, nullptr));
   free(raw_buf);
 }
@@ -655,9 +655,9 @@ TEST(UnionTest, Validation_NullableObjectUnion) {
 
   size_t size = GetSerializedSize_(*small_struct);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   internal::StructNullObjectUnion_Data* data = nullptr;
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             Serialize_(small_struct.get(), &buf, &data));
 
   std::vector<zx_handle_t> handles;
@@ -665,76 +665,12 @@ TEST(UnionTest, Validation_NullableObjectUnion) {
   EXPECT_TRUE(handles.empty());
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             internal::StructNullObjectUnion_Data::Validate(
                 raw_buf, &bounds_checker, nullptr));
   free(raw_buf);
-}
-
-// TODO(azani): Move back in map_unittest.cc when possible.
-// Map Tests
-TEST(UnionTest, PodUnionInMap) {
-  SmallStructPtr small_struct(SmallStruct::New());
-  small_struct->pod_union_map = Map<String, PodUnionPtr>();
-  small_struct->pod_union_map.insert("one", PodUnion::New());
-  small_struct->pod_union_map.insert("two", PodUnion::New());
-
-  small_struct->pod_union_map["one"]->set_f_int8(8);
-  small_struct->pod_union_map["two"]->set_f_int16(16);
-
-  EXPECT_EQ(8, small_struct->pod_union_map["one"]->get_f_int8());
-  EXPECT_EQ(16, small_struct->pod_union_map["two"]->get_f_int16());
-}
-
-TEST(UnionTest, PodUnionInMapSerialization) {
-  Map<String, PodUnionPtr> map;
-  map.insert("one", PodUnion::New());
-  map.insert("two", PodUnion::New());
-
-  map["one"]->set_f_int8(8);
-  map["two"]->set_f_int16(16);
-
-  size_t size = GetSerializedSize_(map);
-  EXPECT_EQ(120U, size);
-
-  fidl::internal::FixedBufferForTesting buf(size);
-  fidl::internal::Map_Data<fidl::internal::String_Data*,
-                           internal::PodUnion_Data>* data = nullptr;
-  fidl::internal::ArrayValidateParams validate_params(0, false, nullptr);
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
-            SerializeMap_(&map, &buf, &data, &validate_params));
-
-  Map<String, PodUnionPtr> map2;
-  Deserialize_(data, &map2);
-
-  EXPECT_EQ(8, map2["one"]->get_f_int8());
-  EXPECT_EQ(16, map2["two"]->get_f_int16());
-}
-
-TEST(UnionTest, PodUnionInMapSerializationWithNull) {
-  Map<String, PodUnionPtr> map;
-  map.insert("one", PodUnion::New());
-  map.insert("two", nullptr);
-
-  map["one"]->set_f_int8(8);
-
-  size_t size = GetSerializedSize_(map);
-  EXPECT_EQ(120U, size);
-
-  fidl::internal::FixedBufferForTesting buf(size);
-  fidl::internal::Map_Data<fidl::internal::String_Data*,
-                           internal::PodUnion_Data>* data = nullptr;
-  fidl::internal::ArrayValidateParams validate_params(0, true, nullptr);
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
-            SerializeMap_(&map, &buf, &data, &validate_params));
-
-  Map<String, PodUnionPtr> map2;
-  Deserialize_(data, &map2);
-
-  EXPECT_EQ(8, map2["one"]->get_f_int8());
-  EXPECT_TRUE(map2["two"].is_null());
 }
 
 TEST(UnionTest, StructInUnionGetterSetterPasser) {
@@ -757,7 +693,7 @@ TEST(UnionTest, StructInUnionSerialization) {
   size_t size = GetSerializedSize_(obj);
   EXPECT_EQ(32U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::ObjectUnion_Data::New(&buf);
   SerializeUnion_(obj.get(), &buf, &data);
 
@@ -779,7 +715,7 @@ TEST(UnionTest, StructInUnionValidation) {
 
   size_t size = GetSerializedSize_(obj);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::ObjectUnion_Data::New(&buf);
   SerializeUnion_(obj.get(), &buf, &data);
 
@@ -788,9 +724,9 @@ TEST(UnionTest, StructInUnionValidation) {
   EXPECT_TRUE(handles.empty());
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             internal::ObjectUnion_Data::Validate(raw_buf, &bounds_checker,
                                                  false, nullptr));
   free(raw_buf);
@@ -804,7 +740,7 @@ TEST(UnionTest, StructInUnionValidationNonNullable) {
 
   size_t size = GetSerializedSize_(obj);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::ObjectUnion_Data::New(&buf);
   SerializeUnion_(obj.get(), &buf, &data);
 
@@ -813,9 +749,9 @@ TEST(UnionTest, StructInUnionValidationNonNullable) {
   EXPECT_TRUE(handles.empty());
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
-  EXPECT_NE(fidl::internal::ValidationError::NONE,
+  EXPECT_NE(f1dl::internal::ValidationError::NONE,
             internal::ObjectUnion_Data::Validate(raw_buf, &bounds_checker,
                                                  false, nullptr));
   free(raw_buf);
@@ -829,7 +765,7 @@ TEST(UnionTest, StructInUnionValidationNullable) {
 
   size_t size = GetSerializedSize_(obj);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::ObjectUnion_Data::New(&buf);
   SerializeUnion_(obj.get(), &buf, &data);
 
@@ -838,9 +774,9 @@ TEST(UnionTest, StructInUnionValidationNullable) {
   EXPECT_TRUE(handles.empty());
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             internal::ObjectUnion_Data::Validate(raw_buf, &bounds_checker,
                                                  false, nullptr));
   free(raw_buf);
@@ -869,7 +805,7 @@ TEST(UnionTest, ArrayInUnionSerialization) {
   size_t size = GetSerializedSize_(obj);
   EXPECT_EQ(32U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::ObjectUnion_Data::New(&buf);
   SerializeUnion_(obj.get(), &buf, &data);
 
@@ -893,7 +829,7 @@ TEST(UnionTest, ArrayInUnionValidation) {
   obj->set_f_array_int8(std::move(array));
 
   size_t size = GetSerializedSize_(obj);
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::ObjectUnion_Data::New(&buf);
   SerializeUnion_(obj.get(), &buf, &data);
 
@@ -902,81 +838,15 @@ TEST(UnionTest, ArrayInUnionValidation) {
   EXPECT_TRUE(handles.empty());
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
 
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             internal::ObjectUnion_Data::Validate(raw_buf, &bounds_checker,
                                                  false, nullptr));
   free(raw_buf);
 }
 
-TEST(UnionTest, MapInUnionGetterSetter) {
-  Map<String, int8_t> map;
-  map.insert("one", 1);
-  map.insert("two", 2);
-
-  ObjectUnionPtr obj(ObjectUnion::New());
-  obj->set_f_map_int8(std::move(map));
-
-  EXPECT_EQ(1, obj->get_f_map_int8()["one"]);
-  EXPECT_EQ(2, obj->get_f_map_int8()["two"]);
-}
-
-TEST(UnionTest, MapInUnionSerialization) {
-  Map<String, int8_t> map;
-  map.insert("one", 1);
-  map.insert("two", 2);
-
-  ObjectUnionPtr obj(ObjectUnion::New());
-  obj->set_f_map_int8(std::move(map));
-
-  size_t size = GetSerializedSize_(obj);
-  EXPECT_EQ(112U, size);
-
-  fidl::internal::FixedBufferForTesting buf(size);
-  auto* data = internal::ObjectUnion_Data::New(&buf);
-  SerializeUnion_(obj.get(), &buf, &data);
-
-  std::vector<zx_handle_t> handles;
-  data->EncodePointersAndHandles(&handles);
-  data->DecodePointersAndHandles(&handles);
-
-  ObjectUnionPtr obj2 = ObjectUnion::New();
-  Deserialize_(data, obj2.get());
-
-  EXPECT_EQ(1, obj2->get_f_map_int8()["one"]);
-  EXPECT_EQ(2, obj2->get_f_map_int8()["two"]);
-}
-
-TEST(UnionTest, MapInUnionValidation) {
-  Map<String, int8_t> map;
-  map.insert("one", 1);
-  map.insert("two", 2);
-
-  ObjectUnionPtr obj(ObjectUnion::New());
-  obj->set_f_map_int8(std::move(map));
-
-  size_t size = GetSerializedSize_(obj);
-  EXPECT_EQ(112U, size);
-
-  fidl::internal::FixedBufferForTesting buf(size);
-  auto* data = internal::ObjectUnion_Data::New(&buf);
-  SerializeUnion_(obj.get(), &buf, &data);
-
-  std::vector<zx_handle_t> handles;
-  data->EncodePointersAndHandles(&handles);
-  EXPECT_TRUE(handles.empty());
-
-  void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
-                                               static_cast<uint32_t>(size), 0);
-
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
-            internal::ObjectUnion_Data::Validate(raw_buf, &bounds_checker,
-                                                 false, nullptr));
-  free(raw_buf);
-}
 
 TEST(UnionTest, UnionInUnionGetterSetter) {
   PodUnionPtr pod(PodUnion::New());
@@ -998,7 +868,7 @@ TEST(UnionTest, UnionInUnionSerialization) {
   size_t size = GetSerializedSize_(obj);
   EXPECT_EQ(32U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::ObjectUnion_Data::New(&buf);
   SerializeUnion_(obj.get(), &buf, &data);
 
@@ -1021,7 +891,7 @@ TEST(UnionTest, UnionInUnionValidation) {
   size_t size = GetSerializedSize_(obj);
   EXPECT_EQ(32U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::ObjectUnion_Data::New(&buf);
   SerializeUnion_(obj.get(), &buf, &data);
 
@@ -1029,9 +899,9 @@ TEST(UnionTest, UnionInUnionValidation) {
   data->EncodePointersAndHandles(&handles);
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             internal::ObjectUnion_Data::Validate(raw_buf, &bounds_checker,
                                                  false, nullptr));
   free(raw_buf);
@@ -1045,16 +915,16 @@ TEST(UnionTest, UnionInUnionValidationNonNullable) {
 
   size_t size = GetSerializedSize_(obj);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::ObjectUnion_Data::New(&buf);
   SerializeUnion_(obj.get(), &buf, &data);
   std::vector<zx_handle_t> handles;
   data->EncodePointersAndHandles(&handles);
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 0);
-  EXPECT_NE(fidl::internal::ValidationError::NONE,
+  EXPECT_NE(f1dl::internal::ValidationError::NONE,
             internal::ObjectUnion_Data::Validate(raw_buf, &bounds_checker,
                                                  false, nullptr));
   free(raw_buf);
@@ -1090,7 +960,7 @@ TEST(UnionTest, HandleInUnionSerialization) {
   size_t size = GetSerializedSize_(handle);
   EXPECT_EQ(16U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::HandleUnion_Data::New(&buf);
   SerializeUnion_(handle.get(), &buf, &data);
 
@@ -1123,7 +993,7 @@ TEST(UnionTest, HandleInUnionValidation) {
   size_t size = GetSerializedSize_(handle);
   EXPECT_EQ(16U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::HandleUnion_Data::New(&buf);
   SerializeUnion_(handle.get(), &buf, &data);
 
@@ -1131,9 +1001,9 @@ TEST(UnionTest, HandleInUnionValidation) {
   data->EncodePointersAndHandles(&handles);
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 1);
-  EXPECT_EQ(fidl::internal::ValidationError::NONE,
+  EXPECT_EQ(f1dl::internal::ValidationError::NONE,
             internal::HandleUnion_Data::Validate(raw_buf, &bounds_checker,
                                                  false, nullptr));
   free(raw_buf);
@@ -1147,7 +1017,7 @@ TEST(UnionTest, HandleInUnionValidationNull) {
   size_t size = GetSerializedSize_(handle);
   EXPECT_EQ(16U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::HandleUnion_Data::New(&buf);
   SerializeUnion_(handle.get(), &buf, &data);
 
@@ -1155,9 +1025,9 @@ TEST(UnionTest, HandleInUnionValidationNull) {
   data->EncodePointersAndHandles(&handles);
 
   void* raw_buf = buf.Leak();
-  fidl::internal::BoundsChecker bounds_checker(data,
+  f1dl::internal::BoundsChecker bounds_checker(data,
                                                static_cast<uint32_t>(size), 1);
-  EXPECT_NE(fidl::internal::ValidationError::NONE,
+  EXPECT_NE(f1dl::internal::ValidationError::NONE,
             internal::HandleUnion_Data::Validate(raw_buf, &bounds_checker,
                                                  false, nullptr));
   free(raw_buf);
@@ -1201,7 +1071,7 @@ TEST(UnionTest, InterfaceInUnionSerialization) {
   size_t size = GetSerializedSize_(handle);
   EXPECT_EQ(16U, size);
 
-  fidl::internal::FixedBufferForTesting buf(size);
+  f1dl::internal::FixedBufferForTesting buf(size);
   auto* data = internal::HandleUnion_Data::New(&buf);
   SerializeUnion_(handle.get(), &buf, &data);
 
@@ -1245,4 +1115,4 @@ TEST(UnionTest, UnionInInterface) {
 }
 
 }  // namespace test
-}  // namespace fidl
+}  // namespace f1dl

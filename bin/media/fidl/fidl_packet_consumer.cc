@@ -5,16 +5,23 @@
 #include "garnet/bin/media/fidl/fidl_packet_consumer.h"
 
 #include "garnet/bin/media/fidl/fidl_type_conversions.h"
+#include "garnet/bin/media/util/thread_aware_shared_ptr.h"
 #include "lib/fsl/tasks/message_loop.h"
 
 namespace media {
+
+// static
+std::shared_ptr<FidlPacketConsumer> FidlPacketConsumer::Create() {
+  return ThreadAwareSharedPtr(new FidlPacketConsumer(),
+                              fsl::MessageLoop::GetCurrent()->task_runner());
+}
 
 FidlPacketConsumer::FidlPacketConsumer() {}
 
 FidlPacketConsumer::~FidlPacketConsumer() {}
 
 void FidlPacketConsumer::Bind(
-    fidl::InterfaceRequest<MediaPacketConsumer> packet_consumer_request,
+    f1dl::InterfaceRequest<MediaPacketConsumer> packet_consumer_request,
     const std::function<void()>& unbind_handler) {
   unbind_handler_ = unbind_handler;
   task_runner_ = fsl::MessageLoop::GetCurrent()->task_runner();
@@ -94,9 +101,8 @@ FidlPacketConsumer::PacketImpl::PacketImpl(
              supplied_packet->payload()),
       supplied_packet_(std::move(supplied_packet)) {
   if (supplied_packet_->packet()->revised_media_type) {
-    SetRevisedStreamType(
-        supplied_packet_->packet()
-            ->revised_media_type.To<std::unique_ptr<StreamType>>());
+    SetRevisedStreamType(fxl::To<std::unique_ptr<StreamType>>(
+        supplied_packet_->packet()->revised_media_type));
   }
 }
 

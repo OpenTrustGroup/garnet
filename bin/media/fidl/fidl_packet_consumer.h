@@ -17,14 +17,12 @@ class FidlPacketConsumer : public MediaPacketConsumerBase, public ActiveSource {
   using FlushRequestedCallback =
       std::function<void(bool hold_frame, const FlushCallback&)>;
 
-  static std::shared_ptr<FidlPacketConsumer> Create() {
-    return std::shared_ptr<FidlPacketConsumer>(new FidlPacketConsumer());
-  }
+  static std::shared_ptr<FidlPacketConsumer> Create();
 
   ~FidlPacketConsumer() override;
 
   // Binds.
-  void Bind(fidl::InterfaceRequest<MediaPacketConsumer> packet_consumer_request,
+  void Bind(f1dl::InterfaceRequest<MediaPacketConsumer> packet_consumer_request,
             const std::function<void()>& connection_error_handler);
 
   // Sets a callback signalling that a flush has been requested from the

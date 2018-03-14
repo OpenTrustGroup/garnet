@@ -6,24 +6,22 @@ module lib.fidl.compiler.interfaces;
 
 import "fidl_types.fidl";
 
-/*
- * The structures in this file are intended to be used by the Fidl compiler
- * and code generators. The front end of the compiler takes as input a
- * .fidl file (or a list of .fidl files) and produces a FidlFileGraph struct.
- *
- * The backend of the compiler consumes a FidlFileGraph and invokes each of the
- * code generators passing them data derived from the FidlFileGraph.
- *
- * A FidlFile represents the data parsed from a single .fidl file. Fidl
- * files form a directed acyclic graph via the "imports" relation.
- * That is, if file A imports file B then there is a directed edge in the
- * graph from A to B. A FidlFileGraph represents the whole Graph.
+// The structures in this file are intended to be used by the Fidl compiler
+// and code generators. The front end of the compiler takes as input a
+// .fidl file (or a list of .fidl files) and produces a FidlFileGraph struct.
+//
+// The backend of the compiler consumes a FidlFileGraph and invokes each of the
+// code generators passing them data derived from the FidlFileGraph.
+//
+// A FidlFile represents the data parsed from a single .fidl file. Fidl
+// files form a directed acyclic graph via the "imports" relation.
+// That is, if file A imports file B then there is a directed edge in the
+// graph from A to B. A FidlFileGraph represents the whole Graph.
 
- * The Fidl structures represented here have been fully resolved, meaning that
- * the type references have been associated with their corresponding type
- * definitions. This resolved type data is contained in the resolved_types data
- * in FidlFileGraph.
- */
+// The Fidl structures represented here have been fully resolved, meaning that
+// the type references have been associated with their corresponding type
+// definitions. This resolved type data is contained in the resolved_types data
+// in FidlFileGraph.
 
 // A FidlFile represents the data defined by a single .fidl file, when
 // all of the type references to types declared in imported .fidl files
@@ -77,18 +75,33 @@ struct FidlFile {
   Comments? comments;
 };
 
+struct FileGraphEntry {
+  string key;
+  FidlFile value;
+};
+
+struct ResolvedTypeEntry {
+  string key;
+  UserDefinedType value;
+};
+
+struct ResolvedConstantEntry {
+  string key;
+  DeclaredConstant value;
+};
+
 // Represents a directed acyclic graph of FidlFiles.
 struct FidlFileGraph {
   // All the files in this graph. The keys are |file_name|s.
-  map<string, FidlFile> files;
+  array<FileGraphEntry> files;
 
   // All the resolved user-defined types in all the files in the graph. The keys are
   // the |type_key|s.
-  map<string, UserDefinedType> resolved_types;
+  array<ResolvedTypeEntry> resolved_types;
 
   // All the resolved DeclaredConstants in all the files in the graph. The keys are
   // the |constant_key|s.
-  map<string, DeclaredConstant> resolved_constants;
+  array<ResolvedConstantEntry> resolved_constants;
 };
 
 // A KeysByType struct organizes by type the keys of all types and consants in

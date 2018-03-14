@@ -6,14 +6,13 @@
 
 #include <wlan/mlme/mac_frame.h>
 
-#include "lib/wlan/fidl/wlan_mlme.fidl-common.h"
-#include "lib/wlan/fidl/wlan_mlme_ext.fidl-common.h"
-
-#include <ddk/protocol/wlan.h>
-#include <zircon/types.h>
+#include "lib/wlan/fidl/wlan_mlme.fidl.h"
+#include "lib/wlan/fidl/wlan_mlme_ext.fidl.h"
 
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
+#include <wlan/protocol/mac.h>
+#include <zircon/types.h>
 
 #define WLAN_DECL_VIRT_FUNC_HANDLE(methodName, args...) \
     virtual zx_status_t methodName(args) { return ZX_OK; }
@@ -34,6 +33,16 @@
     zx_status_t HandleMgmtFrameInternal(const ImmutableMgmtFrame<mgmtFrameType>& frame, \
                                         const wlan_rx_info_t& info) {                   \
         return Handle##mgmtFrameType(frame, info);                                      \
+    }
+
+#define WLAN_DECL_FUNC_HANDLE_CTRL(ctrlFrameType)                                               \
+    WLAN_DECL_VIRT_FUNC_HANDLE(Handle##ctrlFrameType, const ImmutableCtrlFrame<ctrlFrameType>&, \
+                               const wlan_rx_info_t&)
+
+#define WLAN_DECL_FUNC_INTERNAL_HANDLE_CTRL(ctrlFrameType)                              \
+    zx_status_t HandleCtrlFrameInternal(const ImmutableCtrlFrame<ctrlFrameType>& frame, \
+                                        const wlan_rx_info_t& info) {                   \
+        return Handle##ctrlFrameType(frame, info);                                      \
     }
 
 #define WLAN_DECL_VIRT_FUNC_HANDLE_DATA(methodName, BodyType)                           \
@@ -164,6 +173,10 @@ class FrameHandler : public fbl::RefCounted<FrameHandler> {
     WLAN_DECL_FUNC_HANDLE_MGMT(AddBaRequestFrame)
     WLAN_DECL_FUNC_HANDLE_MGMT(AddBaResponseFrame)
 
+    // Control frame handlers.
+    virtual zx_status_t HandleCtrlFrame(const FrameControl& fc) { return ZX_OK; }
+    WLAN_DECL_FUNC_HANDLE_CTRL(PsPollFrame)
+
    private:
     // Internal Service Message handlers.
     template <typename Message>
@@ -219,6 +232,17 @@ class FrameHandler : public fbl::RefCounted<FrameHandler> {
     }
     WLAN_DECL_FUNC_INTERNAL_HANDLE_DATA(NullDataFrame, NilHeader)
     WLAN_DECL_FUNC_INTERNAL_HANDLE_DATA(DataFrame, LlcHeader)
+
+    // Internal Control frame handlers.
+    template <typename Body>
+    zx_status_t HandleFrameInternal(const ImmutableCtrlFrame<Body>& frame,
+                                    const wlan_rx_info_t& info) {
+        auto status = HandleCtrlFrame(frame.hdr->fc);
+        if (status != ZX_OK) { return status; }
+
+        return HandleCtrlFrameInternal(frame, info);
+    }
+    WLAN_DECL_FUNC_INTERNAL_HANDLE_CTRL(PsPollFrame)
 
     // Frame target which will only receive the current frame. Will be reset after each frame.
     // TODO(hahnr): This is still not exactly what I fancy but good enough for now.

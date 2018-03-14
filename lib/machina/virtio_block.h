@@ -10,7 +10,7 @@
 #include <virtio/block.h>
 
 #include "garnet/lib/machina/block_dispatcher.h"
-#include "garnet/lib/machina/virtio.h"
+#include "garnet/lib/machina/virtio_device.h"
 
 typedef struct file_state file_state_t;
 
@@ -19,7 +19,7 @@ namespace machina {
 // Stores the state of a block device.
 class VirtioBlock : public VirtioDevice {
  public:
-  static const size_t kSectorSize = 512;
+  static constexpr size_t kSectorSize = 512;
 
   VirtioBlock(const PhysMem& phys_mem);
   ~VirtioBlock() override = default;
@@ -35,18 +35,18 @@ class VirtioBlock : public VirtioDevice {
     return ZX_ERR_NOT_SUPPORTED;
   }
 
-  zx_status_t HandleBlockRequest(virtio_queue_t* queue,
+  zx_status_t HandleBlockRequest(VirtioQueue* queue,
                                  uint16_t head,
                                  uint32_t* used);
 
   bool is_read_only() { return has_device_features(VIRTIO_BLK_F_RO); }
 
   // The queue used for handling block reauests.
-  virtio_queue_t& queue() { return queue_; }
+  VirtioQueue& queue() { return queue_; }
 
  private:
   // Queue for handling block requests.
-  virtio_queue_t queue_;
+  VirtioQueue queue_;
   // Device configuration fields.
   virtio_blk_config_t config_ = {};
   fbl::unique_ptr<BlockDispatcher> dispatcher_;

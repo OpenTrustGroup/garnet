@@ -6,8 +6,8 @@
 
 #include <fcntl.h>
 
-#include <async/default.h>
 #include <fbl/function.h>
+#include <lib/async/default.h>
 #include <zircon/status.h>
 
 #include "garnet/lib/bluetooth/c/bt_host.h"
@@ -118,7 +118,7 @@ void AdapterManager::OnDeviceFound(int dir_fd, std::string filename) {
 
   FXL_DCHECK(host_channel);
 
-  fidl::InterfaceHandle<bluetooth::host::Host> handle(std::move(host_channel));
+  f1dl::InterfaceHandle<bluetooth::host::Host> handle(std::move(host_channel));
   FXL_DCHECK(handle.is_valid());
 
   // Bind the channel to a host interface pointer.
@@ -224,8 +224,6 @@ void AdapterManager::CancelInitTimeout() {
 }
 
 void AdapterManager::SetActiveAdapterInternal(Adapter* adapter) {
-  FXL_DCHECK(adapter);
-
   if (active_adapter_) {
     // Tell the current active adapter to close all of its handles.
     FXL_DCHECK(active_adapter_->host());

@@ -7,8 +7,7 @@
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
-#include "lib/media/fidl/media_service.fidl.h"
-#include "lib/media/timeline/fidl_type_conversions.h"
+#include "lib/media/fidl/audio_server.fidl.h"
 #include "lib/media/timeline/timeline.h"
 #include "lib/media/timeline/timeline_rate.h"
 
@@ -61,11 +60,11 @@ LpcmOutputStream::LpcmOutputStream(app::ApplicationContext* application_context,
   ns_to_frames_ = TimelineFunction(TimelineRate(frames_per_second_) /
                                    TimelineRate::NsPerSecond);
 
-  auto media_service =
-      application_context->ConnectToEnvironmentService<MediaService>();
+  auto audio_server =
+      application_context->ConnectToEnvironmentService<AudioServer>();
 
-  media_service->CreateAudioRenderer(audio_renderer_.NewRequest(),
-                                     media_renderer_.NewRequest());
+  audio_server->CreateRenderer(audio_renderer_.NewRequest(),
+                               media_renderer_.NewRequest());
   audio_renderer_.set_error_handler([this]() {
     audio_renderer_.Unbind();
     SetError(MediaResult::CONNECTION_LOST);
@@ -105,17 +104,16 @@ void LpcmOutputStream::Init() {
 
   HandleStatusUpdates();
 
-  producer_.Connect(std::move(packet_consumer),
-                    [this_ptr = ref_ptr()]() {
-                      if (!this_ptr->is_valid()) {
-                        return;
-                      }
+  producer_.Connect(std::move(packet_consumer), [this_ptr = ref_ptr()]() {
+    if (!this_ptr->is_valid()) {
+      return;
+    }
 
-                      this_ptr->ready_ = true;
-                      if (!this_ptr->sends_pending_ready_.empty()) {
-                        this_ptr->Start();
-                      }
-                    });
+    this_ptr->ready_ = true;
+    if (!this_ptr->sends_pending_ready_.empty()) {
+      this_ptr->Start();
+    }
+  });
 }
 
 void LpcmOutputStream::Reset() {
@@ -353,7 +351,7 @@ void LpcmOutputStream::SetTimelineTransform(
     local_to_presentation_frames_ = TimelineFunction();
     timeline_consumer_->SetTimelineTransformNoReply(timeline_transform.Clone());
   } else {
-    Start(timeline_transform.To<TimelineFunction>());
+    Start(static_cast<TimelineFunction>(timeline_transform));
   }
 }
 
@@ -374,7 +372,7 @@ void LpcmOutputStream::Start(const TimelineFunction& timeline) {
   sends_pending_ready_.clear();
 
   timeline_consumer_->SetTimelineTransformNoReply(
-      TimelineTransform::From(timeline));
+      static_cast<TimelineTransformPtr>(timeline));
 }
 
 void LpcmOutputStream::Restart() {
@@ -553,7 +551,8 @@ void LpcmOutputStream::HandleStatusUpdates(
         !local_to_presentation_frames_.invertable();
 
     local_to_presentation_frames_ =
-        ns_to_frames_ * status->timeline_transform.To<TimelineFunction>();
+        ns_to_frames_ *
+        static_cast<TimelineFunction>(status->timeline_transform);
 
     if (need_to_post_task_before_deadline &&
         local_to_presentation_frames_.invertable()) {

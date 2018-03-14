@@ -1,4 +1,4 @@
-# Copyright 2017 The Fuchsia Authors. All rights reserved.
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
@@ -10,17 +10,12 @@ package("rust-crates-tests") {
 
   deps = [
     "fdio",
+    "fuchsia-async",
     "fuchsia-vfs",
     "fuchsia-vfs/fuchsia-vfs-watcher",
     "fuchsia-zircon",
-    "tokio-fuchsia",
   ]
 
   tests = [
-    { name = "fdio-lib-test" },
-    { name = "fuchsia_vfs-lib-test" },
-    { name = "fuchsia_vfs_watcher-lib-test" },
-    { name = "fuchsia_zircon-lib-test" },
-    { name = "tokio_fuchsia-lib-test" },
   ]
 }

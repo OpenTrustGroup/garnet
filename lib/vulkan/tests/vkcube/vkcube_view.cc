@@ -7,9 +7,9 @@
 
 VkCubeView::VkCubeView(
     mozart::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
+    f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
     std::function<void(float width, float height,
-                       fidl::InterfaceHandle<scenic::ImagePipe> interface_request)>
+                       f1dl::InterfaceHandle<scenic::ImagePipe> interface_request)>
         resize_callback)
     : BaseView(std::move(view_manager), std::move(view_owner_request), "vkcube"),
       pane_node_(session()), resize_callback_(resize_callback)
@@ -18,7 +18,7 @@ VkCubeView::VkCubeView(
 
 VkCubeView::~VkCubeView() {}
 
-void VkCubeView::OnSceneInvalidated(scenic::PresentationInfoPtr presentation_info)
+void VkCubeView::OnSceneInvalidated(ui_mozart::PresentationInfoPtr presentation_info)
 {
     if (size_.Equals(logical_size()))
         return;
@@ -39,11 +39,12 @@ void VkCubeView::OnSceneInvalidated(scenic::PresentationInfoPtr presentation_inf
 
     uint32_t image_pipe_id = session()->AllocResourceId();
     session()->Enqueue(scenic_lib::NewCreateImagePipeOp(
-        image_pipe_id, fidl::InterfaceRequest<scenic::ImagePipe>(std::move(endpoint1))));
+        image_pipe_id, f1dl::InterfaceRequest<scenic::ImagePipe>(std::move(endpoint1))));
     pane_material.SetTexture(image_pipe_id);
     session()->ReleaseResource(image_pipe_id);
-    session()->Present(zx_clock_get(ZX_CLOCK_MONOTONIC), [](scenic::PresentationInfoPtr info) {});
+
+    // No need to Present on session; base_view will present after calling OnSceneInvalidated.
 
     resize_callback_(logical_size().width, logical_size().height,
-                     fidl::InterfaceHandle<scenic::ImagePipe>(std::move(endpoint0)));
+                     f1dl::InterfaceHandle<scenic::ImagePipe>(std::move(endpoint0)));
 }

@@ -4,12 +4,12 @@
 
 #pragma once
 
-#include "garnet/public/lib/wlan/fidl/wlan_mlme.fidl-common.h"
+#include "garnet/public/lib/wlan/fidl/wlan_mlme.fidl.h"
+
+#include <wlan/protocol/mac.h>
 
 #include <cstdint>
 #include <string>
-
-#include <ddk/protocol/wlan.h>
 
 namespace wlan {
 namespace common {

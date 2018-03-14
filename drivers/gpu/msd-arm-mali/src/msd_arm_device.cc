@@ -66,15 +66,10 @@ protected:
 
 class MsdArmDevice::ScheduleAtomRequest : public DeviceRequest {
 public:
-    ScheduleAtomRequest(std::shared_ptr<MsdArmAtom> atom) : atom_(std::move(atom)) {}
+    ScheduleAtomRequest() {}
 
 protected:
-    magma::Status Process(MsdArmDevice* device) override
-    {
-        return device->ProcessScheduleAtom(std::move(atom_));
-    }
-
-    std::shared_ptr<MsdArmAtom> atom_;
+    magma::Status Process(MsdArmDevice* device) override { return device->ProcessScheduleAtoms(); }
 };
 
 class MsdArmDevice::CancelAtomsRequest : public DeviceRequest {
@@ -170,9 +165,11 @@ bool MsdArmDevice::Init(void* device_handle)
     magma::log(magma::LOG_INFO, "ARM mali ID %x", gpu_features_.gpu_id.reg_value());
 
 #if defined(MSD_ARM_ENABLE_CACHE_COHERENCY)
-    if (!gpu_features_.coherency_features.ace().get())
-        return DRETF(false, "ACE cache coherency not available");
-    cache_coherency_status_ = kArmMaliCacheCoherencyAce;
+    if (gpu_features_.coherency_features.ace().get()) {
+        cache_coherency_status_ = kArmMaliCacheCoherencyAce;
+    } else {
+        magma::log(magma::LOG_INFO, "Cache coherency unsupported");
+    }
 #endif
 
     device_request_semaphore_ = magma::PlatformSemaphore::Create();
@@ -412,16 +409,19 @@ magma::Status MsdArmDevice::ProcessJobInterrupt()
 magma::Status MsdArmDevice::ProcessMmuInterrupt()
 {
     auto irq_status = registers::MmuIrqFlags::GetStatus().ReadFrom(register_io_.get());
-
-    magma::log(magma::LOG_WARNING, "Got unexpected MMU IRQ %d\n", irq_status.reg_value());
-
-    // All MMU interrupts are unexpected, so dump status to log to help
-    // debugging.
-    ProcessDumpStatusToLog();
+    DLOG("Received MMU IRQ status 0x%x\n", irq_status.reg_value());
 
     uint32_t faulted_slots = irq_status.pf_flags().get() | irq_status.bf_flags().get();
     while (faulted_slots) {
         uint32_t slot = ffs(faulted_slots) - 1;
+
+        // Clear all flags before attempting to page in memory, as otherwise
+        // if the atom continues executing the next interrupt may be lost.
+        auto clear_flags = registers::MmuIrqFlags::GetIrqClear().FromValue(0);
+        clear_flags.pf_flags().set(1 << slot);
+        clear_flags.bf_flags().set(1 << slot);
+        clear_flags.WriteTo(register_io_.get());
+
         std::shared_ptr<MsdArmConnection> connection;
         {
             auto mapping = address_manager_->GetMappingForSlot(slot);
@@ -432,17 +432,35 @@ magma::Status MsdArmDevice::ProcessMmuInterrupt()
             }
         }
         if (connection) {
-            connection->set_address_space_lost();
-            scheduler_->ReleaseMappingsForConnection(connection);
-            // This will invalidate the address slot, causing the job to die
-            // with a fault.
-            address_manager_->ReleaseSpaceMappings(connection->address_space());
+            uint64_t address = registers::AsRegisters(slot)
+                                   .FaultAddress()
+                                   .ReadFrom(register_io_.get())
+                                   .reg_value();
+            bool kill_context = true;
+            if (irq_status.bf_flags().get() & (1 << slot)) {
+                magma::log(magma::LOG_WARNING, "Bus fault at address 0x%lx on slot %d\n", address,
+                           slot);
+            } else {
+                if (connection->PageInMemory(address)) {
+                    DLOG("Paged in address %lx\n", address);
+                    kill_context = false;
+                } else {
+                    magma::log(magma::LOG_WARNING, "Failed to page in address 0x%lx on slot %d\n",
+                               address, slot);
+                }
+            }
+            if (kill_context) {
+                ProcessDumpStatusToLog();
+
+                connection->set_address_space_lost();
+                scheduler_->ReleaseMappingsForConnection(connection);
+                // This will invalidate the address slot, causing the job to die
+                // with a fault.
+                address_manager_->ReleaseSpaceMappings(connection->const_address_space());
+            }
         }
         faulted_slots &= ~(1 << slot);
     }
-
-    auto clear_flags = registers::MmuIrqFlags::GetIrqClear().FromValue(irq_status.reg_value());
-    clear_flags.WriteTo(register_io_.get());
 
     mmu_interrupt_->Complete();
     return MAGMA_STATUS_OK;
@@ -541,7 +559,14 @@ void MsdArmDevice::EnqueueDeviceRequest(std::unique_ptr<DeviceRequest> request, 
 
 void MsdArmDevice::ScheduleAtom(std::shared_ptr<MsdArmAtom> atom)
 {
-    EnqueueDeviceRequest(std::make_unique<ScheduleAtomRequest>(std::move(atom)));
+    bool need_schedule;
+    {
+        std::lock_guard<std::mutex> lock(schedule_mutex_);
+        need_schedule = atoms_to_schedule_.empty();
+        atoms_to_schedule_.push_back(std::move(atom));
+    }
+    if (need_schedule)
+        EnqueueDeviceRequest(std::make_unique<ScheduleAtomRequest>());
 }
 
 void MsdArmDevice::CancelAtoms(std::shared_ptr<MsdArmConnection> connection)
@@ -643,10 +668,16 @@ magma::Status MsdArmDevice::ProcessDumpStatusToLog()
     return MAGMA_STATUS_OK;
 }
 
-magma::Status MsdArmDevice::ProcessScheduleAtom(std::shared_ptr<MsdArmAtom> atom)
+magma::Status MsdArmDevice::ProcessScheduleAtoms()
 {
-    TRACE_DURATION("magma", "MsdArmDevice::ProcessScheduleAtom");
-    scheduler_->EnqueueAtom(std::move(atom));
+    TRACE_DURATION("magma", "MsdArmDevice::ProcessScheduleAtoms");
+    std::vector<std::shared_ptr<MsdArmAtom>> atoms_to_schedule;
+    {
+        std::lock_guard<std::mutex> lock(schedule_mutex_);
+        atoms_to_schedule.swap(atoms_to_schedule_);
+    }
+    for (auto& atom : atoms_to_schedule)
+        scheduler_->EnqueueAtom(std::move(atom));
     scheduler_->TryToSchedule();
     return MAGMA_STATUS_OK;
 }
@@ -707,6 +738,7 @@ void MsdArmDevice::HardStopAtom(MsdArmAtom* atom)
 {
     DASSERT(atom->hard_stopped());
     registers::JobSlotRegisters slot(atom->slot());
+    DLOG("Hard stopping atom slot %d\n", atom->slot());
     slot.Command()
         .FromValue(registers::JobSlotCommand::kCommandHardStop)
         .WriteTo(register_io_.get());

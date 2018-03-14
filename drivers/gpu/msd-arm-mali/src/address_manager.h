@@ -37,7 +37,9 @@ public:
     // AddressSpaceObserver implementation.
     void FlushAddressMappingRange(AddressSpace*, uint64_t start, uint64_t length,
                                   bool synchronous) override;
-    void ReleaseSpaceMappings(AddressSpace* address_space) override;
+    void ReleaseSpaceMappings(const AddressSpace* address_space) override;
+
+    void UnlockAddressSpace(AddressSpace*) override;
 
 private:
     struct AddressSlot {
@@ -47,7 +49,7 @@ private:
         // set to null by AddressSpace destructor if this is attached to an
         // address space. This can't be a weak pointer because we need to
         // compare against it in the AddressSpace destructor.
-        void* address_space = nullptr;
+        const void* address_space = nullptr;
     };
 
     struct HardwareSlot {
@@ -58,13 +60,14 @@ private:
         // Wait for the MMU to finish processing any existing commands.
         void WaitForMmuIdle(RegisterIo* io) FXL_EXCLUSIVE_LOCKS_REQUIRED(lock);
         void InvalidateSlot(RegisterIo* io) FXL_EXCLUSIVE_LOCKS_REQUIRED(lock);
+        void UnlockMmu(RegisterIo* io) FXL_EXCLUSIVE_LOCKS_REQUIRED(lock);
 
         std::mutex lock;
         FXL_GUARDED_BY(lock) registers::AsRegisters registers;
     };
 
     std::shared_ptr<AddressSlotMapping>
-    GetMappingForAddressSpaceUnlocked(AddressSpace* address_space)
+    GetMappingForAddressSpaceUnlocked(const AddressSpace* address_space)
         FXL_EXCLUSIVE_LOCKS_REQUIRED(address_slot_lock_);
     std::shared_ptr<AddressSlotMapping>
     AllocateMappingForAddressSpace(std::shared_ptr<MsdArmConnection> connection);

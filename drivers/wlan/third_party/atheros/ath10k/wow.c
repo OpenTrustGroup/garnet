@@ -60,7 +60,7 @@ static int ath10k_wow_cleanup(struct ath10k* ar) {
     struct ath10k_vif* arvif;
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     list_for_each_entry(arvif, &ar->arvifs, list) {
         ret = ath10k_wow_vif_cleanup(arvif);
@@ -163,7 +163,7 @@ static int ath10k_wow_set_wakeups(struct ath10k* ar,
     struct ath10k_vif* arvif;
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
     list_for_each_entry(arvif, &ar->arvifs, list) {
         ret = ath10k_vif_wow_set_wakeups(arvif, wowlan);
@@ -180,9 +180,9 @@ static int ath10k_wow_set_wakeups(struct ath10k* ar,
 static int ath10k_wow_enable(struct ath10k* ar) {
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    reinit_completion(&ar->target_suspend);
+    completion_reset(&ar->target_suspend);
 
     ret = ath10k_wmi_wow_enable(ar);
     if (ret) {
@@ -190,8 +190,7 @@ static int ath10k_wow_enable(struct ath10k* ar) {
         return ret;
     }
 
-    ret = wait_for_completion_timeout(&ar->target_suspend, 3 * HZ);
-    if (ret == 0) {
+    if (completion_wait(&ar->target_suspend, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
         ath10k_warn("timed out while waiting for suspend completion\n");
         return -ETIMEDOUT;
     }
@@ -202,9 +201,9 @@ static int ath10k_wow_enable(struct ath10k* ar) {
 static int ath10k_wow_wakeup(struct ath10k* ar) {
     int ret;
 
-    lockdep_assert_held(&ar->conf_mutex);
+    ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    reinit_completion(&ar->wow.wakeup_completed);
+    completion_reset(&ar->wow.wakeup_completed);
 
     ret = ath10k_wmi_wow_host_wakeup_ind(ar);
     if (ret) {
@@ -213,8 +212,7 @@ static int ath10k_wow_wakeup(struct ath10k* ar) {
         return ret;
     }
 
-    ret = wait_for_completion_timeout(&ar->wow.wakeup_completed, 3 * HZ);
-    if (ret == 0) {
+    if (completion_wait(&ar->wow.wakeup_completed, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
         ath10k_warn("timed out while waiting for wow wakeup completion\n");
         return -ETIMEDOUT;
     }
@@ -227,7 +225,7 @@ int ath10k_wow_op_suspend(struct ieee80211_hw* hw,
     struct ath10k* ar = hw->priv;
     int ret;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     if (WARN_ON(!test_bit(ATH10K_FW_FEATURE_WOWLAN_SUPPORT,
                           ar->running_fw->fw_file.fw_features))) {
@@ -270,7 +268,7 @@ cleanup:
     ath10k_wow_cleanup(ar);
 
 exit:
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret ? 1 : 0;
 }
 
@@ -278,7 +276,7 @@ int ath10k_wow_op_resume(struct ieee80211_hw* hw) {
     struct ath10k* ar = hw->priv;
     int ret;
 
-    mutex_lock(&ar->conf_mutex);
+    mtx_lock(&ar->conf_mutex);
 
     if (WARN_ON(!test_bit(ATH10K_FW_FEATURE_WOWLAN_SUPPORT,
                           ar->running_fw->fw_file.fw_features))) {
@@ -316,7 +314,7 @@ exit:
         }
     }
 
-    mutex_unlock(&ar->conf_mutex);
+    mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 

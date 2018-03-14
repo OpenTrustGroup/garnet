@@ -89,6 +89,12 @@ void magma_release_buffer(magma_connection_t* connection, magma_buffer_t buffer)
     delete platform_buffer;
 }
 
+magma_status_t magma_set_cache_policy(magma_buffer_t buffer, magma_cache_policy_t policy)
+{
+    bool result = reinterpret_cast<magma::PlatformBuffer*>(buffer)->SetCachePolicy(policy);
+    return result ? MAGMA_STATUS_OK : MAGMA_STATUS_INTERNAL_ERROR;
+}
+
 uint64_t magma_get_buffer_id(magma_buffer_t buffer)
 {
     return reinterpret_cast<magma::PlatformBuffer*>(buffer)->id();
@@ -204,6 +210,17 @@ magma_status_t magma_map_aligned(magma_connection_t* connection, magma_buffer_t 
     return MAGMA_STATUS_OK;
 }
 
+magma_status_t magma_map_specific(magma_connection_t* connection, magma_buffer_t buffer,
+                                  uint64_t addr)
+{
+    auto platform_buffer = reinterpret_cast<magma::PlatformBuffer*>(buffer);
+
+    if (!platform_buffer->MapAtCpuAddr(addr))
+        return DRET(MAGMA_STATUS_MEMORY_ERROR);
+
+    return MAGMA_STATUS_OK;
+}
+
 magma_status_t magma_unmap(magma_connection_t* connection, magma_buffer_t buffer)
 {
     auto platform_buffer = reinterpret_cast<magma::PlatformBuffer*>(buffer);
@@ -306,6 +323,14 @@ void magma_submit_command_buffer(magma_connection_t* connection, magma_buffer_t 
     magma::PlatformIpcConnection::cast(connection)->ExecuteCommandBuffer(buffer_handle, context_id);
 
     delete platform_buffer;
+}
+
+void magma_execute_immediate_commands(magma_connection_t* connection, uint32_t context_id,
+                                      uint64_t command_count,
+                                      magma_system_inline_command_buffer* command_buffers)
+{
+    magma::PlatformIpcConnection::cast(connection)
+        ->ExecuteImmediateCommands(context_id, command_count, command_buffers);
 }
 
 void magma_wait_rendering(magma_connection_t* connection, magma_buffer_t buffer)

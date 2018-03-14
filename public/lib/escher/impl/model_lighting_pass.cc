@@ -14,7 +14,7 @@ layout(location = 0) out vec2 fragUV;
 
 void main() {
   vec4 pos = ComputeVertexPosition();
-  gl_Position = camera_transform * pos;
+  gl_Position = vp_matrix * model_transform  * pos;
   fragUV = inUV;
 }
 )GLSL";
@@ -30,12 +30,13 @@ layout(set = 0, binding = 0) uniform PerModel {
   float time;
   vec3 ambient_light_intensity;
   vec3 direct_light_intensity;
+  vec2 shadow_map_uv_multiplier;
 };
 
 layout(set = 0, binding = 1) uniform sampler2D light_tex;
 
 layout(set = 1, binding = 0) uniform PerObject {
-  mat4 camera_transform;
+  mat4 model_transform;
   mat4 light_transform;
   vec4 color;
 };

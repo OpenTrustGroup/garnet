@@ -6,10 +6,10 @@
 
 #include <limits.h>
 
-#include <hypervisor/phys_mem.h>
+#include "garnet/lib/machina/phys_mem.h"
 
-static const size_t kMaxSize = 512ull << 30;
-static const size_t kMinSize = 4 * (4 << 10);
+static constexpr size_t kMaxSize = 512ull << 30;
+static constexpr size_t kMinSize = 4 * (4 << 10);
 
 enum {
   X86_PTE_P = 0x01,   // P    Valid
@@ -17,11 +17,11 @@ enum {
   X86_PTE_PS = 0x80,  // PS   Page size
 };
 
-static const size_t kPml4PageSize = 512ull << 30;
-static const size_t kPdpPageSize = 1 << 30;
-static const size_t kPdPageSize = 2 << 20;
-static const size_t kPtPageSize = 4 << 10;
-static const size_t kPtesPerPage = PAGE_SIZE / sizeof(uint64_t);
+static constexpr size_t kPml4PageSize = 512ull << 30;
+static constexpr size_t kPdpPageSize = 1 << 30;
+static constexpr size_t kPdPageSize = 2 << 20;
+static constexpr size_t kPtPageSize = 4 << 10;
+static constexpr size_t kPtesPerPage = PAGE_SIZE / sizeof(uint64_t);
 
 // Create all page tables for a given page size.
 //
@@ -36,7 +36,7 @@ static const size_t kPtesPerPage = PAGE_SIZE / sizeof(uint64_t);
 // @param has_page     Whether this level of the page table has associated
 //                     pages.
 // @param map_flags    Flags added to any descriptors directly mapping pages.
-static uintptr_t create_page_table_level(const PhysMem& phys_mem,
+static uintptr_t create_page_table_level(const machina::PhysMem& phys_mem,
                                          size_t l1_page_size,
                                          uintptr_t l1_pte_off,
                                          uint64_t* aspace_off,
@@ -48,7 +48,7 @@ static uintptr_t create_page_table_level(const PhysMem& phys_mem,
   const size_t l1_pages = (l1_ptes + kPtesPerPage - 1) / kPtesPerPage;
 
   uintptr_t l0_pte_off = l1_pte_off + l1_pages * PAGE_SIZE;
-  uint64_t* pt = (uint64_t*)(phys_mem.addr() + l1_pte_off);
+  auto pt = phys_mem.as<uint64_t>(l1_pte_off);
   for (size_t i = 0; i < l1_ptes; i++) {
     if (has_page && (!has_l0_aspace || i < l1_ptes - 1)) {
       pt[i] = *aspace_off | X86_PTE_P | X86_PTE_RW | map_flags;

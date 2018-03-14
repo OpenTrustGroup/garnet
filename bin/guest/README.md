@@ -1,54 +1,61 @@
 # Guest
-
 The `guest` app enables booting a guest operating system using the Zircon
 hypervisor.
 
 These instructions will guide you through creating minimal Zircon and Linux
 guests. For instructions on building a more comprehensive linux guest system
-see [Hypervisor Benchmarking](docs/benchmarking.md).
+see the [debian-guest](debian-guest/README.md) package.
 
 These instructions assume a general familiarity with how to netboot the target
 device.
 
-## Build host system with guest packages
-
+## Build host system with the guest package
+Configure, build, and boot the guest package as follows:
 ```
-$ cd $GARNET_DIR
-
-# This will assemble all the boot images and start the bootserver. It will be
-# ready to netboot once you see:
-#
-# [bootserver] listening on [::]33331
-$ ./bin/guest/scripts/build.sh x86
+$ fx set x64 --packages "garnet/packages/guest" --release
+$ fx full-build
+$ fx boot -1
 ```
 
 ## Running guests
 After netbooting the target device, to run Zircon:
-
 ```
-$ run zircon-guest
+$ guest launch zircon-guest
 ```
 
 Likewise, to launch a Linux guest:
 ```
-$ run linux-guest
+$ guest launch linux-guest
 ```
 
 ## Running from Topaz
-To run from topaz, update the build command as:
-
+To run from Topaz, configure the guest package as follows:
 ```
-$ ./bin/guest/scripts/build.sh -p "topaz/packages/default,garnet/packages/linux-guest,garnet/packages/zircon-guest" x86
+$ fx set x64 --packages "topaz/packages/default,garnet/packages/guest" --release
 ```
 
 After netbooting the guest packages can be launched from the system launcher as
 `linux-guest` and `zircon-guest`.
 
-# Guest Configuration
+## Building for arm64
+First flash Zedboot onto your VIM2:
+```
+$ cd $ZIRCON_DIR
+$ scripts/build-zircon-arm64
+$ scripts/flash-vim2 -m
 
+```
+
+Then configure, build, and boot the guest package as follows:
+```
+$ fx set arm64 --packages "garnet/packages/guest" --release --netboot
+$ fx full-build
+$ fx boot vim2 -1
+```
+
+# Guest Configuration
 Guest systems can be configured by including a config file inside the guest
 package:
-
 ```
 {
     "type": "object",

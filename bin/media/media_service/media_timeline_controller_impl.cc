@@ -7,7 +7,6 @@
 #include "garnet/bin/media/fidl/fidl_type_conversions.h"
 #include "garnet/bin/media/util/callback_joiner.h"
 #include "lib/fxl/logging.h"
-#include "lib/media/timeline/fidl_type_conversions.h"
 #include "lib/media/timeline/timeline.h"
 
 namespace media {
@@ -15,18 +14,19 @@ namespace media {
 // static
 std::shared_ptr<MediaTimelineControllerImpl>
 MediaTimelineControllerImpl::Create(
-    fidl::InterfaceRequest<MediaTimelineController> request,
-    MediaServiceImpl* owner) {
+    f1dl::InterfaceRequest<MediaTimelineController> request,
+    MediaComponentFactory* owner) {
   return std::shared_ptr<MediaTimelineControllerImpl>(
       new MediaTimelineControllerImpl(std::move(request), owner));
 }
 
 MediaTimelineControllerImpl::MediaTimelineControllerImpl(
-    fidl::InterfaceRequest<MediaTimelineController> request,
-    MediaServiceImpl* owner)
-    : MediaServiceImpl::Product<MediaTimelineController>(this,
-                                                         std::move(request),
-                                                         owner),
+    f1dl::InterfaceRequest<MediaTimelineController> request,
+    MediaComponentFactory* owner)
+    : MediaComponentFactory::Product<MediaTimelineController>(
+          this,
+          std::move(request),
+          owner),
       control_point_binding_(this),
       consumer_binding_(this) {
   status_publisher_.SetCallbackRunner(
@@ -34,7 +34,7 @@ MediaTimelineControllerImpl::MediaTimelineControllerImpl(
         MediaTimelineControlPointStatusPtr status =
             MediaTimelineControlPointStatus::New();
         status->timeline_transform =
-            TimelineTransform::From(current_timeline_function_);
+            static_cast<TimelineTransformPtr>(current_timeline_function_);
         status->end_of_stream = end_of_stream_;
         callback(version, std::move(status));
       });
@@ -56,7 +56,7 @@ MediaTimelineControllerImpl::~MediaTimelineControllerImpl() {
 }
 
 void MediaTimelineControllerImpl::AddControlPoint(
-    fidl::InterfaceHandle<MediaTimelineControlPoint> control_point) {
+    f1dl::InterfaceHandle<MediaTimelineControlPoint> control_point) {
   control_point_states_.push_back(std::unique_ptr<ControlPointState>(
       new ControlPointState(this, control_point.Bind())));
 
@@ -64,7 +64,7 @@ void MediaTimelineControllerImpl::AddControlPoint(
 }
 
 void MediaTimelineControllerImpl::GetControlPoint(
-    fidl::InterfaceRequest<MediaTimelineControlPoint> control_point) {
+    f1dl::InterfaceRequest<MediaTimelineControlPoint> control_point) {
   if (control_point_binding_.is_bound()) {
     control_point_binding_.Unbind();
   }
@@ -78,7 +78,7 @@ void MediaTimelineControllerImpl::GetStatus(uint64_t version_last_seen,
 }
 
 void MediaTimelineControllerImpl::GetTimelineConsumer(
-    fidl::InterfaceRequest<TimelineConsumer> timeline_consumer) {
+    f1dl::InterfaceRequest<TimelineConsumer> timeline_consumer) {
   if (consumer_binding_.is_bound()) {
     consumer_binding_.Unbind();
   }

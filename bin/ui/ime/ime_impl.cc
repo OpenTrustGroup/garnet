@@ -16,8 +16,8 @@ ImeImpl::ImeImpl(
     mozart::KeyboardType keyboard_type,
     mozart::InputMethodAction action,
     mozart::TextInputStatePtr initial_state,
-    fidl::InterfaceHandle<mozart::InputMethodEditorClient> client,
-    fidl::InterfaceRequest<mozart::InputMethodEditor> editor_request)
+    f1dl::InterfaceHandle<mozart::InputMethodEditorClient> client,
+    f1dl::InterfaceRequest<mozart::InputMethodEditor> editor_request)
     : editor_binding_(this, std::move(editor_request)),
       keyboard_type_(keyboard_type),
       action_(action),
@@ -61,7 +61,7 @@ void ImeImpl::InjectInput(mozart::InputEventPtr event) {
     if (keyboard->code_point) {
       FXL_VLOG(1) << "Appending character (state = " << *state_ << "')";
       state_->revision++;
-      std::string text = state_->text.To<std::string>();
+      std::string text = state_->text;
       // FIXME (jpoichet) Actually handle UTF8 here
       std::string replacement = "";
       replacement += static_cast<char>(keyboard->code_point);
@@ -70,7 +70,7 @@ void ImeImpl::InjectInput(mozart::InputEventPtr event) {
       int64_t extent = state_->selection->extent;
       extent = extent == -1 ? 0 : extent;
       text.replace(base, extent - base, replacement);
-      state_->text = fidl::String(text);
+      state_->text = f1dl::String(text);
       state_->selection->base = base + replacement.length();
       state_->selection->extent = state_->selection->base;
 
@@ -103,7 +103,7 @@ void ImeImpl::InjectInput(mozart::InputEventPtr event) {
           state_->revision++;
           // TODO(jpoichet) actually pay attention to affinity
           state_->selection->extent =
-              (unsigned)state_->selection->extent < state_->text.size()
+              (unsigned)state_->selection->extent < state_->text->size()
                   ? state_->selection->extent + 1
                   : state_->selection->extent;
           if (keyboard->modifiers & mozart::kModifierShift) {

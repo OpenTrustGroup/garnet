@@ -4,13 +4,15 @@
 
 #include "garnet/lib/ui/scenic/tests/mocks.h"
 
+#include "garnet/lib/ui/mozart/command_dispatcher.h"
+
 namespace scene_manager {
 namespace test {
 
 SessionForTest::SessionForTest(SessionId id,
                                Engine* engine,
-                               EventReporter* event_reporter,
-                               ErrorReporter* error_reporter)
+                               scene_manager::EventReporter* event_reporter,
+                               mz::ErrorReporter* error_reporter)
     : Session(id, engine, event_reporter, error_reporter) {}
 
 void SessionForTest::TearDown() {
@@ -18,26 +20,29 @@ void SessionForTest::TearDown() {
 }
 
 SessionHandlerForTest::SessionHandlerForTest(
+    mz::CommandDispatcherContext context,
     Engine* engine,
     SessionId session_id,
-    ::fidl::InterfaceRequest<scenic::Session> request,
-    ::fidl::InterfaceHandle<scenic::SessionListener> listener)
-    : SessionHandler(engine,
+    mz::EventReporter* event_reporter,
+    mz::ErrorReporter* error_reporter)
+    : SessionHandler(std::move(context),
+                     engine,
                      session_id,
-                     std::move(request),
-                     std::move(listener)),
+                     event_reporter,
+                     error_reporter),
       enqueue_count_(0),
       present_count_(0) {}
 
-void SessionHandlerForTest::Enqueue(::fidl::Array<scenic::OpPtr> ops) {
+void SessionHandlerForTest::Enqueue(::f1dl::Array<ui_mozart::CommandPtr> ops) {
   SessionHandler::Enqueue(std::move(ops));
   ++enqueue_count_;
 }
 
-void SessionHandlerForTest::Present(uint64_t presentation_time,
-                                    ::fidl::Array<zx::event> acquire_fences,
-                                    ::fidl::Array<zx::event> release_fences,
-                                    const PresentCallback& callback) {
+void SessionHandlerForTest::Present(
+    uint64_t presentation_time,
+    ::f1dl::Array<zx::event> acquire_fences,
+    ::f1dl::Array<zx::event> release_fences,
+    const ui_mozart::Session::PresentCallback& callback) {
   SessionHandler::Present(presentation_time, std::move(acquire_fences),
                           std::move(release_fences), callback);
   ++present_count_;
@@ -53,17 +58,26 @@ void ReleaseFenceSignallerForTest::AddCPUReleaseFence(zx::event fence) {
   fence.signal(0u, escher::kFenceSignalled);
 }
 
+SessionManagerForTest::SessionManagerForTest(UpdateScheduler* update_scheduler)
+    : SessionManager(update_scheduler) {}
+
+std::unique_ptr<SessionHandler> SessionManagerForTest::CreateSessionHandler(
+    mz::CommandDispatcherContext context,
+    Engine* engine,
+    SessionId session_id,
+    mz::EventReporter* event_reporter,
+    mz::ErrorReporter* error_reporter) const {
+  return std::make_unique<SessionHandlerForTest>(
+      std::move(context), engine, session_id, event_reporter, error_reporter);
+}
+
 EngineForTest::EngineForTest(DisplayManager* display_manager,
                              std::unique_ptr<escher::ReleaseFenceSignaller> r,
                              escher::Escher* escher)
     : Engine(display_manager, std::move(r), escher) {}
 
-std::unique_ptr<SessionHandler> EngineForTest::CreateSessionHandler(
-    SessionId session_id,
-    ::fidl::InterfaceRequest<scenic::Session> request,
-    ::fidl::InterfaceHandle<scenic::SessionListener> listener) {
-  return std::make_unique<SessionHandlerForTest>(
-      this, session_id, std::move(request), std::move(listener));
+std::unique_ptr<SessionManager> EngineForTest::InitializeSessionManager() {
+  return std::make_unique<SessionManagerForTest>(this);
 }
 
 }  // namespace test

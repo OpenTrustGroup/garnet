@@ -6,8 +6,11 @@
 
 extern crate failure;
 extern crate fidl;
-extern crate fuchsia_app;
-extern crate tokio_core;
+extern crate fuchsia_app as app;
+extern crate fuchsia_async as async;
+#[macro_use]
+extern crate structopt;
+use structopt::StructOpt;
 
 // This is the generated crate containing FIDL bindings for the Echo service.
 extern crate garnet_examples_fidl_services;
@@ -20,10 +23,7 @@ use garnet_examples_fidl_services::Echo;
 use failure::{Error, ResultExt};
 
 // The fuchsia_app crate allows us to start up applications.
-use fuchsia_app::client::Launcher;
-
-// The Tokio Reactor is used to handle and distribute IO events.
-use tokio_core::reactor;
+use app::client::Launcher;
 
 fn main() {
     if let Err(e) = main_res() {
@@ -33,23 +33,33 @@ fn main() {
 
 /// Starts an echo server, sends a message, and prints the response.
 fn main_res() -> Result<(), Error> {
-    let mut core = reactor::Core::new().context("Error creating core")?;
-    let handle = core.handle();
+    let mut executor = async::Executor::new().context("Error creating executor")?;
 
-    let launcher = Launcher::new(&handle).context("Failed to open launcher service")?;
+    let launcher = Launcher::new().context("Failed to open launcher service")?;
+
+    #[derive(StructOpt, Debug)]
+    #[structopt(name = "echo_client_rust")]
+    struct Opt {
+        #[structopt(long = "server", help = "URL of echo server",
+                    default_value = "echo_server_rust")]
+        server_url: String,
+    }
 
     // Launch the server and connect to the echo service.
-    let echo_url = std::env::args().nth(1).unwrap_or_else(|| "echo_server_rust".into());
+    let Opt { server_url } = Opt::from_args();
 
-    let app = launcher.launch(echo_url, None, &handle).context("Failed to launch echo service")?;
-    let echo = app.connect_to_service::<Echo::Service>(&handle).context("Failed to connect to echo service")?;
+    let app = launcher.launch(server_url, None)
+                      .context("Failed to launch echo service")?;
+
+    let echo = app.connect_to_service::<Echo::Service>()
+                  .context("Failed to connect to echo service")?;
 
     // Send "echo msg" to the server.
     // `response_fut` is a `Future` which returns `Option<String>`.
     let response_fut = echo.echo_string(Some(String::from("echo msg")));
 
-    // Run `response_fut` to completion.
-    let response = core.run(response_fut).context("Error getting echo response")?;
+    // Run `response_fut` to completion using 2 worker threads.
+    let response = executor.run(response_fut, 2).context("Error getting echo response")?;
     println!("{:?}", response);
 
     Ok(())

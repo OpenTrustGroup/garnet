@@ -42,25 +42,25 @@ class App : public mozart::Presenter,
 
  private:
   // |Presenter|:
-  void Present(fidl::InterfaceHandle<mozart::ViewOwner> view_owner,
-               fidl::InterfaceRequest<mozart::Presentation>
+  void Present(f1dl::InterfaceHandle<mozart::ViewOwner> view_owner,
+               f1dl::InterfaceRequest<mozart::Presentation>
                    presentation_request) override;
 
   // |InputDeviceRegistry|:
   void RegisterDevice(mozart::DeviceDescriptorPtr descriptor,
-                      fidl::InterfaceRequest<mozart::InputDevice>
+                      f1dl::InterfaceRequest<mozart::InputDevice>
                           input_device_request) override;
 
   void InitializeServices();
   void Reset();
 
   std::unique_ptr<app::ApplicationContext> application_context_;
-  fidl::BindingSet<mozart::Presenter> presenter_bindings_;
-  fidl::BindingSet<mozart::InputDeviceRegistry> input_receiver_bindings_;
+  f1dl::BindingSet<mozart::Presenter> presenter_bindings_;
+  f1dl::BindingSet<mozart::InputDeviceRegistry> input_receiver_bindings_;
   mozart::input::InputReader input_reader_;
 
   mozart::ViewManagerPtr view_manager_;
-  scenic::SceneManagerPtr scene_manager_;
+  ui_mozart::MozartPtr mozart_;
 
   std::vector<std::unique_ptr<Presentation>> presentations_;
 

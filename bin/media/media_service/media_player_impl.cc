@@ -5,97 +5,83 @@
 #include "garnet/bin/media/media_service/media_player_impl.h"
 
 #include "garnet/bin/media/fidl/fidl_formatting.h"
+#include "garnet/bin/media/media_service/video_renderer_impl.h"
 #include "garnet/bin/media/util/callback_joiner.h"
 #include "lib/app/cpp/connect.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
-#include "lib/media/timeline/fidl_type_conversions.h"
+#include "lib/media/fidl/audio_server.fidl.h"
 #include "lib/media/timeline/timeline.h"
 
 namespace media {
 
 // static
 std::shared_ptr<MediaPlayerImpl> MediaPlayerImpl::Create(
-    fidl::InterfaceHandle<SeekingReader> reader_handle,
-    fidl::InterfaceHandle<MediaRenderer> audio_renderer_handle,
-    fidl::InterfaceHandle<MediaRenderer> video_renderer_handle,
-    fidl::InterfaceRequest<MediaPlayer> request,
-    MediaServiceImpl* owner) {
-  return std::shared_ptr<MediaPlayerImpl>(new MediaPlayerImpl(
-      std::move(reader_handle), std::move(audio_renderer_handle),
-      std::move(video_renderer_handle), std::move(request), owner));
+    f1dl::InterfaceRequest<MediaPlayer> request,
+    MediaComponentFactory* owner) {
+  return std::shared_ptr<MediaPlayerImpl>(
+      new MediaPlayerImpl(std::move(request), owner));
 }
 
-MediaPlayerImpl::MediaPlayerImpl(
-    fidl::InterfaceHandle<SeekingReader> reader_handle,
-    fidl::InterfaceHandle<MediaRenderer> audio_renderer_handle,
-    fidl::InterfaceHandle<MediaRenderer> video_renderer_handle,
-    fidl::InterfaceRequest<MediaPlayer> request,
-    MediaServiceImpl* owner)
-    : MediaServiceImpl::Product<MediaPlayer>(this, std::move(request), owner),
-      reader_handle_(std::move(reader_handle)) {
-  RCHECK(audio_renderer_handle || video_renderer_handle);
+MediaPlayerImpl::MediaPlayerImpl(f1dl::InterfaceRequest<MediaPlayer> request,
+                                 MediaComponentFactory* owner)
+    : MediaComponentFactory::Product<MediaPlayer>(this,
+                                                  std::move(request),
+                                                  owner) {
   FXL_DCHECK(owner);
 
-  if (audio_renderer_handle) {
-    streams_by_medium_[MediaTypeMedium::AUDIO].renderer_handle_ =
-        std::move(audio_renderer_handle);
-  }
+  status_publisher_.SetCallbackRunner(
+      [this](const GetStatusCallback& callback, uint64_t version) {
+        MediaPlayerStatusPtr status = MediaPlayerStatus::New();
+        status->timeline_transform =
+            static_cast<TimelineTransformPtr>(timeline_function_);
+        status->end_of_stream = end_of_stream_;
 
-  if (video_renderer_handle) {
-    streams_by_medium_[MediaTypeMedium::VIDEO].renderer_handle_ =
-        std::move(video_renderer_handle);
-  }
-
-  FLOG(log_channel_, BoundAs(FLOG_BINDING_KOID(binding())));
-
-  status_publisher_.SetCallbackRunner([this](const GetStatusCallback& callback,
-                                             uint64_t version) {
-    MediaPlayerStatusPtr status = MediaPlayerStatus::New();
-    status->timeline_transform = TimelineTransform::From(timeline_function_);
-    status->end_of_stream = end_of_stream_;
-
-    if (stream_types_) {
-      for (MediaTypePtr& stream_type : stream_types_) {
-        switch (stream_type->medium) {
-          case MediaTypeMedium::AUDIO:
-            status->content_has_audio = true;
-            break;
-          case MediaTypeMedium::VIDEO:
-            status->content_has_video = true;
-            break;
-          default:
-            break;
+        if (stream_types_) {
+          for (MediaTypePtr& stream_type : stream_types_) {
+            switch (stream_type->medium) {
+              case MediaTypeMedium::AUDIO:
+                status->content_has_audio = true;
+                break;
+              case MediaTypeMedium::VIDEO:
+                status->content_has_video = true;
+                break;
+              default:
+                break;
+            }
+          }
         }
-      }
-    }
 
-    if (source_status_) {
-      status->audio_connected = source_status_->audio_connected;
-      status->video_connected = source_status_->video_connected;
-      status->metadata = source_status_->metadata.Clone();
+        if (source_status_) {
+          status->audio_connected = source_status_->audio_connected;
+          status->video_connected = source_status_->video_connected;
+          status->metadata = source_status_->metadata.Clone();
 
-      if (source_status_->problem) {
-        status->problem = source_status_->problem.Clone();
-      } else if (state_ >= State::kFlushed && !status->audio_connected &&
-                 !status->video_connected) {
-        // The source isn't reporting a problem, but neither audio nor video
-        // is connected. We report this as a problem so the client doesn't
-        // have to check these values separately.
-        status->problem = Problem::New();
-        status->problem->type = Problem::kProblemMediaTypeNotSupported;
-      }
-    }
+          if (video_renderer_impl_) {
+            status->video_size = video_renderer_impl_->GetSize().Clone();
+            status->pixel_aspect_ratio =
+                video_renderer_impl_->GetPixelAspectRatio().Clone();
+          }
 
-    callback(version, std::move(status));
-  });
+          if (source_status_->problem) {
+            status->problem = source_status_->problem.Clone();
+          } else if (state_ >= State::kFlushed && !status->audio_connected &&
+                     !status->video_connected) {
+            // The source isn't reporting a problem, but neither audio nor video
+            // is connected. We report this as a problem so the client doesn't
+            // have to check these values separately.
+            status->problem = Problem::New();
+            status->problem->type = Problem::kProblemMediaTypeNotSupported;
+          }
+        }
+
+        callback(version, std::move(status));
+      });
 
   state_ = State::kInactive;
 
-  media_service_ = owner->ConnectToEnvironmentService<MediaService>();
-
   // Create a timeline controller.
-  media_service_->CreateTimelineController(timeline_controller_.NewRequest());
+  owner->CreateTimelineController(timeline_controller_.NewRequest());
   timeline_controller_->GetControlPoint(timeline_control_point_.NewRequest());
   timeline_control_point_->GetTimelineConsumer(timeline_consumer_.NewRequest());
   HandleTimelineControlPointStatusUpdates();
@@ -103,7 +89,11 @@ MediaPlayerImpl::MediaPlayerImpl(
   MaybeCreateSource();
 }
 
-MediaPlayerImpl::~MediaPlayerImpl() {}
+MediaPlayerImpl::~MediaPlayerImpl() {
+  if (video_renderer_impl_) {
+    video_renderer_impl_->SetGeometryUpdateCallback(nullptr);
+  }
+}
 
 void MediaPlayerImpl::MaybeCreateSource() {
   if (!reader_handle_) {
@@ -112,17 +102,48 @@ void MediaPlayerImpl::MaybeCreateSource() {
 
   state_ = State::kWaiting;
 
-  media_service_->CreateSource(std::move(reader_handle_), nullptr,
-                               source_.NewRequest());
-  FLOG(log_channel_, CreatedSource(FLOG_PTR_KOID(source_)));
+  owner()->CreateSource(std::move(reader_handle_), nullptr,
+                        source_.NewRequest());
   HandleSourceStatusUpdates();
 
   source_->Describe(
-      fxl::MakeCopyable([this](fidl::Array<MediaTypePtr> stream_types) mutable {
-        FLOG(log_channel_, ReceivedSourceDescription(stream_types.Clone()));
+      fxl::MakeCopyable([this](f1dl::Array<MediaTypePtr> stream_types) mutable {
         stream_types_ = std::move(stream_types);
         ConnectSinks();
       }));
+}
+
+void MediaPlayerImpl::MaybeCreateRenderer(MediaTypeMedium medium) {
+  if (streams_by_medium_.find(medium) != streams_by_medium_.end()) {
+    // Renderer already exists.
+    return;
+  }
+
+  auto& stream = streams_by_medium_[medium];
+
+  switch (medium) {
+    case MediaTypeMedium::AUDIO: {
+      f1dl::InterfaceHandle<MediaRenderer> audio_media_renderer;
+      auto audio_server = owner()->ConnectToEnvironmentService<AudioServer>();
+      audio_server->CreateRenderer(audio_renderer_.NewRequest(),
+                                   audio_media_renderer.NewRequest());
+      stream.renderer_handle_ = std::move(audio_media_renderer);
+      if (gain_ != 1.0f) {
+        audio_renderer_->SetGain(gain_);
+      }
+    } break;
+    case MediaTypeMedium::VIDEO: {
+      f1dl::InterfaceHandle<MediaRenderer> video_media_renderer;
+      video_renderer_impl_ =
+          owner()->CreateVideoRenderer(video_media_renderer.NewRequest());
+      stream.renderer_handle_ = std::move(video_media_renderer);
+      video_renderer_impl_->SetGeometryUpdateCallback(
+          [this]() { status_publisher_.SendUpdates(); });
+    } break;
+    default:
+      FXL_DCHECK(false) << "Only audio and video are currently supported";
+      break;
+  }
 }
 
 void MediaPlayerImpl::ConnectSinks() {
@@ -131,9 +152,13 @@ void MediaPlayerImpl::ConnectSinks() {
   size_t stream_index = 0;
 
   for (MediaTypePtr& stream_type : stream_types_) {
+    MaybeCreateRenderer(stream_type->medium);
+
     auto iter = streams_by_medium_.find(stream_type->medium);
     if (iter != streams_by_medium_.end()) {
-      if (iter->second.connected_) {
+      auto& stream = iter->second;
+
+      if (stream.connected_) {
         // TODO(dalesat): How do we choose the right stream?
         FXL_DLOG(INFO) << "Stream " << stream_index
                        << " redundant, already connected to sink with medium "
@@ -142,7 +167,7 @@ void MediaPlayerImpl::ConnectSinks() {
         continue;
       }
 
-      PrepareStream(&iter->second, stream_index, stream_type,
+      PrepareStream(&stream, stream_index, stream_type,
                     callback_joiner->NewCallback());
     }
 
@@ -150,9 +175,7 @@ void MediaPlayerImpl::ConnectSinks() {
   }
 
   callback_joiner->WhenJoined([this]() {
-    FLOG(log_channel_, StreamsPrepared());
     state_ = State::kFlushed;
-    FLOG(log_channel_, Flushed());
     Update();
   });
 }
@@ -161,13 +184,10 @@ void MediaPlayerImpl::PrepareStream(Stream* stream,
                                     size_t index,
                                     const MediaTypePtr& input_media_type,
                                     const std::function<void()>& callback) {
-  FXL_DCHECK(media_service_);
-
   if (!stream->sink_) {
     FXL_DCHECK(stream->renderer_handle_);
-    media_service_->CreateSink(std::move(stream->renderer_handle_),
-                               stream->sink_.NewRequest());
-    FLOG(log_channel_, CreatedSink(index, FLOG_PTR_KOID(stream->sink_)));
+    owner()->CreateSink(std::move(stream->renderer_handle_),
+                        stream->sink_.NewRequest());
 
     MediaTimelineControlPointPtr timeline_control_point;
     stream->sink_->GetTimelineControlPoint(timeline_control_point.NewRequest());
@@ -178,7 +198,7 @@ void MediaPlayerImpl::PrepareStream(Stream* stream,
   stream->sink_->ConsumeMediaType(
       input_media_type.Clone(),
       [this, stream, index,
-       callback](fidl::InterfaceHandle<MediaPacketConsumer> consumer) {
+       callback](f1dl::InterfaceHandle<MediaPacketConsumer> consumer) {
         if (!consumer) {
           // The sink couldn't build a conversion pipeline for the media type.
           callback();
@@ -191,8 +211,7 @@ void MediaPlayerImpl::PrepareStream(Stream* stream,
         source_->GetPacketProducer(index, producer.NewRequest());
 
         // Capture producer so it survives through the callback.
-        producer->Connect(consumer.Bind(),
-                          fxl::MakeCopyable([
+        producer->Connect(consumer.Bind(), fxl::MakeCopyable([
                             this, callback, producer = std::move(producer)
                           ]() { callback(); }));
       });
@@ -244,7 +263,7 @@ void MediaPlayerImpl::Update() {
         if (!reader_transition_pending_) {
           return;
         }
-        // Falls through.
+      // Falls through.
 
       case State::kFlushed:
         // Presentation time is not progressing, and the pipeline is clear of
@@ -299,16 +318,13 @@ void MediaPlayerImpl::Update() {
                   // We've had a seek request to a new position. Refrain from
                   // seeking the source and re-enter this sequence.
                   state_ = State::kFlushed;
-                  FLOG(log_channel_, Flushed());
                   Update();
                   return;
                 }
 
                 // Seek to the new position.
-                FLOG(log_channel_, Seeking(target_position));
                 source_->Seek(target_position, [this]() {
                   state_ = State::kFlushed;
-                  FLOG(log_channel_, Flushed());
                   // Back in |kFlushed|. Call |Update| to see
                   // if there's further action to be taken.
                   Update();
@@ -330,10 +346,8 @@ void MediaPlayerImpl::Update() {
           timeline_control_point_->SetProgramRange(0, program_range_min_pts_,
                                                    kMaxTime);
 
-          FLOG(log_channel_, Priming());
           timeline_control_point_->Prime([this]() {
             state_ = State::kPrimed;
-            FLOG(log_channel_, Primed());
             // Now we're in |kPrimed|. Call |Update| to see if there's further
             // action to be taken.
             Update();
@@ -357,12 +371,10 @@ void MediaPlayerImpl::Update() {
           // |kWaiting|, issue the |Flush| request and transition to |kFlushed|
           // when the operation is complete.
           state_ = State::kWaiting;
-          FLOG(log_channel_, Flushing());
           source_->Flush(
               target_state_ != State::kFlushed && !reader_transition_pending_,
               [this]() {
                 state_ = State::kFlushed;
-                FLOG(log_channel_, Flushed());
                 // Now we're in |kFlushed|. Call |Update| to see if there's
                 // further action to be taken.
                 Update();
@@ -381,7 +393,6 @@ void MediaPlayerImpl::Update() {
           SetTimelineTransform(1.0f, Timeline::local_now() + kMinimumLeadTime,
                                [this](bool completed) {
                                  state_ = State::kPlaying;
-                                 FLOG(log_channel_, Playing());
                                  // Now we're in |kPlaying|. Call |Update| to
                                  // see if there's further action to be taken.
                                  Update();
@@ -409,7 +420,6 @@ void MediaPlayerImpl::Update() {
           SetTimelineTransform(0.0f, Timeline::local_now() + kMinimumLeadTime,
                                [this](bool completed) {
                                  state_ = State::kPrimed;
-                                 FLOG(log_channel_, Primed());
                                  // Now we're in |kPrimed|. Call |Update| to see
                                  // if there's further action to be taken.
                                  Update();
@@ -425,7 +435,6 @@ void MediaPlayerImpl::Update() {
           // itself, so we just need to transition to |kPrimed|.
           target_state_ = State::kPrimed;
           state_ = State::kPrimed;
-          FLOG(log_channel_, EndOfStream());
           // Loop around to check if there's more work to do.
           break;
         }
@@ -446,7 +455,6 @@ void MediaPlayerImpl::SetTimelineTransform(
     const TimelineConsumer::SetTimelineTransformCallback callback) {
   TimelineTransformPtr timeline_transform =
       CreateTimelineTransform(rate, reference_time);
-  FLOG(log_channel_, SettingTimelineTransform(timeline_transform.Clone()));
   timeline_consumer_->SetTimelineTransform(std::move(timeline_transform),
                                            callback);
 }
@@ -467,31 +475,21 @@ TimelineTransformPtr MediaPlayerImpl::CreateTimelineTransform(
   return result;
 }
 
-void MediaPlayerImpl::GetStatus(uint64_t version_last_seen,
-                                const GetStatusCallback& callback) {
-  status_publisher_.Get(version_last_seen, callback);
+void MediaPlayerImpl::SetHttpSource(const f1dl::String& http_url) {
+  f1dl::InterfaceHandle<SeekingReader> reader;
+  owner()->CreateHttpReader(http_url, reader.NewRequest());
+  SetReader(std::move(reader));
 }
 
-void MediaPlayerImpl::Play() {
-  FLOG(log_channel_, PlayRequested());
-  target_state_ = State::kPlaying;
-  Update();
+void MediaPlayerImpl::SetFileSource(zx::channel file_channel) {
+  f1dl::InterfaceHandle<SeekingReader> reader;
+  owner()->CreateFileChannelReader(std::move(file_channel),
+                                   reader.NewRequest());
+  SetReader(std::move(reader));
 }
 
-void MediaPlayerImpl::Pause() {
-  FLOG(log_channel_, PauseRequested());
-  target_state_ = State::kPrimed;
-  Update();
-}
-
-void MediaPlayerImpl::Seek(int64_t position) {
-  FLOG(log_channel_, SeekRequested(position));
-  target_position_ = position;
-  Update();
-}
-
-void MediaPlayerImpl::SetReader(
-    fidl::InterfaceHandle<SeekingReader> reader_handle) {
+void MediaPlayerImpl::SetReaderSource(
+    f1dl::InterfaceHandle<SeekingReader> reader_handle) {
   if (!reader_handle && !source_) {
     // There was already no reader. Nothing to do.
     return;
@@ -505,12 +503,86 @@ void MediaPlayerImpl::SetReader(
   reader_handle_ = std::move(reader_handle);
 
   // We clear |target_position_| so that a previously-requested seek that's
-  // still pending will not be applied to the new reader. The client can call
-  // |Seek| between this point and when the new graph is set up, and it will
-  // work.
+  // still pending will not be applied to the new reader. The client can
+  // call |Seek| between this point and when the new graph is set up, and it
+  // will work.
   target_position_ = kUnspecifiedTime;
 
   Update();
+}
+
+void MediaPlayerImpl::Play() {
+  target_state_ = State::kPlaying;
+  Update();
+}
+
+void MediaPlayerImpl::Pause() {
+  target_state_ = State::kPrimed;
+  Update();
+}
+
+void MediaPlayerImpl::Seek(int64_t position) {
+  target_position_ = position;
+  Update();
+}
+
+void MediaPlayerImpl::GetStatus(uint64_t version_last_seen,
+                                const GetStatusCallback& callback) {
+  status_publisher_.Get(version_last_seen, callback);
+}
+
+void MediaPlayerImpl::SetGain(float gain) {
+  if (audio_renderer_) {
+    audio_renderer_->SetGain(gain);
+  } else {
+    gain_ = gain;
+  }
+}
+
+void MediaPlayerImpl::CreateView(
+    f1dl::InterfaceHandle<mozart::ViewManager> view_manager,
+    f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request) {
+  MaybeCreateRenderer(MediaTypeMedium::VIDEO);
+  if (!video_renderer_impl_) {
+    return;
+  }
+
+  video_renderer_impl_->CreateView(view_manager.Bind(),
+                                   std::move(view_owner_request));
+}
+
+void MediaPlayerImpl::SetAudioRenderer(
+    f1dl::InterfaceHandle<AudioRenderer> audio_renderer,
+    f1dl::InterfaceHandle<MediaRenderer> media_renderer) {
+  if (streams_by_medium_.find(MediaTypeMedium::AUDIO) !=
+      streams_by_medium_.end()) {
+    // We already have this renderer. Do nothing.
+    return;
+  }
+
+  streams_by_medium_[MediaTypeMedium::AUDIO].renderer_handle_ =
+      std::move(media_renderer);
+
+  if (audio_renderer) {
+    audio_renderer_.Bind(std::move(audio_renderer));
+  }
+}
+
+void MediaPlayerImpl::SetReader(
+    f1dl::InterfaceHandle<SeekingReader> reader_handle) {
+  SetReaderSource(std::move(reader_handle));
+}
+
+void MediaPlayerImpl::SetVideoRenderer(
+    f1dl::InterfaceHandle<MediaRenderer> media_renderer) {
+  if (streams_by_medium_.find(MediaTypeMedium::VIDEO) !=
+      streams_by_medium_.end()) {
+    // We already have this renderer. Do nothing.
+    return;
+  }
+
+  streams_by_medium_[MediaTypeMedium::VIDEO].renderer_handle_ =
+      std::move(media_renderer);
 }
 
 void MediaPlayerImpl::HandleSourceStatusUpdates(uint64_t version,
@@ -530,7 +602,8 @@ void MediaPlayerImpl::HandleTimelineControlPointStatusUpdates(
     uint64_t version,
     MediaTimelineControlPointStatusPtr status) {
   if (status) {
-    timeline_function_ = status->timeline_transform.To<TimelineFunction>();
+    timeline_function_ =
+        static_cast<TimelineFunction>(status->timeline_transform);
     end_of_stream_ = status->end_of_stream;
     status_publisher_.SendUpdates();
     Update();

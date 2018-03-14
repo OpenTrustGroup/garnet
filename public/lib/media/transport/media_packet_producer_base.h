@@ -2,16 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_MEDIA_TRANSPORT_MEDIA_PACKET_PRODUCER_BASE_H_
+#define LIB_MEDIA_TRANSPORT_MEDIA_PACKET_PRODUCER_BASE_H_
 
 #include <limits>
+#include <mutex>
 
-#include "lib/fxl/synchronization/mutex.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
 #include "lib/fxl/synchronization/thread_checker.h"
-#include "lib/media/fidl/logs/media_packet_producer_channel.fidl.h"
 #include "lib/media/fidl/media_transport.fidl.h"
-#include "lib/media/flog/flog.h"
 #include "lib/media/timeline/timeline_rate.h"
 #include "lib/media/transport/shared_buffer_set_allocator.h"
 
@@ -35,7 +34,7 @@ class MediaPacketProducerBase {
                const MediaPacketProducer::ConnectCallback& callback);
 
   // Disconnects from the consumer.
-  void Disconnect() { consumer_.Unbind(); }
+  void Disconnect();
 
   // Determines if we are connected to a consumer.
   bool is_connected() { return consumer_.is_bound(); }
@@ -77,10 +76,7 @@ class MediaPacketProducerBase {
   // Called when demand is updated. If demand is updated in a SupplyPacket
   // callback, the DemandUpdatedCallback is called before the
   // ProducePacketCallback.
-  // NOTE: We could provide a default implementation, but that makes 'this'
-  // have a null value during member initialization, thereby breaking
-  // FLOG_INSTANCE_CHANNEL. As a workaround, this method has been made pure
-  // virtual.
+  // TODO(dalesat): Default implementation?
   virtual void OnDemandUpdated(uint32_t min_packets_outstanding,
                                int64_t min_pts) = 0;
 
@@ -88,6 +84,9 @@ class MediaPacketProducerBase {
   virtual void OnFailure();
 
  private:
+  // Initializes demand to 0.
+  void ResetDemand();
+
   // Handles a demand update callback or, if called with default parameters,
   // initiates demand update requests.
   void HandleDemandUpdate(MediaPacketDemandPtr demand = nullptr);
@@ -99,19 +98,17 @@ class MediaPacketProducerBase {
   SharedBufferSetAllocator allocator_;
   MediaPacketConsumerPtr consumer_;
   bool flush_in_progress_ = false;
-  uint64_t prev_packet_label_ = 0;
 
-  mutable fxl::Mutex mutex_;
+  mutable std::mutex mutex_;
   MediaPacketDemand demand_ FXL_GUARDED_BY(mutex_);
-  uint32_t packets_outstanding_ FXL_GUARDED_BY(mutex_) = 0;
+  uint32_t packets_outstanding_ FXL_GUARDED_BY(mutex_);
   int64_t pts_last_produced_ FXL_GUARDED_BY(mutex_) =
       std::numeric_limits<int64_t>::min();
   bool end_of_stream_ FXL_GUARDED_BY(mutex_) = false;
 
   FXL_DECLARE_THREAD_CHECKER(thread_checker_);
-
- protected:
-  FLOG_INSTANCE_CHANNEL(logs::MediaPacketProducerChannel, log_channel_);
 };
 
 }  // namespace media
+
+#endif  // LIB_MEDIA_TRANSPORT_MEDIA_PACKET_PRODUCER_BASE_H_

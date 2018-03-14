@@ -33,16 +33,19 @@ impl WlanPhy {
         let dev = OpenOptions::new().read(true).write(true).open(&path)?;
         let mut path_buf = PathBuf::new();
         path_buf.push(path);
-        Ok(WlanPhy { dev_path: path_buf, dev_node: dev })
+        Ok(WlanPhy {
+            dev_path: path_buf,
+            dev_node: dev,
+        })
     }
 
     /// Queries the WLAN Phy device for its capabilities.
-    pub fn query(&self) -> Result<wlan::WlanInfo, zircon::Status> {
+    pub fn query(&self) -> Result<wlan::WlanPhyInfo, zircon::Status> {
         sys::query_wlanphy_device(&self.dev_node).map_err(|_| zircon::Status::INTERNAL)
     }
 
     /// Creates a new WLAN Iface with the given role.
-    pub fn create_iface(&self, role: wlan::MacRole) -> Result<wlan::WlanIface, zircon::Status> {
+    pub fn create_iface(&self, role: wlan::MacRole) -> Result<wlan::WlanIfaceInfo, zircon::Status> {
         sys::create_wlaniface(&self.dev_node, role).map_err(|_| zircon::Status::INTERNAL)
     }
 
@@ -54,6 +57,8 @@ impl WlanPhy {
 
 impl fmt::Debug for WlanPhy {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        f.debug_struct("WlanPhy").field("path", &self.dev_path).finish()
+        f.debug_struct("WlanPhy")
+            .field("path", &self.dev_path)
+            .finish()
     }
 }

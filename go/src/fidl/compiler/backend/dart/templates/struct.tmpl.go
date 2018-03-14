@@ -6,47 +6,47 @@ package templates
 
 const Struct = `
 {{- define "StructDeclaration" -}}
-class {{ .Name }} extends Encodable {
-
-  {{- range .Members }}
-  final {{ .Type.Decl }} {{ .Name }};
-  {{- end }}
-
+class {{ .Name }} extends $fidl.Struct {
   const {{ .Name }}({
-  {{- range .Members }}
-    {{- if not .Type.Nullable }}
-    @required
-    {{- end }}
-    this.{{ .Name }},
-  {{- end }}
+{{- range .Members }}
+    {{ if not .Type.Nullable }}{{ if not .DefaultValue }}@required {{ end }}{{ end -}}
+    this.{{ .Name }}{{ if .DefaultValue }}: {{ .DefaultValue }}{{ end }},
+{{- end }}
   });
+
+  {{ .Name }}._(List<Object> argv)
+    :
+{{- range $index, $member := .Members -}}
+  {{- if $index }},
+      {{ else }} {{ end -}}
+    {{ .Name }} = argv[{{ $index }}]
+{{- end }};
+
+{{- range .Members }}
+  final {{ .Type.Decl }} {{ .Name }};
+{{- end }}
+
+  @override
+  List<Object> get $fields {
+    return <Object>[
+  {{- range .Members }}
+      {{ .Name }},
+  {{- end }}
+    ];
+  }
 
   @override
   String toString() {
-    return "{{ .Name }}(
-  {{- range $index, $member := .Members -}}
+    return '{{ .Name }}(
+{{- range $index, $member := .Members -}}
       {{- if $index }}, {{ end -}}{{ $member.Name  }}: ${{ $member.Name  }}
-  {{- end -}}
-    )";
+{{- end -}}
+    )';
   }
 
-  Map toJson() {
-    Map map = new Map();
-  {{- range .Members }}
-    map["{{ .Name }}"] = {{ .Name }};
-  {{- end }}
-    return map;
-  }
-
-  @override
-  int get encodedSize => {{ .EncodedSize }};
-
-  @override
-  void encode(Encoder encoder, int offset) {
-  {{- range .Members }}
-    {{ .Type.EncodeStanza .Name .Offset }};
-  {{- end }}
-  }
+  static {{ .Name }} _ctor(List<Object> argv) => new {{ .Name }}._(argv);
 }
+
+const $fidl.StructType<{{ .Name }}> {{ .TypeSymbol }} = {{ .TypeExpr }};
 {{ end }}
 `

@@ -16,7 +16,7 @@ namespace view_manager {
 ViewTreeState::ViewTreeState(
     ViewRegistry* registry,
     mozart::ViewTreeTokenPtr view_tree_token,
-    fidl::InterfaceRequest<mozart::ViewTree> view_tree_request,
+    f1dl::InterfaceRequest<mozart::ViewTree> view_tree_request,
     mozart::ViewTreeListenerPtr view_tree_listener,
     const std::string& label)
     : view_tree_token_(std::move(view_tree_token)),
@@ -49,6 +49,7 @@ ViewTreeState* ViewTreeState::AsViewTreeState() {
 }
 
 void ViewTreeState::RequestFocus(ViewStub* child_stub) {
+  FXL_DCHECK(child_stub != nullptr);
   if (child_stub->is_unavailable())
     return;
   focused_view_ = child_stub->GetWeakPtr();

@@ -56,12 +56,11 @@ pub const PA_FDIO_EVENT: u32 = 0x34;
 pub const PA_FDIO_LOGGER: u32 = 0x35;
 pub const PA_FDIO_SOCKET: u32 = 0x36;
 
-pub const PA_SERVICE_REQUEST: u32 = 0x3B;
+pub const PA_DIRECTORY_REQUEST: u32 = 0x3B;
 // Used by devmgr and devhosts
 pub const PA_RESOURCE: u32 = 0x3F;
 // Handle types used by the application model
 pub const PA_APP_LAUNCHER: u32 = 0x41;
-pub const PA_APP_SERVICES: u32 = 0x43;
 // Channel for dynamic loader service
 pub const PA_SVC_LOADER: u32 = 0x10;
 // VM object handle for the main executable file

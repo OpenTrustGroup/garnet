@@ -15,23 +15,22 @@ namespace media {
 
 // static
 std::shared_ptr<MediaDemuxImpl> MediaDemuxImpl::Create(
-    fidl::InterfaceHandle<SeekingReader> reader,
-    fidl::InterfaceRequest<MediaSource> request,
-    MediaServiceImpl* owner) {
+    f1dl::InterfaceHandle<SeekingReader> reader,
+    f1dl::InterfaceRequest<MediaSource> request,
+    MediaComponentFactory* owner) {
   return std::shared_ptr<MediaDemuxImpl>(
       new MediaDemuxImpl(std::move(reader), std::move(request), owner));
 }
 
-MediaDemuxImpl::MediaDemuxImpl(fidl::InterfaceHandle<SeekingReader> reader,
-                               fidl::InterfaceRequest<MediaSource> request,
-                               MediaServiceImpl* owner)
-    : MediaServiceImpl::Product<MediaSource>(this, std::move(request), owner),
+MediaDemuxImpl::MediaDemuxImpl(f1dl::InterfaceHandle<SeekingReader> reader,
+                               f1dl::InterfaceRequest<MediaSource> request,
+                               MediaComponentFactory* owner)
+    : MediaComponentFactory::Product<MediaSource>(this,
+                                                  std::move(request),
+                                                  owner),
       task_runner_(fsl::MessageLoop::GetCurrent()->task_runner()),
       graph_(owner->multiproc_task_runner()) {
   FXL_DCHECK(reader);
-
-  FLOG(log_channel_, BoundAs(FLOG_BINDING_KOID(binding())));
-
   FXL_DCHECK(task_runner_);
 
   status_publisher_.SetCallbackRunner(
@@ -82,7 +81,7 @@ MediaDemuxImpl::MediaDemuxImpl(fidl::InterfaceHandle<SeekingReader> reader,
   demux_->SetStatusCallback([this](const std::unique_ptr<Metadata>& metadata,
                                    const std::string& problem_type,
                                    const std::string& problem_details) {
-    metadata_ = MediaMetadata::From(metadata);
+    metadata_ = fxl::To<MediaMetadataPtr>(metadata);
     if (problem_type.empty()) {
       problem_.reset();
       status_publisher_.SendUpdates();
@@ -110,11 +109,6 @@ void MediaDemuxImpl::OnDemuxInitialized(Result result) {
 
     streams_.back()->producer()->SetConnectionStateChangedCallback(
         [this]() { status_publisher_.SendUpdates(); });
-
-    FLOG(log_channel_,
-         NewStream(streams_.size() - 1,
-                   MediaType::From(streams_.back()->stream_type()),
-                   FLOG_ADDRESS(streams_.back()->producer().get())));
   }
 
   graph_.Prepare();
@@ -128,16 +122,16 @@ void MediaDemuxImpl::ReportProblem(const std::string& type,
                                    const std::string& details) {
   problem_ = Problem::New();
   problem_->type = type;
-  problem_->details = details.empty() ? nullptr : fidl::String(details);
+  problem_->details = details.empty() ? nullptr : f1dl::String(details);
   status_publisher_.SendUpdates();
 }
 
 void MediaDemuxImpl::Describe(const DescribeCallback& callback) {
   init_complete_.When([this, callback]() {
-    fidl::Array<MediaTypePtr> result =
-        fidl::Array<MediaTypePtr>::New(streams_.size());
+    f1dl::Array<MediaTypePtr> result =
+        f1dl::Array<MediaTypePtr>::New(streams_.size());
     for (size_t i = 0; i < streams_.size(); i++) {
-      result[i] = MediaType::From(streams_[i]->stream_type());
+      result[i] = fxl::To<MediaTypePtr>(streams_[i]->stream_type());
     }
 
     callback(std::move(result));
@@ -146,7 +140,7 @@ void MediaDemuxImpl::Describe(const DescribeCallback& callback) {
 
 void MediaDemuxImpl::GetPacketProducer(
     uint32_t stream_index,
-    fidl::InterfaceRequest<MediaPacketProducer> producer) {
+    f1dl::InterfaceRequest<MediaPacketProducer> producer) {
   RCHECK(init_complete_.occurred());
 
   if (stream_index >= streams_.size()) {
@@ -197,7 +191,7 @@ MediaDemuxImpl::Stream::Stream(OutputRef output,
 MediaDemuxImpl::Stream::~Stream() {}
 
 void MediaDemuxImpl::Stream::BindPacketProducer(
-    fidl::InterfaceRequest<MediaPacketProducer> producer) {
+    f1dl::InterfaceRequest<MediaPacketProducer> producer) {
   FXL_DCHECK(producer_);
   producer_->Bind(std::move(producer));
 }

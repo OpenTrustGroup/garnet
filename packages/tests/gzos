@@ -1,0 +1,8 @@
+{
+    "languages": [
+        "cpp"
+    ],
+    "packages": {
+        "trusty_tests": "//garnet/lib/trusty:trusty_tests"
+    }
+}

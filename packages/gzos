@@ -1,2 +1,5 @@
 {
+    "imports": [
+        "garnet/packages/tests/gzos"
+    ]
 }

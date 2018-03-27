@@ -1,0 +1,86 @@
+// Copyright 2018 OpenTrustGroup. All rights reserved.
+// Copyright 2017 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#pragma once
+
+#include <fbl/ref_counted.h>
+#include <fbl/ref_ptr.h>
+#include <zx/vmo.h>
+#include <type_traits>
+
+#include "garnet/public/lib/fxl/logging.h"
+
+namespace trusty {
+
+static bool validate_range(uintptr_t addr,
+                           size_t size,
+                           uintptr_t mem_addr,
+                           size_t mem_size) {
+  uintptr_t range_end = addr + size;
+  uintptr_t mem_end = mem_addr + mem_size;
+
+  return addr >= mem_addr && range_end <= mem_end;
+}
+
+class SharedMem : public fbl::RefCounted<SharedMem> {
+ public:
+
+  static zx_status_t Create(zx::vmo vmo, fbl::RefPtr<SharedMem>* out);
+  ~SharedMem();
+
+  uintptr_t VirtToPhys(void* addr, size_t size) {
+    if (validate_vaddr_range(addr, size))
+      return paddr_ + (reinterpret_cast<uintptr_t>(addr) - vaddr_);
+    else
+      return 0;
+  }
+
+  template <typename T>
+  T* PhysToVirt(uintptr_t addr, size_t size) {
+    if (validate_paddr_range(addr, size))
+      return reinterpret_cast<T*>(vaddr_ + (addr - paddr_));
+    else
+      return nullptr;
+  }
+
+  bool validate_vaddr_range(void* addr, size_t size) {
+    return validate_range(reinterpret_cast<uintptr_t>(addr), size, vaddr_,
+                          vmo_size_);
+  }
+
+  bool validate_paddr_range(zx_paddr_t addr, size_t size) {
+    return validate_range(addr, size, paddr_, vmo_size_);
+  }
+
+  uintptr_t addr() const { return vaddr_; }
+  size_t size() const { return vmo_size_; }
+
+  template <typename T>
+  T* as(uintptr_t off) const {
+    FXL_DCHECK(off + sizeof(T) <= vmo_size_)
+        << "Region is outside of shared memory";
+    return reinterpret_cast<T*>(vaddr_ + off);
+  }
+
+  void* ptr(uintptr_t off, size_t len) const {
+    FXL_DCHECK(off + len <= vmo_size_) << "Region is outside of shared memory";
+    return reinterpret_cast<void*>(vaddr_ + off);
+  }
+
+ private:
+  SharedMem(zx::vmo vmo, size_t vmo_size, uintptr_t vaddr, uintptr_t paddr)
+      : vmo_(fbl::move(vmo)),
+        vmo_size_(vmo_size),
+        vaddr_(vaddr),
+        paddr_(paddr) {}
+
+ protected:
+  zx::vmo vmo_;
+  size_t vmo_size_;
+  uintptr_t vaddr_;
+  uintptr_t paddr_;
+};
+
+}  // namespace trusty

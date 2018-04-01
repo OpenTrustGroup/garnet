@@ -4,79 +4,82 @@
 
 #include "garnet/bin/media/media_service/media_player_impl.h"
 
+#include <fuchsia/cpp/media.h>
+
 #include "garnet/bin/media/fidl/fidl_formatting.h"
 #include "garnet/bin/media/media_service/video_renderer_impl.h"
 #include "garnet/bin/media/util/callback_joiner.h"
 #include "lib/app/cpp/connect.h"
+#include "lib/fidl/cpp/clone.h"
+#include "lib/fidl/cpp/optional.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
-#include "lib/media/fidl/audio_server.fidl.h"
 #include "lib/media/timeline/timeline.h"
 
 namespace media {
 
 // static
 std::shared_ptr<MediaPlayerImpl> MediaPlayerImpl::Create(
-    f1dl::InterfaceRequest<MediaPlayer> request,
+    fidl::InterfaceRequest<MediaPlayer> request,
     MediaComponentFactory* owner) {
   return std::shared_ptr<MediaPlayerImpl>(
       new MediaPlayerImpl(std::move(request), owner));
 }
 
-MediaPlayerImpl::MediaPlayerImpl(f1dl::InterfaceRequest<MediaPlayer> request,
+MediaPlayerImpl::MediaPlayerImpl(fidl::InterfaceRequest<MediaPlayer> request,
                                  MediaComponentFactory* owner)
-    : MediaComponentFactory::Product<MediaPlayer>(this,
-                                                  std::move(request),
-                                                  owner) {
+    : MediaComponentFactory::MultiClientProduct<MediaPlayer>(this,
+                                                             std::move(request),
+                                                             owner) {
   FXL_DCHECK(owner);
 
-  status_publisher_.SetCallbackRunner(
-      [this](const GetStatusCallback& callback, uint64_t version) {
-        MediaPlayerStatusPtr status = MediaPlayerStatus::New();
-        status->timeline_transform =
-            static_cast<TimelineTransformPtr>(timeline_function_);
-        status->end_of_stream = end_of_stream_;
+  status_publisher_.SetCallbackRunner([this](GetStatusCallback callback,
+                                             uint64_t version) {
+    MediaPlayerStatus status;
+    status.timeline_transform =
+        fidl::MakeOptional(timeline_function_.ToTimelineTransform());
+    status.end_of_stream = end_of_stream_;
 
-        if (stream_types_) {
-          for (MediaTypePtr& stream_type : stream_types_) {
-            switch (stream_type->medium) {
-              case MediaTypeMedium::AUDIO:
-                status->content_has_audio = true;
-                break;
-              case MediaTypeMedium::VIDEO:
-                status->content_has_video = true;
-                break;
-              default:
-                break;
-            }
-          }
+    if (stream_types_) {
+      for (const MediaType& stream_type : *stream_types_) {
+        switch (stream_type.medium) {
+          case MediaTypeMedium::AUDIO:
+            status.content_has_audio = true;
+            break;
+          case MediaTypeMedium::VIDEO:
+            status.content_has_video = true;
+            break;
+          default:
+            break;
         }
+      }
+    }
 
-        if (source_status_) {
-          status->audio_connected = source_status_->audio_connected;
-          status->video_connected = source_status_->video_connected;
-          status->metadata = source_status_->metadata.Clone();
+    if (source_status_) {
+      status.audio_connected = source_status_->audio_connected;
+      status.video_connected = source_status_->video_connected;
+      fidl::Clone(source_status_->metadata, &status.metadata);
 
-          if (video_renderer_impl_) {
-            status->video_size = video_renderer_impl_->GetSize().Clone();
-            status->pixel_aspect_ratio =
-                video_renderer_impl_->GetPixelAspectRatio().Clone();
-          }
+      if (video_renderer_impl_) {
+        status.video_size = fidl::MakeOptional(video_renderer_impl_->GetSize());
+        status.pixel_aspect_ratio =
+            fidl::MakeOptional(video_renderer_impl_->GetPixelAspectRatio());
+      }
 
-          if (source_status_->problem) {
-            status->problem = source_status_->problem.Clone();
-          } else if (state_ >= State::kFlushed && !status->audio_connected &&
-                     !status->video_connected) {
-            // The source isn't reporting a problem, but neither audio nor video
-            // is connected. We report this as a problem so the client doesn't
-            // have to check these values separately.
-            status->problem = Problem::New();
-            status->problem->type = Problem::kProblemMediaTypeNotSupported;
-          }
-        }
+      if (source_status_->problem) {
+        fidl::Clone(source_status_->problem, &status.problem);
+      } else if (state_ >= State::kFlushed && !status.audio_connected &&
+                 !status.video_connected) {
+        // The source isn't reporting a problem, but neither audio nor video
+        // is connected. We report this as a problem so the client doesn't
+        // have to check these values separately.
+        status.problem = Problem::New();
+        status.problem->type = kProblemMediaTypeNotSupported;
+      }
+    }
 
-        callback(version, std::move(status));
-      });
+    callback(version, std::move(status));
+  });
 
   state_ = State::kInactive;
 
@@ -106,8 +109,8 @@ void MediaPlayerImpl::MaybeCreateSource() {
                         source_.NewRequest());
   HandleSourceStatusUpdates();
 
-  source_->Describe(
-      fxl::MakeCopyable([this](f1dl::Array<MediaTypePtr> stream_types) mutable {
+  source_->Describe(fxl::MakeCopyable(
+      [this](fidl::VectorPtr<MediaType> stream_types) mutable {
         stream_types_ = std::move(stream_types);
         ConnectSinks();
       }));
@@ -123,7 +126,7 @@ void MediaPlayerImpl::MaybeCreateRenderer(MediaTypeMedium medium) {
 
   switch (medium) {
     case MediaTypeMedium::AUDIO: {
-      f1dl::InterfaceHandle<MediaRenderer> audio_media_renderer;
+      fidl::InterfaceHandle<MediaRenderer> audio_media_renderer;
       auto audio_server = owner()->ConnectToEnvironmentService<AudioServer>();
       audio_server->CreateRenderer(audio_renderer_.NewRequest(),
                                    audio_media_renderer.NewRequest());
@@ -133,7 +136,7 @@ void MediaPlayerImpl::MaybeCreateRenderer(MediaTypeMedium medium) {
       }
     } break;
     case MediaTypeMedium::VIDEO: {
-      f1dl::InterfaceHandle<MediaRenderer> video_media_renderer;
+      fidl::InterfaceHandle<MediaRenderer> video_media_renderer;
       video_renderer_impl_ =
           owner()->CreateVideoRenderer(video_media_renderer.NewRequest());
       stream.renderer_handle_ = std::move(video_media_renderer);
@@ -151,10 +154,10 @@ void MediaPlayerImpl::ConnectSinks() {
 
   size_t stream_index = 0;
 
-  for (MediaTypePtr& stream_type : stream_types_) {
-    MaybeCreateRenderer(stream_type->medium);
+  for (const MediaType& stream_type : *stream_types_) {
+    MaybeCreateRenderer(stream_type.medium);
 
-    auto iter = streams_by_medium_.find(stream_type->medium);
+    auto iter = streams_by_medium_.find(stream_type.medium);
     if (iter != streams_by_medium_.end()) {
       auto& stream = iter->second;
 
@@ -162,7 +165,7 @@ void MediaPlayerImpl::ConnectSinks() {
         // TODO(dalesat): How do we choose the right stream?
         FXL_DLOG(INFO) << "Stream " << stream_index
                        << " redundant, already connected to sink with medium "
-                       << stream_type->medium;
+                       << stream_type.medium;
         ++stream_index;
         continue;
       }
@@ -182,7 +185,7 @@ void MediaPlayerImpl::ConnectSinks() {
 
 void MediaPlayerImpl::PrepareStream(Stream* stream,
                                     size_t index,
-                                    const MediaTypePtr& input_media_type,
+                                    const MediaType& input_media_type,
                                     const std::function<void()>& callback) {
   if (!stream->sink_) {
     FXL_DCHECK(stream->renderer_handle_);
@@ -195,10 +198,12 @@ void MediaPlayerImpl::PrepareStream(Stream* stream,
     timeline_controller_->AddControlPoint(std::move(timeline_control_point));
   }
 
+  MediaType media_type;
+  fidl::Clone(input_media_type, &media_type);
   stream->sink_->ConsumeMediaType(
-      input_media_type.Clone(),
+      std::move(media_type),
       [this, stream, index,
-       callback](f1dl::InterfaceHandle<MediaPacketConsumer> consumer) {
+       callback](fidl::InterfaceHandle<MediaPacketConsumer> consumer) {
         if (!consumer) {
           // The sink couldn't build a conversion pipeline for the media type.
           callback();
@@ -211,9 +216,12 @@ void MediaPlayerImpl::PrepareStream(Stream* stream,
         source_->GetPacketProducer(index, producer.NewRequest());
 
         // Capture producer so it survives through the callback.
-        producer->Connect(consumer.Bind(), fxl::MakeCopyable([
-                            this, callback, producer = std::move(producer)
-                          ]() { callback(); }));
+        auto producer_ptr =
+            std::make_unique<MediaPacketProducerPtr>(std::move(producer));
+        (*producer_ptr)->Connect(consumer.Bind(), fxl::MakeCopyable([
+                                   this, callback,
+                                   producer_ptr = std::move(producer_ptr)
+                                 ]() { callback(); }));
       });
 }
 
@@ -263,7 +271,7 @@ void MediaPlayerImpl::Update() {
         if (!reader_transition_pending_) {
           return;
         }
-      // Falls through.
+        // Falls through.
 
       case State::kFlushed:
         // Presentation time is not progressing, and the pipeline is clear of
@@ -455,7 +463,7 @@ void MediaPlayerImpl::SetTimelineTransform(
     const TimelineConsumer::SetTimelineTransformCallback callback) {
   TimelineTransformPtr timeline_transform =
       CreateTimelineTransform(rate, reference_time);
-  timeline_consumer_->SetTimelineTransform(std::move(timeline_transform),
+  timeline_consumer_->SetTimelineTransform(std::move(*timeline_transform),
                                            callback);
 }
 
@@ -475,21 +483,21 @@ TimelineTransformPtr MediaPlayerImpl::CreateTimelineTransform(
   return result;
 }
 
-void MediaPlayerImpl::SetHttpSource(const f1dl::String& http_url) {
-  f1dl::InterfaceHandle<SeekingReader> reader;
+void MediaPlayerImpl::SetHttpSource(fidl::StringPtr http_url) {
+  fidl::InterfaceHandle<SeekingReader> reader;
   owner()->CreateHttpReader(http_url, reader.NewRequest());
-  SetReader(std::move(reader));
+  SetReaderSource(std::move(reader));
 }
 
 void MediaPlayerImpl::SetFileSource(zx::channel file_channel) {
-  f1dl::InterfaceHandle<SeekingReader> reader;
+  fidl::InterfaceHandle<SeekingReader> reader;
   owner()->CreateFileChannelReader(std::move(file_channel),
                                    reader.NewRequest());
-  SetReader(std::move(reader));
+  SetReaderSource(std::move(reader));
 }
 
 void MediaPlayerImpl::SetReaderSource(
-    f1dl::InterfaceHandle<SeekingReader> reader_handle) {
+    fidl::InterfaceHandle<SeekingReader> reader_handle) {
   if (!reader_handle && !source_) {
     // There was already no reader. Nothing to do.
     return;
@@ -527,7 +535,7 @@ void MediaPlayerImpl::Seek(int64_t position) {
 }
 
 void MediaPlayerImpl::GetStatus(uint64_t version_last_seen,
-                                const GetStatusCallback& callback) {
+                                GetStatusCallback callback) {
   status_publisher_.Get(version_last_seen, callback);
 }
 
@@ -540,8 +548,8 @@ void MediaPlayerImpl::SetGain(float gain) {
 }
 
 void MediaPlayerImpl::CreateView(
-    f1dl::InterfaceHandle<mozart::ViewManager> view_manager,
-    f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request) {
+    fidl::InterfaceHandle<views_v1::ViewManager> view_manager,
+    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request) {
   MaybeCreateRenderer(MediaTypeMedium::VIDEO);
   if (!video_renderer_impl_) {
     return;
@@ -552,8 +560,8 @@ void MediaPlayerImpl::CreateView(
 }
 
 void MediaPlayerImpl::SetAudioRenderer(
-    f1dl::InterfaceHandle<AudioRenderer> audio_renderer,
-    f1dl::InterfaceHandle<MediaRenderer> media_renderer) {
+    fidl::InterfaceHandle<AudioRenderer> audio_renderer,
+    fidl::InterfaceHandle<MediaRenderer> media_renderer) {
   if (streams_by_medium_.find(MediaTypeMedium::AUDIO) !=
       streams_by_medium_.end()) {
     // We already have this renderer. Do nothing.
@@ -568,13 +576,12 @@ void MediaPlayerImpl::SetAudioRenderer(
   }
 }
 
-void MediaPlayerImpl::SetReader(
-    f1dl::InterfaceHandle<SeekingReader> reader_handle) {
-  SetReaderSource(std::move(reader_handle));
+void MediaPlayerImpl::AddBinding(fidl::InterfaceRequest<MediaPlayer> request) {
+  MultiClientProduct::AddBinding(std::move(request));
 }
 
 void MediaPlayerImpl::SetVideoRenderer(
-    f1dl::InterfaceHandle<MediaRenderer> media_renderer) {
+    fidl::InterfaceHandle<MediaRenderer> media_renderer) {
   if (streams_by_medium_.find(MediaTypeMedium::VIDEO) !=
       streams_by_medium_.end()) {
     // We already have this renderer. Do nothing.
@@ -592,15 +599,15 @@ void MediaPlayerImpl::HandleSourceStatusUpdates(uint64_t version,
     status_publisher_.SendUpdates();
   }
 
-  source_->GetStatus(version,
-                     [this](uint64_t version, MediaSourceStatusPtr status) {
-                       HandleSourceStatusUpdates(version, std::move(status));
-                     });
+  source_->GetStatus(version, [this](uint64_t version,
+                                     MediaSourceStatus status) {
+    HandleSourceStatusUpdates(version, fidl::MakeOptional(std::move(status)));
+  });
 }
 
 void MediaPlayerImpl::HandleTimelineControlPointStatusUpdates(
     uint64_t version,
-    MediaTimelineControlPointStatusPtr status) {
+    MediaTimelineControlPointStatus* status) {
   if (status) {
     timeline_function_ =
         static_cast<TimelineFunction>(status->timeline_transform);
@@ -611,8 +618,8 @@ void MediaPlayerImpl::HandleTimelineControlPointStatusUpdates(
 
   timeline_control_point_->GetStatus(
       version,
-      [this](uint64_t version, MediaTimelineControlPointStatusPtr status) {
-        HandleTimelineControlPointStatusUpdates(version, std::move(status));
+      [this](uint64_t version, MediaTimelineControlPointStatus status) {
+        HandleTimelineControlPointStatusUpdates(version, &status);
       });
 }
 

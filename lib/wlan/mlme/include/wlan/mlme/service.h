@@ -7,67 +7,91 @@
 #include <wlan/common/macaddr.h>
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/packet.h>
+#include <zircon/fidl.h>
 
-#include "lib/wlan/fidl/wlan_mlme.fidl.h"
-#include "lib/wlan/fidl/wlan_mlme_ext.fidl.h"
+#include <fuchsia/cpp/wlan_mlme.h>
+
+#include <lib/fidl/cpp/decoder.h>
+#include <lib/fidl/cpp/message.h>
 
 namespace wlan {
 
 class DeviceInterface;
 
-// ServiceHeader is the method header that is prepended to method calls over the channel.
-// This will be removed when FIDL2 is available.
-struct ServiceHeader {
-  uint64_t len;
-  uint64_t txn_id;
-  uint32_t flags;
-  uint32_t ordinal;
-  uint8_t payload[];
-} __PACKED;
-
-template <typename T, typename FidlStruct = ::f1dl::StructPtr<T>>
-zx_status_t DeserializeServiceMsg(const Packet& packet, Method m, FidlStruct* out) {
+template <typename T>
+zx_status_t DeserializeServiceMsg(const Packet& packet, wlan_mlme::Method m, T* out) {
     if (out == nullptr) return ZX_ERR_INVALID_ARGS;
 
-    const uint8_t* p = packet.data();
-    auto h = FromBytes<ServiceHeader>(p, packet.len());
-    if (static_cast<Method>(h->ordinal) != m) return ZX_ERR_IO;
+    // Verify that the message header contains the ordinal we expect.
+    auto h = packet.mut_field<fidl_message_header_t>(0);
+    if (static_cast<wlan_mlme::Method>(h->ordinal) != m) return ZX_ERR_IO;
 
-    *out = T::New();
-    auto reqptr = reinterpret_cast<const void*>(h->payload);
-    if (!(*out)->Deserialize(const_cast<void*>(reqptr), packet.len() - h->len)) {
-        return ZX_ERR_IO;
+    // Extract the message contents and decode in-place (i.e., fixup all the out-of-line pointers to
+    // be offsets into the buffer).
+    auto payload = packet.mut_field<uint8_t>(sizeof(fidl_message_header_t));
+    size_t payload_len = packet.len() - sizeof(fidl_message_header_t);
+    const char* err_msg = nullptr;
+    zx_status_t status = fidl_decode(T::FidlType, payload, payload_len, nullptr, 0, &err_msg);
+    if (status != ZX_OK) {
+        errorf("could not decode received message: %s\n", err_msg);
+        return status;
     }
+
+    // Construct a fidl Message and decode it into our T.
+    fidl::Message msg(fidl::BytePart(payload, payload_len, payload_len), fidl::HandlePart());
+    fidl::Decoder decoder(std::move(msg));
+    *out = std::move(fidl::DecodeAs<T>(&decoder, 0));
     return ZX_OK;
 }
 
-template <typename T> zx_status_t SerializeServiceMsg(Packet* packet, Method m, const T& msg) {
-    size_t buf_len = sizeof(ServiceHeader) + msg->GetSerializedSize();
-    auto header = FromBytes<ServiceHeader>(packet->mut_data(), buf_len);
-    if (header == nullptr) { return ZX_ERR_BUFFER_TOO_SMALL; }
-    header->len = sizeof(ServiceHeader);
-    header->txn_id = 1;  // TODO(tkilbourn): txn ids
-    header->flags = 0;
-    header->ordinal = static_cast<uint32_t>(m);
-    if (!msg->Serialize(header->payload, buf_len - sizeof(ServiceHeader))) { return ZX_ERR_IO; }
-    return ZX_OK;
+template <typename T> zx_status_t SerializeServiceMsg(Packet* packet, wlan_mlme::Method m, T* msg) {
+    // Create an encoder that sets the ordinal to m.
+    fidl::Encoder enc(static_cast<uint32_t>(m));
+
+    // Encode our message of type T. The encoder will take care of extending the buffer to
+    // accommodate out-of-line data (e.g., vectors, strings, and nullable data).
+    enc.Alloc(fidl::CodingTraits<T>::encoded_size);
+    msg->Encode(&enc, sizeof(fidl_message_header_t));
+
+    // The coding tables for fidl structs do not include offsets for the message header, so we must
+    // run validation starting after this header.
+    auto encoded = enc.GetMessage();
+    ZX_ASSERT(encoded.bytes().actual() >= sizeof(fidl_message_header_t));
+    const void* msg_bytes = encoded.bytes().data() + sizeof(fidl_message_header_t);
+    uint32_t msg_actual = encoded.bytes().actual() - sizeof(fidl_message_header_t);
+    const char* err_msg = nullptr;
+    zx_status_t status = fidl_validate(T::FidlType, msg_bytes, msg_actual, 0, &err_msg);
+    if (status != ZX_OK) {
+        errorf("could not validate encoded message: %s\n", err_msg);
+        return status;
+    }
+
+    // Copy all of the encoded data, including the header, into the packet.
+    status = packet->CopyFrom(encoded.bytes().data(), encoded.bytes().actual(), 0);
+    if (status == ZX_OK) {
+        // We must set the length ourselves, since the initial packet length was almost certainly an
+        // over-estimate.
+        packet->set_len(encoded.bytes().actual());
+    }
+    return status;
 }
 
 namespace service {
 
-zx_status_t SendJoinResponse(DeviceInterface* device, JoinResultCodes result_code);
+zx_status_t SendJoinResponse(DeviceInterface* device, wlan_mlme::JoinResultCodes result_code);
 zx_status_t SendAuthResponse(DeviceInterface* device, const common::MacAddr& peer_sta,
-                             AuthenticateResultCodes code);
+                             wlan_mlme::AuthenticateResultCodes code);
 zx_status_t SendDeauthResponse(DeviceInterface* device, const common::MacAddr& peer_sta);
 zx_status_t SendDeauthIndication(DeviceInterface* device, const common::MacAddr& peer_sta,
                                  uint16_t code);
-zx_status_t SendAssocResponse(DeviceInterface* device, AssociateResultCodes code, uint16_t aid = 0);
+zx_status_t SendAssocResponse(DeviceInterface* device, wlan_mlme::AssociateResultCodes code,
+                              uint16_t aid = 0);
 zx_status_t SendDisassociateIndication(DeviceInterface* device, const common::MacAddr& peer_sta,
                                        uint16_t code);
 
 zx_status_t SendSignalReportIndication(DeviceInterface* device, uint8_t rssi);
 
-zx_status_t SendEapolResponse(DeviceInterface* device, EapolResultCodes result_code);
+zx_status_t SendEapolResponse(DeviceInterface* device, wlan_mlme::EapolResultCodes result_code);
 zx_status_t SendEapolIndication(DeviceInterface* device, const EapolFrame& eapol,
                                 const common::MacAddr& src, const common::MacAddr& dst);
 }  // namespace service

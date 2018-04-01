@@ -24,12 +24,18 @@
 namespace btlib {
 namespace gap {
 
-Adapter::Adapter(fxl::RefPtr<hci::Transport> hci)
+Adapter::Adapter(fxl::RefPtr<hci::Transport> hci,
+                 fbl::RefPtr<l2cap::L2CAP> l2cap,
+                 fbl::RefPtr<gatt::GATT> gatt)
     : identifier_(fxl::GenerateUUID()),
       hci_(hci),
       init_state_(State::kNotInitialized),
+      l2cap_(l2cap),
+      gatt_(gatt),
       weak_ptr_factory_(this) {
   FXL_DCHECK(hci_);
+  FXL_DCHECK(l2cap_);
+  FXL_DCHECK(gatt_);
 
   auto message_loop = fsl::MessageLoop::GetCurrent();
   FXL_DCHECK(message_loop)
@@ -127,10 +133,11 @@ bool Adapter::Initialize(const InitializeCallback& callback,
         state_.controller_address_ = params->bd_addr;
       });
 
-  init_seq_runner_->RunCommands([callback, this](bool success) {
-    if (!success) {
+  init_seq_runner_->RunCommands([callback, this](hci::Status status) {
+    if (status != hci::Status::kSuccess) {
       FXL_LOG(ERROR)
-          << "gap: Adapter: Failed to obtain initial controller information";
+          << "gap: Adapter: Failed to obtain initial controller information: "
+          << StatusToString(status);
       CleanUp();
       callback(false);
       return;
@@ -144,6 +151,8 @@ bool Adapter::Initialize(const InitializeCallback& callback,
 
 void Adapter::ShutDown() {
   FXL_DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  FXL_VLOG(1) << "gap: shutting down";
+
   if (IsInitializing()) {
     FXL_DCHECK(!init_seq_runner_->IsReady());
     init_seq_runner_->Cancel();
@@ -252,10 +261,11 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
         });
   }
 
-  init_seq_runner_->RunCommands([callback, this](bool success) {
-    if (!success) {
+  init_seq_runner_->RunCommands([callback, this](hci::Status status) {
+    if (status != hci::Status::kSuccess) {
       FXL_LOG(ERROR) << "gap: Adapter: Failed to obtain initial controller "
-                        "information (step 2)";
+                        "information (step 2): "
+                     << StatusToString(status);
       CleanUp();
       callback(false);
       return;
@@ -352,10 +362,11 @@ void Adapter::InitializeStep3(const InitializeCallback& callback) {
         });
   }
 
-  init_seq_runner_->RunCommands([callback, this](bool success) {
-    if (!success) {
+  init_seq_runner_->RunCommands([callback, this](hci::Status status) {
+    if (status != hci::Status::kSuccess) {
       FXL_LOG(ERROR) << "gap: Adapter: Failed to obtain initial controller "
-                        "information (step 3)";
+                        "information (step 3): "
+                     << StatusToString(status);
       CleanUp();
       callback(false);
       return;
@@ -396,9 +407,8 @@ void Adapter::InitializeStep4(const InitializeCallback& callback) {
   le_discovery_manager_ = std::make_unique<LowEnergyDiscoveryManager>(
       Mode::kLegacy, hci_, &device_cache_);
 
-  l2cap_ = std::make_unique<l2cap::ChannelManager>(hci_, task_runner_);
   le_connection_manager_ = std::make_unique<LowEnergyConnectionManager>(
-      hci_, hci_le_connector_.get(), &device_cache_, l2cap_.get());
+      hci_, hci_le_connector_.get(), &device_cache_, l2cap_, gatt_);
   le_advertising_manager_ =
       std::make_unique<LowEnergyAdvertisingManager>(hci_le_advertiser_.get());
 

@@ -42,8 +42,7 @@ static zx_protocol_device_t wlan_device_ops = {
     .get_size = nullptr,
     .ioctl = [](void* ctx, uint32_t op, const void* in_buf, size_t in_len, void* out_buf,
                 size_t out_len, size_t* out_actual) -> zx_status_t {
-                    return DEV(ctx)->WlanIoctl(op, in_buf, in_len, out_buf, out_len,
-                            out_actual);
+        return DEV(ctx)->WlanIoctl(op, in_buf, in_len, out_buf, out_len, out_actual);
     },
     .suspend = nullptr,
     .resume = nullptr,
@@ -68,25 +67,18 @@ static zx_protocol_device_t eth_device_ops = {
 };
 
 static wlanmac_ifc_t wlanmac_ifc_ops = {
-    .status = [](void* cookie, uint32_t status) {
-        DEV(cookie)->WlanmacStatus(status);
-    },
+    .status = [](void* cookie, uint32_t status) { DEV(cookie)->WlanmacStatus(status); },
     .recv = [](void* cookie, uint32_t flags, const void* data, size_t length,
-               wlan_rx_info_t* info) {
-        DEV(cookie)->WlanmacRecv(flags, data, length, info);
-    },
-    .complete_tx = [](void* cookie, wlan_tx_packet_t* pkt, zx_status_t status) {
-        DEV(cookie)->WlanmacCompleteTx(pkt, status);
-    },
+               wlan_rx_info_t* info) { DEV(cookie)->WlanmacRecv(flags, data, length, info); },
+    .complete_tx = [](void* cookie, wlan_tx_packet_t* pkt,
+                      zx_status_t status) { DEV(cookie)->WlanmacCompleteTx(pkt, status); },
 };
 
 static ethmac_protocol_ops_t ethmac_ops = {
     .query = [](void* ctx, uint32_t options, ethmac_info_t* info) -> zx_status_t {
         return DEV(ctx)->EthmacQuery(options, info);
     },
-    .stop = [](void* ctx) {
-        DEV(ctx)->EthmacStop();
-    },
+    .stop = [](void* ctx) { DEV(ctx)->EthmacStop(); },
     .start = [](void* ctx, ethmac_ifc_t* ifc, void* cookie) -> zx_status_t {
         return DEV(ctx)->EthmacStart(ifc, cookie);
     },
@@ -149,9 +141,7 @@ zx_status_t Device::Bind() __TA_NO_THREAD_SAFETY_ANALYSIS {
         if (work_thread_.joinable()) { work_thread_.join(); }
 
         // Remove the wlan device if it was successfully added.
-        if (wlan_added) {
-            device_remove(zxdev_);
-        }
+        if (wlan_added) { device_remove(zxdev_); }
     } else {
         debugf("device added\n");
     }
@@ -228,9 +218,7 @@ void Device::WlanUnbind() {
 
 void Device::WlanRelease() {
     debugfn();
-    if (work_thread_.joinable()) {
-        work_thread_.join();
-    }
+    if (work_thread_.joinable()) { work_thread_.join(); }
     delete this;
 }
 
@@ -440,6 +428,9 @@ zx_status_t Device::ConfigureBss(wlan_bss_config_t* cfg) {
 }
 
 zx_status_t Device::ConfigureBeacon(fbl::unique_ptr<Packet> beacon) {
+    // Disable hardware Beacons if no Beacon frame was supplied.
+    if (beacon.get() == nullptr) { return wlanmac_proxy_.ConfigureBeacon(0u, nullptr); }
+
     wlan_tx_packet_t tx_packet;
     auto status = beacon->AsWlanTxPacket(&tx_packet);
     if (status != ZX_OK) {
@@ -534,12 +525,7 @@ void Device::MainLoop() {
 }
 
 void Device::ProcessChannelPacketLocked(const zx_port_packet_t& pkt) {
-    debugf("%s pkt{key=%" PRIu64 ", type=%u, status=%d}\n", __func__, pkt.key, pkt.type,
-           pkt.status);
-
     const auto& sig = pkt.signal;
-    debugf("signal trigger=%u observed=%u count=%" PRIu64 "\n", sig.trigger, sig.observed,
-           sig.count);
     if (sig.observed & ZX_CHANNEL_PEER_CLOSED) {
         infof("channel closed\n");
         channel_.reset();
@@ -558,7 +544,6 @@ void Device::ProcessChannelPacketLocked(const zx_port_packet_t& pkt) {
             channel_.reset();
             return;
         }
-        debugf("read %u bytes from channel_\n", read);
 
         auto packet = fbl::unique_ptr<Packet>(new Packet(std::move(buffer), read));
         packet->set_peer(Packet::Peer::kService);

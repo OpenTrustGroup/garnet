@@ -7,9 +7,7 @@ command line interface (invoke trace with --help to get an overview):
 trace [options] command [command-specific options]
   --help: Produce this help message
 
-  dump-provider - dumps provider with specified id
   list-categories - list all known categories
-  list-providers - list all registered providers
   record - starts tracing and records data
     --[command args]: Run program before starting trace. The program is terminated when tracing ends unless --detach is specified
     --append-args=[""]: Additional args for the app being traced, appended to those from the spec file, if any

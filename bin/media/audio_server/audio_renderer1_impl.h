@@ -8,16 +8,15 @@
 #include <deque>
 #include <set>
 
+#include <fuchsia/cpp/media.h>
 #include "garnet/bin/media/audio_server/audio_link_packet_source.h"
 #include "garnet/bin/media/audio_server/audio_object.h"
 #include "garnet/bin/media/audio_server/audio_packet_ref.h"
 #include "garnet/bin/media/audio_server/audio_pipe.h"
 #include "garnet/bin/media/audio_server/audio_renderer_impl.h"
 #include "garnet/bin/media/audio_server/fwd_decls.h"
-#include "garnet/bin/media/util/timeline_control_point.h"
-#include "lib/fidl/cpp/bindings/binding.h"
-#include "lib/media/fidl/audio_renderer.fidl.h"
-#include "lib/media/fidl/media_renderer.fidl.h"
+#include "garnet/bin/media/fidl/timeline_control_point.h"
+#include "lib/fidl/cpp/binding.h"
 #include "lib/media/timeline/timeline_function.h"
 #include "lib/media/timeline/timeline_rate.h"
 
@@ -30,8 +29,8 @@ class AudioRenderer1Impl : public AudioRendererImpl,
  public:
   ~AudioRenderer1Impl() override;
   static fbl::RefPtr<AudioRenderer1Impl> Create(
-      f1dl::InterfaceRequest<AudioRenderer> audio_renderer_request,
-      f1dl::InterfaceRequest<MediaRenderer> media_renderer_request,
+      fidl::InterfaceRequest<AudioRenderer> audio_renderer_request,
+      fidl::InterfaceRequest<MediaRenderer> media_renderer_request,
       AudioServerImpl* owner);
 
   // Shutdown the audio renderer, unlinking it from all outputs, closing
@@ -49,8 +48,8 @@ class AudioRenderer1Impl : public AudioRendererImpl,
   friend class AudioPipe;
 
   AudioRenderer1Impl(
-      f1dl::InterfaceRequest<AudioRenderer> audio_renderer_request,
-      f1dl::InterfaceRequest<MediaRenderer> media_renderer_request,
+      fidl::InterfaceRequest<AudioRenderer> audio_renderer_request,
+      fidl::InterfaceRequest<MediaRenderer> media_renderer_request,
       AudioServerImpl* owner);
 
   // AudioObject overrides.
@@ -58,15 +57,14 @@ class AudioRenderer1Impl : public AudioRendererImpl,
 
   // Implementation of AudioRenderer interface.
   void SetGain(float db_gain) override;
-  void GetMinDelay(const GetMinDelayCallback& callback) override;
+  void GetMinDelay(GetMinDelayCallback callback) override;
 
   // MediaRenderer implementation.
-  void GetSupportedMediaTypes(
-      const GetSupportedMediaTypesCallback& callback) override;
-  void SetMediaType(MediaTypePtr media_type) override;
+  void GetSupportedMediaTypes(GetSupportedMediaTypesCallback callback) override;
+  void SetMediaType(MediaType media_type) override;
   void GetPacketConsumer(
-      f1dl::InterfaceRequest<MediaPacketConsumer> consumer_request) override;
-  void GetTimelineControlPoint(f1dl::InterfaceRequest<MediaTimelineControlPoint>
+      fidl::InterfaceRequest<MediaPacketConsumer> consumer_request) override;
+  void GetTimelineControlPoint(fidl::InterfaceRequest<MediaTimelineControlPoint>
                                    control_point_request) override;
 
   // Methods called by our AudioPipe.
@@ -77,12 +75,12 @@ class AudioRenderer1Impl : public AudioRendererImpl,
   // encapsulation so that AudioPipe does not have to know that we are an
   // AudioRenderer1Impl (just that we implement its interface).
   void OnPacketReceived(fbl::RefPtr<AudioPacketRef> packet);
-  bool OnFlushRequested(const MediaPacketConsumer::FlushCallback& cbk);
-  f1dl::Array<MediaTypeSetPtr> SupportedMediaTypes();
+  bool OnFlushRequested(MediaPacketConsumer::FlushCallback cbk);
+  fidl::VectorPtr<MediaTypeSet> SupportedMediaTypes();
 
   AudioServerImpl* owner_;
-  f1dl::Binding<AudioRenderer> audio_renderer_binding_;
-  f1dl::Binding<MediaRenderer> media_renderer_binding_;
+  fidl::Binding<AudioRenderer> audio_renderer_binding_;
+  fidl::Binding<MediaRenderer> media_renderer_binding_;
   AudioPipe pipe_;
   TimelineControlPoint timeline_control_point_;
   bool is_shutdown_ = false;

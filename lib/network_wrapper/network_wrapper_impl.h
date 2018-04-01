@@ -10,7 +10,7 @@
 #include "garnet/lib/callback/scoped_task_runner.h"
 #include "garnet/lib/network_wrapper/network_wrapper.h"
 #include "lib/fxl/tasks/task_runner.h"
-#include "lib/network/fidl/network_service.fidl.h"
+#include <fuchsia/cpp/network.h>
 
 namespace network_wrapper {
 
@@ -23,8 +23,8 @@ class NetworkWrapperImpl : public NetworkWrapper {
   ~NetworkWrapperImpl() override;
 
   fxl::RefPtr<callback::Cancellable> Request(
-      std::function<network::URLRequestPtr()> request_factory,
-      std::function<void(network::URLResponsePtr)> callback) override;
+      std::function<network::URLRequest()> request_factory,
+      std::function<void(network::URLResponse)> callback) override;
 
  private:
   class RunningRequest;

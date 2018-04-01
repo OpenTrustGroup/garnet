@@ -6,9 +6,9 @@
 
 #include "garnet/bin/media/util/factory_service_base.h"
 #include "lib/app/cpp/application_context.h"
-#include "lib/fidl/cpp/bindings/binding_set.h"
+#include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
-#include "lib/media/fidl/net_media_service.fidl.h"
+#include <fuchsia/cpp/media.h>
 
 namespace media {
 
@@ -16,22 +16,21 @@ class NetMediaServiceImpl : public FactoryServiceBase<NetMediaServiceImpl>,
                             public NetMediaService {
  public:
   NetMediaServiceImpl(
-      std::unique_ptr<app::ApplicationContext> application_context);
+      std::unique_ptr<component::ApplicationContext> application_context);
   ~NetMediaServiceImpl() override;
 
   // NetMediaService implementation.
-  void CreateNetMediaPlayer(
-      const f1dl::String& service_name,
-      f1dl::InterfaceHandle<MediaPlayer> media_player,
-      f1dl::InterfaceRequest<NetMediaPlayer> net_media_player_request) override;
+  void PublishMediaPlayer(
+      fidl::StringPtr service_name,
+      fidl::InterfaceHandle<MediaPlayer> media_player) override;
 
-  void CreateNetMediaPlayerProxy(
-      const f1dl::String& device_name,
-      const f1dl::String& service_name,
-      f1dl::InterfaceRequest<NetMediaPlayer> net_media_player_request) override;
+  void CreateMediaPlayerProxy(
+      fidl::StringPtr device_name,
+      fidl::StringPtr service_name,
+      fidl::InterfaceRequest<MediaPlayer> media_player_request) override;
 
  private:
-  f1dl::BindingSet<NetMediaService> bindings_;
+  fidl::BindingSet<NetMediaService> bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(NetMediaServiceImpl);
 };

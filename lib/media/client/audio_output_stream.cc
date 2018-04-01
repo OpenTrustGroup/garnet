@@ -10,12 +10,11 @@
 #include "garnet/lib/media/client/audio_output_device.h"
 #include "garnet/lib/media/client/audio_output_manager.h"
 
+#include <fuchsia/cpp/media.h>
 #include "lib/app/cpp/environment_services.h"
-#include "lib/fidl/cpp/bindings/synchronous_interface_ptr.h"
+#include "lib/fidl/cpp/synchronous_interface_ptr.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/time/time_point.h"
-#include "lib/media/fidl/audio_renderer.fidl.h"
-#include "lib/media/fidl/audio_server.fidl.h"
 #include "lib/media/timeline/timeline.h"
 
 namespace media_client {
@@ -60,15 +59,15 @@ bool AudioOutputStream::Initialize(fuchsia_audio_parameters* params,
 
 bool AudioOutputStream::AcquireRenderer() {
   media::AudioServerSyncPtr audio_server;
-  app::ConnectToEnvironmentService(GetSynchronousProxy(&audio_server));
+  component::ConnectToEnvironmentService(audio_server.NewRequest());
 
-  if (!audio_server->CreateRenderer(GetSynchronousProxy(&audio_renderer_),
-                                    GetSynchronousProxy(&media_renderer_))) {
+  if (!audio_server->CreateRenderer(audio_renderer_.NewRequest(),
+                                    media_renderer_.NewRequest())) {
     return false;
   }
 
   return media_renderer_->GetTimelineControlPoint(
-      GetSynchronousProxy(&timeline_control_point_));
+      timeline_control_point_.NewRequest());
 }
 
 bool AudioOutputStream::SetMediaType(int num_channels, int sample_rate) {
@@ -83,16 +82,15 @@ bool AudioOutputStream::SetMediaType(int num_channels, int sample_rate) {
 
   FXL_DCHECK(media_renderer_);
 
-  auto details = media::AudioMediaTypeDetails::New();
-  details->sample_format = media::AudioSampleFormat::SIGNED_16;
-  details->channels = num_channels;
-  details->frames_per_second = sample_rate;
+  media::AudioMediaTypeDetails details;
+  details.sample_format = media::AudioSampleFormat::SIGNED_16;
+  details.channels = num_channels;
+  details.frames_per_second = sample_rate;
 
-  auto media_type = media::MediaType::New();
-  media_type->medium = media::MediaTypeMedium::AUDIO;
-  media_type->encoding = media::MediaType::kAudioEncodingLpcm;
-  media_type->details = media::MediaTypeDetails::New();
-  media_type->details->set_audio(std::move(details));
+  media::MediaType media_type;
+  media_type.medium = media::MediaTypeMedium::AUDIO;
+  media_type.encoding = media::kAudioEncodingLpcm;
+  media_type.details.set_audio(std::move(details));
 
   if (!media_renderer_->SetMediaType(std::move(media_type))) {
     FXL_LOG(ERROR) << "Could not set media type";
@@ -127,8 +125,7 @@ bool AudioOutputStream::CreateMemoryMapping() {
     return false;
   }
 
-  if (!media_renderer_->GetPacketConsumer(
-          GetSynchronousProxy(&packet_consumer_))) {
+  if (!media_renderer_->GetPacketConsumer(packet_consumer_.NewRequest())) {
     FXL_LOG(ERROR) << "PacketConsumer connection lost. Quitting.";
     return false;
   }
@@ -174,24 +171,23 @@ void AudioOutputStream::PullFromClientBuffer(float* client_buffer,
       (current_sample_offset_ + num_samples) % total_mapping_samples_;
 }
 
-media::MediaPacketPtr AudioOutputStream::CreateMediaPacket(
-    zx_time_t pts,
-    size_t payload_offset,
-    size_t payload_size) {
-  auto packet = media::MediaPacket::New();
+media::MediaPacket AudioOutputStream::CreateMediaPacket(zx_time_t pts,
+                                                        size_t payload_offset,
+                                                        size_t payload_size) {
+  media::MediaPacket packet;
 
-  packet->pts_rate_ticks = sample_rate_;
-  packet->pts_rate_seconds = 1;
-  packet->flags = 0u;
-  packet->payload_buffer_id = kBufferId;
-  packet->payload_size = payload_size;
-  packet->payload_offset = payload_offset;
-  packet->pts = pts;
+  packet.pts_rate_ticks = sample_rate_;
+  packet.pts_rate_seconds = 1;
+  packet.flags = 0u;
+  packet.payload_buffer_id = kBufferId;
+  packet.payload_size = payload_size;
+  packet.payload_offset = payload_offset;
+  packet.pts = pts;
 
   return packet;
 }
 
-bool AudioOutputStream::SendMediaPacket(media::MediaPacketPtr packet) {
+bool AudioOutputStream::SendMediaPacket(media::MediaPacket packet) {
   FXL_DCHECK(packet_consumer_);
 
   return packet_consumer_->SupplyPacketNoReply(std::move(packet));
@@ -213,7 +209,7 @@ int AudioOutputStream::SetGain(float db_gain) {
     return ZX_ERR_CONNECTION_ABORTED;
   }
 
-  if (db_gain > media::AudioRenderer::kMaxGain) {
+  if (db_gain > media::kMaxGain) {
     return ZX_ERR_OUT_OF_RANGE;
   }
 
@@ -259,7 +255,7 @@ int AudioOutputStream::Write(float* client_buffer,
 
   // On first packet, establish a timeline starting at given presentation time.
   // Others get kNoTimestamp, indicating 'play without gap after the previous'.
-  zx_time_t subject_time = media::MediaPacket::kNoTimestamp;
+  zx_time_t subject_time = media::kNoTimestamp;
   if (!received_first_frame_) {
     subject_time = 0;
     start_time_ = pres_time;
@@ -292,14 +288,13 @@ int AudioOutputStream::Write(float* client_buffer,
 
 bool AudioOutputStream::Start() {
   media::TimelineConsumerSyncPtr timeline_consumer;
-  timeline_control_point_->GetTimelineConsumer(
-      GetSynchronousProxy(&timeline_consumer));
+  timeline_control_point_->GetTimelineConsumer(timeline_consumer.NewRequest());
 
-  auto transform = media::TimelineTransform::New();
-  transform->reference_time = start_time_;
-  transform->subject_time = 0;
-  transform->reference_delta = 1;
-  transform->subject_delta = 1;
+  media::TimelineTransform transform;
+  transform.reference_time = start_time_;
+  transform.subject_time = 0;
+  transform.reference_delta = 1;
+  transform.subject_delta = 1;
 
   return timeline_consumer->SetTimelineTransformNoReply(std::move(transform));
 }
@@ -309,14 +304,13 @@ void AudioOutputStream::Stop() {
   active_ = false;
 
   media::TimelineConsumerSyncPtr timeline_consumer;
-  timeline_control_point_->GetTimelineConsumer(
-      GetSynchronousProxy(&timeline_consumer));
+  timeline_control_point_->GetTimelineConsumer(timeline_consumer.NewRequest());
 
-  auto transform = media::TimelineTransform::New();
-  transform->reference_time = media::kUnspecifiedTime;
-  transform->subject_time = media::kUnspecifiedTime;
-  transform->reference_delta = 1;
-  transform->subject_delta = 0;
+  media::TimelineTransform transform;
+  transform.reference_time = media::kUnspecifiedTime;
+  transform.subject_time = media::kUnspecifiedTime;
+  transform.reference_delta = 1;
+  transform.subject_delta = 0;
 
   timeline_consumer->SetTimelineTransformNoReply(std::move(transform));
 }

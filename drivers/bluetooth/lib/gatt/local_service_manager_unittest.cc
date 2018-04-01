@@ -7,7 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "garnet/drivers/bluetooth/lib/common/test_helpers.h"
-#include "garnet/drivers/bluetooth/lib/gatt/gatt.h"
+#include "garnet/drivers/bluetooth/lib/gatt/gatt_defs.h"
 
 namespace btlib {
 namespace gatt {
@@ -267,6 +267,49 @@ TEST(GATT_LocalServiceManagerTest, RegisterCharacteristic128) {
 
   // This value is dynamic.
   EXPECT_FALSE(attrs[2].value());
+}
+
+TEST(GATT_LocalServiceManagerTest, ExtPropSetSuccess) {
+  LocalServiceManager mgr;
+  const att::AccessRequirements kReadReqs, kWriteReqs, kUpdateReqs;
+  constexpr common::UUID kChrcType16((uint16_t)0x1234);
+  constexpr IdType kChrcId = 5;
+
+  auto service = std::make_unique<Service>(true /* primary */, kTestType16);
+
+  constexpr uint8_t kChrcProps = Property::kRead;
+  constexpr uint8_t kExtChrcProps = ExtendedProperty::kReliableWrite;
+  auto chrc = std::make_unique<Characteristic>(kChrcId, kChrcType16, kChrcProps,
+                                               kExtChrcProps, kReadReqs,
+                                               kWriteReqs, kUpdateReqs);
+  service->AddCharacteristic(std::move(chrc));
+
+  ASSERT_TRUE(RegisterService(&mgr, std::move(service)));
+  ASSERT_NE(0u, mgr.database()->groupings().size());
+  const auto& grouping = mgr.database()->groupings().front();
+  const auto& attrs = grouping.attributes();
+  ASSERT_EQ(4u, attrs.size());
+  EXPECT_EQ(types::kCharacteristicExtProperties, attrs[3].type());
+  EXPECT_TRUE(common::ContainersEqual(  // Reliable Write property
+      common::CreateStaticByteBuffer(0x01, 0x00), *attrs[3].value()));
+}
+
+// tests that the extended properties descriptor cannot be set externally
+TEST(GATT_LocalServiceManagerTest, ExtPropSetFailure) {
+  LocalServiceManager mgr;
+  const att::AccessRequirements kReadReqs, kWriteReqs, kUpdateReqs;
+
+  constexpr common::UUID kChrcType16((uint16_t)0x1234);
+  constexpr common::UUID kDescType16((uint16_t)0x2900);  // UUID for Ext Prop
+
+  auto service = std::make_unique<Service>(true /* primary */, kTestType16);
+  auto chrc = std::make_unique<Characteristic>(0, kChrcType16, 0, 0, kReadReqs,
+                                               kWriteReqs, kUpdateReqs);
+  chrc->AddDescriptor(
+      std::make_unique<Descriptor>(1, kDescType16, kReadReqs, kWriteReqs));
+  service->AddCharacteristic(std::move(chrc));
+
+  EXPECT_EQ(false, RegisterService(&mgr, std::move(service)));
 }
 
 TEST(GATT_LocalServiceManagerTest, RegisterCharacteristicSorted) {
@@ -1038,6 +1081,52 @@ TEST_F(GATT_LocalClientCharacteristicConfigurationTest, EnableIndicate) {
   EXPECT_TRUE(WriteCCC(attr, kTestDeviceId, kEnableInd, &ecode));
   EXPECT_EQ(att::ErrorCode::kNoError, ecode);
   EXPECT_EQ(1, ccc_callback_count);
+}
+
+TEST_F(GATT_LocalClientCharacteristicConfigurationTest, DisconnectCleanup) {
+  // No security.
+  auto kUpdateReqs = AllowedNoSecurity();
+  constexpr uint8_t kProps = Property::kNotify;
+  BuildService(kProps, kUpdateReqs);
+
+  auto* attr = mgr.database()->FindAttribute(kCCCHandle);
+  ASSERT_TRUE(attr);
+  EXPECT_EQ(types::kClientCharacteristicConfig, attr->type());
+
+  LocalServiceManager::ClientCharacteristicConfig config;
+  EXPECT_FALSE(mgr.GetCharacteristicConfig(last_service_id, kChrcId,
+                                           kTestDeviceId, &config));
+
+  att::ErrorCode ecode;
+  EXPECT_TRUE(WriteCCC(attr, kTestDeviceId, kEnableNot, &ecode));
+  EXPECT_EQ(att::ErrorCode::kNoError, ecode);
+
+  // The callback should have been notified.
+  EXPECT_EQ(1, ccc_callback_count);
+  EXPECT_EQ(kTestDeviceId, last_peer_id);
+  EXPECT_TRUE(last_notify);
+  EXPECT_FALSE(last_indicate);
+
+  mgr.DisconnectClient(kTestDeviceId);
+
+  uint16_t ccc_value;
+  // Reads should succeed but notifications should be disabled.
+  EXPECT_TRUE(ReadCCC(attr, kTestDeviceId, &ecode, &ccc_value));
+  EXPECT_EQ(att::ErrorCode::kNoError, ecode);
+  EXPECT_EQ(0x0000, ccc_value);
+
+  // The callback should have been called again to disable notifications.
+  EXPECT_EQ(2, ccc_callback_count);
+  EXPECT_EQ(kTestDeviceId, last_peer_id);
+  EXPECT_FALSE(last_notify);
+  EXPECT_FALSE(last_indicate);
+
+  mgr.DisconnectClient(kTestDeviceId2);
+
+  // The callback should not be called if a device isn't registered for
+  // notifications.
+  EXPECT_EQ(2, ccc_callback_count);
+  EXPECT_EQ(kTestDeviceId, last_peer_id);
 }
 
 }  // namespace

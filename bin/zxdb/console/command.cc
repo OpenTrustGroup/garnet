@@ -4,16 +4,20 @@
 
 #include "garnet/bin/zxdb/console/command.h"
 
+#include <algorithm>
+
 #include "garnet/bin/zxdb/client/err.h"
+#include "garnet/bin/zxdb/console/nouns.h"
 #include "garnet/bin/zxdb/console/verbs.h"
 #include "garnet/public/lib/fxl/logging.h"
+#include "garnet/public/lib/fxl/strings/string_printf.h"
 
 namespace zxdb {
 
 namespace {
 
 const char kFrameShortHelp[] =
-    "frame";
+    "frame / f: ";
 const char kFrameHelp[] =
     R"(frame
 
@@ -21,24 +25,120 @@ const char kFrameHelp[] =
 )";
 
 const char kThreadShortHelp[] =
-    "thread";
+    "thread / t: Select or list threads.";
 const char kThreadHelp[] =
-    R"(thread
+    R"(thread [ <id> [ <command> ... ] ]
 
-  TODO write me.
+  Selects or lists threads.
+
+  By itself, "thread" will list the threads in the current process.
+
+  With an ID following it ("thread 3"), selects that thread as the current
+  active thread. This thread will apply by default for subsequent commands
+  (like "step").
+
+  With an ID and another command following it ("thread 3 step"), modifies the
+  thread for that command only. This allows stepping or interrogating threads
+  regardless of which is the active one.
+
+Examples
+
+  thread
+      Lists all threads in the current process.
+
+  thread 1
+      Selects thread 1 to be the active thread in the current process.
+
+  process 2 thread 1
+      Selects process 2 as the active process and thread 1 within it as the
+      active thread.
+
+  process 2 thread
+      Lists all threads in process 2.
+
+  thread 1 step
+      Steps thread 1 in the current process, regardless of the active thread.
+
+  process 2 thread 1 step
+      Steps thread 1 in process 2, regardless of the active process or thread.
 )";
 
 const char kProcessShortHelp[] =
-    "process";
+    "process / pr: Select or list process contexts.";
 const char kProcessHelp[] =
-    R"(process
+    R"(process [ <id> [ <command> ... ] ]
 
-  TODO write me.
+  Alias: "pr"
+
+  Selects or lists process contexts.
+
+  By itself, "process" will list available process contexts with their IDs. New
+  process contexts can be created with the "new" command. This list of debugger
+  contexts is different than the list of processes on the target system (use
+  "ps" to list all running processes, and "attach" to attach a context to a
+  running process).
+
+  With an ID following it ("process 3"), selects that process context as the
+  current active context. This context will apply by default for subsequent
+  commands (like "run").
+
+  With an ID and another command following it ("process 3 run"), modifies the
+  process context for that command only. This allows running, pausing, etc.
+  processes regardless of which is the active one.
+
+Examples
+
+  pr
+  process
+      Lists all process contexts.
+
+  pr 2
+  process 2
+      Sets process context 2 as the active one.
+
+  pr 2 r
+  process 2 run
+      Runs process context 2, regardless of the active one.
+)";
+
+const char kBreakpointShortHelp[] =
+    "breakpoint / bp: Select or list breakpoints.";
+const char kBreakpointHelp[] =
+    R"(breakpoint [ <id> [ <command> ... ] ]
+
+  Alias: "bp"
+
+  Selects or lists breakpoints. Not to be confused with the "break" / "b"
+  command which creates new breakpoints. See "help break" for more.
+
+  By itself, "breakpoint" or "bp" will list all breakpoints with their IDs.
+
+  With an ID following it ("breakpoint 3"), selects that breakpoint as the
+  current active breakpoint. This breakpoint will apply by default for
+  subsequent breakpoint commands (like "clear" or "edit").
+
+  With an ID and another command following it ("breakpoint 2 clear"), modifies
+  the breakpoint context for that command only. This allows modifying
+  breakpoints regardless of the active one.
+
+Examples
+
+  bp
+  breakpoint
+      Lists all breakpoints.
+
+  bp 2
+  breakpoint 2
+      Sets breakpoint 2 as the active one.
+
+  bp 2 cl
+  breakpoint 2 clear
+      Clears breakpoint 2.
 )";
 
 }  // namespace
 
-const size_t Command::kNoIndex;
+const int Command::kNoIndex;
 
 Command::Command() = default;
 Command::~Command() = default;
@@ -47,16 +147,28 @@ bool Command::HasNoun(Noun noun) const {
   return nouns_.find(noun) != nouns_.end();
 }
 
-size_t Command::GetNounIndex(Noun noun) const {
+int Command::GetNounIndex(Noun noun) const {
   auto found = nouns_.find(noun);
   if (found == nouns_.end())
     return kNoIndex;
   return found->second;
 }
 
-void Command::SetNoun(Noun noun, size_t index) {
+void Command::SetNoun(Noun noun, int index) {
   FXL_DCHECK(nouns_.find(noun) == nouns_.end());
   nouns_[noun] = index;
+}
+
+Err Command::ValidateNouns(std::initializer_list<Noun> allowed_nouns) const {
+  for (const auto& pair : nouns_) {
+    if (std::find(allowed_nouns.begin(), allowed_nouns.end(), pair.first) ==
+        allowed_nouns.end()) {
+      return Err(ErrType::kInput, fxl::StringPrintf(
+          "\"%s\" may not be specified for this command.",
+          NounToString(pair.first).c_str()));
+    }
+  }
+  return Err();
 }
 
 bool Command::HasSwitch(int id) const {
@@ -114,6 +226,8 @@ std::string VerbToString(Verb v) {
 const std::map<Noun, NounRecord>& GetNouns() {
   static std::map<Noun, NounRecord> all_nouns;
   if (all_nouns.empty()) {
+    all_nouns[Noun::kBreakpoint] =
+        NounRecord({"breakpoint", "bp"}, kBreakpointShortHelp, kBreakpointHelp);
     all_nouns[Noun::kFrame] =
         NounRecord({"frame", "f"}, kFrameShortHelp, kFrameHelp);
     all_nouns[Noun::kThread] =
@@ -131,10 +245,12 @@ const std::map<Noun, NounRecord>& GetNouns() {
 const std::map<Verb, VerbRecord>& GetVerbs() {
   static std::map<Verb, VerbRecord> all_verbs;
   if (all_verbs.empty()) {
+    AppendBreakpointVerbs(&all_verbs);
     AppendControlVerbs(&all_verbs);
     AppendMemoryVerbs(&all_verbs);
-    AppendRunVerbs(&all_verbs);
+    AppendProcessVerbs(&all_verbs);
     AppendSystemVerbs(&all_verbs);
+    AppendThreadVerbs(&all_verbs);
 
     // Everything but Noun::kNone (= 0) should be in the map.
     FXL_DCHECK(all_verbs.size() == static_cast<size_t>(Verb::kLast) - 1)
@@ -167,7 +283,10 @@ const std::map<std::string, Verb>& GetStringVerbMap() {
   return map;
 }
 
-Err DispatchCommand(Session* session, const Command& cmd) {
+Err DispatchCommand(ConsoleContext* context, const Command& cmd) {
+  if (cmd.verb() == Verb::kNone)
+    return ExecuteNoun(context, cmd);
+
   const auto& verbs = GetVerbs();
   const auto& found = verbs.find(cmd.verb());
   if (found == verbs.end()) {
@@ -175,7 +294,7 @@ Err DispatchCommand(Session* session, const Command& cmd) {
                "Invalid verb \"" + VerbToString(cmd.verb()) +
                "\".");
   }
-  return found->second.exec(session, cmd);
+  return found->second.exec(context, cmd);
 }
 
 }  // namespace zxdb

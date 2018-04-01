@@ -4,6 +4,7 @@
 
 #include "garnet/lib/machina/phys_mem_fake.h"
 #include "garnet/lib/machina/virtio_device.h"
+#include "garnet/lib/machina/virtio_device_fake.h"
 #include "garnet/lib/machina/virtio_queue_fake.h"
 #include "gtest/gtest.h"
 
@@ -13,32 +14,15 @@
 namespace machina {
 namespace {
 
-class TestDevice : public VirtioDevice {
- public:
-  TestDevice()
-      : VirtioDevice(VIRTIO_TEST_ID, nullptr, 0, &queue_, 1, phys_mem_),
-        queue_fake_(&queue_) {}
-
-  zx_status_t Init() { return queue_fake_.Init(QUEUE_SIZE); }
-
-  VirtioQueue& queue() { return queue_; }
-  VirtioQueueFake& queue_fake() { return queue_fake_; }
-
- private:
-  VirtioQueue queue_;
-  PhysMemFake phys_mem_;
-  VirtioQueueFake queue_fake_;
-};
-
 TEST(VirtioQueueTest, HandleOverflow) {
-  TestDevice device;
+  VirtioDeviceFake device;
   ASSERT_EQ(device.Init(), ZX_OK);
-  VirtioQueue& queue = device.queue();
+  VirtioQueue* queue = device.queue();
   VirtioQueueFake& queue_fake = device.queue_fake();
 
   // Setup queue pointers so that the next descriptor will wrap avail->idx
   // to 0.
-  queue.UpdateRing<void>([](virtio_queue_t* ring) {
+  queue->UpdateRing<void>([](virtio_queue_t* ring) {
     const_cast<uint16_t&>(ring->avail->idx) = UINT16_MAX;
     ring->index = UINT16_MAX;
   });
@@ -51,10 +35,10 @@ TEST(VirtioQueueTest, HandleOverflow) {
             ZX_OK);
 
   uint16_t desc;
-  ASSERT_EQ(queue.NextAvail(&desc), ZX_OK);
+  ASSERT_EQ(queue->NextAvail(&desc), ZX_OK);
   ASSERT_EQ(desc, expected_desc);
-  ASSERT_EQ(queue.ring()->avail->idx, 0);
-  ASSERT_EQ(queue.ring()->index, 0);
+  ASSERT_EQ(queue->ring()->avail->idx, 0);
+  ASSERT_EQ(queue->ring()->index, 0);
 }
 
 }  // namespace

@@ -23,16 +23,18 @@ class PhysMem {
   size_t size() const { return vmo_size_; }
 
   template <typename T>
-  T* as(uintptr_t off) const {
-    FXL_DCHECK(off + sizeof(T) <= vmo_size_)
+  T* as(uintptr_t off, size_t len = sizeof(T)) const {
+    FXL_DCHECK(off + len <= vmo_size_)
         << "Region is outside of guest physical memory";
     return reinterpret_cast<T*>(addr_ + off);
   }
 
-  void* ptr(uintptr_t off, size_t len) const {
-    FXL_DCHECK(off + len <= vmo_size_)
-        << "Region is outside of guest physical memory";
-    return reinterpret_cast<void*>(addr_ + off);
+  template <typename T>
+  uintptr_t offset(T* ptr, size_t size = sizeof(T)) const {
+    uintptr_t off = reinterpret_cast<uintptr_t>(ptr);
+    FXL_DCHECK(off >= addr_ && (off - addr_ + size <= vmo_size_))
+        << "Pointer is not contained within guest physical memory";
+    return off - addr_;
   }
 
  protected:

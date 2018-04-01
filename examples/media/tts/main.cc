@@ -1,12 +1,13 @@
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+#include <lib/async/cpp/task.h>
 
 #include "lib/app/cpp/application_context.h"
 #include "lib/app/cpp/connect.h"
-#include "lib/fidl/cpp/bindings/synchronous_interface_ptr.h"
+#include "lib/fidl/cpp/synchronous_interface_ptr.h"
 #include "lib/fsl/tasks/message_loop.h"
-#include "lib/media/fidl/tts_service.fidl.h"
+#include <fuchsia/cpp/media.h>
 
 namespace {
 
@@ -20,7 +21,7 @@ class TtsClient {
 };
 
 TtsClient::TtsClient() {
-  auto app_ctx = app::ApplicationContext::CreateFromStartupInfo();
+  auto app_ctx = component::ApplicationContext::CreateFromStartupInfo();
   tts_service_ = app_ctx->ConnectToEnvironmentService<media::TtsService>();
   tts_service_.set_error_handler([]() {
     printf("Connection error when trying to talk to the TtsService\n");
@@ -50,7 +51,7 @@ int main(int argc, const char** argv) {
     words += argv[i];
   }
 
-  loop.task_runner()->PostTask([&]() { client.Say(std::move(words)); });
+  async::PostTask(loop.async(), [&]() { client.Say(std::move(words)); });
 
   loop.Run();
 

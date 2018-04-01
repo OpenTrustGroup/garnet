@@ -12,9 +12,9 @@
 namespace view_manager {
 
 ViewState::ViewState(ViewRegistry* registry,
-                     mozart::ViewTokenPtr view_token,
-                     f1dl::InterfaceRequest<mozart::View> view_request,
-                     mozart::ViewListenerPtr view_listener,
+                     views_v1_token::ViewToken view_token,
+                     fidl::InterfaceRequest<views_v1::View> view_request,
+                     views_v1::ViewListenerPtr view_listener,
                      scenic_lib::Session* session,
                      const std::string& label)
     : view_token_(std::move(view_token)),
@@ -25,7 +25,6 @@ ViewState::ViewState(ViewRegistry* registry,
       view_binding_(impl_.get(), std::move(view_request)),
       owner_binding_(impl_.get()),
       weak_factory_(this) {
-  FXL_DCHECK(view_token_);
   FXL_DCHECK(view_listener_);
 
   view_binding_.set_error_handler([this, registry] {
@@ -41,12 +40,12 @@ ViewState::ViewState(ViewRegistry* registry,
 
 ViewState::~ViewState() {}
 
-void ViewState::IssueProperties(mozart::ViewPropertiesPtr properties) {
+void ViewState::IssueProperties(views_v1::ViewPropertiesPtr properties) {
   issued_properties_ = std::move(properties);
 }
 
 void ViewState::BindOwner(
-    f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request) {
+    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request) {
   FXL_DCHECK(!owner_binding_.is_bound());
   owner_binding_.Bind(std::move(view_owner_request));
 }
@@ -64,15 +63,15 @@ const std::string& ViewState::FormattedLabel() const {
   if (formatted_label_cache_.empty()) {
     formatted_label_cache_ =
         label_.empty()
-            ? fxl::StringPrintf("<V%d>", view_token_->value)
-            : fxl::StringPrintf("<V%d:%s>", view_token_->value, label_.c_str());
+            ? fxl::StringPrintf("<V%d>", view_token_.value)
+            : fxl::StringPrintf("<V%d:%s>", view_token_.value, label_.c_str());
   }
   return formatted_label_cache_;
 }
-app::ServiceProvider* ViewState::GetServiceProviderIfSupports(
+component::ServiceProvider* ViewState::GetServiceProviderIfSupports(
     std::string service_name) {
   if (service_names_) {
-    auto& v = service_names_.storage();
+    auto& v = *service_names_;
     if (std::find(v.begin(), v.end(), service_name) != v.end()) {
       return service_provider_.get();
     }
@@ -81,8 +80,8 @@ app::ServiceProvider* ViewState::GetServiceProviderIfSupports(
 }
 
 void ViewState::SetServiceProvider(
-    f1dl::InterfaceHandle<app::ServiceProvider> service_provider,
-    f1dl::Array<f1dl::String> service_names) {
+    fidl::InterfaceHandle<component::ServiceProvider> service_provider,
+    fidl::VectorPtr<fidl::StringPtr> service_names) {
   if (service_provider) {
     service_provider_ = service_provider.Bind();
     service_names_ = std::move(service_names);
@@ -101,11 +100,11 @@ void ViewState::RebuildFocusChain() {
   // Construct focus chain by adding our ancestors until we hit a root
   size_t index = 0;
   focus_chain_->chain.resize(index + 1);
-  focus_chain_->chain[index++] = view_token().Clone();
+  focus_chain_->chain[index++] = view_token();
   ViewState* parent = view_stub()->parent();
   while (parent) {
     focus_chain_->chain.resize(index + 1);
-    focus_chain_->chain[index++] = parent->view_token().Clone();
+    focus_chain_->chain[index++] = parent->view_token();
     ViewStub* stub = parent->view_stub();
     parent = stub ? stub->parent() : nullptr;
   }

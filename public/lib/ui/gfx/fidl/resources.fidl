@@ -1,0 +1,210 @@
+// Copyright 2017 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library gfx;
+
+// import "lib/ui/gfx/fidl/nodes.fidl";
+// import "lib/ui/gfx/fidl/shapes.fidl";
+// import "lib/ui/gfx/fidl/types.fidl";
+// import "lib/images/fidl/image_info.fidl";
+// import "lib/images/fidl/image_pipe.fidl";
+// import "lib/images/fidl/memory_type.fidl";
+
+// These are all of the types of resources that can be created within a
+// |Session|.
+union ResourceArgs {
+  // Memory resources.
+  MemoryArgs memory;
+  ImageArgs image;
+  ImagePipeArgs image_pipe;
+  BufferArgs buffer;
+
+  // Shapes (see shapes.fidl).
+  RectangleArgs rectangle;
+  RoundedRectangleArgs rounded_rectangle;
+  CircleArgs circle;
+  MeshArgs mesh;
+
+  // Materials.
+  MaterialArgs material;
+
+  // Nodes.
+  ClipNodeArgs clip_node;
+  EntityNodeArgs entity_node;
+  ShapeNodeArgs shape_node;
+
+  // Layers.
+  DisplayCompositorArgs display_compositor;
+  ImagePipeCompositorArgs image_pipe_compositor;
+  LayerStackArgs layer_stack;
+  LayerArgs layer;
+
+  // Scene representation and display.
+  SceneArgs scene;
+  CameraArgs camera;
+  StereoCameraArgs stereo_camera;
+  RendererArgs renderer;
+
+  // Lighting.
+  AmbientLightArgs ambient_light;
+  DirectionalLightArgs directional_light;
+
+  // A value that can be used in place of a constant value.
+  VariableArgs variable;
+};
+
+struct ImagePipeArgs {
+  request<images.ImagePipe> image_pipe_request;
+};
+
+// |Memory| is a |Resource| that wraps a client-provided Zircon vmo to register
+// it with Scenic.
+// TODO: specify resizing behavior.  Who can resize?  Client/Scenic/both/none?
+struct MemoryArgs {
+  // The VMO which backs this memory.
+  handle<vmo> vmo;
+
+  // The type of memory stored in the VMO, namely whether it's GPU memory or
+  // host memory.
+  images.MemoryType memory_type;
+};
+
+// An image mapped to a range of a |Memory| resource.
+// TODO: more precise and extensive docs.
+struct ImageArgs {
+  images.ImageInfo info;
+
+  uint32 memory_id;      // id of a |Memory| resource
+  uint32 memory_offset;  // byte offset of image within |Memory| resource
+};
+
+// A buffer mapped to a range of |Memory|.
+struct BufferArgs {
+  uint32 memory_id;      // id of a |Memory| resource
+  uint32 memory_offset;  // byte offset of buffer within |Memory| resource
+  uint32 num_bytes;
+};
+
+// A DisplayCompositor draws its attached |LayerStack| into an image that is
+// presented on a display.
+struct DisplayCompositorArgs {
+    uint8 dummy;
+};
+
+// An ImagePipeCompositor draws its attached |LayerStack| into an image that is
+// presented on an image-pipe.
+struct ImagePipeCompositorArgs {
+  images.ImagePipe target;
+};
+
+// A LayerStack is a stack of layers that are attached to a Compositor, which
+// draws them in order of increasing Z-order (or rather, presents the illusion
+// of drawing them in that order: it may apply any optimizations that don't
+// affect the output).
+//
+// Supported commands:
+// - AddLayer
+struct LayerStackArgs {
+    uint8 dummy;
+};
+
+// Supported commands:
+// - Detach
+// - SetCamera
+// - SetColor
+// - SetTexture
+// - SetSize (depth must be zero)
+// - SetSize
+// - SetTranslation (z component determines the relative Z-ordering of layers)
+// - SetRotation (must rotate around Z-axis)
+// - SetScale
+//
+// A layer is not drawn unless it has a camera, texture, or color.
+struct LayerArgs {
+    uint8 dummy;
+};
+
+
+// A Scene is the root of a scene-graph, and defines the rendering environment
+// (lighting, etc.) for the tree of nodes beneath it.  The following commands
+// may be  applied to a Scene (public/lib/ui/gfx/fidl/commands.fidl):
+//   - Add/RemoveLight
+//   - AddChild
+struct SceneArgs {
+    uint8 dummy;
+};
+
+// A Camera is used to render a Scene from a particular viewpoint.  This is
+// achieved by setting a Renderer to use the camera.  The following operations
+// may be applied to a Camera (see ops.fidl):
+//   - SetCameraTransform
+//   - SetCameraProjection
+//   - SetCameraPoseBuffer
+struct CameraArgs {
+  // The scene that the camera is viewing.
+  uint32 scene_id;
+};
+
+// A StereoCamera is a Camera that renders the scene in side-by-side stereo.
+// The following operations may be applied to a StereoCamera but not a Camera:
+//   - SetStereoCameraProjection
+// Additionally, any operation which can be applied to a Camera can also be
+// applied to a StereoCamera.
+struct StereoCameraArgs {
+  // The scene that the camera is viewing.
+  uint32 scene_id;
+};
+
+// A Renderer renders a Scene via a Camera.  The following operations may be
+// applied to a Renderer (see ops.fidl):
+//   - SetCamera
+//   - SetRendererParam
+struct RendererArgs {
+    uint8 dummy;
+};
+
+// An AmbientLight is a Light that is is assumed to be everywhere in the scene,
+// in all directions.
+//
+// The following commands may be applied to an AmbientLight (public/lib/ui/gfx/fidl/commands.fidl):
+//   - SetLightColor
+struct AmbientLightArgs {
+    uint8 dummy;
+};
+
+// A DirectionalLight is a Light that is emitted from a point at infinity.
+//
+// Although the light is directional, the light has some amount of angular
+// dispersion (i.e., the light is not fully columnated). For simplicity, we
+// assume the dispersion of the light source is symmetric about the light's
+// primary direction.
+//
+// The following commands may be applied to a DirectionalLight (public/lib/ui/gfx/fidl/commands.fidl):
+//   - SetLightColor
+//   - SetDirection
+struct DirectionalLightArgs {
+    uint8 dummy;
+};
+
+// Simple texture-mapped material.
+//
+// Commands that can be performed later:
+// SetTextureCommand will set the texture, or it can be left as zero (no texture).
+//   The texture can be an Image or ImagePipe.
+// SetColorCommand will set the color.
+struct MaterialArgs {
+    uint8 dummy;
+};
+
+struct VariableArgs {
+  ValueType type;
+  Value initial_value;  // Must match type.  Must not be a variable_id.
+};
+
+// Describes an exported resource that is to be imported by an ImportResourceCommand.
+// NOTE: Currently just an enum of importable resource types, but may later be
+// expanded to express concepts like "meshes with a particular vertex format".
+enum ImportSpec {
+  NODE = 0;
+};

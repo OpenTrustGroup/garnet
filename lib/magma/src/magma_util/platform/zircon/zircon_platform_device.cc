@@ -10,6 +10,7 @@
 #include "magma_util/macros.h"
 #include "platform_mmio.h"
 #include "zircon_platform_device.h"
+#include "zircon_platform_handle.h"
 #include "zircon_platform_interrupt.h"
 #include "zircon_platform_mmio.h"
 
@@ -21,18 +22,19 @@ ZirconPlatformDevice::CpuMapMmio(unsigned int index, PlatformMmio::CachePolicy c
     DLOG("CpuMapMmio index %d", index);
 
     zx_status_t status;
-    pdev_vmo_buffer_t registers;
+    void* vaddr;
+    size_t size;
+    zx_handle_t vmo_handle;
 
-    if ((status = pdev_map_mmio_buffer(&pdev_, index, ZX_CACHE_POLICY_UNCACHED_DEVICE,
-                                       &registers)) != ZX_OK) {
+    if ((status = pdev_map_mmio(&pdev_, index, ZX_CACHE_POLICY_UNCACHED_DEVICE, &vaddr, &size,
+                                &vmo_handle)) != ZX_OK) {
         DRETP(nullptr, "mapping resource failed");
     }
 
-    std::unique_ptr<ZirconPlatformMmio> mmio(
-        new ZirconPlatformMmio(registers.vaddr, registers.size, registers.handle));
+    std::unique_ptr<ZirconPlatformMmio> mmio(new ZirconPlatformMmio(vaddr, size, vmo_handle));
 
     DLOG("map_mmio index %d cache_policy %d returned: 0x%x", index, static_cast<int>(cache_policy),
-         registers.handle);
+         vmo_handle);
 
     return mmio;
 }
@@ -45,6 +47,16 @@ std::unique_ptr<PlatformInterrupt> ZirconPlatformDevice::RegisterInterrupt(unsig
         return DRETP(nullptr, "register interrupt failed");
 
     return std::make_unique<ZirconPlatformInterrupt>(zx::handle(interrupt_handle));
+}
+
+std::unique_ptr<PlatformHandle> ZirconPlatformDevice::GetBusTransactionInitiator()
+{
+    zx_handle_t bti_handle;
+    zx_status_t status = pdev_get_bti(&pdev_, 0, &bti_handle);
+    if (status != ZX_OK)
+        return DRETP(nullptr, "failed to get bus transaction initiator");
+
+    return std::make_unique<ZirconPlatformHandle>(zx::handle(bti_handle));
 }
 
 std::unique_ptr<PlatformDevice> PlatformDevice::Create(void* device_handle)

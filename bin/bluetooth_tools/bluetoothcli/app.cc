@@ -6,6 +6,8 @@
 
 #include <iostream>
 
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
 #include <linenoise/linenoise.h>
 
 #include "lib/fsl/tasks/message_loop.h"
@@ -20,14 +22,14 @@
 namespace bluetoothcli {
 
 App::App()
-    : context_(app::ApplicationContext::CreateFromStartupInfo()),
+    : context_(component::ApplicationContext::CreateFromStartupInfo()),
       manager_delegate_(this),
       adapter_delegate_(this) {
   FXL_DCHECK(context_);
 
   adapter_manager_ =
       context_
-          ->ConnectToEnvironmentService<bluetooth::control::AdapterManager>();
+          ->ConnectToEnvironmentService<bluetooth_control::AdapterManager>();
   FXL_DCHECK(adapter_manager_);
 
   adapter_manager_.set_error_handler([] {
@@ -38,8 +40,8 @@ App::App()
   commands::RegisterCommands(this, &command_dispatcher_);
 
   // Register with the AdapterManager as its delegate.
-  bluetooth::control::AdapterManagerDelegatePtr delegate;
-  f1dl::InterfaceRequest<bluetooth::control::AdapterManagerDelegate>
+  bluetooth_control::AdapterManagerDelegatePtr delegate;
+  fidl::InterfaceRequest<bluetooth_control::AdapterManagerDelegate>
       delegate_request = delegate.NewRequest();
   manager_delegate_.Bind(std::move(delegate_request));
   adapter_manager_->SetDelegate(std::move(delegate));
@@ -48,8 +50,7 @@ App::App()
 void App::ReadNextInput() {
   bool call_complete_cb = true;
   auto complete_cb = [this] {
-    fsl::MessageLoop::GetCurrent()->task_runner()->PostTask(
-        [this] { ReadNextInput(); });
+    async::PostTask(async_get_default(), [this] { ReadNextInput(); });
   };
 
   char* line = linenoise("bluetooth> ");
@@ -85,7 +86,7 @@ void App::ReadNextInput() {
 }
 
 void App::OnActiveAdapterChanged(
-    bluetooth::control::AdapterInfoPtr active_adapter) {
+    bluetooth_control::AdapterInfoPtr active_adapter) {
   if (!active_adapter) {
     CLI_LOG() << "\n>>>> Active adapter is (null)";
     active_adapter_ = nullptr;
@@ -97,7 +98,7 @@ void App::OnActiveAdapterChanged(
 
   adapter_manager_->GetActiveAdapter(active_adapter_.NewRequest());
 
-  bluetooth::control::AdapterDelegatePtr delegate;
+  bluetooth_control::AdapterDelegatePtr delegate;
 
   if (adapter_delegate_.is_bound()) {
     adapter_delegate_.Unbind();
@@ -107,20 +108,20 @@ void App::OnActiveAdapterChanged(
   active_adapter_->SetDelegate(std::move(delegate));
 }
 
-void App::OnAdapterAdded(bluetooth::control::AdapterInfoPtr adapter) {
-  CLI_LOG() << "\n>>>> Adapter added (id=" << adapter->identifier << ")\n";
+void App::OnAdapterAdded(bluetooth_control::AdapterInfo adapter) {
+  CLI_LOG() << "\n>>>> Adapter added (id=" << adapter.identifier << ")\n";
 }
 
-void App::OnAdapterRemoved(const ::f1dl::String& identifier) {
+void App::OnAdapterRemoved(::fidl::StringPtr identifier) {
   CLI_LOG() << "\n>>>> Adapter removed (id=" << identifier << ")\n";
 }
 
-void App::OnAdapterStateChanged(bluetooth::control::AdapterStatePtr state) {
+void App::OnAdapterStateChanged(bluetooth_control::AdapterState state) {
   CLI_LOG() << "\n>>>> Active adapter state changed\n";
 }
 
-void App::OnDeviceDiscovered(bluetooth::control::RemoteDevicePtr device) {
-  discovered_devices_[device->identifier] = std::move(device);
+void App::OnDeviceDiscovered(bluetooth_control::RemoteDevice device) {
+  discovered_devices_[device.identifier] = std::move(device);
 }
 
 }  // namespace bluetoothcli

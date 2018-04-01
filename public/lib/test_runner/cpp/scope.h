@@ -10,43 +10,37 @@
 
 #include "lib/app/cpp/application_context.h"
 #include "lib/app/cpp/service_provider_impl.h"
-#include "lib/app/fidl/application_environment.fidl.h"
-#include "lib/app/fidl/application_environment_host.fidl.h"
-#include "lib/fidl/cpp/bindings/binding.h"
-#include "lib/fidl/cpp/bindings/interface_request.h"
+#include <fuchsia/cpp/component.h>
+#include "lib/fidl/cpp/binding.h"
+#include "lib/fidl/cpp/interface_request.h"
+#include "lib/svc/cpp/service_provider_bridge.h"
 
 namespace test_runner {
 
-// A simple implementation of the ApplicationEnvironmentHost that provides fate
-// separation of sets of applications run by one application. The environment
-// services are delegated to the parent environment.
-class Scope : public app::ApplicationEnvironmentHost {
+// Provides fate separation of sets of applications run by one application. The
+// environment services are delegated to the parent environment.
+class Scope {
  public:
-  Scope(const app::ApplicationEnvironmentPtr& parent_env,
+  Scope(const component::ApplicationEnvironmentPtr& parent_env,
         const std::string& label);
 
   template <typename Interface>
   void AddService(
-      app::ServiceProviderImpl::InterfaceRequestHandler<Interface> handler,
+      component::ServiceProviderImpl::InterfaceRequestHandler<Interface>
+          handler,
       const std::string& service_name = Interface::Name_) {
-    service_provider_impl_.AddService(handler, service_name);
+    service_provider_bridge_.AddService(handler, service_name);
   }
 
-  app::ApplicationLauncher* GetLauncher();
+  component::ApplicationLauncher* GetLauncher();
 
-  app::ApplicationEnvironmentPtr& environment() { return env_; }
+  component::ApplicationEnvironmentPtr& environment() { return env_; }
 
  private:
-  // |ApplicationEnvironmentHost|:
-  void GetApplicationEnvironmentServices(
-      f1dl::InterfaceRequest<app::ServiceProvider> environment_services)
-      override;
-
-  f1dl::Binding<app::ApplicationEnvironmentHost> binding_;
-  app::ApplicationEnvironmentPtr env_;
-  app::ApplicationLauncherPtr env_launcher_;
-  app::ApplicationEnvironmentControllerPtr env_controller_;
-  app::ServiceProviderImpl service_provider_impl_;
+  component::ServiceProviderBridge service_provider_bridge_;
+  component::ApplicationEnvironmentPtr env_;
+  component::ApplicationLauncherPtr env_launcher_;
+  component::ApplicationEnvironmentControllerPtr env_controller_;
 };
 
 }  // namespace test_runner

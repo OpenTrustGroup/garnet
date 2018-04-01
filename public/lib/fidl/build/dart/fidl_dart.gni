@@ -30,7 +30,7 @@ template("fidl_dart") {
     library_name = invoker.name
   }
   root_dir = "$target_gen_dir/${library_name}_package"
-  file_stem = "$root_dir/lib/$library_name.fidl"
+  file_stem = "$root_dir/lib/$library_name"
   bindings_file = "$file_stem.dart"
 
   fidl_target_gen_dir = get_label_info(":bogus($fidl_toolchain)", "target_gen_dir")
@@ -98,7 +98,7 @@ template("fidl_dart") {
 
     package_root = root_dir
 
-    package_name = library_name
+    package_name = "fuchsia.fidl.$library_name"
 
     sources = [
       bindings_file,
@@ -108,6 +108,13 @@ template("fidl_dart") {
       "//topaz/public/dart/fidl",
       "//topaz/public/dart/zircon",
     ]
+
+    if (defined(invoker.deps)) {
+      deps += invoker.deps
+    }
+    if (defined(invoker.public_deps)) {
+      deps += invoker.public_deps
+    }
 
     non_dart_deps = [
       ":$copy_options_target_name",

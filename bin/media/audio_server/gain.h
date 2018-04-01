@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <atomic>
 
-#include "lib/media/fidl/audio_renderer.fidl.h"
+#include <fuchsia/cpp/media.h>
 
 namespace media {
 namespace audio {
@@ -38,8 +38,8 @@ class Gain {
       (static_cast<AScale>(1u) << kFractionalScaleBits);
   static constexpr AScale kMaxScale = 0xFD9539A4;  // +24.0 dB: kMaxGain
 
-  static constexpr float kMinGain = AudioRenderer::kMutedGain;
-  static constexpr float kMaxGain = AudioRenderer::kMaxGain;
+  static constexpr float kMinGain = media::kMutedGain;
+  static constexpr float kMaxGain = media::kMaxGain;
 
   // TODO(mpuryear): MTWN-70 Clarify/document/test audio::Gain's thread-safety
   //

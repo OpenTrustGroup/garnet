@@ -45,9 +45,16 @@ class LogicalLink;
 //   * Provides an API surface for L2CAP channel creation and logical link
 //     management bound to a single creation thread.
 //
-// There is a single instance of ChannelManager for each HCI transport.
+// There can be a single instance of ChannelManager for a HCI transport.
+//
+// THREAD-SAFETY:
+//
+// This object is not thread safe. Construction/destruction must happen on the
+// thread where this is used.
 class ChannelManager final {
  public:
+  using LinkErrorCallback = std::function<void()>;
+
   ChannelManager(fxl::RefPtr<hci::Transport> hci,
                  fxl::RefPtr<fxl::TaskRunner> task_runner);
   ~ChannelManager();
@@ -64,18 +71,23 @@ class ChannelManager final {
                 hci::Connection::LinkType ll_type,
                 hci::Connection::Role role);
 
-  // Registers a LE connection with the L2CAP layer. L2CAP chanels can be
+  // Registers a LE connection with the L2CAP layer. L2CAP channels can be
   // opened on the logical link represented by |handle| after a call to this
   // method.
   //
-  // |callback| will be used to notify the caller if new connection parameters
-  // were accepted from the remote end of the link. |callback| will be posted on
-  // |task_runner|.
+  // |conn_param_callback| will be used to notify the caller if new connection
+  // parameters were accepted from the remote end of the link.
+  //
+  // |link_error_callback| will be used to notify when a channel signals a link
+  // error.
+  //
+  // Both callbacks will be posted onto |task_runner|.
   using LEConnectionParameterUpdateCallback =
       internal::LESignalingChannel::ConnectionParameterUpdateCallback;
   void RegisterLE(hci::ConnectionHandle handle,
                   hci::Connection::Role role,
-                  const LEConnectionParameterUpdateCallback& callback,
+                  LEConnectionParameterUpdateCallback conn_param_callback,
+                  LinkErrorCallback link_error_callback,
                   fxl::RefPtr<fxl::TaskRunner> task_runner);
 
   // Removes a previously registered connection. All corresponding Channels will
@@ -90,46 +102,35 @@ class ChannelManager final {
   // Opens the L2CAP fixed channel with |channel_id| over the logical link
   // identified by |connection_handle| and starts routing packets. Returns
   // nullptr if the channel is already open.
-  //
-  // See channel.h for documentation on |rx_callback| and |closed_callback|.
-  // |rx_callback| is always posted on |rx_task_runner|. |closed_callback|
-  // always runs on the thread that created this ChannelManager.
-  std::unique_ptr<Channel> OpenFixedChannel(
-      hci::ConnectionHandle connection_handle,
-      ChannelId channel_id);
-
-  // TODO(armansito): Introduce a callback that gets invoked when a fixed
-  // channel has been closed, indicating that the link should get torn down.
+  fbl::RefPtr<Channel> OpenFixedChannel(hci::ConnectionHandle connection_handle,
+                                        ChannelId channel_id);
 
  private:
   // Called when an ACL data packet is received from the controller. This method
   // is responsible for routing the packet to the corresponding LogicalLink.
   void OnACLDataReceived(hci::ACLDataPacketPtr data_packet);
 
-  // Called by the various Register functions. The caller must hold |mtx_|.
-  // Returns a pointer to the newly added link.
-  internal::LogicalLink* RegisterInternalLocked(
-      hci::ConnectionHandle handle,
-      hci::Connection::LinkType ll_type,
-      hci::Connection::Role role) __TA_REQUIRES(mtx_);
+  // Called by the various Register functions. Returns a pointer to the newly
+  // added link.
+  internal::LogicalLink* RegisterInternal(hci::ConnectionHandle handle,
+                                          hci::Connection::LinkType ll_type,
+                                          hci::Connection::Role role);
 
   fxl::RefPtr<hci::Transport> hci_;
   fxl::RefPtr<fxl::TaskRunner> task_runner_;
 
-  std::mutex mtx_;
-  std::unordered_map<hci::ConnectionHandle,
-                     std::unique_ptr<internal::LogicalLink>>
-      ll_map_ __TA_GUARDED(mtx_);
+  using LinkMap = std::unordered_map<hci::ConnectionHandle,
+                                     std::unique_ptr<internal::LogicalLink>>;
+  LinkMap ll_map_;
 
   // Stores packets received on a connection handle before a link for it has
   // been created.
   using PendingPacketMap =
       std::unordered_map<hci::ConnectionHandle,
                          common::LinkedList<hci::ACLDataPacket>>;
-  PendingPacketMap pending_packets_ __TA_GUARDED(mtx_);
+  PendingPacketMap pending_packets_;
 
-  common::CancelableCallbackFactory<void()> cancelable_callback_factory_;
-  fxl::ThreadChecker thread_checker_;
+  fxl::WeakPtrFactory<ChannelManager> weak_ptr_factory_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(ChannelManager);
 };

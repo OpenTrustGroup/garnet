@@ -14,8 +14,28 @@ import (
 	"fidl/compiler/backend/types"
 )
 
+const (
+	ProxySuffix   = "Interface"
+	StubSuffix    = "Stub"
+	RequestSuffix = "InterfaceRequest"
+
+	MessageHeaderSize = 16
+)
+
 // Type represents a golang type.
 type Type string
+
+// Const represents the idiomatic representation of a constant in golang.
+type Const struct {
+	// Name is the name of the constant.
+	Name string
+
+	// Type is the constant's type.
+	Type Type
+
+	// Value is the constant's value.
+	Value string
+}
 
 // Enum represents the idiomatic representation of an enum in golang.
 //
@@ -95,8 +115,6 @@ func (t *Tag) String() string {
 	if t.Nullable {
 		elemsTag = append(elemsTag, "*")
 		anyData = true
-	} else {
-		elemsTag = append(elemsTag, "")
 	}
 	for _, elems := range t.MaxElems {
 		if elems == nil {
@@ -125,22 +143,81 @@ type StructMember struct {
 	Tag string
 }
 
+// Interface represents a FIDL interface in terms of golang structures.
+type Interface struct {
+	// Name is the Golang name of the interface.
+	Name string
+
+	// ProxyName is the name of the proxy type for this FIDL interface.
+	ProxyName string
+
+	// StubName is the name of the stub type for this FIDL interface.
+	StubName string
+
+	// RequestName is the name of the interface request type for this FIDL interface.
+	RequestName string
+
+	// ServiceName is the service name for this FIDL interface.
+	ServiceName string
+
+	// Methods is a list of methods for this FIDL interface.
+	Methods []Method
+}
+
+// Method represents a method of a FIDL interface in terms of golang structures.
+type Method struct {
+	// Ordinal is the ordinal for this method.
+	Ordinal types.Ordinal
+
+	// Name is the name of the Method, including the interface name as a prefix.
+	Name string
+
+	// Request represents a goland struct containing the request parameters.
+	Request *Struct
+
+	// Response represents an optional golang struct containing the response parameters.
+	Response *Struct
+}
+
 // Root is the root of the golang backend IR structure.
 //
 // The golang backend IR structure is loosely modeled after an abstract syntax
 // tree, and is used to generate golang code from templates.
 type Root struct {
-	// TODO(mknyszek): Support unions, interfaces, and constants.
+	// TODO(mknyszek): Support unions.
+
+	// Name is the name of the library.
+	Name string
+
+	// Consts represents a list of FIDL constants represented as Go constants.
+	Consts []Const
 
 	// Enums represents a list of FIDL enums represented as Go enums.
 	Enums []Enum
 
 	// Structs represents the list of FIDL structs represented as Go structs.
 	Structs []Struct
+
+	// Interfaces represents the list of FIDL interfaces represented as Go types.
+	Interfaces []Interface
+
+	// Libraries represents the set of library dependencies for this FIDL library.
+	// These are only the names of the libraries, as those are sufficient.
+	Libraries []string
+
+	// NeedsBindings is whether or not the generated code depends on the bindings.
+	NeedsBindings bool
+
+	// NeedsSyscallZx is whether or not the generated code depends on syscall/zx.
+	NeedsSyscallZx bool
 }
 
 // compiler contains the state necessary for recursive compilation.
 type compiler struct {
+	// needsSyscallZx is whether or not we discovered that the generated code
+	// depends on syscall/zx.
+	needsSyscallZx bool
+
 	// decls contains all top-level declarations for the FIDL source.
 	decls types.DeclMap
 }
@@ -225,8 +302,10 @@ var handleTypes = map[types.HandleSubtype]string{
 	types.Vmar:    "_zx.VMAR",
 }
 
-func exportIdentifier(name types.Identifier) types.Identifier {
-	return types.Identifier(common.ToCamelCase(string(name)))
+func exportIdentifier(name types.EncodedIdentifier) types.CompoundIdentifier {
+	ci := types.ParseCompoundIdentifier(name)
+	ci.Name = types.Identifier(common.ToUpperCamelCase(string(ci.Name)))
+	return ci
 }
 
 func isReservedWord(str string) bool {
@@ -234,13 +313,32 @@ func isReservedWord(str string) bool {
 	return ok
 }
 
-func changeIfReserved(val types.Identifier) string {
+func ChangeIfReserved(val types.Identifier, ext string) string {
 	// TODO(mknyszek): Detect name collision within a scope as a result of transforming.
-	str := string(val)
+	str := string(val) + ext
 	if isReservedWord(str) {
 		return str + "_"
 	}
 	return str
+}
+
+func (_ *compiler) compileIdentifier(id types.Identifier, ext string) string {
+	str := string(id)
+	str = common.ToUpperCamelCase(str)
+	return ChangeIfReserved(types.Identifier(str), ext)
+}
+
+func (_ *compiler) compileCompoundIdentifier(ei types.EncodedIdentifier, ext string) string {
+	ci := exportIdentifier(ei)
+	strs := []string{}
+	if ci.Library != "" {
+		strs = append(strs, ChangeIfReserved(ci.Library, "")+".")
+	}
+	for _, v := range ci.NestedDecls {
+		strs = append(strs, ChangeIfReserved(v, ""))
+	}
+	strs = append(strs, ChangeIfReserved(ci.Name, ext))
+	return strings.Join(strs, "")
 }
 
 func (_ *compiler) compileLiteral(val types.Literal) string {
@@ -278,7 +376,6 @@ func (_ *compiler) compilePrimitiveSubtype(val types.PrimitiveSubtype) Type {
 }
 
 func (c *compiler) compileType(val types.Type) (r Type, t Tag) {
-	// TODO(mknyszek): Support requests and identifiers.
 	switch val.Kind {
 	case types.ArrayType:
 		e, et := c.compileType(*val.ElementType)
@@ -292,12 +389,19 @@ func (c *compiler) compileType(val types.Type) (r Type, t Tag) {
 			r = Type("string")
 		}
 	case types.HandleType:
+		c.needsSyscallZx = true
 		e, ok := handleTypes[val.HandleSubtype]
 		if !ok {
 			// Fall back onto a generic handle if we don't support that particular
 			// handle subtype.
 			e = handleTypes[types.Handle]
 		}
+		if val.Nullable {
+			t.Nullable = true
+		}
+		r = Type(e)
+	case types.RequestType:
+		e := c.compileCompoundIdentifier(val.RequestSubtype, RequestSuffix)
 		if val.Nullable {
 			t.Nullable = true
 		}
@@ -314,20 +418,20 @@ func (c *compiler) compileType(val types.Type) (r Type, t Tag) {
 	case types.PrimitiveType:
 		r = c.compilePrimitiveSubtype(val.PrimitiveSubtype)
 	case types.IdentifierType:
-		// val.Identifier is a CompoundIdentifier, but we don't have the
-		// ability to look up the declaration type for identifiers in other
-		// libraries. We also don't know how cross-library identifier references
-		// are even going to look for Go. For now, just use the first component
-		// of the identifier and assume that the identifier is in this library.
-		e := changeIfReserved(exportIdentifier(val.Identifier[0]))
-		declType, ok := c.decls[val.Identifier[0]]
+		e := c.compileCompoundIdentifier(val.Identifier, "")
+		declType, ok := c.decls[val.Identifier]
 		if !ok {
-			log.Fatal("Unknown identifier:", val.Identifier)
+			log.Fatal("Unknown identifier: ", val.Identifier)
 		}
-		// TODO(mknyszek): Support unions and interfaces.
+		// TODO(mknyszek): Support unions.
 		switch declType {
 		case types.EnumDeclType:
 			r = Type(e)
+		case types.InterfaceDeclType:
+			if val.Nullable {
+				t.Nullable = true
+			}
+			r = Type(e + ProxySuffix)
 		case types.StructDeclType:
 			if val.Nullable {
 				r = Type("*" + e)
@@ -335,7 +439,7 @@ func (c *compiler) compileType(val types.Type) (r Type, t Tag) {
 				r = Type(e)
 			}
 		default:
-			log.Fatal("Unknown declaration type:", declType)
+			log.Fatal("Unknown declaration type: ", declType)
 		}
 	default:
 		log.Fatal("Unknown type kind: ", val.Kind)
@@ -343,16 +447,27 @@ func (c *compiler) compileType(val types.Type) (r Type, t Tag) {
 	return
 }
 
+func (c *compiler) compileConst(val types.Const) Const {
+	// It's OK to ignore the tag because this type is guaranteed by the frontend
+	// to be either an enum, a primitive, or a string.
+	t, _ := c.compileType(val.Type)
+	return Const{
+		Name: c.compileCompoundIdentifier(val.Name, ""),
+		Type: t,
+		Value: c.compileConstant(val.Value),
+	}
+}
+
 func (c *compiler) compileEnumMember(val types.EnumMember) EnumMember {
 	return EnumMember{
-		Name:  changeIfReserved(exportIdentifier(val.Name)),
+		Name:  c.compileIdentifier(val.Name, ""),
 		Value: c.compileConstant(val.Value),
 	}
 }
 
 func (c *compiler) compileEnum(val types.Enum) Enum {
 	r := Enum{
-		Name: changeIfReserved(exportIdentifier(val.Name[0])),
+		Name: c.compileCompoundIdentifier(val.Name, ""),
 		Type: c.compilePrimitiveSubtype(val.Type),
 	}
 	for _, v := range val.Members {
@@ -365,14 +480,14 @@ func (c *compiler) compileStructMember(val types.StructMember) StructMember {
 	ty, tag := c.compileType(val.Type)
 	return StructMember{
 		Type: ty,
-		Name: changeIfReserved(exportIdentifier(val.Name)),
+		Name: c.compileIdentifier(val.Name, ""),
 		Tag:  tag.String(),
 	}
 }
 
 func (c *compiler) compileStruct(val types.Struct) Struct {
 	r := Struct{
-		Name:      changeIfReserved(exportIdentifier(val.Name[0])),
+		Name:      c.compileCompoundIdentifier(val.Name, ""),
 		Size:      val.Size,
 		Alignment: val.Alignment,
 	}
@@ -382,15 +497,89 @@ func (c *compiler) compileStruct(val types.Struct) Struct {
 	return r
 }
 
+func (c *compiler) compileParameter(p types.Parameter) StructMember {
+	ty, tag := c.compileType(p.Type)
+	return StructMember{
+		Type: ty,
+		Name: c.compileIdentifier(p.Name, ""),
+		Tag:  tag.String(),
+	}
+}
+
+func (c *compiler) compileMethod(ifaceName types.EncodedIdentifier, val types.Method) Method {
+	methodName := c.compileIdentifier(val.Name, "")
+	r := Method{
+		Name:    methodName,
+		Ordinal: val.Ordinal,
+	}
+	if val.HasRequest {
+		req := Struct{
+			Name: c.compileCompoundIdentifier(ifaceName, methodName+"Request"),
+			// We want just the size of the parameter array as a struct, not
+			// including the message header size.
+			Size: val.RequestSize - MessageHeaderSize,
+		}
+		for _, p := range val.Request {
+			req.Members = append(req.Members, c.compileParameter(p))
+		}
+		r.Request = &req
+	}
+	if val.HasResponse {
+		resp := Struct{
+			Name: c.compileCompoundIdentifier(ifaceName, methodName+"Response"),
+			// We want just the size of the parameter array as a struct, not
+			// including the message header size.
+			Size: val.ResponseSize - MessageHeaderSize,
+		}
+		for _, p := range val.Response {
+			resp.Members = append(resp.Members, c.compileParameter(p))
+		}
+		r.Response = &resp
+	}
+	return r
+}
+
+func (c *compiler) compileInterface(val types.Interface) Interface {
+	r := Interface{
+		Name:        c.compileCompoundIdentifier(val.Name, ""),
+		ProxyName:   c.compileCompoundIdentifier(val.Name, ProxySuffix),
+		StubName:    c.compileCompoundIdentifier(val.Name, StubSuffix),
+		RequestName: c.compileCompoundIdentifier(val.Name, RequestSuffix),
+		ServiceName: val.GetAttribute("ServiceName"),
+	}
+	for _, v := range val.Methods {
+		r.Methods = append(r.Methods, c.compileMethod(val.Name, v))
+	}
+	return r
+}
+
 // Compile translates parsed FIDL IR into golang backend IR for code generation.
 func Compile(fidlData types.Root) Root {
 	c := compiler{decls: fidlData.Decls}
-	r := Root{}
+	r := Root{Name: string(fidlData.Name)}
+	for _, v := range fidlData.Consts {
+		r.Consts = append(r.Consts, c.compileConst(v))
+	}
 	for _, v := range fidlData.Enums {
 		r.Enums = append(r.Enums, c.compileEnum(v))
 	}
 	for _, v := range fidlData.Structs {
 		r.Structs = append(r.Structs, c.compileStruct(v))
 	}
+	if len(fidlData.Interfaces) != 0 {
+		r.NeedsBindings = true
+		r.NeedsSyscallZx = true
+	}
+	for _, v := range fidlData.Interfaces {
+		r.Interfaces = append(r.Interfaces, c.compileInterface(v))
+	}
+	for _, v := range fidlData.Libraries {
+		// Don't try to import yourself.
+		if v.Name == fidlData.Name {
+			continue
+		}
+		r.Libraries = append(r.Libraries, string(v.Name))
+	}
+	r.NeedsSyscallZx = r.NeedsSyscallZx || c.needsSyscallZx
 	return r
 }

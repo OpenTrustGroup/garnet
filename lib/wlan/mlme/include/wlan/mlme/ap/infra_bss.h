@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <fuchsia/cpp/wlan_mlme.h>
 #include <wlan/mlme/ap/beacon_sender.h>
 #include <wlan/mlme/ap/bss_client_map.h>
 #include <wlan/mlme/ap/bss_interface.h>
@@ -28,11 +29,14 @@ class InfraBss : public BssInterface, public FrameHandler, public RemoteClient::
              const common::MacAddr& bssid);
     virtual ~InfraBss();
 
+    bool IsStarted();
     zx_status_t HandleTimeout(const common::MacAddr& client_addr);
 
     // BssInterface implementation
     const common::MacAddr& bssid() const override;
     uint64_t timestamp() override;
+    void Start(const wlan_mlme::StartRequest& req) override;
+    void Stop() override;
     zx_status_t AssignAid(const common::MacAddr& client, aid_t* out_aid) override;
     zx_status_t ReleaseAid(const common::MacAddr& client) override;
     fbl::unique_ptr<Buffer> GetPowerSavingBuffer(size_t len) override;
@@ -40,6 +44,14 @@ class InfraBss : public BssInterface, public FrameHandler, public RemoteClient::
     seq_t NextSeq(const MgmtFrameHeader& hdr) override;
     seq_t NextSeq(const MgmtFrameHeader& hdr, uint8_t aci) override;
     seq_t NextSeq(const DataFrameHeader& hdr) override;
+
+    bool IsHTReady() const override;
+    bool IsCbw40RxReady() const override;
+    bool IsCbw40TxReady() const override;
+    HtCapabilities BuildHtCapabilities() const override;
+    HtOperation BuildHtOperation(const wlan_channel_t& chan) const override;
+
+    wlan_channel_t Chan() const override { return chan_; }
 
    private:
     // FrameHandler implementation
@@ -61,10 +73,12 @@ class InfraBss : public BssInterface, public FrameHandler, public RemoteClient::
     const common::MacAddr bssid_;
     DeviceInterface* device_;
     fbl::unique_ptr<BeaconSender> bcn_sender_;
-    bss::timestamp_t started_at_;
+    zx_time_t started_at_;
     BssClientMap clients_;
     Sequence seq_;
     TrafficIndicationMap tim_;
+
+    wlan_channel_t chan_;
 };
 
 }  // namespace wlan

@@ -6,12 +6,9 @@ import("//build/rust/rust_binary.gni")
 import("//build/package.gni")
 
 rust_binary("bin") {
-  name = "wlanstack2"
+  with_unit_tests = true
 
-  deps = [
-    "//garnet/lib/rust/fidl_crates/garnet_lib_wlan_fidl",
-    "//garnet/lib/rust/fidl_crates/garnet_lib_wlan_fidl_service",
-  ]
+  name = "wlanstack2"
 }
 
 package("wlanstack2") {

@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-module mozart;
+library views_v1;
 
-import "lib/ui/geometry/fidl/geometry.fidl";
+// import "lib/ui/geometry/fidl/geometry.fidl";
 
 // Parameters and contextual information for a view provided by its container.
 //
@@ -20,7 +20,7 @@ struct DisplayMetrics {
   // The ratio of the size of a logical pixel to a physical pixel assuming
   // pixels are square.  This value changes in relation to display
   // resolution and density.  Must be > 0.
-  float device_pixel_ratio = 1.0;
+  float32 device_pixel_ratio = 1.0;
 };
 
 // Provides layout constraints for a view.
@@ -31,9 +31,9 @@ struct DisplayMetrics {
 struct ViewLayout {
   // The size of the view in logical pixels.
   // Must be non-negative.
-  SizeF size;
+  geometry.SizeF size;
 
   // The inset of the view in logical pixels.
   // Must be non-negative.
-  InsetF inset;
+  geometry.InsetF inset;
 };

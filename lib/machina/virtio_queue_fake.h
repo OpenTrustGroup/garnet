@@ -73,6 +73,9 @@ class VirtioQueueFake {
   // to use those buffers.
   zx_status_t Init(uint16_t size);
 
+  // Access the underlying VirtioQueue.
+  VirtioQueue* queue() const { return queue_; }
+
   // Allocate and write a descriptor. |addr|, |len|, and |flags| correspond
   // to the fields in vring_desc.
   //
@@ -110,6 +113,6 @@ class VirtioQueueFake {
   uint16_t next_free_desc_ = 0;
 };
 
-#endif  // GARNET_LIB_MACHINA_VIRTIO_QUEUE_FAKE_H_
-
 }  // namespace machina
+
+#endif  // GARNET_LIB_MACHINA_VIRTIO_QUEUE_FAKE_H_

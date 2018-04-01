@@ -4,12 +4,12 @@
 
 #pragma once
 
+#include <fuchsia/cpp/media.h>
+
 #include "garnet/lib/media/wav_writer/wav_writer.h"
 #include "lib/app/cpp/application_context.h"
 #include "lib/fsl/tasks/fd_waiter.h"
 #include "lib/fxl/command_line.h"
-#include "lib/media/fidl/audio_capturer.fidl.h"
-#include "lib/media/fidl/audio_server.fidl.h"
 
 namespace examples {
 
@@ -18,19 +18,19 @@ class WavRecorder : public media::AudioCapturerClient {
   WavRecorder(fxl::CommandLine cmd_line)
       : async_binding_(this), cmd_line_(std::move(cmd_line)) {}
   ~WavRecorder();
-  void Run(app::ApplicationContext* app_context);
+  void Run(component::ApplicationContext* app_context);
 
  private:
   void Usage();
   void Shutdown();
   bool SetupPayloadBuffer();
   void SendCaptureJob();
-  void OnDefaultFormatFetched(media::MediaTypePtr type);
-  void OnPacketCaptured(media::MediaPacketPtr pkt) override;
+  void OnDefaultFormatFetched(media::MediaType type);
+  void OnPacketCaptured(media::MediaPacket pkt) override;
   void OnQuit();
 
   media::AudioCapturerPtr capturer_;
-  f1dl::Binding<AudioCapturerClient> async_binding_;
+  fidl::Binding<AudioCapturerClient> async_binding_;
   fsl::FDWaiter keystroke_waiter_;
   media::audio::WavWriter<> wav_writer_;
 

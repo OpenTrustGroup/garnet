@@ -9,7 +9,7 @@
 #include "garnet/examples/netconnector/netconnector_example/netconnector_example_params.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
-#include "lib/netconnector/fidl/netconnector.fidl.h"
+#include <fuchsia/cpp/netconnector.h>
 
 namespace examples {
 namespace {
@@ -22,7 +22,8 @@ static const std::vector<std::string> kConversation = {
 
 NetConnectorExampleImpl::NetConnectorExampleImpl(
     NetConnectorExampleParams* params)
-    : application_context_(app::ApplicationContext::CreateFromStartupInfo()) {
+    : application_context_(
+          component::ApplicationContext::CreateFromStartupInfo()) {
   // The MessageRelay makes using the channel easier. Hook up its callbacks.
   message_relay_.SetMessageReceivedCallback(
       [this](std::vector<uint8_t> message) { HandleReceivedMessage(message); });
@@ -61,7 +62,7 @@ NetConnectorExampleImpl::NetConnectorExampleImpl(
           application_context_
               ->ConnectToEnvironmentService<netconnector::NetConnector>();
 
-      f1dl::InterfaceHandle<app::ServiceProvider> handle;
+      fidl::InterfaceHandle<component::ServiceProvider> handle;
       application_context_->outgoing_services()->AddBinding(
           handle.NewRequest());
 
@@ -89,7 +90,7 @@ NetConnectorExampleImpl::NetConnectorExampleImpl(
     message_relay_.SetChannel(std::move(local));
 
     // Pass the remote end to NetConnector.
-    app::ServiceProviderPtr device_service_provider;
+    component::ServiceProviderPtr device_service_provider;
     connector->GetDeviceServiceProvider(params->request_device_name(),
                                         device_service_provider.NewRequest());
 

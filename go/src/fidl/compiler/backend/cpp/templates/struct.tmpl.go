@@ -12,32 +12,29 @@ class {{ .Name }};
 {{- define "StructDeclaration" }}
 class {{ .Name }}  {
  public:
-  {{ .Name }}();
-  {{ .Name }}({{ .Name }}&&);
-  {{ .Name }}(const {{ .Name }}&) = delete;
-  ~{{ .Name }}();
-
-  {{ .Name }}& operator=({{ .Name }}&&);
-  {{ .Name }}& operator=(const {{ .Name }}&) = delete;
-
+  static const fidl_type_t* FidlType;
   {{- range .Members }}
-  {{ .Type.Decl }} {{ .Name }}{{ if .DefaultValue }} = {{ .DefaultValue }}{{ end }};
+  {{ .Type.Decl }} {{ .Name }}{{ if .DefaultValue }} = {{ .DefaultValue }}{{ else }}{}{{ end }};
   {{- end }}
+
+  static inline ::std::unique_ptr<{{ .Name }}> New() { return ::std::make_unique<{{ .Name }}>(); }
 
   void Encode(::fidl::Encoder* encoder, size_t offset);
   static void Decode(::fidl::Decoder* decoder, {{ .Name }}* value, size_t offset);
   zx_status_t Clone({{ .Name }}* result) const;
 };
+
+bool operator==(const {{ .Name }}& lhs, const {{ .Name }}& rhs);
+inline bool operator!=(const {{ .Name }}& lhs, const {{ .Name }}& rhs) {
+  return !(lhs == rhs);
+}
+
+using {{ .Name }}Ptr = ::std::unique_ptr<{{ .Name }}>;
 {{- end }}
 
 {{- define "StructDefinition" }}
-{{ .Name }}::{{ .Name }}() = default;
-
-{{ .Name }}::{{ .Name }}({{ .Name }}&&) = default;
-
-{{ .Name }}::~{{ .Name }}() = default;
-
-{{ .Name }}& {{ .Name }}::operator=({{ .Name }}&&) = default;
+extern "C" const fidl_type_t {{ .TableType }};
+const fidl_type_t* {{ .Name }}::FidlType = &{{ .TableType }};
 
 void {{ .Name }}::Encode(::fidl::Encoder* encoder, size_t offset) {
   {{- range .Members }}
@@ -54,11 +51,30 @@ void {{ .Name }}::Decode(::fidl::Decoder* decoder, {{ .Name }}* value, size_t of
 zx_status_t {{ .Name }}::Clone({{ .Name }}* result) const {
   {{- range $index, $member := .Members }}
   {{ if not $index }}zx_status_t {{ end -}}
-  status = ::fidl::Clone({{ .Name }}, &result->{{ .Name }});
-  if (status != ZX_OK)
-    return status;
+  _status = ::fidl::Clone({{ .Name }}, &result->{{ .Name }});
+  if (_status != ZX_OK)
+    return _status;
   {{- end }}
   return ZX_OK;
+}
+
+bool operator==(const {{ .Name }}& lhs, const {{ .Name }}& rhs) {
+  {{- range $index, $member := .Members }}
+  {{- if .Type.IsPointer }}
+  if (lhs.{{ .Name }} == nullptr && rhs.{{ .Name }} != nullptr) {
+    return false;
+  } else if (rhs.{{ .Name }} == nullptr) {
+    return false;
+  } else if (*lhs.{{ .Name }} != *rhs.{{ .Name }}) {
+    return false;
+  }
+  {{- else }}
+  if (lhs.{{ .Name }} != rhs.{{ .Name }}) {
+    return false;
+  }
+  {{- end }}
+  {{- end }}
+  return true;
 }
 {{- end }}
 
@@ -69,7 +85,7 @@ struct CodingTraits<{{ .Namespace }}::{{ .Name }}>
 
 inline zx_status_t Clone(const {{ .Namespace }}::{{ .Name }}& value,
                          {{ .Namespace }}::{{ .Name }}* result) {
-return value.Clone(result);
+  return value.Clone(result);
 }
 {{- end }}
 `

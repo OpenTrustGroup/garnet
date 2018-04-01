@@ -4,6 +4,7 @@
 
 use async;
 use failure::Error;
+use futures::future;
 use futures::prelude::*;
 use parking_lot::Mutex;
 use vfs_watcher;
@@ -19,14 +20,17 @@ use std::str::FromStr;
 
 struct PhyDevice {
     id: u16,
+    proxy: wlan::PhyProxy,
     dev: wlan_dev::WlanPhy,
 }
 
 impl PhyDevice {
     fn new<P: AsRef<Path>>(id: u16, path: P) -> Result<Self, Error> {
+        let dev = wlan_dev::WlanPhy::new(path)?;
         Ok(PhyDevice {
-            id: id,
-            dev: wlan_dev::WlanPhy::new(path)?,
+            id,
+            proxy: dev.connect()?,
+            dev,
         })
     }
 }
@@ -73,7 +77,7 @@ impl DeviceManager {
     }
 
     /// Retrieves information about all the phy devices managed by this `DeviceManager`.
-    pub fn list_phys(&self) -> Vec<wlan::WlanPhyInfo> {
+    pub fn list_phys(&self) -> Vec<wlan::PhyInfo> {
         self.phys
             .values()
             .filter_map(|phy| {
@@ -87,10 +91,21 @@ impl DeviceManager {
     }
 
     /// Creates an interface on the phy with the given id.
-    pub fn create_iface(&mut self, phy_id: u16, role: wlan::MacRole) -> Result<u16, Error> {
-        let phy = self.phys.get(&phy_id).ok_or(zx::Status::INVALID_ARGS)?;
-        let iface_info = phy.dev.create_iface(role)?;
-        Ok(iface_info.id)
+    pub fn create_iface(&mut self, phy_id: u16, role: wlan::MacRole) -> impl Future<Item = u16, Error = zx::Status> + Send {
+        let phy = match self.phys.get(&phy_id) {
+            Some(p) => p,
+            None => return future::err(zx::Status::INVALID_ARGS).left(),
+        };
+        let mut req = wlan::CreateIfaceRequest { role };
+        phy.proxy.create_iface(&mut req)
+            .map_err(|_| zx::Status::IO)
+            .and_then(|resp| {
+            if let Ok(()) = zx::Status::ok(resp.status) {
+                future::ok(resp.info.id)
+            } else {
+                future::err(zx::Status::from_raw(resp.status))
+            }
+        }).right()
     }
 
     /// Destroys an interface with the given ids.
@@ -108,32 +123,6 @@ impl DeviceManager {
         {
             self.listeners.push(listener);
         }
-    }
-}
-
-struct PhyQuery {
-    devmgr: DevMgrRef,
-    phy: Option<PhyDevice>,
-}
-
-impl Future for PhyQuery {
-    type Item = ();
-    type Error = zx::Status;
-
-    fn poll(&mut self, _: &mut task::Context) -> Poll<Self::Item, Self::Error> {
-        // TODO(tkilbourn): make this async once queries are async.
-        // TODO(tkilbourn): store the result in the PhyDevice once we can clone FIDL structs.
-        let phy = self.phy.take().expect("PhyQuery polled after completion");
-        let _info = phy.dev
-            .query()
-            .map(|mut info| {
-                // We add the id to the device's info.
-                info.id = phy.id;
-                info
-            })?;
-
-        self.devmgr.lock().add_phy(phy);
-        Ok(Async::Ready(()))
     }
 }
 
@@ -190,12 +179,14 @@ pub fn new_phy_watcher<P: AsRef<Path>>(
             // This could fail if the device were to go away in between our receiving the watcher
             // message and here. TODO(tkilbourn): handle this case more cleanly.
             let phy = PhyDevice::new(id, path).expect("Failed to open phy device");
-            async::spawn(PhyQuery {
-                devmgr: devmgr.clone(),
-                phy: Some(phy),
-            }.recover(
-                |e| eprintln!("Could not query wlan phy device: {:?}", e)
-            ));
+            async::spawn(
+                phy.proxy.query()
+                    .and_then(move |_resp| {
+                        devmgr.lock().add_phy(phy);
+                        Ok(())
+                    })
+                    .recover(
+                        |e| eprintln!("Could not query/add wlan phy device: {:?}", e)));
         },
         |devmgr, path| {
             info!("removing phy at {}", path.to_string_lossy());

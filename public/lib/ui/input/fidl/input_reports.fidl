@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-module mozart;
+library input;
 
 // Descriptors are used to describe the capabilities of an input device.
 //
@@ -22,12 +22,13 @@ struct Range {
 };
 
 struct RangeF {
-  float min;
-  float max;
+  float32 min;
+  float32 max;
 };
 
 enum AxisScale {
-  LINEAR, LOGARITHMIC,
+  LINEAR = 0;
+  LOGARITHMIC = 1;
 };
 
 // An |Axis| is defined as a |range| and |resolution|.
@@ -39,7 +40,7 @@ struct Axis {
 
 struct AxisF {
   RangeF range;
-  float resolution = 1.0;
+  float32 resolution = 1.0;
   AxisScale scale = LINEAR;
 };
 
@@ -49,14 +50,14 @@ struct AxisF {
 // |KeyboardDescriptor| describes the capabilities of a keyboard.
 struct KeyboardDescriptor {
   // The list of HID keyboard usages that this keyboard can generate.
-  array<uint32> keys;
+  vector<uint32> keys;
 };
 
 // |KeyboardReport| lists the keys currently pressed down.
 struct KeyboardReport {
   // |pressed_keys| is the list of HID usage that are currently pressed down on
   // the keyboard.
-  array<uint32> pressed_keys;
+  vector<uint32> pressed_keys;
 };
 
 // Mouse
@@ -163,7 +164,52 @@ struct Touch {
 // |TouchscreenReport| describes the current touches recorded by the touchscreen
 // and holds a |Touch| per finger down.
 struct TouchscreenReport {
-  array<Touch> touches;
+  vector<Touch> touches;
+};
+
+// Motion Sensors
+
+// Descriptive categories for sensor devices.
+// We assume that each (SensorType,SensorLocation) pair is unique to the system.
+
+enum SensorType {
+  ACCELEROMETER = 0;
+  GYROSCOPE = 1;
+  MAGNETOMETER = 2;
+  LIGHTMETER = 3;
+};
+
+enum SensorLocation {
+  BASE = 0;
+  LID = 1;
+};
+
+// |SensorDescriptor| describes the capabilities of a sensor device.  It does
+// not capture properties that can be changed after initialization, such as the
+// current sampling frequency.
+struct SensorDescriptor {
+  SensorType type;
+  SensorLocation loc;
+
+  // Min and max sampling frequencies for a sensor.
+  uint32 min_sampling_freq;
+  uint32 max_sampling_freq;
+  // Max number of sensor events that could be in hardware FIFO.
+  uint32 fifo_max_event_count;
+
+  // Physical range of a specific sensor.
+  // Accelerometer ranges are given in Gs.
+  // Gyroscope ranges are given in deg/s.
+  // Magnetometer ranges are given in multiples of 1/16 uT.
+  // Light meter ranges are given in lux (to be confirmed!).
+  int32 phys_min;
+  int32 phys_max;
+};
+
+// |SensorReport| describes the sensor event delivered from the event stream.
+union SensorReport {
+  array<int16>:3 @vector;
+  uint16 scalar;
 };
 
 // Device and Report
@@ -175,13 +221,14 @@ struct DeviceInfo {
   string name;
 };
 
-// |DeviceDescriptor| describes an input device.
+// |DeviceDescriptor| describes one input device.
 struct DeviceDescriptor {
   DeviceInfo? device_info;
   KeyboardDescriptor? keyboard;
   MouseDescriptor? mouse;
   StylusDescriptor? stylus;
   TouchscreenDescriptor? touchscreen;
+  SensorDescriptor? sensor;
 };
 
 // |InputReport| is an input |report| triggered by an input device.
@@ -193,4 +240,5 @@ struct InputReport {
   MouseReport? mouse;
   StylusReport? stylus;
   TouchscreenReport? touchscreen;
+  SensorReport? sensor;
 };

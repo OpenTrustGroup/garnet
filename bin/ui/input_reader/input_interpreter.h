@@ -10,14 +10,23 @@
 #include <zircon/types.h>
 #include <zx/event.h>
 
-#include <map>
+#include <array>
 #include <string>
+#include <vector>
 
-#include "lib/ui/input/fidl/input_device_registry.fidl.h"
-#include "lib/ui/input/fidl/input_reports.fidl.h"
+#include "garnet/bin/ui/input_reader/hid_decoder.h"
+
+#include <fuchsia/cpp/input.h>
+#include <fuchsia/cpp/input.h>
 
 namespace mozart {
-namespace input {
+
+// Each InputInterpreter instance observes and routes events coming in from one
+// file descriptor under /dev/class/input. Each file descriptor may multiplex
+// events from one or more physical devices, though typically there is a 1:1
+// correspondence for input devices like keyboards and mice. Sensors are an
+// atypical case, where many sensors have their events routed through one
+// logical file descriptor, since they share a hardware FIFO queue.
 
 class InputInterpreter {
  public:
@@ -31,16 +40,19 @@ class InputInterpreter {
   using OnReportCallback = std::function<void(ReportType type)>;
 
   static std::unique_ptr<InputInterpreter>
-  Open(int dirfd, std::string filename, mozart::InputDeviceRegistry* registry);
+  Open(int dirfd, std::string filename, input::InputDeviceRegistry* registry);
   ~InputInterpreter();
 
   bool Initialize();
   bool Read(bool discard);
 
-  const std::string& name() const { return name_; }
+  const std::string& name() const { return hid_decoder_.name(); }
   zx_handle_t handle() { return event_.get(); }
 
  private:
+  static const uint8_t kMaxSensorCount = 16;
+  static const uint8_t kNoSuchSensor = 0xFF;
+
   enum class TouchDeviceType {
     NONE,
     ACER12,
@@ -50,22 +62,16 @@ class InputInterpreter {
     EGALAX
   };
 
-  enum class MouseDeviceType {
+  enum class MouseDeviceType { NONE, BOOT, PARADISEv1, PARADISEv2 };
+
+  enum class SensorDeviceType {
     NONE,
-    BOOT,
-    PARADISEv1,
-    PARADISEv2
+    PARADISE,
   };
 
   InputInterpreter(std::string name,
                    int fd,
-                   mozart::InputDeviceRegistry* registry);
-
-  zx_status_t GetProtocol(int* out_proto);
-  zx_status_t GetReportDescriptionLength(size_t* out_report_desc_len);
-  zx_status_t GetReportDescription(uint8_t* out_buf,
-                                   size_t out_report_desc_len);
-  zx_status_t GetMaxReportLength(input_report_size_t* out_max_report_len);
+                   input::InputDeviceRegistry* registry);
 
   void NotifyRegistry();
 
@@ -79,42 +85,51 @@ class InputInterpreter {
   bool ParseEGalaxTouchscreenReport(uint8_t* report, size_t len);
   template <typename ReportT>
   bool ParseParadiseTouchpadReport(uint8_t* report, size_t len);
+  bool ParseParadiseSensorReport(uint8_t* report, size_t len);
 
-  const int fd_;
-  const std::string name_;
-  mozart::InputDeviceRegistry* registry_;
+  input::InputDeviceRegistry* registry_;
 
   zx::event event_;
-  std::vector<uint8_t> report_;
-  input_report_size_t max_report_len_ = 0;
 
   acer12_touch_t acer12_touch_reports_[2];
 
   bool has_keyboard_ = false;
-  mozart::KeyboardDescriptorPtr keyboard_descriptor_;
+  input::KeyboardDescriptorPtr keyboard_descriptor_;
   bool has_mouse_ = false;
-  mozart::MouseDescriptorPtr mouse_descriptor_;
+  input::MouseDescriptorPtr mouse_descriptor_;
   bool has_stylus_ = false;
-  mozart::StylusDescriptorPtr stylus_descriptor_;
+  input::StylusDescriptorPtr stylus_descriptor_;
   bool has_touchscreen_ = false;
-  mozart::TouchscreenDescriptorPtr touchscreen_descriptor_;
+  input::TouchscreenDescriptorPtr touchscreen_descriptor_;
+  bool has_sensors_ = false;
+  // Arrays are indexed by the sensor number that was assigned by Zircon.
+  // Keeps track of the physical sensors multiplexed over the file descriptor.
+  std::array<input::SensorDescriptorPtr, kMaxSensorCount> sensor_descriptors_;
+  std::array<input::InputDevicePtr, kMaxSensorCount> sensor_devices_;
 
   TouchDeviceType touch_device_type_ = TouchDeviceType::NONE;
   MouseDeviceType mouse_device_type_ = MouseDeviceType::NONE;
+  SensorDeviceType sensor_device_type_ = SensorDeviceType::NONE;
 
   // Used for converting absolute coords from paradise into relative deltas
   int32_t mouse_abs_x_ = -1;
   int32_t mouse_abs_y_ = -1;
 
-  mozart::InputReportPtr keyboard_report_;
-  mozart::InputReportPtr mouse_report_;
-  mozart::InputReportPtr touchscreen_report_;
-  mozart::InputReportPtr stylus_report_;
+  // Keep track of which sensor gave us a report. Index into
+  // |sensor_descriptors_| and |sensor_devices_|.
+  uint8_t sensor_idx_ = kNoSuchSensor;
 
-  mozart::InputDevicePtr input_device_;
+  input::InputReportPtr keyboard_report_;
+  input::InputReportPtr mouse_report_;
+  input::InputReportPtr touchscreen_report_;
+  input::InputReportPtr stylus_report_;
+  input::InputReportPtr sensor_report_;
+
+  input::InputDevicePtr input_device_;
+
+  HidDecoder hid_decoder_;
 };
 
-}  // namespace input
 }  // namespace mozart
 
 #endif  // GARNET_BIN_UI_INPUT_READER_INPUT_INTERPRETER_H_

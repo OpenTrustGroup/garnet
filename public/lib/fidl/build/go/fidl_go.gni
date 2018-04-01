@@ -4,9 +4,10 @@
 
 import("//build/compiled_action.gni")
 import("//build/fidl/toolchain.gni")
+import("//build/go/go_library.gni")
 import("//build/go/toolchain.gni")
 
-# Generates some C++ bindings for a FIDL library.
+# Generates some Go bindings for a FIDL library.
 #
 # The parameters for this template are defined in //build/fidl/fidl.gni. The
 # relevant parameters in this template are:
@@ -28,9 +29,9 @@ template("fidl_go") {
   if (defined(invoker.name)) {
     library_name = invoker.name
   }
-  file_stem = "$target_gen_dir/$library_name.fidl"
 
-  fidl_target_gen_dir = get_label_info(":bogus($fidl_toolchain)", "target_gen_dir")
+  fidl_target_gen_dir = get_label_info(":$target_name($fidl_toolchain)", "target_gen_dir")
+  file_stem = "$fidl_target_gen_dir/$library_name.fidl"
   json_representation = "$fidl_target_gen_dir/$target_name.fidl.json"
 
   compiled_action(generation_target_name) {
@@ -45,7 +46,7 @@ template("fidl_go") {
     ]
 
     outputs = [
-      "$file_stem.go",
+      "$file_stem/impl.go",
     ]
 
     args = [
@@ -64,10 +65,21 @@ template("fidl_go") {
     ]
   }
 
-  # TODO(TO-862): turn this into a target consumable by other Go targets.
-  group(main_target_name) {
-    deps = [
+  go_library(main_target_name) {
+    name = "fuchsia/go/$library_name"
+
+    source_dir = file_stem
+
+    non_go_deps = [
       ":$generation_target_name",
     ]
+
+    deps = []
+    if (defined(invoker.deps)) {
+      deps += invoker.deps
+    }
+    if (defined(invoker.public_deps)) {
+      deps += invoker.public_deps
+    }
   }
 }

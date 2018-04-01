@@ -5,10 +5,10 @@
 #ifndef GARNET_BIN_NETWORK_URL_LOADER_IMPL_H_
 #define GARNET_BIN_NETWORK_URL_LOADER_IMPL_H_
 
-#include "lib/network/fidl/url_loader.fidl.h"
+#include <fuchsia/cpp/network.h>
 
 #include "lib/fxl/functional/closure.h"
-#include "lib/fidl/cpp/bindings/binding.h"
+#include "lib/fidl/cpp/binding.h"
 #include "lib/url/gurl.h"
 
 namespace network {
@@ -30,24 +30,24 @@ class URLLoaderImpl : public URLLoader {
   template <typename T>
   class HTTPClient;
 
-  using Callback = std::function<void(network::URLResponsePtr)>;
+  using Callback = std::function<void(network::URLResponse)>;
 
   // URLLoader methods:
-  void Start(URLRequestPtr request, const Callback& callback) override;
-  void FollowRedirect(const Callback& callback) override;
-  void QueryStatus(const QueryStatusCallback& callback) override;
+  void Start(URLRequest request, Callback callback) override;
+  void FollowRedirect(Callback callback) override;
+  void QueryStatus(QueryStatusCallback callback) override;
 
   void SendError(int error_code);
   void FollowRedirectInternal();
-  void SendResponse(URLResponsePtr response);
-  void StartInternal(URLRequestPtr request);
+  void SendResponse(URLResponse response);
+  void StartInternal(URLRequest request);
 
   Coordinator* coordinator_;
   Callback callback_;
-  URLRequest::ResponseBodyMode response_body_mode_;
+  ResponseBodyMode response_body_mode_;
   // bool auto_follow_redirects_;
   url::GURL current_url_;
-  URLLoaderStatusPtr last_status_;
+  URLLoaderStatus last_status_;
 };
 
 }  // namespace network

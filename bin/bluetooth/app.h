@@ -10,9 +10,9 @@
 #include "garnet/bin/bluetooth/adapter_manager.h"
 #include "garnet/bin/bluetooth/adapter_manager_server.h"
 #include "lib/app/cpp/application_context.h"
-#include "lib/bluetooth/fidl/control.fidl.h"
-#include "lib/bluetooth/fidl/gatt.fidl.h"
-#include "lib/bluetooth/fidl/low_energy.fidl.h"
+#include <fuchsia/cpp/bluetooth_control.h>
+#include <fuchsia/cpp/bluetooth_gatt.h>
+#include <fuchsia/cpp/bluetooth_low_energy.h>
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
 
@@ -27,7 +27,8 @@ namespace bluetooth_service {
 // long as the device exists and remains the active adapter.
 class App final {
  public:
-  explicit App(std::unique_ptr<app::ApplicationContext> application_context);
+  explicit App(
+      std::unique_ptr<component::ApplicationContext> application_context);
   ~App() = default;
 
   // Returns the underlying AdapterManager that owns the gap::Adapter instances.
@@ -42,22 +43,22 @@ class App final {
   // Called when there is an interface request for the AdapterManager FIDL
   // service.
   void OnAdapterManagerRequest(
-      f1dl::InterfaceRequest<::bluetooth::control::AdapterManager> request);
+      fidl::InterfaceRequest<::bluetooth_control::AdapterManager> request);
 
   // Called when there is an interface request for the low_energy::Central FIDL
   // service.
   void OnLowEnergyCentralRequest(
-      f1dl::InterfaceRequest<::bluetooth::low_energy::Central> request);
+      fidl::InterfaceRequest<::bluetooth_low_energy::Central> request);
 
   // Called when there is an interface request for the low_energy::Peripheral
   // FIDL service.
   void OnLowEnergyPeripheralRequest(
-      f1dl::InterfaceRequest<::bluetooth::low_energy::Peripheral> request);
+      fidl::InterfaceRequest<::bluetooth_low_energy::Peripheral> request);
 
   // Called when there is an interface request for the gatt::Server FIDL
   // service.
   void OnGattServerRequest(
-      f1dl::InterfaceRequest<::bluetooth::gatt::Server> request);
+      fidl::InterfaceRequest<::bluetooth_gatt::Server> request);
 
   // Called when a AdapterManagerServer that we own notifies a connection
   // error handler.
@@ -65,7 +66,7 @@ class App final {
 
   // Provides access to the environment. This is used to publish outgoing
   // services.
-  std::unique_ptr<app::ApplicationContext> application_context_;
+  std::unique_ptr<component::ApplicationContext> application_context_;
 
   // Watches for Bluetooth HCI devices and notifies us when adapters get added
   // and removed.

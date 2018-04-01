@@ -11,38 +11,53 @@
 namespace root_presenter {
 namespace {
 
-static const std::array<mozart::DisplayUsage, 5> kDisplayUsages = {
-    mozart::DisplayUsage::HANDHELD, mozart::DisplayUsage::CLOSE,
-    mozart::DisplayUsage::NEAR, mozart::DisplayUsage::MIDRANGE,
-    mozart::DisplayUsage::FAR};
+// Global keyboard shortcut for switching display usage.
+const uint32_t kGlobalShortcutKeyCodePoint = 61;  // '=' key
+const uint32_t kGlobalShortcutKeyHidUsage = 46;   // '=' key
+
+static const std::array<presentation::DisplayUsage, 5> kDisplayUsages = {
+    presentation::DisplayUsage::kHandheld, presentation::DisplayUsage::kClose,
+    presentation::DisplayUsage::kNear, presentation::DisplayUsage::kMidrange,
+    presentation::DisplayUsage::kFar};
 }  // namespace
+
+std::string GetDisplayUsageAsString(presentation::DisplayUsage usage) {
+  switch (usage) {
+    case presentation::DisplayUsage::kUnknown:
+      return "kUnknown";
+    case presentation::DisplayUsage::kHandheld:
+      return "kHandheld";
+    case presentation::DisplayUsage::kClose:
+      return "kClose";
+    case presentation::DisplayUsage::kNear:
+      return "kNear";
+    case presentation::DisplayUsage::kMidrange:
+      return "kMidrange";
+    case presentation::DisplayUsage::kFar:
+      return "kFar";
+  }
+}
 
 DisplayUsageSwitcher::DisplayUsageSwitcher() {}
 
-bool DisplayUsageSwitcher::OnEvent(const mozart::InputEventPtr& event,
-                                   Presentation* presenter,
-                                   bool* continue_dispatch_out) {
-  FXL_DCHECK(continue_dispatch_out);
-  bool invalidate = false;
-  if (event->is_keyboard()) {
-    const mozart::KeyboardEventPtr& kbd = event->get_keyboard();
-    const uint32_t kEqualsKeyCodePoint = 61;
-    const uint32_t kEqualsKeyHidUsage = 46;
-    if ((kbd->modifiers & mozart::kModifierAlt) &&
-        kbd->phase == mozart::KeyboardEvent::Phase::PRESSED &&
-        kbd->code_point == kEqualsKeyCodePoint &&
-        kbd->hid_usage == kEqualsKeyHidUsage) {
+bool DisplayUsageSwitcher::OnEvent(const input::InputEvent& event,
+                                   Presentation* presenter) {
+  if (event.is_keyboard()) {
+    const input::KeyboardEvent& kbd = event.keyboard();
+    if ((kbd.modifiers & input::kModifierAlt) &&
+        kbd.phase == input::KeyboardEventPhase::PRESSED &&
+        kbd.code_point == kGlobalShortcutKeyCodePoint &&
+        kbd.hid_usage == kGlobalShortcutKeyHidUsage) {
       // Switch to the next display usage value.
       current_display_usage_index_ =
           (current_display_usage_index_ + 1) % kDisplayUsages.size();
       presenter->SetDisplayUsage(kDisplayUsages[current_display_usage_index_]);
 
-      invalidate = true;
-      *continue_dispatch_out = false;
+      return true;
     }
   }
 
-  return invalidate;
+  return false;
 }
 
 }  // namespace root_presenter

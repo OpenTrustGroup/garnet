@@ -13,22 +13,15 @@ import (
 	"syscall/zx/fdio"
 )
 
-type binder interface {
-	// Name returns the name of provided fidl service.
-	Name() string
-
-	// Bind binds an implementation of fidl service to the provided
-	// channel and runs it.
-	Bind(h zx.Handle)
-}
+type Binder func(zx.Channel) error
 
 type Namespace struct {
-	binders    map[string]binder
+	binders    map[string]Binder
 	Dispatcher *fdio.Dispatcher
 }
 
 func New() *Namespace {
-	return &Namespace{binders: make(map[string]binder)}
+	return &Namespace{binders: make(map[string]Binder)}
 }
 
 func (sn *Namespace) ServeDirectory(h zx.Handle) error {
@@ -39,7 +32,7 @@ func (sn *Namespace) ServeDirectory(h zx.Handle) error {
 
 	n := &svcfs.Namespace{
 		Provider: func(name string, h zx.Handle) {
-			sn.ConnectToService(name, h)
+			sn.ConnectToService(name, zx.Channel(h))
 		},
 		Dispatcher: d,
 	}
@@ -53,16 +46,15 @@ func (sn *Namespace) ServeDirectory(h zx.Handle) error {
 	return nil
 }
 
-func (sn *Namespace) ConnectToService(name string, h zx.Handle) error {
-	b, ok := sn.binders[name]
+func (sn *Namespace) ConnectToService(name string, h zx.Channel) error {
+	binder, ok := sn.binders[name]
 	if !ok {
 		h.Close()
 		return nil
 	}
-	b.Bind(h)
-	return nil
+	return binder(h)
 }
 
-func (sn *Namespace) AddService(b binder) {
-	sn.binders[b.Name()] = b
+func (sn *Namespace) AddService(n string, b Binder) {
+	sn.binders[n] = b
 }

@@ -42,40 +42,41 @@ public:
                                                           buffer->size() - 4));
         EXPECT_TRUE(buffer->UnmapCpu());
 
-        // pin, unpin and check again
-        EXPECT_TRUE(buffer->PinPages(0, num_pages));
-        EXPECT_TRUE(buffer->UnpinPages(0, num_pages));
+        EXPECT_TRUE(buffer->CommitPages(0, num_pages));
+
+        // check again
         EXPECT_TRUE(buffer->MapCpu(&virt_addr));
         EXPECT_EQ(first_word, *reinterpret_cast<uint32_t*>(virt_addr));
         EXPECT_EQ(last_word, *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(virt_addr) +
                                                           buffer->size() - 4));
         EXPECT_TRUE(buffer->UnmapCpu());
 
-        // now go page-by-page...
-        EXPECT_TRUE(buffer->PinPages(0, num_pages));
-        EXPECT_TRUE(buffer->MapCpu(&virt_addr));
-        EXPECT_EQ(first_word, *reinterpret_cast<uint32_t*>(virt_addr));
+        std::vector<std::unique_ptr<magma::PlatformBuffer::BusMapping>> mappings;
 
-        // pin again
-        EXPECT_TRUE(buffer->PinPages(0, num_pages));
-        EXPECT_EQ(last_word, *reinterpret_cast<uint32_t*>(reinterpret_cast<uint8_t*>(virt_addr) +
-                                                          buffer->size() - 4));
+        if (num_pages >= 1) {
+            auto mapping = buffer->MapPageRangeBus(0, 1);
+            ASSERT_NE(mapping, nullptr);
+            EXPECT_TRUE(mapping->Get().size() == 1);
+            EXPECT_EQ(0u, mapping->page_offset());
+            EXPECT_EQ(1u, mapping->page_count());
+            mappings.push_back(std::move(mapping));
+        }
 
-        // unpin once
-        EXPECT_TRUE(buffer->UnpinPages(0, num_pages));
+        if (num_pages >= 2) {
+            auto mapping = buffer->MapPageRangeBus(num_pages - 1, 1);
+            ASSERT_NE(mapping, nullptr);
+            EXPECT_TRUE(mapping->Get().size() == 1);
+            EXPECT_EQ(num_pages - 1, mapping->page_offset());
+            EXPECT_EQ(1u, mapping->page_count());
+            mappings.push_back(std::move(mapping));
 
-        uint64_t bus_addr;
-        EXPECT_TRUE(buffer->MapPageRangeBus(0, 1, &bus_addr));
-        EXPECT_TRUE(buffer->MapPageRangeBus(num_pages - 1, 1, &bus_addr));
-
-        EXPECT_TRUE(buffer->UnmapCpu());
-        EXPECT_TRUE(buffer->UnmapPageRangeBus(0, 1));
-
-        if (size > PAGE_SIZE)
-            EXPECT_TRUE(buffer->UnmapPageRangeBus(num_pages - 1, 1));
-
-        // unpin last
-        EXPECT_TRUE(buffer->UnpinPages(0, num_pages));
+            mapping = buffer->MapPageRangeBus(1, num_pages - 1);
+            ASSERT_NE(mapping, nullptr);
+            EXPECT_TRUE(mapping->Get().size() == num_pages - 1);
+            EXPECT_EQ(1u, mapping->page_offset());
+            EXPECT_EQ(num_pages - 1, mapping->page_count());
+            mappings.push_back(std::move(mapping));
+        }
     }
 
     static void MapSpecific()
@@ -181,112 +182,85 @@ public:
         test_buffer_passing(buffer[0].get(), buffer[1].get());
     }
 
-    static void BufferFdPassing()
-    {
-        std::vector<std::unique_ptr<magma::PlatformBuffer>> buffer(2);
+    // TODO(MA-427) - adapt test to new bus page mappings; AND enable this test
+    // static void PinRanges(uint32_t num_pages)
+    // {
+    //     std::unique_ptr<magma::PlatformBuffer> buffer =
+    //         magma::PlatformBuffer::Create(num_pages * PAGE_SIZE, "test");
 
-        buffer[0] = magma::PlatformBuffer::Create(1, "test");
-        ASSERT_NE(buffer[0], nullptr);
-        int fd;
-        ASSERT_TRUE(buffer[0]->GetFd(&fd));
-        buffer[1] = magma::PlatformBuffer::ImportFromFd(fd);
-        ASSERT_NE(buffer[1], nullptr);
+    //     for (uint32_t i = 0; i < num_pages; i++) {
+    //         uint64_t phys_addr = 0;
+    //         EXPECT_FALSE(buffer->MapPageRangeBus(i, 1, &phys_addr));
+    //     }
 
-        EXPECT_EQ(buffer[0]->size(), buffer[1]->size());
-        EXPECT_EQ(0, close(fd));
+    //     EXPECT_FALSE(buffer->UnpinPages(0, num_pages));
 
-        test_buffer_passing(buffer[0].get(), buffer[1].get());
+    //     EXPECT_TRUE(buffer->PinPages(0, num_pages));
 
-        buffer[0] = std::move(buffer[1]);
-        ASSERT_NE(buffer[0], nullptr);
-        ASSERT_TRUE(buffer[0]->GetFd(&fd));
-        buffer[1] = magma::PlatformBuffer::ImportFromFd(fd);
-        ASSERT_NE(buffer[1], nullptr);
+    //     for (uint32_t i = 0; i < num_pages; i++) {
+    //         uint64_t phys_addr = 0;
+    //         EXPECT_TRUE(buffer->MapPageRangeBus(i, 1, &phys_addr));
+    //         EXPECT_NE(phys_addr, 0u);
+    //     }
 
-        EXPECT_EQ(buffer[0]->size(), buffer[1]->size());
+    //     // Map first page again
+    //     EXPECT_TRUE(buffer->PinPages(0, 1));
 
-        test_buffer_passing(buffer[0].get(), buffer[1].get());
-        EXPECT_EQ(0, close(fd));
-    }
+    //     // Unpin full range
+    //     EXPECT_TRUE(buffer->UnpinPages(0, num_pages));
 
-    static void PinRanges(uint32_t num_pages)
-    {
-        std::unique_ptr<magma::PlatformBuffer> buffer =
-            magma::PlatformBuffer::Create(num_pages * PAGE_SIZE, "test");
+    //     for (uint32_t i = 0; i < num_pages; i++) {
+    //         uint64_t phys_addr = 0;
+    //         if (i == 0) {
+    //             EXPECT_TRUE(buffer->MapPageRangeBus(i, 1, &phys_addr));
+    //             EXPECT_TRUE(buffer->UnmapPageRangeBus(i, 1));
+    //         } else
+    //             EXPECT_FALSE(buffer->MapPageRangeBus(i, 1, &phys_addr));
+    //     }
 
-        for (uint32_t i = 0; i < num_pages; i++) {
-            uint64_t phys_addr = 0;
-            EXPECT_FALSE(buffer->MapPageRangeBus(i, 1, &phys_addr));
-        }
+    //     EXPECT_FALSE(buffer->UnpinPages(0, num_pages));
+    //     EXPECT_TRUE(buffer->UnpinPages(0, 1));
 
-        EXPECT_FALSE(buffer->UnpinPages(0, num_pages));
+    //     // Map the middle page.
+    //     EXPECT_TRUE(buffer->PinPages(num_pages / 2, 1));
 
-        EXPECT_TRUE(buffer->PinPages(0, num_pages));
+    //     // Map a middle range.
+    //     uint32_t range_start = num_pages / 2 - 1;
+    //     uint32_t range_pages = 3;
+    //     ASSERT_GE(num_pages, range_pages);
 
-        for (uint32_t i = 0; i < num_pages; i++) {
-            uint64_t phys_addr = 0;
-            EXPECT_TRUE(buffer->MapPageRangeBus(i, 1, &phys_addr));
-            EXPECT_NE(phys_addr, 0u);
-        }
+    //     EXPECT_TRUE(buffer->PinPages(range_start, range_pages));
 
-        // Map first page again
-        EXPECT_TRUE(buffer->PinPages(0, 1));
+    //     // Verify middle range is mapped.
+    //     for (uint32_t i = 0; i < num_pages; i++) {
+    //         uint64_t phys_addr = 0;
+    //         if (i >= range_start && i < range_start + range_pages) {
+    //             EXPECT_TRUE(buffer->MapPageRangeBus(i, 1, &phys_addr));
+    //             EXPECT_TRUE(buffer->UnmapPageRangeBus(i, 1));
+    //         } else
+    //             EXPECT_FALSE(buffer->MapPageRangeBus(i, 1, &phys_addr));
+    //     }
 
-        // Unpin full range
-        EXPECT_TRUE(buffer->UnpinPages(0, num_pages));
+    //     // Unpin middle page.
+    //     EXPECT_TRUE(buffer->UnpinPages(num_pages / 2, 1));
 
-        for (uint32_t i = 0; i < num_pages; i++) {
-            uint64_t phys_addr = 0;
-            if (i == 0) {
-                EXPECT_TRUE(buffer->MapPageRangeBus(i, 1, &phys_addr));
-                EXPECT_TRUE(buffer->UnmapPageRangeBus(i, 1));
-            } else
-                EXPECT_FALSE(buffer->MapPageRangeBus(i, 1, &phys_addr));
-        }
+    //     // Same result.
+    //     for (uint32_t i = 0; i < num_pages; i++) {
+    //         uint64_t phys_addr = 0;
+    //         if (i >= range_start && i < range_start + range_pages) {
+    //             EXPECT_TRUE(buffer->MapPageRangeBus(i, 1, &phys_addr));
+    //             EXPECT_TRUE(buffer->UnmapPageRangeBus(i, 1));
+    //         } else
+    //             EXPECT_FALSE(buffer->MapPageRangeBus(i, 1, &phys_addr));
+    //     }
 
-        EXPECT_FALSE(buffer->UnpinPages(0, num_pages));
-        EXPECT_TRUE(buffer->UnpinPages(0, 1));
+    //     EXPECT_TRUE(buffer->UnpinPages(range_start, range_pages));
 
-        // Map the middle page.
-        EXPECT_TRUE(buffer->PinPages(num_pages / 2, 1));
-
-        // Map a middle range.
-        uint32_t range_start = num_pages / 2 - 1;
-        uint32_t range_pages = 3;
-        ASSERT_GE(num_pages, range_pages);
-
-        EXPECT_TRUE(buffer->PinPages(range_start, range_pages));
-
-        // Verify middle range is mapped.
-        for (uint32_t i = 0; i < num_pages; i++) {
-            uint64_t phys_addr = 0;
-            if (i >= range_start && i < range_start + range_pages) {
-                EXPECT_TRUE(buffer->MapPageRangeBus(i, 1, &phys_addr));
-                EXPECT_TRUE(buffer->UnmapPageRangeBus(i, 1));
-            } else
-                EXPECT_FALSE(buffer->MapPageRangeBus(i, 1, &phys_addr));
-        }
-
-        // Unpin middle page.
-        EXPECT_TRUE(buffer->UnpinPages(num_pages / 2, 1));
-
-        // Same result.
-        for (uint32_t i = 0; i < num_pages; i++) {
-            uint64_t phys_addr = 0;
-            if (i >= range_start && i < range_start + range_pages) {
-                EXPECT_TRUE(buffer->MapPageRangeBus(i, 1, &phys_addr));
-                EXPECT_TRUE(buffer->UnmapPageRangeBus(i, 1));
-            } else
-                EXPECT_FALSE(buffer->MapPageRangeBus(i, 1, &phys_addr));
-        }
-
-        EXPECT_TRUE(buffer->UnpinPages(range_start, range_pages));
-
-        for (uint32_t i = 0; i < num_pages; i++) {
-            uint64_t phys_addr = 0;
-            EXPECT_FALSE(buffer->MapPageRangeBus(i, 1, &phys_addr));
-        }
-    }
+    //     for (uint32_t i = 0; i < num_pages; i++) {
+    //         uint64_t phys_addr = 0;
+    //         EXPECT_FALSE(buffer->MapPageRangeBus(i, 1, &phys_addr));
+    //     }
+    // }
 
     static void CommitPages(uint32_t num_pages)
     {
@@ -360,7 +334,6 @@ TEST(PlatformBuffer, MapSpecific) { TestPlatformBuffer::MapSpecific(); }
 TEST(PlatformBuffer, CachePolicy) { TestPlatformBuffer::CachePolicy(); }
 
 TEST(PlatformBuffer, BufferPassing) { TestPlatformBuffer::BufferPassing(); }
-TEST(PlatformBuffer, BufferFdPassing) { TestPlatformBuffer::BufferFdPassing(); }
 
 TEST(PlatformBuffer, Commit)
 {

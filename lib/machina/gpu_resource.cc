@@ -95,11 +95,11 @@ virtio_gpu_ctrl_type GpuResource::TransferToHost2D(
 virtio_gpu_ctrl_type GpuResource::Flush(
     const virtio_gpu_resource_flush_t* request) {
   GpuScanout* scanout = scanout_;
-  if (scanout == nullptr)
+  if (scanout == nullptr) {
     return VIRTIO_GPU_RESP_OK_NODATA;
+  }
 
-  // TODO: Convert r to scanout coordinates.
-  scanout->FlushRegion(request->r);
+  scanout->DrawScanoutResource(request->r);
   return VIRTIO_GPU_RESP_OK_NODATA;
 }
 
@@ -113,7 +113,7 @@ void GpuResource::CopyBytes(uint64_t offset, uint8_t* dest, size_t size) {
       len = len > size ? size : len;
 
       zx_vaddr_t src_vaddr = entry.addr + offset - base;
-      memcpy(dest, gpu_->phys_mem().ptr(src_vaddr, len), len);
+      memcpy(dest, gpu_->phys_mem().as<void>(src_vaddr, len), len);
 
       dest += len;
       offset += len;

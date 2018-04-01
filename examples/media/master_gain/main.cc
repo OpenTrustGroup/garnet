@@ -9,7 +9,7 @@
 #include "lib/app/cpp/connect.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/command_line.h"
-#include "lib/media/fidl/audio_server.fidl.h"
+#include <fuchsia/cpp/media.h>
 
 void usage(const char* prog_name) {
   std::cout << "Usage: " << prog_name << " [gain]\n";
@@ -39,7 +39,8 @@ int main(int argc, const char** argv) {
 
   fsl::MessageLoop loop;
 
-  auto application_context = app::ApplicationContext::CreateFromStartupInfo();
+  auto application_context =
+      component::ApplicationContext::CreateFromStartupInfo();
 
   auto audio_server =
       application_context->ConnectToEnvironmentService<media::AudioServer>();

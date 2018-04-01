@@ -42,6 +42,9 @@ magma_status_t magma_query(int32_t fd, uint64_t id, uint64_t* value_out)
         case MAGMA_QUERY_VENDOR_PARAM_0:
             *value_out = (23l << 32) | 8;
             return MAGMA_STATUS_OK;
+        case MAGMA_QUERY_VENDOR_PARAM_0 + 1: // gtt size
+            *value_out = 1ull << 32;
+            return MAGMA_STATUS_OK;
     }
     return MAGMA_STATUS_INVALID_ARGS;
 }
@@ -127,19 +130,6 @@ magma_status_t magma_export(magma_connection_t* connection, magma_buffer_t buffe
     reinterpret_cast<magma::PlatformBuffer*>(buffer)->duplicate_handle(&handle);
     exported_buffers[handle] = magma::PlatformBuffer::Import(handle).release();
     *buffer_handle_out = handle;
-    return MAGMA_STATUS_OK;
-}
-
-magma_status_t magma_export_fd(magma_connection_t* connection, magma_buffer_t buffer, int* fd)
-{
-    reinterpret_cast<magma::PlatformBuffer*>(buffer)->GetFd(fd);
-    return MAGMA_STATUS_OK;
-}
-
-magma_status_t magma_import_fd(magma_connection_t* connection, int fd, magma_buffer_t* buffer_out)
-{
-    *buffer_out =
-        reinterpret_cast<magma_buffer_t>(magma::PlatformBuffer::ImportFromFd(fd).release());
     return MAGMA_STATUS_OK;
 }
 

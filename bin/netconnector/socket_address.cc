@@ -8,7 +8,7 @@
 
 #include <endian.h>
 
-#include "lib/netstack/fidl/netstack.fidl.h"
+#include <fuchsia/cpp/netstack.h>
 
 namespace netconnector {
 
@@ -119,7 +119,7 @@ SocketAddress::SocketAddress(const sockaddr_storage& addr) {
 }
 
 SocketAddress::SocketAddress(const netstack::SocketAddress* addr)
-    : SocketAddress(IpAddress(addr->addr.get()),
+    : SocketAddress(IpAddress(&addr->addr),
                     IpPort::From_uint16_t(addr->port)) {
   FXL_DCHECK(addr != nullptr);
 }

@@ -2,33 +2,33 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "audio_analysis.h"
-
+#include "garnet/bin/media/audio_server/test/audio_analysis.h"
+#include <fbl/algorithm.h>
+#include <vector>
 #include "lib/fxl/logging.h"
 
 namespace media {
+namespace audio {
 namespace test {
 
 //
 // This library contains standalone functions that enable tests to analyze
 // audio- or gain-related outputs.
 //
-// The ValToDb and GainScaleToDb functions convert numerical values (RMS level)
-// into the decibel scale (hence 20dB per 10x, not 10dB). The AccumCosine
-// function populates audio buffers with sinusoidal values of the given
-// frequency, magnitude and phase. The FFT function performs Fast Fourier
-// Transforms on the provided real and imaginary arrays. The MeasureAudioFreq
-// function analyzes the given audio buffer at the specified frequency,
-// returning the magnitude of signal that resides at that frequency, as well as
-// the combined magnitude of all other frequencies (useful for computing
-// signal-to-noise and other metrics).
+// The GenerateCosine function populates audio buffers with sinusoidal values of
+// the given frequency, magnitude and phase. The FFT function performs Fast
+// Fourier Transforms on the provided real and imaginary arrays. The
+// MeasureAudioFreq function analyzes the given audio buffer at the specified
+// frequency, returning the magnitude of signal that resides at that frequency,
+// as well as the combined magnitude of all other frequencies (useful for
+// computing signal-to-noise and other metrics).
 //
 
 //
-// TODO(mpuryear): Consider using the googletest Array Matchers for this
-//
 // Numerically compare two buffers of integers. Emit values if mismatch found.
 // For testability, last param bool represents whether we expect comp to fail
+//
+// TODO(mpuryear): Consider using the googletest Array Matchers for this
 template <typename T>
 bool CompareBuffers(const T* actual,
                     const T* expect,
@@ -106,8 +106,8 @@ void DisplayVals(const double* buf, uint32_t buf_size) {
 // audio input device operating in uint8 mode). Float and double specializations
 // need not do anything, as double-to-float cast poses no real risk of
 // distortion from truncation.
-// Used only within this file by AccumCosine, these functions do not check for
-// overflow/clamp, leaving that responsibility on users of AccumCosine.
+// Used only within this file by GenerateCosine, these functions do not check
+// for overflow/clamp, leaving that responsibility on users of GenerateCosine.
 template <typename T>
 inline T Finalize(double value) {
   return static_cast<T>(round(value));
@@ -129,17 +129,23 @@ inline double Finalize(double value) {
 // repeats itself 'freq' times within buffer length; 'magn' specifies peak
 // value. Accumulates these values with preexisting array vals, if bool is set.
 template <typename T>
-void AccumCosine(T* buffer,
-                 uint32_t buf_size,
-                 double freq,
-                 double magn,
-                 double phase,
-                 bool accum) {
+void GenerateCosine(T* buffer,
+                    uint32_t buf_size,
+                    double freq,
+                    bool accumulate,
+                    double magn,
+                    double phase) {
+  // If frequency is 0 (constant val), phase offset causes reduced amplitude
   FXL_DCHECK(freq > 0.0 || (freq == 0.0 && phase == 0.0));
 
+  // Freqs above buf_size/2 (Nyquist limit) will alias into lower frequencies.
+  FXL_DCHECK(freq * 2.0 <= buf_size)
+      << "Buffer too short--requested frequency will be aliased";
+
+  // freq is defined as: cosine recurs exactly 'freq' times within buf_size.
   const double mult = 2.0 * M_PI / buf_size * freq;
 
-  if (accum) {
+  if (accumulate) {
     for (uint32_t idx = 0; idx < buf_size; ++idx) {
       buffer[idx] += Finalize<T>(magn * std::cos(mult * idx + phase));
     }
@@ -193,7 +199,7 @@ void AccumCosine(T* buffer,
 // Classic DSP texts by Oppenheim, Schaffer, Rabiner, or the Cooley-Tukey paper
 // itself, are serviceable references for these concepts.
 //
-// TODO: Consider using std::complex<double> instead of dual real/imag arrays.
+// TODO(mpuryear): Consider std::complex<double> instead of real/imag arrays.
 void FFT(double* reals, double* imags, uint32_t buf_size) {
   FXL_DCHECK(fbl::is_pow2(buf_size));
   const uint32_t buf_sz_2 = buf_size >> 1;
@@ -275,8 +281,9 @@ void MeasureAudioFreq(T* audio,
                       double* magn_signal,
                       double* magn_other) {
   FXL_DCHECK(fbl::is_pow2(buf_size));
+
   uint32_t buf_sz_2 = buf_size >> 1;
-  FXL_DCHECK(freq <= buf_sz_2);
+  bool freq_out_of_range = (freq > buf_sz_2);
 
   // Copy input to double buffer, before doing a high-res FFT (freq-analysis)
   // Note that we set imags[] to zero: MeasureAudioFreq retrieves a REAL (not
@@ -286,11 +293,11 @@ void MeasureAudioFreq(T* audio,
   std::vector<double> imags(buf_size);
   for (uint32_t idx = 0; idx < buf_size; ++idx) {
     reals[idx] = audio[idx];
-    imags[idx] = 0.0f;
+    imags[idx] = 0.0;
 
     // In case of uint8 input data, bias from a zero of 0x80 to 0.0
     if (std::is_same<T, uint8_t>::value) {
-      reals[idx] -= 128.0f;
+      reals[idx] -= 128.0;
     }
   }
   FFT(reals.data(), imags.data(), buf_size);
@@ -312,15 +319,18 @@ void MeasureAudioFreq(T* audio,
   reals[buf_sz_2] /= buf_size;  // we divide the real and imag values by
   imags[buf_sz_2] /= buf_size;  // buf_size instead of buf_sz_2.
 
-  // Calculate magnitude of primary signal
+  // Calculate magnitude of primary signal (even if out-of-range aliased back!)
+  if (freq_out_of_range) {
+    freq = buf_size - freq;
+  }
   *magn_signal =
       std::sqrt(reals[freq] * reals[freq] + imags[freq] * imags[freq]);
 
   // Calculate magnitude of all other frequencies
   if (magn_other) {
-    double sum_sq_magn_other = 0.0f;
-    for (uint32_t bin = 0; bin < buf_sz_2; ++bin) {
-      if (bin != freq) {
+    double sum_sq_magn_other = 0.0;
+    for (uint32_t bin = 0; bin <= buf_sz_2; ++bin) {
+      if (bin != freq || freq_out_of_range) {
         sum_sq_magn_other +=
             (reals[bin] * reals[bin] + imags[bin] * imags[bin]);
       }
@@ -329,16 +339,16 @@ void MeasureAudioFreq(T* audio,
   }
 }
 
-template bool CompareBuffers<int32_t>(const int32_t*,
-                                      const int32_t*,
+template bool CompareBuffers<uint8_t>(const uint8_t*,
+                                      const uint8_t*,
                                       uint32_t,
                                       bool);
 template bool CompareBuffers<int16_t>(const int16_t*,
                                       const int16_t*,
                                       uint32_t,
                                       bool);
-template bool CompareBuffers<uint8_t>(const uint8_t*,
-                                      const uint8_t*,
+template bool CompareBuffers<int32_t>(const int32_t*,
+                                      const int32_t*,
                                       uint32_t,
                                       bool);
 template bool CompareBuffers<double>(const double*,
@@ -346,43 +356,43 @@ template bool CompareBuffers<double>(const double*,
                                      uint32_t,
                                      bool);
 
-template bool CompareBufferToVal<int32_t>(const int32_t*,
-                                          int32_t,
+template bool CompareBufferToVal<uint8_t>(const uint8_t*,
+                                          uint8_t,
                                           uint32_t,
                                           bool);
 template bool CompareBufferToVal<int16_t>(const int16_t*,
                                           int16_t,
                                           uint32_t,
                                           bool);
-template bool CompareBufferToVal<uint8_t>(const uint8_t*,
-                                          uint8_t,
+template bool CompareBufferToVal<int32_t>(const int32_t*,
+                                          int32_t,
                                           uint32_t,
                                           bool);
 
-template void AccumCosine<uint8_t>(uint8_t*,
-                                   uint32_t,
-                                   double,
-                                   double,
-                                   double,
-                                   bool);
-template void AccumCosine<int16_t>(int16_t*,
-                                   uint32_t,
-                                   double,
-                                   double,
-                                   double,
-                                   bool);
-template void AccumCosine<int32_t>(int32_t*,
-                                   uint32_t,
-                                   double,
-                                   double,
-                                   double,
-                                   bool);
-template void AccumCosine<double>(double*,
-                                  uint32_t,
-                                  double,
-                                  double,
-                                  double,
-                                  bool);
+template void GenerateCosine<uint8_t>(uint8_t*,
+                                      uint32_t,
+                                      double,
+                                      bool,
+                                      double,
+                                      double);
+template void GenerateCosine<int16_t>(int16_t*,
+                                      uint32_t,
+                                      double,
+                                      bool,
+                                      double,
+                                      double);
+template void GenerateCosine<int32_t>(int32_t*,
+                                      uint32_t,
+                                      double,
+                                      bool,
+                                      double,
+                                      double);
+template void GenerateCosine<double>(double*,
+                                     uint32_t,
+                                     double,
+                                     bool,
+                                     double,
+                                     double);
 
 template void MeasureAudioFreq<uint8_t>(uint8_t* audio,
                                         uint32_t buf_size,
@@ -401,4 +411,5 @@ template void MeasureAudioFreq<int32_t>(int32_t* audio,
                                         double* magn_other = nullptr);
 
 }  // namespace test
+}  // namespace audio
 }  // namespace media

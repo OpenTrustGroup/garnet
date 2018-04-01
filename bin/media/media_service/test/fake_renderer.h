@@ -8,9 +8,8 @@
 #include <queue>
 #include <vector>
 
-#include "lib/fidl/cpp/bindings/binding.h"
-#include "lib/media/fidl/media_renderer.fidl.h"
-#include "lib/media/fidl/media_transport.fidl.h"
+#include <fuchsia/cpp/media.h>
+#include "lib/fidl/cpp/binding.h"
 #include "lib/media/timeline/timeline_function.h"
 #include "lib/media/transport/media_packet_consumer_base.h"
 
@@ -44,7 +43,7 @@ class FakeRenderer : public MediaPacketConsumerBase,
   ~FakeRenderer() override;
 
   // Binds the renderer.
-  void Bind(f1dl::InterfaceRequest<MediaRenderer> renderer_request);
+  void Bind(fidl::InterfaceRequest<MediaRenderer> renderer_request);
 
   // Sets the demand min_packets_outstanding.
   void ConfigureDemand(uint32_t min_packets_outstanding) {
@@ -66,46 +65,43 @@ class FakeRenderer : public MediaPacketConsumerBase,
 
  private:
   // MediaRenderer implementation.
-  void GetSupportedMediaTypes(
-      const GetSupportedMediaTypesCallback& callback) override;
+  void GetSupportedMediaTypes(GetSupportedMediaTypesCallback callback) override;
 
-  void SetMediaType(MediaTypePtr media_type) override;
+  void SetMediaType(MediaType media_type) override;
 
-  void GetPacketConsumer(f1dl::InterfaceRequest<MediaPacketConsumer>
+  void GetPacketConsumer(fidl::InterfaceRequest<MediaPacketConsumer>
                              packet_consumer_request) override;
 
-  void GetTimelineControlPoint(f1dl::InterfaceRequest<MediaTimelineControlPoint>
+  void GetTimelineControlPoint(fidl::InterfaceRequest<MediaTimelineControlPoint>
                                    control_point_request) override;
 
   // MediaPacketConsumerBase overrides.
   void OnPacketSupplied(
       std::unique_ptr<SuppliedPacket> supplied_packet) override;
 
-  void OnFlushRequested(bool hold_frame,
-                        const FlushCallback& callback) override;
+  void OnFlushRequested(bool hold_frame, FlushCallback callback) override;
 
   void OnFailure() override;
 
   // MediaTimelineControlPoint implementation.
   void GetStatus(uint64_t version_last_seen,
-                 const GetStatusCallback& callback) override;
+                 GetStatusCallback callback) override;
 
-  void GetTimelineConsumer(f1dl::InterfaceRequest<TimelineConsumer>
+  void GetTimelineConsumer(fidl::InterfaceRequest<TimelineConsumer>
                                timeline_consumer_request) override;
 
   void SetProgramRange(uint64_t program,
                        int64_t min_pts,
                        int64_t max_pts) override;
 
-  void Prime(const PrimeCallback& callback) override;
+  void Prime(PrimeCallback callback) override;
 
   // TimelineConsumer implementation.
-  void SetTimelineTransform(
-      TimelineTransformPtr timeline_transform,
-      const SetTimelineTransformCallback& callback) override;
+  void SetTimelineTransform(TimelineTransform timeline_transform,
+                            SetTimelineTransformCallback callback) override;
 
   void SetTimelineTransformNoReply(
-      TimelineTransformPtr timeline_transform) override;
+      TimelineTransform timeline_transform) override;
 
   // Clears the pending timeline function and calls its associated callback
   // with the indicated completed status.
@@ -118,16 +114,16 @@ class FakeRenderer : public MediaPacketConsumerBase,
   void SendStatusUpdates();
 
   // Calls the callback with the current status.
-  void CompleteGetStatus(const GetStatusCallback& callback);
+  void CompleteGetStatus(GetStatusCallback callback);
 
   uint32_t demand_min_packets_outstanding_ = 1;
   bool dump_packets_ = false;
   std::vector<PacketInfo> expected_packets_info_;
   std::vector<PacketInfo>::iterator expected_packets_info_iter_;
 
-  f1dl::Binding<MediaRenderer> renderer_binding_;
-  f1dl::Binding<MediaTimelineControlPoint> control_point_binding_;
-  f1dl::Binding<TimelineConsumer> timeline_consumer_binding_;
+  fidl::Binding<MediaRenderer> renderer_binding_;
+  fidl::Binding<MediaTimelineControlPoint> control_point_binding_;
+  fidl::Binding<TimelineConsumer> timeline_consumer_binding_;
   std::queue<std::unique_ptr<SuppliedPacket>> packet_queue_;
   TimelineFunction current_timeline_function_;
   TimelineFunction pending_timeline_function_;

@@ -8,8 +8,8 @@
 #include <string>
 
 #include "garnet/bin/netconnector/socket_address.h"
-#include "lib/app/fidl/service_provider.fidl.h"
-#include "lib/fidl/cpp/bindings/binding.h"
+#include <fuchsia/cpp/component.h>
+#include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/macros.h"
 
 namespace netconnector {
@@ -17,28 +17,27 @@ namespace netconnector {
 class NetConnectorImpl;
 
 // Provides services on a remote device.
-class DeviceServiceProvider : public app::ServiceProvider {
+class DeviceServiceProvider : public component::ServiceProvider {
  public:
   static std::unique_ptr<DeviceServiceProvider> Create(
-      const std::string& device_name,
-      const SocketAddress& address,
-      f1dl::InterfaceRequest<app::ServiceProvider> request,
+      const std::string& device_name, const SocketAddress& address,
+      fidl::InterfaceRequest<component::ServiceProvider> request,
       NetConnectorImpl* owner);
 
   ~DeviceServiceProvider() override;
 
-  void ConnectToService(const f1dl::String& service_name,
+  void ConnectToService(fidl::StringPtr service_name,
                         zx::channel channel) override;
 
  private:
-  DeviceServiceProvider(const std::string& device_name,
-                        const SocketAddress& address,
-                        f1dl::InterfaceRequest<app::ServiceProvider> request,
-                        NetConnectorImpl* owner);
+  DeviceServiceProvider(
+      const std::string& device_name, const SocketAddress& address,
+      fidl::InterfaceRequest<component::ServiceProvider> request,
+      NetConnectorImpl* owner);
 
   std::string device_name_;
   SocketAddress address_;
-  f1dl::Binding<app::ServiceProvider> binding_;
+  fidl::Binding<component::ServiceProvider> binding_;
   NetConnectorImpl* owner_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(DeviceServiceProvider);

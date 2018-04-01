@@ -8,6 +8,7 @@ source_set("audio_mixer_lib") {
   sources = [
     "constants.h",
     "gain.cc",
+    "gain.h",
     "platform/generic/mixer.cc",
     "platform/generic/mixer.h",
     "platform/generic/mixers/linear_sampler.cc",
@@ -28,6 +29,7 @@ source_set("audio_mixer_lib") {
   deps = [
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/media/timeline",
+    "//zircon/public/lib/fbl",
   ]
 }
 
@@ -89,7 +91,6 @@ executable("audio_server") {
     "//garnet/bin/media/audio",
     "//garnet/bin/media/audio_server:audio_mixer_lib",
     "//garnet/bin/media/fidl",
-    "//garnet/bin/media/util",
     "//garnet/lib/media/wav_writer",
     "//garnet/public/lib/app/cpp",
     "//garnet/public/lib/fsl",
@@ -110,20 +111,27 @@ test("tests") {
   output_name = "audio_mixer_tests"
 
   sources = [
-    "test/mixer_tests_shared.cc",
-    "test/mixer_tests_shared.h",
-    "test/audio_analysis.cc",
+    "test/main.cc",
     "test/audio_analysis.h",
+    "test/audio_analysis.cc",
     "test/audio_analysis_tests.cc",
+    "test/audio_result.h",
+    "test/audio_result.cc",
+    "test/frequency_set.h",
+    "test/frequency_set.cc",
+    "test/mixer_tests_shared.h",
+    "test/mixer_tests_shared.cc",
     "test/mixer_transparency_tests.cc",
     "test/mixer_gain_tests.cc",
     "test/mixer_resampler_tests.cc",
+    "test/mixer_frequency_tests.cc",
     "test/mixer_tests_recap.cc",
   ]
 
   deps = [
     "//garnet/bin/media/audio_server:audio_mixer_lib",
     "//third_party/googletest:gtest_main",
+    "//garnet/public/lib/fxl",
     "//zircon/public/lib/fbl",
   ]
 }

@@ -26,7 +26,7 @@ VideoFrameSource::VideoFrameSource() {
       });
 
   timeline_control_point_.SetPrimeRequestedCallback(
-      [this](const MediaTimelineControlPoint::PrimeCallback& callback) {
+      [this](MediaTimelineControlPoint::PrimeCallback callback) {
         SetDemand(kPacketDemand);
 
         if (packet_queue_.size() >= kPacketDemand) {
@@ -59,7 +59,7 @@ void VideoFrameSource::AdvanceReferenceTime(int64_t reference_time) {
 }
 
 void VideoFrameSource::GetRgbaFrame(uint8_t* rgba_buffer,
-                                    const mozart::Size& rgba_buffer_size) {
+                                    const geometry::Size& rgba_buffer_size) {
   if (held_packet_) {
     converter_.ConvertFrame(rgba_buffer, rgba_buffer_size.width,
                             rgba_buffer_size.height, held_packet_->payload(),
@@ -78,12 +78,12 @@ void VideoFrameSource::GetRgbaFrame(uint8_t* rgba_buffer,
 void VideoFrameSource::OnPacketSupplied(
     std::unique_ptr<SuppliedPacket> supplied_packet) {
   FXL_DCHECK(supplied_packet);
-  FXL_DCHECK(supplied_packet->packet()->pts_rate_ticks ==
+  FXL_DCHECK(supplied_packet->packet().pts_rate_ticks ==
              TimelineRate::NsPerSecond.subject_delta());
-  FXL_DCHECK(supplied_packet->packet()->pts_rate_seconds ==
+  FXL_DCHECK(supplied_packet->packet().pts_rate_seconds ==
              TimelineRate::NsPerSecond.reference_delta());
 
-  if (supplied_packet->packet()->flags & MediaPacket::kFlagEos) {
+  if (supplied_packet->packet().flags & kFlagEos) {
     if (prime_callback_) {
       // We won't get any more packets, so we're as primed as we're going to
       // get.
@@ -91,7 +91,7 @@ void VideoFrameSource::OnPacketSupplied(
       prime_callback_ = nullptr;
     }
 
-    timeline_control_point_.SetEndOfStreamPts(supplied_packet->packet()->pts);
+    timeline_control_point_.SetEndOfStreamPts(supplied_packet->packet().pts);
   }
 
   // Discard empty packets so they don't confuse the selection logic.
@@ -106,7 +106,7 @@ void VideoFrameSource::OnPacketSupplied(
     CheckForRevisedMediaType(supplied_packet->packet());
   }
 
-  if (supplied_packet->packet()->pts < min_pts_) {
+  if (supplied_packet->packet().pts < min_pts_) {
     // This packet falls outside the program range. Discard it.
     return;
   }
@@ -137,7 +137,7 @@ void VideoFrameSource::OnPacketSupplied(
 }
 
 void VideoFrameSource::OnFlushRequested(bool hold_frame,
-                                        const FlushCallback& callback) {
+                                        FlushCallback callback) {
   if (!packet_queue_.empty()) {
     if (hold_frame) {
       held_packet_ = std::move(packet_queue_.front());
@@ -163,7 +163,7 @@ void VideoFrameSource::DiscardOldPackets() {
   // We keep at least one packet around even if it's old, so we can show an
   // old frame rather than no frame when we starve.
   while (packet_queue_.size() > 1 &&
-         packet_queue_.front()->packet()->pts < pts_) {
+         packet_queue_.front()->packet().pts < pts_) {
     // TODO(dalesat): Add hysteresis.
     packet_queue_.pop();
     // Make sure the front of the queue has been checked for revised media
@@ -172,13 +172,10 @@ void VideoFrameSource::DiscardOldPackets() {
   }
 }
 
-void VideoFrameSource::CheckForRevisedMediaType(const MediaPacketPtr& packet) {
-  FXL_DCHECK(packet);
+void VideoFrameSource::CheckForRevisedMediaType(const MediaPacket& packet) {
+  const MediaTypePtr& revised_media_type = packet.revised_media_type;
 
-  const MediaTypePtr& revised_media_type = packet->revised_media_type;
-
-  if (revised_media_type && revised_media_type->details &&
-      revised_media_type->details->get_video()) {
+  if (revised_media_type && revised_media_type->details.is_video()) {
     converter_.SetStreamType(
         fxl::To<std::unique_ptr<StreamType>>(revised_media_type));
 

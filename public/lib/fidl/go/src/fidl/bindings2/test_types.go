@@ -4,7 +4,9 @@
 
 package bindings2
 
-import _zx "syscall/zx"
+import (
+	_zx "syscall/zx"
+)
 
 type TestSimple struct {
 	X int64
@@ -114,7 +116,7 @@ func (_ *TestFloat3) InlineAlignment() int {
 
 // Implements Payload.
 func (_ *TestFloat3) InlineSize() int {
-	return 28
+	return 32
 }
 
 type TestArray1 struct {
@@ -143,7 +145,7 @@ func (_ *TestArray2) InlineAlignment() int {
 
 // Implements Payload.
 func (_ *TestArray2) InlineSize() int {
-	return 12
+	return 16
 }
 
 type TestArray3 struct {
@@ -206,8 +208,8 @@ func (_ *TestString2) InlineSize() int {
 }
 
 type TestString3 struct {
-	A [2]string  `fidl:",4"`
-	B [2]*string `fidl:",4"`
+	A [2]string  `fidl:"4"`
+	B [2]*string `fidl:"4"`
 }
 
 // Implements Payload.
@@ -223,8 +225,8 @@ func (_ *TestString3) InlineSize() int {
 type TestVector1 struct {
 	A []int8
 	B *[]int16
-	C []int32  `fidl:",2"`
-	D *[]int64 `fidl:",2"`
+	C []int32  `fidl:"2"`
+	D *[]int64 `fidl:"2"`
 }
 
 // Implements Payload.
@@ -239,8 +241,8 @@ func (_ *TestVector1) InlineSize() int {
 
 type TestVector2 struct {
 	A [2][]int8
-	B [][]int8    `fidl:",,2"`
-	C []*[]string `fidl:",5,2,2"`
+	B [][]int8    `fidl:",2"`
+	C []*[]string `fidl:"5,2,2"`
 }
 
 // Implements Payload.
@@ -303,7 +305,7 @@ func (_ *TestHandle1) InlineSize() int {
 }
 
 type TestHandle2 struct {
-	A []_zx.Handle `fidl:",1"`
+	A []_zx.Handle `fidl:"1"`
 	B []_zx.VMO    `fidl:"*,1"`
 }
 
@@ -315,4 +317,92 @@ func (_ *TestHandle2) InlineAlignment() int {
 // Implements Payload.
 func (_ *TestHandle2) InlineSize() int {
 	return 32
+}
+
+type TestInterface1 struct {
+	A Test1Interface
+	B Test1Interface `fidl:"*"`
+	C Test1InterfaceRequest
+	D Test1InterfaceRequest `fidl:"*"`
+}
+
+// Implements Payload.
+func (_ *TestInterface1) InlineAlignment() int {
+	return 4
+}
+
+// Implements Payload.
+func (_ *TestInterface1) InlineSize() int {
+	return 16
+}
+
+// Request for Echo.
+type Test1EchoRequest struct {
+	In *string
+}
+
+// Implements Payload.
+func (_ *Test1EchoRequest) InlineAlignment() int {
+	return 0
+}
+
+// Implements Payload.
+func (_ *Test1EchoRequest) InlineSize() int {
+	return 16
+}
+
+// Response for Echo.
+type Test1EchoResponse struct {
+	Out *string
+}
+
+// Implements Payload.
+func (_ *Test1EchoResponse) InlineAlignment() int {
+	return 0
+}
+
+// Implements Payload.
+func (_ *Test1EchoResponse) InlineSize() int {
+	return 16
+}
+
+type Test1Interface Proxy
+
+func (p *Test1Interface) Echo(in *string) (*string, error) {
+	req_ := Test1EchoRequest{
+		In: in,
+	}
+	resp_ := Test1EchoResponse{}
+	err := ((*Proxy)(p)).Call(10, &req_, &resp_)
+	return resp_.Out, err
+}
+
+type Test1 interface {
+	Echo(in *string) (out *string, err_ error)
+}
+
+type Test1InterfaceRequest _zx.Channel
+
+func NewTest1InterfaceRequest() (Test1InterfaceRequest, *Test1Interface, error) {
+	req, cli, err := NewInterfaceRequest()
+	return Test1InterfaceRequest(req), (*Test1Interface)(cli), err
+}
+
+type Test1Stub struct {
+	Impl Test1
+}
+
+func (s *Test1Stub) Dispatch(ord uint32, b_ []byte, h_ []_zx.Handle) (Payload, error) {
+	switch ord {
+	case 10:
+		in_ := Test1EchoRequest{}
+		if err_ := Unmarshal(b_, h_, &in_); err_ != nil {
+			return nil, err_
+		}
+		out_ := Test1EchoResponse{}
+		out, err_ := s.Impl.Echo(in_.In)
+		out_.Out = out
+		return &out_, err_
+	}
+	return nil, ErrUnknownOrdinal
 }

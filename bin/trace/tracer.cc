@@ -7,14 +7,13 @@
 #include <utility>
 
 #include <fbl/type_support.h>
+#include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
 #include <trace-engine/fields.h>
 #include <trace-reader/reader.h>
 
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
-
-using namespace tracing::internal;
 
 namespace tracing {
 namespace {
@@ -34,7 +33,7 @@ Tracer::~Tracer() {
   CloseSocket();
 }
 
-void Tracer::Start(TraceOptionsPtr options,
+void Tracer::Start(TraceOptions options,
                    RecordConsumer record_consumer,
                    ErrorHandler error_handler,
                    fxl::Closure start_callback,
@@ -145,8 +144,7 @@ void Tracer::Done() {
   CloseSocket();
 
   if (done_callback_) {
-    fsl::MessageLoop::GetCurrent()->task_runner()->PostTask(
-        std::move(done_callback_));
+    async::PostTask(async_get_default(), std::move(done_callback_));
   }
 }
 

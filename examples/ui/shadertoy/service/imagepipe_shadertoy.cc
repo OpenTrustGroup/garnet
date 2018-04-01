@@ -20,9 +20,8 @@ namespace shadertoy {
 
 ShadertoyStateForImagePipe::ShadertoyStateForImagePipe(
     App* app,
-    ::f1dl::InterfaceHandle<scenic::ImagePipe> image_pipe)
-    : ShadertoyState(app),
-      image_pipe_(image_pipe.Bind()) {
+    ::fidl::InterfaceHandle<images::ImagePipe> image_pipe)
+    : ShadertoyState(app), image_pipe_(image_pipe.Bind()) {
   image_pipe_.set_error_handler([this] { this->Close(); });
 }
 
@@ -63,10 +62,8 @@ void ShadertoyStateForImagePipe::OnSetResolution() {
   for (size_t i = 0; i < kNumFramebuffers; ++i) {
     auto& fb = framebuffers_[i];
 
-    auto acquire_semaphore_pair =
-        escher::NewSemaphoreEventPair(escher());
-    auto release_semaphore_pair =
-        escher::NewSemaphoreEventPair(escher());
+    auto acquire_semaphore_pair = escher::NewSemaphoreEventPair(escher());
+    auto release_semaphore_pair = escher::NewSemaphoreEventPair(escher());
     if (!acquire_semaphore_pair.first || !release_semaphore_pair.first) {
       FXL_LOG(ERROR) << "OnSetResolution() failed.";
       ClearFramebuffers();
@@ -96,14 +93,14 @@ void ShadertoyStateForImagePipe::OnSetResolution() {
     fb.release_fence = std::move(release_semaphore_pair.second);
     fb.image_pipe_id = next_image_pipe_id_++;
 
-    auto image_info = scenic::ImageInfo::New();
-    image_info->width = width();
-    image_info->height = height();
-    image_info->stride = 0;  // inapplicable to GPU_OPTIMAL tiling.
-    image_info->tiling = scenic::ImageInfo::Tiling::GPU_OPTIMAL;
+    images::ImageInfo image_info;
+    image_info.width = width();
+    image_info.height = height();
+    image_info.stride = 0;  // inapplicable to GPU_OPTIMAL tiling.
+    image_info.tiling = images::Tiling::GPU_OPTIMAL;
 
     image_pipe_->AddImage(fb.image_pipe_id, std::move(image_info),
-                          std::move(vmo), scenic::MemoryType::VK_DEVICE_MEMORY,
+                          std::move(vmo), images::MemoryType::VK_DEVICE_MEMORY,
                           image->memory_offset());
   }
 }
@@ -147,17 +144,17 @@ void ShadertoyStateForImagePipe::DrawFrame(uint64_t presentation_time,
 
   // Present the image and request another frame.
   auto present_image_callback = [weak = weak_ptr_factory()->GetWeakPtr()](
-                                    ui_mozart::PresentationInfoPtr info) {
+      images::PresentationInfo info) {
     // Need this cast in order to call protected member of superclass.
     if (auto self = static_cast<ShadertoyStateForImagePipe*>(weak.get())) {
-      self->OnFramePresented(info);
+      self->OnFramePresented(std::move(info));
     }
   };
 
-  auto acquire_fences = f1dl::Array<zx::event>::New(1);
-  acquire_fences[0] = std::move(acquire_fence);
-  auto release_fences = f1dl::Array<zx::event>::New(1);
-  release_fences[0] = std::move(release_fence);
+  fidl::VectorPtr<zx::event> acquire_fences;
+  acquire_fences.push_back(std::move(acquire_fence));
+  fidl::VectorPtr<zx::event> release_fences;
+  release_fences.push_back(std::move(release_fence));
   image_pipe_->PresentImage(fb.image_pipe_id, presentation_time,
                             std::move(acquire_fences),
                             std::move(release_fences), present_image_callback);

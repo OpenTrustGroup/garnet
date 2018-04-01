@@ -6,12 +6,9 @@ import("//build/rust/rust_binary.gni")
 import("//build/package.gni")
 
 rust_binary("bin") {
-  name = "logger"
+  with_unit_tests = true
 
-  deps = [
-    "//garnet/public/rust/fidl_crates/garnet_public_lib_app_fidl",
-    "//garnet/public/rust/fidl_crates/garnet_public_lib_logger_fidl",
-  ]
+  name = "logger"
 }
 
 executable("logger_integration_tests") {
@@ -46,5 +43,15 @@ package("logger_tests") {
 
   deps = [
     ":bin",
+    ":logger_integration_tests",
+  ]
+
+  tests = [
+    {
+      name = "logger-bin-unit-test"
+    },
+    {
+      name = "logger_integration_tests"
+    },
   ]
 }

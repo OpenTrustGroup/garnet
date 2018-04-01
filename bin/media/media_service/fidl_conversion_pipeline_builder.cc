@@ -4,6 +4,7 @@
 
 #include "garnet/bin/media/media_service/fidl_conversion_pipeline_builder.h"
 
+#include <fuchsia/cpp/media.h>
 #include "garnet/bin/media/fidl/fidl_type_conversions.h"
 #include "garnet/bin/media/framework/formatting.h"
 #include "garnet/bin/media/framework/types/audio_stream_type.h"
@@ -11,8 +12,8 @@
 #include "garnet/bin/media/framework/types/video_stream_type.h"
 #include "garnet/bin/media/media_service/media_component_factory.h"
 #include "garnet/bin/media/util/callback_joiner.h"
+#include "lib/fidl/cpp/optional.h"
 #include "lib/fxl/functional/make_copyable.h"
-#include "lib/media/fidl/media_type_converter.fidl.h"
 
 namespace media {
 
@@ -207,7 +208,7 @@ bool Builder::GoalTypeSetsIncludeEncoding(const std::string& encoding) const {
 }
 
 void Builder::AddConverter(MediaTypeConverterPtr converter) {
-  converter->GetOutputType([this](MediaTypePtr output_type) {
+  converter->GetOutputType([this](MediaType output_type) {
     current_type_ = fxl::To<std::unique_ptr<StreamType>>(output_type);
     type_ = &current_type_;
     AddConverters();
@@ -365,9 +366,12 @@ void Builder::Succeed() {
 
       callback_joiner->Spawn();
       // Capture producer to keep it alive through the callback.
-      producer->Connect(std::move(consumer), fxl::MakeCopyable([
-                          callback_joiner, producer = std::move(producer)
-                        ]() { callback_joiner->Complete(); }));
+      auto producer_ptr =
+          std::make_unique<MediaPacketProducerPtr>(std::move(producer));
+      (*producer_ptr)->Connect(std::move(consumer), fxl::MakeCopyable([
+                                 callback_joiner,
+                                 producer_ptr = std::move(producer_ptr)
+                               ]() { callback_joiner->Complete(); }));
     }
 
     if (converter.get() != converters_.back().get() || consumer_getter_) {
@@ -386,9 +390,12 @@ void Builder::Succeed() {
 
     callback_joiner->Spawn();
     // Capture producer to keep it alive through the callback.
-    producer->Connect(std::move(consumer), fxl::MakeCopyable([
-                        callback_joiner, producer = std::move(producer)
-                      ]() { callback_joiner->Complete(); }));
+    auto producer_ptr =
+        std::make_unique<MediaPacketProducerPtr>(std::move(producer));
+    (*producer_ptr)->Connect(std::move(consumer), fxl::MakeCopyable([
+                               callback_joiner,
+                               producer_ptr = std::move(producer_ptr)
+                             ]() { callback_joiner->Complete(); }));
   }
 
   callback_joiner->WhenJoined([this]() {
@@ -417,11 +424,11 @@ void Builder::Succeed() {
       callback_(
           true,
           [shared_converter_ptr](
-              f1dl::InterfaceRequest<MediaPacketConsumer> request) {
+              fidl::InterfaceRequest<MediaPacketConsumer> request) {
             (*shared_converter_ptr)->GetPacketConsumer(std::move(request));
           },
           [shared_converter_ptr](
-              f1dl::InterfaceRequest<MediaPacketProducer> request) {
+              fidl::InterfaceRequest<MediaPacketProducer> request) {
             (*shared_converter_ptr)->GetPacketProducer(std::move(request));
           },
           std::move(*type_));
@@ -435,7 +442,7 @@ void Builder::Succeed() {
       // ConsumerGetter to connect a producer later on.
       consumer_getter_to_return =
           fxl::MakeCopyable([converter = std::move(converters_.front())](
-              f1dl::InterfaceRequest<MediaPacketConsumer> request) {
+              fidl::InterfaceRequest<MediaPacketConsumer> request) {
             converter->GetPacketConsumer(std::move(request));
           });
     }
@@ -446,7 +453,7 @@ void Builder::Succeed() {
       // ProducerGetter to connect a consumer later on.
       producer_getter_to_return =
           fxl::MakeCopyable([converter = std::move(converters_.back())](
-              f1dl::InterfaceRequest<MediaPacketProducer> request) {
+              fidl::InterfaceRequest<MediaPacketProducer> request) {
             converter->GetPacketProducer(std::move(request));
           });
     }

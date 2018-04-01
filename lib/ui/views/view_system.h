@@ -5,40 +5,39 @@
 #ifndef GARNET_LIB_UI_VIEWS_VIEW_SYSTEM_H_
 #define GARNET_LIB_UI_VIEWS_VIEW_SYSTEM_H_
 
-#include "garnet/lib/ui/mozart/system.h"
-#include "garnet/lib/ui/scenic/scenic_system.h"
+#include "garnet/lib/ui/gfx/scenic_system.h"
+#include "garnet/lib/ui/scenic/system.h"
 
-namespace mz {
+namespace scenic {
 
 // TODO(MZ-552): document.
 class ViewSystem : public System {
  public:
   static constexpr TypeId kTypeId = kViews;
 
-  explicit ViewSystem(mz::SystemContext context,
-                      scene_manager::ScenicSystem* scenic);
+  explicit ViewSystem(SystemContext context, scenic::gfx::ScenicSystem* scenic);
   ~ViewSystem() override;
 
   std::unique_ptr<CommandDispatcher> CreateCommandDispatcher(
-      mz::CommandDispatcherContext context) override;
+      CommandDispatcherContext context) override;
 
  private:
-  scene_manager::ScenicSystem* scenic_system_;
+  scenic::gfx::ScenicSystem* scenic_system_;
 };
 
 // TODO(MZ-552): document.
 class ViewCommandDispatcher : public CommandDispatcher {
  public:
-  ViewCommandDispatcher(mz::CommandDispatcherContext context,
-                        scene_manager::ScenicSystem* scenic_system);
+  ViewCommandDispatcher(CommandDispatcherContext context,
+                        scenic::gfx::ScenicSystem* scenic_system);
   ~ViewCommandDispatcher() override;
 
-  bool ApplyCommand(const ui_mozart::CommandPtr& command) override;
+  bool ApplyCommand(const ui::Command& command) override;
 
  private:
-  scene_manager::ScenicSystem* scenic_system_;
+  scenic::gfx::ScenicSystem* scenic_system_;
 };
 
-}  // namespace mz
+}  // namespace scenic
 
 #endif  // GARNET_LIB_UI_VIEWS_VIEW_SYSTEM_H_

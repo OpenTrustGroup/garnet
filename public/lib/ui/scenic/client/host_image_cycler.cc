@@ -23,18 +23,18 @@ const HostImage* HostImageCycler::AcquireImage(
     uint32_t width,
     uint32_t height,
     uint32_t stride,
-    scenic::ImageInfo::PixelFormat pixel_format,
-    scenic::ImageInfo::ColorSpace color_space) {
+    images::PixelFormat pixel_format,
+    images::ColorSpace color_space) {
   FXL_DCHECK(!acquired_image_);
 
   // Update the image pool and content shape.
-  scenic::ImageInfo image_info;
+  images::ImageInfo image_info;
   image_info.width = width;
   image_info.height = height;
   image_info.stride = stride;
   image_info.pixel_format = pixel_format;
   image_info.color_space = color_space;
-  image_info.tiling = scenic::ImageInfo::Tiling::LINEAR;
+  image_info.tiling = images::Tiling::LINEAR;
   reconfigured_ = image_pool_.Configure(&image_info);
 
   const HostImage* image = image_pool_.GetImage(image_index_);
@@ -59,7 +59,7 @@ void HostImageCycler::ReleaseAndSwapImage() {
     reconfigured_ = false;
   }
 
-  // TODO(MZ-145): Define an |InvalidateOp| on |Image| instead.
+  // TODO(MZ-145): Define an |InvalidateCommand| on |Image| instead.
   image_pool_.DiscardImage(image_index_);
   image_index_ = (image_index_ + 1) % kNumBuffers;
 }

@@ -12,8 +12,9 @@
 #include "lib/app/cpp/application_context.h"
 #include "lib/svc/cpp/service_namespace.h"
 #include "lib/svc/cpp/services.h"
-#include "lib/app/fidl/application_controller.fidl.h"
-#include "lib/app/fidl/application_environment.fidl.h"
+#include "lib/svc/cpp/service_provider_bridge.h"
+#include <fuchsia/cpp/component.h>
+#include <fuchsia/cpp/component.h>
 #include "garnet/bin/sysmgr/delegating_application_loader.h"
 #include "lib/fxl/macros.h"
 
@@ -25,37 +26,31 @@ namespace sysmgr {
 // The nested environment consists of the following system applications
 // which are started on demand then retained as singletons for the lifetime
 // of the environment.
-class App : public app::ApplicationEnvironmentHost {
+class App {
  public:
   App();
   ~App();
 
  private:
-  // |ApplicationEnvironmentHost|:
-  void GetApplicationEnvironmentServices(
-      f1dl::InterfaceRequest<app::ServiceProvider> environment_services)
-      override;
-
   void RegisterSingleton(std::string service_name,
-                         app::ApplicationLaunchInfoPtr launch_info);
+                         component::ApplicationLaunchInfoPtr launch_info);
   void RegisterDefaultServiceConnector();
   void RegisterAppLoaders(Config::ServiceMap app_loaders);
-  void LaunchApplication(app::ApplicationLaunchInfoPtr launch_info);
+  void LaunchApplication(component::ApplicationLaunchInfo launch_info);
 
-  std::unique_ptr<app::ApplicationContext> application_context_;
+  std::unique_ptr<component::ApplicationContext> application_context_;
 
   // Keep track of all services, indexed by url.
-  std::map<std::string, app::Services> services_;
+  std::map<std::string, component::Services> services_;
 
   // Nested environment within which the apps started by sysmgr will run.
-  app::ApplicationEnvironmentPtr env_;
-  app::ApplicationEnvironmentControllerPtr env_controller_;
-  f1dl::Binding<app::ApplicationEnvironmentHost> env_host_binding_;
-  app::ServiceNamespace env_services_;
-  app::ApplicationLauncherPtr env_launcher_;
+  component::ApplicationEnvironmentPtr env_;
+  component::ApplicationEnvironmentControllerPtr env_controller_;
+  component::ServiceProviderBridge service_provider_bridge_;
+  component::ApplicationLauncherPtr env_launcher_;
 
   std::unique_ptr<DelegatingApplicationLoader> app_loader_;
-  f1dl::BindingSet<app::ApplicationLoader> app_loader_bindings_;
+  fidl::BindingSet<component::ApplicationLoader> app_loader_bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(App);
 };

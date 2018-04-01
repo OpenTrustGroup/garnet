@@ -8,12 +8,11 @@
 #include <vector>
 
 #include "lib/app/cpp/application_context.h"
-#include "lib/test_runner/fidl/test_runner.fidl.h"
+#include <fuchsia/cpp/test_runner.h>
 
 namespace test_runner {
 
-void ReportResult(std::string identity,
-                  app::ApplicationContext* context,
+void ReportResult(std::string identity, component::ApplicationContext* context,
                   std::vector<TestResultPtr> results);
 
 }  // namespace test_runner

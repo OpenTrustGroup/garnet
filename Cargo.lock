@@ -81,12 +81,14 @@ version = "0.1.0"
 dependencies = [
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fidl 0.1.0",
+ "fidl_bluetooth 0.1.0",
+ "fidl_bluetooth_gatt 0.1.0",
+ "fidl_bluetooth_low_energy 0.1.0",
+ "fidl_power_manager 0.1.0",
  "fuchsia-app 0.1.0",
  "fuchsia-async 0.1.0",
  "fuchsia-zircon 0.3.4",
  "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_public_lib_bluetooth_fidl 0.1.0",
- "garnet_public_lib_power_fidl 0.1.0",
  "parking_lot 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -119,6 +121,20 @@ dependencies = [
  "fuchsia-bluetooth 0.1.0",
  "fuchsia-zircon 0.3.4",
  "rand 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "btsnoop"
+version = "0.1.0"
+dependencies = [
+ "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clap 2.31.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fuchsia-async 0.1.0",
+ "fuchsia-bluetooth 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+ "futures-util 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -213,11 +229,12 @@ dependencies = [
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fdio 0.2.0",
  "fidl 0.1.0",
+ "fidl_device_settings 0.1.0",
  "fuchsia-app 0.1.0",
  "fuchsia-async 0.1.0",
+ "fuchsia-syslog 0.1.0",
  "fuchsia-zircon 0.3.4",
  "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_public_lib_device_settings_fidl 0.1.0",
  "mxruntime 0.1.0",
  "mxruntime-sys 0.1.0",
  "parking_lot 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -249,28 +266,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "echo_client_rust"
+name = "echo2_client_rust"
 version = "0.1.0"
 dependencies = [
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fidl 0.1.0",
+ "fidl_echo2 0.1.0",
  "fuchsia-app 0.1.0",
  "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
  "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_examples_fidl_services 0.1.0",
  "structopt 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
-name = "echo_server_rust"
+name = "echo2_server_rust"
 version = "0.1.0"
 dependencies = [
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fidl 0.1.0",
+ "fidl_echo2 0.1.0",
  "fuchsia-app 0.1.0",
  "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
  "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_examples_fidl_services 0.1.0",
 ]
 
 [[package]]
@@ -324,6 +343,163 @@ dependencies = [
 ]
 
 [[package]]
+name = "fidl_bluetooth"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_bluetooth_control"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fidl_bluetooth 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_bluetooth_gatt"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fidl_bluetooth 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_bluetooth_low_energy"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fidl_bluetooth 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_component"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fidl_fsl 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_device_settings"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_echo2"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_fsl"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_logger"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_netstack"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_network"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fidl_fsl 0.1.0",
+ "fidl_netstack 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_power_manager"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_wlan_device"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_wlan_device_service"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fidl_wlan_device 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "fidl_xi"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "font-rs"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -338,13 +514,10 @@ dependencies = [
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fdio 0.2.0",
  "fidl 0.1.0",
+ "fidl_component 0.1.0",
  "fuchsia-async 0.1.0",
  "fuchsia-zircon 0.3.4",
  "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_examples_fidl_services 0.1.0",
- "garnet_public_lib_app_fidl 0.1.0",
- "garnet_public_lib_app_fidl_service_provider 0.1.0",
- "garnet_public_lib_fsl_fidl 0.1.0",
  "mxruntime 0.1.0",
 ]
 
@@ -397,6 +570,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fuchsia-syslog"
+version = "0.1.0"
+dependencies = [
+ "fuchsia-zircon 0.3.4",
+ "lazy_static 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mxruntime 0.1.0",
+ "tempdir 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "fuchsia-vfs"
 version = "0.1.0"
 dependencies = [
@@ -427,8 +611,9 @@ dependencies = [
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fdio 0.2.0",
  "fidl 0.1.0",
+ "fidl_wlan_device 0.1.0",
+ "fuchsia-async 0.1.0",
  "fuchsia-zircon 0.3.4",
- "garnet_lib_wlan_fidl 0.1.0",
 ]
 
 [[package]]
@@ -520,158 +705,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "garnet_examples_fidl_services"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "garnet_lib_wlan_fidl"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "garnet_lib_wlan_fidl_service"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_lib_wlan_fidl 0.1.0",
-]
-
-[[package]]
-name = "garnet_public_lib_app_fidl"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_public_lib_app_fidl_service_provider 0.1.0",
- "garnet_public_lib_fsl_fidl 0.1.0",
-]
-
-[[package]]
-name = "garnet_public_lib_app_fidl_service_provider"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "garnet_public_lib_bluetooth_fidl"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_public_lib_fsl_fidl 0.1.0",
- "garnet_public_lib_netstack_fidl_net_address 0.1.0",
- "garnet_public_lib_power_fidl 0.1.0",
-]
-
-[[package]]
-name = "garnet_public_lib_device_settings_fidl"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "garnet_public_lib_fsl_fidl"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "garnet_public_lib_logger_fidl"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "garnet_public_lib_mdns_fidl"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_public_lib_app_fidl 0.1.0",
- "garnet_public_lib_netstack_fidl_net_address 0.1.0",
-]
-
-[[package]]
-name = "garnet_public_lib_netstack_fidl_net_address"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "garnet_public_lib_network_fidl"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_public_lib_fsl_fidl 0.1.0",
- "garnet_public_lib_netstack_fidl_net_address 0.1.0",
-]
-
-[[package]]
-name = "garnet_public_lib_power_fidl"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_public_lib_app_fidl_service_provider 0.1.0",
- "garnet_public_lib_fsl_fidl 0.1.0",
-]
-
-[[package]]
-name = "garnet_public_lib_xi_fidl"
-version = "0.1.0"
-dependencies = [
- "fidl 0.1.0",
- "fuchsia-async 0.1.0",
- "fuchsia-zircon 0.3.4",
- "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
 name = "gcc"
 version = "0.3.54"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -714,6 +747,11 @@ dependencies = [
 
 [[package]]
 name = "lazy_static"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "lazy_static"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
@@ -749,17 +787,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "log_listener"
+version = "0.1.0"
+dependencies = [
+ "fidl 0.1.0",
+ "fidl_logger 0.1.0",
+]
+
+[[package]]
 name = "logger"
 version = "0.1.0"
 dependencies = [
  "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fidl 0.1.0",
+ "fidl_logger 0.1.0",
  "fuchsia-app 0.1.0",
  "fuchsia-async 0.1.0",
  "fuchsia-zircon 0.3.4",
  "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_public_lib_logger_fidl 0.1.0",
  "libc 0.2.39 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -1253,11 +1299,12 @@ version = "0.1.0"
 dependencies = [
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fidl 0.1.0",
+ "fidl_fsl 0.1.0",
+ "fidl_network 0.1.0",
  "fuchsia-app 0.1.0",
  "fuchsia-async 0.1.0",
+ "fuchsia-zircon 0.3.4",
  "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_public_lib_fsl_fidl 0.1.0",
- "garnet_public_lib_network_fidl 0.1.0",
 ]
 
 [[package]]
@@ -1293,6 +1340,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "wlan-rsn"
 version = "0.1.0"
 dependencies = [
+ "bitfield 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "bytes 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1315,9 +1364,12 @@ version = "0.1.0"
 dependencies = [
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fdio 0.2.0",
+ "fidl 0.1.0",
+ "fidl_wlan_device 0.1.0",
+ "fuchsia-async 0.1.0",
  "fuchsia-wlan-dev 0.1.0",
  "fuchsia-zircon 0.3.4",
- "garnet_lib_wlan_fidl 0.1.0",
+ "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -1326,12 +1378,12 @@ version = "0.1.0"
 dependencies = [
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fidl 0.1.0",
+ "fidl_wlan_device 0.1.0",
+ "fidl_wlan_device_service 0.1.0",
  "fuchsia-app 0.1.0",
  "fuchsia-async 0.1.0",
  "fuchsia-zircon 0.3.4",
  "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_lib_wlan_fidl 0.1.0",
- "garnet_lib_wlan_fidl_service 0.1.0",
 ]
 
 [[package]]
@@ -1340,14 +1392,14 @@ version = "0.1.0"
 dependencies = [
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fidl 0.1.0",
+ "fidl_wlan_device 0.1.0",
+ "fidl_wlan_device_service 0.1.0",
  "fuchsia-app 0.1.0",
  "fuchsia-async 0.1.0",
  "fuchsia-vfs-watcher 0.1.0",
  "fuchsia-wlan-dev 0.1.0",
  "fuchsia-zircon 0.3.4",
  "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_lib_wlan_fidl 0.1.0",
- "garnet_lib_wlan_fidl_service 0.1.0",
  "log 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "parking_lot 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "wlan-sme 0.1.0",
@@ -1360,11 +1412,11 @@ dependencies = [
  "clap 2.31.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fidl 0.1.0",
+ "fidl_wlan_device 0.1.0",
+ "fidl_wlan_device_service 0.1.0",
  "fuchsia-app 0.1.0",
  "fuchsia-async 0.1.0",
  "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_lib_wlan_fidl 0.1.0",
- "garnet_lib_wlan_fidl_service 0.1.0",
  "structopt 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -1440,11 +1492,11 @@ dependencies = [
  "byteorder 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "fidl 0.1.0",
+ "fidl_xi 0.1.0",
  "fuchsia-app 0.1.0",
  "fuchsia-async 0.1.0",
  "fuchsia-zircon 0.3.4",
  "futures 0.2.0-alpha (registry+https://github.com/rust-lang/crates.io-index)",
- "garnet_public_lib_xi_fidl 0.1.0",
  "mxruntime 0.1.0",
  "xi-core-lib 0.2.0",
  "xi-rpc 0.2.0",
@@ -1514,6 +1566,7 @@ version = "0.1.12"
 "checksum iovec 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)" = "dbe6e417e7d0975db6512b90796e8ce223145ac4e33c377e4a42882a0e88bb08"
 "checksum itoa 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)" = "8324a32baf01e2ae060e9de58ed0bc2320c9a2833491ee36cd3b4c414de4db8c"
 "checksum kernel32-sys 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7507624b29483431c0ba2d82aece8ca6cdba9382bff4ddd0f7490560c056098d"
+"checksum lazy_static 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)" = "cf186d1a8aa5f5bee5fd662bc9c1b949e0259e1bcc379d1f006847b0080c7417"
 "checksum lazy_static 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "c8f31047daa365f19be14b47c29df4f7c3b581832407daabe6ae77397619237d"
 "checksum libc 0.2.39 (registry+https://github.com/rust-lang/crates.io-index)" = "f54263ad99207254cf58b5f701ecb432c717445ea2ee8af387334bdd1a03fdff"
 "checksum libflate 0.1.14 (registry+https://github.com/rust-lang/crates.io-index)" = "1a429b86418868c7ea91ee50e9170683f47fd9d94f5375438ec86ec3adb74e8e"

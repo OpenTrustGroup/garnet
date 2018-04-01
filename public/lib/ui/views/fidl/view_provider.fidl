@@ -2,16 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-module mozart;
+library views_v1;
 
-import "lib/app/fidl/service_provider.fidl";
-import "lib/ui/views/fidl/views.fidl";
+// import "lib/app/fidl/service_provider.fidl";
+// import "lib/ui/views/fidl/views.fidl";
 
 // Provides a View upon request.
 //
 // Applications should implement and expose this service so that they can
 // expose views to be embedded into other applications.
-[ServiceName="mozart::ViewProvider"]
+[ServiceName="views_v1::ViewProvider"]
 interface ViewProvider {
   // Creates and registers a view with the view manager and returns its
   // view owner which may subsequently be passed to |View.AddChild()|
@@ -23,6 +23,6 @@ interface ViewProvider {
   //
   // The caller may request services from the created view via the |services|
   // service provider.
-  CreateView@0(ViewOwner& view_owner,
-               app.ServiceProvider&? services);
+  1: CreateView(request<views_v1_token.ViewOwner> view_owner,
+               request<component.ServiceProvider>? services);
 };

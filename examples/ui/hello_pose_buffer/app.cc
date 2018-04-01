@@ -19,20 +19,20 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
 
+#include <fuchsia/cpp/gfx.h>
+
 #include "lib/app/cpp/connect.h"
 #include "lib/escher/util/image_utils.h"
 
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 
-#include "garnet/lib/ui/scenic/tests/util.h"
+#include "garnet/lib/ui/gfx/tests/util.h"
 #include "lib/escher/hmd/pose_buffer.h"
 #include "lib/ui/scenic/client/host_memory.h"
-#include "lib/ui/scenic/fidl/ops.fidl.h"
 #include "lib/ui/scenic/fidl_helpers.h"
 #include "lib/ui/scenic/types.h"
 
-using namespace mozart;
 using namespace scenic_lib;
 
 namespace hello_pose_buffer {
@@ -43,18 +43,17 @@ static constexpr float kEdgeLength = 900;
 static constexpr uint64_t kBillion = 1000000000;
 
 App::App()
-    : application_context_(app::ApplicationContext::CreateFromStartupInfo()),
+    : application_context_(
+          component::ApplicationContext::CreateFromStartupInfo()),
       loop_(fsl::MessageLoop::GetCurrent()) {
   // Connect to the Mozart service.
-  mozart_ =
-      application_context_->ConnectToEnvironmentService<ui_mozart::Mozart>();
-  mozart_.set_error_handler([this] {
+  scenic_ = application_context_->ConnectToEnvironmentService<ui::Scenic>();
+  scenic_.set_error_handler([this] {
     FXL_LOG(INFO) << "Lost connection to Mozart service.";
     loop_->QuitNow();
   });
-  mozart_->GetDisplayInfo([this](scenic::DisplayInfoPtr display_info) {
-    Init(std::move(display_info));
-  });
+  scenic_->GetDisplayInfo(
+      [this](gfx::DisplayInfo display_info) { Init(std::move(display_info)); });
 }
 
 void App::CreateExampleScene(float display_width, float display_height) {
@@ -77,7 +76,8 @@ void App::CreateExampleScene(float display_width, float display_height) {
   float up[3] = {0, 1, 0};
   float fovy = glm::radians(30.f);
 
-  camera_->SetProjection(eye_position, look_at, up, fovy);
+  camera_->SetTransform(eye_position, look_at, up);
+  camera_->SetProjection(fovy);
 
   compositor_->SetLayerStack(layer_stack);
   layer_stack.AddLayer(layer);
@@ -142,17 +142,17 @@ void App::CreateExampleScene(float display_width, float display_height) {
   uint64_t time_interval = 1024 * 1024 * 60 / 3.0;  // 16.67 ms
   uint32_t num_entries = 1;
 
-  Memory mem(session, std::move(vmo), scenic::MemoryType::VK_DEVICE_MEMORY);
+  Memory mem(session, std::move(vmo), images::MemoryType::VK_DEVICE_MEMORY);
   Buffer pose_buffer(mem, 0, vmo_size);
 
   camera_->SetPoseBuffer(pose_buffer, num_entries, base_time, time_interval);
 }
 
-void App::Init(scenic::DisplayInfoPtr display_info) {
+void App::Init(gfx::DisplayInfo display_info) {
   FXL_LOG(INFO) << "Creating new Session";
 
   // TODO: set up SessionListener.
-  session_ = std::make_unique<scenic_lib::Session>(mozart_.get());
+  session_ = std::make_unique<scenic_lib::Session>(scenic_.get());
   session_->set_error_handler([this] {
     FXL_LOG(INFO) << "Session terminated.";
     loop_->QuitNow();
@@ -165,8 +165,8 @@ void App::Init(scenic::DisplayInfoPtr display_info) {
       fxl::TimeDelta::FromSeconds(kSessionDuration));
 
   // Set up initial scene.
-  const float display_width = static_cast<float>(display_info->width_in_px);
-  const float display_height = static_cast<float>(display_info->height_in_px);
+  const float display_width = static_cast<float>(display_info.width_in_px);
+  const float display_height = static_cast<float>(display_info.height_in_px);
   CreateExampleScene(display_width, display_height);
 
   start_time_ = zx_clock_get(ZX_CLOCK_MONOTONIC);
@@ -184,15 +184,14 @@ void App::Update(uint64_t next_presentation_time) {
 
   // Use vmo::write here for test simplicity. In a real case the vmo should be
   // mapped into a vmar so we dont need a syscall per write
-  size_t actual_size;
   zx_status_t status =
-      pose_buffer_vmo_.write(&pose, 0, sizeof(escher::hmd::Pose), &actual_size);
+      pose_buffer_vmo_.write(&pose, 0, sizeof(escher::hmd::Pose));
   FXL_DCHECK(status == ZX_OK);
 
   // Present
   session_->Present(
-      next_presentation_time, [this](ui_mozart::PresentationInfoPtr info) {
-        Update(info->presentation_time + info->presentation_interval);
+      next_presentation_time, [this](images::PresentationInfo info) {
+        Update(info.presentation_time + info.presentation_interval);
       });
 }
 

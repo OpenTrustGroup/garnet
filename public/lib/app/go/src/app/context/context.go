@@ -5,7 +5,7 @@
 package context
 
 import (
-	"fidl/bindings"
+	"fidl/bindings2"
 	"fmt"
 	"svc/svcns"
 
@@ -13,17 +13,16 @@ import (
 	"syscall/zx/fdio"
 	"syscall/zx/mxruntime"
 
-	"garnet/public/lib/app/fidl/application_environment"
-	"garnet/public/lib/app/fidl/application_launcher"
-	"garnet/public/lib/app/fidl/service_provider"
+	"fuchsia/go/component"
 )
 
 type Context struct {
-	Environment     *application_environment.ApplicationEnvironment_Proxy
+	Environment     *component.ApplicationEnvironmentInterface
 	OutgoingService *svcns.Namespace
 	serviceRoot     zx.Handle
-	Launcher        *application_launcher.ApplicationLauncher_Proxy
+	Launcher        *component.ApplicationLauncherInterface
 	appServices     zx.Handle
+	services        bindings2.BindingSet
 }
 
 // TODO: define these in syscall/zx/mxruntime
@@ -54,11 +53,17 @@ func New(serviceRoot, serviceRequest, appServices zx.Handle) *Context {
 
 	c.OutgoingService = svcns.New()
 
-	r, p := c.Environment.NewRequest(bindings.GetAsyncWaiter())
+	r, p, err := component.NewApplicationEnvironmentInterfaceRequest()
+	if err != nil {
+		panic(err.Error())
+	}
 	c.Environment = p
 	c.ConnectToEnvService(r)
 
-	r2, p2 := c.Launcher.NewRequest(bindings.GetAsyncWaiter())
+	r2, p2, err := component.NewApplicationLauncherInterfaceRequest()
+	if err != nil {
+		panic(err.Error())
+	}
 	c.Launcher = p2
 	c.ConnectToEnvService(r2)
 
@@ -71,35 +76,21 @@ func New(serviceRoot, serviceRequest, appServices zx.Handle) *Context {
 
 func (c *Context) Serve() {
 	if c.appServices.IsValid() {
-		r := service_provider.ServiceProvider_Request{
-			bindings.NewChannelHandleOwner(c.appServices)}
-		s := service_provider.NewStubForServiceProvider(
-			r, c.OutgoingService, bindings.GetAsyncWaiter())
-		go func() {
-			for {
-				if err := s.ServeRequest(); err != nil {
-					break
-				}
-			}
-		}()
+		stub := component.ServiceProviderStub{Impl: c.OutgoingService}
+		c.services.Add(&stub, zx.Channel(c.appServices))
+		go bindings2.Serve()
 	}
-
 	if c.OutgoingService.Dispatcher != nil {
 		go c.OutgoingService.Dispatcher.Serve()
 	}
 }
 
-type interfaceRequest interface {
-	Name() string
-	TakeChannel() zx.Handle
+func (c *Context) ConnectToEnvService(r bindings2.ServiceRequest) {
+	c.ConnectToEnvServiceAt(r.Name(), r.Channel())
 }
 
-func (c *Context) ConnectToEnvService(r interfaceRequest) {
-	c.ConnectToEnvServiceAt(r.Name(), r.TakeChannel())
-}
-
-func (c *Context) ConnectToEnvServiceAt(name string, h zx.Handle) {
-	err := fdio.ServiceConnectAt(c.serviceRoot, name, h)
+func (c *Context) ConnectToEnvServiceAt(name string, h zx.Channel) {
+	err := fdio.ServiceConnectAt(c.serviceRoot, name, zx.Handle(h))
 	if err != nil {
 		panic(fmt.Sprintf("ConnectToEnvService: %v: %v", name, err))
 	}

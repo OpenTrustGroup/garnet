@@ -4,16 +4,16 @@
 
 #pragma once
 
+#include <fuchsia/cpp/media.h>
+
 #include "garnet/bin/media/framework/metadata.h"
 #include "garnet/bin/media/framework/result.h"
 #include "garnet/bin/media/framework/types/audio_stream_type.h"
 #include "garnet/bin/media/framework/types/stream_type.h"
 #include "garnet/bin/media/framework/types/video_stream_type.h"
-#include "lib/fidl/cpp/bindings/type_converters.h"
+#include "lib/fidl/cpp/optional.h"
+#include "lib/fsl/types/type_converters.h"
 #include "lib/fxl/type_converter.h"
-#include "lib/media/fidl/media_metadata.fidl.h"
-#include "lib/media/fidl/media_result.fidl.h"
-#include "lib/media/fidl/media_types.fidl.h"
 
 namespace fxl {
 
@@ -86,29 +86,57 @@ struct TypeConverter<media::ColorSpace, media::VideoStreamType::ColorSpace> {
 };
 
 template <>
+struct TypeConverter<media::MediaType, media::StreamType> {
+  static media::MediaType Convert(const media::StreamType& input);
+};
+
+template <>
+struct TypeConverter<media::MediaType, std::unique_ptr<media::StreamType>> {
+  static media::MediaType Convert(
+      const std::unique_ptr<media::StreamType>& input) {
+    FXL_DCHECK(input);
+    return fxl::To<media::MediaType>(*input);
+  }
+};
+
+template <>
 struct TypeConverter<media::MediaTypePtr, std::unique_ptr<media::StreamType>> {
   static media::MediaTypePtr Convert(
-      const std::unique_ptr<media::StreamType>& input);
+      const std::unique_ptr<media::StreamType>& input) {
+    if (!input)
+      return nullptr;
+    return fidl::MakeOptional(fxl::To<media::MediaType>(*input));
+  }
+};
+
+template <>
+struct TypeConverter<std::unique_ptr<media::StreamType>, media::MediaType> {
+  static std::unique_ptr<media::StreamType> Convert(
+      const media::MediaType& input);
 };
 
 template <>
 struct TypeConverter<std::unique_ptr<media::StreamType>, media::MediaTypePtr> {
   static std::unique_ptr<media::StreamType> Convert(
-      const media::MediaTypePtr& input);
+      const media::MediaTypePtr& input) {
+    if (!input)
+      return nullptr;
+    return To<std::unique_ptr<media::StreamType>>(*input);
+  }
 };
 
 template <>
-struct TypeConverter<media::MediaTypeSetPtr,
+struct TypeConverter<media::MediaTypeSet,
                      std::unique_ptr<media::StreamTypeSet>> {
-  static media::MediaTypeSetPtr Convert(
+  static media::MediaTypeSet Convert(
       const std::unique_ptr<media::StreamTypeSet>& input);
 };
 
 template <>
 struct TypeConverter<std::unique_ptr<media::StreamTypeSet>,
-                     media::MediaTypeSetPtr> {
+                     media::MediaTypeSet> {
   static std::unique_ptr<media::StreamTypeSet> Convert(
-      const media::MediaTypeSetPtr& input);
+      const media::MediaTypeSet& input);
 };
 
 template <>
@@ -119,6 +147,16 @@ struct TypeConverter<media::MediaMetadataPtr,
 };
 
 template <>
+struct TypeConverter<media::MediaMetadataPtr, const media::Metadata*> {
+  static media::MediaMetadataPtr Convert(const media::Metadata* input);
+};
+
+template <>
+struct TypeConverter<media::MediaMetadataPtr, media::Metadata> {
+  static media::MediaMetadataPtr Convert(const media::Metadata& input);
+};
+
+template <>
 struct TypeConverter<std::unique_ptr<media::Metadata>,
                      media::MediaMetadataPtr> {
   static std::unique_ptr<media::Metadata> Convert(
@@ -126,15 +164,15 @@ struct TypeConverter<std::unique_ptr<media::Metadata>,
 };
 
 template <>
-struct TypeConverter<f1dl::Array<uint8_t>, std::unique_ptr<media::Bytes>> {
-  static f1dl::Array<uint8_t> Convert(
+struct TypeConverter<fidl::VectorPtr<uint8_t>, std::unique_ptr<media::Bytes>> {
+  static fidl::VectorPtr<uint8_t> Convert(
       const std::unique_ptr<media::Bytes>& input);
 };
 
 template <>
-struct TypeConverter<std::unique_ptr<media::Bytes>, f1dl::Array<uint8_t>> {
+struct TypeConverter<std::unique_ptr<media::Bytes>, fidl::VectorPtr<uint8_t>> {
   static std::unique_ptr<media::Bytes> Convert(
-      const f1dl::Array<uint8_t>& input);
+      const fidl::VectorPtr<uint8_t>& input);
 };
 
 }  // namespace fxl

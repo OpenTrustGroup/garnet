@@ -12,15 +12,13 @@ import (
 	"github.com/google/netstack/tcpip"
 
 	"app/context"
-	"fidl/bindings"
 
-	"garnet/public/lib/netstack/fidl/net_address"
-	"garnet/public/lib/netstack/fidl/netstack"
+	"fuchsia/go/netstack"
 )
 
 type netstackClientApp struct {
 	ctx      *context.Context
-	netstack *netstack.Netstack_Proxy
+	netstack *netstack.NetstackInterface
 }
 
 func (a *netstackClientApp) printAll() {
@@ -85,8 +83,74 @@ func (a *netstackClientApp) addIfaceAddress(iface netstack.NetInterface, cidr st
 	}
 	prefixLen, _ := netSubnet.Mask.Size()
 	result, _ := a.netstack.SetInterfaceAddress(iface.Id, toNetAddress(netAddr), uint64(prefixLen))
-	if result.Status != netstack.Status_Ok {
+	if result.Status != netstack.StatusOk {
 		fmt.Printf("Error setting interface address: %s\n", result.Message)
+	}
+}
+
+func (a *netstackClientApp) parseRouteAttribute(in *netstack.RouteTableEntry, args []string) (remaining []string, err error) {
+	if len(args) < 2 {
+		return args, fmt.Errorf("not enough args to make attribute")
+	}
+	var attr, val string
+	switch attr, val, remaining = args[0], args[1], args[2:]; attr {
+	case "gateway":
+		in.Gateway = toNetAddress(net.ParseIP(val))
+	case "iface":
+		iface := a.getIfaceByName(val)
+		if iface == nil {
+			return remaining, fmt.Errorf("no such interface '%s'\n", val)
+		}
+
+		in.Nicid = iface.Id
+	default:
+		return remaining, fmt.Errorf("unknown route attribute: %s %s", attr, val)
+	}
+
+	return remaining, nil
+}
+
+func (a *netstackClientApp) newRouteFromArgs(args []string) (route netstack.RouteTableEntry, err error) {
+	destination, remaining := args[0], args[1:]
+	dstAddr, dstSubnet, err := net.ParseCIDR(destination)
+	if err != nil {
+		return route, fmt.Errorf("invalid destination (destination must be provided in CIDR format): %s", destination)
+	}
+
+	route.Destination = toNetAddress(dstAddr)
+	route.Netmask = toNetAddress(net.IP(dstSubnet.Mask))
+
+	for len(remaining) > 0 {
+		remaining, err = a.parseRouteAttribute(&route, remaining)
+		if err != nil {
+			return route, err
+		}
+	}
+
+	if len(remaining) != 0 {
+		return route, fmt.Errorf("could not parse all route arguments. remaining: %s", remaining)
+	}
+
+	return route, nil
+}
+
+func (a *netstackClientApp) addRoute(r netstack.RouteTableEntry) error {
+	rs, err := a.netstack.GetRouteTable()
+	if err != nil {
+		return fmt.Errorf("Could not get route table from netstack: %s", err)
+	}
+
+	return a.netstack.SetRouteTable(append(rs, r))
+}
+
+func (a *netstackClientApp) setDHCP(iface netstack.NetInterface, startStop string) {
+	switch startStop {
+	case "start":
+		a.netstack.SetDhcpClientStatus(iface.Id, true)
+	case "stop":
+		a.netstack.SetDhcpClientStatus(iface.Id, false)
+	default:
+		usage()
 	}
 }
 
@@ -101,13 +165,13 @@ func hwAddrToString(hwaddr []uint8) string {
 	return str
 }
 
-func netAddrToString(addr net_address.NetAddress) string {
+func netAddrToString(addr netstack.NetAddress) string {
 	switch addr.Family {
-	case net_address.NetAddressFamily_Ipv4:
-		a := tcpip.Address(addr.Ipv4[:])
+	case netstack.NetAddressFamilyIpv4:
+		a := tcpip.Address(addr.Ipv4.Addr[:])
 		return fmt.Sprintf("%s", a)
-	case net_address.NetAddressFamily_Ipv6:
-		a := tcpip.Address(addr.Ipv6[:])
+	case netstack.NetAddressFamilyIpv6:
+		a := tcpip.Address(addr.Ipv6.Addr[:])
 		return fmt.Sprintf("%s", a)
 	}
 	return ""
@@ -125,16 +189,16 @@ func isIPv4(ip net.IP) bool {
 	return ip.DefaultMask() != nil
 }
 
-func toNetAddress(addr net.IP) net_address.NetAddress {
-	out := net_address.NetAddress{Family: net_address.NetAddressFamily_Unspecified}
+func toNetAddress(addr net.IP) netstack.NetAddress {
+	out := netstack.NetAddress{Family: netstack.NetAddressFamilyUnspecified}
 	if isIPv4(addr) {
-		out.Family = net_address.NetAddressFamily_Ipv4
-		out.Ipv4 = &[4]uint8{}
-		copy(out.Ipv4[:], addr[len(addr)-4:])
+		out.Family = netstack.NetAddressFamilyIpv4
+		out.Ipv4 = &netstack.Ipv4Address{Addr: [4]uint8{}}
+		copy(out.Ipv4.Addr[:], addr[len(addr)-4:])
 	} else {
-		out.Family = net_address.NetAddressFamily_Ipv6
-		out.Ipv6 = &[16]uint8{}
-		copy(out.Ipv6[:], addr[:])
+		out.Family = netstack.NetAddressFamilyIpv6
+		out.Ipv6 = &netstack.Ipv6Address{Addr: [16]uint8{}}
+		copy(out.Ipv6.Addr[:], addr[:])
 	}
 	return out
 }
@@ -170,24 +234,54 @@ func usage() {
 	fmt.Printf("  %s [<interface>]\n", os.Args[0])
 	fmt.Printf("  %s [<interface>] [up|down]\n", os.Args[0])
 	fmt.Printf("  %s [<interface>] [add|del] [<address>]/[<mask>]\n", os.Args[0])
+	fmt.Printf("  %s [<interface>] dhcp [start|stop]", os.Args[0])
+	os.Exit(1)
 }
 
 func main() {
 	a := &netstackClientApp{ctx: context.CreateFromStartupInfo()}
-	r, p := a.netstack.NewRequest(bindings.GetAsyncWaiter())
-	a.netstack = p
+	req, pxy, err := netstack.NewNetstackInterfaceRequest()
+	if err != nil {
+		panic(err.Error())
+	}
+	a.netstack = pxy
 	defer a.netstack.Close()
-	a.ctx.ConnectToEnvService(r)
+	a.ctx.ConnectToEnvService(req)
 
 	if len(os.Args) == 1 {
 		a.printAll()
 		return
 	}
 
-	iface := a.getIfaceByName(os.Args[1])
-	if iface == nil {
-		fmt.Printf("ifconfig: no such interface '%s'\n", os.Args[1])
+	var iface *netstack.NetInterface
+	switch os.Args[1] {
+	case "route":
+		routeFlags := os.Args[3:]
+		r, err := a.newRouteFromArgs(routeFlags)
+		if err != nil {
+			fmt.Printf("Error parsing route from args: %s, error: %s\n", routeFlags, err)
+		}
+
+		switch op := os.Args[2]; op {
+		case "add":
+			err = a.addRoute(r)
+			if err != nil {
+				fmt.Printf("Error adding route to route table: %s", err)
+			}
+		case "del":
+			fmt.Printf("Deleting routes from the route table is not yet supported.\n")
+		default:
+			fmt.Printf("Unknown route operation: %s", op)
+			usage()
+		}
+
 		return
+	default:
+		iface = a.getIfaceByName(os.Args[1])
+		if iface == nil {
+			fmt.Printf("ifconfig: no such interface '%s'\n", os.Args[1])
+			return
+		}
 	}
 
 	switch len(os.Args) {
@@ -202,8 +296,10 @@ func main() {
 		case "add":
 			a.addIfaceAddress(*iface, os.Args[3])
 		case "del":
-			fmt.Printf("Deleting addresses from an interface is not yet supported.")
+			fmt.Printf("Deleting addresses from an interface is not yet supported.\n")
 			usage()
+		case "dhcp":
+			a.setDHCP(*iface, os.Args[3])
 		default:
 			usage()
 		}

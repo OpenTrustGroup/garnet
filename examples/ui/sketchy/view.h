@@ -7,8 +7,8 @@
 
 #include "lib/app/cpp/application_context.h"
 #include "lib/fxl/macros.h"
-#include "lib/ui/sketchy/canvas.h"
-#include "lib/ui/sketchy/resources.h"
+#include "lib/ui/sketchy/client/canvas.h"
+#include "lib/ui/sketchy/client/resources.h"
 #include "lib/ui/view_framework/base_view.h"
 
 namespace sketchy_example {
@@ -19,15 +19,15 @@ using namespace sketchy_lib;
 // clear the canvas.
 class View final : public mozart::BaseView {
  public:
-  View(app::ApplicationContext* application_context,
-       mozart::ViewManagerPtr view_manager,
-       f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request);
+  View(component::ApplicationContext* application_context,
+       views_v1::ViewManagerPtr view_manager,
+       fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request);
 
   ~View() override = default;
 
   // mozart::BaseView.
-  void OnPropertiesChanged(mozart::ViewPropertiesPtr old_properties) override;
-  bool OnInputEvent(mozart::InputEventPtr event) override;
+  void OnPropertiesChanged(views_v1::ViewProperties old_properties) override;
+  bool OnInputEvent(input::InputEvent event) override;
 
  private:
   Canvas canvas_;

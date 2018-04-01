@@ -8,8 +8,8 @@
 #include "lib/app/cpp/connect.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/macros.h"
-#include "lib/network/fidl/network_service.fidl.h"
-#include "lib/network/fidl/url_loader.fidl.h"
+#include <fuchsia/cpp/network.h>
+#include <fuchsia/cpp/network.h>
 
 namespace examples {
 
@@ -19,12 +19,12 @@ class ResponseConsumer {
   ResponseConsumer(int id) : id_(id) {}
   ResponseConsumer() = delete;
 
-  void Run(network::URLResponsePtr response) const {
-    if (response->error) {
-      printf("#%d: Got error: %d (%s)\n", id_, response->error->code,
-             response->error->description.get().c_str());
+  void Run(network::URLResponse response) const {
+    if (response.error) {
+      printf("#%d: Got error: %d (%s)\n", id_, response.error->code,
+             response.error->description.get().c_str());
     } else {
-      ReadResponseBody(std::move(response->body->get_stream()));
+      ReadResponseBody(std::move(response.body->stream()));
     }
   }
 
@@ -57,7 +57,8 @@ class MWGetApp {
  public:
   static constexpr int MAX_LOADERS = 100;
 
-  MWGetApp() : context_(app::ApplicationContext::CreateFromStartupInfo()) {
+  MWGetApp()
+      : context_(component::ApplicationContext::CreateFromStartupInfo()) {
     network_service_ =
         context_->ConnectToEnvironmentService<network::NetworkService>();
     FXL_DCHECK(network_service_);
@@ -83,13 +84,13 @@ class MWGetApp {
     for (int i = 0; i < num_loaders_; i++) {
       network_service_->CreateURLLoader(url_loader_[i].NewRequest());
 
-      network::URLRequestPtr request(network::URLRequest::New());
-      request->url = url;
-      request->method = "GET";
-      request->auto_follow_redirects = true;
+      network::URLRequest request;
+      request.url = url;
+      request.method = "GET";
+      request.auto_follow_redirects = true;
 
       url_loader_[i]->Start(std::move(request),
-                            [this, i](network::URLResponsePtr response) {
+                            [this, i](network::URLResponse response) {
                               ResponseConsumer consumer(i);
                               consumer.Run(std::move(response));
                               ++num_done_;
@@ -104,7 +105,7 @@ class MWGetApp {
   }
 
  private:
-  std::unique_ptr<app::ApplicationContext> context_;
+  std::unique_ptr<component::ApplicationContext> context_;
 
   network::NetworkServicePtr network_service_;
   network::URLLoaderPtr url_loader_[MAX_LOADERS];

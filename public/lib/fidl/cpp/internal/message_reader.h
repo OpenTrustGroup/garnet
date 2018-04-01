@@ -5,8 +5,8 @@
 #ifndef LIB_FIDL_CPP_INTERNAL_MESSAGE_READER_H_
 #define LIB_FIDL_CPP_INTERNAL_MESSAGE_READER_H_
 
-#include <fidl/cpp/message.h>
-#include <fidl/cpp/message_buffer.h>
+#include <lib/fidl/cpp/message.h>
+#include <lib/fidl/cpp/message_buffer.h>
 #include <lib/async/wait.h>
 #include <zx/channel.h>
 
@@ -30,12 +30,14 @@ class MessageReader {
   // Binds the given channel to this |MessageReader|.
   //
   // The |MessageReader| will wait asynchronously for messages on this channel
-  // and dispatch them to the message handler. After this method returns, the
-  // |MessageReader| will be waiting for incomming messages.
+  // and dispatch them to the message handler using |async|. After this method
+  // returns, the |MessageReader| will be waiting for incomming messages.
   //
   // If the |MessageReader| is already bound, the |MessageReader| will first
   // be unbound.
-  zx_status_t Bind(zx::channel channel);
+  //
+  // If |async| is null, the current thread must have a default async_t.
+  zx_status_t Bind(zx::channel channel, async_t* async = nullptr);
 
   // Unbinds the channel from this |MessageReader|.
   //

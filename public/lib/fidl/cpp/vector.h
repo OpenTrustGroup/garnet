@@ -5,8 +5,8 @@
 #ifndef LIB_FIDL_CPP_VECTOR_H_
 #define LIB_FIDL_CPP_VECTOR_H_
 
-#include <fidl/cpp/builder.h>
-#include <fidl/cpp/vector_view.h>
+#include <lib/fidl/cpp/builder.h>
+#include <lib/fidl/cpp/vector_view.h>
 
 #include <utility>
 #include <vector>
@@ -27,6 +27,8 @@ template <typename T>
 class VectorPtr {
  public:
   VectorPtr() : is_null_(true) {}
+  ~VectorPtr() = default;
+  VectorPtr(std::nullptr_t) : is_null_(true) {}
   explicit VectorPtr(size_t size)
       : vec_(std::vector<T>(size)), is_null_(false) {}
   explicit VectorPtr(std::vector<T> vec)
@@ -35,26 +37,16 @@ class VectorPtr {
   VectorPtr(const VectorPtr&) = delete;
   VectorPtr& operator=(const VectorPtr&) = delete;
 
-  VectorPtr(VectorPtr&& other)
-      : vec_(std::move(other.vec_)), is_null_(other.is_null_) {}
+  VectorPtr(VectorPtr&& other) = default;
+  VectorPtr& operator=(VectorPtr&& other) = default;
 
-  VectorPtr& operator=(VectorPtr&& other) {
-    vec_ = std::move(other.vec_);
-    is_null_ = other.is_null_;
-    return *this;
-  }
+  // Creates a VectorPtr of the given size.
+  //
+  // Equivalent to using the |VectorPtr(size_t)| constructor.
+  static VectorPtr New(size_t size) { return VectorPtr(size); }
 
   // Accesses the underlying std::vector object.
-  //
-  // Asserts if the VectorPtr is null.
-  std::vector<T>& get() {
-    ZX_ASSERT_MSG(!is_null_, "cannot call get() on a null VectorPtr");
-    return vec_;
-  }
-  const std::vector<T>& get() const {
-    ZX_ASSERT_MSG(!is_null_, "cannot call get() on a null VectorPtr");
-    return vec_;
-  }
+  const std::vector<T>& get() const { return vec_; }
 
   // Takes the std::vector from the VectorPtr.
   //
@@ -72,11 +64,32 @@ class VectorPtr {
     is_null_ = false;
   }
 
+  void reset() {
+    vec_.clear();
+    is_null_ = true;
+  }
+
   // Resizes the underlying std::vector in this VectorPtr to the given size.
   //
   // After this method returns, the VectorPtr is non-null.
   void resize(size_t size) {
     vec_.resize(size);
+    is_null_ = false;
+  }
+
+  // Pushes |value| onto the back of this VectorPtr.
+  //
+  // If this vector was null, it will become non-null with a size of 1.
+  void push_back(const T& value) {
+    vec_.push_back(value);
+    is_null_ = false;
+  }
+
+  // Pushes |value| onto the back of this VectorPtr.
+  //
+  // If this vector was null, it will become non-null with a size of 1.
+  void push_back(T&& value) {
+    vec_.push_back(std::forward<T>(value));
     is_null_ = false;
   }
 
@@ -86,40 +99,51 @@ class VectorPtr {
     swap(is_null_, other.is_null_);
   }
 
+  // Returns a copy of this VectorPtr.
+  //
+  // Unlike fidl::Clone, this function can never fail. However, this function
+  // works only if T is copiable.
+  VectorPtr Clone() const {
+    if (is_null_)
+      return VectorPtr();
+    return VectorPtr(vec_);
+  }
+
   // Whether this VectorPtr is null.
   //
   // The null state is separate from the empty state.
-  bool is_null() const { return is_null_; }
+  bool is_null() const { return is_null_ && vec_.empty(); }
 
   // Tests as true if non-null, false if null.
   explicit operator bool() const { return !is_null_; }
 
-  // Provides access to the underlying std::vector. Asserts if the VectorPtr is
-  // null.
-  std::vector<T>* operator->() {
-    ZX_ASSERT_MSG(!is_null_, "cannot dereference a null VectorPtr");
-    return &vec_;
-  }
-  const std::vector<T>* operator->() const {
-    ZX_ASSERT_MSG(!is_null_, "cannot dereference a null VectorPtr");
-    return &vec_;
-  }
+  // Provides access to the underlying std::vector.
+  std::vector<T>* operator->() { return &vec_; }
+  const std::vector<T>* operator->() const { return &vec_; }
 
-  // Provides access to the underlying std::vector. Asserts if the VectorPtr is
-  // null.
-  std::vector<T>& operator*() {
-    ZX_ASSERT_MSG(!is_null_, "cannot dereference a null VectorPtr");
-    return vec_;
-  }
-  const std::vector<T>& operator*() const {
-    ZX_ASSERT_MSG(!is_null_, "cannot dereference a null VectorPtr");
-    return vec_;
-  }
+  // Provides access to the underlying std::vector.
+  std::vector<T>& operator*() { return vec_; }
+  const std::vector<T>& operator*() const { return vec_; }
+
+  operator const std::vector<T>&() const { return vec_; }
 
  private:
   std::vector<T> vec_;
   bool is_null_;
 };
+
+template <class T>
+inline bool operator==(const VectorPtr<T>& lhs, const VectorPtr<T>& rhs) {
+  if (lhs.is_null() || rhs.is_null()) {
+    return lhs.is_null() == rhs.is_null();
+  }
+  return *lhs == *rhs;
+}
+
+template <class T>
+inline bool operator!=(const VectorPtr<T>& lhs, const VectorPtr<T>& rhs) {
+  return !(lhs == rhs);
+}
 
 }  // namespace fidl
 

@@ -7,18 +7,18 @@
 #include <fdio/limits.h>
 #include <fdio/util.h>
 
+#include <fuchsia/cpp/component.h>
 #include "garnet/bin/guest/tool/serial.h"
 #include "lib/app/cpp/environment_services.h"
-#include "lib/app/fidl/application_launcher.fidl.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
 
 // Service directory channel.
 static zx::channel directory;
 // Application controller.
-static app::ApplicationControllerPtr controller;
+static component::ApplicationControllerPtr controller;
 
-static app::FileDescriptorPtr CloneFileDescriptor(int fd) {
+static component::FileDescriptorPtr CloneFileDescriptor(int fd) {
   zx_handle_t handles[FDIO_MAX_HANDLES] = {0, 0, 0};
   uint32_t types[FDIO_MAX_HANDLES] = {
       ZX_HANDLE_INVALID,
@@ -29,7 +29,7 @@ static app::FileDescriptorPtr CloneFileDescriptor(int fd) {
   if (status <= 0) {
     return nullptr;
   }
-  app::FileDescriptorPtr result = app::FileDescriptor::New();
+  component::FileDescriptorPtr result = component::FileDescriptor::New();
   result->type0 = types[0];
   result->handle0 = zx::handle(handles[0]);
   result->type1 = types[1];
@@ -41,22 +41,22 @@ static app::FileDescriptorPtr CloneFileDescriptor(int fd) {
 
 void handle_launch(int argc, const char** argv) {
   // Setup launch request.
-  auto launch_info = app::ApplicationLaunchInfo::New();
-  launch_info->url = argv[0];
+  component::ApplicationLaunchInfo launch_info;
+  launch_info.url = argv[0];
   for (int i = 0; i < argc - 1; ++i) {
-    launch_info->arguments.push_back(argv[1 + i]);
+    launch_info.arguments.push_back(argv[1 + i]);
   }
-  launch_info->out = CloneFileDescriptor(STDOUT_FILENO);
-  launch_info->err = CloneFileDescriptor(STDERR_FILENO);
+  launch_info.out = CloneFileDescriptor(STDOUT_FILENO);
+  launch_info.err = CloneFileDescriptor(STDERR_FILENO);
 
   // Create service request and service directory.
   zx_status_t status =
-      zx::channel::create(0, &launch_info->directory_request, &directory);
+      zx::channel::create(0, &launch_info.directory_request, &directory);
   FXL_CHECK(status == ZX_OK) << "Unable to create directory";
 
   // Connect to application launcher and create guest.
-  app::ApplicationLauncherSyncPtr launcher;
-  app::ConnectToEnvironmentService(GetSynchronousProxy(&launcher));
+  component::ApplicationLauncherSyncPtr launcher;
+  component::ConnectToEnvironmentService(launcher.NewRequest());
   launcher->CreateApplication(std::move(launch_info), controller.NewRequest());
 
   // Open the serial service of the guest and process IO.

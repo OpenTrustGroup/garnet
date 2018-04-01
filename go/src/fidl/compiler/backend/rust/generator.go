@@ -9,7 +9,6 @@ import (
 	"fidl/compiler/backend/rust/templates"
 	"fidl/compiler/backend/types"
 	"os"
-	"path/filepath"
 	"text/template"
 )
 
@@ -30,15 +29,11 @@ func writeFile(outputFilename string,
 func (_ FidlGenerator) GenerateFidl(fidl types.Root, config *types.Config) error {
 	tree := ir.Compile(fidl)
 
-	relStem, err := filepath.Rel(config.RootGenDir, config.FidlStem)
-	if err != nil {
-		return err
-	}
-
-	srcPath := relStem + ".rs"
+	srcPath := config.FidlStem + ".rs"
 
 	tmpls := template.New("RustTemplates")
 	template.Must(tmpls.Parse(templates.SourceFile))
+	template.Must(tmpls.Parse(templates.Const))
 	template.Must(tmpls.Parse(templates.Enum))
 	template.Must(tmpls.Parse(templates.Interface))
 	template.Must(tmpls.Parse(templates.Struct))

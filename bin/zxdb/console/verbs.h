@@ -11,9 +11,11 @@
 namespace zxdb {
 
 // These functions add records for the verbs they support to the given map.
+void AppendBreakpointVerbs(std::map<Verb, VerbRecord>* verbs);
 void AppendControlVerbs(std::map<Verb, VerbRecord>* verbs);
 void AppendMemoryVerbs(std::map<Verb, VerbRecord>* verbs);
-void AppendRunVerbs(std::map<Verb, VerbRecord>* verbs);
+void AppendProcessVerbs(std::map<Verb, VerbRecord>* verbs);
 void AppendSystemVerbs(std::map<Verb, VerbRecord>* verbs);
+void AppendThreadVerbs(std::map<Verb, VerbRecord>* verbs);
 
 }  // namespace zxdb

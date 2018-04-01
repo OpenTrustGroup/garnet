@@ -19,7 +19,7 @@
 #include "lib/fxl/logging.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
 #include "lib/fxl/tasks/task_runner.h"
-#include "lib/media/fidl/problem.fidl.h"
+#include <fuchsia/cpp/media.h>
 #include "lib/media/timeline/timeline_rate.h"
 
 namespace media {
@@ -31,13 +31,13 @@ class FfmpegDemuxImpl : public FfmpegDemux {
   ~FfmpegDemuxImpl() override;
 
   // Demux implementation.
-  void SetStatusCallback(const StatusCallback& callback) override;
+  void SetStatusCallback(StatusCallback callback) override;
 
   void WhenInitialized(std::function<void(Result)> callback) override;
 
   const std::vector<DemuxStream*>& streams() const override;
 
-  void Seek(int64_t position, const SeekCallback& callback) override;
+  void Seek(int64_t position, SeekCallback callback) override;
 
   // ActiveMultistreamSource implementation.
   size_t stream_count() const override;
@@ -170,7 +170,7 @@ FfmpegDemuxImpl::~FfmpegDemuxImpl() {
   }
 }
 
-void FfmpegDemuxImpl::SetStatusCallback(const StatusCallback& callback) {
+void FfmpegDemuxImpl::SetStatusCallback(StatusCallback callback) {
   status_callback_ = callback;
 }
 
@@ -182,7 +182,7 @@ const std::vector<Demux::DemuxStream*>& FfmpegDemuxImpl::streams() const {
   return streams_;
 }
 
-void FfmpegDemuxImpl::Seek(int64_t position, const SeekCallback& callback) {
+void FfmpegDemuxImpl::Seek(int64_t position, SeekCallback callback) {
   std::lock_guard<std::mutex> locker(mutex_);
   seek_position_ = position;
   seek_callback_ = callback;
@@ -206,8 +206,8 @@ void FfmpegDemuxImpl::Worker() {
   if (result_ != Result::kOk) {
     FXL_LOG(ERROR) << "AvIoContext::Create failed, result "
                    << static_cast<int>(result_);
-    ReportProblem(result_ == Result::kNotFound ? Problem::kProblemAssetNotFound
-                                               : Problem::kProblemInternal,
+    ReportProblem(result_ == Result::kNotFound ? kProblemAssetNotFound
+                                               : kProblemInternal,
                   "");
     init_complete_.Occur();
     return;
@@ -219,7 +219,7 @@ void FfmpegDemuxImpl::Worker() {
   if (!format_context_) {
     FXL_LOG(ERROR) << "AvFormatContext::OpenInput failed";
     result_ = Result::kUnsupportedOperation;
-    ReportProblem(Problem::kProblemContainerNotSupported, "");
+    ReportProblem(kProblemContainerNotSupported, "");
     init_complete_.Occur();
     return;
   }
@@ -228,7 +228,7 @@ void FfmpegDemuxImpl::Worker() {
   if (r < 0) {
     FXL_LOG(ERROR) << "avformat_find_stream_info failed, result " << r;
     result_ = Result::kInternalError;
-    ReportProblem(Problem::kProblemInternal,
+    ReportProblem(kProblemInternal,
                   "avformat_find_stream_info failed");
     init_complete_.Occur();
     return;

@@ -5,6 +5,7 @@
 #pragma once
 
 #include <map>
+#include <memory>
 
 #include "garnet/bin/debug_agent/debugged_process.h"
 #include "garnet/bin/debug_agent/exception_handler.h"
@@ -27,10 +28,11 @@ class DebugAgent : public ExceptionHandler::Sink {
   // ExceptionHandler::Sink implementation.
   void OnStreamData() override;
   void OnProcessTerminated(zx_koid_t process_koid) override;
-  void OnThreadStarting(const zx::thread& thread, zx_koid_t proc_koid,
+  void OnThreadStarting(zx::thread thread, zx_koid_t process_koid,
                         zx_koid_t thread_koid) override;
-  void OnThreadExiting(const zx::thread& thread, zx_koid_t proc_koid,
-                        zx_koid_t thread_koid) override;
+  void OnThreadExiting(zx_koid_t proc_koid, zx_koid_t thread_koid) override;
+  void OnException(zx_koid_t proc_koid, zx_koid_t thread_koid,
+                   uint32_t type) override;
 
  private:
   // IPC handlers.
@@ -38,19 +40,40 @@ class DebugAgent : public ExceptionHandler::Sink {
                debug_ipc::HelloReply* reply);
   void OnLaunch(const debug_ipc::LaunchRequest& request,
                 debug_ipc::LaunchReply* reply);
+  void OnAttach(std::vector<char> serialized);
+  void OnDetach(const debug_ipc::DetachRequest& request,
+                debug_ipc::DetachReply* reply);
+  void OnContinue(const debug_ipc::ContinueRequest& request,
+                  debug_ipc::ContinueReply* reply);
   void OnProcessTree(const debug_ipc::ProcessTreeRequest& request,
                      debug_ipc::ProcessTreeReply* reply);
   void OnThreads(const debug_ipc::ThreadsRequest& request,
                  debug_ipc::ThreadsReply* reply);
   void OnReadMemory(const debug_ipc::ReadMemoryRequest& request,
                     debug_ipc::ReadMemoryReply* reply);
+  void OnAddOrChangeBreakpoint(
+      const debug_ipc::AddOrChangeBreakpointRequest& request,
+      debug_ipc::AddOrChangeBreakpointReply* reply);
+  void OnRemoveBreakpoint(
+      const debug_ipc::RemoveBreakpointRequest& request,
+      debug_ipc::RemoveBreakpointReply* reply);
 
-  void AddDebuggedProcess(zx_koid_t koid, zx::process proc);
+  // Returns the debugged process for the given koid or null if not found.
+  DebuggedProcess* GetDebuggedProcess(zx_koid_t koid);
+
+  // Returns a pointer to the newly created object.
+  DebuggedProcess* AddDebuggedProcess(zx_koid_t koid, zx::process proc);
   void RemoveDebuggedProcess(zx_koid_t koid);
+
+  // Sends all current threads or one specific thread information as new thread
+  // notifications about the given process.
+  void SendCurrentThreads(zx_handle_t process, zx_koid_t proc_koid);
+  void SendThreadNotification(zx_koid_t proc_koid,
+                              const debug_ipc::ThreadRecord& record);
 
   ExceptionHandler* handler_;  // Non-owning.
 
-  std::map<zx_koid_t, DebuggedProcess> procs_;
+  std::map<zx_koid_t, std::unique_ptr<DebuggedProcess>> procs_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(DebugAgent);
 };

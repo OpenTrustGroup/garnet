@@ -5,13 +5,13 @@
 #![deny(warnings)]
 
 use failure::{Error, ResultExt};
-use fdio::{self, fdio_sys};
-use fidl::{self, DecodablePtr, EncodablePtr};
+use fdio::{self, fdio_sys, ioctl_raw};
+use fidl::encoding2::{Decoder, Decodable, Encoder};
 use std::fs::File;
 use std::os::raw;
 use std::os::unix::io::AsRawFd;
 use wlan;
-use zircon;
+use zircon::{self, HandleBased};
 
 unsafe fn ioctl(
     dev: &File,
@@ -43,21 +43,44 @@ unsafe fn ioctl(
     }
 }
 
-pub fn query_wlanphy_device(device: &File) -> Result<wlan::WlanPhyInfo, Error> {
+pub fn connect_wlanphy_device(device: &File) -> Result<zircon::Channel, Error> {
+    let (local, remote) = zircon::Channel::create()?;
+    let hnd = remote.into_raw();
+
+    // This call is safe because the handle is never used after this call, and the output buffer is
+    // null.
+    unsafe {
+        match ioctl_raw(
+            device.as_raw_fd(),
+            IOCTL_WLANPHY_CONNECT,
+            &hnd as *const _ as *const raw::c_void,
+            ::std::mem::size_of::<zircon::sys::zx_handle_t>(),
+            ::std::ptr::null_mut(),
+            0) as i32 {
+            e if e < 0 => Err(zircon::Status::from_raw(e)),
+            e => Ok(e),
+        }?;
+    }
+    Ok(local)
+}
+
+pub fn query_wlanphy_device(device: &File) -> Result<wlan::PhyInfo, Error> {
     let mut info = vec![0; 2048];
     // This call is safe because the length of the output buffer is passed based on the length of
     // the |info| vector. The callee will not retain any pointers from this call.
     unsafe {
         ioctl(device, IOCTL_WLANPHY_QUERY, &[], &mut info).context("failure in ioctl wlan query")?;
     }
-    let mut buf = fidl::DecodeBuf::new_with(zircon::MessageBuf::new_with(info, vec![]));
-    wlan::WlanPhyInfo::decode_obj(&mut buf, 0).map_err(|e| e.into())
+    let mut ret = wlan::PhyInfo::new_empty();
+    Decoder::decode_into(&info, &mut [], &mut ret)?;
+    Ok(ret)
 }
 
-pub fn create_wlaniface(device: &File, role: wlan::MacRole) -> Result<wlan::WlanIfaceInfo, Error> {
-    let mut buf = fidl::EncodeBuf::new();
-    let req = wlan::CreateIfaceRequest { role: role };
-    req.encode_obj(&mut buf);
+pub fn create_wlaniface(device: &File, role: wlan::MacRole) -> Result<wlan::IfaceInfo, Error> {
+    let mut buf = vec![];
+    let mut hnds = vec![];
+    let mut req = wlan::CreateIfaceRequest { role: role };
+    Encoder::encode(&mut buf, &mut hnds, &mut req)?;
     let mut info = vec![0; 1024];
     // This call is safe because the length of the buffers are passed based on the length of
     // the |buf| and |info| vectors. The callee will not retain any pointers from this call.
@@ -65,44 +88,52 @@ pub fn create_wlaniface(device: &File, role: wlan::MacRole) -> Result<wlan::Wlan
         ioctl(
             device,
             IOCTL_WLANPHY_CREATE_IFACE,
-            buf.get_bytes(),
+            &buf,
             &mut info,
         ).context("failure in ioctl wlan create iface")?;
     }
-    let mut recvbuf = fidl::DecodeBuf::new_with(zircon::MessageBuf::new_with(info, vec![]));
-    wlan::WlanIfaceInfo::decode_obj(&mut recvbuf, 0).map_err(|e| e.into())
+    let mut ret = wlan::IfaceInfo::new_empty();
+    Decoder::decode_into(&info, &mut [], &mut ret)?;
+    Ok(ret)
 }
 
 pub fn destroy_wlaniface(device: &File, id: u16) -> Result<(), zircon::Status> {
-    let mut buf = fidl::EncodeBuf::new();
-    let req = wlan::DestroyIfaceRequest { id: id };
-    req.encode_obj(&mut buf);
+    let mut buf = vec![];
+    let mut hnds = vec![];
+    let mut req = wlan::DestroyIfaceRequest { id: id };
+    Encoder::encode(&mut buf, &mut hnds, &mut req).map_err(|_| zircon::Status::IO)?;
     // This call is safe because the length of the buffer is passed based on the length of
     // the |buf| vector. The callee will not retain any pointers from this call.
     unsafe {
         ioctl(
             device,
             IOCTL_WLANPHY_DESTROY_IFACE,
-            buf.get_bytes(),
+            &buf,
             &mut [],
         ).map(|_| ())
     }
 }
 
-const IOCTL_WLANPHY_QUERY: raw::c_int = make_ioctl!(
-    fdio_sys::IOCTL_KIND_DEFAULT,
+const IOCTL_WLANPHY_CONNECT: raw::c_int = make_ioctl!(
+    fdio_sys::IOCTL_KIND_SET_HANDLE,
     fdio_sys::IOCTL_FAMILY_WLANPHY,
     0
 );
 
-const IOCTL_WLANPHY_CREATE_IFACE: raw::c_int = make_ioctl!(
+const IOCTL_WLANPHY_QUERY: raw::c_int = make_ioctl!(
     fdio_sys::IOCTL_KIND_DEFAULT,
     fdio_sys::IOCTL_FAMILY_WLANPHY,
     1
 );
 
-const IOCTL_WLANPHY_DESTROY_IFACE: raw::c_int = make_ioctl!(
+const IOCTL_WLANPHY_CREATE_IFACE: raw::c_int = make_ioctl!(
     fdio_sys::IOCTL_KIND_DEFAULT,
     fdio_sys::IOCTL_FAMILY_WLANPHY,
     2
+);
+
+const IOCTL_WLANPHY_DESTROY_IFACE: raw::c_int = make_ioctl!(
+    fdio_sys::IOCTL_KIND_DEFAULT,
+    fdio_sys::IOCTL_FAMILY_WLANPHY,
+    3
 );

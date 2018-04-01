@@ -6,10 +6,10 @@
 
 #include <memory>
 
+#include <fuchsia/cpp/escher_demo.h>
 #include "garnet/examples/escher/common/demo_harness.h"
-#include "garnet/examples/escher/common/services/escher_demo.fidl.h"
 #include "lib/app/cpp/application_context.h"
-#include "lib/fidl/cpp/bindings/binding_set.h"
+#include "lib/fidl/cpp/binding_set.h"
 #include "lib/fsl/tasks/message_loop.h"
 
 class DemoHarnessFuchsia : public DemoHarness, public escher_demo::EscherDemo {
@@ -27,7 +27,7 @@ class DemoHarnessFuchsia : public DemoHarness, public escher_demo::EscherDemo {
                            double ypos) override;
   void HandleTouchEnd(uint64_t touch_id, double xpos, double ypos) override;
 
-  app::ApplicationContext* application_context() {
+  component::ApplicationContext* application_context() {
     return application_context_.get();
   }
 
@@ -51,7 +51,7 @@ class DemoHarnessFuchsia : public DemoHarness, public escher_demo::EscherDemo {
   fsl::MessageLoop* loop_;
   std::unique_ptr<fsl::MessageLoop> owned_loop_;
 
-  std::unique_ptr<app::ApplicationContext> application_context_;
-  f1dl::Binding<escher_demo::EscherDemo> escher_demo_binding_;
-  std::unique_ptr<app::ServiceProviderImpl> outgoing_services_;
+  std::unique_ptr<component::ApplicationContext> application_context_;
+  fidl::Binding<escher_demo::EscherDemo> escher_demo_binding_;
+  std::unique_ptr<component::ServiceProviderImpl> outgoing_services_;
 };

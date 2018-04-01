@@ -57,7 +57,7 @@ type Daemon struct {
 
 // NewDaemon creates a Daemon with the given SourceSet
 func NewDaemon(r *pkg.PackageSet, f func(*GetResult, *pkg.PackageSet) error,
-               s []source.Source) *Daemon {
+	s []source.Source) *Daemon {
 	d := &Daemon{pkgs: r,
 		runCount:  sync.WaitGroup{},
 		srcMons:   []*SourceMonitor{},
@@ -69,7 +69,7 @@ func NewDaemon(r *pkg.PackageSet, f func(*GetResult, *pkg.PackageSet) error,
 	d.runCount.Add(1)
 	d.srcMons = append(d.srcMons, mon)
 	for k := range s {
-	    d.AddSource(s[k])
+		d.AddSource(s[k])
 	}
 	go func() {
 		mon.Run()
@@ -424,9 +424,14 @@ func WriteUpdateToPkgFS(data *GetResult) (string, error) {
 	}
 	defer data.Close()
 
-	dstPath := filepath.Join(DstUpdate, data.Update.Name)
+	dstPath := filepath.Join(DstUpdate, data.Update.Merkle)
 	dst, e := os.Create(dstPath)
+
 	if e != nil {
+		// if the file already exists, treat as success
+		if os.IsExist(e) {
+			return dstPath, nil
+		}
 		return "", NewErrProcessPackage("couldn't open file to write update %s", e)
 	}
 	defer dst.Close()

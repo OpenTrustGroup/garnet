@@ -9,9 +9,8 @@
 set -eo pipefail
 
 usage() {
-  echo "usage: ${0} [options] {arm64, x86}"
+  echo "usage: ${0} [options] {arm64, x64}"
   echo
-  echo "  -d [defconfig]  Defconfig to use"
   echo "  -l [linux-dir]  Linux source dir"
   echo "  -o [image]      Output location for the built kernel"
   echo
@@ -20,7 +19,6 @@ usage() {
 
 while getopts "d:l:o:" OPT; do
   case $OPT in
-  d) DEFCONFIG="${OPTARG}";;
   l) LINUX_DIR="${OPTARG}";;
   o) LINUX_OUT="${OPTARG}";;
   *) usage;;
@@ -32,12 +30,13 @@ case "${1}" in
 arm64)
   type aarch64-linux-gnu-gcc ||
     { echo "Required package gcc-aarch64-linux-gnu is not installed."
-      echo "(sudo apt install gcc-aarch64-linux-gnu)"; exit 1; };
-  declare -x ARCH=arm64;
+      echo "(sudo apt install gcc-aarch64-linux-gnu)"; exit 1; }
+
+  declare -rx ARCH=arm64
   declare -x CROSS_COMPILE=aarch64-linux-gnu-
   declare -r LINUX_IMAGE="${LINUX_DIR}/arch/arm64/boot/Image";;
-x86)
-  declare -x ARCH=x86;
+x64)
+  declare -rx ARCH=x86_64
   declare -x CROSS_COMPILE=x86_64-linux-gnu-
   declare -r LINUX_IMAGE="${LINUX_DIR}/arch/x86/boot/bzImage";;
 *)
@@ -45,8 +44,6 @@ x86)
 esac
 
 declare -r LINUX_DIR=${LINUX_DIR:-/tmp/linux}
-declare -r DEFCONFIG=${DEFCONFIG:-machina_defconfig}
-echo "Building Linux with ${DEFCONFIG} in ${LINUX_DIR}"
 
 # Shallow clone the repository.
 if [ ! -d "${LINUX_DIR}/.git" ]; then
@@ -57,7 +54,7 @@ fi
 cd "${LINUX_DIR}"
 git pull
 # Build Linux.
-make "${DEFCONFIG}"
+make machina_defconfig
 make -j $(getconf _NPROCESSORS_ONLN)
 
 if [ -n "${LINUX_OUT}" ]; then

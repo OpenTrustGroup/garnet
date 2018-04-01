@@ -1,0 +1,15 @@
+// Copyright 2018 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library ui;
+
+// import "lib/ui/scenic/fidl/dummy_system/commands.fidl";
+// import "lib/ui/gfx/fidl/commands.fidl";
+// import "lib/ui/views/fidl/commands.fidl";
+
+union Command {
+  gfx.Command gfx;
+  views.Command views;
+  scenic_dummy_system.DummySystemCommand dummy;
+};

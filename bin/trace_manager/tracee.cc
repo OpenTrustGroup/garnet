@@ -71,7 +71,7 @@ bool Tracee::operator==(TraceProviderBundle* bundle) const {
 }
 
 bool Tracee::Start(size_t buffer_size,
-                   f1dl::Array<f1dl::String> categories,
+                   fidl::VectorPtr<fidl::StringPtr> categories,
                    fxl::Closure started_callback,
                    fxl::Closure stopped_callback) {
   FXL_DCHECK(state_ == State::kReady);
@@ -237,13 +237,9 @@ Tracee::TransferStatus Tracee::TransferRecords(const zx::socket& socket) const {
 
   std::vector<uint8_t> buffer(buffer_vmo_size_);
 
-  size_t actual = 0;
-  if ((buffer_vmo_.read(buffer.data(), 0, buffer_vmo_size_, &actual) !=
-       ZX_OK) ||
-      (actual != buffer_vmo_size_)) {
+  if (buffer_vmo_.read(buffer.data(), 0, buffer_vmo_size_) != ZX_OK) {
     FXL_LOG(WARNING) << *bundle_ << ": Failed to read data from buffer_vmo: "
-                     << "actual size=" << actual
-                     << ", expected size=" << buffer_vmo_size_;
+                     << "expected size=" << buffer_vmo_size_;
   }
 
   const uint64_t* start = reinterpret_cast<const uint64_t*>(buffer.data());
@@ -265,11 +261,9 @@ Tracee::TransferStatus Tracee::TransferRecords(const zx::socket& socket) const {
 
 Tracee::TransferStatus Tracee::WriteProviderInfoRecord(
     const zx::socket& socket) const {
-  FXL_DCHECK(bundle_->label.size() <=
-             trace::ProviderInfoMetadataRecordFields::kMaxNameLength);
-
-  size_t num_words =
-      1u + trace::BytesToWords(trace::Pad(bundle_->label.size()));
+  std::string label("");  // TODO(ZX-1875): Provide meaningful labels or remove
+                          // labels from the trace wire format altogether.
+  size_t num_words = 1u + trace::BytesToWords(trace::Pad(label.size()));
   std::vector<uint64_t> record(num_words);
   record[0] =
       trace::ProviderInfoMetadataRecordFields::Type::Make(
@@ -278,9 +272,8 @@ Tracee::TransferStatus Tracee::WriteProviderInfoRecord(
       trace::ProviderInfoMetadataRecordFields::MetadataType::Make(
           trace::ToUnderlyingType(trace::MetadataType::kProviderInfo)) |
       trace::ProviderInfoMetadataRecordFields::Id::Make(bundle_->id) |
-      trace::ProviderInfoMetadataRecordFields::NameLength::Make(
-          bundle_->label.size());
-  memcpy(&record[1], bundle_->label.c_str(), bundle_->label.size());
+      trace::ProviderInfoMetadataRecordFields::NameLength::Make(label.size());
+  memcpy(&record[1], label.c_str(), label.size());
   return WriteBufferToSocket(reinterpret_cast<uint8_t*>(record.data()),
                              trace::WordsToBytes(num_words), socket);
 }

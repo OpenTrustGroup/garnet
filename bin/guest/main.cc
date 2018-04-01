@@ -16,6 +16,7 @@
 #include <fbl/string_buffer.h>
 #include <fbl/unique_fd.h>
 #include <fbl/unique_ptr.h>
+#include <lib/async/cpp/task.h>
 #include <zircon/process.h>
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/hypervisor.h>
@@ -144,15 +145,22 @@ static zx_status_t poll_balloon_stats(machina::VirtioBalloon* balloon,
 static zx_status_t setup_zircon_framebuffer(
     machina::VirtioGpu* gpu,
     fbl::unique_ptr<machina::GpuScanout>* scanout) {
+  // Try software framebuffer.
   zx_status_t status = machina::FramebufferScanout::Create(
       "/dev/class/framebuffer/000", scanout);
-  if (status != ZX_OK)
-    return status;
+  if (status != ZX_OK) {
+    // Try hardware framebuffer.
+    status =
+        machina::FramebufferScanout::Create("/dev/class/display/000", scanout);
+    if (status != ZX_OK) {
+      return status;
+    }
+  }
   return gpu->AddScanout(scanout->get());
 }
 
 static zx_status_t setup_scenic_framebuffer(
-    app::ApplicationContext* application_context,
+    component::ApplicationContext* application_context,
     machina::VirtioGpu* gpu,
     machina::InputDispatcher* input_dispatcher,
     fbl::unique_ptr<machina::GpuScanout>* scanout) {
@@ -188,8 +196,8 @@ static zx_status_t read_guest_cfg(const char* cfg_path,
 
 int main(int argc, char** argv) {
   fsl::MessageLoop loop;
-  std::unique_ptr<app::ApplicationContext> application_context =
-      app::ApplicationContext::CreateFromStartupInfo();
+  std::unique_ptr<component::ApplicationContext> application_context =
+      component::ApplicationContext::CreateFromStartupInfo();
 
   GuestConfig cfg;
   zx_status_t status = read_guest_cfg("/pkg/data/guest.cfg", argc, argv, &cfg);
@@ -199,16 +207,16 @@ int main(int argc, char** argv) {
 
   machina::Guest guest;
   status = guest.Init(cfg.memory());
-  if (status != ZX_OK)
+  if (status != ZX_OK) {
     return status;
+  }
 
   // Instantiate the inspect service.
   machina::InspectServiceImpl inspect_svc(application_context.get(),
                                           guest.phys_mem());
 
-  uintptr_t pt_end_off = 0;
 #if __x86_64__
-  status = machina::create_page_table(guest.phys_mem(), &pt_end_off);
+  status = machina::create_page_table(guest.phys_mem());
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to create page table";
     return status;
@@ -218,9 +226,9 @@ int main(int argc, char** argv) {
       .dsdt_path = kDsdtPath,
       .mcfg_path = kMcfgPath,
       .io_apic_addr = machina::kIoApicPhysBase,
-      .num_cpus = 1,
+      .num_cpus = cfg.num_cpus(),
   };
-  status = machina::create_acpi_table(acpi_cfg, guest.phys_mem(), pt_end_off);
+  status = machina::create_acpi_table(acpi_cfg, guest.phys_mem());
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to create ACPI table";
     return status;
@@ -232,12 +240,10 @@ int main(int argc, char** argv) {
   uintptr_t boot_ptr = 0;
   switch (cfg.kernel()) {
     case Kernel::ZIRCON:
-      status =
-          setup_zircon(cfg, guest.phys_mem(), pt_end_off, &guest_ip, &boot_ptr);
+      status = setup_zircon(cfg, guest.phys_mem(), &guest_ip, &boot_ptr);
       break;
     case Kernel::LINUX:
-      status =
-          setup_linux(cfg, guest.phys_mem(), pt_end_off, &guest_ip, &boot_ptr);
+      status = setup_linux(cfg, guest.phys_mem(), &guest_ip, &boot_ptr);
       break;
     default:
       FXL_LOG(ERROR) << "Unknown kernel";
@@ -385,7 +391,8 @@ int main(int argc, char** argv) {
   }
 
   // Setup console
-  machina::VirtioConsole console(guest.phys_mem(), inspect_svc.TakeSocket());
+  machina::VirtioConsole console(guest.phys_mem(), guest.device_async(),
+                                 inspect_svc.TakeSocket());
   status = console.Start();
   if (status != ZX_OK) {
     return status;
@@ -397,37 +404,57 @@ int main(int argc, char** argv) {
 
   machina::InputDispatcher input_dispatcher(kInputQueueDepth);
   machina::HidEventSource hid_event_source(&input_dispatcher);
-  machina::VirtioInput input(&input_dispatcher, guest.phys_mem(),
-                             "machina-input", "serial-number");
+  machina::VirtioKeyboard keyboard(input_dispatcher.Keyboard(),
+                                   guest.phys_mem(), "machina-keyboard",
+                                   "serial-number");
+  machina::VirtioRelativePointer pointer(input_dispatcher.Pointer(),
+                                         guest.phys_mem(), "machina-pointer",
+                                         "serial-number");
   machina::VirtioGpu gpu(guest.phys_mem());
   fbl::unique_ptr<machina::GpuScanout> gpu_scanout;
 
-  if (cfg.enable_gpu()) {
-    // Setup input device.
-    status = input.Start();
+  if (cfg.display() != GuestDisplay::NONE) {
+    // Setup keyboard device.
+    status = keyboard.Start();
     if (status != ZX_OK) {
       return status;
     }
-    status = bus.Connect(input.pci_device());
+    status = bus.Connect(keyboard.pci_device());
+    if (status != ZX_OK) {
+      return status;
+    }
+    // Setup pointer device.
+    status = pointer.Start();
+    if (status != ZX_OK) {
+      return status;
+    }
+    status = bus.Connect(pointer.pci_device());
     if (status != ZX_OK) {
       return status;
     }
 
-    // Setup GPU device.
-    status = setup_zircon_framebuffer(&gpu, &gpu_scanout);
-    if (status == ZX_OK) {
-      // If we were able to acquire the zircon framebuffer then no compositor
-      // is present. In this case we should read input events directly from the
-      // input devics.
+    if (cfg.display() == GuestDisplay::FRAMEBUFFER) {
+      // Setup GPU device.
+      status = setup_zircon_framebuffer(&gpu, &gpu_scanout);
+      if (status != ZX_OK) {
+        FXL_LOG(ERROR) << "Failed to acquire framebuffer " << status;
+        return status;
+      }
+      // When displaying to the framebuffer, we should read input events
+      // directly from the input devics.
       status = hid_event_source.Start();
     } else {
       // Expose a view that can be composited by mozart. Input events will be
       // injected by the view events.
       status = setup_scenic_framebuffer(application_context.get(), &gpu,
                                         &input_dispatcher, &gpu_scanout);
+      if (status != ZX_OK) {
+        FXL_LOG(ERROR) << "Failed to create scenic view " << status;
+        return status;
+      }
     }
     if (status == ZX_OK) {
-      status = gpu.Init();
+      status = gpu.Init(guest.device_async());
       if (status != ZX_OK) {
         return status;
       }
@@ -435,8 +462,6 @@ int main(int argc, char** argv) {
       if (status != ZX_OK) {
         return status;
       }
-    } else {
-      FXL_LOG(INFO) << "Could not find a GPU backend";
     }
   }
 
@@ -465,7 +490,7 @@ int main(int argc, char** argv) {
   };
   if (gpu_scanout) {
     gpu_scanout->WhenReady(
-        [&loop, &start_task] { loop.task_runner()->PostTask(start_task); });
+        [&loop, &start_task] { async::PostTask(loop.async(), start_task); });
 
   } else {
     start_task();

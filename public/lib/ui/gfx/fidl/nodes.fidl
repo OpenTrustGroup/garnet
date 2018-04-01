@@ -1,0 +1,79 @@
+// Copyright 2017 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library gfx;
+
+// These are the types of nodes that can be created within a Mozart |Session|.
+//
+// Node Characteristics:
+// These are characteristics that each type of |Node| either has or doesn't.
+// These constrain operations that reference nodes; violations will cause the
+// |Session| connection to be closed.  For example, |NodeAddChildOp| must target
+// a node with the "has_children" characteristic.  These characteristics are not
+// explicitly reflected in the Session API; instead, they must be enforced by
+// implementations of the API.
+// - has_transform:
+// - has_children:
+// - has_parent:
+// - has_parts:
+// - has_clip:
+// - is_clip:
+// - has_shape:
+// - has_material:
+
+// A transform space which can serve as a container for Nodes.  Each Space is
+// linked to a paired SpaceHolder via a shared token.
+//
+// Usually the Space and SpaceHolder exist in separate processes, allowing a
+// distributed scene graph.
+//
+// Characteristics
+// - has_transform
+// - has_children
+struct SpaceArgs {
+  handle<eventpair> token;
+  string? debug_name;
+};
+
+// A container which is created to manage each transform Space.  Each
+// SpaceHolder is linked to a paired Space via a shared token.
+//
+// Usually the SpaceHolder and Space exist in separate processes, allowing a
+// distributed scene graph.
+//
+// Characteristics
+// - has_transform
+// - has_parent
+struct SpaceHolderArgs {
+  handle<eventpair> token;
+  string? debug_name;
+};
+
+// Characteristics:
+// - has_transform
+// - has_parent
+// - is_clip
+// - has_parts
+struct ClipNodeArgs {
+    uint8 unused;
+};
+
+// Characteristics:
+// - has_transform
+// - has_children
+// - has_parent
+// - has_parts
+// - has_clip
+struct EntityNodeArgs {
+    uint8 unused;
+};
+
+// Characteristics:
+// - has_transform
+// - has_parent
+// - has_shape
+// - has_material
+struct ShapeNodeArgs {
+    uint8 unused;
+};

@@ -25,6 +25,13 @@ bool Deserialize(MessageReader* reader, ThreadRecord* record) {
     return false;
   if (!reader->ReadString(&record->name))
     return false;
+
+  uint32_t state;
+  if (!reader->ReadUint32(&state))
+    return false;
+  if (state >= static_cast<uint32_t>(ThreadRecord::State::kLast))
+    return false;
+  record->state = static_cast<ThreadRecord::State>(state);
   return true;
 }
 
@@ -37,11 +44,12 @@ bool Deserialize(MessageReader* reader, MemoryBlock* block) {
     return false;
   block->valid = !!valid_flag;
 
-  if (!reader->ReadUint64(&block->size))
+  if (!reader->ReadUint32(&block->size))
     return false;
-  if (block->size > reader->remaining())
-    return false;
-  if (block->valid && block->size > 0) {
+  if (block->valid) {
+    if (block->size > reader->remaining())
+      return false;
+
     block->data.resize(block->size);
     if (!reader->ReadBytes(block->size, &block->data[0]))
       return false;
@@ -49,11 +57,7 @@ bool Deserialize(MessageReader* reader, MemoryBlock* block) {
   return true;
 }
 
-bool Deserialize(MessageReader* reader, NotifyThread* thread) {
-  if (!reader->ReadUint64(&thread->process_koid))
-    return false;
-  return reader->ReadUint64(&thread->thread_koid);
-}
+// Hello -----------------------------------------------------------------------
 
 void WriteRequest(const HelloRequest& request,
                   uint32_t transaction_id,
@@ -70,6 +74,8 @@ bool ReadReply(MessageReader* reader,
   *transaction_id = header.transaction_id;
   return reader->ReadBytes(sizeof(HelloReply), reply);
 }
+
+// Launch ----------------------------------------------------------------------
 
 void WriteRequest(const LaunchRequest& request,
                   uint32_t transaction_id,
@@ -90,8 +96,78 @@ bool ReadReply(MessageReader* reader,
     return false;
   if (!reader->ReadUint64(&reply->process_koid))
     return false;
+  if (!reader->ReadString(&reply->process_name))
+    return false;
   return true;
 }
+
+// Attach ----------------------------------------------------------------------
+
+void WriteRequest(const AttachRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer) {
+  writer->WriteHeader(MsgHeader::Type::kAttach, transaction_id);
+  writer->WriteUint64(request.koid);
+}
+
+bool ReadReply(MessageReader* reader,
+               AttachReply* reply,
+               uint32_t* transaction_id) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  *transaction_id = header.transaction_id;
+
+  if (!reader->ReadUint32(&reply->status))
+    return false;
+  if (!reader->ReadString(&reply->process_name))
+    return false;
+  return true;
+}
+
+// Detach ----------------------------------------------------------------------
+
+void WriteRequest(const DetachRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer) {
+  writer->WriteHeader(MsgHeader::Type::kDetach, transaction_id);
+  writer->WriteUint64(request.process_koid);
+}
+
+bool ReadReply(MessageReader* reader,
+               DetachReply* reply,
+               uint32_t* transaction_id) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  *transaction_id = header.transaction_id;
+
+  if (!reader->ReadUint32(&reply->status))
+    return false;
+  return true;
+}
+
+// Continue --------------------------------------------------------------------
+
+void WriteRequest(const ContinueRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer) {
+  writer->WriteHeader(MsgHeader::Type::kContinue, transaction_id);
+  writer->WriteUint64(request.process_koid);
+  writer->WriteUint64(request.thread_koid);
+}
+
+bool ReadReply(MessageReader* reader,
+               ContinueReply* reply,
+               uint32_t* transaction_id) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  *transaction_id = header.transaction_id;
+  return true;
+}
+
+// ProcessTree -----------------------------------------------------------------
 
 void WriteRequest(const ProcessTreeRequest& request,
                   uint32_t transaction_id,
@@ -109,6 +185,8 @@ bool ReadReply(MessageReader* reader,
   *transaction_id = header.transaction_id;
   return Deserialize(reader, &reply->root);
 }
+
+// Threads ---------------------------------------------------------------------
 
 void WriteRequest(const ThreadsRequest& request,
                   uint32_t transaction_id,
@@ -128,6 +206,8 @@ bool ReadReply(MessageReader* reader,
   return Deserialize(reader, &reply->threads);
 }
 
+// ReadMemory ------------------------------------------------------------------
+
 void WriteRequest(const ReadMemoryRequest& request,
                   uint32_t transaction_id,
                   MessageWriter* writer) {
@@ -146,11 +226,90 @@ bool ReadReply(MessageReader* reader,
   return Deserialize(reader, &reply->blocks);
 }
 
-bool ReadNotifyThread(MessageReader* reader, NotifyThread* thread) {
+// AddOrChangeBreakpoint -------------------------------------------------------
+
+void WriteRequest(const AddOrChangeBreakpointRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer) {
+  writer->WriteHeader(MsgHeader::Type::kAddOrChangeBreakpoint, transaction_id);
+  writer->WriteBytes(&request, sizeof(AddOrChangeBreakpointRequest));
+}
+
+bool ReadReply(MessageReader* reader,
+               AddOrChangeBreakpointReply* reply,
+               uint32_t* transaction_id) {
   MsgHeader header;
   if (!reader->ReadHeader(&header))
     return false;
-  return Deserialize(reader, thread);
+  *transaction_id = header.transaction_id;
+
+  if (!reader->ReadUint32(&reply->status))
+    return false;
+  return reader->ReadString(&reply->error_message);
+}
+
+// RemoveBreakpoint ------------------------------------------------------------
+
+void WriteRequest(const RemoveBreakpointRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer) {
+  writer->WriteHeader(MsgHeader::Type::kRemoveBreakpoint, transaction_id);
+  writer->WriteBytes(&request, sizeof(RemoveBreakpointRequest));
+}
+
+bool ReadReply(MessageReader* reader,
+               RemoveBreakpointReply* reply,
+               uint32_t* transaction_id) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  *transaction_id = header.transaction_id;
+  return true;
+}
+
+// Notifications ---------------------------------------------------------------
+
+bool ReadNotifyProcess(MessageReader* reader, NotifyProcess* process) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  if (!reader->ReadUint64(&process->process_koid))
+    return false;
+  if (!reader->ReadInt64(&process->return_code))
+    return false;
+  return true;
+}
+
+bool ReadNotifyThread(MessageReader* reader, NotifyThread* notify) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  if (!reader->ReadUint64(&notify->process_koid))
+    return false;
+  return Deserialize(reader, &notify->record);
+}
+
+bool ReadNotifyException(MessageReader* reader, NotifyException* notify) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  if (!reader->ReadUint64(&notify->process_koid))
+    return false;
+  if (!Deserialize(reader, &notify->thread))
+    return false;
+
+  uint32_t type;
+  if (!reader->ReadUint32(&type) ||
+      type >= static_cast<uint32_t>(NotifyException::Type::kLast))
+    return false;
+  notify->type = static_cast<NotifyException::Type>(type);
+
+  if (!reader->ReadUint64(&notify->ip))
+    return false;
+  if (!reader->ReadUint64(&notify->sp))
+    return false;
+
+  return true;
 }
 
 }  // namespace debug_ipc

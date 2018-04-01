@@ -7,11 +7,6 @@ import("//build/package.gni")
 
 rust_binary("bin") {
   name = "wlantool2"
-
-  deps = [
-    "//garnet/lib/rust/fidl_crates/garnet_lib_wlan_fidl",
-    "//garnet/lib/rust/fidl_crates/garnet_lib_wlan_fidl_service",
-  ]
 }
 
 package("wlantool2") {

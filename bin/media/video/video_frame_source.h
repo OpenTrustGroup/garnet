@@ -8,13 +8,12 @@
 #include <queue>
 #include <unordered_set>
 
-#include "garnet/bin/media/util/timeline_control_point.h"
+#include <fuchsia/cpp/geometry.h>
+#include <fuchsia/cpp/media.h>
+#include "garnet/bin/media/fidl/timeline_control_point.h"
 #include "garnet/bin/media/video/video_converter.h"
-#include "lib/media/fidl/media_transport.fidl.h"
-#include "lib/media/fidl/video_renderer.fidl.h"
 #include "lib/media/timeline/timeline_function.h"
 #include "lib/media/transport/media_packet_consumer_base.h"
-#include "lib/ui/geometry/fidl/geometry.fidl.h"
 #include "lib/ui/view_framework/base_view.h"
 
 namespace media {
@@ -33,13 +32,13 @@ class VideoFrameSource : public MediaPacketConsumerBase {
   }
 
   // Binds the packet consumer.
-  void BindConsumer(f1dl::InterfaceRequest<MediaPacketConsumer> request) {
+  void BindConsumer(fidl::InterfaceRequest<MediaPacketConsumer> request) {
     MediaPacketConsumerBase::Bind(std::move(request));
   }
 
   // Binds the timeline control point.
   void BindTimelineControlPoint(
-      f1dl::InterfaceRequest<MediaTimelineControlPoint> request) {
+      fidl::InterfaceRequest<MediaTimelineControlPoint> request) {
     timeline_control_point_.Bind(std::move(request));
   }
 
@@ -66,10 +65,11 @@ class VideoFrameSource : public MediaPacketConsumerBase {
 
   // Gets status (see |VideoRenderer::GetStatus|).
   void GetStatus(uint64_t version_last_seen,
-                 const VideoRenderer::GetStatusCallback& callback);
+                 VideoRenderer::GetStatusCallback callback);
 
   // Gets an RGBA video frame corresponding to the current reference time.
-  void GetRgbaFrame(uint8_t* rgba_buffer, const mozart::Size& rgba_buffer_size);
+  void GetRgbaFrame(uint8_t* rgba_buffer,
+                    const geometry::Size& rgba_buffer_size);
 
  private:
   static constexpr uint32_t kPacketDemand = 3;
@@ -78,19 +78,18 @@ class VideoFrameSource : public MediaPacketConsumerBase {
   void OnPacketSupplied(
       std::unique_ptr<SuppliedPacket> supplied_packet) override;
 
-  void OnFlushRequested(bool hold_frame,
-                        const FlushCallback& callback) override;
+  void OnFlushRequested(bool hold_frame, FlushCallback callback) override;
 
   void OnFailure() override;
 
   // Returns the supported media types.
-  f1dl::Array<MediaTypeSetPtr> SupportedMediaTypes();
+  fidl::VectorPtr<MediaTypeSet> SupportedMediaTypes();
 
   // Discards packets that are older than pts_.
   void DiscardOldPackets();
 
   // Checks |packet| for a revised media type and updates state accordingly.
-  void CheckForRevisedMediaType(const MediaPacketPtr& packet);
+  void CheckForRevisedMediaType(const MediaPacket& packet);
 
   // Calls Invalidate on all registered views.
   void InvalidateViews() {

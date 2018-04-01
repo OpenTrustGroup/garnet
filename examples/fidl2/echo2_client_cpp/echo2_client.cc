@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <fuchsia/cpp/echo2.h>
 #include <launchpad/launchpad.h>
 #include <lib/async/cpp/loop.h>
 #include <lib/async/default.h>
 #include <zircon/processargs.h>
 #include <zx/process.h>
 
-#include "garnet/examples/fidl2/services/echo2.fidl.cc.h"
 #include "lib/app/cpp/application_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/svc/cpp/services.h"
@@ -18,14 +18,14 @@ namespace echo2 {
 class EchoClientApp {
  public:
   EchoClientApp()
-      : context_(app::ApplicationContext::CreateFromStartupInfo()) {}
+      : context_(component::ApplicationContext::CreateFromStartupInfo()) {}
 
   echo2::EchoPtr& echo() { return echo_; }
 
   void Start(std::string server_url, std::string msg) {
-    auto launch_info = app::ApplicationLaunchInfo::New();
-    launch_info->url = server_url;
-    launch_info->directory_request = echo_provider_.NewRequest();
+    component::ApplicationLaunchInfo launch_info;
+    launch_info.url = server_url;
+    launch_info.directory_request = echo_provider_.NewRequest();
     context_->launcher()->CreateApplication(std::move(launch_info),
                                             controller_.NewRequest());
 
@@ -37,10 +37,10 @@ class EchoClientApp {
   EchoClientApp(const EchoClientApp&) = delete;
   EchoClientApp& operator=(const EchoClientApp&) = delete;
 
-  std::unique_ptr<app::ApplicationContext> context_;
+  std::unique_ptr<component::ApplicationContext> context_;
   zx::process server_;
-  app::Services echo_provider_;
-  app::ApplicationControllerPtr controller_;
+  component::Services echo_provider_;
+  component::ApplicationControllerPtr controller_;
   echo2::EchoPtr echo_;
 };
 

@@ -2,9 +2,11 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//garnet/public/lib/fidl/fidl.gni")
+import("//garnet/public/lib/fidl/build/fidl/fidl.gni")
 
 fidl("fidl") {
+  name = "media"
+
   sources = [
     "audio_capturer.fidl",
     "audio_policy_service.fidl",
@@ -20,7 +22,6 @@ fidl("fidl") {
     "media_transport.fidl",
     "media_type_converter.fidl",
     "media_types.fidl",
-    "net_media_player.fidl",
     "net_media_service.fidl",
     "problem.fidl",
     "seeking_reader.fidl",
@@ -31,6 +32,6 @@ fidl("fidl") {
   ]
 
   public_deps = [
-    "//garnet/public/lib/ui/views/fidl",
+    "//garnet/public/lib/ui/views/fidl:v1",
   ]
 }

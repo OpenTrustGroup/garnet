@@ -4,10 +4,11 @@
 
 #include "garnet/bin/media/media_service/media_demux_impl.h"
 
+#include "garnet/bin/media/demux/fidl_reader.h"
 #include "garnet/bin/media/demux/reader_cache.h"
-#include "garnet/bin/media/fidl/fidl_reader.h"
 #include "garnet/bin/media/fidl/fidl_type_conversions.h"
 #include "garnet/bin/media/util/callback_joiner.h"
+#include "lib/fidl/cpp/clone.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
 
@@ -15,15 +16,15 @@ namespace media {
 
 // static
 std::shared_ptr<MediaDemuxImpl> MediaDemuxImpl::Create(
-    f1dl::InterfaceHandle<SeekingReader> reader,
-    f1dl::InterfaceRequest<MediaSource> request,
+    fidl::InterfaceHandle<SeekingReader> reader,
+    fidl::InterfaceRequest<MediaSource> request,
     MediaComponentFactory* owner) {
   return std::shared_ptr<MediaDemuxImpl>(
       new MediaDemuxImpl(std::move(reader), std::move(request), owner));
 }
 
-MediaDemuxImpl::MediaDemuxImpl(f1dl::InterfaceHandle<SeekingReader> reader,
-                               f1dl::InterfaceRequest<MediaSource> request,
+MediaDemuxImpl::MediaDemuxImpl(fidl::InterfaceHandle<SeekingReader> reader,
+                               fidl::InterfaceRequest<MediaSource> request,
                                MediaComponentFactory* owner)
     : MediaComponentFactory::Product<MediaSource>(this,
                                                   std::move(request),
@@ -34,8 +35,8 @@ MediaDemuxImpl::MediaDemuxImpl(f1dl::InterfaceHandle<SeekingReader> reader,
   FXL_DCHECK(task_runner_);
 
   status_publisher_.SetCallbackRunner(
-      [this](const GetStatusCallback& callback, uint64_t version) {
-        MediaSourceStatusPtr status = MediaSourceStatus::New();
+      [this](GetStatusCallback callback, uint64_t version) {
+        MediaSourceStatus status;
 
         for (std::unique_ptr<Stream>& stream : streams_) {
           if (!stream->producer()->is_connected()) {
@@ -44,37 +45,37 @@ MediaDemuxImpl::MediaDemuxImpl(f1dl::InterfaceHandle<SeekingReader> reader,
 
           switch (stream->stream_type()->medium()) {
             case StreamType::Medium::kAudio:
-              status->audio_connected = true;
+              status.audio_connected = true;
               break;
             case StreamType::Medium::kVideo:
-              status->video_connected = true;
+              status.video_connected = true;
               break;
             default:
               break;
           }
         }
 
-        status->metadata = metadata_.Clone();
-        status->problem = problem_.Clone();
+        fidl::Clone(metadata_, &status.metadata);
+        fidl::Clone(problem_, &status.problem);
         callback(version, std::move(status));
       });
 
   std::shared_ptr<Reader> reader_ptr = FidlReader::Create(std::move(reader));
   if (!reader_ptr) {
-    ReportProblem(Problem::kProblemInternal, "couldn't create reader");
+    ReportProblem(kProblemInternal, "couldn't create reader");
     return;
   }
 
   std::shared_ptr<ReaderCache> reader_cache_ptr =
       ReaderCache::Create(reader_ptr);
   if (!reader_cache_ptr) {
-    ReportProblem(Problem::kProblemInternal, "couldn't create reader cache");
+    ReportProblem(kProblemInternal, "couldn't create reader cache");
     return;
   }
 
   demux_ = Demux::Create(std::shared_ptr<Reader>(reader_cache_ptr));
   if (!demux_) {
-    ReportProblem(Problem::kProblemInternal, "couldn't create demux");
+    ReportProblem(kProblemInternal, "couldn't create demux");
     return;
   }
 
@@ -122,16 +123,15 @@ void MediaDemuxImpl::ReportProblem(const std::string& type,
                                    const std::string& details) {
   problem_ = Problem::New();
   problem_->type = type;
-  problem_->details = details.empty() ? nullptr : f1dl::String(details);
+  problem_->details = details.empty() ? nullptr : fidl::StringPtr(details);
   status_publisher_.SendUpdates();
 }
 
-void MediaDemuxImpl::Describe(const DescribeCallback& callback) {
+void MediaDemuxImpl::Describe(DescribeCallback callback) {
   init_complete_.When([this, callback]() {
-    f1dl::Array<MediaTypePtr> result =
-        f1dl::Array<MediaTypePtr>::New(streams_.size());
+    fidl::VectorPtr<MediaType> result;
     for (size_t i = 0; i < streams_.size(); i++) {
-      result[i] = fxl::To<MediaTypePtr>(streams_[i]->stream_type());
+      result.push_back(fxl::To<MediaType>(streams_[i]->stream_type()));
     }
 
     callback(std::move(result));
@@ -140,7 +140,7 @@ void MediaDemuxImpl::Describe(const DescribeCallback& callback) {
 
 void MediaDemuxImpl::GetPacketProducer(
     uint32_t stream_index,
-    f1dl::InterfaceRequest<MediaPacketProducer> producer) {
+    fidl::InterfaceRequest<MediaPacketProducer> producer) {
   RCHECK(init_complete_.occurred());
 
   if (stream_index >= streams_.size()) {
@@ -151,11 +151,11 @@ void MediaDemuxImpl::GetPacketProducer(
 }
 
 void MediaDemuxImpl::GetStatus(uint64_t version_last_seen,
-                               const GetStatusCallback& callback) {
+                               GetStatusCallback callback) {
   status_publisher_.Get(version_last_seen, callback);
 }
 
-void MediaDemuxImpl::Flush(bool hold_frame, const FlushCallback& callback) {
+void MediaDemuxImpl::Flush(bool hold_frame, FlushCallback callback) {
   RCHECK(init_complete_.occurred());
 
   graph_.FlushAllOutputs(demux_node_, hold_frame);
@@ -169,7 +169,7 @@ void MediaDemuxImpl::Flush(bool hold_frame, const FlushCallback& callback) {
   callback_joiner->WhenJoined(callback);
 }
 
-void MediaDemuxImpl::Seek(int64_t position, const SeekCallback& callback) {
+void MediaDemuxImpl::Seek(int64_t position, SeekCallback callback) {
   RCHECK(init_complete_.occurred());
 
   demux_->Seek(position, [this, callback]() {
@@ -191,7 +191,7 @@ MediaDemuxImpl::Stream::Stream(OutputRef output,
 MediaDemuxImpl::Stream::~Stream() {}
 
 void MediaDemuxImpl::Stream::BindPacketProducer(
-    f1dl::InterfaceRequest<MediaPacketProducer> producer) {
+    fidl::InterfaceRequest<MediaPacketProducer> producer) {
   FXL_DCHECK(producer_);
   producer_->Bind(std::move(producer));
 }

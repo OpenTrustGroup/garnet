@@ -1,5 +1,4 @@
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
-// This is a GENERATED file, see //zircon/system/host/sysgen.
 // The license governing this file can be found in the LICENSE file.
 
 #[link(name = "zircon")]
@@ -288,6 +287,8 @@ extern {
         actual: *mut usize
         ) -> zx_status_t;
 
+    pub fn zx_job_default() -> zx_handle_t;
+
     pub fn zx_job_create(
         parent_job: zx_handle_t,
         options: u32,
@@ -402,32 +403,14 @@ extern {
         handle: zx_handle_t,
         data: *mut u8,
         offset: u64,
-        len: usize,
-        actual: *mut usize
-        ) -> zx_status_t;
-
-    pub fn zx_vmo_read_old(
-        handle: zx_handle_t,
-        data: *mut u8,
-        offset: u64,
-        len: usize,
-        actual: *mut usize
+        len: usize
         ) -> zx_status_t;
 
     pub fn zx_vmo_write(
         handle: zx_handle_t,
         data: *const u8,
         offset: u64,
-        len: usize,
-        actual: *mut usize
-        ) -> zx_status_t;
-
-    pub fn zx_vmo_write_old(
-        handle: zx_handle_t,
-        data: *const u8,
-        offset: u64,
-        len: usize,
-        actual: *mut usize
+        len: usize
         ) -> zx_status_t;
 
     pub fn zx_vmo_get_size(

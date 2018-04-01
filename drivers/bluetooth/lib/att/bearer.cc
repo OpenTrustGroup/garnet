@@ -116,6 +116,13 @@ OpCode MatchingTransactionCode(OpCode transaction_end_code) {
 
 }  // namespace
 
+// static
+fxl::RefPtr<Bearer> Bearer::Create(fbl::RefPtr<l2cap::Channel> chan,
+                                   uint32_t timeout) {
+  auto bearer = fxl::AdoptRef(new Bearer(std::move(chan), timeout));
+  return bearer->Activate() ? bearer : nullptr;
+}
+
 Bearer::PendingTransaction::PendingTransaction(OpCode opcode,
                                                TransactionCallback callback,
                                                ErrorCallback error_callback,
@@ -182,7 +189,7 @@ void Bearer::TransactionQueue::InvokeErrorAll(bool timeout,
   }
 }
 
-Bearer::Bearer(std::unique_ptr<l2cap::Channel> chan,
+Bearer::Bearer(fbl::RefPtr<l2cap::Channel> chan,
                uint32_t transaction_timeout_ms)
     : chan_(std::move(chan)),
       transaction_timeout_ms_(transaction_timeout_ms),
@@ -199,12 +206,6 @@ Bearer::Bearer(std::unique_ptr<l2cap::Channel> chan,
   mtu_ = min_mtu();
   preferred_mtu_ =
       std::max(min_mtu(), std::min(chan_->tx_mtu(), chan_->rx_mtu()));
-
-  chan_->set_channel_closed_callback(std::bind(&Bearer::OnChannelClosed, this));
-
-  rx_task_.Reset(std::bind(&Bearer::OnRxBFrame, this, std::placeholders::_1));
-  chan_->SetRxHandler(rx_task_.callback(),
-                      fsl::MessageLoop::GetCurrent()->task_runner());
 }
 
 Bearer::~Bearer() {
@@ -217,7 +218,16 @@ Bearer::~Bearer() {
   indication_queue_.Reset();
 }
 
+bool Bearer::Activate() {
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+  rx_task_.Reset(fbl::BindMember(this, &Bearer::OnRxBFrame));
+  return chan_->Activate(rx_task_.callback(),
+                         fbl::BindMember(this, &Bearer::OnChannelClosed),
+                         fsl::MessageLoop::GetCurrent()->task_runner());
+}
+
 void Bearer::ShutDown() {
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   if (is_open())
     ShutDownInternal(false /* due_to_timeout */);
 }
@@ -228,6 +238,10 @@ void Bearer::ShutDownInternal(bool due_to_timeout) {
   FXL_VLOG(1) << "att: Bearer shutting down";
 
   rx_task_.Cancel();
+
+  // This will have no effect if the channel is already closed (e.g. if
+  // ShutDown() was called by OnChannelClosed()).
+  chan_->SignalLinkError();
   chan_ = nullptr;
 
   request_queue_.InvokeErrorAll(due_to_timeout, ErrorCode::kNoError);
@@ -257,6 +271,7 @@ bool Bearer::SendWithoutResponse(common::ByteBufferPtr pdu) {
 bool Bearer::SendInternal(common::ByteBufferPtr pdu,
                           const TransactionCallback& callback,
                           const ErrorCallback& error_callback) {
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   if (!is_open()) {
     FXL_VLOG(2) << "att: Bearer closed";
     return false;
@@ -333,6 +348,7 @@ Bearer::HandlerId Bearer::RegisterHandler(OpCode opcode,
 }
 
 void Bearer::UnregisterHandler(HandlerId id) {
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   FXL_DCHECK(id != kInvalidHandlerId);
 
   auto iter = handler_id_map_.find(id);
@@ -423,6 +439,8 @@ void Bearer::TryStartNextTransaction(TransactionQueue* tq) {
 void Bearer::SendErrorResponse(OpCode request_opcode,
                                Handle attribute_handle,
                                ErrorCode error_code) {
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+
   auto buffer =
       common::NewSlabBuffer(sizeof(Header) + sizeof(ErrorResponseParams));
   FXL_CHECK(buffer);
@@ -548,6 +566,8 @@ void Bearer::HandleBeginTransaction(RemoteTransaction* currently_pending,
 }
 
 Bearer::RemoteTransaction* Bearer::FindRemoteTransaction(TransactionId id) {
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+
   if (remote_request_ && remote_request_->id == id) {
     return &remote_request_;
   }
@@ -575,9 +595,9 @@ void Bearer::HandlePDUWithoutResponse(const PacketReader& packet) {
 
 void Bearer::OnChannelClosed() {
   FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
-  ShutDown();
 
-  // TODO(armansito): Notify a "closed callback" here.
+  // This will deactivate the channel and notify |closed_cb_|.
+  ShutDown();
 }
 
 void Bearer::OnRxBFrame(const l2cap::SDU& sdu) {

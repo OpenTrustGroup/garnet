@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <fuchsia/cpp/echo2.h>
 #include <lib/async/cpp/loop.h>
 #include <zx/channel.h>
 
-#include "garnet/examples/fidl2/services/echo2.fidl.cc.h"
 #include "lib/app/cpp/application_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fidl/cpp/interface_request.h"
@@ -14,7 +14,8 @@ namespace echo2 {
 
 class EchoServerApp : public Echo {
  public:
-  EchoServerApp() : context_(app::ApplicationContext::CreateFromStartupInfo()) {
+  EchoServerApp()
+      : context_(component::ApplicationContext::CreateFromStartupInfo()) {
     context_->outgoing_services()->AddServiceForName(
         [this](zx::channel request) {
           bindings_.AddBinding(
@@ -34,7 +35,7 @@ class EchoServerApp : public Echo {
   EchoServerApp(const EchoServerApp&) = delete;
   EchoServerApp& operator=(const EchoServerApp&) = delete;
 
-  std::unique_ptr<app::ApplicationContext> context_;
+  std::unique_ptr<component::ApplicationContext> context_;
   fidl::BindingSet<Echo> bindings_;
 };
 

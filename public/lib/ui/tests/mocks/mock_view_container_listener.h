@@ -5,31 +5,29 @@
 #ifndef LIB_UI_TESTS_MOCKS_MOCK_VIEW_CONTAINER_LISTENER_H_
 #define LIB_UI_TESTS_MOCKS_MOCK_VIEW_CONTAINER_LISTENER_H_
 
-#include "lib/ui/views/fidl/view_manager.fidl.h"
-#include "lib/ui/views/fidl/views.fidl.h"
+#include <fuchsia/cpp/views_v1.h>
 #include "lib/fxl/macros.h"
 
 namespace mozart {
 namespace test {
 
 using OnMockChildAttachedCallback =
-    std::function<void(uint32_t, mozart::ViewInfoPtr)>;
+    std::function<void(uint32_t, views_v1::ViewInfo)>;
 using OnMockChildUnavailable = std::function<void(uint32_t)>;
 
-class MockViewContainerListener : public mozart::ViewContainerListener {
+class MockViewContainerListener : public views_v1::ViewContainerListener {
  public:
   MockViewContainerListener();
-  MockViewContainerListener(
-      const OnMockChildAttachedCallback& child_attached_callback,
-      const OnMockChildUnavailable& child_unavailable_callback);
+  MockViewContainerListener(OnMockChildAttachedCallback child_attached_callback,
+                            OnMockChildUnavailable child_unavailable_callback);
   ~MockViewContainerListener();
 
  private:
   void OnChildAttached(uint32_t child_key,
-                       mozart::ViewInfoPtr child_view_info,
-                       const OnChildAttachedCallback& callback) override;
+                       views_v1::ViewInfo child_view_info,
+                       OnChildAttachedCallback callback) override;
   void OnChildUnavailable(uint32_t child_key,
-                          const OnChildUnavailableCallback& callback) override;
+                          OnChildUnavailableCallback callback) override;
 
   OnMockChildAttachedCallback child_attached_callback_;
   OnMockChildUnavailable child_unavailable_callback_;

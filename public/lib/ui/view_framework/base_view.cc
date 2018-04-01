@@ -9,26 +9,28 @@
 #include "lib/app/cpp/connect.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/time/time_point.h"
+#include "lib/ui/geometry/cpp/geometry_util.h"
 
 namespace mozart {
 namespace {
 
-ui_mozart::MozartPtr GetMozart(ViewManager* view_manager) {
-  ui_mozart::MozartPtr mozart;
-  view_manager->GetMozart(mozart.NewRequest());
-  return mozart;
+ui::ScenicPtr GetScenic(views_v1::ViewManager* view_manager) {
+  ui::ScenicPtr scenic;
+  view_manager->GetScenic(scenic.NewRequest());
+  return scenic;
 }
 
 }  // namespace
 
-BaseView::BaseView(ViewManagerPtr view_manager,
-                   f1dl::InterfaceRequest<ViewOwner> view_owner_request,
-                   const std::string& label)
+BaseView::BaseView(
+    views_v1::ViewManagerPtr view_manager,
+    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
+    const std::string& label)
     : view_manager_(std::move(view_manager)),
       view_listener_binding_(this),
       view_container_listener_binding_(this),
       input_listener_binding_(this),
-      session_(GetMozart(view_manager_.get()).get()),
+      session_(GetScenic(view_manager_.get()).get()),
       parent_node_(&session_) {
   FXL_DCHECK(view_manager_);
   FXL_DCHECK(view_owner_request);
@@ -39,24 +41,24 @@ BaseView::BaseView(ViewManagerPtr view_manager,
                             view_listener_binding_.NewBinding(),
                             std::move(parent_export_token), label);
 
-  app::ConnectToService(GetViewServiceProvider(),
-                        input_connection_.NewRequest());
+  component::ConnectToService(GetViewServiceProvider(),
+                              input_connection_.NewRequest());
   input_connection_->SetEventListener(input_listener_binding_.NewBinding());
 
   session_.set_event_handler(
       std::bind(&BaseView::HandleSessionEvents, this, std::placeholders::_1));
-  parent_node_.SetEventMask(scenic::kMetricsEventMask);
+  parent_node_.SetEventMask(gfx::kMetricsEventMask);
 }
 
 BaseView::~BaseView() = default;
 
-app::ServiceProvider* BaseView::GetViewServiceProvider() {
+component::ServiceProvider* BaseView::GetViewServiceProvider() {
   if (!view_service_provider_)
     view_->GetServiceProvider(view_service_provider_.NewRequest());
   return view_service_provider_.get();
 }
 
-ViewContainer* BaseView::GetViewContainer() {
+views_v1::ViewContainer* BaseView::GetViewContainer() {
   if (!view_container_) {
     view_->GetContainer(view_container_.NewRequest());
     view_container_->SetListener(view_container_listener_binding_.NewBinding());
@@ -94,39 +96,38 @@ void BaseView::PresentScene(zx_time_t presentation_time) {
   // Session.Present(), for use in InvalidateScene().
   last_presentation_time_ = presentation_time;
 
-  session()->Present(
-      presentation_time, [this](ui_mozart::PresentationInfoPtr info) {
-        FXL_DCHECK(present_pending_);
+  session()->Present(presentation_time, [this](images::PresentationInfo info) {
+    FXL_DCHECK(present_pending_);
 
-        zx_time_t next_presentation_time =
-            info->presentation_time + info->presentation_interval;
+    zx_time_t next_presentation_time =
+        info.presentation_time + info.presentation_interval;
 
-        bool present_needed = false;
-        if (invalidate_pending_) {
-          invalidate_pending_ = false;
-          OnSceneInvalidated(std::move(info));
-          present_needed = true;
-        }
+    bool present_needed = false;
+    if (invalidate_pending_) {
+      invalidate_pending_ = false;
+      OnSceneInvalidated(std::move(info));
+      present_needed = true;
+    }
 
-        present_pending_ = false;
-        if (present_needed)
-          PresentScene(next_presentation_time);
-      });
+    present_pending_ = false;
+    if (present_needed)
+      PresentScene(next_presentation_time);
+  });
 }
 
-void BaseView::HandleSessionEvents(f1dl::Array<ui_mozart::EventPtr> events) {
-  scenic::Metrics* new_metrics = nullptr;
-  for (const auto& event : events) {
-    if (event->is_scenic()) {
-      const scenic::EventPtr& scenic_event = event->get_scenic();
-      if (scenic_event->is_metrics() &&
-          scenic_event->get_metrics()->node_id == parent_node_.id()) {
-        new_metrics = scenic_event->get_metrics()->metrics.get();
+void BaseView::HandleSessionEvents(fidl::VectorPtr<ui::Event> events) {
+  const gfx::Metrics* new_metrics = nullptr;
+  for (const auto& event : *events) {
+    if (event.is_gfx()) {
+      const gfx::Event& scenic_event = event.gfx();
+      if (scenic_event.is_metrics() &&
+          scenic_event.metrics().node_id == parent_node_.id()) {
+        new_metrics = &scenic_event.metrics().metrics;
       }
     }
   }
 
-  if (new_metrics && !original_metrics_.Equals(*new_metrics)) {
+  if (new_metrics && original_metrics_ != *new_metrics) {
     original_metrics_ = *new_metrics;
     AdjustMetricsAndPhysicalSize();
   }
@@ -154,33 +155,30 @@ void BaseView::AdjustMetricsAndPhysicalSize() {
   InvalidateScene();
 }
 
-void BaseView::OnPropertiesChanged(ViewPropertiesPtr old_properties) {}
+void BaseView::OnPropertiesChanged(views_v1::ViewProperties old_properties) {}
 
-void BaseView::OnSceneInvalidated(
-    ui_mozart::PresentationInfoPtr presentation_info) {}
+void BaseView::OnSceneInvalidated(images::PresentationInfo presentation_info) {}
 
-void BaseView::OnSessionEvent(f1dl::Array<ui_mozart::EventPtr> events) {}
+void BaseView::OnSessionEvent(fidl::VectorPtr<ui::Event> events) {}
 
-bool BaseView::OnInputEvent(mozart::InputEventPtr event) {
+bool BaseView::OnInputEvent(input::InputEvent event) {
   return false;
 }
 
 void BaseView::OnChildAttached(uint32_t child_key,
-                               ViewInfoPtr child_view_info) {}
+                               views_v1::ViewInfo child_view_info) {}
 
 void BaseView::OnChildUnavailable(uint32_t child_key) {}
 
-void BaseView::OnPropertiesChanged(
-    ViewPropertiesPtr properties,
-    const OnPropertiesChangedCallback& callback) {
-  FXL_DCHECK(properties);
+void BaseView::OnPropertiesChanged(views_v1::ViewProperties properties,
+                                   OnPropertiesChangedCallback callback) {
   TRACE_DURATION("view", "OnPropertiesChanged");
 
-  ViewPropertiesPtr old_properties = std::move(properties_);
+  views_v1::ViewProperties old_properties = std::move(properties_);
   properties_ = std::move(properties);
 
-  if (!logical_size_.Equals(*properties_->view_layout->size)) {
-    logical_size_ = *properties_->view_layout->size;
+  if (logical_size_ != properties_.view_layout->size) {
+    logical_size_ = properties_.view_layout->size;
     AdjustMetricsAndPhysicalSize();
   }
 
@@ -190,24 +188,21 @@ void BaseView::OnPropertiesChanged(
 }
 
 void BaseView::OnChildAttached(uint32_t child_key,
-                               ViewInfoPtr child_view_info,
-                               const OnChildUnavailableCallback& callback) {
-  FXL_DCHECK(child_view_info);
-
+                               views_v1::ViewInfo child_view_info,
+                               OnChildUnavailableCallback callback) {
   TRACE_DURATION("view", "OnChildAttached", "child_key", child_key);
   OnChildAttached(child_key, std::move(child_view_info));
   callback();
 }
 
 void BaseView::OnChildUnavailable(uint32_t child_key,
-                                  const OnChildUnavailableCallback& callback) {
+                                  OnChildUnavailableCallback callback) {
   TRACE_DURATION("view", "OnChildUnavailable", "child_key", child_key);
   OnChildUnavailable(child_key);
   callback();
 }
 
-void BaseView::OnEvent(mozart::InputEventPtr event,
-                       const OnEventCallback& callback) {
+void BaseView::OnEvent(input::InputEvent event, OnEventCallback callback) {
   TRACE_DURATION("view", "OnEvent");
   bool handled = OnInputEvent(std::move(event));
   callback(handled);

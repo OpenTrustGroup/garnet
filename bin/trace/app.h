@@ -17,11 +17,11 @@ namespace tracing {
 
 class App : public Command {
  public:
-  App(app::ApplicationContext* context);
+  App(component::ApplicationContext* context);
   ~App();
 
-  void Run(const fxl::CommandLine& command_line,
-           OnDoneCallback on_done) override;
+ protected:
+  void Start(const fxl::CommandLine& command_line) override;
 
  private:
   void RegisterCommand(Command::Info info);

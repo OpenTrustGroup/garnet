@@ -15,14 +15,14 @@ namespace shadertoy {
 
 fxl::RefPtr<ShadertoyState> ShadertoyState::NewForImagePipe(
     App* app,
-    ::f1dl::InterfaceHandle<scenic::ImagePipe> image_pipe) {
+    ::fidl::InterfaceHandle<images::ImagePipe> image_pipe) {
   return fxl::AdoptRef(
       new ShadertoyStateForImagePipe(app, std::move(image_pipe)));
 }
 
 fxl::RefPtr<ShadertoyState> ShadertoyState::NewForView(
     App* app,
-    ::f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
+    ::fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
     bool handle_input_events) {
   FXL_CHECK(false) << "unimplemented.";
   return fxl::RefPtr<ShadertoyState>();
@@ -53,25 +53,26 @@ void ShadertoyState::SetPaused(bool paused) {
   RequestFrame(0);
 }
 
-void ShadertoyState::SetShaderCode(
-    std::string glsl,
-    const mozart::example::Shadertoy::SetShaderCodeCallback& callback) {
-  compiler_->Compile(std::string(glsl), [
-    weak = weak_ptr_factory_.GetWeakPtr(), callback = callback
-  ](Compiler::Result result) {
-    if (weak) {
-      if (result.pipeline) {
-        // Notify client that the code was successfully compiled.
-        callback(true);
-        // Start rendering with the new pipeline.
-        weak->pipeline_ = std::move(result.pipeline);
-        weak->RequestFrame(0);
-      } else {
-        // Notify client that the code could not be successfully compiled.
-        callback(false);
-      }
-    }
-  });
+void ShadertoyState::SetShaderCode(fidl::StringPtr glsl,
+                                   shadertoy::Shadertoy::SetShaderCodeCallback callback) {
+  compiler_->Compile(std::string(glsl),
+                     [weak = weak_ptr_factory_.GetWeakPtr(),
+                      callback = callback](Compiler::Result result) {
+                       if (weak) {
+                         if (result.pipeline) {
+                           // Notify client that the code was successfully
+                           // compiled.
+                           callback(true);
+                           // Start rendering with the new pipeline.
+                           weak->pipeline_ = std::move(result.pipeline);
+                           weak->RequestFrame(0);
+                         } else {
+                           // Notify client that the code could not be
+                           // successfully compiled.
+                           callback(false);
+                         }
+                       }
+                     });
 }
 
 void ShadertoyState::SetResolution(uint32_t width, uint32_t height) {
@@ -104,7 +105,7 @@ void ShadertoyState::SetMouse(glm::vec4 i_mouse) {
 
 void ShadertoyState::SetImage(
     uint32_t channel,
-    ::f1dl::InterfaceRequest<scenic::ImagePipe> request) {
+    ::fidl::InterfaceRequest<images::ImagePipe> request) {
   FXL_CHECK(false) << "unimplemented";
 }
 
@@ -122,10 +123,10 @@ void ShadertoyState::RequestFrame(uint64_t presentation_time) {
   KeepAlive(escher()->command_buffer_sequencer()->latest_sequence_number());
 }
 
-void ShadertoyState::OnFramePresented(const ui_mozart::PresentationInfoPtr& info) {
+void ShadertoyState::OnFramePresented(images::PresentationInfo info) {
   FXL_DCHECK(is_drawing_);
   is_drawing_ = false;
-  RequestFrame(info->presentation_time + info->presentation_interval);
+  RequestFrame(info.presentation_time + info.presentation_interval);
 }
 
 void ShadertoyState::Close() {

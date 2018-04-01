@@ -28,26 +28,28 @@
 // runner environment, without teardown; useful for testing modules, which may
 // not need to tear down device_runner.
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include <functional>
 #include <string>
 #include <vector>
 
+#include <arpa/inet.h>
+#include <lib/async/cpp/task.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <fuchsia/cpp/test_runner.h>
+
 #include "lib/app/cpp/application_context.h"
-#include "lib/test_runner/fidl/test_runner.fidl.h"
-#include "lib/test_runner/cpp/scope.h"
-#include "lib/test_runner/cpp/test_runner.h"
-#include "lib/test_runner/cpp/test_runner_store_impl.h"
+#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/split_string.h"
 #include "lib/fxl/strings/string_view.h"
 #include "lib/fxl/synchronization/sleep.h"
 #include "lib/fxl/tasks/one_shot_timer.h"
-#include "lib/fsl/tasks/message_loop.h"
+#include "lib/test_runner/cpp/scope.h"
+#include "lib/test_runner/cpp/test_runner.h"
+#include "lib/test_runner/cpp/test_runner_store_impl.h"
 
 // TODO(vardhan): Make listen port command-line configurable.
 constexpr uint16_t kListenPort = 8342;  // TCP port
@@ -59,8 +61,9 @@ namespace test_runner {
 // tests and runs them one at a time using TestRunContext.
 class TestRunnerConnection : public TestRunObserver {
  public:
-  TestRunnerConnection(int socket_fd,
-                       std::shared_ptr<app::ApplicationContext> app_context)
+  TestRunnerConnection(
+      int socket_fd,
+      std::shared_ptr<component::ApplicationContext> app_context)
       : app_context_(app_context), socket_(socket_fd) {}
 
   void Start() {
@@ -154,7 +157,7 @@ class TestRunnerConnection : public TestRunObserver {
                                            command_parse[2], args));
   }
 
-  std::shared_ptr<app::ApplicationContext> app_context_;
+  std::shared_ptr<component::ApplicationContext> app_context_;
   std::unique_ptr<TestRunContext> test_context_;
 
   // Posix fd for the TCP connection.
@@ -169,7 +172,7 @@ class TestRunnerConnection : public TestRunObserver {
 class TestRunnerTCPServer {
  public:
   TestRunnerTCPServer(uint16_t port)
-      : app_context_(app::ApplicationContext::CreateFromStartupInfo()) {
+      : app_context_(component::ApplicationContext::CreateFromStartupInfo()) {
     struct sockaddr_in6 addr;
     addr.sin6_family = AF_INET6;
     addr.sin6_port = htons(port);
@@ -212,7 +215,7 @@ class TestRunnerTCPServer {
 
  private:
   int listener_;
-  std::shared_ptr<app::ApplicationContext> app_context_;
+  std::shared_ptr<component::ApplicationContext> app_context_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TestRunnerTCPServer);
 };
@@ -228,7 +231,8 @@ int main() {
     // manipulate the message loop to pass control back and forth. Consider
     // using separate threads for handle message loop vs. fd polling.
     auto* runner = server.AcceptConnection();
-    loop.task_runner()->PostTask(
+    async::PostTask(
+        loop.async(),
         std::bind(&test_runner::TestRunnerConnection::Start, runner));
     loop.Run();
   }

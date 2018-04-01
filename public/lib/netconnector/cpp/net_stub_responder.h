@@ -7,11 +7,12 @@
 #include <memory>
 #include <unordered_set>
 
+#include <fuchsia/cpp/netconnector.h>
+
 #include "lib/app/cpp/application_context.h"
-#include "lib/svc/cpp/service_namespace.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/macros.h"
-#include "lib/netconnector/fidl/netconnector.fidl.h"
+#include "lib/svc/cpp/service_namespace.h"
 
 namespace netconnector {
 
@@ -23,7 +24,7 @@ class NetStubResponder {
   // Constructor. |actual| must outlive this.
   NetStubResponder(TInterface* actual,
                    const std::string& service_name,
-                   app::ApplicationContext* application_context)
+                   component::ApplicationContext* application_context)
       : actual_(actual) {
     FXL_DCHECK(actual_);
     FXL_DCHECK(!service_name.empty());
@@ -40,7 +41,7 @@ class NetStubResponder {
         application_context
             ->ConnectToEnvironmentService<netconnector::NetConnector>();
 
-    f1dl::InterfaceHandle<app::ServiceProvider> handle;
+    fidl::InterfaceHandle<component::ServiceProvider> handle;
     service_namespace_.AddBinding(handle.NewRequest());
     FXL_DCHECK(handle);
 
@@ -53,7 +54,7 @@ class NetStubResponder {
 
  private:
   TInterface* actual_;
-  app::ServiceNamespace service_namespace_;
+  component::ServiceNamespace service_namespace_;
   std::unordered_set<std::shared_ptr<TStub>> stubs_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(NetStubResponder);

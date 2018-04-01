@@ -24,23 +24,23 @@
 //#include <linux/sched.h>
 //#include <linux/vmalloc.h>
 
-#include "linuxisms.h"
+#include "pcie.h"
 
-#include <brcm_hw_ids.h>
-#include <brcmu_utils.h>
-#include <brcmu_wifi.h>
-#include <chipcommon.h>
-#include <soc.h>
-
+#include "brcm_hw_ids.h"
+#include "brcmu_utils.h"
+#include "brcmu_wifi.h"
 #include "bus.h"
 #include "chip.h"
+#include "chipcommon.h"
 #include "common.h"
 #include "commonring.h"
 #include "core.h"
 #include "debug.h"
+#include "device.h"
 #include "firmware.h"
+#include "linuxisms.h"
 #include "msgbuf.h"
-#include "pcie.h"
+#include "soc.h"
 
 enum brcmf_pcie_state { BRCMFMAC_PCIE_STATE_DOWN, BRCMFMAC_PCIE_STATE_UP };
 
@@ -463,7 +463,7 @@ static void brcmf_pcie_select_core(struct brcmf_pciedev_info* devinfo, uint16_t 
     if (core) {
         bar0_win = core->base;
         pci_write_config_dword(pdev, BRCMF_PCIE_BAR0_WINDOW, bar0_win);
-        if (pci_read_config_dword(pdev, BRCMF_PCIE_BAR0_WINDOW, &bar0_win) == 0) {
+        if (pci_read_config_dword(pdev, BRCMF_PCIE_BAR0_WINDOW, &bar0_win) == ZX_OK) {
             if (bar0_win != core->base) {
                 bar0_win = core->base;
                 pci_write_config_dword(pdev, BRCMF_PCIE_BAR0_WINDOW, bar0_win);
@@ -669,7 +669,7 @@ static void brcmf_pcie_bus_console_read(struct brcmf_pciedev_info* devinfo) {
         }
         if (ch == '\n') {
             console->log_str[console->log_idx] = 0;
-            pr_debug("CONSOLE: %s", console->log_str);
+            zxlogf(INFO, "brcmfmac: CONSOLE: %s", console->log_str);
             console->log_idx = 0;
         }
     }
@@ -909,7 +909,8 @@ static struct brcmf_pcie_ringbuf* brcmf_pcie_alloc_dma_and_ring(struct brcmf_pci
     return (ring);
 }
 
-static void brcmf_pcie_release_ringbuffer(struct device* dev, struct brcmf_pcie_ringbuf* ring) {
+static void brcmf_pcie_release_ringbuffer(struct brcmf_device* dev,
+                                          struct brcmf_pcie_ringbuf* ring) {
     void* dma_buf;
     uint32_t size;
 
@@ -1131,17 +1132,17 @@ fail:
     return ZX_ERR_NO_MEMORY;
 }
 
-static void brcmf_pcie_down(struct device* dev) {}
+static void brcmf_pcie_down(struct brcmf_device* dev) {}
 
-static zx_status_t brcmf_pcie_tx(struct device* dev, struct sk_buff* skb) {
+static zx_status_t brcmf_pcie_tx(struct brcmf_device* dev, struct sk_buff* skb) {
     return ZX_OK;
 }
 
-static zx_status_t brcmf_pcie_tx_ctlpkt(struct device* dev, unsigned char* msg, uint len) {
+static zx_status_t brcmf_pcie_tx_ctlpkt(struct brcmf_device* dev, unsigned char* msg, uint len) {
     return ZX_OK;
 }
 
-static zx_status_t brcmf_pcie_rx_ctlpkt(struct device* dev, unsigned char* msg, uint len,
+static zx_status_t brcmf_pcie_rx_ctlpkt(struct brcmf_device* dev, unsigned char* msg, uint len,
                                         int* urb_len_out) {
     if (urb_len_out) {
         *urb_len_out = 0;
@@ -1149,7 +1150,7 @@ static zx_status_t brcmf_pcie_rx_ctlpkt(struct device* dev, unsigned char* msg, 
     return ZX_OK;
 }
 
-static void brcmf_pcie_wowl_config(struct device* dev, bool enabled) {
+static void brcmf_pcie_wowl_config(struct brcmf_device* dev, bool enabled) {
     struct brcmf_bus* bus_if = dev_get_drvdata(dev);
     struct brcmf_pciedev* buspub = bus_if->bus_priv.pcie;
     struct brcmf_pciedev_info* devinfo = buspub->devinfo;
@@ -1158,7 +1159,7 @@ static void brcmf_pcie_wowl_config(struct device* dev, bool enabled) {
     devinfo->wowl_enabled = enabled;
 }
 
-static size_t brcmf_pcie_get_ramsize(struct device* dev) {
+static size_t brcmf_pcie_get_ramsize(struct brcmf_device* dev) {
     struct brcmf_bus* bus_if = dev_get_drvdata(dev);
     struct brcmf_pciedev* buspub = bus_if->bus_priv.pcie;
     struct brcmf_pciedev_info* devinfo = buspub->devinfo;
@@ -1166,7 +1167,7 @@ static size_t brcmf_pcie_get_ramsize(struct device* dev) {
     return devinfo->ci->ramsize - devinfo->ci->srsize;
 }
 
-static zx_status_t brcmf_pcie_get_memdump(struct device* dev, void* data, size_t len) {
+static zx_status_t brcmf_pcie_get_memdump(struct brcmf_device* dev, void* data, size_t len) {
     struct brcmf_bus* bus_if = dev_get_drvdata(dev);
     struct brcmf_pciedev* buspub = bus_if->bus_priv.pcie;
     struct brcmf_pciedev_info* devinfo = buspub->devinfo;
@@ -1176,7 +1177,8 @@ static zx_status_t brcmf_pcie_get_memdump(struct device* dev, void* data, size_t
     return ZX_OK;
 }
 
-static zx_status_t brcmf_pcie_get_fwname(struct device* dev, uint32_t chip, uint32_t chiprev, uint8_t* fw_name) {
+static zx_status_t brcmf_pcie_get_fwname(struct brcmf_device* dev, uint32_t chip, uint32_t chiprev,
+                                         uint8_t* fw_name) {
     struct brcmf_bus* bus_if = dev_get_drvdata(dev);
     struct brcmf_pciedev* buspub = bus_if->bus_priv.pcie;
     struct brcmf_pciedev_info* devinfo = buspub->devinfo;
@@ -1461,7 +1463,7 @@ static const struct brcmf_buscore_ops brcmf_pcie_buscore_ops = {
     .write32 = brcmf_pcie_buscore_write32,
 };
 
-static void brcmf_pcie_setup(struct device* dev, zx_status_t ret, const struct firmware* fw,
+static void brcmf_pcie_setup(struct brcmf_device* dev, zx_status_t ret, const struct firmware* fw,
                              void* nvram, uint32_t nvram_len) {
     struct brcmf_bus* bus;
     struct brcmf_pciedev* pcie_bus_dev;
@@ -1677,7 +1679,7 @@ static void brcmf_pcie_remove(struct pci_dev* pdev) {
 
 #ifdef CONFIG_PM
 
-static zx_status_t brcmf_pcie_pm_enter_D3(struct device* dev) {
+static zx_status_t brcmf_pcie_pm_enter_D3(struct brcmf_device* dev) {
     struct brcmf_pciedev_info* devinfo;
     struct brcmf_bus* bus;
 
@@ -1704,7 +1706,7 @@ static zx_status_t brcmf_pcie_pm_enter_D3(struct device* dev) {
     return ZX_OK;
 }
 
-static zx_status_t brcmf_pcie_pm_leave_D3(struct device* dev) {
+static zx_status_t brcmf_pcie_pm_leave_D3(struct brcmf_device* dev) {
     struct brcmf_pciedev_info* devinfo;
     struct brcmf_bus* bus;
     struct pci_dev* pdev;
@@ -1753,45 +1755,10 @@ static const struct dev_pm_ops brcmf_pciedrvr_pm = {
 
 #endif /* CONFIG_PM */
 
-#define BRCMF_PCIE_DEVICE(dev_id)                                     \
-    {                                                                 \
-        BRCM_PCIE_VENDOR_ID_BROADCOM, dev_id, PCI_ANY_ID, PCI_ANY_ID, \
-            PCI_CLASS_NETWORK_OTHER << 8, 0xffff00, 0                 \
-    }
-#define BRCMF_PCIE_DEVICE_SUB(dev_id, subvend, subdev)                                       \
-    {                                                                                        \
-        BRCM_PCIE_VENDOR_ID_BROADCOM, dev_id, subvend, subdev, PCI_CLASS_NETWORK_OTHER << 8, \
-            0xffff00, 0                                                                      \
-    }
-
-static const struct pci_device_id brcmf_pcie_devid_table[] = {
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_4350_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_4356_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_43567_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_43570_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_4358_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_4359_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_43602_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_43602_2G_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_43602_5G_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_43602_RAW_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_4365_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_4365_2G_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_4365_5G_DEVICE_ID),
-    BRCMF_PCIE_DEVICE_SUB(0x4365, BRCM_PCIE_VENDOR_ID_BROADCOM, 0x4365),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_4366_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_4366_2G_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_4366_5G_DEVICE_ID),
-    BRCMF_PCIE_DEVICE(BRCM_PCIE_4371_DEVICE_ID),
-    {/* end: all zeroes */}
-};
-
-MODULE_DEVICE_TABLE(pci, brcmf_pcie_devid_table);
-
 static struct pci_driver brcmf_pciedrvr = {
     .node = {},
     .name = KBUILD_MODNAME,
-    .id_table = brcmf_pcie_devid_table,
+    //    .id_table = brcmf_pcie_devid_table,
     .probe = brcmf_pcie_probe,
     .remove = brcmf_pcie_remove,
 #ifdef CONFIG_PM

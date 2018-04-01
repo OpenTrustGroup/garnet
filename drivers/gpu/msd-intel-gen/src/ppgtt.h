@@ -44,8 +44,8 @@ public:
     bool Free(uint64_t addr) override;
 
     bool Clear(uint64_t addr) override;
-    bool Insert(uint64_t addr, magma::PlatformBuffer* buffer, uint64_t offset, uint64_t length,
-                CachingType caching_type) override;
+    bool Insert(uint64_t addr, magma::PlatformBuffer::BusMapping* buffer, uint64_t page_offset,
+                uint64_t page_count, CachingType caching_type) override;
 
     uint64_t get_pml4_bus_addr() { return pml4_table_->bus_addr(); }
 
@@ -90,13 +90,11 @@ public:
             if (!buffer_)
                 return DRETF(false, "couldn't create buffer");
 
-            if (!buffer_->PinPages(0, 1))
-                return DRETF(false, "failed to pin pages");
-
             if (!buffer_->MapCpu(&mapping_))
                 return DRETF(false, "failed to map cpu");
 
-            if (!buffer_->MapPageRangeBus(0, 1, &bus_addr_))
+            bus_mapping_ = buffer_->MapPageRangeBus(0, 1);
+            if (!bus_mapping_)
                 return DRETF(false, "failed to map page range bus");
 
             return true;
@@ -104,12 +102,12 @@ public:
 
         void* mapping() { return mapping_; }
 
-        uint64_t bus_addr() { return bus_addr_; }
+        uint64_t bus_addr() { return bus_mapping_->Get()[0]; }
 
     private:
         std::unique_ptr<magma::PlatformBuffer> buffer_;
         void* mapping_;
-        uint64_t bus_addr_;
+        std::unique_ptr<magma::PlatformBuffer::BusMapping> bus_mapping_;
     };
 
     class PageTable : public Page {

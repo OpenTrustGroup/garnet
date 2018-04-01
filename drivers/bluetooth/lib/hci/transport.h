@@ -31,29 +31,30 @@ class DeviceWrapper;
 // and receive HCI packets from the underlying Bluetooth controller.
 //
 // Transport expects to be initialized and shut down (via Initialize() and
-// ShutDown()) on the thread it was created on. Initialize()/ShutDown() are NOT
-// thread-safe.
+// ShutDown()) on the same thread. ShutDown() MUST be called to guarantee clean
+// up.
 //
-// TODO(armansito): This class is ref-counted to prevent potential
-// use-after-free errors though vending weak ptrs would have been more suitable
-// since this class is intended to be uniquely owned by its creator.
-// fxl::WeakPtr is not thread-safe which is why we use
-// fxl::RefCountedThreadSafe. Consider making fxl::WeakPtr thread-safe.
+// TODO(armansito): This object has become too heavy-weight. I think it will be
+// cleaner to have CommandChannel and ACLDataChannel each be owned directly by
+// the main and L2CAP domains. Transport should go away as part of the HCI layer
+// clean up (and also NET-388).
 class Transport final : public fxl::RefCountedThreadSafe<Transport> {
  public:
   static fxl::RefPtr<Transport> Create(
       std::unique_ptr<DeviceWrapper> hci_device);
 
-  // Initializes the HCI command channel, starts the I/O event loop, and kicks
-  // off a new I/O thread for transactions with the HCI driver. The
-  // ACLDataChannel will be left uninitialized. The ACLDataChannel must be
+  // Initializes the HCI command channel and starts the I/O event loop.
+  // I/O events are run on the task_runner given, or a new I/O thread
+  // is started if one is not given.
+  //
+  // The ACLDataChannel will be left uninitialized. The ACLDataChannel must be
   // initialized after available data buffer information has been obtained from
   // the controller (via HCI_Read_Buffer_Size and HCI_LE_Read_Buffer_Size).
   //
   // This method is NOT thread-safe! Care must be taken such that the public
   // methods of this class and those of the individual channel classes are not
   // called in a manner that would race with the execution of Initialize().
-  bool Initialize();
+  bool Initialize(fxl::RefPtr<fxl::TaskRunner> task_runner = nullptr);
 
   // Initializes the ACL data channel with the given parameters. Returns false
   // if an error occurs during initialization. Initialize() must have been

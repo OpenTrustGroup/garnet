@@ -45,10 +45,17 @@ class FakeControllerTest : public TestBase {
   // TestBase overrides:
   void SetUp() override {
     SetUpTransport();
-    transport_->Initialize();
+    transport_->Initialize(fsl::MessageLoop::GetCurrent()->task_runner());
   }
 
   void TearDown() override {
+    if (!transport_)
+      return;
+
+    if (transport_->IsInitialized()) {
+      transport_->ShutDown();
+    }
+
     transport_ = nullptr;
     test_device_ = nullptr;
   }

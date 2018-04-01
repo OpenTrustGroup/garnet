@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <fuchsia/cpp/wlan_mlme.h>
 #include <wlan/mlme/ap/beacon_sender.h>
 #include <wlan/mlme/ap/infra_bss.h>
 #include <wlan/mlme/mlme.h>
@@ -18,11 +19,11 @@ namespace wlan {
 class ApMlme : public Mlme {
    public:
     explicit ApMlme(DeviceInterface* device);
-    ~ApMlme() = default;
+    ~ApMlme();
 
     // FrameHandler methods.
-    zx_status_t HandleMlmeStartReq(const StartRequest& req) override;
-    zx_status_t HandleMlmeStopReq(const StopRequest& req) override;
+    zx_status_t HandleMlmeStartReq(const wlan_mlme::StartRequest& req) override;
+    zx_status_t HandleMlmeStopReq(const wlan_mlme::StopRequest& req) override;
 
     // Mlme interface methods.
     zx_status_t Init() override;

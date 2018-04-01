@@ -3,13 +3,15 @@
 // found in the LICENSE file.
 
 #include <stdio.h>
+
 #include <algorithm>
+#include <unordered_map>
 #include <vector>
 
-#include <unordered_map>
-#include "lib/fidl/cpp/bindings/synchronous_interface_ptr.h"
+#include <fuchsia/cpp/images.h>
+
+#include "lib/fidl/cpp/synchronous_interface_ptr.h"
 #include "lib/fxl/logging.h"
-#include "lib/images/fidl/image_pipe.fidl.h"
 #include "vk_dispatch_table_helper.h"
 #include "vk_layer_config.h"
 #include "vk_layer_extension_utils.h"
@@ -64,7 +66,7 @@ struct SupportedImageProperties {
 };
 
 struct ImagePipeSurface {
-  scenic::ImagePipeSyncPtr image_pipe;
+  images::ImagePipeSyncPtr image_pipe;
   SupportedImageProperties supported_properties;
 };
 
@@ -76,7 +78,7 @@ struct PendingImageInfo {
 class ImagePipeSwapchain {
  public:
   ImagePipeSwapchain(SupportedImageProperties supported_properties,
-                     scenic::ImagePipeSyncPtr image_pipe)
+                     images::ImagePipeSyncPtr image_pipe)
       : supported_properties_(supported_properties),
         image_pipe_(std::move(image_pipe)),
         image_pipe_closed_(false),
@@ -99,7 +101,7 @@ class ImagePipeSwapchain {
 
  private:
   SupportedImageProperties supported_properties_;
-  scenic::ImagePipeSyncPtr image_pipe_;
+  images::ImagePipeSyncPtr image_pipe_;
   std::vector<VkImage> images_;
   std::vector<zx::event> acquire_events_;
   std::vector<VkDeviceMemory> memories_;
@@ -124,11 +126,12 @@ VkResult ImagePipeSwapchain::Initialize(
       GetLayerDataPtr(get_dispatch_key(device), layer_data_map)->instance;
 
   VkLayerInstanceDispatchTable* instance_dispatch_table =
-      GetLayerDataPtr(get_dispatch_key(instance), layer_data_map)->instance_dispatch_table;
+      GetLayerDataPtr(get_dispatch_key(instance), layer_data_map)
+          ->instance_dispatch_table;
 
   uint32_t physical_device_count;
-  result =
-      instance_dispatch_table->EnumeratePhysicalDevices(instance, &physical_device_count, nullptr);
+  result = instance_dispatch_table->EnumeratePhysicalDevices(
+      instance, &physical_device_count, nullptr);
   if (result != VK_SUCCESS)
     return result;
 
@@ -136,8 +139,8 @@ VkResult ImagePipeSwapchain::Initialize(
     return VK_ERROR_DEVICE_LOST;
 
   std::vector<VkPhysicalDevice> physical_devices(physical_device_count);
-  result = instance_dispatch_table->EnumeratePhysicalDevices(instance, &physical_device_count,
-                                                             physical_devices.data());
+  result = instance_dispatch_table->EnumeratePhysicalDevices(
+      instance, &physical_device_count, physical_devices.data());
   if (result != VK_SUCCESS)
     return VK_ERROR_DEVICE_LOST;
 
@@ -153,7 +156,8 @@ VkResult ImagePipeSwapchain::Initialize(
       std::vector<VkExtensionProperties> device_extensions(
           device_extension_count);
       result = instance_dispatch_table->EnumerateDeviceExtensionProperties(
-          physical_device, nullptr, &device_extension_count, device_extensions.data());
+          physical_device, nullptr, &device_extension_count,
+          device_extensions.data());
       if (result != VK_SUCCESS)
         return VK_ERROR_DEVICE_LOST;
 
@@ -172,31 +176,33 @@ VkResult ImagePipeSwapchain::Initialize(
 
   VkFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-  // See https://github.com/KhronosGroup/Vulkan-LoaderAndValidationLayers/issues/2064
+  // See
+  // https://github.com/KhronosGroup/Vulkan-LoaderAndValidationLayers/issues/2064
   if (instance_dispatch_table->EnumerateInstanceExtensionProperties) {
-      uint32_t instance_extension_count;
+    uint32_t instance_extension_count;
 
+    result = instance_dispatch_table->EnumerateInstanceExtensionProperties(
+        nullptr, &instance_extension_count, nullptr);
+    if (result != VK_SUCCESS)
+      return result;
+
+    if (instance_extension_count > 0) {
+      std::vector<VkExtensionProperties> instance_extensions(
+          instance_extension_count);
       result = instance_dispatch_table->EnumerateInstanceExtensionProperties(
-          nullptr, &instance_extension_count, nullptr);
+          nullptr, &instance_extension_count, instance_extensions.data());
       if (result != VK_SUCCESS)
-          return result;
+        return result;
 
-      if (instance_extension_count > 0) {
-          std::vector<VkExtensionProperties> instance_extensions(instance_extension_count);
-          result = instance_dispatch_table->EnumerateInstanceExtensionProperties(
-              nullptr, &instance_extension_count, instance_extensions.data());
-          if (result != VK_SUCCESS)
-              return result;
-
-          for (uint32_t i = 0; i < instance_extension_count; i++) {
-              if (!strcmp(VK_GOOGLE_IMAGE_USAGE_SCANOUT_EXTENSION_NAME,
-                          instance_extensions[i].extensionName)) {
-                  // TODO(MA-345) support display tiling on request
-                  // usage |= VK_IMAGE_USAGE_SCANOUT_BIT_GOOGLE;
-                  break;
-              }
-          }
+      for (uint32_t i = 0; i < instance_extension_count; i++) {
+        if (!strcmp(VK_GOOGLE_IMAGE_USAGE_SCANOUT_EXTENSION_NAME,
+                    instance_extensions[i].extensionName)) {
+          // TODO(MA-345) support display tiling on request
+          // usage |= VK_IMAGE_USAGE_SCANOUT_BIT_GOOGLE;
+          break;
+        }
       }
+    }
   }
 
   uint32_t num_images = pCreateInfo->minImageCount;
@@ -237,8 +243,7 @@ VkResult ImagePipeSwapchain::Initialize(
     VkExportMemoryAllocateInfoKHR export_allocate_info = {
         .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO_KHR,
         .pNext = nullptr,
-        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_FUCHSIA_VMO_BIT_KHR
-    };
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_FUCHSIA_VMO_BIT_KHR};
 
     VkMemoryAllocateInfo alloc_info{
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
@@ -274,16 +279,16 @@ VkResult ImagePipeSwapchain::Initialize(
 
     zx::vmo vmo(vmo_handle);
 
-    auto image_info = scenic::ImageInfo::New();
-    image_info->width = width;
-    image_info->height = height;
-    image_info->stride = 0; // Meaningless for optimal tiling.
-    image_info->pixel_format = scenic::ImageInfo::PixelFormat::BGRA_8;
-    image_info->color_space = scenic::ImageInfo::ColorSpace::SRGB;
-    image_info->tiling = scenic::ImageInfo::Tiling::GPU_OPTIMAL;
+    images::ImageInfo image_info;
+    image_info.width = width;
+    image_info.height = height;
+    image_info.stride = 0;  // Meaningless for optimal tiling.
+    image_info.pixel_format = images::PixelFormat::BGRA_8;
+    image_info.color_space = images::ColorSpace::SRGB;
+    image_info.tiling = images::Tiling::GPU_OPTIMAL;
 
     image_pipe_->AddImage(ImageIdFromIndex(i), std::move(image_info),
-                          std::move(vmo), scenic::MemoryType::VK_DEVICE_MEMORY,
+                          std::move(vmo), images::MemoryType::VK_DEVICE_MEMORY,
                           0);
 
     available_ids_.push_back(i);
@@ -399,7 +404,7 @@ VkResult ImagePipeSwapchain::AcquireNextImage(uint64_t timeout_ns,
     zx_status_t status = pending_images_[0].release_fence.wait_one(
         ZX_EVENT_SIGNALED,
         timeout_ns == UINT64_MAX ? zx::time::infinite()
-                                 : zx::deadline_after(zx::duration(timeout_ns)),
+                                 : zx::deadline_after(zx::nsec(timeout_ns)),
         &pending);
     if (status == ZX_ERR_TIMED_OUT) {
       return VK_TIMEOUT;
@@ -497,7 +502,7 @@ VkResult ImagePipeSwapchain::Present(VkQueue queue,
     return VK_ERROR_SURFACE_LOST_KHR;
   }
 
-  auto acquire_fences = f1dl::Array<zx::event>::New(1);
+  auto acquire_fences = fidl::VectorPtr<zx::event>::New(1);
 
   VkSemaphoreGetFuchsiaHandleInfoKHR semaphore_info = {
       .sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FUCHSIA_HANDLE_INFO_KHR,
@@ -505,7 +510,7 @@ VkResult ImagePipeSwapchain::Present(VkQueue queue,
       .semaphore = semaphores_[index],
       .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_FUCHSIA_FENCE_BIT_KHR};
   result = pDisp->GetSemaphoreFuchsiaHandleKHR(
-      device_, &semaphore_info, acquire_fences[0].reset_and_get_address());
+      device_, &semaphore_info, acquire_fences->at(0).reset_and_get_address());
   if (result != VK_SUCCESS) {
     FXL_DLOG(ERROR) << "GetSemaphoreFuchsiaHandleKHR failed with result "
                     << result;
@@ -534,10 +539,10 @@ VkResult ImagePipeSwapchain::Present(VkQueue queue,
 
   pending_images_.push_back({std::move(image_release_fence), index});
 
-  f1dl::Array<zx::event> release_fences;
+  fidl::VectorPtr<zx::event> release_fences;
   release_fences.push_back(std::move(release_fence));
 
-  ui_mozart::PresentationInfoPtr info;
+  images::PresentationInfo info;
   image_pipe_->PresentImage(ImageIdFromIndex(index), 0,
                             std::move(acquire_fences),
                             std::move(release_fences), &info);
@@ -581,9 +586,7 @@ CreateMagmaSurfaceKHR(VkInstance instance,
       {{VK_FORMAT_B8G8R8A8_UNORM, VK_COLORSPACE_SRGB_NONLINEAR_KHR}});
   surface->supported_properties = {{pCreateInfo->width, pCreateInfo->height},
                                    formats};
-  surface->image_pipe =
-      scenic::ImagePipeSyncPtr::Create(f1dl::InterfaceHandle<scenic::ImagePipe>(
-          zx::channel(pCreateInfo->imagePipeHandle)));
+  surface->image_pipe.Bind(zx::channel(pCreateInfo->imagePipeHandle));
   *pSurface = reinterpret_cast<VkSurfaceKHR>(surface);
   return VK_SUCCESS;
 }
@@ -770,11 +773,12 @@ VKAPI_ATTR VkResult VKAPI_CALL
 EnumerateInstanceExtensionProperties(const char* pLayerName,
                                      uint32_t* pCount,
                                      VkExtensionProperties* pProperties) {
-    if (pLayerName && !strcmp(pLayerName, swapchain_layer.layerName))
-        return util_GetExtensionProperties(ARRAY_SIZE(instance_extensions), instance_extensions,
-                                           pCount, pProperties);
+  if (pLayerName && !strcmp(pLayerName, swapchain_layer.layerName))
+    return util_GetExtensionProperties(ARRAY_SIZE(instance_extensions),
+                                       instance_extensions, pCount,
+                                       pProperties);
 
-    return VK_ERROR_LAYER_NOT_PRESENT;
+  return VK_ERROR_LAYER_NOT_PRESENT;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL
@@ -782,16 +786,16 @@ EnumerateDeviceExtensionProperties(VkPhysicalDevice physicalDevice,
                                    const char* pLayerName,
                                    uint32_t* pCount,
                                    VkExtensionProperties* pProperties) {
-    if (pLayerName && !strcmp(pLayerName, swapchain_layer.layerName))
-        return util_GetExtensionProperties(ARRAY_SIZE(device_extensions), device_extensions, pCount,
-                                           pProperties);
+  if (pLayerName && !strcmp(pLayerName, swapchain_layer.layerName))
+    return util_GetExtensionProperties(ARRAY_SIZE(device_extensions),
+                                       device_extensions, pCount, pProperties);
 
-    assert(physicalDevice);
+  assert(physicalDevice);
 
-    dispatch_key key = get_dispatch_key(physicalDevice);
-    LayerData* my_data = GetLayerDataPtr(key, layer_data_map);
-    return my_data->instance_dispatch_table->EnumerateDeviceExtensionProperties(
-        physicalDevice, NULL, pCount, pProperties);
+  dispatch_key key = get_dispatch_key(physicalDevice);
+  LayerData* my_data = GetLayerDataPtr(key, layer_data_map);
+  return my_data->instance_dispatch_table->EnumerateDeviceExtensionProperties(
+      physicalDevice, NULL, pCount, pProperties);
 }
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL

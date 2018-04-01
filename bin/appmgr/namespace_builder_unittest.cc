@@ -4,12 +4,14 @@
 
 #include "garnet/bin/appmgr/namespace_builder.h"
 
+#include <zx/channel.h>
+
 #include <string>
 #include <vector>
 
 #include "gtest/gtest.h"
 
-namespace app {
+namespace component {
 namespace {
 
 TEST(NamespaceBuilder, Control) {
@@ -20,7 +22,7 @@ TEST(NamespaceBuilder, Control) {
   })JSON"));
 
   NamespaceBuilder builder;
-  builder.AddSandbox(sandbox);
+  builder.AddSandbox(sandbox, [] { return zx::channel(); });
 
   fdio_flat_namespace_t* flat = builder.Build();
   EXPECT_EQ(5u, flat->count);
@@ -45,4 +47,4 @@ TEST(NamespaceBuilder, Control) {
 }
 
 }  // namespace
-}  // namespace app
+}  // namespace component

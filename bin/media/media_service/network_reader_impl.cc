@@ -6,10 +6,10 @@
 
 #include <zx/socket.h>
 
+#include <fuchsia/cpp/network.h>
 #include "garnet/bin/network/net_errors.h"
 #include "lib/app/cpp/connect.h"
 #include "lib/fxl/logging.h"
-#include "lib/network/fidl/network_service.fidl.h"
 
 namespace media {
 
@@ -20,16 +20,16 @@ const char* NetworkReaderImpl::kRangeHeaderName = "Range";
 
 // static
 std::shared_ptr<NetworkReaderImpl> NetworkReaderImpl::Create(
-    const f1dl::String& url,
-    f1dl::InterfaceRequest<SeekingReader> request,
+    fidl::StringPtr url,
+    fidl::InterfaceRequest<SeekingReader> request,
     MediaComponentFactory* owner) {
   return std::shared_ptr<NetworkReaderImpl>(
       new NetworkReaderImpl(url, std::move(request), owner));
 }
 
 NetworkReaderImpl::NetworkReaderImpl(
-    const f1dl::String& url,
-    f1dl::InterfaceRequest<SeekingReader> request,
+    fidl::StringPtr url,
+    fidl::InterfaceRequest<SeekingReader> request,
     MediaComponentFactory* owner)
     : MediaComponentFactory::Product<SeekingReader>(this,
                                                     std::move(request),
@@ -40,42 +40,42 @@ NetworkReaderImpl::NetworkReaderImpl(
 
   network_service->CreateURLLoader(url_loader_.NewRequest());
 
-  network::URLRequestPtr url_request(network::URLRequest::New());
-  url_request->url = url_;
-  url_request->method = "HEAD";
-  url_request->auto_follow_redirects = true;
+  network::URLRequest url_request;
+  url_request.url = url_;
+  url_request.method = "HEAD";
+  url_request.auto_follow_redirects = true;
 
   url_loader_->Start(
-      std::move(url_request), [this](network::URLResponsePtr response) {
-        if (response->error) {
-          FXL_LOG(ERROR) << "HEAD response error " << response->error->code
+      std::move(url_request), [this](network::URLResponse response) {
+        if (response.error) {
+          FXL_LOG(ERROR) << "HEAD response error " << response.error->code
                          << " "
-                         << (response->error->description
-                                 ? response->error->description
+                         << (response.error->description
+                                 ? response.error->description
                                  : "<no description>");
           result_ =
-              response->error->code == network::NETWORK_ERR_NAME_NOT_RESOLVED
+              response.error->code == network::NETWORK_ERR_NAME_NOT_RESOLVED
                   ? MediaResult::NOT_FOUND
                   : MediaResult::UNKNOWN_ERROR;
           ready_.Occur();
           return;
         }
 
-        if (response->status_code != kStatusOk) {
+        if (response.status_code != kStatusOk) {
           FXL_LOG(ERROR) << "HEAD response status code "
-                         << response->status_code;
-          result_ = response->status_code == kStatusNotFound
+                         << response.status_code;
+          result_ = response.status_code == kStatusNotFound
                         ? MediaResult::NOT_FOUND
                         : MediaResult::UNKNOWN_ERROR;
           ready_.Occur();
           return;
         }
 
-        for (const network::HttpHeaderPtr& header : response->headers) {
-          if (header->name == kContentLengthHeaderName) {
-            size_ = std::stoull(header->value);
-          } else if (header->name == kAcceptRangesHeaderName &&
-                     header->value == kAcceptRangesHeaderBytesValue) {
+        for (const network::HttpHeader& header : *response.headers) {
+          if (header.name == kContentLengthHeaderName) {
+            size_ = std::stoull(header.value);
+          } else if (header.name == kAcceptRangesHeaderName &&
+                     header.value == kAcceptRangesHeaderBytesValue) {
             can_seek_ = true;
           }
         }
@@ -86,12 +86,11 @@ NetworkReaderImpl::NetworkReaderImpl(
 
 NetworkReaderImpl::~NetworkReaderImpl() {}
 
-void NetworkReaderImpl::Describe(const DescribeCallback& callback) {
+void NetworkReaderImpl::Describe(DescribeCallback callback) {
   ready_.When([this, callback]() { callback(result_, size_, can_seek_); });
 }
 
-void NetworkReaderImpl::ReadAt(uint64_t position,
-                               const ReadAtCallback& callback) {
+void NetworkReaderImpl::ReadAt(uint64_t position, ReadAtCallback callback) {
   ready_.When([this, position, callback]() {
     if (result_ != MediaResult::OK) {
       callback(result_, zx::socket());
@@ -103,36 +102,34 @@ void NetworkReaderImpl::ReadAt(uint64_t position,
       return;
     }
 
-    network::URLRequestPtr request(network::URLRequest::New());
-    request->url = url_;
-    request->method = "GET";
+    network::URLRequest request;
+    request.url = url_;
+    request.method = "GET";
 
     if (position != 0) {
       std::ostringstream value;
       value << kAcceptRangesHeaderBytesValue << "=" << position << "-";
 
-      network::HttpHeaderPtr header(network::HttpHeader::New());
-      header->name = kRangeHeaderName;
-      header->value = value.str();
-
-      request->headers = f1dl::Array<network::HttpHeaderPtr>::New(1);
-      request->headers[0] = std::move(header);
+      network::HttpHeader header;
+      header.name = kRangeHeaderName;
+      header.value = value.str();
+      request.headers.push_back(std::move(header));
     }
 
     url_loader_->Start(
-        std::move(request), [this, callback](network::URLResponsePtr response) {
-          if (response->status_code != kStatusOk &&
-              response->status_code != kStatusPartialContent) {
+        std::move(request), [this, callback](network::URLResponse response) {
+          if (response.status_code != kStatusOk &&
+              response.status_code != kStatusPartialContent) {
             FXL_LOG(WARNING)
-                << "GET response status code " << response->status_code;
+                << "GET response status code " << response.status_code;
             result_ = MediaResult::UNKNOWN_ERROR;
             callback(result_, zx::socket());
             return;
           }
 
-          FXL_DCHECK(response->body);
-          FXL_DCHECK(response->body->get_stream());
-          callback(result_, std::move(response->body->get_stream()));
+          FXL_DCHECK(response.body);
+          FXL_DCHECK(response.body->is_stream());
+          callback(result_, std::move(response.body->stream()));
         });
   });
 }

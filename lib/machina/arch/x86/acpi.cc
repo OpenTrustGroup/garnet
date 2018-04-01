@@ -58,7 +58,7 @@ static zx_status_t load_file(const char* path,
     FXL_LOG(ERROR) << "Failed to stat ACPI table " << path;
     return ZX_ERR_IO;
   }
-  ret = read(fd.get(), phys_mem.ptr(off, stat.st_size), stat.st_size);
+  ret = read(fd.get(), phys_mem.as<void>(off, stat.st_size), stat.st_size);
   if (ret != stat.st_size) {
     FXL_LOG(ERROR) << "Failed to read ACPI table " << path;
     return ZX_ERR_IO;
@@ -77,7 +77,7 @@ static T* madt_subtable(void* base, uint32_t off, uint8_t type) {
 
 static zx_status_t create_madt(ACPI_TABLE_MADT* madt,
                                zx_vaddr_t io_apic_addr,
-                               size_t num_cpus,
+                               uint8_t num_cpus,
                                uint32_t* actual) {
   uint32_t table_size = static_cast<uint32_t>(
       sizeof(ACPI_TABLE_MADT) + (num_cpus * sizeof(ACPI_MADT_LOCAL_APIC)) +
@@ -106,10 +106,8 @@ static zx_status_t create_madt(ACPI_TABLE_MADT* madt,
 
 namespace machina {
 
-zx_status_t create_acpi_table(const AcpiConfig& cfg,
-                              const PhysMem& phys_mem,
-                              uintptr_t acpi_off) {
-  if (phys_mem.size() < acpi_off + PAGE_SIZE)
+zx_status_t create_acpi_table(const AcpiConfig& cfg, const PhysMem& phys_mem) {
+  if (phys_mem.size() < kAcpiOffset + PAGE_SIZE)
     return ZX_ERR_BUFFER_TOO_SMALL;
 
   const uint32_t rsdt_entries = 3;
@@ -117,11 +115,11 @@ zx_status_t create_acpi_table(const AcpiConfig& cfg,
       sizeof(ACPI_TABLE_RSDT) + (rsdt_entries - 1) * sizeof(uint32_t);
 
   // RSDP. ACPI 1.0.
-  auto rsdp = phys_mem.as<ACPI_RSDP_COMMON>(acpi_off);
+  auto rsdp = phys_mem.as<ACPI_RSDP_COMMON>(kAcpiOffset);
   ACPI_MAKE_RSDP_SIG(rsdp->Signature);
   memcpy(rsdp->OemId, "ZX", 2);
   rsdp->RsdtPhysicalAddress =
-      static_cast<uint32_t>(acpi_off + sizeof(ACPI_RSDP_COMMON));
+      static_cast<uint32_t>(kAcpiOffset + sizeof(ACPI_RSDP_COMMON));
   rsdp->Checksum = acpi_checksum(rsdp, ACPI_RSDP_CHECKSUM_LENGTH);
 
   // FADT.

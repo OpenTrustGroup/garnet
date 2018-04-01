@@ -2,14 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <fuchsia/cpp/media.h>
+
 #include "garnet/bin/media/fidl/fidl_formatting.h"
 #include "garnet/bin/media/media_service/test/fake_renderer.h"
 #include "garnet/bin/media/media_service/test/fake_wav_reader.h"
 #include "lib/app/cpp/application_context.h"
 #include "lib/app/cpp/connect.h"
+#include "lib/fidl/cpp/optional.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
-#include "lib/media/fidl/media_player.fidl.h"
 #include "lib/media/timeline/timeline_rate.h"
 
 namespace media {
@@ -18,7 +20,8 @@ namespace test {
 class MediaPlayerTester {
  public:
   MediaPlayerTester()
-      : application_context_(app::ApplicationContext::CreateFromStartupInfo()) {
+      : application_context_(
+            component::ApplicationContext::CreateFromStartupInfo()) {
     FXL_LOG(INFO) << "MediaPlayerTest starting";
 
     FXL_LOG(INFO) << "creating player";
@@ -46,18 +49,18 @@ class MediaPlayerTester {
                                   {16373, true, 0, 0x0000000000000000}});
 
     SeekingReaderPtr fake_reader_ptr;
-    f1dl::InterfaceRequest<SeekingReader> reader_request =
+    fidl::InterfaceRequest<SeekingReader> reader_request =
         fake_reader_ptr.NewRequest();
     fake_reader_.Bind(std::move(reader_request));
 
     MediaRendererPtr fake_renderer_ptr;
-    f1dl::InterfaceRequest<MediaRenderer> renderer_request =
+    fidl::InterfaceRequest<MediaRenderer> renderer_request =
         fake_renderer_ptr.NewRequest();
     fake_renderer_.Bind(std::move(renderer_request));
 
     media_player_->SetAudioRenderer(nullptr, std::move(fake_renderer_ptr));
 
-    media_player_->SetReader(std::move(fake_reader_ptr));
+    media_player_->SetReaderSource(std::move(fake_reader_ptr));
     FXL_LOG(INFO) << "player created " << (media_player_ ? "ok" : "NULL PTR");
 
     HandleStatusUpdates();
@@ -67,7 +70,7 @@ class MediaPlayerTester {
   }
 
  private:
-  void HandleStatusUpdates(uint64_t version = MediaPlayer::kInitialStatus,
+  void HandleStatusUpdates(uint64_t version = kInitialStatus,
                            MediaPlayerStatusPtr status = nullptr) {
     if (status) {
       if (status->end_of_stream) {
@@ -80,12 +83,12 @@ class MediaPlayerTester {
 
     // Request a status update.
     media_player_->GetStatus(
-        version, [this](uint64_t version, MediaPlayerStatusPtr status) {
-          HandleStatusUpdates(version, std::move(status));
+        version, [this](uint64_t version, MediaPlayerStatus status) {
+          HandleStatusUpdates(version, fidl::MakeOptional(std::move(status)));
         });
   }
 
-  std::unique_ptr<app::ApplicationContext> application_context_;
+  std::unique_ptr<component::ApplicationContext> application_context_;
   FakeWavReader fake_reader_;
   FakeRenderer fake_renderer_;
   MediaPlayerPtr media_player_;

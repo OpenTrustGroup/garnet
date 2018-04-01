@@ -11,7 +11,7 @@
 #include "lib/app/cpp/application_context.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/logging.h"
-#include "lib/netstack/fidl/netstack.fidl.h"
+#include <fuchsia/cpp/netstack.h>
 
 namespace netconnector {
 namespace {
@@ -24,7 +24,7 @@ class NetstackClient {
       const netstack::Netstack::GetInterfacesCallback& callback) {
     NetstackClient* client = new NetstackClient();
     client->netstack_->GetInterfaces(
-        [client, callback](f1dl::Array<netstack::NetInterfacePtr> interfaces) {
+        [client, callback](fidl::VectorPtr<netstack::NetInterface> interfaces) {
           callback(std::move(interfaces));
           delete client;
         });
@@ -32,13 +32,13 @@ class NetstackClient {
 
  private:
   NetstackClient()
-      : context_(app::ApplicationContext::CreateFromStartupInfo()) {
+      : context_(component::ApplicationContext::CreateFromStartupInfo()) {
     FXL_DCHECK(context_);
     netstack_ = context_->ConnectToEnvironmentService<netstack::Netstack>();
     FXL_DCHECK(netstack_);
   }
 
-  std::unique_ptr<app::ApplicationContext> context_;
+  std::unique_ptr<component::ApplicationContext> context_;
   netstack::NetstackPtr netstack_;
 };
 
@@ -51,14 +51,14 @@ IpAddress GetHostAddress() {
     return ip_address;
 
   NetstackClient::GetInterfaces(
-      [](const f1dl::Array<netstack::NetInterfacePtr>& interfaces) {
-        for (const auto& interface : interfaces) {
-          if (interface->addr->family == netstack::NetAddressFamily::IPV4) {
-            ip_address = IpAddress(interface->addr.get());
+      [](const fidl::VectorPtr<netstack::NetInterface>& interfaces) {
+        for (const auto& interface : *interfaces) {
+          if (interface.addr.family == netstack::NetAddressFamily::IPV4) {
+            ip_address = IpAddress(&interface.addr);
             break;
           }
-          if (interface->addr->family == netstack::NetAddressFamily::IPV6) {
-            ip_address = IpAddress(interface->addr.get());
+          if (interface.addr.family == netstack::NetAddressFamily::IPV6) {
+            ip_address = IpAddress(&interface.addr);
             // Keep looking...v4 is preferred.
           }
         }

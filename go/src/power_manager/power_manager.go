@@ -8,25 +8,22 @@ import (
 	"app/context"
 	"bytes"
 	"encoding/binary"
-	"fidl/bindings"
+	"fidl/bindings2"
 	"flag"
 	"fmt"
-	"log"
-	"os"
 	"path/filepath"
 	"sync"
 	"syscall"
 	"syscall/zx"
-	"syscall/zx/mxerror"
 	"syscall/zx/fdio"
+	"syslog/logger"
 	"time"
 
-	"garnet/public/lib/power/fidl/power_manager"
+	"fuchsia/go/power_manager"
 )
 
 var (
 	updateWaitTimeFlag uint
-	logger             = log.New(os.Stdout, "power_manager: ", log.Lshortfile)
 )
 
 const (
@@ -40,25 +37,25 @@ func init() {
 type PowerManager struct {
 	mu                     sync.Mutex
 	batteryStatus          power_manager.BatteryStatus
-	watchers               []*power_manager.PowerManagerWatcher_Proxy
+	watchers               []power_manager.PowerManagerWatcherInterface
 	powerAdapterTimeStamp  int64
 	batteryStatusTimeStamp int64
+	bs                     bindings2.BindingSet
 }
 
 func (pm *PowerManager) GetBatteryStatus() (power_manager.BatteryStatus, error) {
-	logger.Println("GetBatteryStatus")
+	logger.Infof("GetBatteryStatus")
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	return pm.batteryStatus, nil
 }
 
-func (pm *PowerManager) Watch(watcher power_manager.PowerManagerWatcher_Pointer) error {
-	pmw := power_manager.NewProxyForPowerManagerWatcher(watcher, bindings.GetAsyncWaiter())
+func (pm *PowerManager) Watch(watcher power_manager.PowerManagerWatcherInterface) error {
 	pm.mu.Lock()
-	pm.watchers = append(pm.watchers, pmw)
+	pm.watchers = append(pm.watchers, watcher)
 	pm.mu.Unlock()
-	go pmw.OnChangeBatteryStatus(pm.batteryStatus)
+	go watcher.OnChangeBatteryStatus(pm.batteryStatus)
 	return nil
 }
 
@@ -124,7 +121,7 @@ func addListener(m fdio.FDIO, callback func(fdio.FDIO)) error {
 				},
 			}
 			if err := zx.WaitMany(wi, zx.TimensecInfinite); err != nil {
-				logger.Printf("Error while waiting: %s\n", err)
+				logger.Errorf("Error while waiting: %s\n", err)
 				break
 			} else {
 				callback(m)
@@ -179,14 +176,13 @@ func (pm *PowerManager) updateStatus(m fdio.FDIO) error {
 		pm.batteryStatus.PowerAdapterOnline = pi.State&fdio.PowerStateOnline > 0
 	}
 
-	pm.batteryStatus.Status = power_manager.Status_Ok
+	pm.batteryStatus.Status = power_manager.StatusOk
 
 	if oldStatus != pm.batteryStatus {
 		// Only update time stamp when status changes
 		pm.batteryStatus.Timestamp = time.Now().UnixNano()
 
-		// uncomment for debugging
-		// logger.Printf("Battery status changed from %v to %v", oldStatus, pm.batteryStatus)
+		logger.VLogf(1, "Battery status changed from %v to %v", oldStatus, pm.batteryStatus)
 		for _, pmw := range pm.watchers {
 			go pmw.OnChangeBatteryStatus(pm.batteryStatus)
 		}
@@ -195,36 +191,19 @@ func (pm *PowerManager) updateStatus(m fdio.FDIO) error {
 	return nil
 }
 
-func (pm *PowerManager) Bind(r power_manager.PowerManager_Request) {
-	logger.Println("Bind")
-
-	s := r.NewStub(pm, bindings.GetAsyncWaiter())
-
-	go func() {
-		defer logger.Println("Bye Bind")
-		for {
-			if err := s.ServeRequest(); err != nil {
-				if mxerror.Status(err) != zx.ErrPeerClosed {
-					log.Println(err)
-				}
-				break
-			}
-		}
-	}()
-}
-
 func main() {
-	logger.Println("start")
-	defer logger.Println("stop")
+	logger.InitDefaultLoggerWithTags("power_manager")
+	logger.Infof("start")
+	defer logger.Infof("stop")
 	watcher, err := NewWatcher(powerDevice)
 	if err != nil {
-		logger.Printf("Error while watching device %q: %s\n", powerDevice, err)
+		logger.Errorf("Error while watching device %q: %s\n", powerDevice, err)
 		return
 	}
 	now := time.Now().UnixNano()
 	pm := &PowerManager{
 		batteryStatus: power_manager.BatteryStatus{
-			Status:    power_manager.Status_NotAvailable,
+			Status:    power_manager.StatusNotAvailable,
 			Level:     float32(0),
 			Timestamp: now,
 		},
@@ -233,8 +212,13 @@ func main() {
 	}
 
 	c := context.CreateFromStartupInfo()
-	c.OutgoingService.AddService(&power_manager.PowerManager_ServiceBinder{pm})
+	c.OutgoingService.AddService(power_manager.PowerManagerName, func(c zx.Channel) error {
+		return pm.bs.Add(&power_manager.PowerManagerStub{
+			Impl: pm,
+		}, c)
+	})
 	c.Serve()
+	go bindings2.Serve()
 
 	adapterDeviceFound := false
 	batteryDeviceFound := false
@@ -242,33 +226,33 @@ func main() {
 		f := filepath.Join(powerDevice, file)
 		m, err := syscall.OpenPath(f, syscall.O_RDONLY, 0)
 		if err != nil {
-			logger.Printf("Error while opening device %q: %s\n", f, err)
+			logger.Errorf("Error while opening device %q: %s\n", f, err)
 			return
 		}
 
 		pi, err := getPowerInfo(m)
 		if err != nil {
-			logger.Printf("Failed to get power info from %q: %s\n", f, err)
+			logger.Errorf("Failed to get power info from %q: %s\n", f, err)
 			return
 		}
 		if pi.PowerType == 1 && batteryDeviceFound {
-			logger.Println("Skip %q as battery device already found", f)
+			logger.Errorf("Skip %q as battery device already found", f)
 			continue
 		} else if pi.PowerType == 0 && adapterDeviceFound {
-			logger.Println("Skip %q as adapter device already found", f)
+			logger.Errorf("Skip %q as adapter device already found", f)
 			continue
 		}
 
 		if err := addListener(m, func(m fdio.FDIO) {
 			if err := pm.updateStatus(m); err != nil {
-				logger.Printf("Error while updating battery status: %s", err)
+				logger.Errorf("Error while updating battery status: %s", err)
 			}
 		}); err != nil {
-			logger.Printf("Not able to add listener to %q: %s\n", f, err)
+			logger.Errorf("Not able to add listener to %q: %s\n", f, err)
 		}
 
 		if err := pm.updateStatus(m); err != nil {
-			logger.Printf("Error while updating battery status: %s", err)
+			logger.Errorf("Error while updating battery status: %s", err)
 		}
 
 		if pi.PowerType == 1 {
@@ -277,7 +261,7 @@ func main() {
 				for {
 					time.Sleep(time.Duration(updateWaitTimeFlag) * time.Second)
 					if err := pm.updateStatus(m); err != nil {
-						logger.Printf("Error while updating battery status: %s", err)
+						logger.Errorf("Error while updating battery status: %s", err)
 					}
 				}
 			}(m)

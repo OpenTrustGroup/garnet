@@ -6,7 +6,7 @@
 
 #include <endian.h>
 
-#include "garnet/drivers/bluetooth/lib/gatt/gatt.h"
+#include "garnet/drivers/bluetooth/lib/gatt/gatt_defs.h"
 
 #include "lib/fxl/memory/weak_ptr.h"
 
@@ -118,8 +118,8 @@ bool ValidateService(const Service& service, size_t* out_attr_count) {
       }
 
       // Reject descriptors with types that are internally managed by us.
-      if (desc_ptr->type() == types::kCharacteristicExtProperties ||
-          desc_ptr->type() == types::kClientCharacteristicConfig ||
+      if (desc_ptr->type() == types::kClientCharacteristicConfig ||
+          desc_ptr->type() == types::kCharacteristicExtProperties ||
           desc_ptr->type() == types::kServerCharacteristicConfig) {
         FXL_VLOG(2) << "gatt: server: Disallowed descriptor type: "
                     << desc_ptr->type().ToString();
@@ -129,6 +129,9 @@ bool ValidateService(const Service& service, size_t* out_attr_count) {
       ids.insert(desc_ptr->id());
 
       // +1: Characteristic Descriptor Declaration (Vol 3, Part G, 3.3.3)
+      attr_count++;
+    }
+    if (chrc_ptr->extended_properties()) {
       attr_count++;
     }
   }
@@ -192,6 +195,19 @@ class LocalServiceManager::ServiceData final {
     return true;
   }
 
+  // Invoke the ClientConfigCallback for each matching client to be removed if
+  // notify or indicate is enabled to signal that they are cleared, then clears
+  // them.
+  void DisconnectClient(const std::string& peer_id) {
+    for (auto& id_config_pair : chrc_configs_) {
+      const uint16_t value = id_config_pair.second.Get(peer_id);
+      id_config_pair.second.Erase(peer_id);
+      if (value != 0) {
+        ccc_callback_(id_, id_config_pair.first, peer_id, false, false);
+      }
+    }
+  }
+
  private:
   class CharacteristicConfig {
    public:
@@ -215,6 +231,10 @@ class LocalServiceManager::ServiceData final {
 
     void Set(const std::string& peer_id, uint16_t value) {
       client_states_[peer_id] = value;
+    }
+
+    void Erase(const std::string& peer_id) {
+      client_states_.erase(peer_id);
     }
 
    private:
@@ -301,6 +321,7 @@ class LocalServiceManager::ServiceData final {
     // TODO(armansito): Consider tracking a transaction timeout here (NET-338).
     IdType id = chrc->id();
     uint8_t props = chrc->properties();
+    uint16_t ext_props = chrc->extended_properties();
     auto self = weak_ptr_factory_.GetWeakPtr();
 
     auto read_handler = [self, id, props](const auto& peer_id,
@@ -353,8 +374,16 @@ class LocalServiceManager::ServiceData final {
       AddCCCDescriptor(grouping, *chrc, chrc_handle);
     }
 
-    // TODO(armansito): Inject a CEP descriptor if the characteristic has
-    // extended properties.
+    if (ext_props) {
+      auto* decl_attr = grouping->AddAttribute(
+          types::kCharacteristicExtProperties,
+          att::AccessRequirements(false, false, false),  // read (no security)
+          att::AccessRequirements());                    // write (not allowed)
+      FXL_DCHECK(decl_attr);
+      decl_attr->SetValue(common::CreateStaticByteBuffer(
+          (uint8_t)(ext_props & 0x00FF), (uint8_t)((ext_props & 0xFF00) >> 8)));
+    }
+
     // TODO(armansito): Inject a SCC descriptor if the characteristic has the
     // broadcast property and if we ever support configured broadcasts.
 
@@ -548,6 +577,12 @@ bool LocalServiceManager::GetCharacteristicConfig(
     return false;
 
   return iter->second->GetCharacteristicConfig(chrc_id, peer_id, out_config);
+}
+
+void LocalServiceManager::DisconnectClient(const std::string& peer_id) {
+  for (auto& id_service_pair : services_) {
+    id_service_pair.second->DisconnectClient(peer_id);
+  }
 }
 
 }  // namespace gatt

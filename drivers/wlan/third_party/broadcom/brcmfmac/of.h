@@ -13,10 +13,19 @@
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+
+#ifndef BRCMF_OF_H
+#define BRCMF_OF_H
+
+#include "common.h"
+#include "device.h"
+
 #ifdef CONFIG_OF
-void brcmf_of_probe(struct device* dev, enum brcmf_bus_type bus_type,
+void brcmf_of_probe(struct brcmf_device* dev, enum brcmf_bus_type bus_type,
                     struct brcmf_mp_device* settings);
 #else
-static void brcmf_of_probe(struct device* dev, enum brcmf_bus_type bus_type,
+static void brcmf_of_probe(struct brcmf_device* dev, enum brcmf_bus_type bus_type,
                            struct brcmf_mp_device* settings) {}
 #endif /* CONFIG_OF */
+
+#endif /* BRCMF_OF_H */

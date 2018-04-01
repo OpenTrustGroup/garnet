@@ -17,8 +17,6 @@ public:
     static std::unique_ptr<PlatformBuffer> Create(uint64_t size, const char* name);
     // Import takes ownership of the handle.
     static std::unique_ptr<PlatformBuffer> Import(uint32_t handle);
-    // ImportFromFd does not close the given file descriptor.
-    static std::unique_ptr<PlatformBuffer> ImportFromFd(int fd);
 
     virtual ~PlatformBuffer() {}
 
@@ -31,9 +29,6 @@ public:
     // on success, duplicate of the underlying handle which is owned by the caller
     virtual bool duplicate_handle(uint32_t* handle_out) const = 0;
 
-    // creates a new fd which can be used to import this buffer.
-    virtual bool GetFd(int* fd_out) const = 0;
-
     // ensures the specified pages are backed by real memory
     // note: the implementation of this function is required to be threadsafe
     virtual bool CommitPages(uint32_t start_page_index, uint32_t page_count) const = 0;
@@ -45,12 +40,18 @@ public:
 
     virtual bool MapAtCpuAddr(uint64_t addr) = 0;
 
-    virtual bool PinPages(uint32_t start_page_index, uint32_t page_count) = 0;
-    virtual bool UnpinPages(uint32_t start_page_index, uint32_t page_count) = 0;
+    class BusMapping {
+    public:
+        virtual ~BusMapping() {}
+        virtual uint64_t page_offset() = 0;
+        virtual uint64_t page_count() = 0;
+        virtual std::vector<uint64_t>& Get() = 0;
+    };
 
-    virtual bool MapPageRangeBus(uint32_t start_page_index, uint32_t page_count,
-                                 uint64_t addr_out[]) = 0;
-    virtual bool UnmapPageRangeBus(uint32_t start_page_index, uint32_t page_count) = 0;
+    // Mapping to the bus will commit pages, and may be slow if CommitPages hasn't already been
+    // called.
+    virtual std::unique_ptr<BusMapping> MapPageRangeBus(uint32_t start_page_index,
+                                                        uint32_t page_count) = 0;
 
     virtual bool CleanCache(uint64_t offset, uint64_t size, bool invalidate) = 0;
 

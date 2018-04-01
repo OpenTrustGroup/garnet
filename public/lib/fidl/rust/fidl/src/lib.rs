@@ -16,13 +16,16 @@ extern crate slab;
 
 #[macro_use]
 mod encoding;
+#[macro_use]
 pub mod encoding2;
 mod message;
 mod error;
 mod server;
 mod interface;
 mod client;
+pub mod client2;
 mod endpoints;
+pub mod endpoints2;
 
 pub use encoding::{Encodable, Decodable, EncodablePtr, DecodablePtr, EncodableType};
 pub use encoding::{CodableUnion, EncodableNullable, DecodableNullable};

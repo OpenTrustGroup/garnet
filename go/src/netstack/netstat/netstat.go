@@ -12,15 +12,13 @@ import (
 	"github.com/google/netstack/tcpip"
 
 	"app/context"
-	"fidl/bindings"
 
-	"garnet/public/lib/netstack/fidl/net_address"
-	"garnet/public/lib/netstack/fidl/netstack"
+	"fuchsia/go/netstack"
 )
 
 type netstatApp struct {
 	ctx      *context.Context
-	netstack *netstack.Netstack_Proxy
+	netstack *netstack.NetstackInterface
 }
 
 type icmpHistogram struct {
@@ -149,17 +147,17 @@ func dumpRouteTables(a *netstatApp) {
 	}
 }
 
-func netAddressZero(addr net_address.NetAddress) bool {
+func netAddressZero(addr netstack.NetAddress) bool {
 	switch addr.Family {
-	case net_address.NetAddressFamily_Ipv4:
-		for _, b := range addr.Ipv4 {
+	case netstack.NetAddressFamilyIpv4:
+		for _, b := range addr.Ipv4.Addr {
 			if b != 0 {
 				return false
 			}
 		}
 		return true
-	case net_address.NetAddressFamily_Ipv6:
-		for _, b := range addr.Ipv6 {
+	case netstack.NetAddressFamilyIpv6:
+		for _, b := range addr.Ipv6.Addr {
 			if b != 0 {
 				return false
 			}
@@ -169,13 +167,13 @@ func netAddressZero(addr net_address.NetAddress) bool {
 	return true
 }
 
-func netAddressToString(addr net_address.NetAddress) string {
+func netAddressToString(addr netstack.NetAddress) string {
 	switch addr.Family {
-	case net_address.NetAddressFamily_Ipv4:
-		a := tcpip.Address(addr.Ipv4[:])
+	case netstack.NetAddressFamilyIpv4:
+		a := tcpip.Address(addr.Ipv4.Addr[:])
 		return fmt.Sprintf("%s", a)
-	case net_address.NetAddressFamily_Ipv6:
-		a := tcpip.Address(addr.Ipv6[:])
+	case netstack.NetAddressFamilyIpv6:
+		a := tcpip.Address(addr.Ipv6.Addr[:])
 		return fmt.Sprintf("%s", a)
 	}
 	return ""
@@ -204,10 +202,13 @@ func main() {
 	flag.BoolVar(&showStats, "s", false, "Show network statistics")
 	flag.Parse()
 
-	r, p := a.netstack.NewRequest(bindings.GetAsyncWaiter())
-	a.netstack = p
+	req, pxy, err := netstack.NewNetstackInterfaceRequest()
+	if err != nil {
+		panic(err.Error())
+	}
+	a.netstack = pxy
 	defer a.netstack.Close()
-	a.ctx.ConnectToEnvService(r)
+	a.ctx.ConnectToEnvService(req)
 
 	if showRouteTables {
 		dumpRouteTables(a)

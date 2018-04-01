@@ -4,6 +4,10 @@
 
 #include "garnet/examples/escher/common/demo_harness_fuchsia.h"
 
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
+#include <zx/time.h>
+
 #include "garnet/examples/escher/common/demo.h"
 
 // When running on Fuchsia, New() instantiates a DemoHarnessFuchsia.
@@ -19,7 +23,8 @@ DemoHarnessFuchsia::DemoHarnessFuchsia(WindowParams window_params)
     : DemoHarness(window_params),
       loop_(fsl::MessageLoop::GetCurrent()),
       owned_loop_(loop_ ? nullptr : new fsl::MessageLoop()),
-      application_context_(app::ApplicationContext::CreateFromStartupInfo()),
+      application_context_(
+          component::ApplicationContext::CreateFromStartupInfo()),
       escher_demo_binding_(this) {
   if (!loop_) {
     loop_ = owned_loop_.get();
@@ -52,7 +57,7 @@ void DemoHarnessFuchsia::ShutdownWindowSystem() {}
 void DemoHarnessFuchsia::Run(Demo* demo) {
   FXL_CHECK(!demo_);
   demo_ = demo;
-  loop_->task_runner()->PostTask([this] { this->RenderFrameOrQuit(); });
+  async::PostTask(loop_->async(), [this] { this->RenderFrameOrQuit(); });
   loop_->Run();
 }
 
@@ -63,8 +68,8 @@ void DemoHarnessFuchsia::RenderFrameOrQuit() {
     device().waitIdle();
   } else {
     demo_->DrawFrame();
-    loop_->task_runner()->PostDelayedTask([this] { this->RenderFrameOrQuit(); },
-                                          fxl::TimeDelta::FromMilliseconds(1));
+    async::PostDelayedTask(loop_->async(),
+                           [this] { this->RenderFrameOrQuit(); }, zx::msec(1));
   }
 }
 

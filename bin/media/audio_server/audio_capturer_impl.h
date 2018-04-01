@@ -11,11 +11,11 @@
 #include <fbl/slab_allocator.h>
 #include <fbl/unique_ptr.h>
 
+#include <fuchsia/cpp/media.h>
 #include "garnet/bin/media/audio_server/audio_object.h"
 #include "garnet/bin/media/audio_server/platform/generic/mixer.h"
 #include "garnet/bin/media/audio_server/platform/generic/output_formatter.h"
-#include "lib/fidl/cpp/bindings/binding.h"
-#include "lib/media/fidl/audio_capturer.fidl.h"
+#include "lib/fidl/cpp/binding.h"
 #include "lib/media/timeline/timeline_function.h"
 #include "lib/media/timeline/timeline_rate.h"
 
@@ -27,12 +27,12 @@ class AudioServerImpl;
 class AudioCapturerImpl : public AudioObject, public AudioCapturer {
  public:
   static fbl::RefPtr<AudioCapturerImpl> Create(
-      f1dl::InterfaceRequest<AudioCapturer> audio_capturer_request,
+      fidl::InterfaceRequest<AudioCapturer> audio_capturer_request,
       AudioServerImpl* owner,
       bool loopback);
 
   bool loopback() const { return loopback_; }
-  void SetInitialFormat(AudioMediaTypeDetailsPtr format)
+  void SetInitialFormat(AudioMediaTypeDetails format)
       FXL_LOCKS_EXCLUDED(mix_domain_->token());
   void Shutdown() FXL_LOCKS_EXCLUDED(mix_domain_->token());
 
@@ -119,7 +119,7 @@ class AudioCapturerImpl : public AudioObject, public AudioCapturer {
     const uint32_t num_frames;
     const CaptureAtCallback cbk;
 
-    int64_t capture_timestamp = MediaPacket::kNoTimestamp;
+    int64_t capture_timestamp = kNoTimestamp;
     uint32_t flags = 0;
     uint32_t filled_frames = 0;
     const uint32_t sequence_number = sequence_generator.Next();
@@ -137,26 +137,26 @@ class AudioCapturerImpl : public AudioObject, public AudioCapturer {
   };
 
   AudioCapturerImpl(
-      f1dl::InterfaceRequest<AudioCapturer> audio_capturer_request,
+      fidl::InterfaceRequest<AudioCapturer> audio_capturer_request,
       AudioServerImpl* owner,
       bool loopback);
 
   // AudioCapturer FIDL implementation
-  void GetMediaType(const GetMediaTypeCallback& cbk) final;
-  void SetMediaType(MediaTypePtr media_type) final;
+  void GetMediaType(GetMediaTypeCallback cbk) final;
+  void SetMediaType(MediaType media_type) final;
   void SetGain(float gain) final;
   void SetPayloadBuffer(zx::vmo payload_buf_vmo) final;
   void CaptureAt(uint32_t offset_frames,
                  uint32_t num_frames,
-                 const CaptureAtCallback& cbk) final;
+                 CaptureAtCallback cbk) final;
   void Flush() final;
-  void FlushWithCallback(const FlushWithCallbackCallback& cbk) final;
+  void FlushWithCallback(FlushWithCallbackCallback cbk) final;
   void StartAsyncCapture(
-      f1dl::InterfaceHandle<AudioCapturerClient> callback_target,
+      fidl::InterfaceHandle<AudioCapturerClient> callback_target,
       uint32_t frames_per_packet) final;
   void StopAsyncCapture() final;
   void StopAsyncCaptureWithCallback(
-      const StopAsyncCaptureWithCallbackCallback& cbk) final;
+      StopAsyncCaptureWithCallbackCallback cbk) final;
 
   // Methods used by the capture/mixer thread(s).  Must be called from the
   // mix_domain.
@@ -193,7 +193,7 @@ class AudioCapturerImpl : public AudioObject, public AudioCapturer {
   // one cannot be found.
   zx_status_t ChooseMixer(const std::shared_ptr<AudioLink>& link);
 
-  f1dl::Binding<AudioCapturer> binding_;
+  fidl::Binding<AudioCapturer> binding_;
   AudioServerImpl* owner_ = nullptr;
   std::atomic<State> state_;
   const bool loopback_;

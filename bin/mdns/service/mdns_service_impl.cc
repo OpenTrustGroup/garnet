@@ -4,21 +4,26 @@
 
 #include "garnet/bin/mdns/service/mdns_service_impl.h"
 
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
+
 #include "garnet/bin/mdns/service/fidl_interface_monitor.h"
 #include "garnet/bin/mdns/service/host_name.h"
 #include "garnet/bin/mdns/service/mdns_fidl_util.h"
 #include "garnet/bin/mdns/service/mdns_names.h"
 #include "lib/app/cpp/application_context.h"
-#include "lib/fidl/cpp/bindings/type_converters.h"
 #include "lib/fsl/tasks/message_loop.h"
+#include "lib/fsl/types/type_converters.h"
 #include "lib/fxl/logging.h"
+#include "lib/fxl/type_converter.h"
 
 namespace mdns {
 
-MdnsServiceImpl::MdnsServiceImpl(app::ApplicationContext* application_context)
+MdnsServiceImpl::MdnsServiceImpl(
+    component::ApplicationContext* application_context)
     : application_context_(application_context) {
   application_context_->outgoing_services()->AddService<MdnsService>(
-      [this](f1dl::InterfaceRequest<MdnsService> request) {
+      [this](fidl::InterfaceRequest<MdnsService> request) {
         bindings_.AddBinding(this, std::move(request));
       });
 
@@ -30,8 +35,8 @@ MdnsServiceImpl::~MdnsServiceImpl() {}
 void MdnsServiceImpl::Start() {
   // TODO(NET-79): Remove this check when NET-79 is fixed.
   if (!NetworkIsReady()) {
-    fsl::MessageLoop::GetCurrent()->task_runner()->PostDelayedTask(
-        [this]() { Start(); }, fxl::TimeDelta::FromSeconds(5));
+    async::PostDelayedTask(async_get_default(), [this]() { Start(); },
+                           zx::sec(5));
     return;
   }
 
@@ -39,9 +44,9 @@ void MdnsServiceImpl::Start() {
               GetHostName());
 }
 
-void MdnsServiceImpl::ResolveHostName(const f1dl::String& host_name,
+void MdnsServiceImpl::ResolveHostName(fidl::StringPtr host_name,
                                       uint32_t timeout_ms,
-                                      const ResolveHostNameCallback& callback) {
+                                      ResolveHostNameCallback callback) {
   if (!MdnsNames::IsValidHostName(host_name)) {
     callback(nullptr, nullptr);
     return;
@@ -59,8 +64,8 @@ void MdnsServiceImpl::ResolveHostName(const f1dl::String& host_name,
 }
 
 void MdnsServiceImpl::SubscribeToService(
-    const f1dl::String& service_name,
-    f1dl::InterfaceRequest<MdnsServiceSubscription> subscription_request) {
+    fidl::StringPtr service_name,
+    fidl::InterfaceRequest<MdnsServiceSubscription> subscription_request) {
   if (!MdnsNames::IsValidServiceName(service_name)) {
     return;
   }
@@ -76,11 +81,11 @@ void MdnsServiceImpl::SubscribeToService(
 }
 
 void MdnsServiceImpl::PublishServiceInstance(
-    const f1dl::String& service_name,
-    const f1dl::String& instance_name,
+    fidl::StringPtr service_name,
+    fidl::StringPtr instance_name,
     uint16_t port,
-    f1dl::Array<f1dl::String> text,
-    const PublishServiceInstanceCallback& callback) {
+    fidl::VectorPtr<fidl::StringPtr> text,
+    PublishServiceInstanceCallback callback) {
   if (!MdnsNames::IsValidServiceName(service_name)) {
     callback(MdnsResult::INVALID_SERVICE_NAME);
     return;
@@ -114,9 +119,8 @@ void MdnsServiceImpl::PublishServiceInstance(
                                             std::move(publisher));
 }
 
-void MdnsServiceImpl::UnpublishServiceInstance(
-    const f1dl::String& service_name,
-    const f1dl::String& instance_name) {
+void MdnsServiceImpl::UnpublishServiceInstance(fidl::StringPtr service_name,
+                                               fidl::StringPtr instance_name) {
   if (!MdnsNames::IsValidServiceName(service_name) ||
       !MdnsNames::IsValidInstanceName(instance_name)) {
     return;
@@ -130,9 +134,9 @@ void MdnsServiceImpl::UnpublishServiceInstance(
 }
 
 void MdnsServiceImpl::AddResponder(
-    const f1dl::String& service_name,
-    const f1dl::String& instance_name,
-    f1dl::InterfaceHandle<MdnsResponder> responder_handle) {
+    fidl::StringPtr service_name,
+    fidl::StringPtr instance_name,
+    fidl::InterfaceHandle<MdnsResponder> responder_handle) {
   FXL_DCHECK(responder_handle);
 
   auto responder_ptr = responder_handle.Bind();
@@ -171,9 +175,9 @@ void MdnsServiceImpl::AddResponder(
                                             std::move(publisher));
 }
 
-void MdnsServiceImpl::SetSubtypes(const f1dl::String& service_name,
-                                  const f1dl::String& instance_name,
-                                  f1dl::Array<f1dl::String> subtypes) {
+void MdnsServiceImpl::SetSubtypes(fidl::StringPtr service_name,
+                                  fidl::StringPtr instance_name,
+                                  fidl::VectorPtr<fidl::StringPtr> subtypes) {
   if (!MdnsNames::IsValidServiceName(service_name) ||
       !MdnsNames::IsValidInstanceName(instance_name)) {
     return;
@@ -190,8 +194,8 @@ void MdnsServiceImpl::SetSubtypes(const f1dl::String& service_name,
   iter->second->SetSubtypes(fxl::To<std::vector<std::string>>(subtypes));
 }
 
-void MdnsServiceImpl::ReannounceInstance(const f1dl::String& service_name,
-                                         const f1dl::String& instance_name) {
+void MdnsServiceImpl::ReannounceInstance(fidl::StringPtr service_name,
+                                         fidl::StringPtr instance_name) {
   if (!MdnsNames::IsValidServiceName(service_name) ||
       !MdnsNames::IsValidInstanceName(instance_name)) {
     return;
@@ -213,7 +217,7 @@ void MdnsServiceImpl::SetVerbose(bool value) {
 }
 
 MdnsServiceImpl::Subscriber::Subscriber(
-    f1dl::InterfaceRequest<MdnsServiceSubscription> request,
+    fidl::InterfaceRequest<MdnsServiceSubscription> request,
     const fxl::Closure& deleter)
     : binding_(this, std::move(request)) {
   binding_.set_error_handler([this, deleter]() {
@@ -221,17 +225,17 @@ MdnsServiceImpl::Subscriber::Subscriber(
     deleter();
   });
 
-  instances_publisher_.SetCallbackRunner(
-      [this](const GetInstancesCallback& callback, uint64_t version) {
-        f1dl::Array<MdnsServiceInstancePtr> instances =
-            f1dl::Array<MdnsServiceInstancePtr>::New(0);
+  instances_publisher_.SetCallbackRunner([this](GetInstancesCallback callback,
+                                                uint64_t version) {
+    fidl::VectorPtr<MdnsServiceInstance> instances(instances_by_name_.size());
 
-        for (auto& pair : instances_by_name_) {
-          instances.push_back(pair.second.Clone());
-        }
+    size_t i = 0;
+    for (auto& pair : instances_by_name_) {
+      pair.second->Clone(&instances->at(i++));
+    }
 
-        callback(version, std::move(instances));
-      });
+    callback(version, std::move(instances));
+  });
 }
 
 MdnsServiceImpl::Subscriber::~Subscriber() {}
@@ -269,18 +273,17 @@ void MdnsServiceImpl::Subscriber::UpdatesComplete() {
   instances_publisher_.SendUpdates();
 }
 
-void MdnsServiceImpl::Subscriber::GetInstances(
-    uint64_t version_last_seen,
-    const GetInstancesCallback& callback) {
+void MdnsServiceImpl::Subscriber::GetInstances(uint64_t version_last_seen,
+                                               GetInstancesCallback callback) {
   instances_publisher_.Get(version_last_seen, callback);
 }
 
 MdnsServiceImpl::SimplePublisher::SimplePublisher(
     IpPort port,
-    f1dl::Array<f1dl::String> text,
-    const PublishServiceInstanceCallback& callback)
+    fidl::VectorPtr<fidl::StringPtr> text,
+    PublishServiceInstanceCallback callback)
     : port_(port),
-      text_(text.To<std::vector<std::string>>()),
+      text_(fxl::To<std::vector<std::string>>(text)),
       callback_(callback) {}
 
 void MdnsServiceImpl::SimplePublisher::ReportSuccess(bool success) {

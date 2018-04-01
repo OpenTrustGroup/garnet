@@ -5,8 +5,8 @@
 #ifndef LIB_UI_TESTS_MOCKS_MOCK_VIEW_TREE_LISTENER_H_
 #define LIB_UI_TESTS_MOCKS_MOCK_VIEW_TREE_LISTENER_H_
 
-#include "lib/ui/views/fidl/view_manager.fidl.h"
-#include "lib/ui/views/fidl/views.fidl.h"
+#include <fuchsia/cpp/views_v1.h>
+#include <fuchsia/cpp/views_v1.h>
 #include "lib/fxl/macros.h"
 
 #include <functional>
@@ -14,7 +14,7 @@
 namespace mozart {
 namespace test {
 
-class MockViewTreeListener : public mozart::ViewTreeListener {
+class MockViewTreeListener : public views_v1::ViewTreeListener {
  public:
   MockViewTreeListener();
   ~MockViewTreeListener();

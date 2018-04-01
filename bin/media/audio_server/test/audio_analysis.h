@@ -4,21 +4,16 @@
 
 #pragma once
 
+#include <zircon/types.h>
 #include <cmath>
 
-#include "garnet/bin/media/audio_server/gain.h"
-
 namespace media {
+namespace audio {
 namespace test {
 
-// Convert float/double into decibels, from RMS *level* (hence 20 instead of 10)
+// Convert double into decibels, from RMS *level* (hence 20dB per 10x, not 10).
 inline double ValToDb(double value) {
   return std::log10(value) * 20.0;
-}
-// Converts a gain multiplier (in fixed-pt 4.28) to decibels (in double floating
-// point). Here, dB refers to Power, so 10x change is +20 dB (not +10dB).
-inline double GainScaleToDb(audio::Gain::AScale gain_scale) {
-  return ValToDb(static_cast<double>(gain_scale) / audio::Gain::kUnityScale);
 }
 
 // Numerically compare two buffers of integers. A bool (default true) represents
@@ -50,12 +45,28 @@ void DisplayVals(const double* buf, uint32_t buf_size);
 // in radians, so runs from -M_PI to +M_PI); 'accum' represents whether to add
 // the results to current contents of the buffer, or to overwrite it.
 template <typename T>
-void AccumCosine(T* buffer,
-                 uint32_t buf_size,
-                 double freq,
-                 double magn = 1.0,
-                 double phase = 0.0,
-                 bool accum = true);
+void GenerateCosine(T* buffer,
+                    uint32_t buf_size,
+                    double freq,
+                    bool accumulate,
+                    double magn = 1.0,
+                    double phase = 0.0);
+template <typename T>
+void AccumulateCosine(T* buffer,
+                      uint32_t buf_size,
+                      double freq,
+                      double magn = 1.0,
+                      double phase = 0.0) {
+  GenerateCosine(buffer, buf_size, freq, true, magn, phase);
+}
+template <typename T>
+void OverwriteCosine(T* buffer,
+                     uint32_t buf_size,
+                     double freq,
+                     double magn = 1.0,
+                     double phase = 0.0) {
+  GenerateCosine(buffer, buf_size, freq, false, magn, phase);
+}
 
 // Perform a Fast Fourier Transform on the provided data arrays.
 //
@@ -78,4 +89,5 @@ void MeasureAudioFreq(T* audio,
                       double* magn_signal,
                       double* magn_other = nullptr);
 }  // namespace test
+}  // namespace audio
 }  // namespace media

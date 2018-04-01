@@ -5,34 +5,34 @@
 #ifndef LIB_UI_TESTS_MOCKS_MOCK_INPUT_DEVICE_H_
 #define LIB_UI_TESTS_MOCKS_MOCK_INPUT_DEVICE_H_
 
-#include "lib/ui/input/fidl/input_device_registry.fidl.h"
-#include "lib/fidl/cpp/bindings/binding.h"
+#include <fuchsia/cpp/input.h>
+#include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/macros.h"
 
 namespace mozart {
 namespace test {
 
-using OnReportCallback = std::function<void(mozart::InputReportPtr report)>;
+using OnReportCallback = std::function<void(input::InputReport report)>;
 
-class MockInputDevice : public mozart::InputDevice {
+class MockInputDevice : public input::InputDevice {
  public:
   MockInputDevice(
       uint32_t device_id,
-      mozart::DeviceDescriptorPtr descriptor,
-      f1dl::InterfaceRequest<mozart::InputDevice> input_device_request,
+      input::DeviceDescriptor descriptor,
+      fidl::InterfaceRequest<input::InputDevice> input_device_request,
       const OnReportCallback& on_report_callback);
   ~MockInputDevice();
 
   uint32_t id() { return id_; }
-  mozart::DeviceDescriptor* descriptor() { return descriptor_.get(); }
+  input::DeviceDescriptor* descriptor() { return &descriptor_; }
 
   // |InputDevice|
-  void DispatchReport(mozart::InputReportPtr report) override;
+  void DispatchReport(input::InputReport report) override;
 
  private:
   uint32_t id_;
-  mozart::DeviceDescriptorPtr descriptor_;
-  f1dl::Binding<mozart::InputDevice> input_device_binding_;
+  input::DeviceDescriptor descriptor_;
+  fidl::Binding<input::InputDevice> input_device_binding_;
   OnReportCallback on_report_callback_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(MockInputDevice);

@@ -5,8 +5,7 @@
 #ifndef GARNET_EXAMPLES_UI_SHADERTOY_CLIENT_VIEW_H_
 #define GARNET_EXAMPLES_UI_SHADERTOY_CLIENT_VIEW_H_
 
-#include "garnet/examples/ui/shadertoy/service/services/shadertoy.fidl.h"
-#include "garnet/examples/ui/shadertoy/service/services/shadertoy_factory.fidl.h"
+#include <fuchsia/cpp/shadertoy.h>
 #include "lib/app/cpp/application_context.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/macros.h"
@@ -17,25 +16,24 @@ namespace shadertoy_client {
 
 class View : public mozart::BaseView {
  public:
-  View(app::ApplicationContext* application_context,
-       mozart::ViewManagerPtr view_manager,
-       f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request);
+  View(component::ApplicationContext* application_context,
+       views_v1::ViewManagerPtr view_manager,
+       fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request);
 
   ~View() override;
 
   // mozart::BaseView.
-  virtual bool OnInputEvent(mozart::InputEventPtr event) override;
+  virtual bool OnInputEvent(input::InputEvent event) override;
 
  private:
   // |BaseView|.
-  void OnSceneInvalidated(
-      ui_mozart::PresentationInfoPtr presentation_info) override;
+  void OnSceneInvalidated(images::PresentationInfo presentation_info) override;
 
-  app::ApplicationContext* const application_context_;
+  component::ApplicationContext* const application_context_;
   fsl::MessageLoop* loop_;
 
-  mozart::example::ShadertoyFactoryPtr shadertoy_factory_;
-  mozart::example::ShadertoyPtr shadertoy_;
+  shadertoy::ShadertoyFactoryPtr shadertoy_factory_;
+  shadertoy::ShadertoyPtr shadertoy_;
 
   std::vector<scenic_lib::ShapeNode> nodes_;
 

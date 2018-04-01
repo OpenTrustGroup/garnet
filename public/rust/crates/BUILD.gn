@@ -11,11 +11,20 @@ package("rust-crates-tests") {
   deps = [
     "fdio",
     "fuchsia-async",
+    "fuchsia-syslog",
     "fuchsia-vfs",
     "fuchsia-vfs/fuchsia-vfs-watcher",
     "fuchsia-zircon",
+    "//garnet/public/lib/fidl/rust/fidl",
   ]
 
   tests = [
+    { name = "fdio-lib-unit-test" },
+    { name = "fidl-lib-unit-test" },
+    { name = "fuchsia_async-lib-unit-test" },
+    { name = "fuchsia_vfs-lib-unit-test" },
+    { name = "fuchsia_vfs_watcher-lib-unit-test" },
+    { name = "fuchsia_zircon-lib-unit-test" },
+    { name = "fuchsia_syslog-lib-unit-test" },
   ]
 }

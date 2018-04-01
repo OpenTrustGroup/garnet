@@ -38,7 +38,7 @@
 
 namespace debugserver {
 
-static constexpr char ipt_device_path[] = "/dev/misc/cpu-trace";
+static constexpr char ipt_device_path[] = "/dev/sys/cpu-trace/cpu-trace";
 static constexpr char ktrace_device_path[] = "/dev/misc/ktrace";
 
 static constexpr char buffer_output_path_suffix[] = "pt";
@@ -539,10 +539,9 @@ static zx_status_t WriteBufferData(const IptConfig& config,
         to_write = buffer_remaining;
       if (to_write > bytes_left)
         to_write = bytes_left;
-      size_t actual;
       // TODO(dje): Mapping into process and reading directly from that
       // left for another day.
-      status = vmo.read(buf, offset, to_write, &actual);
+      status = vmo.read(buf, offset, to_write);
       if (status != ZX_OK) {
         FXL_LOG(ERROR) << fxl::StringPrintf(
                               "zx_vmo_read: buffer %u, buffer %u, offset %zu: ",

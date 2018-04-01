@@ -20,7 +20,7 @@ class App {
 
  private:
   // Called asynchronously by constructor.
-  void Init(scenic::DisplayInfoPtr display_info);
+  void Init(gfx::DisplayInfo display_info);
 
   // Updates and presents the scene.  Called first by Init().  Each invocation
   // schedules another call to Update() when the result of the previous
@@ -31,9 +31,9 @@ class App {
 
   void ReleaseSessionResources();
 
-  std::unique_ptr<app::ApplicationContext> application_context_;
+  std::unique_ptr<component::ApplicationContext> application_context_;
   fsl::MessageLoop* loop_;
-  ui_mozart::MozartPtr mozart_;
+  ui::ScenicPtr scenic_;
 
   std::unique_ptr<scenic_lib::Session> session_;
   std::unique_ptr<scenic_lib::DisplayCompositor> compositor_;

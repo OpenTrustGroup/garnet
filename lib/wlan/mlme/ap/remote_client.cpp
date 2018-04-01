@@ -28,29 +28,51 @@ zx_status_t DeauthenticatedState::HandleAuthentication(
     const ImmutableMgmtFrame<Authentication>& frame, const wlan_rx_info_t& rxinfo) {
     debugfn();
     ZX_DEBUG_ASSERT(frame.hdr->addr2 == client_->addr());
+
+    // Move into Authenticating state which responds to incoming Authentication request.
+    LOG_STATE_TRANSITION(client_->addr(), "Deauthenticated", "Authenticating");
+    MoveToState<AuthenticatingState>(frame);
+    return ZX_ERR_STOP;
+}
+
+// AuthenticatingState implementation.
+
+AuthenticatingState::AuthenticatingState(RemoteClient* client,
+                                         const ImmutableMgmtFrame<Authentication>& frame)
+    : BaseState(client) {
+    ZX_DEBUG_ASSERT(frame.hdr->addr2 == client_->addr());
     debugbss("[client] [%s] received Authentication request...\n",
              client_->addr().ToString().c_str());
+    status_code_ = status_code::kRefusedReasonUnspecified;
 
     auto auth_alg = frame.body->auth_algorithm_number;
     if (auth_alg != AuthAlgorithm::kOpenSystem) {
         errorf("[client] [%s] received auth attempt with unsupported algorithm: %u\n",
                client_->addr().ToString().c_str(), auth_alg);
-        return client_->SendAuthentication(status_code::kUnsupportedAuthAlgorithm);
+        status_code_ = status_code::kUnsupportedAuthAlgorithm;
+        return;
     }
 
     auto auth_txn_seq_no = frame.body->auth_txn_seq_number;
     if (auth_txn_seq_no != 1) {
         errorf("[client] [%s] received auth attempt with invalid tx seq no: %u\n",
                client_->addr().ToString().c_str(), auth_txn_seq_no);
-        return client_->SendAuthentication(status_code::kRefused);
+        status_code_ = status_code::kRefused;
+        return;
     }
+    status_code_ = status_code::kSuccess;
+}
 
-    auto status = client_->SendAuthentication(status_code::kSuccess);
-    if (status == ZX_OK) {
+void AuthenticatingState::OnEnter() {
+    bool auth_success = status_code_ == status_code::kSuccess;
+    auto status = client_->SendAuthentication(status_code_);
+    if (auth_success && status == ZX_OK) {
+        LOG_STATE_TRANSITION(client_->addr(), "Authenticating", "Authenticated");
         MoveToState<AuthenticatedState>();
-        LOG_STATE_TRANSITION(client_->addr(), "Deauthenticated", "Authenticated");
+    } else {
+        LOG_STATE_TRANSITION(client_->addr(), "Authenticating", "Deauthenticated");
+        MoveToState<DeauthenticatedState>();
     }
-    return status;
 }
 
 // AuthenticatedState implementation.
@@ -79,51 +101,70 @@ zx_status_t AuthenticatedState::HandleAuthentication(
     const ImmutableMgmtFrame<Authentication>& frame, const wlan_rx_info_t& rxinfo) {
     debugbss("[client] [%s] received Authentication request while being authenticated\n",
              client_->addr().ToString().c_str());
-    // Client is already authenticated but seems to not have received the previous Authentication
-    // response which was sent. Hence, let the client know its authentication was successful.
-    // TODO(hahnr): We should process the authentication frame again?
-    return client_->SendAuthentication(status_code::kSuccess);
+    LOG_STATE_TRANSITION(client_->addr(), "Authenticated", "Authenticating");
+    MoveToState<AuthenticatingState>(frame);
+    return ZX_ERR_STOP;
 }
 
 zx_status_t AuthenticatedState::HandleDeauthentication(
     const ImmutableMgmtFrame<Deauthentication>& frame, const wlan_rx_info_t& rxinfo) {
-    debugbss("[client] [%s] received Deauthentication request: %u\n",
-             client_->addr().ToString().c_str(), frame.body->reason_code);
+    debugbss("[client] [%s] received Deauthentication: %u\n", client_->addr().ToString().c_str(),
+             frame.body->reason_code);
     MoveToState<DeauthenticatedState>();
     LOG_STATE_TRANSITION(client_->addr(), "Authenticated", "Deauthenticated");
-    return ZX_OK;
+    return ZX_ERR_STOP;
 }
 
 zx_status_t AuthenticatedState::HandleAssociationRequest(
     const ImmutableMgmtFrame<AssociationRequest>& frame, const wlan_rx_info_t& rxinfo) {
-    debugfn();
-    ZX_DEBUG_ASSERT(frame.hdr->addr2 == client_->addr());
-    debugbss("[client] [%s] received Assocation Request\n", client_->addr().ToString().c_str());
 
     // Received request which we've been waiting for. Timer can get canceled.
     client_->CancelTimer();
     auth_timeout_ = zx::time();
 
+    // Move into Associating state state which responds to incoming Association requests.
+    LOG_STATE_TRANSITION(client_->addr(), "Authenticated", "Associating");
+    MoveToState<AssociatingState>(frame);
+    return ZX_ERR_STOP;
+}
+
+// AssociatingState implementation.
+
+AssociatingState::AssociatingState(RemoteClient* client,
+                                   const ImmutableMgmtFrame<AssociationRequest>& frame)
+    : BaseState(client), status_code_(status_code::kRefusedReasonUnspecified), aid_(0) {
+    debugfn();
+    ZX_DEBUG_ASSERT(frame.hdr->addr2 == client_->addr());
+    debugbss("[client] [%s] received Assocation Request\n", client_->addr().ToString().c_str());
+
     aid_t aid;
     auto status = client_->bss()->AssignAid(client_->addr(), &aid);
     if (status == ZX_ERR_NO_RESOURCES) {
         debugbss("[client] [%s] no more AIDs available \n", client_->addr().ToString().c_str());
-        client_->SendAssociationResponse(0, status_code::kDeniedNoMoreStas);
-        // TODO(hahnr): Unclear whether we should deauth the client or not. Check existing AP
-        // implementations for their behavior. For now, let the client stay authenticated.
-        return ZX_OK;
+        status_code_ = status_code::kDeniedNoMoreStas;
+        return;
     } else if (status != ZX_OK) {
         errorf("[client] [%s] couldn't assign AID to client: %d\n",
                client_->addr().ToString().c_str(), status);
-        return ZX_OK;
+        return;
     }
 
+    status_code_ = status_code::kSuccess;
+    aid_ = aid;
+}
+
+void AssociatingState::OnEnter() {
     // TODO(hahnr): Send MLME-Authenticate.indication and wait for response.
     // For now simply send association response.
-    client_->SendAssociationResponse(aid, status_code::kSuccess);
-    MoveToState<AssociatedState>(aid);
-    LOG_STATE_TRANSITION(client_->addr(), "Authenticated", "Associated");
-    return status;
+    bool assoc_success = (status_code_ == status_code::kSuccess);
+    auto status = client_->SendAssociationResponse(aid_, status_code_);
+    if (assoc_success && status == ZX_OK) {
+        LOG_STATE_TRANSITION(client_->addr(), "AssociatingState", "Associated");
+        MoveToState<AssociatedState>(aid_);
+    } else {
+        LOG_STATE_TRANSITION(client_->addr(), "AssociatingState", "Deauthenticated");
+        MoveToState<DeauthenticatedState>();
+    }
 }
 
 // AssociatedState implementation.
@@ -131,17 +172,32 @@ zx_status_t AuthenticatedState::HandleAssociationRequest(
 AssociatedState::AssociatedState(RemoteClient* client, uint16_t aid)
     : BaseState(client), aid_(aid) {}
 
+zx_status_t AssociatedState::HandleAuthentication(const ImmutableMgmtFrame<Authentication>& frame,
+                                                  const wlan_rx_info_t& rxinfo) {
+    debugbss("[client] [%s] received Authentication request while being associated\n",
+             client_->addr().ToString().c_str());
+    // Client believes it is not yet authenticated. Thus, there is no need to send an explicit
+    // Deauthentication.
+    req_deauth_ = false;
+
+    LOG_STATE_TRANSITION(client_->addr(), "Associated", "Authenticating");
+    MoveToState<AuthenticatingState>(frame);
+    return ZX_ERR_STOP;
+}
+
 zx_status_t AssociatedState::HandleAssociationRequest(
     const ImmutableMgmtFrame<AssociationRequest>& frame, const wlan_rx_info_t& rxinfo) {
     debugfn();
     ZX_DEBUG_ASSERT(frame.hdr->addr2 == client_->addr());
     debugbss("[client] [%s] received Assocation Request while being associated\n",
              client_->addr().ToString().c_str());
+    // Client believes it is not yet associated. Thus, there is no need to send an explicit
+    // Deauthentication.
+    req_deauth_ = false;
 
-    // Even though the client is already associated, Association requests should still be answered.
-    // This can happen when the client for some reasons did not receive the previous
-    // AssociationResponse the BSS sent and keeps sending Association requests.
-    return client_->SendAssociationResponse(aid_, status_code::kSuccess);
+    LOG_STATE_TRANSITION(client_->addr(), "Associated", "Associating");
+    MoveToState<AssociatingState>(frame);
+    return ZX_ERR_STOP;
 }
 
 void AssociatedState::OnEnter() {
@@ -157,8 +213,8 @@ zx_status_t AssociatedState::HandleEthFrame(const ImmutableBaseFrame<EthernetII>
         // Enqueue ethernet frame and postpone conversion to when the frame is sent to the client.
         auto status = client_->EnqueueEthernetFrame(frame);
         if (status == ZX_ERR_NO_RESOURCES) {
-            debugbss("[client] [%s] reached PS buffering limit; dropping frame\n",
-                     client_->addr().ToString().c_str());
+            debugps("[client] [%s] reached PS buffering limit; dropping frame\n",
+                    client_->addr().ToString().c_str());
         } else if (status != ZX_OK) {
             errorf("[client] couldn't enqueue ethernet frame: %d\n", status);
         }
@@ -177,11 +233,12 @@ zx_status_t AssociatedState::HandleEthFrame(const ImmutableBaseFrame<EthernetII>
 
 zx_status_t AssociatedState::HandleDeauthentication(
     const ImmutableMgmtFrame<Deauthentication>& frame, const wlan_rx_info_t& rxinfo) {
-    debugbss("[client] [%s] received Deauthentication request: %u\n",
-             client_->addr().ToString().c_str(), frame.body->reason_code);
+    debugbss("[client] [%s] received Deauthentication: %u\n", client_->addr().ToString().c_str(),
+             frame.body->reason_code);
+    req_deauth_ = false;
     MoveToState<DeauthenticatedState>();
     LOG_STATE_TRANSITION(client_->addr(), "Associated", "Deauthenticated");
-    return ZX_OK;
+    return ZX_ERR_STOP;
 }
 
 zx_status_t AssociatedState::HandleDisassociation(const ImmutableMgmtFrame<Disassociation>& frame,
@@ -190,7 +247,7 @@ zx_status_t AssociatedState::HandleDisassociation(const ImmutableMgmtFrame<Disas
              client_->addr().ToString().c_str(), frame.body->reason_code);
     MoveToState<AuthenticatedState>();
     LOG_STATE_TRANSITION(client_->addr(), "Associated", "Authenticated");
-    return ZX_OK;
+    return ZX_ERR_STOP;
 }
 
 zx_status_t AssociatedState::HandleCtrlFrame(const FrameControl& fc) {
@@ -200,39 +257,13 @@ zx_status_t AssociatedState::HandleCtrlFrame(const FrameControl& fc) {
 
 zx_status_t AssociatedState::HandlePsPollFrame(const ImmutableCtrlFrame<PsPollFrame>& frame,
                                                const wlan_rx_info_t& rxinfo) {
+    debugbss("[client] [%s] client requested BU\n", client_->addr().ToString().c_str());
+
     if (client_->HasBufferedFrames()) {
-        // Dequeue buffered Ethernet frame.
-        fbl::unique_ptr<Packet> packet;
-        auto status = client_->DequeueEthernetFrame(&packet);
-        if (status != ZX_OK) {
-            errorf("[client] [%s] unable to dequeue buffered frames\n",
-                   client_->addr().ToString().c_str());
-            return status;
-        }
-
-        // Treat Packet as Ethernet frame.
-        auto hdr = packet->field<EthernetII>(0);
-        auto payload = packet->field<uint8_t>(sizeof(hdr));
-        size_t payload_len = packet->len() - sizeof(hdr);
-        auto eth_frame = ImmutableBaseFrame<EthernetII>(hdr, payload, payload_len);
-
-        // Convert Ethernet to Data frame.
-        fbl::unique_ptr<Packet> data_packet;
-        status = client_->ConvertEthernetToDataFrame(eth_frame, &data_packet);
-        if (status != ZX_OK) {
-            errorf("[client] [%s] couldn't convert ethernet frame: %d\n",
-                   client_->addr().ToString().c_str(), status);
-            return status;
-        }
-
-        // Set `more` bit if there are more frames buffered.
-        auto fc = data_packet->mut_field<FrameControl>(0);
-        fc->set_more_data(client_->HasBufferedFrames() ? 1 : 0);
-
-        // Send Data frame.
-        return client_->SendDataFrame(fbl::move(data_packet));
+        return SendNextBu();
     }
 
+    debugbss("[client] [%s] no more BU available\n", client_->addr().ToString().c_str());
     // There are no frames buffered for the client.
     // Respond with a null data frame and report the situation.
     size_t len = sizeof(DataFrameHeader);
@@ -264,6 +295,17 @@ zx_status_t AssociatedState::HandlePsPollFrame(const ImmutableCtrlFrame<PsPollFr
 void AssociatedState::OnExit() {
     client_->CancelTimer();
     inactive_timeout_ = zx::time();
+
+    // Ensure Deauthentication is sent to the client if itself didn't send such notification or such
+    // notification wasn't already sent due to inactivity of the client.
+    // This Deauthentication is usually issued when the BSS stopped and its associated clients
+    // need to get notified.
+    if (req_deauth_) {
+        req_deauth_ = false;
+        debugbss("[client] [%s] ending association; deauthenticating client\n",
+                 client_->addr().ToString().c_str());
+        client_->SendDeauthentication(reason_code::ReasonCode::kLeavingNetworkDeauth);
+    }
 
     // Ensure the client's AID is released when association is broken.
     client_->bss()->ReleaseAid(client_->addr());
@@ -315,7 +357,6 @@ zx_status_t AssociatedState::HandleDataFrame(const ImmutableDataFrame<LlcHeader>
     }
 
     // TODO(NET-463): Disallow data frames if RSNA is required but not established.
-    // TODO(NET-445): Check FC's power saving bit.
 
     const size_t eth_len = frame.body_len + sizeof(EthernetII);
     auto buffer = GetBuffer(eth_len);
@@ -362,6 +403,7 @@ void AssociatedState::HandleTimeout() {
 
         // The client timed-out, send Deauthentication. Ignore result, always leave associated
         // state.
+        req_deauth_ = false;
         client_->SendDeauthentication(reason_code::ReasonCode::kReasonInactivity);
         debugbss("[client] [%s] client inactive for %lu seconds; deauthenticating client\n",
                  client_->addr().ToString().c_str(), kInactivityTimeoutTu / 1000);
@@ -373,16 +415,30 @@ void AssociatedState::HandleTimeout() {
 void AssociatedState::UpdatePowerSaveMode(const FrameControl& fc) {
     if (fc.pwr_mgmt() != dozing_) {
         dozing_ = fc.pwr_mgmt();
+        if (dozing_) {
+            debugbss("[client] [%s] client is now dozing\n", client_->addr().ToString().c_str());
+        } else {
+            debugbss("[client] [%s] client woke up\n", client_->addr().ToString().c_str());
+        }
 
-        if (!dozing_) {
-            // TODO(hahnr): Client became awake.
-            // Send all remaining buffered frames (U-APSD).
+        if (dozing_) {
+            debugps("[client] [%s] client is now dozing\n", client_->addr().ToString().c_str());
+        } else {
+            debugps("[client] [%s] client woke up\n", client_->addr().ToString().c_str());
+
+            // Send all buffered frames when client woke up.
+            // TODO(hahnr): Once we implemented a smarter way of queuing packets, this code should
+            // be revisited.
+            while (client_->HasBufferedFrames()) {
+                auto status = SendNextBu();
+                if (status != ZX_OK) { return; }
+            }
         }
     }
 }
 
-zx_status_t AssociatedState::HandleMlmeEapolReq(const EapolRequest& req) {
-    size_t len = sizeof(DataFrameHeader) + sizeof(LlcHeader) + req.data.size();
+zx_status_t AssociatedState::HandleMlmeEapolReq(const wlan_mlme::EapolRequest& req) {
+    size_t len = sizeof(DataFrameHeader) + sizeof(LlcHeader) + req.data->size();
     auto buffer = GetBuffer(len);
     if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
@@ -404,18 +460,56 @@ zx_status_t AssociatedState::HandleMlmeEapolReq(const EapolRequest& req) {
     llc->control = kLlcUnnumberedInformation;
     std::memcpy(llc->oui, kLlcOui, sizeof(llc->oui));
     llc->protocol_id = htobe16(kEapolProtocolId);
-    std::memcpy(llc->payload, req.data.data(), req.data.size());
+    std::memcpy(llc->payload, req.data->data(), req.data->size());
 
     auto status = client_->SendDataFrame(fbl::move(packet));
     if (status != ZX_OK) {
         errorf("[client] [%s] could not send EAPOL request packet: %d\n",
                client_->addr().ToString().c_str(), status);
-        service::SendEapolResponse(client_->device(), EapolResultCodes::TRANSMISSION_FAILURE);
+        service::SendEapolResponse(client_->device(),
+                                   wlan_mlme::EapolResultCodes::TRANSMISSION_FAILURE);
         return status;
     }
 
-    service::SendEapolResponse(client_->device(), EapolResultCodes::SUCCESS);
+    service::SendEapolResponse(client_->device(), wlan_mlme::EapolResultCodes::SUCCESS);
     return status;
+}
+
+zx_status_t AssociatedState::SendNextBu() {
+    ZX_DEBUG_ASSERT(client_->HasBufferedFrames());
+    if (!client_->HasBufferedFrames()) { return ZX_ERR_BAD_STATE; }
+
+    // Dequeue buffered Ethernet frame.
+    fbl::unique_ptr<Packet> packet;
+    auto status = client_->DequeueEthernetFrame(&packet);
+    if (status != ZX_OK) {
+        errorf("[client] [%s] unable to dequeue buffered frames\n",
+               client_->addr().ToString().c_str());
+        return status;
+    }
+
+    // Treat Packet as Ethernet frame.
+    auto hdr = packet->field<EthernetII>(0);
+    auto payload = packet->field<uint8_t>(sizeof(EthernetII));
+    size_t payload_len = packet->len() - sizeof(EthernetII);
+    auto eth_frame = ImmutableBaseFrame<EthernetII>(hdr, payload, payload_len);
+
+    // Convert Ethernet to Data frame.
+    fbl::unique_ptr<Packet> data_packet;
+    status = client_->ConvertEthernetToDataFrame(eth_frame, &data_packet);
+    if (status != ZX_OK) {
+        errorf("[client] [%s] couldn't convert ethernet frame: %d\n",
+               client_->addr().ToString().c_str(), status);
+        return status;
+    }
+
+    // Set `more` bit if there are more frames buffered.
+    auto fc = data_packet->mut_field<FrameControl>(0);
+    fc->set_more_data(client_->HasBufferedFrames() ? 1 : 0);
+
+    // Send Data frame.
+    debugps("[client] [%s] sent BU to client\n", client_->addr().ToString().c_str());
+    return client_->SendDataFrame(fbl::move(data_packet));
 }
 
 // RemoteClient implementation.
@@ -433,34 +527,49 @@ RemoteClient::RemoteClient(DeviceInterface* device, fbl::unique_ptr<Timer> timer
 }
 
 RemoteClient::~RemoteClient() {
+    // Cleanly terminate the current state.
+    state_->OnExit();
+    state_.reset();
+
     debugbss("[client] [%s] destroyed\n", addr_.ToString().c_str());
 }
 
 void RemoteClient::MoveToState(fbl::unique_ptr<BaseState> to) {
-    auto from_id = state() == nullptr ? StateId::kUninitialized : state()->id();
+    ZX_DEBUG_ASSERT(to != nullptr);
+    auto from_id = state_ == nullptr ? StateId::kUninitialized : state_->id();
     if (to == nullptr) {
         errorf("attempt to transition to a nullptr from state: %hhu\n", from_id);
-        ZX_DEBUG_ASSERT(to == nullptr);
         return;
     }
 
+    if (state_ != nullptr) { state_->OnExit(); }
     auto to_id = to->id();
-    fsm::StateMachine<BaseState>::MoveToState(fbl::move(to));
+    state_ = fbl::move(to);
 
-    if (listener_ != nullptr) {
-        listener_->HandleClientStateChange(addr_, from_id, to_id);
+    // Report state change to listener.
+    if (listener_ != nullptr) { listener_->HandleClientStateChange(addr_, from_id, to_id); }
+
+    // When the client's owner gets destroyed due to a state change, it will also destroy the state
+    // which we were about to transition into. In that case, terminate.
+    if (state_ != nullptr) {
+        state_->OnEnter();
     }
 }
 
 void RemoteClient::HandleTimeout() {
-    state()->HandleTimeout();
+    state_->HandleTimeout();
+}
+
+zx_status_t RemoteClient::HandleEthFrame(const ImmutableBaseFrame<EthernetII>& frame) {
+    ForwardCurrentFrameTo(state_.get());
+    return ZX_OK;
 }
 
 zx_status_t RemoteClient::HandleDataFrame(const DataFrameHeader& hdr) {
     ZX_DEBUG_ASSERT(hdr.addr2 == addr_);
     if (hdr.addr2 != addr_) { return ZX_ERR_STOP; }
 
-    ForwardCurrentFrameTo(state());
+    ForwardCurrentFrameTo(state_.get());
     return ZX_OK;
 }
 
@@ -468,7 +577,7 @@ zx_status_t RemoteClient::HandleMgmtFrame(const MgmtFrameHeader& hdr) {
     ZX_DEBUG_ASSERT(hdr.addr2 == addr_);
     if (hdr.addr2 != addr_) { return ZX_ERR_STOP; }
 
-    ForwardCurrentFrameTo(state());
+    ForwardCurrentFrameTo(state_.get());
     return ZX_OK;
 }
 
@@ -477,7 +586,7 @@ zx_status_t RemoteClient::HandlePsPollFrame(const ImmutableCtrlFrame<PsPollFrame
     ZX_DEBUG_ASSERT(frame.hdr->ta == addr_);
     if (frame.hdr->ta != addr_) { return ZX_ERR_STOP; }
 
-    ForwardCurrentFrameTo(state());
+    ForwardCurrentFrameTo(state_.get());
     return ZX_OK;
 }
 
@@ -509,7 +618,6 @@ zx_status_t RemoteClient::SendAuthentication(status_code::StatusCode result) {
     FillTxInfo(&packet, *frame.hdr);
 
     auto hdr = frame.hdr;
-    hdr->fc.set_from_ds(1);
     hdr->addr1 = addr_;
     hdr->addr2 = bss_->bssid();
     hdr->addr3 = bss_->bssid();
@@ -533,16 +641,18 @@ zx_status_t RemoteClient::SendAssociationResponse(aid_t aid, status_code::Status
     debugfn();
     debugbss("[client] [%s] sending Association Response\n", addr_.ToString().c_str());
 
+    size_t body_payload_len = 256;
     fbl::unique_ptr<Packet> packet = nullptr;
-    auto frame = BuildMgmtFrame<AssociationResponse>(&packet);
+    auto frame = BuildMgmtFrame<AssociationResponse>(&packet, body_payload_len);
     if (packet == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
     auto hdr = frame.hdr;
-    hdr->fc.set_from_ds(1);
+    const auto& bssid = bss_->bssid();
     hdr->addr1 = addr_;
-    hdr->addr2 = bss_->bssid();
-    hdr->addr3 = bss_->bssid();
+    hdr->addr2 = bssid;
+    hdr->addr3 = bssid;
     hdr->sc.set_seq(bss_->NextSeq(*hdr));
+    FillTxInfo(&packet, *hdr);
 
     auto assoc = frame.body;
     assoc->status_code = result;
@@ -550,7 +660,54 @@ zx_status_t RemoteClient::SendAssociationResponse(aid_t aid, status_code::Status
     assoc->cap.set_ess(1);
     assoc->cap.set_short_preamble(1);
 
-    auto status = device_->SendWlan(fbl::move(packet));
+    // Write elements.
+    ElementWriter w(assoc->elements, body_payload_len);
+
+    // Rates (in Mbps): 1 (basic), 2 (basic), 5.5 (basic), 6, 9, 11 (basic), 12, 18
+    std::vector<uint8_t> rates = {0x82, 0x84, 0x8b, 0x0c, 0x12, 0x96, 0x18, 0x24};
+    if (!w.write<SupportedRatesElement>(std::move(rates))) {
+        errorf("[client] [%s] could not write supported rates\n", addr_.ToString().c_str());
+        return ZX_ERR_IO;
+    }
+
+    // Rates (in Mbps): 24, 36, 48, 54
+    std::vector<uint8_t> ext_rates = {0x30, 0x48, 0x60, 0x6c};
+    if (!w.write<ExtendedSupportedRatesElement>(std::move(ext_rates))) {
+        errorf("[client] [%s] could not write extended supported rates\n",
+               addr_.ToString().c_str());
+        return ZX_ERR_IO;
+    }
+
+    // Validate the request in debug mode.
+    ZX_DEBUG_ASSERT(assoc->Validate(w.size()));
+
+    size_t actual_len = hdr->len() + sizeof(AssociationResponse) + w.size();
+    auto status = packet->set_len(actual_len);
+    if (status != ZX_OK) {
+        errorf("[client] [%s] could not set packet length to %zu: %d\n", addr_.ToString().c_str(),
+               actual_len, status);
+    }
+
+    // TODO(NET-567): Write negotiated SupportedRates, ExtendedSupportedRates IEs
+
+    if (bss_->IsHTReady()) {
+        status = WriteHtCapabilities(&w);
+        if (status != ZX_OK) { return status; }
+
+        status = WriteHtOperation(&w);
+        if (status != ZX_OK) { return status; }
+    }
+
+    body_payload_len = w.size();
+    size_t frame_len = hdr->len() + sizeof(AssociationResponse) + body_payload_len;
+    status = packet->set_len(frame_len);
+    if (status != ZX_OK) {
+        errorf("[client] [%s] could not set assocresp length to %zu: %d\n",
+               addr_.ToString().c_str(), frame_len, status);
+        return status;
+    }
+
+    status = device_->SendWlan(fbl::move(packet));
     if (status != ZX_OK) {
         errorf("[client] [%s] could not send auth response packet: %d\n", addr_.ToString().c_str(),
                status);
@@ -560,14 +717,13 @@ zx_status_t RemoteClient::SendAssociationResponse(aid_t aid, status_code::Status
 
 zx_status_t RemoteClient::SendDeauthentication(reason_code::ReasonCode reason_code) {
     debugfn();
-    debugbss("[client] [%s] sending Disassociation\n", addr_.ToString().c_str());
+    debugbss("[client] [%s] sending Deauthentication\n", addr_.ToString().c_str());
 
     fbl::unique_ptr<Packet> packet = nullptr;
     auto frame = BuildMgmtFrame<Deauthentication>(&packet);
     if (packet == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
     auto hdr = frame.hdr;
-    hdr->fc.set_from_ds(1);
     hdr->addr1 = addr_;
     hdr->addr2 = bss_->bssid();
     hdr->addr3 = bss_->bssid();
@@ -578,8 +734,8 @@ zx_status_t RemoteClient::SendDeauthentication(reason_code::ReasonCode reason_co
 
     auto status = device_->SendWlan(fbl::move(packet));
     if (status != ZX_OK) {
-        errorf("[client] [%s] could not send disassocation packet: %d\n", addr_.ToString().c_str(),
-               status);
+        errorf("[client] [%s] could not send dauthentication packet: %d\n",
+               addr_.ToString().c_str(), status);
     }
     return status;
 }
@@ -594,6 +750,8 @@ zx_status_t RemoteClient::SendDataFrame(fbl::unique_ptr<Packet> packet) {
 
 zx_status_t RemoteClient::EnqueueEthernetFrame(const ImmutableBaseFrame<EthernetII>& frame) {
     if (ps_pkt_queue_.size() >= kMaxPowerSavingQueueSize) { return ZX_ERR_NO_RESOURCES; }
+
+    debugbss("[client] [%s] client is dozing; buffer outbound frame\n", addr().ToString().c_str());
 
     size_t hdr_len = sizeof(EthernetII);
     size_t frame_len = hdr_len + frame.body_len;
@@ -626,11 +784,11 @@ bool RemoteClient::HasBufferedFrames() const {
 
 zx_status_t RemoteClient::ConvertEthernetToDataFrame(const ImmutableBaseFrame<EthernetII>& frame,
                                                      fbl::unique_ptr<Packet>* out_packet) {
-    const size_t data_frame_len = kDataPayloadHeader + frame.body_len;
-    auto buffer = GetBuffer(data_frame_len);
+    const size_t buf_len = kDataFrameHdrLenMax + sizeof(LlcHeader) + frame.body_len;
+    auto buffer = GetBuffer(buf_len);
     if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
-    *out_packet = fbl::make_unique<Packet>(std::move(buffer), data_frame_len);
+    *out_packet = fbl::make_unique<Packet>(std::move(buffer), buf_len);
     (*out_packet)->set_peer(Packet::Peer::kWlan);
 
     auto hdr = (*out_packet)->mut_field<DataFrameHeader>(0);
@@ -655,6 +813,15 @@ zx_status_t RemoteClient::ConvertEthernetToDataFrame(const ImmutableBaseFrame<Et
     wlan_tx_info_t txinfo = {
         // TODO(hahnr): Fill wlan_tx_info_t.
     };
+
+    auto frame_len = hdr->len() + sizeof(LlcHeader) + frame.body_len;
+    auto status = (*out_packet)->set_len(frame_len);
+    if (status != ZX_OK) {
+        errorf("[client] [%s] could not set data frame length to %zu: %d\n",
+               addr_.ToString().c_str(), frame_len, status);
+        return status;
+    }
+
     (*out_packet)->CopyCtrlFrom(txinfo);
 
     return ZX_OK;
@@ -662,6 +829,27 @@ zx_status_t RemoteClient::ConvertEthernetToDataFrame(const ImmutableBaseFrame<Et
 
 void RemoteClient::ReportBuChange(size_t bu_count) {
     if (listener_ != nullptr) { listener_->HandleClientBuChange(addr_, bu_count); }
+}
+
+zx_status_t RemoteClient::WriteHtCapabilities(ElementWriter* w) {
+    HtCapabilities htc = bss_->BuildHtCapabilities();
+    if (!w->write<HtCapabilities>(htc.ht_cap_info, htc.ampdu_params, htc.mcs_set, htc.ht_ext_cap,
+                                  htc.txbf_cap, htc.asel_cap)) {
+        errorf("[client] [%s] could not write HtCapabilities\n", addr_.ToString().c_str());
+        return ZX_ERR_IO;
+    }
+
+    return ZX_OK;
+}
+
+zx_status_t RemoteClient::WriteHtOperation(ElementWriter* w) {
+    auto chan = bss_->Chan();
+    HtOperation hto = bss_->BuildHtOperation(chan);
+    if (!w->write<HtOperation>(hto.primary_chan, hto.head, hto.tail, hto.mcs_set)) {
+        errorf("[client] [%s] could not write HtOperation\n", addr_.ToString().c_str());
+        return ZX_ERR_IO;
+    }
+    return ZX_OK;
 }
 
 #undef LOG_STATE_TRANSITION

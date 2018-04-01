@@ -25,8 +25,8 @@ namespace {
 class VulkanTest {
 public:
     bool Initialize();
-    static bool Exec(VulkanTest* t1, VulkanTest* t2);
-    static bool ExecUsingQueue(VulkanTest* t1, VulkanTest* t2);
+    static bool Exec(VulkanTest* t1, VulkanTest* t2, bool temporary);
+    static bool ExecUsingQueue(VulkanTest* t1, VulkanTest* t2, bool temporary);
 
 private:
     bool InitVulkan();
@@ -244,7 +244,6 @@ bool VulkanTest::InitVulkan()
     vkGetPhysicalDeviceExternalSemaphorePropertiesKHR_(
         vk_physical_device_, &external_semaphore_info, &external_semaphore_properties);
 
-    EXPECT_EQ(external_semaphore_properties.exportFromImportedHandleTypes & VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT_KHR, VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT_KHR);
     EXPECT_EQ(external_semaphore_properties.compatibleHandleTypes, 0u);
     EXPECT_EQ(external_semaphore_properties.externalSemaphoreFeatures,
               0u | VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT_KHR |
@@ -275,7 +274,7 @@ bool VulkanTest::InitVulkan()
     return true;
 }
 
-bool VulkanTest::Exec(VulkanTest* t1, VulkanTest* t2)
+bool VulkanTest::Exec(VulkanTest* t1, VulkanTest* t2, bool temporary)
 {
     VkResult result;
 
@@ -294,14 +293,21 @@ bool VulkanTest::Exec(VulkanTest* t1, VulkanTest* t2)
             return DRETF(false, "vkGetSemaphoreFdKHR returned %d", result);
     }
 
+    std::vector<std::unique_ptr<magma::PlatformSemaphore>> exported(kSemaphoreCount);
+
     // Import semaphores
     for (uint32_t i = 0; i < kSemaphoreCount; i++) {
+        uint32_t flags = temporary ? VK_SEMAPHORE_IMPORT_TEMPORARY_BIT_KHR : 0;
+        exported[i] = magma::PlatformSemaphore::Import(handle[i]);
+        uint32_t import_handle;
+        EXPECT_TRUE(exported[i]->duplicate_handle(&import_handle));
         VkImportSemaphoreFuchsiaHandleInfoKHR import_info = {
             .sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FUCHSIA_HANDLE_INFO_KHR,
             .pNext = nullptr,
+            .flags = flags,
             .semaphore = t2->vk_semaphore_[i],
             .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_FUCHSIA_FENCE_BIT_KHR,
-            .handle = handle[i]};
+            .handle = import_handle};
 
         result = t1->vkImportSemaphoreFuchsiaHandleKHR_(t2->vk_device_, &import_info);
         if (result != VK_SUCCESS)
@@ -310,7 +316,7 @@ bool VulkanTest::Exec(VulkanTest* t1, VulkanTest* t2)
 
     // Test semaphores
     for (uint32_t i = 0; i < kSemaphoreCount; i++) {
-        auto platform_semaphore_export = magma::PlatformSemaphore::Import(handle[i]);
+        auto& platform_semaphore_export = exported[i];
 
         // Export the imported semaphores
         VkSemaphoreGetFuchsiaHandleInfoKHR info {
@@ -347,7 +353,7 @@ bool VulkanTest::Exec(VulkanTest* t1, VulkanTest* t2)
     return true;
 }
 
-bool VulkanTest::ExecUsingQueue(VulkanTest* t1, VulkanTest* t2)
+bool VulkanTest::ExecUsingQueue(VulkanTest* t1, VulkanTest* t2, bool temporary)
 {
     VkResult result;
 
@@ -368,10 +374,11 @@ bool VulkanTest::ExecUsingQueue(VulkanTest* t1, VulkanTest* t2)
 
     // Import semaphores
     for (uint32_t i = 0; i < kSemaphoreCount; i++) {
-        // Permanent import.
+        uint32_t flags = temporary ? VK_SEMAPHORE_IMPORT_TEMPORARY_BIT_KHR : 0;
         VkImportSemaphoreFuchsiaHandleInfoKHR import_info = {
             .sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FUCHSIA_HANDLE_INFO_KHR,
             .pNext = nullptr,
+            .flags = flags,
             .semaphore = t2->vk_semaphore_[i],
             .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_FUCHSIA_FENCE_BIT_KHR,
             .handle = handle[i]};
@@ -428,7 +435,15 @@ TEST(VulkanExtension, ExternalSemaphoreFuchsia)
     VulkanTest t1, t2;
     ASSERT_TRUE(t1.Initialize());
     ASSERT_TRUE(t2.Initialize());
-    ASSERT_TRUE(VulkanTest::Exec(&t1, &t2));
+    ASSERT_TRUE(VulkanTest::Exec(&t1, &t2, false));
+}
+
+TEST(VulkanExtension, TemporaryExternalSemaphoreFuchsia)
+{
+    VulkanTest t1, t2;
+    ASSERT_TRUE(t1.Initialize());
+    ASSERT_TRUE(t2.Initialize());
+    ASSERT_TRUE(VulkanTest::Exec(&t1, &t2, true));
 }
 
 TEST(VulkanExtension, QueueExternalSemaphoreFuchsia)
@@ -436,7 +451,15 @@ TEST(VulkanExtension, QueueExternalSemaphoreFuchsia)
     VulkanTest t1, t2;
     ASSERT_TRUE(t1.Initialize());
     ASSERT_TRUE(t2.Initialize());
-    ASSERT_TRUE(VulkanTest::ExecUsingQueue(&t1, &t2));
+    ASSERT_TRUE(VulkanTest::ExecUsingQueue(&t1, &t2, false));
+}
+
+TEST(VulkanExtension, QueueTemporaryExternalSemaphoreFuchsia)
+{
+    VulkanTest t1, t2;
+    ASSERT_TRUE(t1.Initialize());
+    ASSERT_TRUE(t2.Initialize());
+    ASSERT_TRUE(VulkanTest::ExecUsingQueue(&t1, &t2, true));
 }
 
 } // namespace

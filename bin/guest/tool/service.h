@@ -9,14 +9,14 @@
 #include <fdio/util.h>
 #include <iostream>
 
-#include "garnet/lib/machina/fidl/inspect.fidl.h"
+#include <fuchsia/cpp/machina.h>
 
 // Interface of the inspect service of the guest.
 extern machina::InspectServicePtr inspect_svc;
 // Path to the inspect service of the guest.
 extern std::string svc_path;
 
-using InspectReq = f1dl::InterfaceRequest<machina::InspectService>;
+using InspectReq = fidl::InterfaceRequest<machina::InspectService>;
 using ConnectFunc = fbl::Function<zx_status_t(InspectReq)>;
 
 static inline zx_status_t connect(InspectReq req) {

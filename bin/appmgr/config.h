@@ -8,10 +8,10 @@
 #include <string>
 #include <vector>
 
-#include "lib/app/fidl/application_launcher.fidl.h"
+#include <fuchsia/cpp/component.h>
 #include "lib/fxl/macros.h"
 
-namespace app {
+namespace component {
 
 // The configuration file should be specified as:
 // {
@@ -38,11 +38,10 @@ class Config {
   bool ReadFromIfExists(const std::string& config_file);
 
   std::vector<std::string> path_;
-  std::vector<ApplicationLaunchInfoPtr> initial_apps_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Config);
 };
 
-}  // namespace app
+}  // namespace component
 
 #endif  // GARNET_BIN_APPMGR_CONFIG_H_

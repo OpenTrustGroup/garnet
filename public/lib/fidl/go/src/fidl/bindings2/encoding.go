@@ -4,7 +4,7 @@
 
 package bindings2
 
-// TODO(mknyszek): Support unions and interfaces.
+// TODO(mknyszek): Support unions.
 // TODO(mknyszek): Create a proper set of error values.
 
 import (
@@ -31,13 +31,15 @@ var (
 	// TODO(mknyszek): Add support here for process, thread, job, resource,
 	// interrupt, eventpair, fifo, guest, and time once these are actually
 	// supported in the Go runtime.
-	// TODO(mknyszek): Add channel, log, and port once the underlying types
-	// are unified to uint32.
-	handleType reflect.Type = reflect.TypeOf(zx.Handle(0))
-	vmoType                 = reflect.TypeOf(zx.VMO(0))
-	eventType               = reflect.TypeOf(zx.Event(0))
-	socketType              = reflect.TypeOf(zx.Socket(0))
-	vmarType                = reflect.TypeOf(zx.VMAR(0))
+	handleType  reflect.Type = reflect.TypeOf(zx.Handle(0))
+	channelType              = reflect.TypeOf(zx.Channel(0))
+	logType                  = reflect.TypeOf(zx.Log(0))
+	portType                 = reflect.TypeOf(zx.Port(0))
+	vmoType                  = reflect.TypeOf(zx.VMO(0))
+	eventType                = reflect.TypeOf(zx.Event(0))
+	socketType               = reflect.TypeOf(zx.Socket(0))
+	vmarType                 = reflect.TypeOf(zx.VMAR(0))
+	proxyType                = reflect.TypeOf(Proxy{})
 )
 
 // isHandleType returns true if the reflected type is a Fuchsia handle type.
@@ -55,6 +57,12 @@ func isHandleType(t reflect.Type) bool {
 		return true
 	}
 	return false
+}
+
+// isInterfaceType returns true if the reflected type is a FIDL interface type.
+func isInterfaceType(t reflect.Type) bool {
+	// FIDL interfaces are represented as aliases over Proxy.
+	return t.ConvertibleTo(proxyType)
 }
 
 // getSize returns the size of the type. Occasionally this requires the value,
@@ -258,7 +266,12 @@ func (e *encoder) marshalStructInline(t reflect.Type, v reflect.Value) error {
 		return err
 	}
 	e.head = align(e.head, a)
-	return e.marshalStructFields(t, v)
+	err = e.marshalStructFields(t, v)
+	if err != nil {
+		return err
+	}
+	e.head = align(e.head, a)
+	return nil
 }
 
 // marshalStructPointer marshals a nullable struct's reference, and then marshals
@@ -467,47 +480,52 @@ func (e *encoder) marshal(t reflect.Type, v reflect.Value, n nestedTypeData) err
 	if isHandleType(t) {
 		return e.marshalHandle(v, n)
 	}
+	if isInterfaceType(t) {
+		// An interface is represented by a Proxy, whose first field is
+		// a zx.Channel, and we can just marshal that.
+		return e.marshalHandle(v.Field(0), n)
+	}
 	return e.marshalInline(t, v, n)
 }
 
-func marshalHeader(header *MessageHeader) []byte {
-	e := encoder{}
+// MarshalHeader encodes the FIDL message header into the beginning of data.
+func MarshalHeader(header *MessageHeader, data []byte) {
+	// Clear the buffer so we can append to it.
+	e := encoder{buffer: data[:0]}
 	e.head = e.newObject(MessageHeaderSize)
 	e.writeUint(uint64(header.Txid), 4)
 	e.writeUint(uint64(header.Reserved), 4)
 	e.writeUint(uint64(header.Flags), 4)
 	e.writeUint(uint64(header.Ordinal), 4)
-	return e.buffer
 }
 
-// Marshal returns the FIDL encoding of a FIDL message comprised of a header
-// and a payload which lies in s.
+// Marshal the FIDL payload in s into data and handles.
 //
 // s must be a pointer to a struct, since the primary object in a FIDL message
 // is always a struct.
 //
 // Marshal traverses the value s recursively, following nested type values via
 // reflection in order to encode the FIDL struct.
-func Marshal(header *MessageHeader, s Payload) ([]byte, []zx.Handle, error) {
+func Marshal(s Payload, data []byte, handles []zx.Handle) (int, int, error) {
 	// First, let's make sure we have the right type in s.
 	t := reflect.TypeOf(s)
 	if t.Kind() != reflect.Ptr {
-		return nil, nil, errors.New("expected a pointer")
+		return 0, 0, errors.New("expected a pointer")
 	}
 	t = t.Elem()
 	if t.Kind() != reflect.Struct {
-		return nil, nil, errors.New("primary object must be a struct")
+		return 0, 0, errors.New("primary object must be a struct")
 	}
 
 	// Now, let's get the value of s, marshal the header into a starting
 	// buffer, and then marshal the rest of the payload in s.
 	v := reflect.ValueOf(s).Elem()
-	e := encoder{buffer: marshalHeader(header)}
+	e := encoder{buffer: data[:0], handles: handles[:0]}
 	e.head = e.newObject(s.InlineSize())
 	if err := e.marshalStructFields(t, v); err != nil {
-		return nil, nil, err
+		return 0, 0, err
 	}
-	return e.buffer, e.handles, nil
+	return len(e.buffer), len(e.handles), nil
 }
 
 // decoder represents the decoding context that is necessary to maintain
@@ -816,10 +834,16 @@ func (d *decoder) unmarshal(t reflect.Type, v reflect.Value, n nestedTypeData) e
 	if isHandleType(t) {
 		return d.unmarshalHandle(v, n)
 	}
+	if isInterfaceType(t) {
+		// An interface is represented by a Proxy, whose first field is
+		// a zx.Channel, and we can just unmarshal that.
+		return d.unmarshalHandle(v.Field(0), n)
+	}
 	return d.unmarshalInline(t, v, n)
 }
 
-func unmarshalHeader(data []byte, m *MessageHeader) error {
+// UnmarshalHeader parses a FIDL header in the data into m.
+func UnmarshalHeader(data []byte, m *MessageHeader) error {
 	if len(data) < 16 {
 		return fmt.Errorf("too few bytes in payload to parse header")
 	}
@@ -831,37 +855,31 @@ func unmarshalHeader(data []byte, m *MessageHeader) error {
 	return nil
 }
 
-// Unmarshal parses the encoded FIDL message in data, storing the decoded payload
-// in s and returning the message header.
+// Unmarshal parses the encoded FIDL payload in data and handles, storing the
+// decoded payload in s.
 //
 // The value pointed to by s must be a pointer to a golang struct which represents
 // the decoded primary object of a FIDL message. The data decode process is guided
 // by the structure of the struct pointed to by s.
 //
 // TODO(mknyszek): More rigorously validate the input.
-func Unmarshal(data []byte, handles []zx.Handle, s Payload) (*MessageHeader, error) {
+func Unmarshal(data []byte, handles []zx.Handle, s Payload) error {
 	// First, let's make sure we have the right type in s.
 	t := reflect.TypeOf(s)
 	if t.Kind() != reflect.Ptr {
-		return nil, errors.New("expected a pointer")
+		return errors.New("expected a pointer")
 	}
 	t = t.Elem()
 	if t.Kind() != reflect.Struct {
-		return nil, errors.New("primary object must be a struct")
-	}
-
-	// Since that succeeded, let's unmarshal the header.
-	var m MessageHeader
-	if err := unmarshalHeader(data, &m); err != nil {
-		return nil, err
+		return errors.New("primary object must be a struct")
 	}
 
 	// Get the payload's value and unmarshal it.
 	nextObject := align(s.InlineSize(), 8)
 	d := decoder{
-		buffer:     data[MessageHeaderSize:],
+		buffer:     data,
 		handles:    handles,
 		nextObject: nextObject,
 	}
-	return &m, d.unmarshalStructFields(t, reflect.ValueOf(s).Elem())
+	return d.unmarshalStructFields(t, reflect.ValueOf(s).Elem())
 }

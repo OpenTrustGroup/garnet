@@ -66,7 +66,7 @@ TEST(CommandParser, ParserBasic) {
   EXPECT_FALSE(err.has_error());
   EXPECT_EQ(1u, output.nouns().size());
   EXPECT_TRUE(output.HasNoun(Noun::kProcess));
-  EXPECT_EQ(1u, output.GetNounIndex(Noun::kProcess));
+  EXPECT_EQ(1, output.GetNounIndex(Noun::kProcess));
   EXPECT_EQ(Verb::kNone, output.verb());
 
   // Noun-verb command.
@@ -82,16 +82,16 @@ TEST(CommandParser, ParserBasic) {
   EXPECT_FALSE(err.has_error());
   EXPECT_EQ(1u, output.nouns().size());
   EXPECT_TRUE(output.HasNoun(Noun::kProcess));
-  EXPECT_EQ(2u, output.GetNounIndex(Noun::kProcess));
+  EXPECT_EQ(2, output.GetNounIndex(Noun::kProcess));
   EXPECT_EQ(Verb::kRun, output.verb());
 
   err = ParseCommand("process 2 thread 1 run", &output);
   EXPECT_FALSE(err.has_error());
   EXPECT_EQ(2u, output.nouns().size());
   EXPECT_TRUE(output.HasNoun(Noun::kProcess));
-  EXPECT_EQ(2u, output.GetNounIndex(Noun::kProcess));
+  EXPECT_EQ(2, output.GetNounIndex(Noun::kProcess));
   EXPECT_TRUE(output.HasNoun(Noun::kThread));
-  EXPECT_EQ(1u, output.GetNounIndex(Noun::kThread));
+  EXPECT_EQ(1, output.GetNounIndex(Noun::kThread));
   EXPECT_EQ(Verb::kRun, output.verb());
 }
 
@@ -134,11 +134,28 @@ TEST(CommandParser, Switches) {
   EXPECT_TRUE(err.has_error());
   EXPECT_EQ("Invalid switch \"-\".", err.msg());
 
-  // Valid long switch.
+  // Valid long switch with no equals.
   err = ParseCommand("mem-read --size 234 next", &output);
   EXPECT_FALSE(err.has_error());
   EXPECT_EQ(1u, output.switches().size());
   EXPECT_EQ("234", output.GetSwitchValue(size_switch->id));
+  ASSERT_EQ(1u, output.args().size());
+  EXPECT_EQ("next", output.args()[0]);
+
+  // Valid long switch with equals sign.
+  err = ParseCommand("mem-read --size=234 next", &output);
+  EXPECT_FALSE(err.has_error()) << err.msg();
+  EXPECT_EQ(1u, output.switches().size());
+  EXPECT_EQ("234", output.GetSwitchValue(size_switch->id));
+  ASSERT_EQ(1u, output.args().size());
+  EXPECT_EQ("next", output.args()[0]);
+
+  // Valid long switch with equals and no value (this is OK, value is empty
+  // string).
+  err = ParseCommand("mem-read --size= next", &output);
+  EXPECT_FALSE(err.has_error());
+  EXPECT_EQ(1u, output.switches().size());
+  EXPECT_EQ("", output.GetSwitchValue(size_switch->id));
   ASSERT_EQ(1u, output.args().size());
   EXPECT_EQ("next", output.args()[0]);
 

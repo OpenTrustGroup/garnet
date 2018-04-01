@@ -38,6 +38,15 @@ type netstack struct {
 	mu       sync.Mutex
 	nodename string
 	ifStates map[tcpip.NICID]*ifState
+
+	countNIC tcpip.NICID
+}
+
+type dhcpState struct {
+	client  *dhcp.Client
+	ctx     context.Context
+	cancel  context.CancelFunc
+	enabled bool
 }
 
 // Each ifState tracks the state of a network interface.
@@ -46,8 +55,8 @@ type ifState struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	eth    *eth.Client
-	dhcp   *dhcp.Client
 	state  eth.State
+	dhcpState
 
 	// guarded by ns.mu
 	// NIC is defined in //garnet/go/src/netstack/netiface/netiface.go
@@ -153,6 +162,19 @@ func (ifs *ifState) dhcpAcquired(oldAddr, newAddr tcpip.Address, config dhcp.Con
 	OnInterfacesChanged()
 }
 
+func (ifs *ifState) setDHCPStatus(enabled bool) {
+	ifs.ns.mu.Lock()
+	defer ifs.ns.mu.Unlock()
+	d := ifs.dhcpState
+	if enabled {
+		d.ctx, d.cancel = context.WithCancel(ifs.ctx)
+		d.client.Run(d.ctx)
+	} else {
+		d.cancel()
+	}
+	d.enabled = enabled
+}
+
 func (ifs *ifState) stateChange(s eth.State) {
 	switch s {
 	case eth.StateClosed, eth.StateDown:
@@ -176,8 +198,9 @@ func (ifs *ifState) restart() {
 	ifs.ns.mu.Unlock()
 
 	ifs.ns.stack.SetRouteTable(ifs.ns.flattenRouteTables())
-
-	go ifs.dhcp.Run(ifs.ctx)
+	// TODO(NET-298): remove special case for WLAN after fix for multiple DHCP clients
+	// is enabled
+	ifs.setDHCPStatus(ifs.dhcpState.enabled || ifs.eth.Features&eth.FeatureWlan != 0)
 }
 
 func (ifs *ifState) stop() {
@@ -261,6 +284,8 @@ func (ns *netstack) addLoopback() error {
 			},
 		},
 	}
+	// features is not used for loopback NIC
+	setNICName(nic, 0)
 
 	ifs := &ifState{
 		ns:     ns,
@@ -277,6 +302,7 @@ func (ns *netstack) addLoopback() error {
 		return fmt.Errorf("loopback: other interfaces already registered")
 	}
 	ns.ifStates[nicid] = ifs
+	ns.countNIC++
 	ns.mu.Unlock()
 
 	linkID := loopback.New()
@@ -337,26 +363,24 @@ func (ns *netstack) addEth(path string) error {
 	ifs.nic.Ipv6addrs = []tcpip.Address{lladdr}
 	copy(ifs.nic.Mac[:], ep.LinkAddr)
 
-	var nicid tcpip.NICID
-	for _, ifs := range ns.ifStates {
-		if ifs.nic.ID > nicid {
-			nicid = ifs.nic.ID
-		}
-	}
-	nicid++
+	nicid := ns.countNIC + 1
 	if err := ns.stack.CreateNIC(nicid, linkID); err != nil {
 		ns.mu.Unlock()
 		return fmt.Errorf("NIC %d: could not create NIC for %q: %v", nicid, path, err)
 	}
-	if nicid == 2 && ns.nodename == "" {
+	firstNIC := nicid == 2 && ns.nodename == ""
+	if firstNIC {
 		// This is the first real ethernet device on this host.
 		// No nodename has been configured for the network stack,
 		// so derive it from the MAC address.
 		ns.nodename = deviceid.DeviceID(ifs.nic.Mac)
 	}
 	ifs.nic.ID = nicid
+	setNICName(ifs.nic, client.Features)
+
 	ifs.nic.Routes = defaultRouteTable(nicid, "")
 	ns.ifStates[nicid] = ifs
+	ns.countNIC++
 	ns.mu.Unlock()
 
 	log.Printf("NIC %d added using ethernet device %q", nicid, path)
@@ -373,22 +397,34 @@ func (ns *netstack) addEth(path string) error {
 		return fmt.Errorf("NIC %d: adding solicited-node IPv6 failed: %v", nicid, err)
 	}
 
-	// TODO(): Start DHCP Client after
-	// (1) link is on
-	// (2) its IP address is not to be statically configured
-	// (3) Use of DHCP is explicitly configured
-	ifs.dhcp = dhcp.NewClient(ns.stack, nicid, ep.LinkAddr, ifs.dhcpAcquired)
+	ifs.dhcpState.client = dhcp.NewClient(ns.stack, nicid, ep.LinkAddr, ifs.dhcpAcquired)
+	ifs.dhcpState.ctx, ifs.dhcpState.cancel = context.WithCancel(ifs.ctx)
 
 	// Add default route. This will get clobbered later when we get a DHCP response.
 	ns.stack.SetRouteTable(ns.flattenRouteTables())
 
-	// TODO(porce): Delete this condition. Treat wired ethernet, WLAN NICs in the same way.
+	// TODO(NET-298): Delete this condition after enabling multiple concurrent DHCP clients
+	// in third_party/netstack.
 	if client.Features&eth.FeatureWlan != 0 {
 		// WLAN: Upon 802.1X port open, the state change will ensue, which
 		// will invoke the DHCP Client.
 		return nil
 	}
 
-	go ifs.dhcp.Run(ifs.ctx)
+	// TODO(stijlist): remove default DHCP policy for first NIC once policy manager
+	// sets DHCP status.
+	if firstNIC {
+		ifs.setDHCPStatus(true)
+	}
 	return nil
+}
+
+func setNICName(nic *netiface.NIC, features uint32) {
+	if nic.ID == 1 {
+		nic.Name = "lo"
+	} else if features&eth.FeatureWlan != 0 {
+		nic.Name = fmt.Sprintf("wlan%d", nic.ID)
+	} else {
+		nic.Name = fmt.Sprintf("en%d", nic.ID)
+	}
 }

@@ -1,0 +1,24 @@
+// Copyright 2017 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library sketchy;
+
+using gfx;
+
+struct Touch {
+  gfx.vec2 position;
+  uint32 nanoseconds;
+  float32 pressure;
+};
+
+struct CubicBezier2 {
+  gfx.vec2 pt0;
+  gfx.vec2 pt1;
+  gfx.vec2 pt2;
+  gfx.vec2 pt3;
+};
+
+struct StrokePath {
+  vector<CubicBezier2> segments;
+};

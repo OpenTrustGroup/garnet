@@ -3,12 +3,15 @@
 // found in the LICENSE file.
 
 #include <fbl/algorithm.h>
-
-#include "audio_analysis.h"
-#include "mixer_tests_shared.h"
+#include "garnet/bin/media/audio_server/test/audio_result.h"
+#include "garnet/bin/media/audio_server/test/mixer_tests_shared.h"
 
 namespace media {
+namespace audio {
 namespace test {
+
+// Convenience abbreviation within this source file to shorten names
+using Resampler = media::audio::Mixer::Resampler;
 
 //
 // Gain tests - how does the Gain object respond when given values close to its
@@ -19,31 +22,47 @@ namespace test {
 //
 // Gain tests using the Gain and AScale objects only
 //
+// Test the internally-used inline func that converts fixed-point gain to dB.
+TEST(Gain, GainScaleToDb) {
+  EXPECT_EQ(GainScaleToDb(Gain::kUnityScale), 0.0);
+  EXPECT_EQ(GainScaleToDb(Gain::kUnityScale * 10), 20.0);
+
+  EXPECT_GE(GainScaleToDb(Gain::kUnityScale / 100),
+            -40.0 * AudioResult::kGainToleranceMultiplier);
+  EXPECT_LE(GainScaleToDb(Gain::kUnityScale / 100),
+            -40.0 / AudioResult::kGainToleranceMultiplier);
+
+  EXPECT_GE(GainScaleToDb(Gain::kUnityScale >> 1),
+            -6.0206 * AudioResult::kGainToleranceMultiplier);
+  EXPECT_LE(GainScaleToDb(Gain::kUnityScale >> 1),
+            -6.0206 / AudioResult::kGainToleranceMultiplier);
+}
+
 // Do renderer and output gains correctly combine to produce unity scaling?
-TEST(Gain, UnityGain) {
-  audio::Gain gain;
-  audio::Gain::AScale amplitude_scale;
+TEST(Gain, Unity) {
+  Gain gain;
+  Gain::AScale amplitude_scale;
 
   gain.SetRendererGain(0.0f);
   amplitude_scale = gain.GetGainScale(0.0f);
-  EXPECT_EQ(audio::Gain::kUnityScale, amplitude_scale);
+  EXPECT_EQ(Gain::kUnityScale, amplitude_scale);
 
   // These positive/negative values should sum to 0.0: UNITY
-  gain.SetRendererGain(audio::Gain::kMaxGain / 2);
-  amplitude_scale = gain.GetGainScale(-audio::Gain::kMaxGain / 2);
-  EXPECT_EQ(audio::Gain::kUnityScale, amplitude_scale);
+  gain.SetRendererGain(Gain::kMaxGain / 2);
+  amplitude_scale = gain.GetGainScale(-Gain::kMaxGain / 2);
+  EXPECT_EQ(Gain::kUnityScale, amplitude_scale);
 
   // These positive/negative values should sum to 0.0: UNITY
-  gain.SetRendererGain(audio::Gain::kMaxGain);
-  amplitude_scale = gain.GetGainScale(-audio::Gain::kMaxGain);
-  EXPECT_EQ(audio::Gain::kUnityScale, amplitude_scale);
+  gain.SetRendererGain(Gain::kMaxGain);
+  amplitude_scale = gain.GetGainScale(-Gain::kMaxGain);
+  EXPECT_EQ(Gain::kUnityScale, amplitude_scale);
 }
 
 // Gain caches any previously set Renderer gain, using it if needed.
 // This verifies the default and caching behavior of the Gain object
-TEST(Gain, GainCaching) {
-  audio::Gain gain, expect_gain;
-  audio::Gain::AScale amplitude_scale, expect_amplitude_scale;
+TEST(Gain, Caching) {
+  Gain gain, expect_gain;
+  Gain::AScale amplitude_scale, expect_amplitude_scale;
 
   // Set expect_amplitude_scale to a value that represents -6.0 dB.
   expect_gain.SetRendererGain(6.0f);
@@ -56,83 +75,78 @@ TEST(Gain, GainCaching) {
   // Now set a different Renderer gain that will be cached (+3.0)
   gain.SetRendererGain(3.0f);
   amplitude_scale = gain.GetGainScale(-3.0f);
-  EXPECT_EQ(audio::Gain::kUnityScale, amplitude_scale);
+  EXPECT_EQ(Gain::kUnityScale, amplitude_scale);
 
   // If Render gain is cached val of +3, then combo should be Unity.
   amplitude_scale = gain.GetGainScale(-3.0f);
-  EXPECT_EQ(audio::Gain::kUnityScale, amplitude_scale);
+  EXPECT_EQ(Gain::kUnityScale, amplitude_scale);
 
   // Try another Output gain; with cached +3 this should equate to -6dB.
   amplitude_scale = gain.GetGainScale(-9.0f);
   EXPECT_EQ(expect_amplitude_scale, amplitude_scale);
 }
 
-// System independently limits RendererGain and OutputGain to kMaxGain (+24.0
-// dB), intending for their sum to fit into a fixed-point (4.28) container.
-// MTWN-70 relates to audio::Gain's statefulness. Does it need this complexity?
-TEST(Gain, MaxGainClamp) {
-  audio::Gain gain, expect_gain;
-  audio::Gain::AScale amplitude_scale;
+// System independently limits RendererGain to kMaxGain (24 dB) and OutputGain
+// to 0, intending for their sum to fit into a fixed-point (4.28) container.
+// MTWN-70 relates to Gain's statefulness. Does it need this complexity?
+TEST(Gain, MaxClamp) {
+  Gain gain, expect_gain;
+  Gain::AScale amplitude_scale;
 
   // RendererGain of 2 * kMaxGain is clamped to kMaxGain (+24 dB).
-  gain.SetRendererGain(audio::Gain::kMaxGain * 2);
+  gain.SetRendererGain(Gain::kMaxGain * 2);
   amplitude_scale = gain.GetGainScale(0.0f);
-  EXPECT_EQ(audio::Gain::kMaxScale, amplitude_scale);
+  EXPECT_EQ(Gain::kMaxScale, amplitude_scale);
 
   // System limits RendererGain to kMaxGain, even when the sum is less than 0.
   // RenderGain +36dB (clamped to +24dB) plus OutputGain -48dB becomes -24dB.
-  gain.SetRendererGain(audio::Gain::kMaxGain * 1.5f);
-  amplitude_scale = gain.GetGainScale(-2 * audio::Gain::kMaxGain);
+  gain.SetRendererGain(Gain::kMaxGain * 1.5f);
+  amplitude_scale = gain.GetGainScale(-2 * Gain::kMaxGain);
   // A gain_scale value of 0x10270AC represents -24.0dB.
   EXPECT_EQ(0x10270ACu, amplitude_scale);
 
-  // Today system allows OutputGain > 0, which can produce a [Renderer+Output]
-  // gain that exceeds 4.28. This is always clamped back down to kMaxGain.
-  // TODO(mpuryear): if we limit OutputGain to 0.0 (MTWN-71), change the below
-  //
-  // This combination (24.05 dB) even fits into 4.24, but clamps to 24.0
-  gain.SetRendererGain(audio::Gain::kMaxGain);
+  // This combination (24.05 dB) would even fit into 4.24, but clamps to 24.0dB.
+  gain.SetRendererGain(Gain::kMaxGain);
   amplitude_scale = gain.GetGainScale(0.05f);
-  EXPECT_EQ(audio::Gain::kMaxScale, amplitude_scale);
+  EXPECT_EQ(Gain::kMaxScale, amplitude_scale);
 
-  // System limits OutputGain to kMaxGain, independent of renderer gain.
-  // RendGain = -kMaxGain, OutGain = 1.5*kMaxGain (limited to Max). Expect 0
-  gain.SetRendererGain(-audio::Gain::kMaxGain);
-  amplitude_scale = gain.GetGainScale(audio::Gain::kMaxGain * 1.5);
-  EXPECT_EQ(audio::Gain::kUnityScale, amplitude_scale);
+  // System limits OutputGain to 0, independent of renderer gain.
+  // RendGain = -kMaxGain, OutGain = 1.0 (limited to 0). Expect -kMaxGain.
+  gain.SetRendererGain(-Gain::kMaxGain);
+  amplitude_scale = gain.GetGainScale(1.0);
+  EXPECT_EQ(0x10270ACu, amplitude_scale);
 }
 
 // System independently limits RendererGain and OutputGain to kMinGain (-160dB).
 // Is scale set to zero, if either (or the combo) is at or below kMinGain?
-TEST(Gain, MinGainMute) {
-  audio::Gain gain;
-  audio::Gain::AScale amplitude_scale;
+TEST(Gain, MinMute) {
+  Gain gain;
+  Gain::AScale amplitude_scale;
 
   // if OutputGain <= kMinGain, scale must be 0, regardless of RendererGain
-  gain.SetRendererGain(-2 * audio::Gain::kMinGain);
-  amplitude_scale = gain.GetGainScale(audio::Gain::kMinGain);
+  gain.SetRendererGain(-2 * Gain::kMinGain);
+  amplitude_scale = gain.GetGainScale(Gain::kMinGain);
   EXPECT_EQ(0u, amplitude_scale);
 
   // if RendererGain <= kMinGain, scale must be 0, regardless of OutputGain
-  gain.SetRendererGain(audio::Gain::kMinGain);
-  // TODO(mpuryear): if we fix MTWN-71, setting Output > 0 will cause DCHECK.
-  amplitude_scale = gain.GetGainScale(audio::Gain::kMaxGain * 1.2);
+  gain.SetRendererGain(Gain::kMinGain);
+  amplitude_scale = gain.GetGainScale(Gain::kMaxGain * 1.2);
   EXPECT_EQ(0u, amplitude_scale);
 
   // if sum of RendererGain and OutputGain <= kMinGain, scale should be 0
   // Output gain is just slightly above MinGain, and Render takes us below it
   gain.SetRendererGain(-2.0f);
-  amplitude_scale = gain.GetGainScale(audio::Gain::kMinGain + 1.0f);
+  amplitude_scale = gain.GetGainScale(Gain::kMinGain + 1.0f);
   EXPECT_EQ(0u, amplitude_scale);
 }
 
 // Does GetGainScale round appropriately when converting dB into AScale?
 // SetRendererGain just saves the given float; GetGainScale produces a
 // fixed-point uint32 (4.28 format), truncating (not rounding) in the process.
-TEST(Gain, GainPrecision) {
-  audio::Gain gain;
+TEST(Gain, Precision) {
+  Gain gain;
   gain.SetRendererGain(-159.99f);
-  audio::Gain::AScale amplitude_scale = gain.GetGainScale(0.0f);
+  Gain::AScale amplitude_scale = gain.GetGainScale(0.0f);
   EXPECT_EQ(0x00000002u, amplitude_scale);
   // TODO(mpuryear): when MTWN-73 is fixed, ...2.68 should round up to ...3
 
@@ -145,8 +159,8 @@ TEST(Gain, GainPrecision) {
   EXPECT_EQ(0x0F1ADF93u, amplitude_scale);  // (future)
   // TODO(mpuryear): when MTWN-73 is fixed, ...F93.8 should round to ...F94
 
-  gain.SetRendererGain(0.0f);
-  amplitude_scale = gain.GetGainScale(audio::Gain::kMaxGain);
+  gain.SetRendererGain(Gain::kMaxGain);
+  amplitude_scale = gain.GetGainScale(0.0f);
   EXPECT_EQ(0xFD9539A4u, amplitude_scale);  // FD9539A4.4 correctly rounds down
 }
 
@@ -158,20 +172,20 @@ TEST(Gain, GainPrecision) {
 //
 // Verify whether per-stream gain interacts linearly with accumulation buffer.
 // TODO(mpuryear): when we fix MTWN-82, update our expected values.
-TEST(Gain, DataScalingLinearity) {
+TEST(Gain, Scaling_Linearity) {
   int16_t source[] = {3300, 3276, 35, 4, -14, -25, -3276, -3291};
   int32_t accum[8];
-  audio::Gain gain;
+  Gain gain;
 
   // Validate that +20.00 dB leads to exactly 10x in value (within limits)
   //
   // Can a single signal with kMaxGain clip our accumulation buffer?
   // No, but that one stream IS limited to 16-bit values (even after scaling)
   gain.SetRendererGain(20.0f);
-  audio::Gain::AScale stream_scale = gain.GetGainScale(0.0f);
+  Gain::AScale stream_scale = gain.GetGainScale(0.0f);
 
-  audio::MixerPtr mixer =
-      SelectMixer(AudioSampleFormat::SIGNED_16, 1, 44100, 1, 44100);
+  MixerPtr mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 44100, 1, 44100,
+                               Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum),
         stream_scale);
 
@@ -184,7 +198,8 @@ TEST(Gain, DataScalingLinearity) {
   gain.SetRendererGain(-20.0f);
   stream_scale = gain.GetGainScale(0.0f);
 
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 44100, 1, 44100);
+  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 44100, 1, 44100,
+                      Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum),
         stream_scale);
 
@@ -198,16 +213,16 @@ TEST(Gain, DataScalingLinearity) {
 // are unable to attenuate negative vals to 0 (even -0.00000001 stays -1).
 // In the future, the system should round fractional data values away from 0.
 // By "round away from zero", we mean: 1.5 --> 2; -1.5 --> -2; -1.1 --> -1.
-TEST(Gain, DataScalingPrecision) {
+TEST(Gain, Scaling_Precision) {
   // TODO(mpuryear): when MTWN-73 is fixed, amend these values
   int16_t source[] = {32767, -32768, -1, 1};  // max/min values
   int32_t accum[4];
 
   //
   // Today, a gain even slightly less than unity will reduce all positive vals
-  audio::Gain::AScale gain_scale = audio::Gain::kUnityScale - 1;
-  audio::MixerPtr mixer =
-      SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000);
+  Gain::AScale gain_scale = Gain::kUnityScale - 1;
+  MixerPtr mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
+                               Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum),
         gain_scale);
 
@@ -217,7 +232,8 @@ TEST(Gain, DataScalingPrecision) {
   //
   // This gain will output non-zero, given a full-scale signal.
   gain_scale = 0x00002001;
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000);
+  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
+                      Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, false, 2, gain_scale);
 
   int32_t expect2[] = {1, -2, -1, 0};
@@ -226,7 +242,8 @@ TEST(Gain, DataScalingPrecision) {
   //
   // Today, this gain truncates full-scale to zero.
   gain_scale = 0x00002000;
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000);
+  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
+                      Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, false, 2, gain_scale);
 
   int32_t expect3[] = {0, -1, -1, 0};
@@ -244,15 +261,16 @@ TEST(Gain, Accumulator) {
   int32_t accum[] = {32767, -32768};
   // when mixed, these should exceed the int32 range
 
-  audio::MixerPtr mixer =
-      SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000);
+  MixerPtr mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
+                               Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, true, fbl::count_of(accum));
 
   // These values exceed the per-stream range of int16
   int32_t expect[] = {65534, -65536};
   EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
 
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 2, 48000, 2, 48000);
+  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 2, 48000, 2, 48000,
+                      Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, true, 1);
 
   // these values even exceed uint16
@@ -261,15 +279,15 @@ TEST(Gain, Accumulator) {
 }
 
 // How does our accumulator behave at its limits? Does it clamp or rollover?
-TEST(Gain, AccumulatorClamp) {
+TEST(Gain, Accumulator_Clamp) {
   int16_t source[] = {32767, -32768};
   // if we add these vals, accum SHOULD clamp to int32::max and int32::min
   // Today, our accumulator actually rolls over. Fix the test when it clamps.
   int32_t accum[] = {std::numeric_limits<int32_t>::max() - 32767 + 2,
                      std::numeric_limits<int32_t>::min() + 32768 - 2};
 
-  audio::MixerPtr mixer =
-      SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000);
+  MixerPtr mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
+                               Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, true, fbl::count_of(accum));
 
   // TODO(mpuryear): when MTWN-83 is fixed, expect max and min respectively.
@@ -279,4 +297,5 @@ TEST(Gain, AccumulatorClamp) {
 }
 
 }  // namespace test
+}  // namespace audio
 }  // namespace media

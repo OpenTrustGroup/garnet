@@ -7,8 +7,8 @@
 #include <iomanip>
 #include <iostream>
 
-#include "lib/mdns/fidl/mdns.fidl.h"
-#include "lib/netstack/fidl/net_address.fidl.h"
+#include <fuchsia/cpp/mdns.h>
+#include <fuchsia/cpp/netstack.h>
 
 namespace mdns {
 
@@ -17,13 +17,13 @@ std::ostream& indent(std::ostream& os);
 std::ostream& outdent(std::ostream& os);
 
 template <typename T>
-std::ostream& operator<<(std::ostream& os, const f1dl::Array<T>& value) {
-  if (value.size() == 0) {
+std::ostream& operator<<(std::ostream& os, const fidl::VectorPtr<T>& value) {
+  if (value->size() == 0) {
     return os << "<empty>";
   }
 
   int index = 0;
-  for (const T& element : value) {
+  for (const T& element : *value) {
     os << "\n" << begl << "[" << index++ << "] " << element;
   }
 

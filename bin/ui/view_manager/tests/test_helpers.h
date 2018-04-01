@@ -18,8 +18,8 @@ void Capture(const fxl::Closure& quit, T* out, T value) {
   quit();
 }
 
-inline mozart::PointFPtr MakePointF(float x, float y) {
-  auto result = mozart::PointF::New();
+inline geometry::PointFPtr MakePointF(float x, float y) {
+  auto result = geometry::PointF::New();
   result->x = x;
   result->y = y;
   return result.Pass();
@@ -38,8 +38,8 @@ inline mozart::SceneTokenPtr MakeDummySceneToken(uint32_t value) {
   return result.Pass();
 }
 
-inline mozart::ViewTokenPtr MakeDummyViewToken(uint32_t value) {
-  auto result = mozart::ViewToken::New();
+inline views_v1_token::ViewTokenPtr MakeDummyViewToken(uint32_t value) {
+  auto result = views_v1_token::ViewToken::New();
   result->value = value;
   return result.Pass();
 }

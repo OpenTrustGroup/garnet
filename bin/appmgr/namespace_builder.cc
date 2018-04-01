@@ -15,16 +15,17 @@
 #include "lib/fsl/io/fd.h"
 #include "lib/fxl/files/unique_fd.h"
 
-namespace app {
+namespace component {
 
 NamespaceBuilder::NamespaceBuilder() = default;
 
 NamespaceBuilder::~NamespaceBuilder() = default;
 
 void NamespaceBuilder::AddFlatNamespace(FlatNamespacePtr ns) {
-  if (!ns.is_null() && ns->paths.size() == ns->directories.size()) {
-    for (size_t i = 0; i < ns->paths.size(); ++i) {
-      AddDirectoryIfNotPresent(ns->paths[i], std::move(ns->directories[i]));
+  if (ns && ns->paths->size() == ns->directories->size()) {
+    for (size_t i = 0; i < ns->paths->size(); ++i) {
+      AddDirectoryIfNotPresent(ns->paths->at(i),
+                               std::move(ns->directories->at(i)));
     }
   }
 }
@@ -44,7 +45,9 @@ void NamespaceBuilder::AddServices(zx::channel services) {
   PushDirectoryFromChannel("/svc", std::move(services));
 }
 
-void NamespaceBuilder::AddSandbox(const SandboxMetadata& sandbox) {
+void NamespaceBuilder::AddSandbox(
+    const SandboxMetadata& sandbox,
+    const HubDirectoryFactory& hub_directory_factory) {
   for (const auto& path : sandbox.dev()) {
     if (path == "class") {
       FXL_LOG(WARNING) << "Ignoring request for all device classes";
@@ -70,10 +73,11 @@ void NamespaceBuilder::AddSandbox(const SandboxMetadata& sandbox) {
       // TODO(abarth): These permissions should depend on the envionment
       // in some way so that a shell running at a user-level scope doesn't
       // have access to all the device drivers and such.
-      PushDirectoryFromPath("/blobstore");
+      PushDirectoryFromPath("/blob");
       PushDirectoryFromPath("/boot");
       PushDirectoryFromPath("/data");
       PushDirectoryFromPath("/dev");
+      PushDirectoryFromChannel("/hub", hub_directory_factory());
       PushDirectoryFromPath("/install");
       PushDirectoryFromPath("/pkgfs");
       PushDirectoryFromPath("/system");
@@ -148,13 +152,15 @@ fdio_flat_namespace_t* NamespaceBuilder::Build() {
   return &flat_ns_;
 }
 
-FlatNamespacePtr NamespaceBuilder::BuildForRunner() {
-  auto flat_namespace = FlatNamespace::New();
+FlatNamespace NamespaceBuilder::BuildForRunner() {
+  FlatNamespace flat_namespace;
+
   for (auto& path : paths_) {
-    flat_namespace->paths.push_back(std::move(path));
+    flat_namespace.paths.push_back(std::move(path));
   }
+
   for (auto& handle : handle_pool_) {
-    flat_namespace->directories.push_back(std::move(handle));
+    flat_namespace.directories.push_back(std::move(handle));
   }
   return flat_namespace;
 }
@@ -165,4 +171,4 @@ void NamespaceBuilder::Release() {
   handle_pool_.clear();
 }
 
-}  // namespace app
+}  // namespace component

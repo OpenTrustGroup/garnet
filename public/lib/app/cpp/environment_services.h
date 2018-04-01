@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef LIB_APP_CPP_ENVIRONMENT_SERVICES_H_
+#define LIB_APP_CPP_ENVIRONMENT_SERVICES_H_
+
 #include <zx/channel.h>
 
 #include <string>
 
-#include "lib/fidl/cpp/bindings/interface_ptr.h"
-#include "lib/fidl/cpp/bindings/interface_request.h"
+#include "lib/fidl/cpp/interface_ptr.h"
+#include "lib/fidl/cpp/interface_request.h"
 
-namespace app {
+namespace component {
 
 // These helper functions help connect to environment services through the
 // application's static environment. Multi-tenanted applications should connect
@@ -26,7 +29,7 @@ void ConnectToEnvironmentService(const std::string& interface_name,
 // binding the service to an interface request.
 template <typename Interface>
 void ConnectToEnvironmentService(
-    f1dl::InterfaceRequest<Interface> request,
+    fidl::InterfaceRequest<Interface> request,
     const std::string& interface_name = Interface::Name_) {
   ConnectToEnvironmentService(interface_name, request.TakeChannel());
 }
@@ -34,9 +37,9 @@ void ConnectToEnvironmentService(
 // Connects to a service provided by the application's static environment,
 // returning an interface pointer.
 template <typename Interface>
-f1dl::InterfacePtr<Interface> ConnectToEnvironmentService(
+fidl::InterfacePtr<Interface> ConnectToEnvironmentService(
     const std::string& interface_name = Interface::Name_) {
-  f1dl::InterfacePtr<Interface> interface_ptr;
+  fidl::InterfacePtr<Interface> interface_ptr;
   ConnectToEnvironmentService(interface_name,
                               interface_ptr.NewRequest().TakeChannel());
   return interface_ptr;
@@ -50,4 +53,15 @@ zx::channel CreateStaticServiceRootHandle();
 
 }  // namespace subtle
 
+}  // namespace component
+
+// TODO(alhaad): This namespace is temporary. Use 'component' namespace when
+// we migrate dart/runtime/vm/os_fuchsia.cc
+namespace app {
+namespace subtle {
+zx::channel CreateStaticServiceRootHandle();
+
+}  // namespace subtle
 }  // namespace app
+
+#endif  // LIB_APP_CPP_ENVIRONMENT_SERVICES_H_

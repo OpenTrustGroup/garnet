@@ -1,0 +1,8 @@
+{
+    "languages": [
+        "cpp"
+    ],
+    "packages": {
+        "magma": "//garnet/lib/magma"
+    }
+}

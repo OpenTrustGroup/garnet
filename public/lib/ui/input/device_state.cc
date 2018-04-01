@@ -4,11 +4,11 @@
 
 #include "lib/ui/input/device_state.h"
 
+#include <fuchsia/cpp/input.h>
+#include "lib/fidl/cpp/clone.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/time/time_delta.h"
 #include "lib/fxl/time/time_point.h"
-#include "lib/ui/input/fidl/input_event_constants.fidl.h"
-#include "lib/ui/input/fidl/usages.fidl.h"
 
 namespace {
 int64_t InputEventTimestampNow() {
@@ -34,33 +34,33 @@ KeyboardState::KeyboardState(DeviceState* device_state)
   }
 }
 
-void KeyboardState::SendEvent(mozart::KeyboardEvent::Phase phase,
+void KeyboardState::SendEvent(input::KeyboardEventPhase phase,
                               uint32_t key,
                               uint64_t modifiers,
                               uint64_t timestamp) {
-  auto ev = mozart::InputEvent::New();
-  auto kb = mozart::KeyboardEvent::New();
-  kb->phase = phase;
-  kb->event_time = timestamp;
-  kb->device_id = device_state_->device_id();
-  kb->hid_usage = key;
-  kb->code_point = hid_map_key(
-      key, modifiers & (mozart::kModifierShift | mozart::kModifierCapsLock),
+  input::InputEvent ev;
+  input::KeyboardEvent kb;
+  kb.phase = phase;
+  kb.event_time = timestamp;
+  kb.device_id = device_state_->device_id();
+  kb.hid_usage = key;
+  kb.code_point = hid_map_key(
+      key, modifiers & (input::kModifierShift | input::kModifierCapsLock),
       keymap_);
-  kb->modifiers = modifiers;
-  ev->set_keyboard(std::move(kb));
+  kb.modifiers = modifiers;
+  ev.set_keyboard(std::move(kb));
   device_state_->callback()(std::move(ev));
 }
 
-void KeyboardState::Update(mozart::InputReportPtr input_report) {
-  FXL_DCHECK(input_report->keyboard);
+void KeyboardState::Update(input::InputReport input_report) {
+  FXL_DCHECK(input_report.keyboard);
 
-  uint64_t now = input_report->event_time;
+  uint64_t now = input_report.event_time;
   std::vector<uint32_t> old_keys = keys_;
   keys_.clear();
   repeat_keys_.clear();
 
-  for (uint32_t key : input_report->keyboard->pressed_keys) {
+  for (uint32_t key : *input_report.keyboard->pressed_keys) {
     keys_.push_back(key);
     auto it = std::find(old_keys.begin(), old_keys.end(), key);
     if (it != old_keys.end()) {
@@ -68,33 +68,33 @@ void KeyboardState::Update(mozart::InputReportPtr input_report) {
       continue;
     }
 
-    SendEvent(mozart::KeyboardEvent::Phase::PRESSED, key, modifiers_, now);
+    SendEvent(input::KeyboardEventPhase::PRESSED, key, modifiers_, now);
 
     uint64_t modifiers = modifiers_;
     switch (key) {
       case HID_USAGE_KEY_LEFT_SHIFT:
-        modifiers_ |= mozart::kModifierLeftShift;
+        modifiers_ |= input::kModifierLeftShift;
         break;
       case HID_USAGE_KEY_RIGHT_SHIFT:
-        modifiers_ |= mozart::kModifierRightShift;
+        modifiers_ |= input::kModifierRightShift;
         break;
       case HID_USAGE_KEY_LEFT_CTRL:
-        modifiers_ |= mozart::kModifierLeftControl;
+        modifiers_ |= input::kModifierLeftControl;
         break;
       case HID_USAGE_KEY_RIGHT_CTRL:
-        modifiers_ |= mozart::kModifierRightControl;
+        modifiers_ |= input::kModifierRightControl;
         break;
       case HID_USAGE_KEY_LEFT_ALT:
-        modifiers_ |= mozart::kModifierLeftAlt;
+        modifiers_ |= input::kModifierLeftAlt;
         break;
       case HID_USAGE_KEY_RIGHT_ALT:
-        modifiers_ |= mozart::kModifierRightAlt;
+        modifiers_ |= input::kModifierRightAlt;
         break;
       case HID_USAGE_KEY_LEFT_GUI:
-        modifiers_ |= mozart::kModifierLeftSuper;
+        modifiers_ |= input::kModifierLeftSuper;
         break;
       case HID_USAGE_KEY_RIGHT_GUI:
-        modifiers_ |= mozart::kModifierRightSuper;
+        modifiers_ |= input::kModifierRightSuper;
         break;
       default:
         break;
@@ -112,38 +112,38 @@ void KeyboardState::Update(mozart::InputReportPtr input_report) {
   }
 
   for (uint32_t key : old_keys) {
-    SendEvent(mozart::KeyboardEvent::Phase::RELEASED, key, modifiers_, now);
+    SendEvent(input::KeyboardEventPhase::RELEASED, key, modifiers_, now);
 
     switch (key) {
       case HID_USAGE_KEY_LEFT_SHIFT:
-        modifiers_ &= (~mozart::kModifierLeftShift);
+        modifiers_ &= (~input::kModifierLeftShift);
         break;
       case HID_USAGE_KEY_RIGHT_SHIFT:
-        modifiers_ &= (~mozart::kModifierRightShift);
+        modifiers_ &= (~input::kModifierRightShift);
         break;
       case HID_USAGE_KEY_LEFT_CTRL:
-        modifiers_ &= (~mozart::kModifierLeftControl);
+        modifiers_ &= (~input::kModifierLeftControl);
         break;
       case HID_USAGE_KEY_RIGHT_CTRL:
-        modifiers_ &= (~mozart::kModifierRightControl);
+        modifiers_ &= (~input::kModifierRightControl);
         break;
       case HID_USAGE_KEY_LEFT_ALT:
-        modifiers_ &= (~mozart::kModifierLeftAlt);
+        modifiers_ &= (~input::kModifierLeftAlt);
         break;
       case HID_USAGE_KEY_RIGHT_ALT:
-        modifiers_ &= (~mozart::kModifierRightAlt);
+        modifiers_ &= (~input::kModifierRightAlt);
         break;
       case HID_USAGE_KEY_LEFT_GUI:
-        modifiers_ &= (~mozart::kModifierLeftSuper);
+        modifiers_ &= (~input::kModifierLeftSuper);
         break;
       case HID_USAGE_KEY_RIGHT_GUI:
-        modifiers_ &= (~mozart::kModifierRightSuper);
+        modifiers_ &= (~input::kModifierRightSuper);
         break;
       case HID_USAGE_KEY_CAPSLOCK:
-        if (modifiers_ & mozart::kModifierCapsLock) {
-          modifiers_ &= (~mozart::kModifierCapsLock);
+        if (modifiers_ & input::kModifierCapsLock) {
+          modifiers_ &= (~input::kModifierCapsLock);
         } else {
-          modifiers_ |= mozart::kModifierCapsLock;
+          modifiers_ |= input::kModifierCapsLock;
         }
         break;
       default:
@@ -164,14 +164,14 @@ void KeyboardState::Repeat(uint64_t sequence) {
   }
   uint64_t now = InputEventTimestampNow();
   for (uint32_t key : repeat_keys_) {
-    SendEvent(mozart::KeyboardEvent::Phase::REPEAT, key, modifiers_, now);
+    SendEvent(input::KeyboardEventPhase::REPEAT, key, modifiers_, now);
   }
   ScheduleRepeat(sequence, kKeyRepeatFast);
 }
 
 void KeyboardState::ScheduleRepeat(uint64_t sequence, fxl::TimeDelta delta) {
   task_runner_->PostDelayedTask(
-      [weak = weak_ptr_factory_.GetWeakPtr(), sequence] {
+      [ weak = weak_ptr_factory_.GetWeakPtr(), sequence ] {
         if (weak)
           weak->Repeat(sequence);
       },
@@ -187,52 +187,52 @@ void MouseState::OnUnregistered() {}
 void MouseState::SendEvent(float rel_x,
                            float rel_y,
                            int64_t timestamp,
-                           mozart::PointerEvent::Phase phase,
+                           input::PointerEventPhase phase,
                            uint32_t buttons) {
-  mozart::InputEventPtr ev = mozart::InputEvent::New();
-  mozart::PointerEventPtr pt = mozart::PointerEvent::New();
-  pt->event_time = timestamp;
-  pt->device_id = device_state_->device_id();
-  pt->pointer_id = device_state_->device_id();
-  pt->phase = phase;
-  pt->buttons = buttons;
-  pt->type = mozart::PointerEvent::Type::MOUSE;
-  pt->x = rel_x;
-  pt->y = rel_y;
-  ev->set_pointer(std::move(pt));
+  input::InputEvent ev;
+  input::PointerEvent pt;
+  pt.event_time = timestamp;
+  pt.device_id = device_state_->device_id();
+  pt.pointer_id = device_state_->device_id();
+  pt.phase = phase;
+  pt.buttons = buttons;
+  pt.type = input::PointerEventType::MOUSE;
+  pt.x = rel_x;
+  pt.y = rel_y;
+  ev.set_pointer(std::move(pt));
   device_state_->callback()(std::move(ev));
 }
 
-void MouseState::Update(mozart::InputReportPtr input_report,
-                        mozart::Size display_size) {
-  FXL_DCHECK(input_report->mouse);
-  uint64_t now = input_report->event_time;
-  uint8_t pressed = (input_report->mouse->pressed_buttons ^ buttons_) &
-                    input_report->mouse->pressed_buttons;
+void MouseState::Update(input::InputReport input_report,
+                        geometry::Size display_size) {
+  FXL_DCHECK(input_report.mouse);
+  uint64_t now = input_report.event_time;
+  uint8_t pressed = (input_report.mouse->pressed_buttons ^ buttons_) &
+                    input_report.mouse->pressed_buttons;
   uint8_t released =
-      (input_report->mouse->pressed_buttons ^ buttons_) & buttons_;
-  buttons_ = input_report->mouse->pressed_buttons;
+      (input_report.mouse->pressed_buttons ^ buttons_) & buttons_;
+  buttons_ = input_report.mouse->pressed_buttons;
 
   // TODO(jpoichet) Update once we have an API to capture mouse.
   // TODO(MZ-385): Quantize the mouse value to the range [0, display_width -
   // mouse_resolution]
   position_.x =
-      std::max(0.0f, std::min(position_.x + input_report->mouse->rel_x,
+      std::max(0.0f, std::min(position_.x + input_report.mouse->rel_x,
                               static_cast<float>(display_size.width)));
   position_.y =
-      std::max(0.0f, std::min(position_.y + input_report->mouse->rel_y,
+      std::max(0.0f, std::min(position_.y + input_report.mouse->rel_y,
                               static_cast<float>(display_size.height)));
 
   if (!pressed && !released) {
-    SendEvent(position_.x, position_.y, now, mozart::PointerEvent::Phase::MOVE,
+    SendEvent(position_.x, position_.y, now, input::PointerEventPhase::MOVE,
               buttons_);
   } else {
     if (pressed) {
       SendEvent(position_.x, position_.y, now,
-                mozart::PointerEvent::Phase::DOWN, pressed);
+                input::PointerEventPhase::DOWN, pressed);
     }
     if (released) {
-      SendEvent(position_.x, position_.y, now, mozart::PointerEvent::Phase::UP,
+      SendEvent(position_.x, position_.y, now, input::PointerEventPhase::UP,
                 released);
     }
   }
@@ -241,196 +241,208 @@ void MouseState::Update(mozart::InputReportPtr input_report,
 #pragma mark - StylusState
 
 void StylusState::SendEvent(int64_t timestamp,
-                            mozart::PointerEvent::Phase phase,
-                            mozart::PointerEvent::Type type,
+                            input::PointerEventPhase phase,
+                            input::PointerEventType type,
                             float x,
                             float y,
                             uint32_t buttons) {
-  auto pt = mozart::PointerEvent::New();
-  pt->event_time = timestamp;
-  pt->device_id = device_state_->device_id();
-  pt->pointer_id = 1;
-  pt->type = type;
-  pt->phase = phase;
-  pt->x = x;
-  pt->y = y;
-  pt->buttons = buttons;
+  input::PointerEvent pt;
+  pt.event_time = timestamp;
+  pt.device_id = device_state_->device_id();
+  pt.pointer_id = 1;
+  pt.type = type;
+  pt.phase = phase;
+  pt.x = x;
+  pt.y = y;
+  pt.buttons = buttons;
 
-  stylus_ = *pt;
+  stylus_ = pt;
 
-  auto ev = mozart::InputEvent::New();
-  ev->set_pointer(std::move(pt));
+  input::InputEvent ev;
+  ev.set_pointer(std::move(pt));
   device_state_->callback()(std::move(ev));
 }
 
-void StylusState::Update(mozart::InputReportPtr input_report,
-                         mozart::Size display_size) {
-  FXL_DCHECK(input_report->stylus);
+void StylusState::Update(input::InputReport input_report,
+                         geometry::Size display_size) {
+  FXL_DCHECK(input_report.stylus);
 
-  mozart::StylusDescriptor* descriptor = device_state_->stylus_descriptor();
+  input::StylusDescriptor* descriptor = device_state_->stylus_descriptor();
   FXL_DCHECK(descriptor);
 
   const bool previous_stylus_down = stylus_down_;
   const bool previous_stylus_in_range = stylus_in_range_;
-  stylus_down_ = input_report->stylus->is_in_contact;
-  stylus_in_range_ = input_report->stylus->in_range;
+  stylus_down_ = input_report.stylus->is_in_contact;
+  stylus_in_range_ = input_report.stylus->in_range;
 
-  mozart::PointerEvent::Phase phase = mozart::PointerEvent::Phase::DOWN;
+  input::PointerEventPhase phase = input::PointerEventPhase::DOWN;
   if (stylus_down_) {
     if (previous_stylus_down) {
-      phase = mozart::PointerEvent::Phase::MOVE;
+      phase = input::PointerEventPhase::MOVE;
     }
   } else {
     if (previous_stylus_down) {
-      phase = mozart::PointerEvent::Phase::UP;
+      phase = input::PointerEventPhase::UP;
     } else {
       if (stylus_in_range_ && !previous_stylus_in_range) {
-        inverted_stylus_ = input_report->stylus->is_inverted;
-        phase = mozart::PointerEvent::Phase::ADD;
+        inverted_stylus_ = input_report.stylus->is_inverted;
+        phase = input::PointerEventPhase::ADD;
       } else if (!stylus_in_range_ && previous_stylus_in_range) {
-        phase = mozart::PointerEvent::Phase::REMOVE;
+        phase = input::PointerEventPhase::REMOVE;
       } else if (stylus_in_range_) {
-        phase = mozart::PointerEvent::Phase::HOVER;
+        phase = input::PointerEventPhase::HOVER;
       } else {
         return;
       }
     }
   }
 
-  uint64_t now = input_report->event_time;
+  uint64_t now = input_report.event_time;
 
-  if (phase == mozart::PointerEvent::Phase::UP) {
+  if (phase == input::PointerEventPhase::UP) {
     SendEvent(now, phase,
-              inverted_stylus_ ? mozart::PointerEvent::Type::INVERTED_STYLUS
-                               : mozart::PointerEvent::Type::STYLUS,
+              inverted_stylus_ ? input::PointerEventType::INVERTED_STYLUS
+                               : input::PointerEventType::STYLUS,
               stylus_.x, stylus_.y, stylus_.buttons);
   } else {
     // Quantize the value to [0, 1) based on the resolution.
     float x_denominator =
-        (1 + static_cast<float>(descriptor->x->range->max -
-                                descriptor->x->range->min) /
-                 static_cast<float>(descriptor->x->resolution)) *
-        static_cast<float>(descriptor->x->resolution);
+        (1 + static_cast<float>(descriptor->x.range.max -
+                                descriptor->x.range.min) /
+                 static_cast<float>(descriptor->x.resolution)) *
+        static_cast<float>(descriptor->x.resolution);
     float x =
-        static_cast<float>(display_size.width * (input_report->stylus->x -
-                                                 descriptor->x->range->min)) /
+        static_cast<float>(display_size.width * (input_report.stylus->x -
+                                                 descriptor->x.range.min)) /
         x_denominator;
 
     float y_denominator =
-        (1 + static_cast<float>(descriptor->y->range->max -
-                                descriptor->y->range->min) /
-                 static_cast<float>(descriptor->y->resolution)) *
-        static_cast<float>(descriptor->y->resolution);
+        (1 + static_cast<float>(descriptor->y.range.max -
+                                descriptor->y.range.min) /
+                 static_cast<float>(descriptor->y.resolution)) *
+        static_cast<float>(descriptor->y.resolution);
     float y =
-        static_cast<float>(display_size.height * (input_report->stylus->y -
-                                                  descriptor->y->range->min)) /
+        static_cast<float>(display_size.height * (input_report.stylus->y -
+                                                  descriptor->y.range.min)) /
         y_denominator;
 
     uint32_t buttons = 0;
-    if (input_report->stylus->pressed_buttons & kStylusBarrel) {
-      buttons |= mozart::kStylusPrimaryButton;
+    if (input_report.stylus->pressed_buttons & input::kStylusBarrel) {
+      buttons |= input::kStylusPrimaryButton;
     }
     SendEvent(now, phase,
-              inverted_stylus_ ? mozart::PointerEvent::Type::INVERTED_STYLUS
-                               : mozart::PointerEvent::Type::STYLUS,
+              inverted_stylus_ ? input::PointerEventType::INVERTED_STYLUS
+                               : input::PointerEventType::STYLUS,
               x, y, buttons);
   }
 }
 
 #pragma mark - TouchscreenState
 
-void TouchscreenState::Update(mozart::InputReportPtr input_report,
-                              mozart::Size display_size) {
-  FXL_DCHECK(input_report->touchscreen);
-  mozart::TouchscreenDescriptor* descriptor =
+void TouchscreenState::Update(input::InputReport input_report,
+                              geometry::Size display_size) {
+  FXL_DCHECK(input_report.touchscreen);
+  input::TouchscreenDescriptor* descriptor =
       device_state_->touchscreen_descriptor();
   FXL_DCHECK(descriptor);
 
-  std::vector<mozart::PointerEvent> old_pointers = pointers_;
+  std::vector<input::PointerEvent> old_pointers = pointers_;
   pointers_.clear();
 
-  uint64_t now = input_report->event_time;
+  uint64_t now = input_report.event_time;
 
-  for (auto& touch : input_report->touchscreen->touches) {
-    auto ev = mozart::InputEvent::New();
-    auto pt = mozart::PointerEvent::New();
-    pt->event_time = now;
-    pt->device_id = device_state_->device_id();
-    pt->phase = mozart::PointerEvent::Phase::DOWN;
+  for (auto& touch : *input_report.touchscreen->touches) {
+    input::InputEvent ev;
+    input::PointerEvent pt;
+    pt.event_time = now;
+    pt.device_id = device_state_->device_id();
+    pt.phase = input::PointerEventPhase::DOWN;
     for (auto it = old_pointers.begin(); it != old_pointers.end(); ++it) {
-      FXL_DCHECK(touch->finger_id >= 0);
-      if (it->pointer_id == static_cast<uint32_t>(touch->finger_id)) {
-        pt->phase = mozart::PointerEvent::Phase::MOVE;
+      FXL_DCHECK(touch.finger_id >= 0);
+      if (it->pointer_id == static_cast<uint32_t>(touch.finger_id)) {
+        pt.phase = input::PointerEventPhase::MOVE;
         old_pointers.erase(it);
         break;
       }
     }
 
-    pt->pointer_id = touch->finger_id;
-    pt->type = mozart::PointerEvent::Type::TOUCH;
+    pt.pointer_id = touch.finger_id;
+    pt.type = input::PointerEventType::TOUCH;
 
     // Quantize the value to [0, 1) based on the resolution.
     float x_denominator =
-        (1 + static_cast<float>(descriptor->x->range->max -
-                                descriptor->x->range->min) /
-                 static_cast<float>(descriptor->x->resolution)) *
-        static_cast<float>(descriptor->x->resolution);
+        (1 + static_cast<float>(descriptor->x.range.max -
+                                descriptor->x.range.min) /
+                 static_cast<float>(descriptor->x.resolution)) *
+        static_cast<float>(descriptor->x.resolution);
     float x = static_cast<float>(display_size.width *
-                                 (touch->x - descriptor->x->range->min)) /
+                                 (touch.x - descriptor->x.range.min)) /
               x_denominator;
 
     float y_denominator =
-        (1 + static_cast<float>(descriptor->y->range->max -
-                                descriptor->y->range->min) /
-                 static_cast<float>(descriptor->y->resolution)) *
-        static_cast<float>(descriptor->y->resolution);
+        (1 + static_cast<float>(descriptor->y.range.max -
+                                descriptor->y.range.min) /
+                 static_cast<float>(descriptor->y.resolution)) *
+        static_cast<float>(descriptor->y.resolution);
     float y = static_cast<float>(display_size.height *
-                                 (touch->y - descriptor->y->range->min)) /
+                                 (touch.y - descriptor->y.range.min)) /
               y_denominator;
 
-    uint32_t width = 2 * touch->width;
-    uint32_t height = 2 * touch->height;
+    uint32_t width = 2 * touch.width;
+    uint32_t height = 2 * touch.height;
 
-    pt->x = x;
-    pt->y = y;
-    pt->radius_major = width > height ? width : height;
-    pt->radius_minor = width > height ? height : width;
-    pointers_.push_back(*pt);
+    pt.x = x;
+    pt.y = y;
+    pt.radius_major = width > height ? width : height;
+    pt.radius_minor = width > height ? height : width;
+    pointers_.push_back(pt);
 
     // For now when we get DOWN we need to fake trigger ADD first.
-    if (pt->phase == mozart::PointerEvent::Phase::DOWN) {
-      auto add_ev = ev.Clone();
-      auto add_pt = pt.Clone();
-      add_pt->phase = mozart::PointerEvent::Phase::ADD;
-      add_ev->set_pointer(std::move(add_pt));
+    if (pt.phase == input::PointerEventPhase::DOWN) {
+      input::InputEvent add_ev;
+      zx_status_t clone_result = fidl::Clone(ev, &add_ev);
+      FXL_DCHECK(clone_result);
+      input::PointerEvent add_pt;
+      clone_result = fidl::Clone(pt, &add_pt);
+      FXL_DCHECK(clone_result);
+      add_pt.phase = input::PointerEventPhase::ADD;
+      add_ev.set_pointer(std::move(add_pt));
       device_state_->callback()(std::move(add_ev));
     }
 
-    ev->set_pointer(std::move(pt));
+    ev.set_pointer(std::move(pt));
     device_state_->callback()(std::move(ev));
   }
 
   for (const auto& pointer : old_pointers) {
-    auto ev = mozart::InputEvent::New();
-    auto pt = pointer.Clone();
-    pt->phase = mozart::PointerEvent::Phase::UP;
-    pt->event_time = now;
-    ev->set_pointer(std::move(pt));
+    input::InputEvent ev;
+    input::PointerEvent pt;
+    zx_status_t clone_result = fidl::Clone(pointer, &pt);
+    FXL_DCHECK(clone_result);
+    pt.phase = input::PointerEventPhase::UP;
+    pt.event_time = now;
+    ev.set_pointer(std::move(pt));
     device_state_->callback()(std::move(ev));
 
-    ev = mozart::InputEvent::New();
-    pt = pointer.Clone();
-    pt->phase = mozart::PointerEvent::Phase::REMOVE;
-    pt->event_time = now;
-    ev->set_pointer(std::move(pt));
+    ev = input::InputEvent();
+    clone_result = fidl::Clone(pointer, &pt);
+    FXL_DCHECK(clone_result);
+    pt.phase = input::PointerEventPhase::REMOVE;
+    pt.event_time = now;
+    ev.set_pointer(std::move(pt));
     device_state_->callback()(std::move(ev));
   }
+}
+
+void SensorState::Update(input::InputReport input_report) {
+  FXL_DCHECK(input_report.sensor);
+  FXL_DCHECK(device_state_->sensor_descriptor());
 }
 
 #pragma mark - DeviceState
 
 DeviceState::DeviceState(uint32_t device_id,
-                         mozart::DeviceDescriptor* descriptor,
+                         input::DeviceDescriptor* descriptor,
                          OnEventCallback callback)
     : device_id_(device_id),
       descriptor_(descriptor),
@@ -438,7 +450,8 @@ DeviceState::DeviceState(uint32_t device_id,
       keyboard_(this),
       mouse_(this),
       stylus_(this),
-      touchscreen_(this) {}
+      touchscreen_(this),
+      sensor_(this) {}
 
 DeviceState::~DeviceState() {}
 
@@ -455,6 +468,9 @@ void DeviceState::OnRegistered() {
   if (descriptor_->touchscreen) {
     touchscreen_.OnRegistered();
   }
+  if (descriptor_->sensor) {
+    sensor_.OnRegistered();
+  }
 }
 
 void DeviceState::OnUnregistered() {
@@ -470,18 +486,23 @@ void DeviceState::OnUnregistered() {
   if (descriptor_->touchscreen) {
     touchscreen_.OnUnregistered();
   }
+  if (descriptor_->sensor) {
+    sensor_.OnUnregistered();
+  }
 }
 
-void DeviceState::Update(mozart::InputReportPtr input_report,
-                         mozart::Size display_size) {
-  if (input_report->keyboard && descriptor_->keyboard) {
+void DeviceState::Update(input::InputReport input_report,
+                         geometry::Size display_size) {
+  if (input_report.keyboard && descriptor_->keyboard) {
     keyboard_.Update(std::move(input_report));
-  } else if (input_report->mouse && descriptor_->mouse) {
+  } else if (input_report.mouse && descriptor_->mouse) {
     mouse_.Update(std::move(input_report), display_size);
-  } else if (input_report->stylus && descriptor_->stylus) {
+  } else if (input_report.stylus && descriptor_->stylus) {
     stylus_.Update(std::move(input_report), display_size);
-  } else if (input_report->touchscreen && descriptor_->touchscreen) {
+  } else if (input_report.touchscreen && descriptor_->touchscreen) {
     touchscreen_.Update(std::move(input_report), display_size);
+  } else if (input_report.sensor && descriptor_->sensor) {
+    sensor_.Update(std::move(input_report));
   }
 }
 

@@ -17,7 +17,7 @@
 #include <gtest/gtest.h>
 #include <cstring>
 
-#include "lib/wlan/fidl/wlan_mlme.fidl.h"
+#include <fuchsia/cpp/wlan_mlme.h>
 
 namespace wlan {
 namespace {
@@ -87,27 +87,29 @@ class ScannerTest : public ::testing::Test {
 
    protected:
     void SetupMessages() {
-        req_ = ScanRequest::New();
-        req_->channel_list.push_back(1);
-        resp_ = ScanResponse::New();
+        req_ = wlan_mlme::ScanRequest::New();
+        req_->channel_list.resize(0);
+        req_->channel_list->push_back(1);
     }
 
-    void SetPassive() { req_->scan_type = ScanTypes::PASSIVE; }
+    void SetPassive() { req_->scan_type = wlan_mlme::ScanTypes::PASSIVE; }
 
-    void SetActive() { req_->scan_type = ScanTypes::ACTIVE; }
+    void SetActive() { req_->scan_type = wlan_mlme::ScanTypes::ACTIVE; }
 
-    zx_status_t Start() { return scanner_.Start(*req_.Clone().get()); }
+    zx_status_t Start() {
+        return scanner_.Start(*req_);
+    }
 
     uint16_t CurrentChannel() { return mock_dev_.GetState()->channel().primary; }
 
     zx_status_t DeserializeResponse() {
         EXPECT_EQ(1u, mock_dev_.svc_queue.size());
         auto packet = mock_dev_.svc_queue.Dequeue();
-        return DeserializeServiceMsg<ScanResponse>(*packet, Method::SCAN_confirm, &resp_);
+        return DeserializeServiceMsg<wlan_mlme::ScanResponse>(*packet, wlan_mlme::Method::SCAN_confirm, &resp_);
     }
 
-    ScanRequestPtr req_;
-    ScanResponsePtr resp_;
+    wlan_mlme::ScanRequestPtr req_;
+    wlan_mlme::ScanResponse resp_;
     TestClock clock_;
     MockDevice mock_dev_;
     Scanner scanner_;
@@ -134,8 +136,8 @@ TEST_F(ScannerTest, Start_InvalidChannelTimes) {
     EXPECT_EQ(0u, CurrentChannel());
 
     EXPECT_EQ(ZX_OK, DeserializeResponse());
-    EXPECT_EQ(0u, resp_->bss_description_set.size());
-    EXPECT_EQ(ScanResultCodes::NOT_SUPPORTED, resp_->result_code);
+    EXPECT_EQ(0u, resp_.bss_description_set->size());
+    EXPECT_EQ(wlan_mlme::ScanResultCodes::NOT_SUPPORTED, resp_.result_code);
 }
 
 TEST_F(ScannerTest, Start_NoChannels) {
@@ -149,8 +151,8 @@ TEST_F(ScannerTest, Start_NoChannels) {
     EXPECT_EQ(0u, CurrentChannel());
 
     EXPECT_EQ(ZX_OK, DeserializeResponse());
-    EXPECT_EQ(0u, resp_->bss_description_set.size());
-    EXPECT_EQ(ScanResultCodes::NOT_SUPPORTED, resp_->result_code);
+    EXPECT_EQ(0u, resp_.bss_description_set->size());
+    EXPECT_EQ(wlan_mlme::ScanResultCodes::NOT_SUPPORTED, resp_.result_code);
 }
 
 TEST_F(ScannerTest, Reset) {
@@ -209,8 +211,8 @@ TEST_F(ScannerTest, Timeout_MaxChannelTime) {
     EXPECT_EQ(ZX_OK, scanner_.HandleTimeout());
 
     EXPECT_EQ(ZX_OK, DeserializeResponse());
-    EXPECT_EQ(0u, resp_->bss_description_set.size());
-    EXPECT_EQ(ScanResultCodes::SUCCESS, resp_->result_code);
+    EXPECT_EQ(0u, resp_.bss_description_set->size());
+    EXPECT_EQ(wlan_mlme::ScanResultCodes::SUCCESS, resp_.result_code);
 }
 
 TEST_F(ScannerTest, Timeout_NextChannel) {
@@ -273,19 +275,19 @@ TEST_F(ScannerTest, ScanResponse) {
     EXPECT_EQ(ZX_OK, scanner_.HandleTimeout());
 
     EXPECT_EQ(ZX_OK, DeserializeResponse());
-    ASSERT_EQ(1u, resp_->bss_description_set.size());
-    EXPECT_EQ(ScanResultCodes::SUCCESS, resp_->result_code);
+    ASSERT_EQ(1u, resp_.bss_description_set->size());
+    EXPECT_EQ(wlan_mlme::ScanResultCodes::SUCCESS, resp_.result_code);
 
-    auto bss = resp_->bss_description_set[0].get();
-    EXPECT_EQ(0, std::memcmp(kBeacon + 16, bss->bssid.data(), 6));
-    EXPECT_STREQ("test ssid", bss->ssid.get().c_str());
-    EXPECT_EQ(BSSTypes::INFRASTRUCTURE, bss->bss_type);
-    EXPECT_EQ(100u, bss->beacon_period);
-    EXPECT_EQ(1024u, bss->timestamp);
+    auto& bss = resp_.bss_description_set->at(0);
+    EXPECT_EQ(0, std::memcmp(kBeacon + 16, bss.bssid.data(), 6));
+    EXPECT_STREQ("test ssid", bss.ssid.get().c_str());
+    EXPECT_EQ(wlan_mlme::BSSTypes::INFRASTRUCTURE, bss.bss_type);
+    EXPECT_EQ(100u, bss.beacon_period);
+    EXPECT_EQ(1024u, bss.timestamp);
     // EXPECT_EQ(1u, bss->channel);  // IE missing. info.chan != bss->channel.
-    EXPECT_EQ(10u, bss->rssi_measurement);
-    EXPECT_EQ(0, bss->rcpi_measurement);  // Not reported. Default at 0.
-    EXPECT_EQ(60u, bss->rsni_measurement);
+    EXPECT_EQ(10u, bss.rssi_measurement);
+    EXPECT_EQ(0, bss.rcpi_measurement);  // Not reported. Default at 0.
+    EXPECT_EQ(60u, bss.rsni_measurement);
 }
 
 // TODO(hahnr): add test for active scanning

@@ -18,21 +18,33 @@ class {{ .Name }} {
   {{ .Name }}({{ .Name }}&&);
   {{ .Name }}& operator=({{ .Name }}&&);
 
+  enum class Tag : fidl_union_tag_t {
+  {{- range $index, $member := .Members }}
+    {{ .TagName }} = {{ $index }},
+  {{- end }}
+    Invalid = ::std::numeric_limits<::fidl_union_tag_t>::max(),
+  };
+
+  static inline ::std::unique_ptr<{{ .Name }}> New() { return ::std::make_unique<{{ .Name }}>(); }
+
   void Encode(::fidl::Encoder* encoder, size_t offset);
   static void Decode(::fidl::Decoder* decoder, {{ .Name }}* value, size_t offset);
   zx_status_t Clone({{ .Name }}* result) const;
+
+  bool has_invalid_tag() const { return tag_ == ::std::numeric_limits<::fidl_union_tag_t>::max(); }
+
   {{- range $index, $member := .Members }}
 
   bool is_{{ .Name }}() const { return tag_ == {{ $index }}; }
+  {{ .Type.Decl }}& {{ .Name }}() { return {{ .StorageName }}; }
   const {{ .Type.Decl }}& {{ .Name }}() const { return {{ .StorageName }}; }
-  void set_{{ .Name }}({{ .Type.Decl }} value) {
-    Destroy();
-    tag_ = {{ $index }};
-    {{ .StorageName }} = std::move(value);
-  }
+  void set_{{ .Name }}({{ .Type.Decl }} value);
   {{- end }}
 
+  Tag Which() const { return Tag(tag_); }
+
  private:
+  friend bool operator==(const {{ .Name }}& lhs, const {{ .Name }}& rhs);
   void Destroy();
 
   ::fidl_union_tag_t tag_;
@@ -42,6 +54,13 @@ class {{ .Name }} {
   {{- end }}
   };
 };
+
+bool operator==(const {{ .Name }}& lhs, const {{ .Name }}& rhs);
+inline bool operator!=(const {{ .Name }}& lhs, const {{ .Name }}& rhs) {
+  return !(lhs == rhs);
+}
+
+using {{ .Name }}Ptr = ::std::unique_ptr<{{ .Name }}>;
 {{- end }}
 
 {{- define "UnionDefinition" }}
@@ -55,6 +74,9 @@ class {{ .Name }} {
   switch (tag_) {
   {{- range $index, $member := .Members }}
    case {{ $index }}:
+    {{- if .Type.Dtor }}
+    new (&{{ .StorageName }}) {{ .Type.Decl }}();
+    {{- end }}
     {{ .StorageName }} = std::move(other.{{ .StorageName }});
     break;
   {{- end }}
@@ -65,10 +87,14 @@ class {{ .Name }} {
 
 {{ .Name }}& {{ .Name }}::operator=({{ .Name }}&& other) {
   if (this != &other) {
+    Destroy();
     tag_ = other.tag_;
     switch (tag_) {
     {{- range $index, $member := .Members }}
      case {{ $index }}:
+      {{- if .Type.Dtor }}
+      new (&{{ .StorageName }}) {{ .Type.Decl }}();
+      {{- end }}
       {{ .StorageName }} = std::move(other.{{ .StorageName }});
       break;
     {{- end }}
@@ -93,10 +119,14 @@ void {{ .Name }}::Encode(::fidl::Encoder* encoder, size_t offset) {
 }
 
 void {{ .Name }}::Decode(::fidl::Decoder* decoder, {{ .Name }}* value, size_t offset) {
+  value->Destroy();
   ::fidl::Decode(decoder, &value->tag_, offset);
   switch (value->tag_) {
   {{- range $index, $member := .Members }}
    case {{ $index }}:
+    {{- if .Type.Dtor }}
+    new (&value->{{ .StorageName }}) {{ .Type.Decl }}();
+    {{- end }}
     ::fidl::Decode(decoder, &value->{{ .StorageName }}, offset + {{ .Offset }});
     break;
   {{- end }}
@@ -106,16 +136,47 @@ void {{ .Name }}::Decode(::fidl::Decoder* decoder, {{ .Name }}* value, size_t of
 }
 
 zx_status_t {{ .Name }}::Clone({{ .Name }}* result) const {
+  result->Destroy();
   result->tag_ = tag_;
   switch (tag_) {
     {{- range $index, $member := .Members }}
      case {{ $index }}:
+      {{- if .Type.Dtor }}
+      new (&result->{{ .StorageName }}) {{ .Type.Decl }}();
+      {{- end }}
       return ::fidl::Clone({{ .StorageName }}, &result->{{ .StorageName }});
     {{- end }}
      default:
       return ZX_ERR_INVALID_ARGS;
   }
 }
+
+bool operator==(const {{ .Name }}& lhs, const {{ .Name }}& rhs) {
+  if (lhs.tag_ != rhs.tag_) {
+    return false;
+  }
+  switch (lhs.tag_) {
+    {{- range $index, $member := .Members }}
+     case {{ $index }}:
+      return lhs.{{ .StorageName }} == rhs.{{ .StorageName }};
+    {{- end }}
+     default:
+      return false;
+  }
+}
+
+{{- range $index, $member := .Members }}
+
+void {{ $.Name }}::set_{{ .Name }}({{ .Type.Decl }} value) {
+  Destroy();
+  tag_ = {{ $index }};
+  {{- if .Type.Dtor }}
+  new (&{{ .StorageName }}) {{ .Type.Decl }}();
+  {{- end }}
+  {{ .StorageName }} = std::move(value);
+}
+
+{{- end }}
 
 void {{ .Name }}::Destroy() {
   switch (tag_) {

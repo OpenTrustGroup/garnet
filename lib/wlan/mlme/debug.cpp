@@ -83,7 +83,12 @@ std::string Describe(const FrameHeader& hdr) {
     char buf[1024];
     size_t offset = 0;
 
-    BUFFER("fc: %s dur:%u\n        ", Describe(hdr.fc).c_str(), hdr.duration);
+    BUFFER("[fc] %s dur:%u", Describe(hdr.fc).c_str(), hdr.duration);
+    if (hdr.fc.type() == FrameType::kManagement || hdr.fc.type() == FrameType::kData) {
+        BUFFER("[seq] %s", Describe(hdr.sc).c_str());
+    }
+    BUFFER("\n        ");
+
     // IEEE Std 802.11-2016, Table 9-26
     uint8_t ds = (hdr.fc.to_ds() << 1) + hdr.fc.from_ds();
     switch (ds) {
@@ -106,6 +111,14 @@ std::string Describe(const FrameHeader& hdr) {
     default:
         break;
     }
+
+    return std::string(buf);
+}
+
+std::string Describe(const MgmtFrameHeader& hdr) {
+    char buf[1024];
+    size_t offset = 0;
+    BUFFER("%s", Describe(*reinterpret_cast<const FrameHeader*>(&hdr)).c_str());
 
     return std::string(buf);
 }
@@ -155,7 +168,7 @@ std::string HexDump(const uint8_t bytes[], size_t bytes_len) {
     if (bytes == nullptr || bytes_len == 0) { return "(empty)"; }
 
     // TODO(porce): Support other than 64
-    const size_t kLenLimit = 64;
+    const size_t kLenLimit = 400;
     char buf[kLenLimit * 8];
     size_t offset = 0;
     size_t dump_len = std::min(kLenLimit, bytes_len);
@@ -265,6 +278,9 @@ std::string Describe(Packet::Peer peer) {
 }
 
 std::string Describe(const Packet& p) {
+    std::string suppress_msg = DescribeSuppressed(p);
+    if (!suppress_msg.empty()) { return suppress_msg; }
+
     char buf[2048];
     size_t offset = 0;
     auto has_rxinfo = p.has_ctrl_data<wlan_rx_info_t>();
@@ -294,6 +310,17 @@ std::string Describe(const Packet& p) {
 
     BUFFER("\n  packet data: %s", debug::HexDump(p.data(), p.len()).c_str());
     return std::string(buf);
+}
+
+std::string DescribeSuppressed(const Packet& p) {
+    auto hdr = p.field<FrameHeader>(0);
+
+    if (hdr->fc.type() == FrameType::kManagement &&
+        hdr->fc.subtype() == ManagementSubtype::kBeacon) {
+        return "Beacon. Decoding suppressed.";
+    }
+
+    return "";
 }
 
 }  // namespace debug

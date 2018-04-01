@@ -10,10 +10,10 @@ namespace btlib {
 namespace l2cap {
 namespace testing {
 
-std::unique_ptr<Channel> FakeChannelTest::CreateFakeChannel(
+fbl::RefPtr<FakeChannel> FakeChannelTest::CreateFakeChannel(
     const ChannelOptions& options) {
-  auto fake_chan = std::make_unique<FakeChannel>(
-      options.id, options.conn_handle, options.link_type);
+  auto fake_chan = fbl::AdoptRef(
+      new FakeChannel(options.id, options.conn_handle, options.link_type));
   fake_chan_ = fake_chan->AsWeakPtr();
   return fake_chan;
 }
@@ -25,11 +25,10 @@ bool FakeChannelTest::Expect(const common::ByteBuffer& expected) {
   bool success = false;
   auto cb = [&expected, &success, this](auto cb_packet) {
     success = common::ContainersEqual(expected, *cb_packet);
-    fsl::MessageLoop::GetCurrent()->QuitNow();
   };
 
   fake_chan()->SetSendCallback(cb, message_loop()->task_runner());
-  RunMessageLoop();
+  RunUntilIdle();
 
   return success;
 }

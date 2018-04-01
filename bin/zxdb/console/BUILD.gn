@@ -12,22 +12,31 @@ static_library("console") {
     "command_utils.h",
     "console.cc",
     "console.h",
+    "console_context.cc",
+    "console_context.h",
     "line_input.cc",
     "line_input.h",
     "main_loop.cc",
     "main_loop.h",
+    "memory_format.cc",
+    "memory_format.h",
+    "nouns.cc",
+    "nouns.h",
     "output_buffer.cc",
     "output_buffer.h",
     "verbs.h",
+    "verbs_breakpoint.cc",
     "verbs_control.cc",
     "verbs_memory.cc",
-    "verbs_run.cc",
+    "verbs_process.cc",
     "verbs_system.cc",
+    "verbs_thread.cc",
   ]
 
   deps = []
   public_deps = [
     "//garnet/bin/zxdb/client",
+    "//garnet/public/lib/fxl",
   ]
 
   if (current_toolchain == host_toolchain) {
@@ -51,6 +60,7 @@ source_set("tests") {
     "command_parser_unittest.cc",
     "command_utils_unittest.cc",
     "line_input_unittest.cc",
+    "memory_format_unittest.cc",
   ]
 
   deps = [

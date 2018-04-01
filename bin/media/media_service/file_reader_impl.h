@@ -6,13 +6,13 @@
 
 #include <memory>
 
+#include <fuchsia/cpp/media.h>
 #include <zx/socket.h>
 
 #include "garnet/bin/media/fidl/fidl_default_waiter.h"
 #include "garnet/bin/media/media_service/media_component_factory.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/macros.h"
-#include "lib/media/fidl/seeking_reader.fidl.h"
 
 namespace media {
 
@@ -22,28 +22,22 @@ class FileReaderImpl : public MediaComponentFactory::Product<SeekingReader>,
  public:
   static std::shared_ptr<FileReaderImpl> Create(
       zx::channel file_channel,
-      f1dl::InterfaceRequest<SeekingReader> request,
+      fidl::InterfaceRequest<SeekingReader> request,
       MediaComponentFactory* owner);
 
   ~FileReaderImpl() override;
 
   // SeekingReader implementation.
-  void Describe(const DescribeCallback& callback) override;
+  void Describe(DescribeCallback callback) override;
 
-  void ReadAt(uint64_t position, const ReadAtCallback& callback) override;
+  void ReadAt(uint64_t position, ReadAtCallback callback) override;
 
  private:
   static constexpr size_t kBufferSize = 8192;
 
   FileReaderImpl(fxl::UniqueFD fd,
-                 f1dl::InterfaceRequest<SeekingReader> request,
+                 fidl::InterfaceRequest<SeekingReader> request,
                  MediaComponentFactory* owner);
-
-  // Callback function for WriteToSocket's async wait.
-  static void WriteToSocketStatic(zx_status_t status,
-                                  zx_signals_t pending,
-                                  uint64_t count,
-                                  void* closure);
 
   // Writes data to socket_;
   void WriteToSocket();

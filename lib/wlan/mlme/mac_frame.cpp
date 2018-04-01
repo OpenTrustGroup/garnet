@@ -38,6 +38,7 @@ MgmtFrame<Body> BuildMgmtFrame(fbl::unique_ptr<Packet>* packet, size_t body_payl
                                                 size_t body_payload_len, bool has_ht_ctrl)
 
 DECLARE_BUILD_MGMTFRAME(ProbeRequest);
+DECLARE_BUILD_MGMTFRAME(ProbeResponse);
 DECLARE_BUILD_MGMTFRAME(Beacon);
 DECLARE_BUILD_MGMTFRAME(Authentication);
 DECLARE_BUILD_MGMTFRAME(Deauthentication);
@@ -63,8 +64,9 @@ zx_status_t FillTxInfo(fbl::unique_ptr<Packet>* packet, const MgmtFrameHeader& h
     // TODO(porce): Imeplement rate selection.
     switch (hdr.fc.subtype()) {
     default:
-        txinfo.data_rate = 12;  // 6 Mbps, one of the basic rates.
-        txinfo.mcs = 0x1;       // TODO(porce): Merge data_rate into MCS.
+        txinfo.valid_fields |= WLAN_TX_INFO_VALID_MCS;
+        // txinfo.data_rate = 12;  // 6 Mbps, one of the basic rates.
+        txinfo.mcs = 0x3;  // TODO(NET-645): Choose an optimal MCS
         break;
     }
 

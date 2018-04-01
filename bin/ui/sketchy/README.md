@@ -1,6 +1,6 @@
 # Sketchy Canvas
 
-This package contains implementation for FIDLs in `//garnet/public/lib/ui/fun/sketchy/fidl`. It allows client to draw strokes on a canvas, and generates meshes for `scenic` to render. On one hand, it is a service that handles drawing commands from client. On the other hand, it is client to `scenic` that provides meshes to render.
+This package contains implementation for FIDLs in `//garnet/public/lib/ui/sketchy/fidl`. It allows client to draw strokes on a canvas, and generates meshes for `scenic` to render. On one hand, it is a service that handles drawing commands from client. On the other hand, it is client to `scenic` that provides meshes to render.
 
 * `buffer` contains helper classes for different types of buffers.
 * `resources` contains resources that are defined in `fidl`.
@@ -21,7 +21,7 @@ This package contains implementation for FIDLs in `//garnet/public/lib/ui/fun/sk
 To support dynamic sizing, `capacity` is introduced to describe the total size of the buffer, and `size` is used to describe the actual size that is used. Various buffers are introduced to support different use cases:
 
 * `EscherBuffer` wraps around an `escher::Buffer` and is able to grow dynamically when the content grows. It's used to hold data in `StrokePath` as input to `StrokeTessellator`.
-* `SharedBuffer` is shared between `sketchy` and `scenic`: it wraps around an `escher::Buffer` and the corresponding `scenic::Buffer`. It does NOT change size once created.
+* `SharedBuffer` is shared between `sketchy` and `scenic`: it wraps around an `escher::Buffer` and the corresponding `gfx::Buffer`. It does NOT change size once created.
 * `MeshBuffer` wraps around two `ShardBuffer`'s: one for vertex and the other for index. Dynamic sizing is handled here, rather than `SharedBuffer`, to avoid duplicate semantics.
 
 ### Mesh Buffer
@@ -34,4 +34,4 @@ Multi-buffering is required to handle the case where `scenic` has not fully rend
 
 ![](docs/multi-buffering.png)
 
-Notice that we only recycle `SB1` when `SB2` is consumed for the first time. It's safe to recycle `SB1` because `SB2` starts to get used. However, `SB2` is not yet safe to be recycled because `scenic` keeps consuming `SB2` for rendering the following frames (for example, some other `SB` triggers a `scenic::Present()` but `SB2` has its content unchanged). In that case, we have no signal when `SB2` is finally consumed until a new `SB3` comes and replaces it.
+Notice that we only recycle `SB1` when `SB2` is consumed for the first time. It's safe to recycle `SB1` because `SB2` starts to get used. However, `SB2` is not yet safe to be recycled because `scenic` keeps consuming `SB2` for rendering the following frames (for example, some other `SB` triggers a `ui::Session::Present()` but `SB2` has its content unchanged). In that case, we have no signal when `SB2` is finally consumed until a new `SB3` comes and replaces it.

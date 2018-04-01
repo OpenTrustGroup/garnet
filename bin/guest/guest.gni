@@ -4,6 +4,10 @@
 
 import("//build/package.gni")
 
+declare_args() {
+  guest_display = "scenic"
+}
+
 # Defines a guest package.
 #
 # Parameters
@@ -11,7 +15,7 @@ import("//build/package.gni")
 #     Path to the Zircon kernel. Either "zircon" or "linux" must be specified.
 #   linux (string, optional)
 #     Path to the Linux kernel. Either "zircon" or "linux" must be specified.
-#   ramdisk (string, required)
+#   ramdisk (string, optional)
 #     Path to a ramdisk file to be loaded into the guest.
 #   cmdline (string, optional)
 #     Kernel cmdline string.
@@ -20,7 +24,6 @@ import("//build/package.gni")
 #
 template("guest_app") {
   assert(defined(invoker.zircon) || defined(invoker.linux), "")
-  assert(defined(invoker.ramdisk), "")
 
   guest_config_target_name = "${target_name}_guest_config"
   guest_config_file = "${target_out_dir}/guest.cfg"
@@ -33,23 +36,42 @@ template("guest_app") {
 
     args = []
     if (defined(invoker.zircon)) {
-      args += ["--zircon", "/pkg/data/kernel"]
+      args += [
+        "--zircon",
+        "/pkg/data/kernel",
+      ]
     }
     if (defined(invoker.linux)) {
-      args += ["--linux", "/pkg/data/kernel"]
+      args += [
+        "--linux",
+        "/pkg/data/kernel",
+      ]
     }
     if (defined(invoker.ramdisk)) {
-      args += ["--ramdisk", "/pkg/data/ramdisk"]
+      args += [
+        "--ramdisk",
+        "/pkg/data/ramdisk",
+      ]
     }
     if (defined(invoker.cmdline)) {
-      args += ["--cmdline", invoker.cmdline]
+      args += [
+        "--cmdline",
+        invoker.cmdline,
+      ]
     }
     if (defined(invoker.block_devices)) {
       foreach(block_spec, invoker.block_devices) {
-        args += ["--block", block_spec]
+        args += [
+          "--block",
+          block_spec,
+        ]
       }
     }
-    args += [ rebase_path("$guest_config_file") ]
+    args += [
+      "--display",
+      guest_display,
+      rebase_path("$guest_config_file"),
+    ]
   }
 
   package(target_name) {
@@ -115,14 +137,16 @@ template("guest_app") {
     }
 
     # Add ramdisk resource.
-    ramdisk = rebase_path(invoker.ramdisk)
-    inputs += [ ramdisk ]
-    resources += [
-      {
-        path = ramdisk
-        dest = "ramdisk"
-      },
-    ]
+    if (defined(invoker.ramdisk)) {
+      ramdisk = rebase_path(invoker.ramdisk)
+      inputs += [ ramdisk ]
+      resources += [
+        {
+          path = ramdisk
+          dest = "ramdisk"
+        },
+      ]
+    }
 
     resources += [
       {

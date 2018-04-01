@@ -9,7 +9,7 @@
     <import remote="https://fuchsia.googlesource.com/third_party/boringssl"
             manifest="manifest"
             name="third_party/boringssl"
-            revision="6bd4c58ab7b8445249bb9f44b6da8864e1dff60c"/>
+            revision="e27fe63dc4e88bf7b5ffa3e27c3fc8b3dcbc1807"/>
   </imports>
   <projects>
     <!-- Third Party -->
@@ -23,8 +23,8 @@
 
     <project name="external/github.com/catapult-project/catapult"
              path="third_party/catapult"
-             remote="https://chromium.googlesource.com/external/github.com/catapult-project/catapult"
-             revision="99ec8187805e3ab807dac86c1ef0a1b07be9d1a6"/>
+             remote="https://chromium.googlesource.com/catapult"
+             revision="b3d01529c06b695b32501a0b25dbac5761a12ff6"/>
     <project name="libc-tests"
              path="third_party/libc-tests"
              remote="https://fuchsia.googlesource.com/libc-tests"
@@ -44,7 +44,7 @@
     <project name="cobalt"
              path="third_party/cobalt"
              remote="https://fuchsia.googlesource.com/cobalt"
-             revision="eb0db6be33504835e5aa0f14ce7599c1f67ed087"
+             revision="f309d774e0bbbc84eea86839057c8252fa9d831a"
              gerrithost="https://fuchsia-review.googlesource.com"/>
     <project name="cobalt_config"
              path="third_party/cobalt_config"
@@ -90,7 +90,7 @@
     <project name="third_party/go"
              remote="https://fuchsia.googlesource.com/third_party/go"
              gerrithost="https://fuchsia-review.googlesource.com"
-             revision="eb15022e8e5d64d865dede5a12308ec10b892828"
+             revision="1873e082e4b7a8528a327ed3be2d58d0d01af2dc"
              path="third_party/go"/>
     <project name="go_x_crypto"
              path="third_party/golang/crypto"
@@ -158,7 +158,7 @@
     <project name="third_party/mesa"
              path="third_party/mesa"
              remote="https://fuchsia.googlesource.com/third_party/mesa"
-             revision="3bc756cf5ade60451cdc140f3cd7065591962ec0"
+             revision="9394a51bd195b093805c3fcc62139e85f81a8b6b"
              gerrithost="https://fuchsia-review.googlesource.com"/>
     <project name="third_party/mini_chromium"
              path="third_party/crashpad/third_party/mini_chromium/mini_chromium"
@@ -244,6 +244,7 @@
     <project name="third_party/vulkan_loader_and_validation_layers"
              path="third_party/vulkan_loader_and_validation_layers"
              remote="https://fuchsia.googlesource.com/third_party/vulkan_loader_and_validation_layers"
+             revision="59aa7ed0be55f0b8674032aeb33cba57ef99a24a"
              gerrithost="https://fuchsia-review.googlesource.com"/>
     <project name="third_party/yasm"
              path="third_party/yasm"

@@ -24,6 +24,7 @@
 static constexpr uintptr_t kKernelOffset = 0x80000;
 #elif __x86_64__
 static constexpr uintptr_t kKernelOffset = 0x200000;
+#include "garnet/lib/machina/arch/x86/acpi.h"
 #include "garnet/lib/machina/arch/x86/e820.h"
 #endif
 
@@ -125,17 +126,15 @@ static bool is_mz(const MzHeader* header) {
          header->pe_off >= sizeof(MzHeader);
 }
 
-static zx_status_t read_fd(const int fd,
-                           const machina::PhysMem& phys_mem,
-                           const uintptr_t off,
-                           size_t* file_size) {
+static zx_status_t read_fd(const int fd, const machina::PhysMem& phys_mem,
+                           const uintptr_t off, size_t* file_size) {
   struct stat stat;
   ssize_t ret = fstat(fd, &stat);
   if (ret < 0) {
     FXL_LOG(ERROR) << "Failed to stat file";
     return ZX_ERR_IO;
   }
-  ret = read(fd, phys_mem.ptr(off, stat.st_size), stat.st_size);
+  ret = read(fd, phys_mem.as<void>(off, stat.st_size), stat.st_size);
   if (ret != stat.st_size) {
     FXL_LOG(ERROR) << "Failed to read file";
     return ZX_ERR_IO;
@@ -201,7 +200,8 @@ static zx_status_t write_boot_params(const machina::PhysMem& phys_mem,
     return ZX_ERR_OUT_OF_RANGE;
   }
   uint32_t cmdline_off = phys_mem.size() - PAGE_SIZE;
-  memcpy(phys_mem.ptr(cmdline_off, cmdline_len), cmdline.c_str(), cmdline_len);
+  memcpy(phys_mem.as<void>(cmdline_off, cmdline_len), cmdline.c_str(),
+         cmdline_len);
   bp(phys_mem, COMMAND_LINE) = cmdline_off;
 
 #if __aarch64__
@@ -222,17 +222,24 @@ static zx_status_t write_boot_params(const machina::PhysMem& phys_mem,
 static zx_status_t read_mz(const machina::PhysMem& phys_mem,
                            uintptr_t* guest_ip) {
   MzHeader* mz_header = phys_mem.as<MzHeader>(kKernelOffset);
-  if (!is_mz(mz_header))
+  if (!is_mz(mz_header)) {
     return ZX_ERR_NOT_SUPPORTED;
+  }
 
   *guest_ip = kKernelOffset;
   return ZX_OK;
 }
 
+static void device_tree_error_msg(const char* property_name) {
+  FXL_LOG(ERROR) << "Failed to add \"" << property_name << "\" to device "
+                 << "tree, space must be reserved in the device tree";
+}
+
 static zx_status_t load_device_tree(const int fd,
                                     const machina::PhysMem& phys_mem,
                                     const std::string& cmdline,
-                                    const size_t initrd_size) {
+                                    const size_t initrd_size,
+                                    uint8_t num_cpus) {
   size_t dtb_size;
   zx_status_t status = read_fd(fd, phys_mem, kDtbOffset, &dtb_size);
   if (status != ZX_OK) {
@@ -245,7 +252,7 @@ static zx_status_t load_device_tree(const int fd,
   }
 
   // Validate device tree.
-  void* dtb = phys_mem.ptr(kDtbOffset, dtb_size);
+  void* dtb = phys_mem.as<void>(kDtbOffset, dtb_size);
   int ret = fdt_check_header(dtb);
   if (ret < 0) {
     FXL_LOG(ERROR) << "Invalid device tree";
@@ -260,42 +267,68 @@ static zx_status_t load_device_tree(const int fd,
   // Add command line to device tree.
   ret = fdt_setprop_string(dtb, off, "bootargs", cmdline.c_str());
   if (ret < 0) {
-    FXL_LOG(ERROR)
-        << "Failed to add \"bootargs\" property to device tree, space must be "
-           "reserved in the device tree";
     return ZX_ERR_BAD_STATE;
   }
   // Add the memory range of the initial RAM disk.
   ret = fdt_setprop_u64(dtb, off, "linux,initrd-start", kRamdiskOffset);
   if (ret < 0) {
-    FXL_LOG(ERROR)
-        << "Failed to add \"linux,initrd-start\" property to device tree, "
-           "space must be reserved in the device tree";
+    device_tree_error_msg("linux,initrd-start");
     return ZX_ERR_BAD_STATE;
   }
   ret = fdt_setprop_u64(dtb, off, "linux,initrd-end",
                         kRamdiskOffset + initrd_size);
   if (ret < 0) {
-    FXL_LOG(ERROR)
-        << "Failed to add \"linux,initrd-end\" property to device tree, space "
-           "must be reserved in the device tree";
+    device_tree_error_msg("linux,initrd-end");
     return ZX_ERR_BAD_STATE;
   }
+
+  int cpus_off = fdt_path_offset(dtb, "/cpus");
+  if (cpus_off < 0) {
+    FXL_LOG(ERROR) << "Failed to find \"/cpus\" in device tree";
+    return ZX_ERR_BAD_STATE;
+  }
+  for (uint8_t cpu = 0; cpu != num_cpus; ++cpu) {
+    char subnode_name[10];
+    sprintf(subnode_name, "cpu@%u", cpu);
+    int cpu_off = fdt_add_subnode(dtb, cpus_off, subnode_name);
+    if (cpu_off < 0) {
+      device_tree_error_msg("cpu");
+      return ZX_ERR_BAD_STATE;
+    }
+    ret = fdt_setprop_string(dtb, cpu_off, "device_type", "cpu");
+    if (ret < 0) {
+      device_tree_error_msg("device_type");
+      return ZX_ERR_BAD_STATE;
+    }
+    ret = fdt_setprop_string(dtb, cpu_off, "compatible", "arm,armv8");
+    if (ret < 0) {
+      device_tree_error_msg("compatible");
+      return ZX_ERR_BAD_STATE;
+    }
+    ret = fdt_setprop_u32(dtb, cpu_off, "reg", cpu);
+    if (ret < 0) {
+      device_tree_error_msg("reg");
+      return ZX_ERR_BAD_STATE;
+    }
+    ret = fdt_setprop_string(dtb, cpu_off, "enable-method", "psci");
+    if (ret < 0) {
+      device_tree_error_msg("enable-method");
+      return ZX_ERR_BAD_STATE;
+    }
+  }
+
   return ZX_OK;
 }
 
-static std::string linux_cmdline(std::string cmdline, uintptr_t acpi_off) {
+static std::string linux_cmdline(std::string cmdline) {
 #if __x86_64__
-  fxl::StringAppendf(&cmdline, " acpi_rsdp=%#lx", acpi_off);
+  fxl::StringAppendf(&cmdline, " acpi_rsdp=%#lx", machina::kAcpiOffset);
 #endif
   return cmdline;
 }
 
-zx_status_t setup_linux(const GuestConfig cfg,
-                        const machina::PhysMem& phys_mem,
-                        const uintptr_t acpi_off,
-                        uintptr_t* guest_ip,
-                        uintptr_t* boot_ptr) {
+zx_status_t setup_linux(const GuestConfig cfg, const machina::PhysMem& phys_mem,
+                        uintptr_t* guest_ip, uintptr_t* boot_ptr) {
   // Read the kernel image.
   zx_status_t status = load_kernel(cfg.kernel_path(), phys_mem, kKernelOffset);
   if (status != ZX_OK) {
@@ -319,7 +352,7 @@ zx_status_t setup_linux(const GuestConfig cfg,
     }
   }
 
-  std::string cmdline = linux_cmdline(cfg.cmdline(), acpi_off);
+  std::string cmdline = linux_cmdline(cfg.cmdline());
   if (is_boot_params(phys_mem)) {
     status = read_boot_params(phys_mem, guest_ip);
     if (status != ZX_OK) {
@@ -340,7 +373,8 @@ zx_status_t setup_linux(const GuestConfig cfg,
       FXL_LOG(ERROR) << "Failed to open device tree " << kDtbPath;
       return ZX_ERR_IO;
     }
-    status = load_device_tree(dtb_fd.get(), phys_mem, cmdline, initrd_size);
+    status = load_device_tree(dtb_fd.get(), phys_mem, cmdline, initrd_size,
+                              cfg.num_cpus());
     if (status != ZX_OK) {
       return status;
     }

@@ -2,55 +2,49 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <iostream>
-#include <ostream>
-
 #include "garnet/bin/trace/app.h"
 
-#include "garnet/bin/trace/commands/dump_provider.h"
 #include "garnet/bin/trace/commands/list_categories.h"
-#include "garnet/bin/trace/commands/list_providers.h"
 #include "garnet/bin/trace/commands/record.h"
+#include "lib/fxl/logging.h"
 
 namespace tracing {
 
-App::App(app::ApplicationContext* context) : Command(context) {
-  RegisterCommand(DumpProvider::Describe());
+App::App(component::ApplicationContext* context) : Command(context) {
   RegisterCommand(ListCategories::Describe());
-  RegisterCommand(ListProviders::Describe());
   RegisterCommand(Record::Describe());
 }
 
 App::~App() {}
 
-void App::Run(const fxl::CommandLine& command_line, OnDoneCallback on_done) {
+void App::Start(const fxl::CommandLine& command_line) {
   if (command_line.HasOption("help")) {
     PrintHelp();
-    on_done(0);
+    Done(0);
     return;
   }
 
   const auto& positional_args = command_line.positional_args();
 
   if (positional_args.empty()) {
-    err() << "Command missing - aborting" << std::endl;
+    FXL_LOG(ERROR) << "Command missing - aborting";
     PrintHelp();
-    on_done(1);
+    Done(1);
     return;
   }
 
   auto it = known_commands_.find(positional_args.front());
   if (it == known_commands_.end()) {
-    err() << "Unknown command '" << positional_args.front() << "' - aborting"
-          << std::endl;
+    FXL_LOG(ERROR) << "Unknown command '" << positional_args.front()
+                   << "' - aborting";
     PrintHelp();
-    on_done(1);
+    Done(1);
     return;
   }
 
   if (!context()->has_environment_services()) {
-    err() << "Cannot access application environment services" << std::endl;
-    on_done(1);
+    FXL_LOG(ERROR) << "Cannot access application environment services";
+    Done(1);
     return;
   }
 
@@ -58,9 +52,7 @@ void App::Run(const fxl::CommandLine& command_line, OnDoneCallback on_done) {
   command_->Run(fxl::CommandLineFromIteratorsWithArgv0(
                     positional_args.front(), positional_args.begin() + 1,
                     positional_args.end()),
-                [on_done = std::move(on_done)](int32_t return_code) {
-                  on_done(return_code);
-                });
+                [this](int32_t return_code) { Done(return_code); });
 }
 
 void App::RegisterCommand(Command::Info info) {

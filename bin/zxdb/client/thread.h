@@ -6,9 +6,13 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <string>
 
 #include "garnet/bin/zxdb/client/client_object.h"
+#include "garnet/bin/zxdb/client/thread_observer.h"
+#include "garnet/lib/debug_ipc/protocol.h"
 #include "garnet/public/lib/fxl/macros.h"
+#include "garnet/public/lib/fxl/observer_list.h"
 
 namespace zxdb {
 
@@ -16,21 +20,28 @@ class Process;
 
 class Thread : public ClientObject {
  public:
+  explicit Thread(Session* session);
   ~Thread() override;
 
-  Process* process() const { return process_; }
-  size_t thread_id() const { return thread_id_; }
-  uint64_t koid() const { return koid_; }
+  void AddObserver(ThreadObserver* observer);
+  void RemoveObserver(ThreadObserver* observer);
+
+  // Guaranteed non-null.
+  virtual Process* GetProcess() const = 0;
+
+  virtual uint64_t GetKoid() const = 0;
+  virtual const std::string& GetName() const = 0;
+  virtual debug_ipc::ThreadRecord::State GetState() const = 0;
+
+  // Resumes this thread only (other threads in the process which are suspended
+  // will remain so).
+  virtual void Continue() = 0;
+
+ protected:
+  fxl::ObserverList<ThreadObserver>& observers() { return observers_; }
 
  private:
-  friend Process;
-
-  // Only the Process can create this object.
-  Thread(Process* process, size_t thread_id, uint64_t koid);
-
-  Process* process_;  // Process that owns us.
-  size_t thread_id_;
-  uint64_t koid_;
+  fxl::ObserverList<ThreadObserver> observers_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Thread);
 };

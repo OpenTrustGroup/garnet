@@ -7,8 +7,8 @@
 #include <zx/vmar.h>
 #include <zx/vmo.h>
 
-#include "lib/ui/scenic/fidl_helpers.h"
 #include "lib/fxl/logging.h"
+#include "lib/ui/scenic/fidl_helpers.h"
 
 namespace scenic_lib {
 namespace {
@@ -28,9 +28,8 @@ std::pair<zx::vmo, fxl::RefPtr<HostData>> AllocateMemory(size_t size) {
 
   // Drop rights before we transfer the VMO to the session manager.
   zx::vmo remote_vmo;
-  status = local_vmo.replace(
-      ZX_RIGHTS_BASIC | ZX_RIGHT_READ | ZX_RIGHT_MAP,
-      &remote_vmo);
+  status = local_vmo.replace(ZX_RIGHTS_BASIC | ZX_RIGHT_READ | ZX_RIGHT_MAP,
+                             &remote_vmo);
   FXL_CHECK(status == ZX_OK) << "replace rights failed: status=" << status;
   return std::make_pair(std::move(remote_vmo), std::move(data));
 }
@@ -60,7 +59,7 @@ HostMemory::HostMemory(Session* session, size_t size)
 
 HostMemory::HostMemory(Session* session,
                        std::pair<zx::vmo, fxl::RefPtr<HostData>> init)
-    : Memory(session, std::move(init.first), scenic::MemoryType::HOST_MEMORY),
+    : Memory(session, std::move(init.first), images::MemoryType::HOST_MEMORY),
       data_(std::move(init.second)) {}
 
 HostMemory::HostMemory(HostMemory&& moved)
@@ -70,7 +69,7 @@ HostMemory::~HostMemory() = default;
 
 HostImage::HostImage(const HostMemory& memory,
                      off_t memory_offset,
-                     scenic::ImageInfoPtr info)
+                     images::ImageInfo info)
     : HostImage(memory.session(),
                 memory.id(),
                 memory_offset,
@@ -81,7 +80,7 @@ HostImage::HostImage(Session* session,
                      uint32_t memory_id,
                      off_t memory_offset,
                      fxl::RefPtr<HostData> data,
-                     scenic::ImageInfoPtr info)
+                     images::ImageInfo info)
     : Image(session, memory_id, memory_offset, std::move(info)),
       data_(std::move(data)) {}
 
@@ -95,29 +94,30 @@ HostImagePool::HostImagePool(Session* session, uint32_t num_images)
 
 HostImagePool::~HostImagePool() = default;
 
-bool HostImagePool::Configure(const scenic::ImageInfo* image_info) {
+// TODO(mikejurka): Double-check these changes
+bool HostImagePool::Configure(const images::ImageInfo* image_info) {
   if (image_info) {
-    if (image_info_ && image_info->Equals(*image_info_.get()))
+    if (configured_ && ImageInfoEquals(*image_info, image_info_)) {
       return false;  // no change
-    if (!image_info_)
-      image_info_ = image_info->Clone();
-    else
-      *image_info_ = *image_info;
+    }
+    configured_ = true;
+    image_info_ = *image_info;
   } else {
-    if (!image_info_)
+    if (!configured_) {
       return false;  // no change
-    image_info_.reset();
+    }
+    configured_ = false;
   }
 
   for (uint32_t i = 0; i < num_images(); i++)
     image_ptrs_[i].reset();
 
-  if (image_info_) {
-    FXL_DCHECK(image_info_->width > 0);
-    FXL_DCHECK(image_info_->height > 0);
-    FXL_DCHECK(image_info_->stride > 0);
+  if (configured_) {
+    FXL_DCHECK(image_info_.width > 0);
+    FXL_DCHECK(image_info_.height > 0);
+    FXL_DCHECK(image_info_.stride > 0);
 
-    size_t desired_size = Image::ComputeSize(*image_info_);
+    size_t desired_size = Image::ComputeSize(image_info_);
     for (uint32_t i = 0; i < num_images(); i++) {
       if (memory_ptrs_[i] && !CanReuseMemory(*memory_ptrs_[i], desired_size))
         memory_ptrs_[i].reset();
@@ -132,16 +132,16 @@ const HostImage* HostImagePool::GetImage(uint32_t index) {
   if (image_ptrs_[index])
     return image_ptrs_[index].get();
 
-  if (!image_info_)
+  if (!configured_)
     return nullptr;
 
   if (!memory_ptrs_[index]) {
-    memory_ptrs_[index] = std::make_unique<HostMemory>(
-        session_, Image::ComputeSize(*image_info_));
+    memory_ptrs_[index] =
+        std::make_unique<HostMemory>(session_, Image::ComputeSize(image_info_));
   }
 
-  image_ptrs_[index] = std::make_unique<HostImage>(*memory_ptrs_[index], 0u,
-                                                   image_info_.Clone());
+  image_ptrs_[index] =
+      std::make_unique<HostImage>(*memory_ptrs_[index], 0u, image_info_);
   return image_ptrs_[index].get();
 }
 

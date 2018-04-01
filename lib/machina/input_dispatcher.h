@@ -15,6 +15,8 @@ namespace machina {
 enum class InputEventType {
   KEYBOARD,
   BARRIER,
+  POINTER,
+  BUTTON,
 };
 
 enum class KeyState {
@@ -27,19 +29,40 @@ struct KeyEvent {
   KeyState state;
 };
 
+enum class PointerType {
+  RELATIVE,
+  ABSOLUTE,
+};
+
+struct PointerEvent {
+  float x;
+  float y;
+  PointerType type;
+};
+
+enum class Button {
+  BTN_MOUSE_PRIMARY,
+  BTN_MOUSE_SECONDARY,
+  BTN_MOUSE_TERTIARY,
+};
+
+struct ButtonEvent {
+  Button button;
+  KeyState state;
+};
+
 struct InputEvent {
   InputEventType type;
   union {
     KeyEvent key;
+    PointerEvent pointer;
+    ButtonEvent button;
   };
 };
 
-// The InputDispatcher maintains a queue of pending InputEvents. This class
-// serves as a point of indirection between components that generate input
-// events, and devices that consume them.
-class InputDispatcher {
+class InputEventQueue {
  public:
-  InputDispatcher(size_t queue_depth);
+  InputEventQueue(size_t queue_depth);
 
   // Adds an input event the the queue. If the queue is full the oldest element
   // will be overwritten.
@@ -59,6 +82,22 @@ class InputDispatcher {
   fbl::Array<InputEvent> pending_ __TA_GUARDED(mutex_);
   size_t index_ __TA_GUARDED(mutex_) = 0;
   size_t size_ __TA_GUARDED(mutex_) = 0;
+};
+
+// The InputDispatcher maintains InputEventQueues of pending InputEvents. This
+// class serves as a point of indirection between components that generate input
+// events, and devices that consume them.
+class InputDispatcher {
+ public:
+  InputDispatcher(size_t queue_depth)
+      : keyboard_(queue_depth), pointer_(queue_depth) {}
+
+  InputEventQueue* Keyboard() { return &keyboard_; }
+  InputEventQueue* Pointer() { return &pointer_; }
+
+ private:
+  InputEventQueue keyboard_;
+  InputEventQueue pointer_;
 };
 
 }  // namespace machina

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "address_space.h"
+#include "gtt.h"
 
 std::unique_ptr<GpuMapping> AddressSpace::MapBufferGpu(std::shared_ptr<AddressSpace> address_space,
                                                        std::shared_ptr<MsdIntelBuffer> buffer,
@@ -36,8 +37,8 @@ std::unique_ptr<GpuMapping> AddressSpace::MapBufferGpu(std::shared_ptr<AddressSp
     DASSERT((align_pow2 & ~0xFF) == 0);
     DASSERT(magma::is_page_aligned(length));
 
-    if (!buffer->platform_buffer()->PinPages(offset / PAGE_SIZE, length / PAGE_SIZE))
-        return DRETP(nullptr, "failed to pin pages");
+    if (!buffer->platform_buffer()->CommitPages(offset / PAGE_SIZE, length / PAGE_SIZE))
+        return DRETP(nullptr, "failed to commit pages");
 
     gpu_addr_t gpu_addr;
     if (!address_space->Alloc(length, static_cast<uint8_t>(align_pow2), &gpu_addr))
@@ -47,11 +48,28 @@ std::unique_ptr<GpuMapping> AddressSpace::MapBufferGpu(std::shared_ptr<AddressSp
          "0x%lx",
          offset, length, alignment, static_cast<uint32_t>(align_pow2), gpu_addr);
 
-    if (!address_space->Insert(gpu_addr, buffer->platform_buffer(), offset, length, CACHING_LLC))
-        return DRETP(nullptr, "failed to insert into address_space");
+    uint64_t page_offset = offset / PAGE_SIZE;
+    uint32_t page_count = length / PAGE_SIZE;
+
+    std::unique_ptr<magma::PlatformBuffer::BusMapping> bus_mapping =
+        buffer->platform_buffer()->MapPageRangeBus(page_offset, page_count);
+    if (!bus_mapping)
+        return DRETP(nullptr, "failed to bus map the page range");
+
+    if (address_space->type() == ADDRESS_SPACE_PPGTT) {
+        if (!address_space->Insert(gpu_addr, bus_mapping.get(), page_offset, page_count,
+                                   CACHING_LLC))
+            return DRETP(nullptr, "failed to insert into address_space");
+
+    } else {
+        if (!static_cast<Gtt*>(address_space.get())
+                 ->GlobalGttInsert(gpu_addr, buffer->platform_buffer(), bus_mapping.get(),
+                                   page_offset, page_count, CACHING_LLC))
+            return DRETP(nullptr, "failed to insert into address_space");
+    }
 
     return std::unique_ptr<GpuMapping>(
-        new GpuMapping(address_space, buffer, offset, length, gpu_addr));
+        new GpuMapping(address_space, buffer, offset, length, gpu_addr, std::move(bus_mapping)));
 }
 
 std::shared_ptr<GpuMapping>

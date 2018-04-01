@@ -7,11 +7,11 @@
 #include <memory>
 #include <vector>
 
+#include <fuchsia/cpp/media.h>
 #include "garnet/bin/media/media_service/media_component_factory.h"
 #include "garnet/bin/media/util/callback_joiner.h"
 #include "garnet/bin/media/util/fidl_publisher.h"
-#include "lib/fidl/cpp/bindings/binding.h"
-#include "lib/media/fidl/timeline_controller.fidl.h"
+#include "lib/fidl/cpp/binding.h"
 #include "lib/media/timeline/timeline.h"
 #include "lib/media/timeline/timeline_function.h"
 
@@ -25,38 +25,37 @@ class MediaTimelineControllerImpl
       public TimelineConsumer {
  public:
   static std::shared_ptr<MediaTimelineControllerImpl> Create(
-      f1dl::InterfaceRequest<MediaTimelineController> request,
+      fidl::InterfaceRequest<MediaTimelineController> request,
       MediaComponentFactory* owner);
 
   ~MediaTimelineControllerImpl() override;
 
   // MediaTimelineController implementation.
   void AddControlPoint(
-      f1dl::InterfaceHandle<MediaTimelineControlPoint> control_point) override;
+      fidl::InterfaceHandle<MediaTimelineControlPoint> control_point) override;
 
   void GetControlPoint(
-      f1dl::InterfaceRequest<MediaTimelineControlPoint> control_point) override;
+      fidl::InterfaceRequest<MediaTimelineControlPoint> control_point) override;
 
   // MediaTimelineControlPoint implementation.
   void GetStatus(uint64_t version_last_seen,
-                 const GetStatusCallback& callback) override;
+                 GetStatusCallback callback) override;
 
   void GetTimelineConsumer(
-      f1dl::InterfaceRequest<TimelineConsumer> timeline_consumer) override;
+      fidl::InterfaceRequest<TimelineConsumer> timeline_consumer) override;
 
   void SetProgramRange(uint64_t program,
                        int64_t min_pts,
                        int64_t max_pts) override;
 
-  void Prime(const PrimeCallback& callback) override;
+  void Prime(PrimeCallback callback) override;
 
   // TimelineConsumer implementation.
-  void SetTimelineTransform(
-      TimelineTransformPtr timeline_transform,
-      const SetTimelineTransformCallback& callback) override;
+  void SetTimelineTransform(TimelineTransform timeline_transform,
+                            SetTimelineTransformCallback callback) override;
 
   void SetTimelineTransformNoReply(
-      TimelineTransformPtr timeline_transform) override;
+      TimelineTransform timeline_transform) override;
 
  private:
   static constexpr int64_t kDefaultLeadTime = Timeline::ns_from_ms(30);
@@ -68,9 +67,8 @@ class MediaTimelineControllerImpl
 
     ~ControlPointState();
 
-    void HandleStatusUpdates(
-        uint64_t version = MediaTimelineControlPoint::kInitialStatus,
-        MediaTimelineControlPointStatusPtr status = nullptr);
+    void HandleStatusUpdates(uint64_t version = kInitialStatus,
+                             MediaTimelineControlPointStatus* status = nullptr);
 
     MediaTimelineControllerImpl* parent_;
     MediaTimelineControlPointPtr control_point_;
@@ -81,11 +79,11 @@ class MediaTimelineControllerImpl
   class TimelineTransition
       : public std::enable_shared_from_this<TimelineTransition> {
    public:
-    TimelineTransition(int64_t reference_time,
-                       int64_t subject_time,
-                       uint32_t reference_delta,
+    TimelineTransition(int64_t subject_time,
+                       int64_t reference_time,
                        uint32_t subject_delta,
-                       const SetTimelineTransformCallback& callback);
+                       uint32_t reference_delta,
+                       SetTimelineTransformCallback callback);
 
     ~TimelineTransition();
 
@@ -145,14 +143,14 @@ class MediaTimelineControllerImpl
   };
 
   MediaTimelineControllerImpl(
-      f1dl::InterfaceRequest<MediaTimelineController> request,
+      fidl::InterfaceRequest<MediaTimelineController> request,
       MediaComponentFactory* owner);
 
   // Takes action when a control point changes its end-of-stream value.
   void HandleControlPointEndOfStreamChange();
 
-  f1dl::Binding<MediaTimelineControlPoint> control_point_binding_;
-  f1dl::Binding<TimelineConsumer> consumer_binding_;
+  fidl::Binding<MediaTimelineControlPoint> control_point_binding_;
+  fidl::Binding<TimelineConsumer> consumer_binding_;
   FidlPublisher<GetStatusCallback> status_publisher_;
   std::vector<std::unique_ptr<ControlPointState>> control_point_states_;
   TimelineFunction current_timeline_function_;

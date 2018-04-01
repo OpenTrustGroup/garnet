@@ -14,10 +14,10 @@
 #include "garnet/bin/media/media_service/media_component_factory.h"
 #include "garnet/bin/media/util/fidl_publisher.h"
 #include "garnet/bin/media/util/incident.h"
-#include "lib/fidl/cpp/bindings/binding.h"
+#include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/tasks/task_runner.h"
-#include "lib/media/fidl/media_source.fidl.h"
-#include "lib/media/fidl/seeking_reader.fidl.h"
+#include <fuchsia/cpp/media.h>
+#include <fuchsia/cpp/media.h>
 
 namespace media {
 
@@ -26,29 +26,29 @@ class MediaDemuxImpl : public MediaComponentFactory::Product<MediaSource>,
                        public MediaSource {
  public:
   static std::shared_ptr<MediaDemuxImpl> Create(
-      f1dl::InterfaceHandle<SeekingReader> reader,
-      f1dl::InterfaceRequest<MediaSource> request,
+      fidl::InterfaceHandle<SeekingReader> reader,
+      fidl::InterfaceRequest<MediaSource> request,
       MediaComponentFactory* owner);
 
   ~MediaDemuxImpl() override;
 
   // MediaSource implementation.
-  void Describe(const DescribeCallback& callback) override;
+  void Describe(DescribeCallback callback) override;
 
   void GetPacketProducer(
       uint32_t stream_index,
-      f1dl::InterfaceRequest<MediaPacketProducer> producer) override;
+      fidl::InterfaceRequest<MediaPacketProducer> producer) override;
 
   void GetStatus(uint64_t version_last_seen,
-                 const GetStatusCallback& callback) override;
+                 GetStatusCallback callback) override;
 
-  void Flush(bool hold_frame, const FlushCallback& callback) override;
+  void Flush(bool hold_frame, FlushCallback callback) override;
 
-  void Seek(int64_t position, const SeekCallback& callback) override;
+  void Seek(int64_t position, SeekCallback callback) override;
 
  private:
-  MediaDemuxImpl(f1dl::InterfaceHandle<SeekingReader> reader,
-                 f1dl::InterfaceRequest<MediaSource> request,
+  MediaDemuxImpl(fidl::InterfaceHandle<SeekingReader> reader,
+                 fidl::InterfaceRequest<MediaSource> request,
                  MediaComponentFactory* owner);
 
   class Stream {
@@ -69,7 +69,7 @@ class MediaDemuxImpl : public MediaComponentFactory::Product<MediaSource>,
 
     // Binds the producer.
     void BindPacketProducer(
-        f1dl::InterfaceRequest<MediaPacketProducer> producer);
+        fidl::InterfaceRequest<MediaPacketProducer> producer);
 
     // Tells the producer to flush its connection.
     void FlushConnection(

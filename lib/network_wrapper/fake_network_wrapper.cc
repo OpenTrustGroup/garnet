@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "garnet/lib/callback/cancellable_helper.h"
+#include "lib/fidl/cpp/optional.h"
 #include "lib/fsl/socket/strings.h"
 #include "lib/fxl/functional/make_copyable.h"
 
@@ -21,18 +22,20 @@ network::URLRequest* FakeNetworkWrapper::GetRequest() {
   return request_received_.get();
 }
 
-void FakeNetworkWrapper::ResetRequest() { request_received_.reset(); }
+void FakeNetworkWrapper::ResetRequest() {
+  request_received_.reset();
+}
 
-void FakeNetworkWrapper::SetResponse(network::URLResponsePtr response) {
-  response_to_return_ = std::move(response);
+void FakeNetworkWrapper::SetResponse(network::URLResponse response) {
+  response_to_return_ = fidl::MakeOptional(std::move(response));
 }
 
 void FakeNetworkWrapper::SetSocketResponse(zx::socket body,
                                            uint32_t status_code) {
-  network::URLResponsePtr server_response = network::URLResponse::New();
-  server_response->body = network::URLBody::New();
-  server_response->body->set_stream(std::move(body));
-  server_response->status_code = status_code;
+  network::URLResponse server_response;
+  server_response.body = network::URLBody::New();
+  server_response.body->set_stream(std::move(body));
+  server_response.status_code = status_code;
   SetResponse(std::move(server_response));
 }
 
@@ -42,8 +45,8 @@ void FakeNetworkWrapper::SetStringResponse(const std::string& body,
 }
 
 fxl::RefPtr<callback::Cancellable> FakeNetworkWrapper::Request(
-    std::function<network::URLRequestPtr()> request_factory,
-    std::function<void(network::URLResponsePtr)> callback) {
+    std::function<network::URLRequest()> request_factory,
+    std::function<void(network::URLResponse)> callback) {
   std::unique_ptr<bool> cancelled = std::make_unique<bool>(false);
 
   bool* cancelled_ptr = cancelled.get();
@@ -57,8 +60,9 @@ fxl::RefPtr<callback::Cancellable> FakeNetworkWrapper::Request(
                           callback = cancellable->WrapCallback(callback),
                           request_factory = std::move(request_factory)] {
     if (!*cancelled_ptr) {
-      request_received_ = request_factory();
-      callback(std::move(response_to_return_));
+      request_received_ = fidl::MakeOptional(request_factory());
+      callback(std::move(*response_to_return_));
+      response_to_return_.reset();
     }
   });
   return cancellable;

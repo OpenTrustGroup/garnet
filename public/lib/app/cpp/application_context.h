@@ -10,15 +10,15 @@
 #include <memory>
 
 #include "lib/app/cpp/service_provider_impl.h"
-#include "lib/app/fidl/application_environment.fidl.h"
-#include "lib/app/fidl/application_launcher.fidl.h"
-#include "lib/app/fidl/application_runner.fidl.h"
-#include "lib/app/fidl/service_provider.fidl.h"
-#include "lib/fidl/cpp/bindings/interface_handle.h"
-#include "lib/fidl/cpp/bindings/interface_request.h"
+#include <fuchsia/cpp/component.h>
+#include <fuchsia/cpp/component.h>
+#include <fuchsia/cpp/component.h>
+#include <fuchsia/cpp/component.h>
+#include "lib/fidl/cpp/interface_handle.h"
+#include "lib/fidl/cpp/interface_request.h"
 #include "lib/svc/cpp/service_namespace.h"
 
-namespace app {
+namespace component {
 
 // Provides access to the application's environment and allows the application
 // to publish outgoing services back to its creator.
@@ -48,7 +48,7 @@ class ApplicationContext {
   static std::unique_ptr<ApplicationContext> CreateFromStartupInfoNotChecked();
 
   static std::unique_ptr<ApplicationContext> CreateFrom(
-      ApplicationStartupInfoPtr startup_info);
+      ApplicationStartupInfo startup_info);
 
   // Gets the application's environment.
   //
@@ -104,9 +104,9 @@ class ApplicationContext {
   // Connects to a service provided by the application's environment,
   // returning an interface pointer.
   template <typename Interface>
-  f1dl::InterfacePtr<Interface> ConnectToEnvironmentService(
+  fidl::InterfacePtr<Interface> ConnectToEnvironmentService(
       const std::string& interface_name = Interface::Name_) {
-    f1dl::InterfacePtr<Interface> interface_ptr;
+    fidl::InterfacePtr<Interface> interface_ptr;
     ConnectToEnvironmentService(interface_name,
                                 interface_ptr.NewRequest().TakeChannel());
     return interface_ptr;
@@ -116,7 +116,7 @@ class ApplicationContext {
   // binding the service to an interface request.
   template <typename Interface>
   void ConnectToEnvironmentService(
-      f1dl::InterfaceRequest<Interface> request,
+      fidl::InterfaceRequest<Interface> request,
       const std::string& interface_name = Interface::Name_) {
     ConnectToEnvironmentService(interface_name, request.TakeChannel());
   }
@@ -143,6 +143,6 @@ class ApplicationContext {
   FXL_DISALLOW_COPY_AND_ASSIGN(ApplicationContext);
 };
 
-}  // namespace app
+}  // namespace component
 
 #endif  // LIB_APP_CPP_APPLICATION_CONTEXT_H_

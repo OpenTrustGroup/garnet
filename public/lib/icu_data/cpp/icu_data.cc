@@ -6,10 +6,10 @@
 
 #include <zx/vmar.h>
 
+#include <fuchsia/cpp/icu_data.h>
 #include "lib/app/cpp/application_context.h"
 #include "lib/fsl/vmo/sized_vmo.h"
 #include "lib/icu_data/cpp/constants.h"
-#include "lib/icu_data/fidl/icu_data.fidl.h"
 #include "third_party/icu/source/common/unicode/udata.h"
 
 namespace icu_data {
@@ -49,7 +49,7 @@ uintptr_t GetDataFromVMO(const fsl::SizedVmo& vmo, size_t* size_out) {
 // Then, initializes ICU with the data received.
 //
 // Return value indicates if initialization was successful.
-bool Initialize(app::ApplicationContext* context) {
+bool Initialize(component::ApplicationContext* context) {
   if (g_icu_data_ptr) {
     // Don't allow calling Initialize twice.
     return false;

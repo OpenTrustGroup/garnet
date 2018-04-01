@@ -12,7 +12,6 @@
 #include <fbl/alloc_checker.h>
 #include <fbl/auto_call.h>
 #include <fbl/auto_lock.h>
-#include <virtio/virtio_ids.h>
 
 #include "garnet/lib/machina/bits.h"
 #include "lib/fxl/logging.h"
@@ -171,31 +170,35 @@ const uint8_t kKeyMap[] = {
 // Make sure to report only these event codes from keyboard.
 // Reporting other keycodes may cause guest OS to recognize keyboard as
 // touchpad, stylus or joystick.
-constexpr int kATKeyboardFirstCode = 0;
-constexpr int kATKeyboardLastCode = 255;
-constexpr int kMediaKeyboardFirstCode = 0x160;
-constexpr int kMediaKeyboardLastCode = 0x2bf;
+constexpr uint32_t kATKeyboardFirstCode = 0;
+constexpr uint32_t kATKeyboardLastCode = 255;
+constexpr uint32_t kMediaKeyboardFirstCode = 0x160;
+constexpr uint32_t kMediaKeyboardLastCode = 0x2bf;
+constexpr uint32_t kButtonMousePrimaryCode = 0x110;
+constexpr uint32_t kButtonMouseSecondaryCode = 0x111;
+constexpr uint32_t kButtonMouseTertiaryCode = 0x112;
 
-VirtioInput::VirtioInput(InputDispatcher* input_dispatcher,
+VirtioInput::VirtioInput(InputEventQueue* event_queue,
                          const PhysMem& phys_mem,
                          const char* device_name,
                          const char* device_serial)
-    : VirtioDevice(VIRTIO_ID_INPUT,
-                   &config_,
-                   sizeof(config_),
-                   queues_,
-                   VIRTIO_INPUT_Q_COUNT,
-                   phys_mem),
-      input_dispatcher_(input_dispatcher),
+    : VirtioDeviceBase(phys_mem),
       device_name_(device_name),
-      device_serial_(device_serial) {}
+      device_serial_(device_serial),
+      event_queue_(event_queue) {}
+
+static void SetConfigBit(uint32_t event_code, virtio_input_config_t* config) {
+  config->u.bitmap[event_code / 8] |= 1u << (event_code % 8);
+}
 
 zx_status_t VirtioInput::WriteConfig(uint64_t addr, const IoValue& value) {
-  zx_status_t status = VirtioDevice::WriteConfig(addr, value);
-  if (status != ZX_OK)
+  zx_status_t status = VirtioDeviceBase::WriteConfig(addr, value);
+  if (status != ZX_OK) {
     return status;
-  if (addr >= 2)
+  }
+  if (addr >= 2) {
     return ZX_OK;
+  }
 
   //  A write to select or subselect modifies the contents of the config.u
   //  field.
@@ -215,41 +218,7 @@ zx_status_t VirtioInput::WriteConfig(uint64_t addr, const IoValue& value) {
       memcpy(&config_.u, device_serial_, len);
       return ZX_OK;
     }
-
-    // VIRTIO_INPUT_CFG_EV_BITS: subsel specifies the event type (EV_*).
-    // If size is non-zero the event type is supported and a bitmap the of
-    // supported event codes is returned in u.bitmap.
-    case VIRTIO_INPUT_CFG_EV_BITS: {
-      if (config_.subsel == VIRTIO_INPUT_EV_KEY) {
-        // Say we support all key events. This isn't true but it's
-        // simple.
-        static_assert(kATKeyboardFirstCode % 8 == 0,
-                      "First scan code must be byte aligned.");
-        static_assert((kATKeyboardLastCode + 1 - kATKeyboardFirstCode) % 8 == 0,
-                      "Scan code range must be byte aligned.");
-        static_assert(kMediaKeyboardFirstCode % 8 == 0,
-                      "First scan code must be byte aligned.");
-        static_assert(
-            (kMediaKeyboardLastCode + 1 - kMediaKeyboardFirstCode) % 8 == 0,
-            "Scan code range must be byte aligned.");
-        static_assert((kATKeyboardLastCode + 7) / 8 <
-                      sizeof(virtio_input_config_t().u.bitmap),
-                      "Last scan code cannot exceed allowed range.");
-        static_assert((kMediaKeyboardLastCode + 7) / 8 <
-                      sizeof(virtio_input_config_t().u.bitmap),
-                      "Last scan code cannot exceed allowed range.");
-
-
-        memset(&config_.u, 0, sizeof(config_.u));
-        memset(&config_.u.bitmap[kATKeyboardFirstCode / 8], 0xff,
-               (kATKeyboardLastCode + 1 - kATKeyboardFirstCode) / 8);
-        memset(&config_.u.bitmap[kMediaKeyboardFirstCode / 8], 0xff,
-               (kMediaKeyboardLastCode + 1 - kMediaKeyboardFirstCode) / 8);
-        config_.size = sizeof(config_.u);
-        return ZX_OK;
-      }
-      // Fall-through.
-    }
+    case VIRTIO_INPUT_CFG_EV_BITS:
     case VIRTIO_INPUT_CFG_UNSET:
     case VIRTIO_INPUT_CFG_ID_DEVIDS:
     case VIRTIO_INPUT_CFG_PROP_BITS:
@@ -264,10 +233,80 @@ zx_status_t VirtioInput::WriteConfig(uint64_t addr, const IoValue& value) {
   return ZX_OK;
 }
 
+zx_status_t VirtioKeyboard::WriteConfig(uint64_t addr, const IoValue& value) {
+  zx_status_t status = VirtioInput::WriteConfig(addr, value);
+  if (status != ZX_OK) {
+    return status;
+  }
+  fbl::AutoLock lock(&config_mutex_);
+  if (config_.select != VIRTIO_INPUT_CFG_EV_BITS) {
+    return ZX_OK;
+  }
+
+  // VIRTIO_INPUT_CFG_EV_BITS: subsel specifies the event type (EV_*).
+  // If size is non-zero the event type is supported and a bitmap the of
+  // supported event codes is returned in u.bitmap.
+  if (config_.subsel == VIRTIO_INPUT_EV_KEY) {
+    static_assert(kATKeyboardFirstCode % 8 == 0,
+                  "First scan code must be byte aligned.");
+    static_assert((kATKeyboardLastCode + 1 - kATKeyboardFirstCode) % 8 == 0,
+                  "Scan code range must be byte aligned.");
+    static_assert(kMediaKeyboardFirstCode % 8 == 0,
+                  "First scan code must be byte aligned.");
+    static_assert(
+        (kMediaKeyboardLastCode + 1 - kMediaKeyboardFirstCode) % 8 == 0,
+        "Scan code range must be byte aligned.");
+    static_assert((kATKeyboardLastCode + 7) / 8 <
+                      sizeof(virtio_input_config_t().u.bitmap),
+                  "Last scan code cannot exceed allowed range.");
+    static_assert((kMediaKeyboardLastCode + 7) / 8 <
+                      sizeof(virtio_input_config_t().u.bitmap),
+                  "Last scan code cannot exceed allowed range.");
+
+    memset(&config_.u, 0, sizeof(config_.u));
+    memset(&config_.u.bitmap[kATKeyboardFirstCode / 8], 0xff,
+           (kATKeyboardLastCode + 1 - kATKeyboardFirstCode) / 8);
+    memset(&config_.u.bitmap[kMediaKeyboardFirstCode / 8], 0xff,
+           (kMediaKeyboardLastCode + 1 - kMediaKeyboardFirstCode) / 8);
+    config_.size = sizeof(config_.u);
+  }
+
+  return ZX_OK;
+}
+
+zx_status_t VirtioRelativePointer::WriteConfig(uint64_t addr,
+                                               const IoValue& value) {
+  zx_status_t status = VirtioInput::WriteConfig(addr, value);
+  if (status != ZX_OK) {
+    return status;
+  }
+  fbl::AutoLock lock(&config_mutex_);
+  if (config_.select != VIRTIO_INPUT_CFG_EV_BITS) {
+    return ZX_OK;
+  }
+
+  // VIRTIO_INPUT_CFG_EV_BITS: subsel specifies the event type (EV_*).
+  // If size is non-zero the event type is supported and a bitmap the of
+  // supported event codes is returned in u.bitmap.
+  if (config_.subsel == VIRTIO_INPUT_EV_KEY) {
+    SetConfigBit(kButtonMousePrimaryCode, &config_);
+    SetConfigBit(kButtonMouseSecondaryCode, &config_);
+    SetConfigBit(kButtonMouseTertiaryCode, &config_);
+    config_.size = sizeof(config_.u);
+  } else if (config_.subsel == VIRTIO_INPUT_EV_REL) {
+    memset(&config_.u, 0, sizeof(config_.u));
+    SetConfigBit(VIRTIO_INPUT_EV_REL_X, &config_);
+    SetConfigBit(VIRTIO_INPUT_EV_REL_Y, &config_);
+    config_.size = 1;
+  }
+
+  return ZX_OK;
+}
+
 zx_status_t VirtioInput::Start() {
   thrd_t thread;
   auto poll_thread = [](void* arg) {
-    return reinterpret_cast<VirtioInput*>(arg)->PollInputDispatcher();
+    return reinterpret_cast<VirtioInput*>(arg)->PollEventQueue();
   };
   int ret = thrd_create_with_name(&thread, poll_thread, this, "virtio-input");
   if (ret != thrd_success) {
@@ -280,9 +319,9 @@ zx_status_t VirtioInput::Start() {
   return ZX_OK;
 }
 
-zx_status_t VirtioInput::PollInputDispatcher() {
+zx_status_t VirtioInput::PollEventQueue() {
   while (true) {
-    InputEvent event = input_dispatcher_->Wait();
+    InputEvent event = event_queue_->Wait();
     zx_status_t status = OnInputEvent(event);
     if (status != ZX_OK) {
       return status;
@@ -296,6 +335,10 @@ zx_status_t VirtioInput::OnInputEvent(const InputEvent& event) {
       return OnBarrierEvent();
     case InputEventType::KEYBOARD:
       return OnKeyEvent(event.key);
+    case InputEventType::POINTER:
+      return OnPointerEvent(event.pointer);
+    case InputEventType::BUTTON:
+      return OnButtonEvent(event.button);
     default:
       return ZX_ERR_NOT_SUPPORTED;
   }
@@ -315,6 +358,43 @@ zx_status_t VirtioInput::OnKeyEvent(const KeyEvent& key_event) {
   return SendVirtioEvent(virtio_event);
 }
 
+zx_status_t VirtioInput::OnPointerEvent(const PointerEvent& pointer_event) {
+  virtio_input_event_t x_event, y_event;
+  x_event.type = VIRTIO_INPUT_EV_REL;
+  x_event.code = VIRTIO_INPUT_EV_REL_X;
+  x_event.value = static_cast<int32_t>(pointer_event.x);
+  y_event.type = VIRTIO_INPUT_EV_REL;
+  y_event.code = VIRTIO_INPUT_EV_REL_Y;
+  y_event.value = static_cast<int32_t>(pointer_event.y);
+  zx_status_t status = SendVirtioEvent(x_event);
+  if (status != ZX_OK) {
+    return status;
+  }
+  return SendVirtioEvent(y_event);
+}
+
+zx_status_t VirtioInput::OnButtonEvent(const ButtonEvent& button_event) {
+  virtio_input_event_t virtio_event;
+  switch (button_event.button) {
+    case machina::Button::BTN_MOUSE_PRIMARY:
+      virtio_event.code = kButtonMousePrimaryCode;
+      break;
+    case machina::Button::BTN_MOUSE_SECONDARY:
+      virtio_event.code = kButtonMouseSecondaryCode;
+      break;
+    case machina::Button::BTN_MOUSE_TERTIARY:
+      virtio_event.code = kButtonMouseSecondaryCode;
+      break;
+    default:
+      return ZX_OK;
+  }
+  virtio_event.type = VIRTIO_INPUT_EV_KEY;
+  virtio_event.value = button_event.state == KeyState::PRESSED
+                           ? VIRTIO_INPUT_EV_KEY_PRESSED
+                           : VIRTIO_INPUT_EV_KEY_RELEASED;
+  return SendVirtioEvent(virtio_event);
+}
+
 zx_status_t VirtioInput::OnBarrierEvent() {
   virtio_input_event_t virtio_event = {};
   virtio_event.type = VIRTIO_INPUT_EV_SYN;
@@ -327,10 +407,10 @@ zx_status_t VirtioInput::OnBarrierEvent() {
 
 zx_status_t VirtioInput::SendVirtioEvent(const virtio_input_event_t& event) {
   uint16_t head;
-  event_queue().Wait(&head);
+  event_queue()->Wait(&head);
 
   virtio_desc_t desc;
-  zx_status_t status = event_queue().ReadDesc(head, &desc);
+  zx_status_t status = event_queue()->ReadDesc(head, &desc);
   if (status != ZX_OK) {
     return status;
   }
@@ -338,7 +418,9 @@ zx_status_t VirtioInput::SendVirtioEvent(const virtio_input_event_t& event) {
   auto event_out = static_cast<virtio_input_event_t*>(desc.addr);
   memcpy(event_out, &event, sizeof(event));
 
-  event_queue().Return(head, sizeof(event));
+  // To be less chatty, we'll only send interrupts on barrier events.
+  event_queue()->Return(head, sizeof(event),
+                        VirtioQueue::InterruptAction::SET_FLAGS);
   return ZX_OK;
 }
 

@@ -17,31 +17,30 @@ CanvasImpl::CanvasImpl(scenic_lib::Session* session, escher::Escher* escher)
       shared_buffer_pool_(session, escher),
       stroke_manager_(escher) {}
 
-void CanvasImpl::Init(f1dl::InterfaceHandle<sketchy::CanvasListener> listener) {
+void CanvasImpl::Init(fidl::InterfaceHandle<sketchy::CanvasListener> listener) {
   // TODO(MZ-269): unimplemented.
   FXL_LOG(ERROR) << "Init: unimplemented.";
 }
 
-void CanvasImpl::Enqueue(f1dl::Array<sketchy::OpPtr> ops) {
-  // TODO: Use `AddAll()` when f1dl::Array supports it.
-  for (auto& op : ops) {
-    ops_.push_back(std::move(op));
+void CanvasImpl::Enqueue(fidl::VectorPtr<sketchy::Command> commands) {
+  // TODO: Use `AddAll()` when fidl::VectorPtr supports it.
+  for (size_t i = 0; i < commands->size(); ++i) {
+    commands_.push_back(std::move(commands->at(i)));
   }
 }
 
-void CanvasImpl::Present(uint64_t presentation_time,
-                         const PresentCallback& callback) {
+void CanvasImpl::Present(uint64_t presentation_time, PresentCallback callback) {
   // TODO(MZ-269): Present() should behave the same way as Scenic. Specifically,
-  // Ops shouldn't be applied immediately. Instead a frame-request should be
-  // triggered and the Ops enqueue; when the corresponding frame is processed
-  // all Ops that are scheduled for the current frame's presentation time are
-  // applied.
-  for (auto& op : ops_) {
-    if (!ApplyOp(op)) {
+  // Commands shouldn't be applied immediately. Instead a frame-request should
+  // be triggered and the Commands enqueue; when the corresponding frame is
+  // processed all Commands that are scheduled for the current frame's
+  // presentation time are applied.
+  for (auto it = commands_->begin(); it != commands_->end(); ++it) {
+    if (!ApplyCommand(std::move(*it))) {
       fsl::MessageLoop::GetCurrent()->QuitNow();
     }
   }
-  ops_.reset();
+  commands_.reset();
   callbacks_.push_back(std::move(callback));
   RequestScenicPresent(presentation_time);
 }
@@ -52,17 +51,14 @@ void CanvasImpl::RequestScenicPresent(uint64_t presentation_time) {
   }
   is_scenic_present_requested_ = true;
 
-  auto session_callback = [this, callbacks = std::move(callbacks_)](
-                              ui_mozart::PresentationInfoPtr info) {
+  auto session_callback = [ this, callbacks = std::move(callbacks_) ](
+      images::PresentationInfo info) {
     FXL_DCHECK(is_scenic_present_requested_);
     is_scenic_present_requested_ = false;
     for (auto& callback : callbacks) {
-      auto _info = ui_mozart::PresentationInfo::New();
-      _info->presentation_time = _info->presentation_time;
-      _info->presentation_interval = _info->presentation_interval;
-      callback(std::move(_info));
+      callback(info);
     }
-    RequestScenicPresent(info->presentation_time + info->presentation_interval);
+    RequestScenicPresent(info.presentation_time + info.presentation_interval);
   };
   callbacks_.clear();
 
@@ -73,163 +69,165 @@ void CanvasImpl::RequestScenicPresent(uint64_t presentation_time) {
   }
 
   stroke_manager_.Update(&frame);
-  frame.RequestScenicPresent(
-      session_, presentation_time, std::move(session_callback));
+  frame.RequestScenicPresent(session_, presentation_time,
+                             std::move(session_callback));
 }
 
-bool CanvasImpl::ApplyOp(const sketchy::OpPtr& op) {
-  switch (op->which()) {
-    case sketchy::Op::Tag::CREATE_RESOURCE:
-      return ApplyCreateResourceOp(op->get_create_resource());
-    case sketchy::Op::Tag::RELEASE_RESOURCE:
-      return ApplyReleaseResourceOp(op->get_release_resource());
-    case sketchy::Op::Tag::SET_PATH:
-      return ApplySetPathOp(op->get_set_path());
-    case sketchy::Op::Tag::ADD_STROKE:
-      return ApplyAddStrokeOp(op->get_add_stroke());
-    case sketchy::Op::Tag::REMOVE_STROKE:
-      return ApplyRemoveStrokeOp(op->get_remove_stroke());
-    case sketchy::Op::Tag::BEGIN_STROKE:
-      return ApplyBeginStrokeOp(op->get_begin_stroke());
-    case sketchy::Op::Tag::EXTEND_STROKE:
-      return ApplyExtendStrokeOp(op->get_extend_stroke());
-    case sketchy::Op::Tag::FINISH_STROKE:
-      return ApplyFinishStrokeOp(op->get_finish_stroke());
-    case sketchy::Op::Tag::CLEAR_GROUP:
-      return ApplyClearGroupOp(op->get_clear_group());
-    case sketchy::Op::Tag::SCENIC_IMPORT_RESOURCE:
-      return ApplyScenicImportResourceOp(op->get_scenic_import_resource());
-    case sketchy::Op::Tag::SCENIC_ADD_CHILD:
-      return ApplyScenicAddChildOp(op->get_scenic_add_child());
+bool CanvasImpl::ApplyCommand(sketchy::Command command) {
+  switch (command.Which()) {
+    case sketchy::Command::Tag::kCreateResource:
+      return ApplyCreateResourceCommand(std::move(command.create_resource()));
+    case sketchy::Command::Tag::kReleaseResource:
+      return ApplyReleaseResourceCommand(std::move(command.release_resource()));
+    case sketchy::Command::Tag::kSetPath:
+      return ApplySetPathCommand(std::move(command.set_path()));
+    case sketchy::Command::Tag::kAddStroke:
+      return ApplyAddStrokeCommand(std::move(command.add_stroke()));
+    case sketchy::Command::Tag::kRemoveStroke:
+      return ApplyRemoveStrokeCommand(std::move(command.remove_stroke()));
+    case sketchy::Command::Tag::kBeginStroke:
+      return ApplyBeginStrokeCommand(std::move(command.begin_stroke()));
+    case sketchy::Command::Tag::kExtendStroke:
+      return ApplyExtendStrokeCommand(std::move(command.extend_stroke()));
+    case sketchy::Command::Tag::kFinishStroke:
+      return ApplyFinishStrokeCommand(std::move(command.finish_stroke()));
+    case sketchy::Command::Tag::kClearGroup:
+      return ApplyClearGroupCommand(std::move(command.clear_group()));
+    case sketchy::Command::Tag::kScenicImportResource:
+      return ApplyScenicImportResourceCommand(
+          std::move(command.scenic_import_resource()));
+    case sketchy::Command::Tag::kScenicAddChild:
+      return ApplyScenicAddChildCommand(std::move(command.scenic_add_child()));
     default:
       FXL_DCHECK(false) << "Unsupported op: "
-                        << static_cast<uint32_t>(op->which());
+                        << static_cast<uint32_t>(command.Which());
       return false;
   }
 }
 
-bool CanvasImpl::ApplyCreateResourceOp(
-    const sketchy::CreateResourceOpPtr& create_resource) {
-  switch (create_resource->args->which()) {
-    case sketchy::ResourceArgs::Tag::STROKE:
-      return CreateStroke(create_resource->id,
-                          create_resource->args->get_stroke());
-    case sketchy::ResourceArgs::Tag::STROKE_GROUP:
-      return CreateStrokeGroup(create_resource->id,
-                               create_resource->args->get_stroke_group());
+bool CanvasImpl::ApplyCreateResourceCommand(
+    sketchy::CreateResourceCommand create_resource) {
+  switch (create_resource.args.Which()) {
+    case sketchy::ResourceArgs::Tag::kStroke:
+      return CreateStroke(create_resource.id, create_resource.args.stroke());
+    case sketchy::ResourceArgs::Tag::kStrokeGroup:
+      return CreateStrokeGroup(create_resource.id,
+                               create_resource.args.stroke_group());
     default:
       FXL_DCHECK(false) << "Unsupported resource: "
-                        << static_cast<uint32_t>(
-                               create_resource->args->which());
+                        << static_cast<uint32_t>(create_resource.args.Which());
       return false;
   }
 }
 
-bool CanvasImpl::CreateStroke(ResourceId id, const sketchy::StrokePtr& stroke) {
+bool CanvasImpl::CreateStroke(ResourceId id, sketchy::Stroke stroke) {
   return resource_map_.AddResource(
-      id,
-      fxl::MakeRefCounted<Stroke>(stroke_manager_.stroke_tessellator(),
-                                  shared_buffer_pool_.factory()));
+      id, fxl::MakeRefCounted<Stroke>(stroke_manager_.stroke_tessellator(),
+                                      shared_buffer_pool_.factory()));
 }
 
-bool CanvasImpl::CreateStrokeGroup(
-    ResourceId id,
-    const sketchy::StrokeGroupPtr& stroke_group) {
-  return resource_map_.AddResource(
-      id, fxl::MakeRefCounted<StrokeGroup>(session_));
+bool CanvasImpl::CreateStrokeGroup(ResourceId id,
+                                   sketchy::StrokeGroup stroke_group) {
+  return resource_map_.AddResource(id,
+                                   fxl::MakeRefCounted<StrokeGroup>(session_));
 }
 
-bool CanvasImpl::ApplyReleaseResourceOp(
-    const sketchy::ReleaseResourceOpPtr& op) {
-  return resource_map_.RemoveResource(op->id);
+bool CanvasImpl::ApplyReleaseResourceCommand(
+    sketchy::ReleaseResourceCommand command) {
+  return resource_map_.RemoveResource(command.id);
 }
 
-bool CanvasImpl::ApplySetPathOp(const sketchy::SetStrokePathOpPtr& op) {
-  auto stroke = resource_map_.FindResource<Stroke>(op->stroke_id);
+bool CanvasImpl::ApplySetPathCommand(sketchy::SetStrokePathCommand command) {
+  auto stroke = resource_map_.FindResource<Stroke>(command.stroke_id);
   if (!stroke) {
-    FXL_LOG(ERROR) << "No Stroke of id " << op->stroke_id << " was found!";
+    FXL_LOG(ERROR) << "No Stroke of id " << command.stroke_id << " was found!";
     return false;
   }
   return stroke_manager_.SetStrokePath(
-      stroke, std::make_unique<StrokePath>(std::move(op->path)));
+      stroke, std::make_unique<StrokePath>(std::move(command.path)));
 }
 
-bool CanvasImpl::ApplyAddStrokeOp(const sketchy::AddStrokeOpPtr& op) {
-  auto stroke = resource_map_.FindResource<Stroke>(op->stroke_id);
+bool CanvasImpl::ApplyAddStrokeCommand(sketchy::AddStrokeCommand command) {
+  auto stroke = resource_map_.FindResource<Stroke>(command.stroke_id);
   if (!stroke) {
-    FXL_LOG(ERROR) << "No Stroke of id " << op->stroke_id << " was found!";
+    FXL_LOG(ERROR) << "No Stroke of id " << command.stroke_id << " was found!";
     return false;
   }
-  auto group = resource_map_.FindResource<StrokeGroup>(op->group_id);
+  auto group = resource_map_.FindResource<StrokeGroup>(command.group_id);
   if (!group) {
-    FXL_LOG(ERROR) << "No StrokeGroup of id " << op->group_id << " was found!";
+    FXL_LOG(ERROR) << "No StrokeGroup of id " << command.group_id
+                   << " was found!";
     return false;
   }
   return stroke_manager_.AddStrokeToGroup(stroke, group);
 }
 
-bool CanvasImpl::ApplyRemoveStrokeOp(const sketchy::RemoveStrokeOpPtr& op) {
-  auto stroke = resource_map_.FindResource<Stroke>(op->stroke_id);
+bool CanvasImpl::ApplyRemoveStrokeCommand(
+    sketchy::RemoveStrokeCommand command) {
+  auto stroke = resource_map_.FindResource<Stroke>(command.stroke_id);
   if (!stroke) {
-    FXL_LOG(ERROR) << "No Stroke of id " << op->stroke_id << " was found!";
+    FXL_LOG(ERROR) << "No Stroke of id " << command.stroke_id << " was found!";
     return false;
   }
-  auto group = resource_map_.FindResource<StrokeGroup>(op->group_id);
+  auto group = resource_map_.FindResource<StrokeGroup>(command.group_id);
   if (!group) {
-    FXL_LOG(ERROR) << "No StrokeGroup of id " << op->group_id << " was found!";
+    FXL_LOG(ERROR) << "No StrokeGroup of id " << command.group_id
+                   << " was found!";
     return false;
   }
   return stroke_manager_.RemoveStrokeFromGroup(stroke, group);
 }
 
-bool CanvasImpl::ApplyBeginStrokeOp(const sketchy::BeginStrokeOpPtr& op) {
-  auto stroke = resource_map_.FindResource<Stroke>(op->stroke_id);
+bool CanvasImpl::ApplyBeginStrokeCommand(sketchy::BeginStrokeCommand command) {
+  auto stroke = resource_map_.FindResource<Stroke>(command.stroke_id);
   if (!stroke) {
-    FXL_LOG(ERROR) << "No Stroke of id " << op->stroke_id << " was found!";
+    FXL_LOG(ERROR) << "No Stroke of id " << command.stroke_id << " was found!";
     return false;
   }
-  const auto& pos = op->touch->position;
-  return stroke_manager_.BeginStroke(stroke, {pos->x, pos->y});
+  const auto& pos = command.touch.position;
+  return stroke_manager_.BeginStroke(stroke, {pos.x, pos.y});
 }
 
-bool CanvasImpl::ApplyExtendStrokeOp(const sketchy::ExtendStrokeOpPtr& op) {
-  auto stroke = resource_map_.FindResource<Stroke>(op->stroke_id);
+bool CanvasImpl::ApplyExtendStrokeCommand(
+    sketchy::ExtendStrokeCommand command) {
+  auto stroke = resource_map_.FindResource<Stroke>(command.stroke_id);
   if (!stroke) {
-    FXL_LOG(ERROR) << "No Stroke of id " << op->stroke_id << " was found!";
+    FXL_LOG(ERROR) << "No Stroke of id " << command.stroke_id << " was found!";
     return false;
   }
   std::vector<glm::vec2> pts;
-  pts.reserve(op->touches.size());
-  for (const auto& touch : op->touches) {
-    pts.push_back({touch->position->x, touch->position->y});
+  pts.reserve(command.touches->size());
+  for (const auto& touch : *command.touches) {
+    pts.push_back({touch.position.x, touch.position.y});
   }
   return stroke_manager_.ExtendStroke(stroke, pts);
 }
 
-bool CanvasImpl::ApplyFinishStrokeOp(const sketchy::FinishStrokeOpPtr& op) {
-  auto stroke = resource_map_.FindResource<Stroke>(op->stroke_id);
+bool CanvasImpl::ApplyFinishStrokeCommand(
+    sketchy::FinishStrokeCommand command) {
+  auto stroke = resource_map_.FindResource<Stroke>(command.stroke_id);
   if (!stroke) {
-    FXL_LOG(ERROR) << "No Stroke of id " << op->stroke_id << " was found!";
+    FXL_LOG(ERROR) << "No Stroke of id " << command.stroke_id << " was found!";
     return false;
   }
   return stroke_manager_.FinishStroke(stroke);
 }
 
-bool CanvasImpl::ApplyClearGroupOp(const sketchy::ClearGroupOpPtr& op) {
-  auto group = resource_map_.FindResource<StrokeGroup>(op->group_id);
+bool CanvasImpl::ApplyClearGroupCommand(sketchy::ClearGroupCommand command) {
+  auto group = resource_map_.FindResource<StrokeGroup>(command.group_id);
   if (!group) {
-    FXL_LOG(ERROR) << "No Group of id " << op->group_id << " was found!";
+    FXL_LOG(ERROR) << "No Group of id " << command.group_id << " was found!";
     return false;
   }
   return stroke_manager_.ClearGroup(group);
 }
 
-bool CanvasImpl::ApplyScenicImportResourceOp(
-    const scenic::ImportResourceOpPtr& import_resource) {
-  switch (import_resource->spec) {
-    case scenic::ImportSpec::NODE:
-      return ScenicImportNode(import_resource->id,
-                              std::move(import_resource->token));
+bool CanvasImpl::ApplyScenicImportResourceCommand(
+    gfx::ImportResourceCommand import_resource) {
+  switch (import_resource.spec) {
+    case gfx::ImportSpec::NODE:
+      return ScenicImportNode(import_resource.id,
+                              std::move(import_resource.token));
   }
 }
 
@@ -240,10 +238,10 @@ bool CanvasImpl::ScenicImportNode(ResourceId id, zx::eventpair token) {
   return true;
 }
 
-bool CanvasImpl::ApplyScenicAddChildOp(const scenic::AddChildOpPtr& add_child) {
-  auto import_node = resource_map_.FindResource<ImportNode>(add_child->node_id);
+bool CanvasImpl::ApplyScenicAddChildCommand(gfx::AddChildCommand add_child) {
+  auto import_node = resource_map_.FindResource<ImportNode>(add_child.node_id);
   auto stroke_group =
-      resource_map_.FindResource<StrokeGroup>(add_child->child_id);
+      resource_map_.FindResource<StrokeGroup>(add_child.child_id);
   if (!import_node || !stroke_group) {
     return false;
   }

@@ -13,7 +13,7 @@ namespace media {
 std::shared_ptr<LpcmReformatterImpl> LpcmReformatterImpl::Create(
     MediaTypePtr input_media_type,
     AudioSampleFormat output_sample_format,
-    f1dl::InterfaceRequest<MediaTypeConverter> request,
+    fidl::InterfaceRequest<MediaTypeConverter> request,
     MediaComponentFactory* owner) {
   return std::shared_ptr<LpcmReformatterImpl>(
       new LpcmReformatterImpl(std::move(input_media_type), output_sample_format,
@@ -23,7 +23,7 @@ std::shared_ptr<LpcmReformatterImpl> LpcmReformatterImpl::Create(
 LpcmReformatterImpl::LpcmReformatterImpl(
     MediaTypePtr input_media_type,
     AudioSampleFormat output_sample_format,
-    f1dl::InterfaceRequest<MediaTypeConverter> request,
+    fidl::InterfaceRequest<MediaTypeConverter> request,
     MediaComponentFactory* owner)
     : MediaComponentFactory::Product<MediaTypeConverter>(this,
                                                          std::move(request),
@@ -52,7 +52,7 @@ LpcmReformatterImpl::LpcmReformatterImpl(
 
   consumer_->SetFlushRequestedCallback(
       [this, consumer_ref](bool hold_frame,
-                           const MediaPacketConsumer::FlushCallback& callback) {
+                           MediaPacketConsumer::FlushCallback callback) {
         FXL_DCHECK(producer_);
         graph_.FlushOutput(consumer_ref.output(), hold_frame);
         producer_->FlushConnection(hold_frame, callback);
@@ -63,19 +63,19 @@ LpcmReformatterImpl::LpcmReformatterImpl(
 
 LpcmReformatterImpl::~LpcmReformatterImpl() {}
 
-void LpcmReformatterImpl::GetOutputType(const GetOutputTypeCallback& callback) {
+void LpcmReformatterImpl::GetOutputType(GetOutputTypeCallback callback) {
   FXL_DCHECK(reformatter_);
-  callback(fxl::To<MediaTypePtr>(reformatter_->output_stream_type()));
+  callback(fxl::To<MediaType>(reformatter_->output_stream_type()));
 }
 
 void LpcmReformatterImpl::GetPacketConsumer(
-    f1dl::InterfaceRequest<MediaPacketConsumer> request) {
+    fidl::InterfaceRequest<MediaPacketConsumer> request) {
   Retain();
   consumer_->Bind(std::move(request), [this]() { Release(); });
 }
 
 void LpcmReformatterImpl::GetPacketProducer(
-    f1dl::InterfaceRequest<MediaPacketProducer> request) {
+    fidl::InterfaceRequest<MediaPacketProducer> request) {
   producer_->Bind(std::move(request));
 }
 

@@ -40,12 +40,14 @@ class ExceptionHandler : public debug_ipc::StreamBuffer::Writer {
     virtual void OnProcessTerminated(zx_koid_t process_koid) = 0;
 
     // Exception handlers.
-    virtual void OnThreadStarting(const zx::thread& thread,
-                                  zx_koid_t proc_koid,
+    virtual void OnThreadStarting(zx::thread thread,
+                                  zx_koid_t process_koid,
                                   zx_koid_t thread_koid) = 0;
-    virtual void OnThreadExiting(const zx::thread& thread,
-                                 zx_koid_t proc_koid,
+    virtual void OnThreadExiting(zx_koid_t proc_koid,
                                  zx_koid_t thread_koid) = 0;
+    virtual void OnException(zx_koid_t proc_koid,
+                             zx_koid_t thread_koid,
+                             uint32_t type) = 0;
   };
 
   ExceptionHandler();
@@ -86,22 +88,6 @@ class ExceptionHandler : public debug_ipc::StreamBuffer::Writer {
   void OnSocketReadable();
 
   void OnProcessTerminated(const zx_port_packet_t& packet);
-
-  // Handlers.
-  void OnGeneralException(const zx_port_packet_t& packet,
-                          const zx::thread& thread);
-  void OnFatalPageFault(const zx_port_packet_t& packet,
-                        const zx::thread& thread);
-  void OnUndefinedInstruction(const zx_port_packet_t& packet,
-                              const zx::thread& thread);
-  void OnSoftwareBreakpoint(const zx_port_packet_t& packet,
-                            const zx::thread& thread);
-  void OnHardwareBreakpoint(const zx_port_packet_t& packet,
-                            const zx::thread& thread);
-  void OnUnalignedAccess(const zx_port_packet_t& packet,
-                         const zx::thread& thread);
-  void OnThreadPolicyError(const zx_port_packet_t& packet,
-                           const zx::thread& thread);
 
   // Looks up the given Koid in the processes_ vector, returning it if found,
   // nullptr on not.

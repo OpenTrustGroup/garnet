@@ -6,11 +6,13 @@ package templates
 
 const Enum = `
 {{- define "EnumDeclaration" -}}
-#[repr({{ .Type }})]
-enum {{ .Name }} {
-  {{- range .Members }}
-  {{ .Name }} = {{ .Value }},
+{{- $enum := . }}
+fidl2_enum! {
+  {{ $enum.Name }}({{ $enum.Type }}) {
+    {{- range $member :=  $enum.Members }}
+    {{ $member.Name }} = {{ $member.Value }},
   {{- end }}
+  }
 }
 {{ end }}
 `

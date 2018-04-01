@@ -13,9 +13,8 @@ class ListCategories : public CommandWithTraceController {
  public:
   static Info Describe();
 
-  explicit ListCategories(app::ApplicationContext* context);
-  void Run(const fxl::CommandLine& command_line,
-           OnDoneCallback on_done) override;
+  explicit ListCategories(component::ApplicationContext* context);
+  void Start(const fxl::CommandLine& command_line) override;
 };
 
 }  // namespace tracing

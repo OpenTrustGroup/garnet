@@ -11,11 +11,12 @@
 #include <memory>
 #include <string>
 
+#include <fuchsia/cpp/tracing.h>
+
 #include "lib/app/cpp/application_context.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/functional/closure.h"
 #include "lib/fxl/macros.h"
-#include "lib/tracing/fidl/trace_controller.fidl.h"
 
 namespace tracing {
 
@@ -26,7 +27,7 @@ class Command {
   using OnDoneCallback = std::function<void(int32_t)>;
   struct Info {
     using CommandFactory =
-        std::function<std::unique_ptr<Command>(app::ApplicationContext*)>;
+        std::function<std::unique_ptr<Command>(component::ApplicationContext*)>;
 
     CommandFactory factory;
     std::string name;
@@ -36,33 +37,38 @@ class Command {
 
   virtual ~Command();
 
-  virtual void Run(const fxl::CommandLine& command_line,
-                   OnDoneCallback on_done) = 0;
+  void Run(const fxl::CommandLine& command_line, OnDoneCallback on_done);
 
  protected:
-  static std::istream& in();
   static std::ostream& out();
-  static std::ostream& err();
 
-  explicit Command(app::ApplicationContext* context);
+  explicit Command(component::ApplicationContext* context);
 
-  app::ApplicationContext* context();
-  app::ApplicationContext* context() const;
+  component::ApplicationContext* context();
+  component::ApplicationContext* context() const;
+
+  // Starts running the command.
+  // The command must invoke Done() when finished.
+  virtual void Start(const fxl::CommandLine& command_line) = 0;
+  void Done(int32_t return_code);
 
  private:
-  app::ApplicationContext* context_;
+  component::ApplicationContext* context_;
+  OnDoneCallback on_done_;
+  int32_t return_code_ = -1;
+
   FXL_DISALLOW_COPY_AND_ASSIGN(Command);
 };
 
 class CommandWithTraceController : public Command {
  protected:
-  explicit CommandWithTraceController(app::ApplicationContext* context);
+  explicit CommandWithTraceController(component::ApplicationContext* context);
 
   TraceControllerPtr& trace_controller();
   const TraceControllerPtr& trace_controller() const;
 
  private:
-  std::unique_ptr<app::ApplicationContext> context_;
+  std::unique_ptr<component::ApplicationContext> context_;
   TraceControllerPtr trace_controller_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(CommandWithTraceController);

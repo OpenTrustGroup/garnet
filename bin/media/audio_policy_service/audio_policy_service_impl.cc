@@ -4,6 +4,10 @@
 
 #include "garnet/bin/media/audio_policy_service/audio_policy_service_impl.h"
 
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
+#include <zx/time.h>
+
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/files/directory.h"
 #include "lib/fxl/files/file.h"
@@ -13,8 +17,7 @@ namespace {
 
 static constexpr float kMaxSystemAudioGain = 0.0f;
 static constexpr uint32_t kInitializeAttempts = 30;
-static constexpr fxl::TimeDelta kInitializeAttemptInterval =
-    fxl::TimeDelta::FromMilliseconds(100);
+static constexpr zx::duration kInitializeAttemptInterval = zx::msec(100);
 static const std::string kStatusFilePath =
     "/data/app_local/audio_policy_service/status";
 static const std::string kStatusFileDir =
@@ -23,16 +26,16 @@ static const std::string kStatusFileDir =
 }  // namespace
 
 AudioPolicyServiceImpl::AudioPolicyServiceImpl(
-    std::unique_ptr<app::ApplicationContext> application_context)
+    std::unique_ptr<component::ApplicationContext> application_context)
     : application_context_(std::move(application_context)),
       initialize_attempts_remaining_(kInitializeAttempts) {
   application_context_->outgoing_services()->AddService<AudioPolicyService>(
-      [this](f1dl::InterfaceRequest<AudioPolicyService> request) {
+      [this](fidl::InterfaceRequest<AudioPolicyService> request) {
         bindings_.AddBinding(this, std::move(request));
       });
 
   status_publisher_.SetCallbackRunner(
-      [this](const GetStatusCallback& callback, uint64_t version) {
+      [this](GetStatusCallback callback, uint64_t version) {
         callback(version, Status());
       });
 
@@ -42,22 +45,22 @@ AudioPolicyServiceImpl::AudioPolicyServiceImpl(
 AudioPolicyServiceImpl::~AudioPolicyServiceImpl() {}
 
 void AudioPolicyServiceImpl::GetStatus(uint64_t version_last_seen,
-                                       const GetStatusCallback& callback) {
+                                       GetStatusCallback callback) {
   status_publisher_.Get(version_last_seen, callback);
 }
 
 void AudioPolicyServiceImpl::SetSystemAudioGain(float db) {
-  db = std::max(std::min(db, kMaxSystemAudioGain), AudioRenderer::kMutedGain);
+  db = std::max(std::min(db, kMaxSystemAudioGain), kMutedGain);
 
   if (system_audio_gain_db_ == db) {
     return;
   }
 
-  if (db == AudioRenderer::kMutedGain) {
+  if (db == kMutedGain) {
     // System audio gain is being set to |kMutedGain|. This implicitly mutes
     // system audio.
     system_audio_muted_ = true;
-  } else if (system_audio_gain_db_ == AudioRenderer::kMutedGain) {
+  } else if (system_audio_gain_db_ == kMutedGain) {
     // System audio was muted, because gain was set to |kMutedGain|. We're
     // raising the gain now, so we unmute.
     system_audio_muted_ = false;
@@ -71,7 +74,7 @@ void AudioPolicyServiceImpl::SetSystemAudioGain(float db) {
 }
 
 void AudioPolicyServiceImpl::SetSystemAudioMute(bool muted) {
-  if (system_audio_gain_db_ == AudioRenderer::kMutedGain) {
+  if (system_audio_gain_db_ == kMutedGain) {
     // Keep audio muted if system audio gain is set to |kMutedGain|.
     muted = true;
   }
@@ -94,8 +97,9 @@ void AudioPolicyServiceImpl::InitializeAudioService() {
 
   if (!files::IsFile(kStatusFilePath) &&
       --initialize_attempts_remaining_ != 0) {
-    fsl::MessageLoop::GetCurrent()->task_runner()->PostDelayedTask(
-        [this]() { InitializeAudioService(); }, kInitializeAttemptInterval);
+    async::PostDelayedTask(async_get_default(),
+                           [this]() { InitializeAudioService(); },
+                           kInitializeAttemptInterval);
     return;
   }
 
@@ -105,10 +109,10 @@ void AudioPolicyServiceImpl::InitializeAudioService() {
   SaveStatus();
 }
 
-AudioPolicyStatusPtr AudioPolicyServiceImpl::Status() {
-  AudioPolicyStatusPtr status = AudioPolicyStatus::New();
-  status->system_audio_gain_db = system_audio_gain_db_;
-  status->system_audio_muted = system_audio_muted_;
+AudioPolicyStatus AudioPolicyServiceImpl::Status() {
+  AudioPolicyStatus status;
+  status.system_audio_gain_db = system_audio_gain_db_;
+  status.system_audio_muted = system_audio_muted_;
   return status;
 }
 
@@ -122,35 +126,27 @@ void AudioPolicyServiceImpl::LoadStatus() {
 
   AudioPolicyStatus status;
 
-  if (!status.Deserialize(buffer.data(), buffer.size())) {
+  if (buffer.size() != sizeof(status)) {
     FXL_LOG(WARNING) << "Failed to deserialize status";
     return;
   }
+
+  memcpy(&status, buffer.data(), sizeof(status));
 
   system_audio_gain_db_ = status.system_audio_gain_db;
   system_audio_muted_ = status.system_audio_muted;
 }
 
 void AudioPolicyServiceImpl::SaveStatus() {
-  AudioPolicyStatusPtr status = Status();
-  std::vector<uint8_t> buffer(status->GetSerializedSize());
-  size_t actual_size;
-
-  if (!status->Serialize(buffer.data(), buffer.size(), &actual_size)) {
-    FXL_LOG(WARNING) << "Failed to serialize status";
-    return;
-  }
-
-  FXL_DCHECK(actual_size <= buffer.size());
+  AudioPolicyStatus status = Status();
 
   if (!files::IsDirectory(kStatusFileDir) &&
       !files::CreateDirectory(kStatusFileDir)) {
     FXL_LOG(WARNING) << "Failed to create directory " << kStatusFileDir;
   }
 
-  if (!files::WriteFile(kStatusFilePath,
-                        reinterpret_cast<const char*>(buffer.data()),
-                        actual_size)) {
+  if (!files::WriteFile(kStatusFilePath, reinterpret_cast<const char*>(&status),
+                        sizeof(status))) {
     FXL_LOG(WARNING) << "Failed to write status to " << kStatusFilePath;
     return;
   }

@@ -6,12 +6,12 @@
 
 #include <vector>
 
+#include <fuchsia/cpp/media.h>
 #include <zx/socket.h>
 
 #include "garnet/bin/media/fidl/fidl_default_waiter.h"
-#include "lib/fidl/cpp/bindings/binding.h"
+#include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/logging.h"
-#include "lib/media/fidl/seeking_reader.fidl.h"
 
 namespace media {
 
@@ -31,12 +31,12 @@ class FakeWavReader : public SeekingReader {
   }
 
   // Binds the reader.
-  void Bind(f1dl::InterfaceRequest<SeekingReader> request);
+  void Bind(fidl::InterfaceRequest<SeekingReader> request);
 
   // SeekingReader implementation.
-  void Describe(const DescribeCallback& callback) override;
+  void Describe(DescribeCallback callback) override;
 
-  void ReadAt(uint64_t position, const ReadAtCallback& callback) override;
+  void ReadAt(uint64_t position, ReadAtCallback callback) override;
 
  private:
   static constexpr size_t kMasterChunkHeaderSize = 12;
@@ -49,12 +49,6 @@ class FakeWavReader : public SeekingReader {
   static constexpr uint16_t kSamplesPerFrame = 2;      // Stereo
   static constexpr uint32_t kFramesPerSecond = 48000;  // 48kHz
   static constexpr uint16_t kBitsPerSample = 16;       // 16-bit samples
-
-  // Callback function for WriteToSocket's async wait.
-  static void WriteToSocketStatic(zx_status_t status,
-                                  zx_signals_t pending,
-                                  uint64_t count,
-                                  void* closure);
 
   // Writes data to socket_ starting at postion_;
   void WriteToSocket();
@@ -74,7 +68,7 @@ class FakeWavReader : public SeekingReader {
   // Gets the positionth byte of the file.
   uint8_t GetByte(size_t position);
 
-  f1dl::Binding<SeekingReader> binding_;
+  fidl::Binding<SeekingReader> binding_;
   std::vector<uint8_t> header_;
   uint64_t size_ = kDefaultSize;
   zx::socket socket_;

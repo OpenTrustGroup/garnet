@@ -11,10 +11,10 @@
 #include <queue>
 
 #include "garnet/bin/network/url_loader_impl.h"
-#include "lib/fidl/cpp/bindings/binding_set.h"
-#include "lib/fidl/cpp/bindings/interface_request.h"
+#include "lib/fidl/cpp/binding_set.h"
+#include "lib/fidl/cpp/interface_request.h"
 #include "lib/fxl/functional/closure.h"
-#include "lib/network/fidl/network_service.fidl.h"
+#include <fuchsia/cpp/network.h>
 
 namespace network {
 
@@ -24,10 +24,10 @@ class NetworkServiceImpl : public NetworkService,
   NetworkServiceImpl();
   ~NetworkServiceImpl() override;
 
-  void AddBinding(f1dl::InterfaceRequest<NetworkService> request);
+  void AddBinding(fidl::InterfaceRequest<NetworkService> request);
 
   // NetworkService methods:
-  void CreateURLLoader(f1dl::InterfaceRequest<URLLoader> request) override;
+  void CreateURLLoader(fidl::InterfaceRequest<URLLoader> request) override;
   void GetCookieStore(zx::channel cookie_store) override;
   void CreateWebSocket(zx::channel socket) override;
 
@@ -41,7 +41,7 @@ class NetworkServiceImpl : public NetworkService,
   void OnSlotReturned();
 
   size_t available_slots_;
-  f1dl::BindingSet<NetworkService> bindings_;
+  fidl::BindingSet<NetworkService> bindings_;
   std::list<UrlLoaderContainer> loaders_;
   std::queue<std::function<void(fxl::Closure)>> slot_requests_;
 };

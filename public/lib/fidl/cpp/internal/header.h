@@ -5,7 +5,7 @@
 #ifndef LIB_FIDL_CPP_INTERNAL_HEADER_H_
 #define LIB_FIDL_CPP_INTERNAL_HEADER_H_
 
-#include <fidl/cpp/array.h>
+#include <lib/fidl/cpp/array.h>
 #include <zx/channel.h>
 #include <zx/event.h>
 #include <zx/eventpair.h>
@@ -24,6 +24,7 @@
 #include <zx/vmo.h>
 
 #include <functional>
+#include <ostream>
 
 #include "lib/fidl/cpp/coding_traits.h"
 #include "lib/fidl/cpp/interface_ptr.h"

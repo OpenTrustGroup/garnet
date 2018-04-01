@@ -9,8 +9,8 @@ namespace test {
 
 MockInputDevice::MockInputDevice(
     uint32_t device_id,
-    mozart::DeviceDescriptorPtr descriptor,
-    f1dl::InterfaceRequest<mozart::InputDevice> input_device_request,
+    input::DeviceDescriptor descriptor,
+    fidl::InterfaceRequest<input::InputDevice> input_device_request,
     const OnReportCallback& on_report_callback)
     : id_(device_id),
       descriptor_(std::move(descriptor)),
@@ -19,7 +19,7 @@ MockInputDevice::MockInputDevice(
 
 MockInputDevice::~MockInputDevice() {}
 
-void MockInputDevice::DispatchReport(mozart::InputReportPtr report) {
+void MockInputDevice::DispatchReport(input::InputReport report) {
   if (on_report_callback_)
     on_report_callback_(std::move(report));
 }

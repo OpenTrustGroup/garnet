@@ -6,13 +6,14 @@
 #define GARNET_BIN_UI_SKETCHY_BUFFER_MESH_BUFFER_H_
 
 #include <unordered_map>
+#include <zx/event.h>
+
 #include "garnet/bin/ui/sketchy/buffer/shared_buffer.h"
 #include "garnet/bin/ui/sketchy/frame.h"
 #include "lib/escher/geometry/bounding_box.h"
 #include "lib/escher/renderer/semaphore.h"
 #include "lib/escher/scene/shape_modifier.h"
 #include "lib/escher/vk/buffer.h"
-#include "zircon/system/ulib/zx/include/zx/event.h"
 
 namespace sketchy_service {
 
@@ -36,7 +37,7 @@ class MeshBuffer final {
       Frame* frame, uint32_t vertex_count, uint32_t index_count,
       const escher::BoundingBox& bbox);
 
-  // Provide all the necessary parameters to scenic::Mesh::BindBuffers().
+  // Provide all the necessary parameters to gfx::Mesh::BindBuffers().
   void ProvideBuffersToScenicMesh(scenic_lib::Mesh* scenic_mesh);
 
   uint32_t vertex_count() const { return vertex_count_; }

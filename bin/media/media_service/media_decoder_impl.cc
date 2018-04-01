@@ -12,7 +12,7 @@ namespace media {
 // static
 std::shared_ptr<MediaDecoderImpl> MediaDecoderImpl::Create(
     MediaTypePtr input_media_type,
-    f1dl::InterfaceRequest<MediaTypeConverter> request,
+    fidl::InterfaceRequest<MediaTypeConverter> request,
     MediaComponentFactory* owner) {
   return std::shared_ptr<MediaDecoderImpl>(new MediaDecoderImpl(
       std::move(input_media_type), std::move(request), owner));
@@ -20,7 +20,7 @@ std::shared_ptr<MediaDecoderImpl> MediaDecoderImpl::Create(
 
 MediaDecoderImpl::MediaDecoderImpl(
     MediaTypePtr input_media_type,
-    f1dl::InterfaceRequest<MediaTypeConverter> request,
+    fidl::InterfaceRequest<MediaTypeConverter> request,
     MediaComponentFactory* owner)
     : MediaComponentFactory::Product<MediaTypeConverter>(this,
                                                          std::move(request),
@@ -48,7 +48,7 @@ MediaDecoderImpl::MediaDecoderImpl(
 
   consumer_->SetFlushRequestedCallback(
       [this, consumer_ref](bool hold_frame,
-                           const MediaPacketConsumer::FlushCallback& callback) {
+                           MediaPacketConsumer::FlushCallback callback) {
         FXL_DCHECK(producer_);
         graph_.FlushOutput(consumer_ref.output(), hold_frame);
         producer_->FlushConnection(hold_frame, callback);
@@ -59,19 +59,19 @@ MediaDecoderImpl::MediaDecoderImpl(
 
 MediaDecoderImpl::~MediaDecoderImpl() {}
 
-void MediaDecoderImpl::GetOutputType(const GetOutputTypeCallback& callback) {
+void MediaDecoderImpl::GetOutputType(GetOutputTypeCallback callback) {
   FXL_DCHECK(decoder_);
-  callback(fxl::To<MediaTypePtr>(decoder_->output_stream_type()));
+  callback(std::move(*fxl::To<MediaTypePtr>(decoder_->output_stream_type())));
 }
 
 void MediaDecoderImpl::GetPacketConsumer(
-    f1dl::InterfaceRequest<MediaPacketConsumer> request) {
+    fidl::InterfaceRequest<MediaPacketConsumer> request) {
   Retain();
   consumer_->Bind(std::move(request), [this]() { Release(); });
 }
 
 void MediaDecoderImpl::GetPacketProducer(
-    f1dl::InterfaceRequest<MediaPacketProducer> request) {
+    fidl::InterfaceRequest<MediaPacketProducer> request) {
   producer_->Bind(std::move(request));
 }
 

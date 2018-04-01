@@ -4,7 +4,9 @@
 
 #include "lib/escher/flib/fence_listener.h"
 
+#include <lib/async/default.h>
 #include <zx/time.h>
+
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/functional/closure.h"
 #include "lib/fxl/logging.h"
@@ -13,9 +15,9 @@ namespace escher {
 
 FenceListener::FenceListener(zx::event fence)
     : fence_(std::move(fence)),
-      waiter_(fsl::MessageLoop::GetCurrent()->async(),  // dispatcher
-              fence_.get(),                             // handle
-              kFenceSignalled)                          // trigger
+      waiter_(async_get_default(),  // dispatcher
+              fence_.get(),         // handle
+              kFenceSignalled)      // trigger
 {
   FXL_DCHECK(fence_);
 }
@@ -27,7 +29,7 @@ bool FenceListener::WaitReady(fxl::TimeDelta timeout) {
   else if (timeout == fxl::TimeDelta::Max())
     zx_deadline = zx::time::infinite();
   else
-    zx_deadline = zx::deadline_after(zx::duration(timeout.ToNanoseconds()));
+    zx_deadline = zx::deadline_after(zx::nsec(timeout.ToNanoseconds()));
 
   zx_signals_t pending = 0u;
   while (!ready_) {
@@ -86,4 +88,4 @@ async_wait_result_t FenceListener::OnFenceSignalled(
   }
 }
 
-}  // namespace scene_manager
+}  // namespace escher

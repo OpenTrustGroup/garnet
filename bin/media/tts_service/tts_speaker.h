@@ -4,17 +4,17 @@
 
 #pragma once
 
-#include <zircon/types.h>
-#include <zx/vmo.h>
+#include <fbl/vmo_mapper.h>
 
 #include <mutex>
 #include <thread>
+#include <zircon/types.h>
 
+#include <fuchsia/cpp/media.h>
 #include "lib/app/cpp/application_context.h"
-#include "lib/fidl/cpp/bindings/string.h"
+#include "lib/fidl/cpp/string.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
 #include "lib/fxl/tasks/task_runner.h"
-#include "lib/media/fidl/audio_server.fidl.h"
 #include "third_party/flite/include/flite_fuchsia.h"
 
 namespace media {
@@ -23,12 +23,12 @@ namespace tts {
 class TtsSpeaker : public std::enable_shared_from_this<TtsSpeaker> {
  public:
   TtsSpeaker(fxl::RefPtr<fxl::TaskRunner> master_task_runner);
-  ~TtsSpeaker();
+  ~TtsSpeaker() = default;
 
-  zx_status_t Init(
-      const std::unique_ptr<app::ApplicationContext>& application_context);
+  zx_status_t Init(const std::unique_ptr<component::ApplicationContext>&
+                       application_context);
 
-  zx_status_t Speak(const f1dl::String& words,
+  zx_status_t Speak(fidl::StringPtr words,
                     const fxl::Closure& speak_complete_cbk);
   void Shutdown();
 
@@ -46,16 +46,17 @@ class TtsSpeaker : public std::enable_shared_from_this<TtsSpeaker> {
   uint64_t ComputeRingDistance(uint64_t back, uint64_t front) {
     uint64_t ret;
 
-    FXL_DCHECK(front < shared_buf_size_);
-    FXL_DCHECK(back < shared_buf_size_);
-    ret = (front >= back) ? (front - back) : (shared_buf_size_ + front - back);
+    auto sb_size = shared_buf_.size();
+    FXL_DCHECK(front < sb_size);
+    FXL_DCHECK(back < sb_size);
+    ret = (front >= back) ? (front - back) : (sb_size + front - back);
 
-    FXL_DCHECK(ret < shared_buf_size_);
+    FXL_DCHECK(ret < sb_size);
     return ret;
   }
 
   uint64_t ComputeWriteSpace() FXL_EXCLUSIVE_LOCKS_REQUIRED(ring_buffer_lock_) {
-    return shared_buf_size_ - ComputeRingDistance(rd_ptr_, wr_ptr_) - 1;
+    return shared_buf_.size() - ComputeRingDistance(rd_ptr_, wr_ptr_) - 1;
   }
 
   uint64_t ComputeTxPending() FXL_EXCLUSIVE_LOCKS_REQUIRED(ring_buffer_lock_) {
@@ -68,19 +69,8 @@ class TtsSpeaker : public std::enable_shared_from_this<TtsSpeaker> {
   fxl::RefPtr<fxl::TaskRunner> engine_task_runner_;
   fxl::RefPtr<fxl::TaskRunner> master_task_runner_;
 
-  media::AudioRendererPtr audio_renderer_;
-  media::MediaRendererPtr media_renderer_;
-  media::MediaPacketConsumerPtr packet_consumer_;
-  media::MediaTimelineControlPointPtr timeline_cp_;
-  media::TimelineConsumerPtr timeline_consumer_;
-
-  zx::vmo shared_buf_vmo_;
-  void* shared_buf_virt_ = nullptr;
-
-  // Note: shared_buf_size_ is a value established at Init time, before the work
-  // thread has been created.  Once its value has been determined, it never
-  // changes, therefor it should not need to be guarded by the ring buffer lock.
-  uint64_t shared_buf_size_ = 0;
+  media::AudioRenderer2Ptr audio_renderer_;
+  fbl::VmoMapper shared_buf_;
 
   std::mutex ring_buffer_lock_;
   uint64_t wr_ptr_ FXL_GUARDED_BY(ring_buffer_lock_) = 0;
@@ -88,7 +78,7 @@ class TtsSpeaker : public std::enable_shared_from_this<TtsSpeaker> {
   uint64_t tx_ptr_ = 0;
   zx::event wakeup_event_;
 
-  f1dl::String words_;
+  fidl::StringPtr words_;
   fxl::Closure speak_complete_cbk_;
   std::atomic<bool> abort_playback_;
   std::atomic<bool> synthesis_complete_;

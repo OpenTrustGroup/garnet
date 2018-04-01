@@ -9,7 +9,7 @@
 namespace auth {
 
 TokenManagerFactoryImpl::TokenManagerFactoryImpl(
-    app::ApplicationContext* context)
+    component::ApplicationContext* context)
     : app_context_(context) {
   FXL_CHECK(app_context_);
 }
@@ -17,9 +17,9 @@ TokenManagerFactoryImpl::TokenManagerFactoryImpl(
 TokenManagerFactoryImpl::~TokenManagerFactoryImpl() {}
 
 void TokenManagerFactoryImpl::GetTokenManager(
-    const f1dl::String& user_id,
-    f1dl::Array<AuthProviderConfigPtr> auth_provider_configs,
-    f1dl::InterfaceRequest<TokenManager> request) {
+    fidl::StringPtr user_id,
+    fidl::VectorPtr<AuthProviderConfig> auth_provider_configs,
+    fidl::InterfaceRequest<TokenManager> request) {
   auto file_name = kAuthDbPath + user_id.get() + kAuthDbPostfix;
 
   auto auth_db_file = std::make_unique<store::AuthDbFileImpl>(file_name);

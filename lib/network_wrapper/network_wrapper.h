@@ -8,8 +8,8 @@
 #include "garnet/lib/callback/cancellable.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/ref_ptr.h"
-#include "lib/network/fidl/url_request.fidl.h"
-#include "lib/network/fidl/url_response.fidl.h"
+#include <fuchsia/cpp/network.h>
+#include <fuchsia/cpp/network.h>
 
 namespace network_wrapper {
 
@@ -23,8 +23,8 @@ class NetworkWrapper {
 
   // Starts a url network request.
   virtual fxl::RefPtr<callback::Cancellable> Request(
-      std::function<network::URLRequestPtr()> request_factory,
-      std::function<void(network::URLResponsePtr)> callback) = 0;
+      std::function<network::URLRequest()> request_factory,
+      std::function<void(network::URLResponse)> callback) = 0;
 
  private:
   FXL_DISALLOW_COPY_AND_ASSIGN(NetworkWrapper);

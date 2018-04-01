@@ -12,26 +12,30 @@
 
 #include <zx/vmo.h>
 
-#include "lib/app/fidl/application_loader.fidl.h"
+#include <fuchsia/cpp/component.h>
+#include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
 
-namespace app {
+namespace component {
 
 class RootApplicationLoader : public ApplicationLoader {
  public:
   explicit RootApplicationLoader(std::vector<std::string> path);
   ~RootApplicationLoader() override;
 
-  void LoadApplication(
-      const f1dl::String& url,
-      const ApplicationLoader::LoadApplicationCallback& callback) override;
+  void LoadApplication(fidl::StringPtr url,
+                       LoadApplicationCallback callback) override;
+
+  void AddBinding(fidl::InterfaceRequest<ApplicationLoader> request);
 
  private:
   std::vector<std::string> path_;
 
+  fidl::BindingSet<ApplicationLoader> bindings_;
+
   FXL_DISALLOW_COPY_AND_ASSIGN(RootApplicationLoader);
 };
 
-}  // namespace app
+}  // namespace component
 
 #endif  // GARNET_BIN_APPMGR_ROOT_APPLICATION_LOADER_H_

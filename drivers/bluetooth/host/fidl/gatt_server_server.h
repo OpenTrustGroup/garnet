@@ -4,8 +4,8 @@
 
 #pragma once
 
-#include "lib/bluetooth/fidl/gatt.fidl.h"
-#include "lib/fidl/cpp/bindings/binding.h"
+#include <fuchsia/cpp/bluetooth_gatt.h>
+#include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
 
@@ -16,12 +16,12 @@
 namespace bthost {
 
 // Implements the gatt::Server FIDL interface.
-class GattServerServer : public ServerBase<bluetooth::gatt::Server> {
+class GattServerServer : public GattServerBase<bluetooth_gatt::Server> {
  public:
   // |adapter_manager| is used to lazily request a handle to the corresponding
   // adapter. It MUST out-live this GattServerServer instance.
-  GattServerServer(fxl::WeakPtr<::btlib::gap::Adapter> adapter,
-                   f1dl::InterfaceRequest<bluetooth::gatt::Server> request);
+  GattServerServer(fbl::RefPtr<btlib::gatt::GATT> gatt,
+                   fidl::InterfaceRequest<bluetooth_gatt::Server> request);
 
   ~GattServerServer() override;
 
@@ -33,12 +33,12 @@ class GattServerServer : public ServerBase<bluetooth::gatt::Server> {
  private:
   class ServiceImpl;
 
-  // ::bluetooth::gatt::Server overrides:
+  // ::bluetooth_gatt::Server overrides:
   void PublishService(
-      bluetooth::gatt::ServiceInfoPtr service_info,
-      f1dl::InterfaceHandle<bluetooth::gatt::ServiceDelegate> delegate,
-      f1dl::InterfaceRequest<bluetooth::gatt::Service> service_iface,
-      const PublishServiceCallback& callback) override;
+      bluetooth_gatt::ServiceInfo service_info,
+      fidl::InterfaceHandle<bluetooth_gatt::ServiceDelegate> delegate,
+      fidl::InterfaceRequest<bluetooth_gatt::Service> service_iface,
+      PublishServiceCallback callback) override;
 
   // Called when a remote device issues a read request to one of our services.
   void OnReadRequest(::btlib::gatt::IdType service_id,

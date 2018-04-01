@@ -14,8 +14,8 @@
 #include <zircon/device/sysinfo.h>
 
 #include "lib/app/cpp/application_context.h"
-#include "lib/cobalt/fidl/cobalt.fidl-sync.h"
-#include "lib/cobalt/fidl/cobalt.fidl.h"
+#include <fuchsia/cpp/cobalt.h>
+#include <fuchsia/cpp/cobalt.h>
 #include "lib/fsl/tasks/message_loop.h"
 
 const uint32_t kSystemMetricsProjectId = 102;
@@ -68,7 +68,7 @@ class SystemMetricsApp {
   // tick_interval_minutes is the number of minutes to sleep in between calls to
   // the GatherMetrics method.
   SystemMetricsApp(unsigned int tick_interval_minutes)
-      : context_(app::ApplicationContext::CreateFromStartupInfo()),
+      : context_(component::ApplicationContext::CreateFromStartupInfo()),
         start_time_(std::chrono::steady_clock::now()),
         tick_interval_(tick_interval_minutes) {}
 
@@ -90,7 +90,7 @@ class SystemMetricsApp {
   cobalt::Status LogMemoryUsage(std::chrono::minutes uptime_minutes);
 
  private:
-  std::unique_ptr<app::ApplicationContext> context_;
+  std::unique_ptr<component::ApplicationContext> context_;
   cobalt::CobaltEncoderSyncPtr encoder_;
   std::chrono::steady_clock::time_point start_time_;
   std::chrono::minutes tick_interval_;
@@ -112,7 +112,8 @@ void SystemMetricsApp::GatherMetrics() {
   LogMemoryUsage(uptime_minutes);
 }
 
-cobalt::Status SystemMetricsApp::LogUptime(std::chrono::minutes uptime_minutes) {
+cobalt::Status SystemMetricsApp::LogUptime(
+    std::chrono::minutes uptime_minutes) {
   while (next_uptime_bucket_ <= uptime_minutes.count()) {
     cobalt::Status status = cobalt::Status::INTERNAL_ERROR;
 
@@ -156,27 +157,21 @@ cobalt::Status SystemMetricsApp::LogMemoryUsage(
     return cobalt::Status::INTERNAL_ERROR;
   }
 
-  auto values = f1dl::Array<cobalt::ObservationValuePtr>::New(3);
-  values[0] = cobalt::ObservationValue::New();
+  auto values = fidl::VectorPtr<cobalt::ObservationValue>::New(3);
   // Metric part name as defined in the corresponding metric config.
-  values[0]->name = "system_uptime_minutes";
-  values[0]->value = cobalt::Value::New();
-  values[0]->value->set_int_value(uptime_minutes.count());
-  values[0]->encoding_id = kRawEncodingId;
+  values->at(0).name = "system_uptime_minutes";
+  values->at(0).value.set_int_value(uptime_minutes.count());
+  values->at(0).encoding_id = kRawEncodingId;
 
-  values[1] = cobalt::ObservationValue::New();
   // Metric part name as defined in the corresponding metric config.
-  values[1]->name = "total_system_memory";
-  values[1]->value = cobalt::Value::New();
-  values[1]->value->set_int_value(stats.total_bytes);
-  values[1]->encoding_id = kRawEncodingId;
+  values->at(1).name = "total_system_memory";
+  values->at(1).value.set_int_value(stats.total_bytes);
+  values->at(1).encoding_id = kRawEncodingId;
 
-  values[2] = cobalt::ObservationValue::New();
   // Metric part name as defined in the corresponding metric config.
-  values[2]->name = "free_memory";
-  values[2]->value = cobalt::Value::New();
-  values[2]->value->set_int_value(stats.free_bytes);
-  values[2]->encoding_id = kRawEncodingId;
+  values->at(2).name = "free_memory";
+  values->at(2).value.set_int_value(stats.free_bytes);
+  values->at(2).encoding_id = kRawEncodingId;
 
   cobalt::Status cobalt_status = cobalt::Status::INTERNAL_ERROR;
   encoder_->AddMultipartObservation(kMemoryUsageMetricId, std::move(values),
@@ -204,8 +199,8 @@ void SystemMetricsApp::Main() {
 void SystemMetricsApp::ConnectToEnvironmentService() {
   // Connect to the Cobalt FIDL service provided by the environment.
   cobalt::CobaltEncoderFactorySyncPtr factory;
-  context_->ConnectToEnvironmentService(f1dl::GetSynchronousProxy(&factory));
-  factory->GetEncoder(kSystemMetricsProjectId, GetSynchronousProxy(&encoder_));
+  context_->ConnectToEnvironmentService(factory.NewRequest());
+  factory->GetEncoder(kSystemMetricsProjectId, encoder_.NewRequest());
 }
 
 int main(int argc, const char** argv) {

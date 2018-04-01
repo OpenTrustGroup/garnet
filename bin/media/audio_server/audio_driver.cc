@@ -8,6 +8,7 @@
 
 #include "garnet/bin/media/audio/driver_utils.h"
 #include "garnet/bin/media/fidl/fidl_type_conversions.h"
+#include "lib/fidl/cpp/clone.h"
 #include "lib/fxl/logging.h"
 
 namespace media {
@@ -114,10 +115,12 @@ void AudioDriver::SnapshotRingBuffer(RingBufferSnapshot* snapshot) const {
 AudioMediaTypeDetailsPtr AudioDriver::GetSourceFormat() const {
   std::lock_guard<std::mutex> lock(configured_format_lock_);
 
-  if (configured_format_.is_null())
+  if (!configured_format_)
     return nullptr;
 
-  return configured_format_.Clone();
+  AudioMediaTypeDetailsPtr result;
+  fidl::Clone(configured_format_, &result);
+  return result;
 }
 
 zx_status_t AudioDriver::GetSupportedFormats() {
@@ -780,8 +783,8 @@ zx_status_t AudioDriver::ProcessStartResponse(
   // Now that we have started up, compute the transformation from clock
   // monotonic to the ring buffer position (in bytes) Then update the ring
   // buffer state's transformation and bump the generation counter.
-  TimelineFunction func(resp.start_time, 0, ZX_SEC(1),
-                        frames_per_sec_ * bytes_per_frame_);
+  TimelineFunction func(0, resp.start_time, frames_per_sec_ * bytes_per_frame_,
+                        ZX_SEC(1));
   {
     std::lock_guard<std::mutex> lock(ring_buffer_state_lock_);
     FXL_DCHECK(!clock_mono_to_ring_pos_bytes_.invertable());

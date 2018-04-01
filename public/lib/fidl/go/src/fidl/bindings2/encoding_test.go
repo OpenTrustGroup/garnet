@@ -11,33 +11,42 @@ import (
 )
 
 func testIdentity(t *testing.T, input Payload, expectSize int, output Payload) {
-	m := MessageHeader{
-		Txid:     1215,
-		Reserved: 0,
-		Flags:    111111,
-		Ordinal:  889,
-	}
-	bytes, handles, err := Marshal(&m, input)
+	var respb [zx.ChannelMaxMessageBytes]byte
+	var resph [zx.ChannelMaxMessageHandles]zx.Handle
+	nb, nh, err := Marshal(input, respb[:], resph[:])
 	if err != nil {
 		t.Fatal(err)
 	}
-	totalSize := expectSize + MessageHeaderSize
-	if len(bytes) != totalSize {
-		t.Fatalf("expected size %d but got %d: %v", totalSize, len(bytes), bytes)
+	if nb != expectSize {
+		t.Fatalf("expected size %d but got %d: %v", expectSize, nb, respb[:nb])
 	}
-	h, err := Unmarshal(bytes, handles, output)
-	if err != nil {
+	if err := Unmarshal(respb[:nb], resph[:nh], output); err != nil {
 		t.Fatal(err)
-	}
-	if *h != m {
-		t.Fatal("expected header: %v, got %v", m, h)
 	}
 	if !reflect.DeepEqual(input, output) {
-		t.Fatalf("expected: %v, got %v", input, output)
+		t.Fatalf("expected: %v, got: %v", input, output)
 	}
 }
 
 func TestEncodingIdentity(t *testing.T) {
+	t.Run("Header", func(t *testing.T) {
+		var buf [MessageHeaderSize]byte
+		m := MessageHeader{
+			Txid:     1215,
+			Reserved: 0,
+			Flags:    111111,
+			Ordinal:  889,
+		}
+		MarshalHeader(&m, buf[:])
+
+		var header MessageHeader
+		if err := UnmarshalHeader(buf[:], &header); err != nil {
+			t.Fatal(err)
+		}
+		if m != header {
+			t.Fatalf("expected: %v, got: %v", m, header)
+		}
+	})
 	t.Run("Simple", func(t *testing.T) {
 		testIdentity(t, &TestSimple{X: 124}, 8, &TestSimple{})
 		testIdentity(t, &TestSimpleBool{X: true}, 8, &TestSimpleBool{})
@@ -142,5 +151,19 @@ func TestEncodingIdentity(t *testing.T) {
 			B: []zx.VMO{zx.VMO(zx.HANDLE_INVALID)},
 		}, 48, &TestHandle2{})
 		vmo.Close()
+	})
+	t.Run("Interfaces", func(t *testing.T) {
+		h0, h1, err := zx.NewChannel(0)
+		defer h0.Close()
+		defer h1.Close()
+		if err != nil {
+			t.Fatalf("failed to create vmo: %v", err)
+		}
+		testIdentity(t, &TestInterface1{
+			A: Test1Interface(Proxy{Channel: h0}),
+			B: Test1Interface(Proxy{Channel: zx.Channel(zx.HANDLE_INVALID)}),
+			C: Test1InterfaceRequest(h1),
+			D: Test1InterfaceRequest(zx.Channel(zx.HANDLE_INVALID)),
+		}, 16, &TestInterface1{})
 	})
 }

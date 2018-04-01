@@ -30,6 +30,12 @@ enum class Kernel {
   LINUX,
 };
 
+enum class GuestDisplay {
+  FRAMEBUFFER,
+  SCENIC,
+  NONE,
+};
+
 class GuestConfig {
  public:
   Kernel kernel() const { return kernel_; }
@@ -37,13 +43,14 @@ class GuestConfig {
   const std::string& ramdisk_path() const { return ramdisk_path_; }
   const std::vector<BlockSpec>& block_devices() const { return block_specs_; }
   const std::string& cmdline() const { return cmdline_; }
+  uint8_t num_cpus() const { return num_cpus_; }
   size_t memory() const { return memory_; }
   zx_duration_t balloon_interval() const {
     return ZX_SEC(balloon_interval_seconds_);
   }
   uint32_t balloon_pages_threshold() const { return balloon_pages_threshold_; }
   bool balloon_demand_page() const { return balloon_demand_page_; }
-  bool enable_gpu() const { return enable_gpu_; }
+  GuestDisplay display() const { return display_; }
   bool block_wait() const { return block_wait_; }
 
  private:
@@ -53,11 +60,12 @@ class GuestConfig {
   std::string ramdisk_path_;
   std::vector<BlockSpec> block_specs_;
   std::string cmdline_;
+  uint8_t num_cpus_ = 1;
   size_t memory_ = 1 << 30;
   uint32_t balloon_interval_seconds_ = 0;
   uint32_t balloon_pages_threshold_ = 0;
   bool balloon_demand_page_ = false;
-  bool enable_gpu_ = true;
+  GuestDisplay display_ = GuestDisplay::SCENIC;
   bool block_wait_ = false;
 };
 

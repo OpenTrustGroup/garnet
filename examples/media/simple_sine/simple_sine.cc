@@ -9,7 +9,7 @@
 #include "lib/app/cpp/connect.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
-#include "lib/media/fidl/audio_server.fidl.h"
+#include <fuchsia/cpp/media.h>
 
 namespace {
 // TODO(mpuryear): Make frame rate, num_chans, payload size & num, frequency,
@@ -43,7 +43,7 @@ MediaApp::MediaApp() {}
 MediaApp::~MediaApp() {}
 
 // Prepare for playback, submit initial data and start the presentation timeline
-void MediaApp::Run(app::ApplicationContext* app_context) {
+void MediaApp::Run(component::ApplicationContext* app_context) {
   AcquireRenderer(app_context);
   SetMediaType();
 
@@ -57,13 +57,13 @@ void MediaApp::Run(app::ApplicationContext* app_context) {
     SendPacket(CreateAudioPacket(payload_num));
   }
 
-  audio_renderer_->PlayNoReply(media::AudioPacket::kNoTimestamp,
-                               media::AudioPacket::kNoTimestamp);
+  audio_renderer_->PlayNoReply(media::kNoTimestamp,
+                               media::kNoTimestamp);
 }
 
 // Use ApplicationContext to acquire AudioServerPtr, MediaRendererPtr and
 // PacketConsumerPtr in turn. Set error handlers, in case of channel closures.
-void MediaApp::AcquireRenderer(app::ApplicationContext* app_context) {
+void MediaApp::AcquireRenderer(component::ApplicationContext* app_context) {
   // AudioServer is needed only long enough to create the renderer(s).
   media::AudioServerPtr audio_server =
       app_context->ConnectToEnvironmentService<media::AudioServer>();
@@ -81,10 +81,10 @@ void MediaApp::AcquireRenderer(app::ApplicationContext* app_context) {
 void MediaApp::SetMediaType() {
   FXL_DCHECK(audio_renderer_);
 
-  media::AudioPcmFormatPtr format = media::AudioPcmFormat::New();
-  format->sample_format = media::AudioSampleFormat::SIGNED_16;
-  format->channels = kNumChannels;
-  format->frames_per_second = kRendererFrameRate;
+  media::AudioPcmFormat format;
+  format.sample_format = media::AudioSampleFormat::SIGNED_16;
+  format.channels = kNumChannels;
+  format.frames_per_second = kRendererFrameRate;
 
   audio_renderer_->SetPcmFormat(std::move(format));
 }
@@ -127,19 +127,17 @@ void MediaApp::WriteAudioIntoBuffer() {
 
 // We divided our cross-proc buffer into different zones, called payloads.
 // Create a packet corresponding to this particular payload.
-media::AudioPacketPtr MediaApp::CreateAudioPacket(size_t payload_num) {
-  auto packet = media::AudioPacket::New();
-
-  packet->payload_offset = (payload_num * kPayloadSize) % kTotalMappingSize;
-  packet->payload_size = kPayloadSize;
-
+media::AudioPacket MediaApp::CreateAudioPacket(size_t payload_num) {
+  media::AudioPacket packet;
+  packet.payload_offset = (payload_num * kPayloadSize) % kTotalMappingSize;
+  packet.payload_size = kPayloadSize;
   return packet;
 }
 
 // Submit a packet, incrementing our count of packets sent. When it returns:
 // a. if there are more packets to send, create and send the next packet;
 // b. if all expected packets have completed, begin closing down the system.
-void MediaApp::SendPacket(media::AudioPacketPtr packet) {
+void MediaApp::SendPacket(media::AudioPacket packet) {
   ++num_packets_sent_;
   audio_renderer_->SendPacket(
       std::move(packet), [this]() { OnSendPacketComplete(); });

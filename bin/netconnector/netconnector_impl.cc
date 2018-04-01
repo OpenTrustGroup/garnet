@@ -6,6 +6,10 @@
 
 #include <iostream>
 
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
+#include <zx/time.h>
+
 #include "garnet/bin/netconnector/device_service_provider.h"
 #include "garnet/bin/netconnector/host_name.h"
 #include "garnet/bin/netconnector/netconnector_params.h"
@@ -24,7 +28,8 @@ const std::string NetConnectorImpl::kLocalDeviceName = "local";
 
 NetConnectorImpl::NetConnectorImpl(NetConnectorParams* params)
     : params_(params),
-      application_context_(app::ApplicationContext::CreateFromStartupInfo()),
+      application_context_(
+          component::ApplicationContext::CreateFromStartupInfo()),
       // TODO(dalesat): Create a new RespondingServiceHost per user.
       // Requestors should provide user credentials allowing a ServiceAgent
       // to obtain a user environment. A RespondingServiceHost should be
@@ -44,13 +49,14 @@ NetConnectorImpl::NetConnectorImpl(NetConnectorParams* params)
 
     if (params_->show_devices()) {
       net_connector->GetKnownDeviceNames(
-          NetConnector::kInitialKnownDeviceNames,
-          fxl::MakeCopyable([ this, net_connector = std::move(net_connector) ](
-              uint64_t version, f1dl::Array<f1dl::String> device_names) {
-            if (device_names.size() == 0) {
+          kInitialKnownDeviceNames,
+          fxl::MakeCopyable([this, net_connector = std::move(net_connector)](
+                                uint64_t version,
+                                fidl::VectorPtr<fidl::StringPtr> device_names) {
+            if (device_names->size() == 0) {
               std::cout << "No remote devices found\n";
             } else {
-              for (auto& device_name : device_names) {
+              for (auto& device_name : *device_names) {
                 std::cout << device_name << "\n";
               }
             }
@@ -66,14 +72,14 @@ NetConnectorImpl::NetConnectorImpl(NetConnectorParams* params)
 
   // Running as listener.
   application_context_->outgoing_services()->AddService<NetConnector>(
-      [this](f1dl::InterfaceRequest<NetConnector> request) {
+      [this](fidl::InterfaceRequest<NetConnector> request) {
         bindings_.AddBinding(this, std::move(request));
       });
 
   device_names_publisher_.SetCallbackRunner(
       [this](const GetKnownDeviceNamesCallback& callback, uint64_t version) {
-        f1dl::Array<f1dl::String> device_names =
-            f1dl::Array<f1dl::String>::New(0);
+        fidl::VectorPtr<fidl::StringPtr> device_names =
+            fidl::VectorPtr<fidl::StringPtr>::New(0);
 
         for (auto& pair : params_->devices()) {
           device_names.push_back(pair.first);
@@ -95,8 +101,8 @@ NetConnectorImpl::~NetConnectorImpl() {}
 
 void NetConnectorImpl::StartListener() {
   if (!NetworkIsReady()) {
-    fsl::MessageLoop::GetCurrent()->task_runner()->PostDelayedTask(
-        [this]() { StartListener(); }, fxl::TimeDelta::FromSeconds(5));
+    async::PostDelayedTask(async_get_default(), [this]() { StartListener(); },
+                           zx::sec(5));
     return;
   }
 
@@ -111,7 +117,7 @@ void NetConnectorImpl::StartListener() {
 
   mdns_service_->PublishServiceInstance(
       kFuchsiaServiceName, host_name_, kPort.as_uint16_t(),
-      f1dl::Array<f1dl::String>(), [this](mdns::MdnsResult result) {
+      fidl::VectorPtr<fidl::StringPtr>(), [this](mdns::MdnsResult result) {
         switch (result) {
           case mdns::MdnsResult::OK:
             break;
@@ -141,21 +147,21 @@ void NetConnectorImpl::StartListener() {
                                     subscription.NewRequest());
 
   mdns_subscriber_.Init(
-      std::move(subscription),
-      [this](mdns::MdnsServiceInstance* from, mdns::MdnsServiceInstance* to) {
+      std::move(subscription), [this](const mdns::MdnsServiceInstance* from,
+                                      const mdns::MdnsServiceInstance* to) {
         if (from == nullptr && to != nullptr) {
           if (to->v4_address) {
             std::cerr << "netconnector: Device '" << to->instance_name
                       << "' discovered at address "
                       << SocketAddress(to->v4_address.get()) << "\n";
             params_->RegisterDevice(to->instance_name,
-                                    IpAddress(to->v4_address->addr.get()));
+                                    IpAddress(&to->v4_address->addr));
           } else if (to->v6_address) {
             std::cerr << "netconnector: Device '" << to->instance_name
                       << "' discovered at address "
                       << SocketAddress(to->v6_address.get()) << "\n";
             params_->RegisterDevice(to->instance_name,
-                                    IpAddress(to->v6_address->addr.get()));
+                                    IpAddress(&to->v6_address->addr));
           }
         } else if (from != nullptr && to == nullptr) {
           std::cerr << "netconnector: Device '" << from->instance_name
@@ -182,8 +188,8 @@ void NetConnectorImpl::ReleaseServiceAgent(ServiceAgent* service_agent) {
 }
 
 void NetConnectorImpl::GetDeviceServiceProvider(
-    const f1dl::String& device_name,
-    f1dl::InterfaceRequest<app::ServiceProvider> request) {
+    fidl::StringPtr device_name,
+    fidl::InterfaceRequest<component::ServiceProvider> request) {
   if (device_name == host_name_ || device_name == kLocalDeviceName) {
     responding_service_host_.AddBinding(std::move(request));
     return;
@@ -202,13 +208,13 @@ void NetConnectorImpl::GetDeviceServiceProvider(
 
 void NetConnectorImpl::GetKnownDeviceNames(
     uint64_t version_last_seen,
-    const GetKnownDeviceNamesCallback& callback) {
+    GetKnownDeviceNamesCallback callback) {
   device_names_publisher_.Get(version_last_seen, callback);
 }
 
 void NetConnectorImpl::RegisterServiceProvider(
-    const f1dl::String& name,
-    f1dl::InterfaceHandle<app::ServiceProvider> handle) {
+    fidl::StringPtr name,
+    fidl::InterfaceHandle<component::ServiceProvider> handle) {
   FXL_LOG(INFO) << "Service '" << name << "' provider registered.";
   responding_service_host_.RegisterProvider(name, std::move(handle));
 }

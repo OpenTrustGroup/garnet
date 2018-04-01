@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #include "garnet/bin/media/audio_server/fwd_decls.h"
-#include "lib/media/fidl/media_types.fidl.h"
+#include <fuchsia/cpp/media.h>
 #include "lib/media/timeline/timeline_rate.h"
 
 namespace media {
@@ -18,9 +18,9 @@ class AudioRendererFormatInfo
     : public fbl::RefCounted<AudioRendererFormatInfo> {
  public:
   static fbl::RefPtr<AudioRendererFormatInfo> Create(
-      AudioMediaTypeDetailsPtr format);
+      AudioMediaTypeDetails format);
 
-  const AudioMediaTypeDetailsPtr& format() const { return format_; }
+  const AudioMediaTypeDetails& format() const { return format_; }
   const TimelineRate& frames_per_ns() const { return frames_per_ns_; }
   const TimelineRate& frame_to_media_ratio() const {
     return frame_to_media_ratio_;
@@ -30,9 +30,9 @@ class AudioRendererFormatInfo
  private:
   FXL_DISALLOW_COPY_AND_ASSIGN(AudioRendererFormatInfo);
 
-  AudioRendererFormatInfo(AudioMediaTypeDetailsPtr format);
+  AudioRendererFormatInfo(AudioMediaTypeDetails format);
 
-  AudioMediaTypeDetailsPtr format_;
+  AudioMediaTypeDetails format_;
   TimelineRate frames_per_ns_;
   TimelineRate frame_to_media_ratio_;
   uint32_t bytes_per_frame_;

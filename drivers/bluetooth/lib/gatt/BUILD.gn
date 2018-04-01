@@ -4,9 +4,13 @@
 
 static_library("gatt") {
   sources = [
+    "client.cc",
+    "client.h",
     "connection.cc",
     "connection.h",
+    "gatt.cc",
     "gatt.h",
+    "gatt_defs.h",
     "local_service_manager.cc",
     "local_service_manager.h",
     "server.cc",
@@ -15,8 +19,24 @@ static_library("gatt") {
     "types.h",
   ]
 
-  deps = [
+  public_deps = [
     "//garnet/drivers/bluetooth/lib/att",
+    "//garnet/public/lib/fidl/cpp",
+  ]
+}
+
+source_set("testing") {
+  testonly = true
+
+  sources = [
+    "fake_layer.cc",
+    "fake_layer.h",
+  ]
+
+  public_deps = [
+    ":gatt",
+    "//garnet/public/lib/fxl",
+    "//zircon/public/lib/fbl",
   ]
 }
 
@@ -24,6 +44,7 @@ source_set("tests") {
   testonly = true
 
   sources = [
+    "client_unittest.cc",
     "local_service_manager_unittest.cc",
     "server_unittest.cc"
   ]

@@ -1,0 +1,11 @@
+{
+    "languages": [
+        "cpp"
+    ],
+    "imports": [
+        "garnet/packages/prod/netstack"
+    ],
+    "packages": {
+        "libssl": "//third_party/boringssl:libssl"
+    }
+}

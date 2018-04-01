@@ -10,60 +10,53 @@
 
 #include "garnet/examples/ui/tile/tile_params.h"
 #include "lib/app/cpp/application_context.h"
-#include "lib/app/fidl/application_launcher.fidl.h"
-#include "lib/fidl/cpp/bindings/binding_set.h"
+#include <fuchsia/cpp/component.h>
+#include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
-#include "lib/ui/presentation/fidl/presenter.fidl.h"
+#include "lib/svc/cpp/service_provider_bridge.h"
+#include <fuchsia/cpp/presentation.h>
 #include "lib/ui/scenic/client/resources.h"
 #include "lib/ui/view_framework/base_view.h"
-#include "lib/ui/views/fidl/view_provider.fidl.h"
+#include <fuchsia/cpp/views_v1.h>
 
 namespace examples {
 
 class TileView : public mozart::BaseView,
-                 public app::ApplicationEnvironmentHost,
-                 public mozart::Presenter {
+                 public presentation::Presenter {
  public:
-  TileView(mozart::ViewManagerPtr view_manager,
-           f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
-           app::ApplicationContext* application_context,
+  TileView(views_v1::ViewManagerPtr view_manager,
+           fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
+           component::ApplicationContext* application_context,
            const TileParams& tile_params);
 
   ~TileView() override;
 
  private:
   struct ViewData {
-    explicit ViewData(const std::string& url,
-                      uint32_t key,
-                      app::ApplicationControllerPtr controller,
+    explicit ViewData(const std::string& url, uint32_t key,
+                      component::ApplicationControllerPtr controller,
                       scenic_lib::Session* session);
     ~ViewData();
 
     const std::string url;
     const uint32_t key;
-    app::ApplicationControllerPtr controller;
+    component::ApplicationControllerPtr controller;
     scenic_lib::EntityNode host_node;
 
-    mozart::ViewPropertiesPtr view_properties;
-    mozart::ViewInfoPtr view_info;
+    views_v1::ViewProperties view_properties;
+    views_v1::ViewInfo view_info;
   };
 
   // |BaseView|:
   void OnChildAttached(uint32_t child_key,
-                       mozart::ViewInfoPtr child_view_info) override;
+                       views_v1::ViewInfo child_view_info) override;
   void OnChildUnavailable(uint32_t child_key) override;
-  void OnSceneInvalidated(
-      ui_mozart::PresentationInfoPtr presentation_info) override;
+  void OnSceneInvalidated(images::PresentationInfo presentation_info) override;
 
   // |Presenter|:
   void Present(
-      f1dl::InterfaceHandle<mozart::ViewOwner> view_owner,
-      f1dl::InterfaceRequest<mozart::Presentation> presentation) override;
-
-  // |ApplicationEnvironmentHost|:
-  void GetApplicationEnvironmentServices(
-      f1dl::InterfaceRequest<app::ServiceProvider> environment_services)
-      override;
+      fidl::InterfaceHandle<views_v1_token::ViewOwner> view_owner,
+      fidl::InterfaceRequest<presentation::Presentation> presentation) override;
 
   // Set up environment with a |Presenter| service.
   // We launch apps with this environment.
@@ -72,20 +65,19 @@ class TileView : public mozart::BaseView,
   // Launches initial list of views, passed as command line parameters.
   void ConnectViews();
 
-  void AddChildView(f1dl::InterfaceHandle<mozart::ViewOwner> view_owner,
+  void AddChildView(fidl::InterfaceHandle<views_v1_token::ViewOwner> view_owner,
                     const std::string& url,
-                    app::ApplicationControllerPtr);
+                    component::ApplicationControllerPtr);
   void RemoveChildView(uint32_t child_key);
 
   // Nested environment within which the apps started by TileView will run.
-  app::ApplicationEnvironmentPtr env_;
-  app::ApplicationEnvironmentControllerPtr env_controller_;
-  f1dl::Binding<app::ApplicationEnvironmentHost> env_host_binding_;
-  app::ServiceProviderImpl env_services_;
-  app::ApplicationLauncherPtr env_launcher_;
+  component::ApplicationEnvironmentPtr env_;
+  component::ApplicationEnvironmentControllerPtr env_controller_;
+  component::ServiceProviderBridge service_provider_bridge_;
+  component::ApplicationLauncherPtr env_launcher_;
 
   // Context inherited when TileView is launched.
-  app::ApplicationContext* application_context_;
+  component::ApplicationContext* application_context_;
 
   // Parsed command-line parameters for this program.
   TileParams params_;
@@ -99,7 +91,7 @@ class TileView : public mozart::BaseView,
   // Map from keys to |ViewData|
   std::map<uint32_t, std::unique_ptr<ViewData>> views_;
 
-  f1dl::BindingSet<mozart::Presenter> presenter_bindings_;
+  fidl::BindingSet<presentation::Presenter> presenter_bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TileView);
 };

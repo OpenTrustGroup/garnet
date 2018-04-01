@@ -9,55 +9,55 @@
 #include "garnet/bin/mdns/service/mdns.h"
 #include "garnet/bin/media/util/fidl_publisher.h"
 #include "lib/app/cpp/application_context.h"
-#include "lib/fidl/cpp/bindings/binding.h"
+#include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/macros.h"
-#include "lib/mdns/fidl/mdns.fidl.h"
+#include <fuchsia/cpp/mdns.h>
 
 namespace mdns {
 
 class MdnsServiceImpl : public MdnsService {
  public:
-  MdnsServiceImpl(app::ApplicationContext* application_context);
+  MdnsServiceImpl(component::ApplicationContext* application_context);
 
   ~MdnsServiceImpl() override;
 
   // MdnsService implementation.
-  void ResolveHostName(const f1dl::String& host_name,
+  void ResolveHostName(fidl::StringPtr host_name,
                        uint32_t timeout_ms,
-                       const ResolveHostNameCallback& callback) override;
+                       ResolveHostNameCallback callback) override;
 
-  void SubscribeToService(const f1dl::String& service_name,
-                          f1dl::InterfaceRequest<MdnsServiceSubscription>
+  void SubscribeToService(fidl::StringPtr service_name,
+                          fidl::InterfaceRequest<MdnsServiceSubscription>
                               subscription_request) override;
 
   void PublishServiceInstance(
-      const f1dl::String& service_name,
-      const f1dl::String& instance_name,
+      fidl::StringPtr service_name,
+      fidl::StringPtr instance_name,
       uint16_t port,
-      f1dl::Array<f1dl::String> text,
-      const PublishServiceInstanceCallback& callback) override;
+      fidl::VectorPtr<fidl::StringPtr> text,
+      PublishServiceInstanceCallback callback) override;
 
-  void UnpublishServiceInstance(const f1dl::String& service_name,
-                                const f1dl::String& instance_name) override;
+  void UnpublishServiceInstance(fidl::StringPtr service_name,
+                                fidl::StringPtr instance_name) override;
 
   void AddResponder(
-      const f1dl::String& service_name,
-      const f1dl::String& instance_name,
-      f1dl::InterfaceHandle<MdnsResponder> responder_handle) override;
+      fidl::StringPtr service_name,
+      fidl::StringPtr instance_name,
+      fidl::InterfaceHandle<MdnsResponder> responder_handle) override;
 
-  void SetSubtypes(const f1dl::String& service_name,
-                   const f1dl::String& instance_name,
-                   f1dl::Array<f1dl::String> subtypes) override;
+  void SetSubtypes(fidl::StringPtr service_name,
+                   fidl::StringPtr instance_name,
+                   fidl::VectorPtr<fidl::StringPtr> subtypes) override;
 
-  void ReannounceInstance(const f1dl::String& service_name,
-                          const f1dl::String& instance_name) override;
+  void ReannounceInstance(fidl::StringPtr service_name,
+                          fidl::StringPtr instance_name) override;
 
   void SetVerbose(bool value) override;
 
  private:
   class Subscriber : public Mdns::Subscriber, public MdnsServiceSubscription {
    public:
-    Subscriber(f1dl::InterfaceRequest<MdnsServiceSubscription> request,
+    Subscriber(fidl::InterfaceRequest<MdnsServiceSubscription> request,
                const fxl::Closure& deleter);
 
     ~Subscriber() override;
@@ -82,10 +82,10 @@ class MdnsServiceImpl : public MdnsService {
 
     // MdnsServiceSubscription implementation.
     void GetInstances(uint64_t version_last_seen,
-                      const GetInstancesCallback& callback) override;
+                      GetInstancesCallback callback) override;
 
    private:
-    f1dl::Binding<MdnsServiceSubscription> binding_;
+    fidl::Binding<MdnsServiceSubscription> binding_;
     media::FidlPublisher<GetInstancesCallback> instances_publisher_;
     std::unordered_map<std::string, MdnsServiceInstancePtr> instances_by_name_;
 
@@ -96,8 +96,8 @@ class MdnsServiceImpl : public MdnsService {
   class SimplePublisher : public Mdns::Publisher {
    public:
     SimplePublisher(IpPort port,
-                    f1dl::Array<f1dl::String> text,
-                    const PublishServiceInstanceCallback& callback);
+                    fidl::VectorPtr<fidl::StringPtr> text,
+                    PublishServiceInstanceCallback callback);
 
    private:
     // Mdns::Publisher implementation.
@@ -138,8 +138,8 @@ class MdnsServiceImpl : public MdnsService {
   // Starts the service.
   void Start();
 
-  app::ApplicationContext* application_context_;
-  f1dl::BindingSet<MdnsService> bindings_;
+  component::ApplicationContext* application_context_;
+  fidl::BindingSet<MdnsService> bindings_;
   mdns::Mdns mdns_;
   size_t next_subscriber_id_ = 0;
   std::unordered_map<size_t, std::unique_ptr<Subscriber>> subscribers_by_id_;

@@ -7,45 +7,42 @@
 
 #include <list>
 
-#include "lib/app/cpp/application_context.h"
-#include "lib/tracing/fidl/trace_controller.fidl.h"
-#include "lib/tracing/fidl/trace_registry.fidl.h"
+#include <fuchsia/cpp/trace_link.h>
+#include <fuchsia/cpp/tracing.h>
+
 #include "garnet/bin/trace_manager/config.h"
 #include "garnet/bin/trace_manager/trace_provider_bundle.h"
 #include "garnet/bin/trace_manager/trace_session.h"
-#include "lib/fidl/cpp/bindings/binding_set.h"
-#include "lib/fidl/cpp/bindings/interface_ptr_set.h"
-#include "lib/fidl/cpp/bindings/interface_request.h"
+#include "lib/app/cpp/application_context.h"
+#include "lib/fidl/cpp/binding_set.h"
+#include "lib/fidl/cpp/interface_ptr_set.h"
+#include "lib/fidl/cpp/interface_request.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/tasks/one_shot_timer.h"
 
 namespace tracing {
 
-class TraceManager : public TraceRegistry, public TraceController {
+class TraceManager : public trace_link::Registry, public TraceController {
  public:
-  TraceManager(app::ApplicationContext* context, const Config& config);
+  TraceManager(component::ApplicationContext* context, const Config& config);
   ~TraceManager() override;
 
  private:
   // |TraceController| implementation.
-  void StartTracing(TraceOptionsPtr options,
+  void StartTracing(TraceOptions options,
                     zx::socket output,
-                    const StartTracingCallback& cb) override;
+                    StartTracingCallback cb) override;
   void StopTracing() override;
-  void DumpProvider(uint32_t provider_id, zx::socket output) override;
-  void GetKnownCategories(const GetKnownCategoriesCallback& callback) override;
-  void GetRegisteredProviders(
-      const GetRegisteredProvidersCallback& callback) override;
+  void GetKnownCategories(GetKnownCategoriesCallback callback) override;
 
   // |TraceRegistry| implementation.
   void RegisterTraceProvider(
-      f1dl::InterfaceHandle<tracing::TraceProvider> provider,
-      const f1dl::String& label) override;
+      fidl::InterfaceHandle<trace_link::Provider> provider) override;
 
   void FinalizeTracing();
   void LaunchConfiguredProviders();
 
-  app::ApplicationContext* const context_;
+  component::ApplicationContext* const context_;
   const Config& config_;
 
   uint32_t next_provider_id_ = 1u;

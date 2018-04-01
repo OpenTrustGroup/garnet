@@ -5,11 +5,12 @@
 #ifndef GARNET_BIN_AUTH_TOKEN_MANAGER_TOKEN_MANAGER_FACTORY_IMPL_H_
 #define GARNET_BIN_AUTH_TOKEN_MANAGER_TOKEN_MANAGER_FACTORY_IMPL_H_
 
+#include <fuchsia/cpp/auth.h>
+
 #include "lib/app/cpp/application_context.h"
-#include "lib/auth/fidl/token_manager.fidl.h"
-#include "lib/fidl/cpp/bindings/binding_set.h"
-#include "lib/fidl/cpp/bindings/interface_request.h"
-#include "lib/fidl/cpp/bindings/string.h"
+#include "lib/fidl/cpp/binding_set.h"
+#include "lib/fidl/cpp/interface_request.h"
+#include "lib/fidl/cpp/string.h"
 #include "lib/fxl/macros.h"
 
 namespace auth {
@@ -24,19 +25,20 @@ const std::string kAuthDbPostfix = "token_store.db";
 
 class TokenManagerFactoryImpl : public TokenManagerFactory {
  public:
-  TokenManagerFactoryImpl(app::ApplicationContext* context);
+  TokenManagerFactoryImpl(component::ApplicationContext* context);
 
   ~TokenManagerFactoryImpl() override;
 
  private:
   // |TokenManagerFactory|
-  void GetTokenManager(const f1dl::String& user_id,
-                       f1dl::Array<AuthProviderConfigPtr> auth_provider_configs,
-                       f1dl::InterfaceRequest<TokenManager> request) override;
+  void GetTokenManager(
+      fidl::StringPtr user_id,
+      fidl::VectorPtr<AuthProviderConfig> auth_provider_configs,
+      fidl::InterfaceRequest<TokenManager> request) override;
 
-  app::ApplicationContext* const app_context_;
+  component::ApplicationContext* const app_context_;
 
-  f1dl::BindingSet<TokenManager, std::unique_ptr<TokenManager>>
+  fidl::BindingSet<TokenManager, std::unique_ptr<TokenManager>>
       token_manager_bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TokenManagerFactoryImpl);

@@ -6,18 +6,19 @@
 
 #include <fdio/util.h>
 
+#include <fuchsia/cpp/views_v1.h>
+#include "lib/fidl/cpp/optional.h"
 #include "lib/fxl/logging.h"
 #include "lib/svc/cpp/services.h"
-#include "lib/ui/views/fidl/view_provider.fidl.h"
+#include "lib/ui/geometry/cpp/geometry_util.h"
 
 namespace examples {
 
-TileView::TileView(mozart::ViewManagerPtr view_manager,
-                   f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
-                   app::ApplicationContext* application_context,
+TileView::TileView(views_v1::ViewManagerPtr view_manager,
+                   fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
+                   component::ApplicationContext* application_context,
                    const TileParams& params)
     : BaseView(std::move(view_manager), std::move(view_owner_request), "Tile"),
-      env_host_binding_(this),
       application_context_(application_context),
       params_(params),
       container_node_(session()) {
@@ -30,29 +31,29 @@ TileView::TileView(mozart::ViewManagerPtr view_manager,
 TileView::~TileView() {}
 
 void TileView::Present(
-    f1dl::InterfaceHandle<mozart::ViewOwner> child_view_owner,
-    f1dl::InterfaceRequest<mozart::Presentation> presentation) {
+    fidl::InterfaceHandle<views_v1_token::ViewOwner> child_view_owner,
+    fidl::InterfaceRequest<presentation::Presentation> presentation) {
   const std::string empty_url;
   AddChildView(std::move(child_view_owner), empty_url, nullptr);
 }
 
 void TileView::ConnectViews() {
   for (const auto& url : params_.view_urls) {
-    app::Services services;
-    app::ApplicationControllerPtr controller;
+    component::Services services;
+    component::ApplicationControllerPtr controller;
 
-    auto launch_info = app::ApplicationLaunchInfo::New();
-    launch_info->url = url;
-    launch_info->directory_request = services.NewRequest();
+    component::ApplicationLaunchInfo launch_info;
+    launch_info.url = url;
+    launch_info.directory_request = services.NewRequest();
 
     // |env_launcher_| launches the app with our nested environment.
     env_launcher_->CreateApplication(std::move(launch_info),
                                      controller.NewRequest());
 
     // Get the view provider back from the launched app.
-    auto view_provider = services.ConnectToService<mozart::ViewProvider>();
+    auto view_provider = services.ConnectToService<views_v1::ViewProvider>();
 
-    f1dl::InterfaceHandle<mozart::ViewOwner> child_view_owner;
+    fidl::InterfaceHandle<views_v1_token::ViewOwner> child_view_owner;
     view_provider->CreateView(child_view_owner.NewRequest(), nullptr);
 
     // Add the view, which increments child_key_.
@@ -60,34 +61,28 @@ void TileView::ConnectViews() {
   }
 }
 
-void TileView::GetApplicationEnvironmentServices(
-    f1dl::InterfaceRequest<app::ServiceProvider> environment_services) {
-  env_services_.AddBinding(std::move(environment_services));
-}
 
 void TileView::CreateNestedEnvironment() {
-  app::ApplicationEnvironmentHostPtr env_host;
-  env_host_binding_.Bind(env_host.NewRequest());
   application_context_->environment()->CreateNestedEnvironment(
-      std::move(env_host), env_.NewRequest(), env_controller_.NewRequest(),
-      "tile");
+      service_provider_bridge_.OpenAsDirectory(), env_.NewRequest(),
+      env_controller_.NewRequest(), "tile");
   env_->GetApplicationLauncher(env_launcher_.NewRequest());
 
   // Add a binding for the presenter service
-  env_services_.AddService<mozart::Presenter>(
-      [this](f1dl::InterfaceRequest<mozart::Presenter> request) {
+  service_provider_bridge_.AddService<presentation::Presenter>(
+      [this](fidl::InterfaceRequest<presentation::Presenter> request) {
         presenter_bindings_.AddBinding(this, std::move(request));
       });
 
-  env_services_.SetDefaultServiceConnector(
-      [this](std::string service_name, zx::channel channel) {
-        application_context_->ConnectToEnvironmentService(service_name,
-                                                          std::move(channel));
-      });
+  zx::channel h1, h2;
+  if (zx::channel::create(0, &h1, &h2) < 0)
+    return
+  application_context_->environment()->GetDirectory(std::move(h1));
+  service_provider_bridge_.set_backing_dir(std::move(h2));
 }
 
 void TileView::OnChildAttached(uint32_t child_key,
-                               mozart::ViewInfoPtr child_view_info) {
+                               views_v1::ViewInfo child_view_info) {
   auto it = views_.find(child_key);
   FXL_DCHECK(it != views_.end());
 
@@ -101,9 +96,9 @@ void TileView::OnChildUnavailable(uint32_t child_key) {
 }
 
 void TileView::AddChildView(
-    f1dl::InterfaceHandle<mozart::ViewOwner> child_view_owner,
+    fidl::InterfaceHandle<views_v1_token::ViewOwner> child_view_owner,
     const std::string& url,
-    app::ApplicationControllerPtr app_controller) {
+    component::ApplicationControllerPtr app_controller) {
   const uint32_t view_key = next_child_view_key_++;
 
   auto view_data = std::make_unique<ViewData>(
@@ -130,8 +125,7 @@ void TileView::RemoveChildView(uint32_t child_key) {
   InvalidateScene();
 }
 
-void TileView::OnSceneInvalidated(
-    ui_mozart::PresentationInfoPtr presentation_info) {
+void TileView::OnSceneInvalidated(images::PresentationInfo presentation_info) {
   if (!has_logical_size() || views_.empty())
     return;
 
@@ -154,7 +148,7 @@ void TileView::OnSceneInvalidated(
       excess--;
     }
 
-    mozart::RectF layout_bounds;
+    geometry::RectF layout_bounds;
     if (vertical) {
       layout_bounds.x = 0;
       layout_bounds.y = offset;
@@ -168,26 +162,25 @@ void TileView::OnSceneInvalidated(
     }
     offset += extent;
 
-    auto view_properties = mozart::ViewProperties::New();
-    view_properties->view_layout = mozart::ViewLayout::New();
-    view_properties->view_layout->size = mozart::SizeF::New();
-    view_properties->view_layout->size->width = layout_bounds.width;
-    view_properties->view_layout->size->height = layout_bounds.height;
-    view_properties->view_layout->inset = mozart::InsetF::New();
+    views_v1::ViewProperties view_properties;
+    view_properties.view_layout = views_v1::ViewLayout::New();
+    view_properties.view_layout->size.width = layout_bounds.width;
+    view_properties.view_layout->size.height = layout_bounds.height;
 
-    if (!view_data->view_properties.Equals(view_properties)) {
-      view_data->view_properties = view_properties.Clone();
+    if (view_data->view_properties != view_properties) {
+      views_v1::ViewProperties view_properties_clone;
+      view_properties.Clone(&view_properties_clone);
+      view_data->view_properties = std::move(view_properties_clone);
       GetViewContainer()->SetChildProperties(it->first,
-                                             std::move(view_properties));
+          fidl::MakeOptional(std::move(view_properties)));
     }
 
     view_data->host_node.SetTranslation(layout_bounds.x, layout_bounds.y, 0u);
   }
 }
 
-TileView::ViewData::ViewData(const std::string& url,
-                             uint32_t key,
-                             app::ApplicationControllerPtr controller,
+TileView::ViewData::ViewData(const std::string& url, uint32_t key,
+                             component::ApplicationControllerPtr controller,
                              scenic_lib::Session* session)
     : url(url),
       key(key),

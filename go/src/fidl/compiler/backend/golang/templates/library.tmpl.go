@@ -10,15 +10,35 @@ const Library = `
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-package main
+package {{ .Name }}
 
-import _zx "syscall/zx"
+import (
+{{- if .NeedsBindings }}
+	_bindings "fidl/bindings2"
+{{- end }}
+{{- if .NeedsSyscallZx }}
+	_zx "syscall/zx"
+{{- end }}
+
+{{- range $lib := .Libraries }}
+	{{ $lib }} "fuchsia/go/{{ $lib }}"
+{{- end }}
+)
+
+const (
+{{- range $const := .Consts }}
+	{{ .Name }} {{ .Type }} = {{ .Value }}
+{{- end }}
+)
 
 {{ range $enum := .Enums -}}
 {{ template "EnumDefinition" $enum }}
 {{ end -}}
 {{ range $struct := .Structs -}}
 {{ template "StructDefinition" $struct }}
+{{ end -}}
+{{ range $interface := .Interfaces -}}
+{{ template "InterfaceDefinition" $interface }}
 {{ end -}}
 
 {{- end -}}

@@ -7,66 +7,70 @@
 
 #include <zircon/types.h>
 
+#include <fuchsia/cpp/views_v1.h>
 #include "garnet/lib/machina/gpu_scanout.h"
 #include "garnet/lib/machina/input_dispatcher.h"
 #include "garnet/lib/machina/virtio_gpu.h"
 #include "lib/app/cpp/application_context.h"
-#include "lib/fidl/cpp/bindings/binding_set.h"
+#include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/tasks/task_runner.h"
 #include "lib/ui/scenic/client/host_memory.h"
 #include "lib/ui/scenic/client/resources.h"
 #include "lib/ui/view_framework/base_view.h"
-#include "lib/ui/views/fidl/view_provider.fidl.h"
 
 class GuestView;
 
-class ScenicScanout : public machina::GpuScanout, public mozart::ViewProvider {
+class ScenicScanout : public machina::GpuScanout,
+                      public views_v1::ViewProvider {
  public:
-  static zx_status_t Create(app::ApplicationContext* application_context,
+  static zx_status_t Create(component::ApplicationContext* application_context,
                             machina::InputDispatcher* input_dispatcher,
                             fbl::unique_ptr<GpuScanout>* out);
 
-  ScenicScanout(app::ApplicationContext* application_context,
+  ScenicScanout(component::ApplicationContext* application_context,
                 machina::InputDispatcher* input_dispatcher);
 
   // |GpuScanout|
-  void FlushRegion(const virtio_gpu_rect_t& rect) override;
+  void InvalidateRegion(const machina::GpuRect& rect) override;
 
   // |ViewProvider|
   void CreateView(
-      f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request,
-      f1dl::InterfaceRequest<app::ServiceProvider> view_services) override;
+      fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
+      fidl::InterfaceRequest<component::ServiceProvider> view_services)
+      override;
 
  private:
   machina::InputDispatcher* input_dispatcher_;
-  app::ApplicationContext* application_context_;
+  component::ApplicationContext* application_context_;
   fxl::RefPtr<fxl::TaskRunner> task_runner_;
-  f1dl::BindingSet<ViewProvider> bindings_;
+  fidl::BindingSet<ViewProvider> bindings_;
   fbl::unique_ptr<GuestView> view_;
 };
 
 class GuestView : public mozart::BaseView {
  public:
-  GuestView(machina::GpuScanout* scanout,
-            machina::InputDispatcher* input_dispatcher,
-            mozart::ViewManagerPtr view_manager,
-            f1dl::InterfaceRequest<mozart::ViewOwner> view_owner_request);
+  GuestView(
+      machina::GpuScanout* scanout,
+      machina::InputDispatcher* input_dispatcher,
+      views_v1::ViewManagerPtr view_manager,
+      fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request);
 
   ~GuestView() override;
 
  private:
   // |BaseView|:
-  void OnSceneInvalidated(
-      ui_mozart::PresentationInfoPtr presentation_info) override;
-  bool OnInputEvent(mozart::InputEventPtr event) override;
+  void OnSceneInvalidated(images::PresentationInfo presentation_info) override;
+  bool OnInputEvent(input::InputEvent event) override;
 
   scenic_lib::ShapeNode background_node_;
   scenic_lib::Material material_;
-  scenic::ImageInfo image_info_;
+  images::ImageInfo image_info_;
   fbl::unique_ptr<scenic_lib::HostMemory> memory_;
 
   machina::InputDispatcher* input_dispatcher_;
+  float previous_pointer_x_;
+  float previous_pointer_y_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(GuestView);
 };

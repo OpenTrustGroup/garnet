@@ -9,22 +9,22 @@
 #include <utility>
 
 #include "garnet/bin/appmgr/url_resolver.h"
+#include "lib/fidl/cpp/optional.h"
 #include "lib/fsl/io/fd.h"
 #include "lib/fsl/vmo/file.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/concatenate.h"
 
-namespace app {
+namespace component {
 
 RootApplicationLoader::RootApplicationLoader(std::vector<std::string> path)
     : path_(std::move(path)) {}
 
 RootApplicationLoader::~RootApplicationLoader() {}
 
-void RootApplicationLoader::LoadApplication(
-    const f1dl::String& url,
-    const ApplicationLoader::LoadApplicationCallback& callback) {
+void RootApplicationLoader::LoadApplication(fidl::StringPtr url,
+                                            LoadApplicationCallback callback) {
   std::string path = GetPathFromURL(url);
   if (path.empty()) {
     // TODO(abarth): Support URL schemes other than file:// by querying the host
@@ -42,10 +42,10 @@ void RootApplicationLoader::LoadApplication(
         if (fd.is_valid()) {
           zx::channel directory = fsl::CloneChannelFromFileDescriptor(fd.get());
           if (directory) {
-            ApplicationPackagePtr package = ApplicationPackage::New();
-            package->directory = std::move(directory);
-            package->resolved_url = fxl::Concatenate({"file://", pkg_path});
-            callback(std::move(package));
+            ApplicationPackage package;
+            package.directory = std::move(directory);
+            package.resolved_url = fxl::Concatenate({"file://", pkg_path});
+            callback(fidl::MakeOptional(std::move(package)));
             return;
           }
         }
@@ -61,10 +61,10 @@ void RootApplicationLoader::LoadApplication(
     }
     fsl::SizedVmo data;
     if (fd.is_valid() && fsl::VmoFromFd(std::move(fd), &data)) {
-      ApplicationPackagePtr package = ApplicationPackage::New();
-      package->data = std::move(data).ToTransport();
-      package->resolved_url = fxl::Concatenate({"file://", path});
-      callback(std::move(package));
+      ApplicationPackage package;
+      package.data = fidl::MakeOptional(std::move(data).ToTransport());
+      package.resolved_url = fxl::Concatenate({"file://", path});
+      callback(fidl::MakeOptional(std::move(package)));
       return;
     }
     FXL_LOG(ERROR) << "Could not load url: " << url;
@@ -73,4 +73,9 @@ void RootApplicationLoader::LoadApplication(
   callback(nullptr);
 }
 
-}  // namespace app
+void RootApplicationLoader::AddBinding(
+    fidl::InterfaceRequest<ApplicationLoader> request) {
+  bindings_.AddBinding(this, std::move(request));
+}
+
+}  // namespace component

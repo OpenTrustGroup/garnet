@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 #![feature(test)]
 
+#[macro_use]
+extern crate bitfield;
+extern crate byteorder;
 extern crate bytes;
 extern crate crypto;
 #[macro_use]
@@ -22,6 +25,7 @@ mod cipher;
 mod crypto_utils;
 mod integrity;
 mod key;
+mod key_data;
 mod keywrap;
 mod pmkid;
 pub mod rsne;
@@ -57,6 +61,17 @@ pub enum Error {
     PtkHierarchyUnsupportedAkmError,
     #[fail(display = "error deriving PTK; unsupported cipher suite")]
     PtkHierarchyUnsupportedCipherError,
+    #[fail(display = "error invalid key size for AES keywrap: {}", _0)]
+    InvalidAesKeywrapKeySize(usize),
+    #[fail(display = "error data must be a multiple of 64-bit blocks and at least 128 bits: {}", _0)]
+    InvalidAesKeywrapDataLength(usize),
+    #[fail(display = "error wrong key for AES Keywrap unwrapping")]
+    WrongAesKeywrapKey,
+    #[fail(display = "invalid key data length; must be at least 16 bytes and a multiple of 8: {}", _0)]
+    InvaidKeyDataLength(usize),
+    #[fail(display = "invalid key data; error code: {:?}", _0)]
+    InvalidKeyData(nom::IError),
+
 }
 
 impl From<std::io::Error> for Error {

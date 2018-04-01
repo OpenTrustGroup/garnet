@@ -6,24 +6,21 @@ package main
 
 import (
 	"app/context"
-	"fidl/bindings"
+	"fidl/bindings2"
 
-	"syscall/zx"
-	"syscall/zx/mxerror"
-
-	"garnet/public/lib/wlan/fidl/wlan_service"
+	"fuchsia/go/wlan_service"
 	"netstack/watcher"
 	"wlan/wlan"
 
 	"fmt"
 	"log"
 	"sync"
+	"syscall/zx"
 )
 
 type Wlanstack struct {
 	cfg   *wlan.Config
 	apCfg *wlan.APConfig
-	stubs []*bindings.Stub
 
 	mu     sync.Mutex
 	client []*wlan.Client
@@ -34,7 +31,7 @@ func (ws *Wlanstack) Scan(sr wlan_service.ScanRequest) (res wlan_service.ScanRes
 	if cli == nil {
 		return wlan_service.ScanResult{
 			wlan_service.Error{
-				wlan_service.ErrCode_NotFound,
+				wlan_service.ErrCodeNotFound,
 				"No wlan interface found"},
 			nil,
 		}, nil
@@ -53,7 +50,7 @@ func (ws *Wlanstack) Scan(sr wlan_service.ScanRequest) (res wlan_service.ScanRes
 	if !ok {
 		return wlan_service.ScanResult{
 			wlan_service.Error{
-				wlan_service.ErrCode_Internal,
+				wlan_service.ErrCodeInternal,
 				"Internal error"},
 			nil,
 		}, nil
@@ -64,7 +61,7 @@ func (ws *Wlanstack) Scan(sr wlan_service.ScanRequest) (res wlan_service.ScanRes
 		aps = append(aps, ap)
 	}
 	return wlan_service.ScanResult{
-		wlan_service.Error{wlan_service.ErrCode_Ok, "OK"},
+		wlan_service.Error{wlan_service.ErrCodeOk, "OK"},
 		&aps,
 	}, nil
 }
@@ -73,7 +70,7 @@ func (ws *Wlanstack) Connect(sc wlan_service.ConnectConfig) (wserr wlan_service.
 	cli := ws.getCurrentClient()
 	if cli == nil {
 		return wlan_service.Error{
-			wlan_service.ErrCode_NotFound,
+			wlan_service.ErrCodeNotFound,
 			"No wlan interface found"}, nil
 	}
 	cfg := wlan.NewConfig()
@@ -88,13 +85,13 @@ func (ws *Wlanstack) Connect(sc wlan_service.ConnectConfig) (wserr wlan_service.
 	if resp.Err != nil {
 		return *resp.Err, nil
 	}
-	return wlan_service.Error{wlan_service.ErrCode_Ok, "OK"}, nil
+	return wlan_service.Error{wlan_service.ErrCodeOk, "OK"}, nil
 }
 
 func (ws *Wlanstack) Disconnect() (wserr wlan_service.Error, err error) {
 	cli := ws.getCurrentClient()
 	if cli == nil {
-		return wlan_service.Error{wlan_service.ErrCode_NotFound, "No wlan interface found"}, nil
+		return wlan_service.Error{wlan_service.ErrCodeNotFound, "No wlan interface found"}, nil
 	}
 	respC := make(chan *wlan.CommandResult, 1)
 	var noArgs interface{}
@@ -104,7 +101,7 @@ func (ws *Wlanstack) Disconnect() (wserr wlan_service.Error, err error) {
 	if resp.Err != nil {
 		return *resp.Err, nil
 	}
-	return wlan_service.Error{wlan_service.ErrCode_Ok, "OK"}, nil
+	return wlan_service.Error{wlan_service.ErrCodeOk, "OK"}, nil
 }
 
 func (ws *Wlanstack) Status() (res wlan_service.WlanStatus, err error) {
@@ -112,28 +109,47 @@ func (ws *Wlanstack) Status() (res wlan_service.WlanStatus, err error) {
 	if cli == nil {
 		return wlan_service.WlanStatus{
 			wlan_service.Error{
-				wlan_service.ErrCode_NotFound,
+				wlan_service.ErrCodeNotFound,
 				"No wlan interface found"},
-			wlan_service.State_Unknown,
+			wlan_service.StateUnknown,
 			nil,
 		}, nil
 	}
 	return cli.Status(), nil
 }
 
-func (ws *Wlanstack) Bind(r wlan_service.Wlan_Request) {
-	s := r.NewStub(ws, bindings.GetAsyncWaiter())
-	ws.stubs = append(ws.stubs, s)
-	go func() {
-		for {
-			if err := s.ServeRequest(); err != nil {
-				if mxerror.Status(err) != zx.ErrPeerClosed {
-					log.Println(err)
-				}
-				break
-			}
-		}
-	}()
+func (ws *Wlanstack) StartBss(sc_cfg wlan_service.BssConfig) (wserr wlan_service.Error, err error) {
+	cli := ws.getCurrentClient()
+	if cli == nil {
+		return wlan_service.Error{wlan_service.ErrCodeNotFound, "No wlan interface found"}, nil
+	}
+
+	cfg := wlan.NewAPConfig(sc_cfg.Ssid)
+	respC := make(chan *wlan.CommandResult, 1)
+	cli.PostCommand(wlan.CmdStartBSS, cfg, respC)
+
+	resp := <-respC
+	if resp.Err != nil {
+		return *resp.Err, nil
+	}
+	return wlan_service.Error{wlan_service.ErrCodeOk, "OK"}, nil
+}
+
+func (ws *Wlanstack) StopBss() (wserr wlan_service.Error, err error) {
+	cli := ws.getCurrentClient()
+	if cli == nil {
+		return wlan_service.Error{wlan_service.ErrCodeNotFound, "No wlan interface found"}, nil
+	}
+
+	respC := make(chan *wlan.CommandResult, 1)
+	var noArgs interface{}
+	cli.PostCommand(wlan.CmdStopBSS, noArgs, respC)
+
+	resp := <-respC
+	if resp.Err != nil {
+		return *resp.Err, nil
+	}
+	return wlan_service.Error{wlan_service.ErrCodeOk, "OK"}, nil
 }
 
 func main() {
@@ -143,8 +159,12 @@ func main() {
 
 	ws := &Wlanstack{}
 
+	service := &bindings2.BindingSet{}
 	ctx := context.CreateFromStartupInfo()
-	ctx.OutgoingService.AddService(&wlan_service.Wlan_ServiceBinder{ws})
+	ctx.OutgoingService.AddService(wlan_service.WlanName, func(c zx.Channel) error {
+		return service.Add(&wlan_service.WlanStub{Impl: ws}, c)
+	})
+	go bindings2.Serve()
 	ctx.Serve()
 
 	ws.readConfigFile()

@@ -10,7 +10,7 @@
 #include "garnet/bin/ui/root_presenter/displays/display_metrics.h"
 
 #include "lib/fxl/macros.h"
-#include "lib/ui/presentation/fidl/display_usage.fidl.h"
+#include <fuchsia/cpp/presentation.h>
 
 namespace root_presenter {
 
@@ -50,7 +50,7 @@ class DisplayModel {
   struct EnvironmentInfo {
     // The intended usage of the display.
     // Value is |kUnknown| if unknown.
-    mozart::DisplayUsage usage = mozart::DisplayUsage::UNKNOWN;
+    presentation::DisplayUsage usage = presentation::DisplayUsage::kUnknown;
 
     // The nominal apparent viewing distance in millimeters.
     // Value is 0.0 if unknown.
@@ -79,8 +79,6 @@ class DisplayModel {
   DisplayInfo display_info_;
   EnvironmentInfo environment_info_;
   UserInfo user_info_;
-
-  FXL_DISALLOW_COPY_AND_ASSIGN(DisplayModel);
 };
 
 }  // namespace root_presenter

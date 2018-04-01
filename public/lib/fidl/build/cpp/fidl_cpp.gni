@@ -16,33 +16,49 @@ template("fidl_cpp") {
   assert(current_base_toolchain == target_toolchain,
          "This template can only be used in $target_toolchain.")
 
-  not_needed(invoker, [ "sdk_candidate" ])
+  not_needed(invoker,
+             [
+               "sdk_candidate",
+               "sources",
+             ])
 
   main_target_name = target_name
   generation_target_name = "${target_name}_cpp_generate"
-  c_generation_target_name = "${target_name}_c_generate"
 
   library_name = target_name
   if (defined(invoker.name)) {
     library_name = invoker.name
   }
 
-  # Generate the source code just once in the base toolchain, even
-  # if it gets compiled separately in multiple variant toolchains.
-  base_gen_dir = get_label_info(":${target_name}(${current_base_toolchain})",
-                                "target_gen_dir")
+  # Generate the source code just once in the base toolchain, even if it
+  # gets compiled separately in multiple variants of the target toolchains.
+  # The generation happens in the base (C++) toolchain, but put its output
+  # into fidl_toolchain's gen/ directory instead so that a single
+  # `-Ifidling/gen` lets `#include <fuchsia/cpp/library.h>` find the
+  # files without adding `-Igen` when gen/ is for a different actual C++
+  # toolchain.  Since `fidling/gen` contains nothing but FIDL-generated
+  # code, it's not so scary to have that included in code built by multiple
+  # other toolchains.
+  fidl_target_gen_dir =
+      get_label_info(":$target_name($fidl_toolchain)", "target_gen_dir")
+  fidl_root_gen_dir =
+      get_label_info(":$target_name($fidl_toolchain)", "root_gen_dir")
 
-  file_stem = "$base_gen_dir/$library_name.fidl"
-  c_header = "$file_stem.c.h"
-  tables = "$file_stem.tables.cc"
+  file_stem = "$fidl_root_gen_dir/fuchsia/cpp/$library_name"
+  coding_tables = "$fidl_target_gen_dir/$target_name.fidl.tables.cc"
 
   if (current_toolchain == current_base_toolchain) {
-    fidl_target_gen_dir =
-        get_label_info(":bogus($fidl_toolchain)", "target_gen_dir")
+    fidl_root_gen_dir =
+        get_label_info(":$target_name($fidl_toolchain)", "root_gen_dir")
     json_representation = "$fidl_target_gen_dir/$target_name.fidl.json"
 
     compiled_action(generation_target_name) {
-      visibility = [ ":*" ]
+      forward_variables_from(invoker,
+                            [
+                              "testonly",
+                            ])
+
+      visibility = [ ":$main_target_name" ]
 
       tool = "//garnet/go/src/fidl:fidl_backend"
 
@@ -51,45 +67,24 @@ template("fidl_cpp") {
       ]
 
       outputs = [
-        "$file_stem.cc.h",
+        "$file_stem.h",
         "$file_stem.cc",
       ]
 
       args = [
-        "-fidl-json",
+        "--fidl-json",
         rebase_path(json_representation, root_build_dir),
-        "-fidl-stem",
+        "--fidl-stem",
         rebase_path(file_stem, root_build_dir),
         "--root-gen-dir",
-        rebase_path(root_gen_dir, root_build_dir),
-        "-generators",
+        rebase_path(fidl_root_gen_dir, root_build_dir),
+        "--generators",
         "cpp",
       ]
 
       deps = [
         ":$main_target_name($fidl_toolchain)",
       ]
-    }
-
-    compiled_action(c_generation_target_name) {
-      visibility = [ ":*" ]
-
-      tool = "//zircon/public/tool/fidl2"
-
-      inputs = invoker.sources
-
-      outputs = [
-        c_header,
-        tables,
-      ]
-
-      args = [
-               "--c-header",
-               rebase_path(c_header, root_build_dir),
-               "--tables",
-               rebase_path(tables, root_build_dir),
-               "--files",
-             ] + rebase_path(inputs, root_build_dir)
     }
   } else {
     not_needed(invoker, "*")
@@ -104,15 +99,28 @@ template("fidl_cpp") {
 
     sources = [
       "$file_stem.cc",
-      "$file_stem.cc.h",
-      c_header,
-      tables,
+      "$file_stem.h",
+      coding_tables,
     ]
 
+    # Let dependencies use `#include "$file_stem.h"`.
+    public_configs = [ "//garnet/public/lib/fidl/build/cpp:fidl_gen_config" ]
+
     deps = [
-      ":${c_generation_target_name}(${current_base_toolchain})",
-      ":${generation_target_name}(${current_base_toolchain})",
+      ":$generation_target_name($current_base_toolchain)",
+      ":$main_target_name($fidl_toolchain)",
+    ]
+
+    public_deps = [
       "//garnet/public/lib/fidl/cpp",
     ]
+
+    if (defined(invoker.deps)) {
+      deps += invoker.deps
+    }
+
+    if (defined(invoker.public_deps)) {
+      public_deps += invoker.public_deps
+    }
   }
 }

@@ -7,11 +7,11 @@
 
 #include <memory>
 
-#include "lib/app/cpp/application_context.h"
-#include "lib/app/fidl/application_environment.fidl.h"
-#include "lib/ui/views/fidl/view_manager.fidl.h"
+#include <fuchsia/cpp/component.h>
+#include <fuchsia/cpp/views_v1.h>
 #include "garnet/bin/ui/view_manager/view_registry.h"
-#include "lib/fidl/cpp/bindings/binding_set.h"
+#include "lib/app/cpp/application_context.h"
+#include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
 
 namespace view_manager {
@@ -25,10 +25,10 @@ class ViewManagerApp {
   ~ViewManagerApp();
 
  private:
-  std::unique_ptr<app::ApplicationContext> application_context_;
+  std::unique_ptr<component::ApplicationContext> application_context_;
 
   std::unique_ptr<ViewRegistry> registry_;
-  f1dl::BindingSet<mozart::ViewManager, std::unique_ptr<ViewManagerImpl>>
+  fidl::BindingSet<views_v1::ViewManager, std::unique_ptr<ViewManagerImpl>>
       view_manager_bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(ViewManagerApp);

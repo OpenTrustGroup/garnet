@@ -9,6 +9,9 @@
 #include <thread>
 #include <unordered_set>
 
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
+
 #include "lib/app/cpp/application_context.h"
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fsl/threading/create_thread.h"
@@ -48,7 +51,8 @@ class FactoryServiceBase {
     bool quit_on_destruct_ = false;
   };
 
-  // A |ProductBase| that exposes FIDL interface |Interface|.
+  // A |ProductBase| that exposes FIDL interface |Interface| via a single
+  // binding.
   template <typename Interface>
   class Product : public ProductBase {
    public:
@@ -56,7 +60,7 @@ class FactoryServiceBase {
 
    protected:
     Product(Interface* impl,
-            f1dl::InterfaceRequest<Interface> request,
+            fidl::InterfaceRequest<Interface> request,
             Factory* owner)
         : ProductBase(owner), binding_(impl, std::move(request)) {
       FXL_DCHECK(impl);
@@ -69,7 +73,7 @@ class FactoryServiceBase {
     }
 
     // Returns the binding established via the request in the constructor.
-    const f1dl::Binding<Interface>& binding() { return binding_; }
+    const fidl::Binding<Interface>& binding() { return binding_; }
 
     // Increments the retention count.
     void Retain() { ++retention_count_; }
@@ -99,24 +103,72 @@ class FactoryServiceBase {
 
    private:
     size_t retention_count_ = 0;
-    f1dl::Binding<Interface> binding_;
+    fidl::Binding<Interface> binding_;
+  };
+
+  // A |ProductBase| that exposes FIDL interface |Interface| via multiple
+  // bindings.
+  template <typename Interface>
+  class MultiClientProduct : public ProductBase {
+   public:
+    virtual ~MultiClientProduct() {}
+
+   protected:
+    MultiClientProduct(Interface* impl,
+                       fidl::InterfaceRequest<Interface> request,
+                       Factory* owner)
+        : ProductBase(owner), impl_(impl) {
+      FXL_DCHECK(impl);
+
+      if (request) {
+        AddBinding(std::move(request));
+      }
+
+      bindings_.set_empty_set_handler([this]() {
+        bindings_.set_empty_set_handler(nullptr);
+        ProductBase::ReleaseFromOwner();
+      });
+    }
+
+    // Returns the bindings for this product.
+    const fidl::BindingSet<Interface>& bindings() { return bindings_; }
+
+    // Adds a binding.
+    void AddBinding(fidl::InterfaceRequest<Interface> request) {
+      FXL_DCHECK(request);
+      bindings_.AddBinding(impl_, std::move(request));
+    }
+
+    // Closes the bindings.
+    void Unbind() { bindings_.CloseAll(); }
+
+    // Closes the bindings and calls ReleaseFromOwner. This method can only
+    // be called after the first shared_ptr to the product is created.
+    void UnbindAndReleaseFromOwner() {
+      Unbind();
+      ProductBase::ReleaseFromOwner();
+    }
+
+   private:
+    Interface* impl_;
+    fidl::BindingSet<Interface> bindings_;
   };
 
   FactoryServiceBase(
-      std::unique_ptr<app::ApplicationContext> application_context)
+      std::unique_ptr<component::ApplicationContext> application_context)
       : application_context_(std::move(application_context)),
         task_runner_(fsl::MessageLoop::GetCurrent()->task_runner()) {}
 
   virtual ~FactoryServiceBase() {}
 
   // Gets the application context.
-  app::ApplicationContext* application_context() {
+  component::ApplicationContext* application_context() {
     return application_context_.get();
   }
 
   // Connects to a service registered with the application environment.
   template <typename Interface>
-  f1dl::InterfacePtr<Interface> ConnectToEnvironmentService(
+  fidl::InterfacePtr<Interface> ConnectToEnvironmentService(
       const std::string& interface_name = Interface::Name_) {
     return application_context_->ConnectToEnvironmentService<Interface>(
         interface_name);
@@ -160,7 +212,7 @@ class FactoryServiceBase {
   virtual void OnLastProductRemoved() {}
 
  private:
-  std::unique_ptr<app::ApplicationContext> application_context_;
+  std::unique_ptr<component::ApplicationContext> application_context_;
   fxl::RefPtr<fxl::TaskRunner> task_runner_;
   mutable std::mutex mutex_;
   std::unordered_set<std::shared_ptr<ProductBase>> products_
@@ -176,11 +228,10 @@ class FactoryServiceBase {
 // The unbind happens synchronously to prevent any pending method calls from
 // happening. The release is deferred so that RCHECK works in a product
 // constructor.
-#define RCHECK(condition)                                             \
-  if (!(condition)) {                                                 \
-    FXL_LOG(ERROR) << "request precondition failed: " #condition "."; \
-    Unbind();                                                         \
-    fsl::MessageLoop::GetCurrent()->task_runner()->PostTask(          \
-        [this]() { ReleaseFromOwner(); });                            \
-    return;                                                           \
+#define RCHECK(condition)                                                   \
+  if (!(condition)) {                                                       \
+    FXL_LOG(ERROR) << "request precondition failed: " #condition ".";       \
+    Unbind();                                                               \
+    async::PostTask(async_get_default(), [this]() { ReleaseFromOwner(); }); \
+    return;                                                                 \
   }

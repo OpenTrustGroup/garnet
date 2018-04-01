@@ -45,7 +45,22 @@ bool SerializeDeserializeReply(const ReplyType& in, ReplyType* out) {
   return true;
 }
 
+template<typename NotificationType>
+bool SerializeDeserializeNotification(
+    const NotificationType& in,
+    NotificationType* out,
+    void (*write_fn)(const NotificationType&, MessageWriter*),
+    bool (*read_fn)(MessageReader*, NotificationType*)) {
+  MessageWriter writer;
+  write_fn(in, &writer);
+
+  MessageReader reader(writer.MessageComplete());
+  return read_fn(&reader, out);
+}
+
 }  // namespace
+
+// Hello -----------------------------------------------------------------------
 
 TEST(Protocol, HelloRequest) {
   HelloRequest initial;
@@ -60,6 +75,8 @@ TEST(Protocol, HelloReply) {
   ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
   EXPECT_EQ(initial.version, second.version);
 }
+
+// Launch ----------------------------------------------------------------------
 
 TEST(Protocol, LaunchRequest) {
   LaunchRequest initial;
@@ -77,12 +94,71 @@ TEST(Protocol, LaunchReply) {
   LaunchReply initial;
   initial.status = 67;
   initial.process_koid = 0x1234;
+  initial.process_name = "winword.exe";
 
   LaunchReply second;
   ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
   EXPECT_EQ(initial.status, second.status);
   EXPECT_EQ(initial.process_koid, second.process_koid);
+  EXPECT_EQ(initial.process_name, second.process_name);
 }
+
+// Attach ----------------------------------------------------------------------
+
+TEST(Protocol, AttachRequest) {
+  AttachRequest initial;
+  initial.koid = 5678;
+
+  AttachRequest second;
+  ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
+  EXPECT_EQ(initial.koid, second.koid);
+}
+
+TEST(Protocol, AttachReply) {
+  AttachReply initial;
+  initial.status = 67;
+  initial.process_name = "virtual console";
+
+  AttachReply second;
+  ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
+  EXPECT_EQ(initial.status, second.status);
+  EXPECT_EQ(initial.process_name, second.process_name);
+}
+
+// Detach ----------------------------------------------------------------------
+
+TEST(Protocol, DetachRequest) {
+  DetachRequest initial;
+  initial.process_koid = 5678;
+
+  DetachRequest second;
+  ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+}
+
+TEST(Protocol, DetachReply) {
+  DetachReply initial;
+  initial.status = 67;
+
+  DetachReply second;
+  ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
+  EXPECT_EQ(initial.status, second.status);
+}
+
+// Continue --------------------------------------------------------------------
+
+TEST(Protocol, ContinueRequest) {
+  ContinueRequest initial;
+  initial.process_koid = 3746234;
+  initial.thread_koid = 123523;
+
+  ContinueRequest second;
+  ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+  EXPECT_EQ(initial.thread_koid, second.thread_koid);
+}
+
+// ProcessTree -----------------------------------------------------------------
 
 TEST(Protocol, ProcessTreeRequest) {
   ProcessTreeRequest initial;
@@ -113,6 +189,8 @@ TEST(Protocol, ProcessTreeReply) {
   EXPECT_EQ(initial.root.children[0].name, second.root.children[0].name);
 }
 
+// Threads ---------------------------------------------------------------------
+
 TEST(Protocol, ThreadsRequest) {
   ThreadsRequest initial;
   initial.process_koid = 36473476;
@@ -139,6 +217,8 @@ TEST(Protocol, ThreadsReply) {
   EXPECT_EQ(initial.threads[1].koid, second.threads[1].koid);
   EXPECT_EQ(initial.threads[1].name, second.threads[1].name);
 }
+
+// ReadMemory ------------------------------------------------------------------
 
 TEST(Protocol, ReadMemoryRequest) {
   ReadMemoryRequest initial;
@@ -182,6 +262,99 @@ TEST(Protocol, ReadMemoryReply) {
   EXPECT_EQ(initial.blocks[1].valid, second.blocks[1].valid);
   EXPECT_EQ(initial.blocks[1].size, second.blocks[1].size);
   EXPECT_TRUE(second.blocks[1].data.empty());
+}
+
+// AddOrChangeBreakpoint -------------------------------------------------------
+
+TEST(Protocol, AddOrChangeBreakpointRequest) {
+  AddOrChangeBreakpointRequest initial;
+  initial.process_koid = 1234;
+  initial.breakpoint.breakpoint_id = 8976;
+  initial.breakpoint.thread_koid = 14612;
+  initial.breakpoint.address = 0x723456234;
+  initial.breakpoint.stop = debug_ipc::Stop::kProcess;
+
+  AddOrChangeBreakpointRequest second;
+  ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
+
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+  EXPECT_EQ(initial.breakpoint.breakpoint_id, second.breakpoint.breakpoint_id);
+  EXPECT_EQ(initial.breakpoint.thread_koid, second.breakpoint.thread_koid);
+  EXPECT_EQ(initial.breakpoint.address, second.breakpoint.address);
+  EXPECT_EQ(initial.breakpoint.stop, second.breakpoint.stop);
+}
+
+TEST(Protocol, AddOrChangeBreakpointReply) {
+  AddOrChangeBreakpointReply initial;
+  initial.status = 78;
+  initial.error_message = "foo bar";
+
+  AddOrChangeBreakpointReply second;
+  ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
+
+  EXPECT_EQ(initial.status, second.status);
+  EXPECT_EQ(initial.error_message, second.error_message);
+}
+
+// RemoveBreakpoint ------------------------------------------------------------
+
+TEST(Protocol, RemoveBreakpointRequest) {
+  RemoveBreakpointRequest initial;
+  initial.process_koid = 1234;
+  initial.breakpoint_id = 8976;
+
+  RemoveBreakpointRequest second;
+  ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
+
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+  EXPECT_EQ(initial.breakpoint_id, second.breakpoint_id);
+}
+
+TEST(Protocol, RemoveBreakpointReply) {
+  RemoveBreakpointReply initial;
+  RemoveBreakpointReply second;
+  ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
+}
+
+// Notifications ---------------------------------------------------------------
+
+TEST(Protocol, NotifyThread) {
+  NotifyThread initial;
+  initial.process_koid = 9887;
+  initial.record.koid = 1234;
+  initial.record.name = "Wolfgang";
+  initial.record.state = ThreadRecord::State::kDying;
+
+  MessageWriter writer;
+  WriteNotifyThread(MsgHeader::Type::kNotifyThreadStarting, initial, &writer);
+
+  MessageReader reader(writer.MessageComplete());
+  NotifyThread second;
+  ASSERT_TRUE(ReadNotifyThread(&reader, &second));
+
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+  EXPECT_EQ(initial.record.koid, second.record.koid);
+  EXPECT_EQ(initial.record.name, second.record.name);
+  EXPECT_EQ(initial.record.state, second.record.state);
+}
+
+TEST(Protocol, NotifyException) {
+  NotifyException initial;
+  initial.process_koid = 23;
+  initial.thread.name = "foo";
+  initial.type = NotifyException::Type::kHardware;
+  initial.ip = 0x7647342634;
+  initial.sp = 0x9861238251;
+
+  NotifyException second;
+  ASSERT_TRUE(SerializeDeserializeNotification(
+      initial, &second, &WriteNotifyException, &ReadNotifyException));
+
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+  EXPECT_EQ(initial.thread.name, second.thread.name);
+  EXPECT_EQ(initial.type, second.type);
+  EXPECT_EQ(initial.ip, second.ip);
+  EXPECT_EQ(initial.sp, second.sp);
 }
 
 }  // namespace debug_ipc

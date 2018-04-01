@@ -8,7 +8,7 @@
 
 #include "garnet/bin/media/media_service/media_component_factory.h"
 #include "lib/fsl/tasks/message_loop.h"
-#include "lib/media/fidl/media_player.fidl.h"
+#include <fuchsia/cpp/media.h>
 #include "lib/svc/cpp/services.h"
 
 const std::string kIsolateUrl = "media_service";
@@ -16,16 +16,15 @@ const std::string kIsolateArgument = "--transient";
 
 // Connects to the requested service in a media_service isolate.
 template <typename Interface>
-void ConnectToIsolate(f1dl::InterfaceRequest<Interface> request,
-                      app::ApplicationLauncher* launcher) {
-  auto launch_info = app::ApplicationLaunchInfo::New();
-  launch_info->url = kIsolateUrl;
-  launch_info->arguments = f1dl::Array<f1dl::String>::New(1);
-  launch_info->arguments[0] = kIsolateArgument;
-  app::Services services;
-  launch_info->directory_request = services.NewRequest();
+void ConnectToIsolate(fidl::InterfaceRequest<Interface> request,
+                      component::ApplicationLauncher* launcher) {
+  component::ApplicationLaunchInfo launch_info;
+  launch_info.url = kIsolateUrl;
+  launch_info.arguments.push_back(kIsolateArgument);
+  component::Services services;
+  launch_info.directory_request = services.NewRequest();
 
-  app::ApplicationControllerPtr controller;
+  component::ApplicationControllerPtr controller;
   launcher->CreateApplication(std::move(launch_info), controller.NewRequest());
 
   services.ConnectToService(std::move(request), Interface::Name_);
@@ -45,8 +44,8 @@ int main(int argc, const char** argv) {
   fsl::MessageLoop loop;
   trace::TraceProvider trace_provider(loop.async());
 
-  std::unique_ptr<app::ApplicationContext> application_context =
-      app::ApplicationContext::CreateFromStartupInfo();
+  std::unique_ptr<component::ApplicationContext> application_context =
+      component::ApplicationContext::CreateFromStartupInfo();
 
   if (transient) {
     media::MediaComponentFactory factory(std::move(application_context));
@@ -54,18 +53,18 @@ int main(int argc, const char** argv) {
     factory.application_context()
         ->outgoing_services()
         ->AddService<media::MediaPlayer>(
-            [&factory](f1dl::InterfaceRequest<media::MediaPlayer> request) {
+            [&factory](fidl::InterfaceRequest<media::MediaPlayer> request) {
               factory.CreateMediaPlayer(std::move(request));
             });
 
     loop.Run();
   } else {
-    app::ApplicationLauncherPtr launcher;
+    component::ApplicationLauncherPtr launcher;
     application_context->environment()->GetApplicationLauncher(
         launcher.NewRequest());
 
     application_context->outgoing_services()->AddService<media::MediaPlayer>(
-        [&launcher](f1dl::InterfaceRequest<media::MediaPlayer> request) {
+        [&launcher](fidl::InterfaceRequest<media::MediaPlayer> request) {
           ConnectToIsolate<media::MediaPlayer>(std::move(request),
                                                launcher.get());
         });

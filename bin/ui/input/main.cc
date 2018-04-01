@@ -6,17 +6,21 @@
 #include <iostream>
 #include <memory>
 
+#include <fuchsia/cpp/input.h>
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
+#include <zx/time.h>
+
 #include "lib/app/cpp/application_context.h"
 #include "lib/app/cpp/connect.h"
-#include "lib/ui/input/cpp/formatting.h"
-#include "lib/ui/input/fidl/input_device_registry.fidl.h"
+#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/log_settings.h"
 #include "lib/fxl/log_settings_command_line.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/string_number_conversions.h"
-#include "lib/fsl/tasks/message_loop.h"
+#include "lib/ui/input/cpp/formatting.h"
 
 namespace {
 int64_t InputEventTimestampNow() {
@@ -29,10 +33,10 @@ namespace input {
 class InputApp {
  public:
   InputApp()
-      : application_context_(app::ApplicationContext::CreateFromStartupInfo()) {
-    registry_ =
-        application_context_
-            ->ConnectToEnvironmentService<mozart::InputDeviceRegistry>();
+      : application_context_(
+            component::ApplicationContext::CreateFromStartupInfo()) {
+    registry_ = application_context_
+                    ->ConnectToEnvironmentService<input::InputDeviceRegistry>();
   }
 
   ~InputApp() {}
@@ -117,25 +121,21 @@ class InputApp {
     fsl::MessageLoop::GetCurrent()->PostQuitTask();
   }
 
-  mozart::InputDevicePtr RegisterTouchscreen(uint32_t width, uint32_t height) {
-    mozart::InputDevicePtr input_device;
+  input::InputDevicePtr RegisterTouchscreen(uint32_t width, uint32_t height) {
+    input::InputDevicePtr input_device;
 
-    mozart::TouchscreenDescriptorPtr touchscreen =
-        mozart::TouchscreenDescriptor::New();
-    touchscreen->x = mozart::Axis::New();
-    touchscreen->x->range = mozart::Range::New();
-    touchscreen->x->range->min = 0;
-    touchscreen->x->range->max = width;
+    input::TouchscreenDescriptorPtr touchscreen =
+        input::TouchscreenDescriptor::New();
+    touchscreen->x.range.min = 0;
+    touchscreen->x.range.max = width;
 
-    touchscreen->y = mozart::Axis::New();
-    touchscreen->y->range = mozart::Range::New();
-    touchscreen->y->range->min = 0;
-    touchscreen->y->range->max = height;
+    touchscreen->y.range.min = 0;
+    touchscreen->y.range.max = height;
 
-    mozart::DeviceDescriptorPtr descriptor = mozart::DeviceDescriptor::New();
-    descriptor->touchscreen = std::move(touchscreen);
+    input::DeviceDescriptor descriptor;
+    descriptor.touchscreen = std::move(touchscreen);
 
-    FXL_VLOG(1) << "Registering " << *descriptor;
+    FXL_VLOG(1) << "Registering " << descriptor;
     registry_->RegisterDevice(std::move(descriptor), input_device.NewRequest());
     return input_device;
   }
@@ -162,7 +162,7 @@ class InputApp {
 
     FXL_VLOG(1) << "TapEvent " << x << "x" << y;
 
-    mozart::InputDevicePtr input_device = RegisterTouchscreen(width, height);
+    input::InputDevicePtr input_device = RegisterTouchscreen(width, height);
     SendTap(std::move(input_device), x, y, duration_ms);
   }
 
@@ -187,17 +187,17 @@ class InputApp {
 
     FXL_VLOG(1) << "KeyEvent " << usage;
 
-    mozart::KeyboardDescriptorPtr keyboard = mozart::KeyboardDescriptor::New();
+    input::KeyboardDescriptorPtr keyboard = input::KeyboardDescriptor::New();
     keyboard->keys.resize(HID_USAGE_KEY_RIGHT_GUI - HID_USAGE_KEY_A);
     for (size_t index = HID_USAGE_KEY_A; index < HID_USAGE_KEY_RIGHT_GUI;
          ++index) {
-      keyboard->keys[index - HID_USAGE_KEY_A] = index;
+      keyboard->keys->at(index - HID_USAGE_KEY_A) = index;
     }
-    mozart::DeviceDescriptorPtr descriptor = mozart::DeviceDescriptor::New();
-    descriptor->keyboard = std::move(keyboard);
+    input::DeviceDescriptor descriptor;
+    descriptor.keyboard = std::move(keyboard);
 
-    mozart::InputDevicePtr input_device;
-    FXL_VLOG(1) << "Registering " << *descriptor;
+    input::InputDevicePtr input_device;
+    FXL_VLOG(1) << "Registering " << descriptor;
     registry_->RegisterDevice(std::move(descriptor), input_device.NewRequest());
 
     SendKeyPress(std::move(input_device), usage, duration_ms);
@@ -233,140 +233,136 @@ class InputApp {
 
     FXL_VLOG(1) << "SwipeEvent " << x0 << "x" << y0 << " -> " << x1 << "x"
                 << y1;
-    mozart::InputDevicePtr input_device = RegisterTouchscreen(width, height);
+    input::InputDevicePtr input_device = RegisterTouchscreen(width, height);
 
     SendSwipe(std::move(input_device), x0, y0, x1, y1, duration);
   }
 
-  void SendTap(mozart::InputDevicePtr input_device,
+  void SendTap(input::InputDevicePtr input_device,
                uint32_t x,
                uint32_t y,
                uint32_t duration_ms) {
     // DOWN
-    mozart::TouchPtr touch = mozart::Touch::New();
-    touch->finger_id = 1;
-    touch->x = x;
-    touch->y = y;
-    mozart::TouchscreenReportPtr touchscreen = mozart::TouchscreenReport::New();
-    touchscreen->touches.resize(1);
-    touchscreen->touches[0] = std::move(touch);
+    input::Touch touch;
+    touch.finger_id = 1;
+    touch.x = x;
+    touch.y = y;
+    input::TouchscreenReportPtr touchscreen = input::TouchscreenReport::New();
+    touchscreen->touches.push_back(std::move(touch));
 
-    mozart::InputReportPtr report = mozart::InputReport::New();
-    report->event_time = InputEventTimestampNow();
-    report->touchscreen = std::move(touchscreen);
+    input::InputReport report;
+    report.event_time = InputEventTimestampNow();
+    report.touchscreen = std::move(touchscreen);
 
-    FXL_VLOG(1) << "SendTap " << *report;
+    FXL_VLOG(1) << "SendTap " << report;
     input_device->DispatchReport(std::move(report));
 
-    fxl::TimeDelta delta = fxl::TimeDelta::FromMilliseconds(duration_ms);
-    fsl::MessageLoop::GetCurrent()->task_runner()->PostDelayedTask(
+    zx::duration delta = zx::msec(duration_ms);
+    async::PostDelayedTask(async_get_default(),
         fxl::MakeCopyable([device = std::move(input_device)]() mutable {
           // UP
-          mozart::TouchscreenReportPtr touchscreen =
-              mozart::TouchscreenReport::New();
+          input::TouchscreenReportPtr touchscreen =
+              input::TouchscreenReport::New();
           touchscreen->touches.resize(0);
 
-          mozart::InputReportPtr report = mozart::InputReport::New();
-          report->event_time = InputEventTimestampNow();
-          report->touchscreen = std::move(touchscreen);
+          input::InputReport report;
+          report.event_time = InputEventTimestampNow();
+          report.touchscreen = std::move(touchscreen);
 
-          FXL_VLOG(1) << "SendTap " << *report;
+          FXL_VLOG(1) << "SendTap " << report;
           device->DispatchReport(std::move(report));
           fsl::MessageLoop::GetCurrent()->PostQuitTask();
         }),
         delta);
   }
 
-  void SendKeyPress(mozart::InputDevicePtr input_device,
+  void SendKeyPress(input::InputDevicePtr input_device,
                     uint32_t usage,
                     uint32_t duration_ms) {
     // PRESSED
-    mozart::KeyboardReportPtr keyboard = mozart::KeyboardReport::New();
-    keyboard->pressed_keys.resize(1);
-    keyboard->pressed_keys[0] = usage;
+    input::KeyboardReportPtr keyboard = input::KeyboardReport::New();
+    keyboard->pressed_keys.push_back(usage);
 
-    mozart::InputReportPtr report = mozart::InputReport::New();
-    report->event_time = InputEventTimestampNow();
-    report->keyboard = std::move(keyboard);
-    FXL_VLOG(1) << "SendKeyPress " << *report;
+    input::InputReport report;
+    report.event_time = InputEventTimestampNow();
+    report.keyboard = std::move(keyboard);
+    FXL_VLOG(1) << "SendKeyPress " << report;
     input_device->DispatchReport(std::move(report));
 
-    fxl::TimeDelta delta = fxl::TimeDelta::FromMilliseconds(duration_ms);
-    fsl::MessageLoop::GetCurrent()->task_runner()->PostDelayedTask(
+    zx::duration delta = zx::msec(duration_ms);
+    async::PostDelayedTask(
+        async_get_default(),
         fxl::MakeCopyable([device = std::move(input_device)]() mutable {
-
           // RELEASED
-          mozart::KeyboardReportPtr keyboard = mozart::KeyboardReport::New();
+          input::KeyboardReportPtr keyboard = input::KeyboardReport::New();
           keyboard->pressed_keys.resize(0);
 
-          mozart::InputReportPtr report = mozart::InputReport::New();
-          report->event_time = InputEventTimestampNow();
-          report->keyboard = std::move(keyboard);
-          FXL_VLOG(1) << "SendKeyPress " << *report;
+          input::InputReport report;
+          report.event_time = InputEventTimestampNow();
+          report.keyboard = std::move(keyboard);
+          FXL_VLOG(1) << "SendKeyPress " << report;
           device->DispatchReport(std::move(report));
           fsl::MessageLoop::GetCurrent()->PostQuitTask();
         }),
         delta);
   }
 
-  void SendSwipe(mozart::InputDevicePtr input_device,
+  void SendSwipe(input::InputDevicePtr input_device,
                  uint32_t x0,
                  uint32_t y0,
                  uint32_t x1,
                  uint32_t y1,
                  uint32_t duration_ms) {
     // DOWN
-    mozart::TouchPtr touch = mozart::Touch::New();
-    touch->finger_id = 1;
-    touch->x = x0;
-    touch->y = y0;
-    mozart::TouchscreenReportPtr touchscreen = mozart::TouchscreenReport::New();
-    touchscreen->touches.resize(1);
-    touchscreen->touches[0] = std::move(touch);
+    input::Touch touch;
+    touch.finger_id = 1;
+    touch.x = x0;
+    touch.y = y0;
+    input::TouchscreenReportPtr touchscreen = input::TouchscreenReport::New();
+    touchscreen->touches.push_back(std::move(touch));
 
-    mozart::InputReportPtr report = mozart::InputReport::New();
-    report->event_time = InputEventTimestampNow();
-    report->touchscreen = std::move(touchscreen);
-    FXL_VLOG(1) << "SendSwipe " << *report;
+    input::InputReport report;
+    report.event_time = InputEventTimestampNow();
+    report.touchscreen = std::move(touchscreen);
+    FXL_VLOG(1) << "SendSwipe " << report;
     input_device->DispatchReport(std::move(report));
 
-    fxl::TimeDelta delta = fxl::TimeDelta::FromMilliseconds(duration_ms);
-    fsl::MessageLoop::GetCurrent()->task_runner()->PostDelayedTask(
-        fxl::MakeCopyable(
-            [ device = std::move(input_device), x1, y1 ]() mutable {
-              // MOVE
-              mozart::TouchPtr touch = mozart::Touch::New();
-              touch->finger_id = 1;
-              touch->x = x1;
-              touch->y = y1;
-              mozart::TouchscreenReportPtr touchscreen =
-                  mozart::TouchscreenReport::New();
-              touchscreen->touches.resize(1);
-              touchscreen->touches[0] = std::move(touch);
+    zx::duration delta = zx::msec(duration_ms);
+    async::PostDelayedTask(
+        async_get_default(),
+        fxl::MakeCopyable([device = std::move(input_device), x1, y1]() mutable {
+          // MOVE
+          input::Touch touch;
+          touch.finger_id = 1;
+          touch.x = x1;
+          touch.y = y1;
+          input::TouchscreenReportPtr touchscreen =
+              input::TouchscreenReport::New();
+          touchscreen->touches.push_back(std::move(touch));
 
-              mozart::InputReportPtr report = mozart::InputReport::New();
-              report->event_time = InputEventTimestampNow();
-              report->touchscreen = std::move(touchscreen);
-              FXL_VLOG(1) << "SendSwipe " << *report;
-              device->DispatchReport(std::move(report));
+          input::InputReport report;
+          report.event_time = InputEventTimestampNow();
+          report.touchscreen = std::move(touchscreen);
+          FXL_VLOG(1) << "SendSwipe " << report;
+          device->DispatchReport(std::move(report));
 
-              // UP
-              touchscreen = mozart::TouchscreenReport::New();
-              touchscreen->touches.resize(0);
+          // UP
+          touchscreen = input::TouchscreenReport::New();
+          touchscreen->touches.resize(0);
 
-              report = mozart::InputReport::New();
-              report->event_time = InputEventTimestampNow();
-              report->touchscreen = std::move(touchscreen);
-              FXL_VLOG(1) << "SendSwipe " << *report;
-              device->DispatchReport(std::move(report));
+          report = input::InputReport();
+          report.event_time = InputEventTimestampNow();
+          report.touchscreen = std::move(touchscreen);
+          FXL_VLOG(1) << "SendSwipe " << report;
+          device->DispatchReport(std::move(report));
 
-              fsl::MessageLoop::GetCurrent()->PostQuitTask();
-            }),
+          fsl::MessageLoop::GetCurrent()->PostQuitTask();
+        }),
         delta);
   }
 
-  std::unique_ptr<app::ApplicationContext> application_context_;
-  f1dl::InterfacePtr<mozart::InputDeviceRegistry> registry_;
+  std::unique_ptr<component::ApplicationContext> application_context_;
+  fidl::InterfacePtr<input::InputDeviceRegistry> registry_;
 };
 }  // namespace input
 
@@ -377,7 +373,8 @@ int main(int argc, char** argv) {
 
   fsl::MessageLoop loop;
   input::InputApp app;
-  loop.task_runner()->PostTask([&app, command_line] { app.Run(command_line); });
+  async::PostTask(loop.async(),
+                  [&app, command_line] { app.Run(command_line); });
   loop.Run();
   return 0;
 }

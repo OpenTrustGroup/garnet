@@ -6,18 +6,23 @@
 
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <unordered_set>
+
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
+#include <zx/time.h>
 
 #include "garnet/bin/trace/commands/record.h"
 #include "garnet/bin/trace/results_export.h"
 #include "garnet/bin/trace/results_output.h"
 #include "lib/fsl/tasks/message_loop.h"
+#include "lib/fsl/types/type_converters.h"
 #include "lib/fxl/files/file.h"
 #include "lib/fxl/files/path.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/split_string.h"
 #include "lib/fxl/strings/string_number_conversions.h"
-#include "lib/network/fidl/network_service.fidl.h"
 
 namespace tracing {
 
@@ -92,7 +97,7 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
 
   for (auto& option : command_line.options()) {
     if (known_options.count(option.name) == 0) {
-      err() << "Unknown option: " << option.name << std::endl;
+      FXL_LOG(ERROR) << "Unknown option: " << option.name;
       return false;
     }
   }
@@ -104,19 +109,19 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
   if (command_line.HasOption(kSpecFile, &index)) {
     std::string spec_file_path = command_line.options()[index].value;
     if (!files::IsFile(spec_file_path)) {
-      err() << spec_file_path << " is not a file" << std::endl;
+      FXL_LOG(ERROR) << spec_file_path << " is not a file";
       return false;
     }
 
     std::string content;
     if (!files::ReadFileToString(spec_file_path, &content)) {
-      err() << "Can't read " << spec_file_path << std::endl;
+      FXL_LOG(ERROR) << "Can't read " << spec_file_path;
       return false;
     }
 
     Spec spec;
     if (!DecodeSpec(content, &spec)) {
-      err() << "Can't decode " << spec_file_path << std::endl;
+      FXL_LOG(ERROR) << "Can't decode " << spec_file_path;
       return false;
     }
     app = std::move(spec.app);
@@ -152,8 +157,8 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
     uint64_t seconds;
     if (!fxl::StringToNumberWithError(command_line.options()[index].value,
                                       &seconds)) {
-      err() << "Failed to parse command-line option duration: "
-            << command_line.options()[index].value;
+      FXL_LOG(ERROR) << "Failed to parse command-line option duration: "
+                     << command_line.options()[index].value;
       return false;
     }
     duration = fxl::TimeDelta::FromSeconds(seconds);
@@ -173,8 +178,8 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
     uint32_t megabytes;
     if (!fxl::StringToNumberWithError(command_line.options()[index].value,
                                       &megabytes)) {
-      err() << "Failed to parse command-line option buffer-size: "
-            << command_line.options()[index].value;
+      FXL_LOG(ERROR) << "Failed to parse command-line option buffer-size: "
+                     << command_line.options()[index].value;
       return false;
     }
     buffer_size_megabytes_hint = megabytes;
@@ -202,7 +207,7 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
 
 Command::Info Record::Describe() {
   return Command::Info{
-      [](app::ApplicationContext* context) {
+      [](component::ApplicationContext* context) {
         return std::make_unique<Record>(context);
       },
       "record",
@@ -231,26 +236,25 @@ Command::Info Record::Describe() {
         "tracing ends unless --detach is specified"}}};
 }
 
-Record::Record(app::ApplicationContext* context)
+Record::Record(component::ApplicationContext* context)
     : CommandWithTraceController(context), weak_ptr_factory_(this) {}
 
-void Record::Run(const fxl::CommandLine& command_line, OnDoneCallback on_done) {
+void Record::Start(const fxl::CommandLine& command_line) {
   if (!options_.Setup(command_line)) {
-    err() << "Error parsing options from command line - aborting" << std::endl;
-    on_done(1);
+    FXL_LOG(ERROR) << "Error parsing options from command line - aborting";
+    Done(1);
     return;
   }
 
   std::ofstream out_file(options_.output_file_name,
                          std::ios_base::out | std::ios_base::trunc);
   if (!out_file.is_open()) {
-    err() << "Failed to open " << options_.output_file_name << " for writing"
-          << std::endl;
-    on_done(1);
+    FXL_LOG(ERROR) << "Failed to open " << options_.output_file_name
+                   << " for writing";
+    Done(1);
     return;
   }
 
-  on_done_ = std::move(on_done);
   exporter_.reset(new ChromiumExporter(std::move(out_file)));
   tracer_.reset(new Tracer(trace_controller().get()));
   if (!options_.measurements.duration.empty()) {
@@ -266,10 +270,10 @@ void Record::Run(const fxl::CommandLine& command_line, OnDoneCallback on_done) {
 
   tracing_ = true;
 
-  auto trace_options = TraceOptions::New();
-  trace_options->categories =
-      f1dl::Array<f1dl::String>::From(options_.categories);
-  trace_options->buffer_size_megabytes_hint =
+  TraceOptions trace_options;
+  trace_options.categories =
+      fxl::To<fidl::VectorPtr<fidl::StringPtr>>(options_.categories);
+  trace_options.buffer_size_megabytes_hint =
       options_.buffer_size_megabytes_hint;
 
   tracer_->Start(
@@ -281,7 +285,7 @@ void Record::Run(const fxl::CommandLine& command_line, OnDoneCallback on_done) {
           events_.push_back(fbl::move(record));
         }
       },
-      [](fbl::String error) { err() << error.c_str() << std::endl; },
+      [](fbl::String error) { FXL_LOG(ERROR) << error.c_str(); },
       [this] {
         if (!options_.app.empty())
           options_.launchpad ? LaunchTool() : LaunchApp();
@@ -299,7 +303,7 @@ void Record::StopTrace(int32_t return_code) {
   }
 }
 
-void Record::ProcessMeasurements(fxl::Closure on_done) {
+void Record::ProcessMeasurements() {
   if (!events_.empty()) {
     std::sort(std::begin(events_), std::end(events_),
               [](const trace::Record& e1, const trace::Record& e2) {
@@ -336,30 +340,30 @@ void Record::ProcessMeasurements(fxl::Closure on_done) {
   bool errored = false;
   for (auto& result : results) {
     if (result.samples.empty()) {
-      err() << "No results for measurement \"" << result.label << "\"."
-            << std::endl;
+      FXL_LOG(ERROR) << "No results for measurement \"" << result.label
+                     << "\".";
       errored = true;
     }
   }
   OutputResults(out(), results);
   if (errored) {
-    err() << "One or more measurements had empty results. Quitting."
-          << std::endl;
-    on_done_(1);
+    FXL_LOG(ERROR) << "One or more measurements had empty results. Quitting.";
+    Done(1);
     return;
   }
 
   if (!options_.benchmark_results_file.empty()) {
     if (!ExportResults(options_.benchmark_results_file, results)) {
-      err() << "Failed to write benchmark results to "
-            << options_.benchmark_results_file;
-      on_done_(1);
+      FXL_LOG(ERROR) << "Failed to write benchmark results to "
+                     << options_.benchmark_results_file;
+      Done(1);
       return;
     }
-    out() << "Benchmark results written to " << options_.benchmark_results_file;
+    out() << "Benchmark results written to "
+          << options_.benchmark_results_file << std::endl;
   }
 
-  on_done();
+  Done(return_code_);
 }
 
 void Record::DoneTrace() {
@@ -369,18 +373,19 @@ void Record::DoneTrace() {
   out() << "Trace file written to " << options_.output_file_name << std::endl;
 
   if (measure_duration_ || measure_time_between_) {
-    ProcessMeasurements([this] { on_done_(return_code_); });
+    ProcessMeasurements();
   } else {
-    on_done_(return_code_);
+    Done(return_code_);
   }
 }
 
 void Record::LaunchApp() {
-  auto launch_info = app::ApplicationLaunchInfo::New();
-  launch_info->url = f1dl::String(options_.app);
-  launch_info->arguments = f1dl::Array<f1dl::String>::From(options_.args);
+  component::ApplicationLaunchInfo launch_info;
+  launch_info.url = fidl::StringPtr(options_.app);
+  launch_info.arguments =
+      fxl::To<fidl::VectorPtr<fidl::StringPtr>>(options_.args);
 
-  out() << "Launching " << launch_info->url << std::endl;
+  out() << "Launching " << launch_info.url << std::endl;
   context()->launcher()->CreateApplication(
       std::move(launch_info), application_controller_.NewRequest());
   application_controller_.set_error_handler([this] {
@@ -403,17 +408,29 @@ void Record::LaunchApp() {
 void Record::LaunchTool() {
   std::vector<std::string> all_args = {options_.app};
   all_args.insert(all_args.end(), options_.args.begin(), options_.args.end());
+
+  if (FXL_VLOG_IS_ON(1)) {
+    std::stringstream command;
+    for (size_t i = 0; i < all_args.size(); ++i) {
+      if (i > 0)
+        command << " ";
+      command << all_args[i];
+    }
+    FXL_VLOG(1) << "Launching: " << command.str();
+  } else {
+    out() << "Launching: " << options_.app << std::endl;
+  }
+
   zx_handle_t process = Launch(all_args);
   if (process == ZX_HANDLE_INVALID) {
     StopTrace(-1);
-    out() << "Unable to launch " << options_.app << std::endl;
+    FXL_LOG(ERROR) << "Unable to launch " << options_.app;
     return;
   }
-  out() << "Launching " << options_.app << std::endl;
 
   int exit_code = -1;
   if (!WaitForExit(process, &exit_code))
-    out() << "Unable to get return code" << std::endl;
+    FXL_LOG(ERROR) << "Unable to get return code";
 
   out() << "Application exited with return code " << exit_code << std::endl;
   if (!options_.decouple)
@@ -421,12 +438,12 @@ void Record::LaunchTool() {
 }
 
 void Record::StartTimer() {
-  fsl::MessageLoop::GetCurrent()->task_runner()->PostDelayedTask(
-      [weak = weak_ptr_factory_.GetWeakPtr()] {
-        if (weak)
-          weak->StopTrace(0);
-      },
-      options_.duration);
+  async::PostDelayedTask(async_get_default(),
+                         [weak = weak_ptr_factory_.GetWeakPtr()] {
+                           if (weak)
+                             weak->StopTrace(0);
+                         },
+                         zx::nsec(options_.duration.ToNanoseconds()));
   out() << "Starting trace; will stop in " << options_.duration.ToSecondsF()
         << " seconds..." << std::endl;
 }

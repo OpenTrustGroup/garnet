@@ -7,8 +7,8 @@
 #include <fbl/vmo_mapper.h>
 
 #include "lib/app/cpp/application_context.h"
-#include "lib/media/fidl/audio_renderer.fidl.h"
-#include "lib/media/fidl/media_transport.fidl.h"
+#include <fuchsia/cpp/media.h>
+#include <fuchsia/cpp/media.h>
 
 namespace examples {
 
@@ -17,17 +17,17 @@ class MediaApp {
   MediaApp();
   ~MediaApp();
 
-  void Run(app::ApplicationContext* app_context);
+  void Run(component::ApplicationContext* app_context);
 
  private:
-  void AcquireRenderer(app::ApplicationContext* app_context);
+  void AcquireRenderer(component::ApplicationContext* app_context);
   void SetMediaType();
 
   zx_status_t CreateMemoryMapping();
   void WriteAudioIntoBuffer();
 
-  media::AudioPacketPtr CreateAudioPacket(size_t packet_num);
-  void SendPacket(media::AudioPacketPtr packet);
+  media::AudioPacket CreateAudioPacket(size_t packet_num);
+  void SendPacket(media::AudioPacket packet);
   void OnSendPacketComplete();
 
   void Shutdown();

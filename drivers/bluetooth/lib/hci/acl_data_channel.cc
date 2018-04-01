@@ -5,13 +5,14 @@
 #include "acl_data_channel.h"
 
 #include <endian.h>
+
+#include <lib/async/default.h>
 #include <zircon/status.h>
 
 #include "garnet/drivers/bluetooth/lib/common/run_task_sync.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/string_printf.h"
-
 #include "slab_allocators.h"
 #include "transport.h"
 
@@ -44,7 +45,8 @@ ACLDataChannel::ACLDataChannel(Transport* transport,
 }
 
 ACLDataChannel::~ACLDataChannel() {
-  ShutDown();
+  // Do nothing. Since Transport is shared across threads, this can be called
+  // from any thread and calling ShutDown() would be unsafe.
 }
 
 void ACLDataChannel::Initialize(const DataBufferInfo& bredr_buffer_info,
@@ -59,8 +61,7 @@ void ACLDataChannel::Initialize(const DataBufferInfo& bredr_buffer_info,
   auto setup_handler_task = [this] {
     channel_wait_.set_handler(
         fbl::BindMember(this, &ACLDataChannel::OnChannelReady));
-    zx_status_t status =
-        channel_wait_.Begin(fsl::MessageLoop::GetCurrent()->async());
+    zx_status_t status = channel_wait_.Begin(async_get_default());
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "hci: ACLDataChannel: failed channel setup: "
                      << zx_status_get_string(status);
@@ -99,8 +100,7 @@ void ACLDataChannel::ShutDown() {
   auto handler_cleanup_task = [this] {
     FXL_DCHECK(fsl::MessageLoop::GetCurrent());
     FXL_LOG(INFO) << "hci: ACLDataChannel: canceling I/O handler";
-    zx_status_t status =
-        channel_wait_.Cancel(fsl::MessageLoop::GetCurrent()->async());
+    zx_status_t status = channel_wait_.Cancel(async_get_default());
     if (status != ZX_OK) {
       FXL_LOG(WARNING) << "Couldn't cancel wait on channel: "
                        << zx_status_get_string(status);
@@ -123,9 +123,11 @@ void ACLDataChannel::ShutDown() {
   SetDataRxHandler(nullptr);
 }
 
-void ACLDataChannel::SetDataRxHandler(const DataReceivedCallback& rx_callback) {
+void ACLDataChannel::SetDataRxHandler(const DataReceivedCallback& rx_callback,
+                                      fxl::RefPtr<fxl::TaskRunner> rx_runner) {
   std::lock_guard<std::mutex> lock(rx_mutex_);
   rx_callback_ = rx_callback;
+  rx_runner_ = rx_runner;
 }
 
 bool ACLDataChannel::SendPacket(ACLDataPacketPtr data_packet,
@@ -434,7 +436,16 @@ async_wait_result_t ACLDataChannel::OnChannelReady(
 
     packet->InitializeFromBuffer();
 
-    rx_callback_(std::move(packet));
+    // TODO(armansito): Always post when this becomes mandatory.
+    if (!rx_runner_) {
+      rx_callback_(std::move(packet));
+    } else {
+      // TODO(armansito): Stop using MakeCopyable! (NET-425).
+      rx_runner_->PostTask(fxl::MakeCopyable(
+          [cb = rx_callback_, packet = std::move(packet)]() mutable {
+            cb(std::move(packet));
+          }));
+    }
   }
   return ASYNC_WAIT_AGAIN;
 }

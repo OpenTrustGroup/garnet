@@ -11,9 +11,11 @@
 #include <vector>
 
 #include "garnet/drivers/bluetooth/lib/gap/gap.h"
+#include "garnet/drivers/bluetooth/lib/gatt/gatt.h"
 #include "garnet/drivers/bluetooth/lib/hci/command_channel.h"
 #include "garnet/drivers/bluetooth/lib/hci/control_packets.h"
 #include "garnet/drivers/bluetooth/lib/hci/low_energy_connector.h"
+#include "garnet/drivers/bluetooth/lib/l2cap/l2cap.h"
 
 #include "lib/fxl/functional/closure.h"
 #include "lib/fxl/macros.h"
@@ -26,15 +28,6 @@ namespace btlib {
 namespace hci {
 class Transport;
 }  // namespace hci
-
-namespace l2cap {
-class ChannelManager;
-}  // namespace l2cap
-
-namespace gatt {
-class Connection;
-class LocalServiceManager;
-}  // namespace gatt
 
 namespace gap {
 
@@ -65,12 +58,14 @@ class LowEnergyConnectionRef final {
   }
 
   const std::string& device_identifier() const { return device_id_; }
+  hci::ConnectionHandle handle() const { return handle_; }
 
  private:
   friend class LowEnergyConnectionManager;
   friend class internal::LowEnergyConnection;
 
   LowEnergyConnectionRef(const std::string& device_id,
+                         hci::ConnectionHandle handle,
                          fxl::WeakPtr<LowEnergyConnectionManager> manager);
 
   // Called by LowEnergyConnectionManager when the underlying connection is
@@ -79,6 +74,7 @@ class LowEnergyConnectionRef final {
 
   bool active_;
   std::string device_id_;
+  hci::ConnectionHandle handle_;
   fxl::WeakPtr<LowEnergyConnectionManager> manager_;
   fxl::Closure closed_cb_;
   fxl::ThreadChecker thread_checker_;
@@ -93,7 +89,8 @@ class LowEnergyConnectionManager final {
   LowEnergyConnectionManager(fxl::RefPtr<hci::Transport> hci,
                              hci::LowEnergyConnector* connector,
                              RemoteDeviceCache* device_cache,
-                             l2cap::ChannelManager* l2cap);
+                             fbl::RefPtr<l2cap::L2CAP> l2cap,
+                             fbl::RefPtr<gatt::GATT> gatt);
   ~LowEnergyConnectionManager();
 
   // Allows a caller to claim shared ownership over a connection to the
@@ -137,14 +134,6 @@ class LowEnergyConnectionManager final {
   // A link with the given handle should not have been previously registered.
   LowEnergyConnectionRefPtr RegisterRemoteInitiatedLink(
       hci::ConnectionPtr link);
-
-  gatt::LocalServiceManager* gatt_registry() const {
-    return gatt_registry_.get();
-  }
-
-  // Returns the GATT bearer that corresponds to |peer_id|. Returns false if
-  // |peer_id| does not correspond to a connected device.
-  gatt::Connection* GetGattConnection(const std::string& peer_id);
 
   // TODO(armansito): Add a RemoteDeviceCache::Observer interface and move these
   // callbacks there.
@@ -324,9 +313,14 @@ class LowEnergyConnectionManager final {
   // connetion parameters, etc). Expected to outlive this instance.
   RemoteDeviceCache* device_cache_;  // weak
 
-  // The L2CAP layer is shared between the BR/EDR and LE connection managers and
-  // it is expected to outlive both. Expected to outlive this instance.
-  l2cap::ChannelManager* l2cap_;  // weak
+  // The L2CAP layer reference, used to manage LE logical links and fixed
+  // channels. LE-specific L2CAP signaling events (e.g. connection parameter
+  // update) are received here.
+  fbl::RefPtr<l2cap::L2CAP> l2cap_;
+
+  // The GATT layer reference, used to add and remove ATT data bearers and
+  // service discovery.
+  fbl::RefPtr<gatt::GATT> gatt_;
 
   // Local GATT service registry.
   std::unique_ptr<gatt::LocalServiceManager> gatt_registry_;

@@ -4,32 +4,32 @@
 
 #include "garnet/lib/ui/views/view_system.h"
 
-namespace mz {
+namespace scenic {
 
-ViewSystem::ViewSystem(mz::SystemContext context,
-                       scene_manager::ScenicSystem* scenic_system)
+ViewSystem::ViewSystem(SystemContext context,
+                       scenic::gfx::ScenicSystem* scenic_system)
     : System(std::move(context)), scenic_system_(scenic_system) {}
 
 ViewSystem::~ViewSystem() = default;
 
 std::unique_ptr<CommandDispatcher> ViewSystem::CreateCommandDispatcher(
-    mz::CommandDispatcherContext context) {
+    CommandDispatcherContext context) {
   return std::make_unique<ViewCommandDispatcher>(std::move(context),
                                                  scenic_system_);
 }
 
 ViewCommandDispatcher::ViewCommandDispatcher(
-    mz::CommandDispatcherContext context,
-    scene_manager::ScenicSystem* scenic_system)
+    CommandDispatcherContext context,
+    scenic::gfx::ScenicSystem* scenic_system)
     : CommandDispatcher(std::move(context)), scenic_system_(scenic_system) {
   FXL_DCHECK(scenic_system_);
 }
 
 ViewCommandDispatcher::~ViewCommandDispatcher() = default;
 
-bool ViewCommandDispatcher::ApplyCommand(const ui_mozart::CommandPtr& command) {
+bool ViewCommandDispatcher::ApplyCommand(const ui::Command& command) {
   FXL_CHECK(false) << "not implemented";
   return false;
 }
 
-}  // namespace mz
+}  // namespace scenic

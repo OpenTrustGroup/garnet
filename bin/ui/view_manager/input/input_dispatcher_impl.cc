@@ -5,14 +5,18 @@
 #include "garnet/bin/ui/view_manager/input/input_dispatcher_impl.h"
 
 #include <queue>
-#include "lib/ui/geometry/cpp/geometry_util.h"
-#include "lib/ui/input/cpp/formatting.h"
-#include "lib/ui/views/cpp/formatting.h"
+
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
+
 #include "garnet/bin/ui/view_manager/internal/input_owner.h"
 #include "garnet/bin/ui/view_manager/internal/view_inspector.h"
 #include "lib/escher/util/type_utils.h"
-#include "lib/fxl/functional/make_copyable.h"
 #include "lib/fsl/tasks/message_loop.h"
+#include "lib/fxl/functional/make_copyable.h"
+#include "lib/ui/geometry/cpp/geometry_util.h"
+#include "lib/ui/input/cpp/formatting.h"
+#include "lib/ui/views/cpp/formatting.h"
 
 namespace view_manager {
 namespace {
@@ -20,20 +24,20 @@ namespace {
 // Returns a pair of points representing a ray's origin and direction, in that
 // order. The ray is constructed to point directly into the scene at the
 // provided device coordinate.
-std::pair<mozart::Point3F, mozart::Point3F> DefaultRayForHitTestingScreenPoint(
-    const mozart::PointF& point) {
-  mozart::Point3F origin;
+std::pair<geometry::Point3F, geometry::Point3F>
+DefaultRayForHitTestingScreenPoint(const geometry::PointF& point) {
+  geometry::Point3F origin;
   origin.x = point.x;
   origin.y = point.y;
   origin.z = -1.f;
-  mozart::Point3F direction;
+  geometry::Point3F direction;
   direction.z = 1.f;
   return {origin, direction};
 }
 
-// Converts a mozart::Transform into a escher::mat4 suitable for use in
+// Converts a geometry::Transform into a escher::mat4 suitable for use in
 // mathematical operations.
-escher::mat4 Unwrap(const mozart::Transform& matrix) {
+escher::mat4 Unwrap(const geometry::Transform& matrix) {
   const auto& in = matrix.matrix;
   return {in[0], in[4], in[8],  in[12], in[1], in[5], in[9],  in[13],
           in[2], in[6], in[10], in[14], in[3], in[7], in[11], in[15]};
@@ -55,14 +59,13 @@ escher::mat4 Unwrap(const mozart::Transform& matrix) {
 // the coordinate space of the ray.
 // |distance| is the distance along the ray that the original hit occured.
 // |event| is the event to transform.
-void TransformPointerEvent(const mozart::Point3F& ray_origin,
-                           const mozart::Point3F& ray_direction,
-                           const mozart::Transform& transform,
+void TransformPointerEvent(const geometry::Point3F& ray_origin,
+                           const geometry::Point3F& ray_direction,
+                           const geometry::Transform& transform,
                            float distance,
-                           mozart::InputEvent* event) {
+                           input::InputEvent* event) {
   if (!event->is_pointer())
     return;
-  const mozart::PointerEventPtr& pointer = event->get_pointer();
 
   escher::mat4 hit_node_to_device_transform = Unwrap(transform);
   escher::ray4 ray{{ray_origin.x, ray_origin.y, ray_origin.z, 1.f},
@@ -73,8 +76,8 @@ void TransformPointerEvent(const mozart::Point3F& ray_origin,
   escher::vec4 hit = escher::homogenize(transformed_ray.origin +
                                         distance * transformed_ray.direction);
 
-  pointer->x = hit[0];
-  pointer->y = hit[1];
+  event->pointer().x = hit[0];
+  event->pointer().y = hit[1];
 }
 
 // The input event fidl is currently defined to expect some number
@@ -87,25 +90,22 @@ int64_t InputEventTimestampNow() {
 InputDispatcherImpl::InputDispatcherImpl(
     ViewInspector* inspector,
     InputOwner* owner,
-    mozart::ViewTreeTokenPtr view_tree_token,
-    f1dl::InterfaceRequest<mozart::InputDispatcher> request)
+    views_v1::ViewTreeToken view_tree_token,
+    fidl::InterfaceRequest<input::InputDispatcher> request)
     : inspector_(inspector),
       owner_(owner),
-      view_tree_token_(std::move(view_tree_token)),
+      view_tree_token_(view_tree_token),
       binding_(this, std::move(request)),
       weak_factory_(this) {
   FXL_DCHECK(inspector_);
-  FXL_DCHECK(view_tree_token_);
 
-  binding_.set_error_handler(
-      [this] { owner_->OnInputDispatcherDied(this); });
+  binding_.set_error_handler([this] { owner_->OnInputDispatcherDied(this); });
 }
 
 InputDispatcherImpl::~InputDispatcherImpl() {}
 
-void InputDispatcherImpl::DispatchEvent(mozart::InputEventPtr event) {
-  FXL_DCHECK(event);
-  FXL_VLOG(1) << "DispatchEvent: " << *event;
+void InputDispatcherImpl::DispatchEvent(input::InputEvent event) {
+  FXL_VLOG(1) << "DispatchEvent: " << event;
 
   pending_events_.push(std::move(event));
   if (pending_events_.size() == 1u)
@@ -116,34 +116,34 @@ void InputDispatcherImpl::ProcessNextEvent() {
   FXL_DCHECK(!pending_events_.empty());
 
   do {
-    const mozart::InputEvent* event = pending_events_.front().get();
-    FXL_VLOG(1) << "ProcessNextEvent: " << *event;
+    const input::InputEvent* event = &pending_events_.front();
+    FXL_VLOG(1) << "ProcessNextEvent: " << event;
 
     if (event->is_pointer()) {
       // TODO(MZ-164): We may also need to perform hit tests on ADD and
       // keep track of which views have seen the ADD or REMOVE so that
       // they can be balanced correctly.
-      const mozart::PointerEventPtr& pointer = event->get_pointer();
-      if (pointer->phase == mozart::PointerEvent::Phase::DOWN) {
-        mozart::PointF point;
-        point.x = pointer->x;
-        point.y = pointer->y;
+      const input::PointerEvent& pointer = event->pointer();
+      if (pointer.phase == input::PointerEventPhase::DOWN) {
+        geometry::PointF point;
+        point.x = pointer.x;
+        point.y = pointer.y;
         FXL_VLOG(1) << "HitTest: point=" << point;
-        std::pair<mozart::Point3F, mozart::Point3F> ray =
+        std::pair<geometry::Point3F, geometry::Point3F> ray =
             DefaultRayForHitTestingScreenPoint(point);
-        inspector_->HitTest(*view_tree_token_, ray.first, ray.second, [
-          weak = weak_factory_.GetWeakPtr(), point
-        ](std::vector<ViewHit> view_hits) mutable {
-          if (weak)
-            weak->OnHitTestResult(point, std::move(view_hits));
-        });
+        inspector_->HitTest(view_tree_token_, ray.first, ray.second,
+                            [weak = weak_factory_.GetWeakPtr(),
+                             point](std::vector<ViewHit> view_hits) mutable {
+                              if (weak)
+                                weak->OnHitTestResult(point,
+                                                      std::move(view_hits));
+                            });
         return;
       }
     } else if (event->is_keyboard()) {
       inspector_->ResolveFocusChain(
-          view_tree_token_.Clone(),
-          [weak = weak_factory_.GetWeakPtr()](
-              std::unique_ptr<FocusChain> focus_chain) {
+          view_tree_token_, [weak = weak_factory_.GetWeakPtr()](
+                                std::unique_ptr<FocusChain> focus_chain) {
             if (weak) {
               // Make sure to keep processing events when no focus is defined
               if (focus_chain) {
@@ -162,7 +162,7 @@ void InputDispatcherImpl::ProcessNextEvent() {
 
 void InputDispatcherImpl::DeliverEvent(uint64_t event_path_propagation_id,
                                        size_t index,
-                                       mozart::InputEventPtr event) {
+                                       input::InputEvent event) {
   // TODO(MZ-164) when the chain is changed, we might need to cancel events
   // that have not progagated fully through the chain.
   if (index >= event_path_.size() ||
@@ -171,69 +171,62 @@ void InputDispatcherImpl::DeliverEvent(uint64_t event_path_propagation_id,
 
   // TODO(MZ-33) once input arena is in place, we won't need the "handled"
   // boolean on the callback anymore.
-  mozart::InputEventPtr view_event = event.Clone();
   const ViewHit& view_hit = event_path_[index];
-  const mozart::PointerEventPtr& pointer = event->get_pointer();
-  mozart::PointF point;
-  point.x = pointer->x;
-  point.y = pointer->y;
-  std::pair<mozart::Point3F, mozart::Point3F> ray =
+  const input::PointerEvent& pointer = event.pointer();
+  geometry::PointF point;
+  point.x = pointer.x;
+  point.y = pointer.y;
+  std::pair<geometry::Point3F, geometry::Point3F> ray =
       DefaultRayForHitTestingScreenPoint(point);
-  TransformPointerEvent(ray.first, ray.second, *view_hit.inverse_transform,
-                        view_hit.distance, view_event.get());
+  TransformPointerEvent(ray.first, ray.second, view_hit.inverse_transform,
+                        view_hit.distance, &event);
   FXL_VLOG(1) << "DeliverEvent " << event_path_propagation_id << " to "
-              << event_path_[index].view_token << ": " << *view_event;
+              << event_path_[index].view_token << ": " << event;
   owner_->DeliverEvent(
-      &event_path_[index].view_token, std::move(view_event), fxl::MakeCopyable([
-        this, event_path_propagation_id, index, event = std::move(event)
-      ](bool handled) mutable {
+      event_path_[index].view_token, std::move(event),
+      fxl::MakeCopyable([this, event_path_propagation_id, index,
+                         event = std::move(event)](bool handled) mutable {
         if (!handled) {
           DeliverEvent(event_path_propagation_id, index + 1, std::move(event));
         }
       }));
 }
 
-void InputDispatcherImpl::DeliverEvent(mozart::InputEventPtr event) {
+void InputDispatcherImpl::DeliverEvent(input::InputEvent event) {
   DeliverEvent(event_path_propagation_id_, 0u, std::move(event));
 }
 
 void InputDispatcherImpl::DeliverKeyEvent(
     std::unique_ptr<FocusChain> focus_chain,
     uint64_t propagation_index,
-    mozart::InputEventPtr event) {
+    input::InputEvent event) {
   FXL_DCHECK(propagation_index < focus_chain->chain.size());
   FXL_VLOG(1) << "DeliverKeyEvent " << focus_chain->version << " "
               << (1 + propagation_index) << "/" << focus_chain->chain.size()
-              << " " << *(focus_chain->chain[propagation_index]) << ": "
-              << *event;
+              << " " << focus_chain->chain[propagation_index] << ": " << event;
 
-  auto cloned_event = event.Clone();
   owner_->DeliverEvent(
-      focus_chain->chain[propagation_index].get(), std::move(event),
-      fxl::MakeCopyable([
-        this, focus_chain = std::move(focus_chain), propagation_index,
-        cloned_event = std::move(cloned_event)
-      ](bool handled) mutable {
-        FXL_VLOG(2) << "Event " << *cloned_event << (handled ? "" : " Not")
-                    << " Handled by "
-                    << *(focus_chain->chain[propagation_index]);
+      focus_chain->chain[propagation_index], std::move(event),
+      fxl::MakeCopyable([this, focus_chain = std::move(focus_chain),
+                         propagation_index,
+                         event = std::move(event)](bool handled) mutable {
+        FXL_VLOG(2) << "Event " << event << (handled ? "" : " Not")
+                    << " Handled by " << focus_chain->chain[propagation_index];
 
         if (!handled && propagation_index + 1 < focus_chain->chain.size()) {
           // Avoid re-entrance on DeliverKeyEvent
-          fsl::MessageLoop::GetCurrent()->task_runner()->PostTask(
-              fxl::MakeCopyable([
-                weak = weak_factory_.GetWeakPtr(),
-                focus_chain = std::move(focus_chain), propagation_index,
-                cloned_event = std::move(cloned_event)
-              ]() mutable {
+          async::PostTask(async_get_default(),
+              fxl::MakeCopyable([weak = weak_factory_.GetWeakPtr(),
+                                 focus_chain = std::move(focus_chain),
+                                 propagation_index,
+                                 event = std::move(event)]() mutable {
                 FXL_VLOG(2) << "Propagating event to "
-                            << *(focus_chain->chain[propagation_index + 1]);
+                            << focus_chain->chain[propagation_index + 1];
 
                 if (weak)
                   weak->DeliverKeyEvent(std::move(focus_chain),
                                         propagation_index + 1,
-                                        std::move(cloned_event));
-
+                                        std::move(event));
               }));
         }
       }));
@@ -248,8 +241,7 @@ void InputDispatcherImpl::PopAndScheduleNextEvent() {
         if (weak)
           weak->ProcessNextEvent();
       };
-      fsl::MessageLoop::GetCurrent()->task_runner()->PostTask(
-          process_next_event);
+      async::PostTask(async_get_default(), process_next_event);
     }
   }
 }
@@ -265,7 +257,7 @@ void InputDispatcherImpl::OnFocusResult(
   PopAndScheduleNextEvent();
 }
 
-void InputDispatcherImpl::OnHitTestResult(const mozart::PointF& point,
+void InputDispatcherImpl::OnHitTestResult(const geometry::PointF& point,
                                           std::vector<ViewHit> view_hits) {
   FXL_DCHECK(!pending_events_.empty());
 
@@ -276,31 +268,29 @@ void InputDispatcherImpl::OnHitTestResult(const mozart::PointF& point,
 
   // FIXME(jpoichet) This should be done somewhere else.
   inspector_->ActivateFocusChain(
-      view_hits.front().view_token.Clone(),
+      view_hits.front().view_token,
       [this](std::unique_ptr<FocusChain> new_chain) {
-        if (!active_focus_chain_ ||
-            active_focus_chain_->chain.front()->value !=
-                new_chain->chain.front()->value) {
+        if (!active_focus_chain_ || active_focus_chain_->chain.front().value !=
+                                        new_chain->chain.front().value) {
           if (active_focus_chain_) {
             FXL_VLOG(1) << "Input focus lost by "
-                        << *(active_focus_chain_->chain.front().get());
-            mozart::InputEventPtr event = mozart::InputEvent::New();
-            mozart::FocusEventPtr focus = mozart::FocusEvent::New();
-            focus->event_time = InputEventTimestampNow();
-            focus->focused = false;
-            event->set_focus(std::move(focus));
-            owner_->DeliverEvent(active_focus_chain_->chain.front().get(),
+                        << active_focus_chain_->chain.front();
+            input::InputEvent event;
+            input::FocusEvent focus;
+            focus.event_time = InputEventTimestampNow();
+            focus.focused = false;
+            event.set_focus(std::move(focus));
+            owner_->DeliverEvent(active_focus_chain_->chain.front(),
                                  std::move(event), nullptr);
           }
 
-          FXL_VLOG(1) << "Input focus gained by "
-                      << *(new_chain->chain.front().get());
-          mozart::InputEventPtr event = mozart::InputEvent::New();
-          mozart::FocusEventPtr focus = mozart::FocusEvent::New();
-          focus->event_time = InputEventTimestampNow();
-          focus->focused = true;
-          event->set_focus(std::move(focus));
-          owner_->DeliverEvent(new_chain->chain.front().get(), std::move(event),
+          FXL_VLOG(1) << "Input focus gained by " << new_chain->chain.front();
+          input::InputEvent event = input::InputEvent();
+          input::FocusEvent focus = input::FocusEvent();
+          focus.event_time = InputEventTimestampNow();
+          focus.focused = true;
+          event.set_focus(std::move(focus));
+          owner_->DeliverEvent(new_chain->chain.front(), std::move(event),
                                nullptr);
 
           active_focus_chain_ = std::move(new_chain);

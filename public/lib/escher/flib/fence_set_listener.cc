@@ -4,13 +4,16 @@
 
 #include "lib/escher/flib/fence_set_listener.h"
 
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
 #include <zx/time.h>
+
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
 
 namespace escher {
 
-FenceSetListener::FenceSetListener(::f1dl::Array<zx::event> fence_listeners)
+FenceSetListener::FenceSetListener(::fidl::VectorPtr<zx::event> fence_listeners)
     : fences_(std::move(fence_listeners)) {}
 
 void FenceSetListener::WaitReadyAsync(fxl::Closure ready_callback) {
@@ -21,21 +24,20 @@ void FenceSetListener::WaitReadyAsync(fxl::Closure ready_callback) {
   FXL_DCHECK(!ready_callback_);
 
   if (ready()) {
-    fsl::MessageLoop::GetCurrent()->task_runner()->PostTask(
-        std::move(ready_callback));
+    async::PostTask(async_get_default(), std::move(ready_callback));
     return;
   }
 
   FXL_DCHECK(waiters_.empty());
-  waiters_.reserve(fences_.size());
+  waiters_.reserve(fences_->size());
   int waiter_index = 0;
 
   // Wait for |kFenceSignalled| on each fence.
-  for (auto& fence : fences_) {
+  for (auto& fence : *fences_) {
     auto wait = std::make_unique<async::AutoWait>(
-        fsl::MessageLoop::GetCurrent()->async(),  // async dispatcher
-        fence.get(),                              // handle
-        kFenceSignalled                           // trigger
+        async_get_default(),  // async dispatcher
+        fence.get(),          // handle
+        kFenceSignalled       // trigger
     );
     wait->set_handler(std::bind(&FenceSetListener::OnFenceSignalled, this,
                                 waiter_index, std::placeholders::_2,

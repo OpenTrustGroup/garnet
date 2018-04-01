@@ -8,7 +8,7 @@
 
 #include "garnet/bin/media/audio_server/audio_packet_ref.h"
 #include "garnet/bin/media/audio_server/fwd_decls.h"
-#include "lib/media/fidl/timeline_controller.fidl.h"
+#include <fuchsia/cpp/media.h>
 #include "lib/media/transport/media_packet_consumer_base.h"
 
 namespace media {
@@ -43,12 +43,12 @@ class AudioPipe : public MediaPacketConsumerBase {
 
   // Indicates the priming was requested. The pipe is responsible for calling
   // the callback when priming is complete.
-  void PrimeRequested(const MediaTimelineControlPoint::PrimeCallback& callback);
+  void PrimeRequested(MediaTimelineControlPoint::PrimeCallback callback);
 
  protected:
   void OnPacketSupplied(
       std::unique_ptr<MediaPacketConsumerBase::SuppliedPacket> packet) override;
-  void OnFlushRequested(bool hold_frame, const FlushCallback& cbk) override;
+  void OnFlushRequested(bool hold_frame, FlushCallback cbk) override;
 
  private:
   static constexpr uint32_t kDemandMinPacketsOutstanding = 4;

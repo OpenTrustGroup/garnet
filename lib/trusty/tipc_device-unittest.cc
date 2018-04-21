@@ -32,7 +32,7 @@ static zx_status_t alloc_shm_vmo(zx::vmo* out, zx_info_ns_shm_t* vmo_info) {
   zx_handle_t smc;
   zx_handle_t shm_vmo;
   zx_info_smc_t smc_info;
-  zx_status_t status = zx_smc_create(0, &smc_info, sizeof(zx_info_smc_t), &smc, &shm_vmo);
+  zx_status_t status = zx_smc_create(0, &smc_info, &smc, &shm_vmo);
   if (status != ZX_OK) {
     return status;
   }

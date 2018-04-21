@@ -20,18 +20,16 @@ static constexpr uint32_t kMapFlags =
 namespace trusty {
 
 zx_status_t SharedMem::Create(zx::vmo vmo, zx_info_ns_shm_t vmo_info, fbl::RefPtr<SharedMem>* out) {
-  size_t vmo_size = vmo_info.size;
   uintptr_t vaddr;
-  zx_status_t status = zx::vmar::root_self().map(0, vmo, 0, vmo_size, kMapFlags, &vaddr);
+  zx_status_t status =
+      zx::vmar::root_self().map(0, vmo, 0, vmo_info.size, kMapFlags, &vaddr);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to map vmo: " << status;
     return status;
   }
 
-  uintptr_t paddr = vmo_info.base_phys;
   fbl::AllocChecker ac;
-  *out = fbl::AdoptRef(new (&ac)
-                           SharedMem(fbl::move(vmo), vmo_size, vaddr, paddr));
+  *out = fbl::AdoptRef(new (&ac) SharedMem(fbl::move(vmo), vmo_info, vaddr));
   if (!ac.check()) {
     return ZX_ERR_NO_MEMORY;
   }

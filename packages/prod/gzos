@@ -1,0 +1,8 @@
+{
+    "languages": [
+        "cpp"
+    ],
+    "packages": {
+        "smc_service": "//garnet/bin/gzos/smc_service"
+    }
+}

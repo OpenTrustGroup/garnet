@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include <fbl/mutex.h>
+#include <fbl/auto_lock.h>
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
 #include <fbl/unique_ptr.h>

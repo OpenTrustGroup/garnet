@@ -7,6 +7,7 @@
 
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
+#include <zircon/syscalls/smc.h>
 #include <zx/vmo.h>
 #include <type_traits>
 
@@ -56,6 +57,7 @@ class SharedMem : public fbl::RefCounted<SharedMem> {
 
   uintptr_t addr() const { return vaddr_; }
   size_t size() const { return vmo_size_; }
+  bool use_cache() const { return use_cache_; }
 
   template <typename T>
   T* as(uintptr_t off) const {
@@ -70,17 +72,19 @@ class SharedMem : public fbl::RefCounted<SharedMem> {
   }
 
  private:
-  SharedMem(zx::vmo vmo, size_t vmo_size, uintptr_t vaddr, uintptr_t paddr)
+  SharedMem(zx::vmo vmo, zx_info_ns_shm_t vmo_info, uintptr_t vaddr)
       : vmo_(fbl::move(vmo)),
-        vmo_size_(vmo_size),
+        vmo_size_(vmo_info.size),
         vaddr_(vaddr),
-        paddr_(paddr) {}
+        paddr_(vmo_info.base_phys),
+        use_cache_(vmo_info.use_cache) {}
 
  protected:
   zx::vmo vmo_;
   size_t vmo_size_;
   uintptr_t vaddr_;
   uintptr_t paddr_;
+  bool use_cache_;
 };
 
 }  // namespace trusty

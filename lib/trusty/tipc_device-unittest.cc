@@ -12,9 +12,9 @@
 #include <zx/channel.h>
 #include <zx/vmo.h>
 
-#include "garnet/lib/trusty/linux_fake.h"
 #include "garnet/lib/trusty/tipc_device.h"
 #include "garnet/lib/trusty/tipc_msg.h"
+#include "garnet/lib/trusty/tipc_remote_fake.h"
 #include "gtest/gtest.h"
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
@@ -55,9 +55,9 @@ class ResourceTableTest : public ::testing::Test {
     bus_ = fbl::make_unique_checked<VirtioBus>(&ac, shared_mem_);
     ASSERT_TRUE(ac.check());
 
-    // Create fake Linux client
-    linux_ = fbl::move(LinuxFake::Create(shared_mem_));
-    ASSERT_TRUE(linux_ != nullptr);
+    // Create fake remote system
+    remote_ = fbl::move(TipcRemoteFake::Create(shared_mem_));
+    ASSERT_TRUE(remote_ != nullptr);
 
     // Create some devices on the bus
     for (uint32_t i = 0; i < ARRAY_SIZE(kTipcDescriptors); i++) {
@@ -77,12 +77,12 @@ class ResourceTableTest : public ::testing::Test {
 
   fbl::RefPtr<SharedMem> shared_mem_;
   fbl::unique_ptr<VirtioBus> bus_;
-  fbl::unique_ptr<LinuxFake> linux_;
+  fbl::unique_ptr<TipcRemoteFake> remote_;
 };
 
 TEST_F(ResourceTableTest, GetResourceTable) {
   size_t buf_size = ResourceTableSize();
-  auto buf = linux_->AllocBuffer(buf_size);
+  auto buf = remote_->AllocBuffer(buf_size);
   ASSERT_TRUE(buf != nullptr);
   ASSERT_EQ(bus_->GetResourceTable(buf, &buf_size), ZX_OK);
 
@@ -140,37 +140,35 @@ class TransactionTest : public ::testing::Test {
     bus_ = fbl::make_unique_checked<VirtioBus>(&ac, shared_mem_);
     ASSERT_TRUE(ac.check());
 
-    // Create fake Linux client
-    linux_ = fbl::move(LinuxFake::Create(shared_mem_));
-    ASSERT_TRUE(linux_ != nullptr);
+    // Create fake remote system
+    remote_ = fbl::move(TipcRemoteFake::Create(shared_mem_));
+    ASSERT_TRUE(remote_ != nullptr);
 
     // Create device on the bus
     tipc_dev_ = fbl::AdoptRef(new TipcDevice(kTipcDescriptors[0]));
     ASSERT_TRUE(tipc_dev_ != nullptr);
     ASSERT_EQ(bus_->AddDevice(tipc_dev_), ZX_OK);
 
-    // Also, create corresponding linux tipc driver
-    ASSERT_EQ(linux_->CreateDriver(tipc_dev_.get()), ZX_OK);
-
     VirtioBusOnline();
   }
 
   void VirtioBusOnline() {
-    const auto& tipc_driver = linux_->drivers()[0];
-
     size_t buf_size = PAGE_SIZE;
-    auto buf = linux_->AllocBuffer(buf_size);
+    auto buf = remote_->AllocBuffer(buf_size);
     ASSERT_TRUE(buf != nullptr);
     ASSERT_EQ(bus_->GetResourceTable(buf, &buf_size), ZX_OK);
 
     auto table = reinterpret_cast<resource_table*>(buf);
-    ASSERT_EQ(linux_->HandleResourceTable(table), ZX_OK);
+    ASSERT_EQ(remote_->HandleResourceTable(table, bus_->devices()), ZX_OK);
+
+    auto tipc_frontend = remote_->GetFrontend(tipc_dev_->notify_id());
+    ASSERT_TRUE(tipc_frontend != nullptr);
 
     // Allocate buffer for online message
     size_t msg_size = sizeof(tipc_hdr) + sizeof(tipc_ctrl_msg_hdr);
-    auto msg_buf = linux_->AllocBuffer(msg_size);
+    auto msg_buf = remote_->AllocBuffer(msg_size);
     ASSERT_TRUE(msg_buf != nullptr);
-    ASSERT_EQ(tipc_driver->rx_queue()
+    ASSERT_EQ(tipc_frontend->rx_queue()
                   .BuildDescriptor()
                   .AppendWriteable(msg_buf, msg_size)
                   .Build(),
@@ -178,14 +176,14 @@ class TransactionTest : public ::testing::Test {
 
     // Sent the processed resource table back to VirtioBus, and notify
     // it to start service. Each Tipc device will send back a control
-    // message to tipc driver after it is ready to online.
+    // message to tipc frontend after it is ready to online.
     ASSERT_EQ(bus_->Start(buf, buf_size), ZX_OK);
 
     // Verify the online message
     virtio_desc_t desc;
-    volatile vring_used_elem* used = tipc_driver->rx_queue().ReadFromUsed();
+    volatile vring_used_elem* used = tipc_frontend->rx_queue().ReadFromUsed();
     ASSERT_TRUE(used != nullptr);
-    EXPECT_EQ(tipc_driver->rx_queue().queue()->ReadDesc(used->id, &desc),
+    EXPECT_EQ(tipc_frontend->rx_queue().queue()->ReadDesc(used->id, &desc),
               ZX_OK);
     EXPECT_TRUE(used->len == sizeof(tipc_hdr) + sizeof(tipc_ctrl_msg_hdr));
     EXPECT_FALSE(desc.has_next);
@@ -203,20 +201,22 @@ class TransactionTest : public ::testing::Test {
   fbl::RefPtr<SharedMem> shared_mem_;
   fbl::RefPtr<TipcDevice> tipc_dev_;
   fbl::unique_ptr<VirtioBus> bus_;
-  fbl::unique_ptr<LinuxFake> linux_;
+  fbl::unique_ptr<TipcRemoteFake> remote_;
 };
 
 TEST_F(TransactionTest, ReceiveTest) {
   constexpr int kNumRxBuffers = 2;
-  const auto& tipc_driver = linux_->drivers()[0];
+
+  const auto tipc_frontend = remote_->GetFrontend(tipc_dev_->notify_id());
+  ASSERT_TRUE(tipc_frontend != nullptr);
 
   // allocate some RX buffers
   for (int i = 0; i < kNumRxBuffers; i++) {
     size_t msg_size = PAGE_SIZE;
-    auto msg_buf = linux_->AllocBuffer(msg_size);
+    auto msg_buf = remote_->AllocBuffer(msg_size);
     ASSERT_TRUE(msg_buf != nullptr);
 
-    ASSERT_EQ(tipc_driver->rx_queue()
+    ASSERT_EQ(tipc_frontend->rx_queue()
                   .BuildDescriptor()
                   .AppendWriteable(msg_buf, msg_size)
                   .Build(),
@@ -238,23 +238,26 @@ TEST_F(TransactionTest, ReceiveTest) {
 
   loop.RunUntilIdle();
 
-  // Verify the message from linux side
+  // Verify the message from remote side
   virtio_desc_t desc;
-  volatile vring_used_elem* used = tipc_driver->rx_queue().ReadFromUsed();
+  volatile vring_used_elem* used = tipc_frontend->rx_queue().ReadFromUsed();
   ASSERT_TRUE(used != nullptr);
-  EXPECT_EQ(tipc_driver->rx_queue().queue()->ReadDesc(used->id, &desc), ZX_OK);
+  EXPECT_EQ(tipc_frontend->rx_queue().queue()->ReadDesc(used->id, &desc),
+            ZX_OK);
   EXPECT_TRUE(used->len == sizeof(msg1));
   EXPECT_STREQ(reinterpret_cast<const char*>(desc.addr), msg1);
 
-  used = tipc_driver->rx_queue().ReadFromUsed();
+  used = tipc_frontend->rx_queue().ReadFromUsed();
   ASSERT_TRUE(used != nullptr);
-  EXPECT_EQ(tipc_driver->rx_queue().queue()->ReadDesc(used->id, &desc), ZX_OK);
+  EXPECT_EQ(tipc_frontend->rx_queue().queue()->ReadDesc(used->id, &desc),
+            ZX_OK);
   EXPECT_TRUE(used->len == sizeof(msg2));
   EXPECT_STREQ(reinterpret_cast<const char*>(desc.addr), msg2);
 }
 
 TEST_F(TransactionTest, SendTest) {
-  const auto& tipc_driver = linux_->drivers()[0];
+  const auto tipc_frontend = remote_->GetFrontend(tipc_dev_->notify_id());
+  ASSERT_TRUE(tipc_frontend != nullptr);
 
   const char msg1[] = "This is the first message";
   const char msg2[] = "This is the second message";
@@ -265,20 +268,20 @@ TEST_F(TransactionTest, SendTest) {
   ASSERT_EQ(zx::channel::create(0, &ch0, &ch1), ZX_OK);
   ASSERT_EQ(tipc_dev_->Connect(loop.async(), fbl::move(ch1)), ZX_OK);
 
-  // Send some buffers from linux side
-  auto buf = linux_->AllocBuffer(sizeof(msg1));
+  // Send some buffers from remote side
+  auto buf = remote_->AllocBuffer(sizeof(msg1));
   ASSERT_TRUE(buf != nullptr);
   memcpy(buf, msg1, sizeof(msg1));
-  ASSERT_EQ(tipc_driver->tx_queue()
+  ASSERT_EQ(tipc_frontend->tx_queue()
                 .BuildDescriptor()
                 .AppendReadable(buf, sizeof(msg1))
                 .Build(),
             ZX_OK);
 
-  buf = linux_->AllocBuffer(sizeof(msg2));
+  buf = remote_->AllocBuffer(sizeof(msg2));
   ASSERT_TRUE(buf != nullptr);
   memcpy(buf, msg2, sizeof(msg2));
-  ASSERT_EQ(tipc_driver->tx_queue()
+  ASSERT_EQ(tipc_frontend->tx_queue()
                 .BuildDescriptor()
                 .AppendReadable(buf, sizeof(msg2))
                 .Build(),

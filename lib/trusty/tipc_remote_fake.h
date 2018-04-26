@@ -17,22 +17,25 @@
 
 namespace trusty {
 
-class TipcDriverFake;
+class TipcFrontendFake;
 
-// This class emulates a fake Linux client that sent command to us
-class LinuxFake {
+// This class emulates a remote system that communicate with us
+class TipcRemoteFake {
  public:
-  static fbl::unique_ptr<LinuxFake> Create(fbl::RefPtr<SharedMem> shared_mem) {
+  static fbl::unique_ptr<TipcRemoteFake> Create(
+      fbl::RefPtr<SharedMem> shared_mem) {
     auto alloc =
         magma::SimpleAllocator::Create(shared_mem->addr(), shared_mem->size());
     if (!alloc)
       return NULL;
 
-    return fbl::unique_ptr<LinuxFake>(
-        new LinuxFake(std::move(alloc), shared_mem));
+    return fbl::unique_ptr<TipcRemoteFake>(
+        new TipcRemoteFake(std::move(alloc), shared_mem));
   }
 
-  zx_status_t HandleResourceTable(resource_table* table);
+  zx_status_t HandleResourceTable(
+      resource_table* table,
+      const fbl::Vector<fbl::RefPtr<VirtioDevice>>& devs);
 
   void* AllocBuffer(size_t size) {
     uint64_t buf;
@@ -50,31 +53,30 @@ class LinuxFake {
     return shared_mem_->VirtToPhys(addr, size);
   }
 
-  const auto& drivers() { return drivers_; }
-
-  zx_status_t CreateDriver(TipcDevice* device);
+  TipcFrontendFake* GetFrontend(uint32_t notify_id);
 
  private:
-  LinuxFake(std::unique_ptr<magma::SimpleAllocator> alloc,
-            fbl::RefPtr<SharedMem> shared_mem)
+  TipcRemoteFake(std::unique_ptr<magma::SimpleAllocator> alloc,
+                 fbl::RefPtr<SharedMem> shared_mem)
       : alloc_(std::move(alloc)), shared_mem_(shared_mem) {}
 
   std::unique_ptr<magma::SimpleAllocator> alloc_;
 
   fbl::RefPtr<SharedMem> shared_mem_;
-  fbl::Vector<fbl::unique_ptr<TipcDriverFake>> drivers_;
+  fbl::Vector<fbl::unique_ptr<TipcFrontendFake>> frontends_;
 };
 
-// This class emulates a fake Linux tipc driver
-class TipcDriverFake {
+// This class emulates a fake tipc frontend on the remote system
+class TipcFrontendFake {
  public:
-  TipcDriverFake(TipcDevice* device, LinuxFake* linux)
+  TipcFrontendFake(TipcDevice* device, TipcRemoteFake* remote)
       : rx_queue_(device->tx_queue()),
         tx_queue_(device->rx_queue()),
-        linux_(linux) {}
-  ~TipcDriverFake() {}
+        notify_id_(device->notify_id()),
+        remote_(remote) {}
+  ~TipcFrontendFake() {}
 
-  zx_status_t Probe(fw_rsc_vdev* vdev) {
+  zx_status_t Init(fw_rsc_vdev* vdev) {
     zx_status_t status;
 
     // Tipc Tx Queue is our Rx Queue
@@ -94,17 +96,18 @@ class TipcDriverFake {
 
   VirtioQueueFake& rx_queue() { return rx_queue_; }
   VirtioQueueFake& tx_queue() { return tx_queue_; }
+  uint32_t notify_id() { return notify_id_; }
 
  private:
   zx_status_t AllocVring(VirtioQueueFake* queue, fw_rsc_vdev_vring* vring) {
     size_t size = vring_size(vring->num, vring->align);
 
-    auto buf = linux_->AllocBuffer(size);
+    auto buf = remote_->AllocBuffer(size);
     if (!buf) {
       return ZX_ERR_NO_MEMORY;
     }
 
-    vring->da = linux_->VirtToPhys(buf, size);
+    vring->da = remote_->VirtToPhys(buf, size);
     queue->Init(vring);
 
     return ZX_OK;
@@ -112,7 +115,8 @@ class TipcDriverFake {
 
   VirtioQueueFake rx_queue_;
   VirtioQueueFake tx_queue_;
-  LinuxFake* linux_ = nullptr;
+  uint32_t notify_id_;
+  TipcRemoteFake* remote_ = nullptr;
 };
 
 }  // namespace trusty

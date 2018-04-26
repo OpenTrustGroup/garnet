@@ -42,8 +42,8 @@ executable("trusty_unittests") {
   testonly = true
 
   sources = [
-    "linux_fake.cc",
-    "linux_fake.h",
+    "tipc_remote_fake.cc",
+    "tipc_remote_fake.h",
     "run_all_unittests.cc",
     "tipc_device-unittest.cc",
     "virtio_queue_fake.cc",

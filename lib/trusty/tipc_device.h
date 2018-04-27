@@ -79,7 +79,9 @@ struct tipc_vdev_descr {
 
 class TipcDevice : public VirtioDevice {
  public:
-  explicit TipcDevice(const tipc_vdev_descr& descr);
+  explicit TipcDevice(const tipc_vdev_descr& descr,
+                      async_t* async,
+                      zx::channel channel);
   ~TipcDevice() override {}
 
   size_t ResourceEntrySize(void) override { return sizeof(tipc_vdev_descr); }
@@ -122,6 +124,7 @@ class TipcDevice : public VirtioDevice {
                                        const zx_packet_signal_t* signal);
 
     void OnStreamClosed(zx_status_t status, const char* action);
+    void DropBuffer();
 
     async_t* async_;
     zx_handle_t channel_;
@@ -132,9 +135,9 @@ class TipcDevice : public VirtioDevice {
     virtio_desc_t desc_;
   };
 
-  fbl::unique_ptr<Stream> tx_stream_;
-  fbl::unique_ptr<Stream> rx_stream_;
   zx::channel channel_;
+  Stream rx_stream_;
+  Stream tx_stream_;
 };
 
 }  // namespace trusty

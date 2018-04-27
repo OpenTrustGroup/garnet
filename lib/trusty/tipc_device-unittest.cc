@@ -61,8 +61,10 @@ class ResourceTableTest : public ::testing::Test {
 
     // Create some devices on the bus
     for (uint32_t i = 0; i < ARRAY_SIZE(kTipcDescriptors); i++) {
-      fbl::RefPtr<TipcDevice> dev =
-          fbl::AdoptRef(new TipcDevice(kTipcDescriptors[i]));
+      zx::channel h0, h1;
+      ASSERT_EQ(zx::channel::create(0, &h0, &h1), ZX_OK);
+      fbl::RefPtr<TipcDevice> dev = fbl::AdoptRef(
+          new TipcDevice(kTipcDescriptors[i], loop_.async(), fbl::move(h1)));
       ASSERT_TRUE(dev != nullptr);
 
       ASSERT_EQ(bus_->AddDevice(dev), ZX_OK);
@@ -78,6 +80,7 @@ class ResourceTableTest : public ::testing::Test {
   fbl::RefPtr<SharedMem> shared_mem_;
   fbl::unique_ptr<VirtioBus> bus_;
   fbl::unique_ptr<TipcRemoteFake> remote_;
+  async::Loop loop_;
 };
 
 TEST_F(ResourceTableTest, GetResourceTable) {
@@ -129,6 +132,8 @@ TEST_F(ResourceTableTest, FailedToGetResourceTable) {
 
 class TransactionTest : public ::testing::Test {
  protected:
+  static constexpr size_t kMsgBufferSize = 256;
+
   virtual void SetUp() {
     // Create Shared Memory
     zx::vmo shm_vmo;
@@ -145,7 +150,10 @@ class TransactionTest : public ::testing::Test {
     ASSERT_TRUE(remote_ != nullptr);
 
     // Create device on the bus
-    tipc_dev_ = fbl::AdoptRef(new TipcDevice(kTipcDescriptors[0]));
+    zx::channel connector;
+    ASSERT_EQ(zx::channel::create(0, &channel_, &connector), ZX_OK);
+    tipc_dev_ = fbl::AdoptRef(new TipcDevice(kTipcDescriptors[0], loop_.async(),
+                                             fbl::move(connector)));
     ASSERT_TRUE(tipc_dev_ != nullptr);
     ASSERT_EQ(bus_->AddDevice(tipc_dev_), ZX_OK);
 
@@ -202,6 +210,9 @@ class TransactionTest : public ::testing::Test {
   fbl::RefPtr<TipcDevice> tipc_dev_;
   fbl::unique_ptr<VirtioBus> bus_;
   fbl::unique_ptr<TipcRemoteFake> remote_;
+
+  async::Loop loop_;
+  zx::channel channel_;
 };
 
 TEST_F(TransactionTest, ReceiveTest) {
@@ -223,20 +234,13 @@ TEST_F(TransactionTest, ReceiveTest) {
               ZX_OK);
   }
 
+  // Write some messages to the tipc device
   const char msg1[] = "This is the first message";
   const char msg2[] = "This is the second message";
-  async::Loop loop;
+  ASSERT_EQ(channel_.write(0, msg1, sizeof(msg1), NULL, 0), ZX_OK);
+  ASSERT_EQ(channel_.write(0, msg2, sizeof(msg2), NULL, 0), ZX_OK);
 
-  // Create channel and connected with tipc device
-  zx::channel ch0, ch1;
-  ASSERT_EQ(zx::channel::create(0, &ch0, &ch1), ZX_OK);
-  ASSERT_EQ(tipc_dev_->Connect(loop.async(), fbl::move(ch1)), ZX_OK);
-
-  // Write some messages to the tipc device
-  ASSERT_EQ(ch0.write(0, msg1, sizeof(msg1), NULL, 0), ZX_OK);
-  ASSERT_EQ(ch0.write(0, msg2, sizeof(msg2), NULL, 0), ZX_OK);
-
-  loop.RunUntilIdle();
+  loop_.RunUntilIdle();
 
   // Verify the message from remote side
   virtio_desc_t desc;
@@ -259,16 +263,10 @@ TEST_F(TransactionTest, SendTest) {
   const auto tipc_frontend = remote_->GetFrontend(tipc_dev_->notify_id());
   ASSERT_TRUE(tipc_frontend != nullptr);
 
+  // Send some buffers from remote side
   const char msg1[] = "This is the first message";
   const char msg2[] = "This is the second message";
-  async::Loop loop;
 
-  // Create channel and connected with tipc device
-  zx::channel ch0, ch1;
-  ASSERT_EQ(zx::channel::create(0, &ch0, &ch1), ZX_OK);
-  ASSERT_EQ(tipc_dev_->Connect(loop.async(), fbl::move(ch1)), ZX_OK);
-
-  // Send some buffers from remote side
   auto buf = remote_->AllocBuffer(sizeof(msg1));
   ASSERT_TRUE(buf != nullptr);
   memcpy(buf, msg1, sizeof(msg1));
@@ -287,20 +285,113 @@ TEST_F(TransactionTest, SendTest) {
                 .Build(),
             ZX_OK);
 
-  loop.RunUntilIdle();
+  loop_.RunUntilIdle();
 
   // Read the message from tipc device and verify it
-  char msg_buf[256];
+  char msg_buf[kMsgBufferSize];
   uint32_t byte_read;
-  ASSERT_EQ(ch0.read(0, msg_buf, sizeof(msg_buf), &byte_read, NULL, 0, NULL),
-            ZX_OK);
+  ASSERT_EQ(
+      channel_.read(0, msg_buf, sizeof(msg_buf), &byte_read, NULL, 0, NULL),
+      ZX_OK);
   EXPECT_EQ(sizeof(msg1), byte_read);
   EXPECT_STREQ(msg_buf, msg1);
 
-  ASSERT_EQ(ch0.read(0, msg_buf, sizeof(msg_buf), &byte_read, NULL, 0, NULL),
-            ZX_OK);
+  ASSERT_EQ(
+      channel_.read(0, msg_buf, sizeof(msg_buf), &byte_read, NULL, 0, NULL),
+      ZX_OK);
   EXPECT_EQ(sizeof(msg2), byte_read);
   EXPECT_STREQ(msg_buf, msg2);
+}
+
+TEST_F(TransactionTest, SendInvalidBuffer) {
+  const auto tipc_frontend = remote_->GetFrontend(tipc_dev_->notify_id());
+  ASSERT_TRUE(tipc_frontend != nullptr);
+
+  // Send invalid buffer from frontend (not on shared memory)
+  const char invalid_buf[] = "The buffer should be dropped";
+  ASSERT_EQ(
+      tipc_frontend->tx_queue()
+          .BuildDescriptor()
+          .AppendReadable(const_cast<char*>(invalid_buf), sizeof(invalid_buf))
+          .Build(),
+      ZX_OK);
+
+  loop_.RunUntilIdle();
+
+  // Frontend should able to get the dropped tx buffer
+  volatile vring_used_elem* used = tipc_frontend->tx_queue().ReadFromUsed();
+  ASSERT_TRUE(used != nullptr);
+  EXPECT_EQ(used->len, 0u);
+
+  // The channal should not have any message
+  char msg_buf[kMsgBufferSize];
+  uint32_t byte_read;
+  ASSERT_EQ(
+      channel_.read(0, msg_buf, sizeof(msg_buf), &byte_read, NULL, 0, NULL),
+      ZX_ERR_SHOULD_WAIT);
+
+  // Should still able to send a valid message
+  const char msg[] = "This is a valid message";
+  auto valid_buf = remote_->AllocBuffer(sizeof(msg));
+  ASSERT_TRUE(valid_buf != nullptr);
+  memcpy(valid_buf, msg, sizeof(msg));
+  ASSERT_EQ(tipc_frontend->tx_queue()
+                .BuildDescriptor()
+                .AppendReadable(valid_buf, sizeof(msg))
+                .Build(),
+            ZX_OK);
+
+  loop_.RunUntilIdle();
+
+  // Can get the message now
+  ASSERT_EQ(
+      channel_.read(0, msg_buf, sizeof(msg_buf), &byte_read, NULL, 0, NULL),
+      ZX_OK);
+  EXPECT_EQ(sizeof(msg), byte_read);
+  EXPECT_STREQ(msg_buf, msg);
+}
+
+TEST_F(TransactionTest, InvalidRxBuffer) {
+  const auto tipc_frontend = remote_->GetFrontend(tipc_dev_->notify_id());
+  ASSERT_TRUE(tipc_frontend != nullptr);
+
+  // Add an invalid rx buffer (not on shared memory)
+  char invalid_buf[kMsgBufferSize];
+  ASSERT_EQ(tipc_frontend->rx_queue()
+                .BuildDescriptor()
+                .AppendReadable(&invalid_buf, sizeof(invalid_buf))
+                .Build(),
+            ZX_OK);
+
+  const char msg[] = "The message should not be received";
+  ASSERT_EQ(channel_.write(0, msg, sizeof(msg), NULL, 0), ZX_OK);
+
+  loop_.RunUntilIdle();
+
+  // Frontend should not recevied the message
+  volatile vring_used_elem* used = tipc_frontend->rx_queue().ReadFromUsed();
+  ASSERT_TRUE(used != nullptr);
+  EXPECT_EQ(used->len, 0u);
+
+  // Added another valid rx buffer
+  auto valid_buf = remote_->AllocBuffer(sizeof(msg));
+  ASSERT_TRUE(valid_buf != nullptr);
+  ASSERT_EQ(tipc_frontend->rx_queue()
+                .BuildDescriptor()
+                .AppendWriteable(valid_buf, sizeof(msg))
+                .Build(),
+            ZX_OK);
+
+  loop_.RunUntilIdle();
+
+  // Can receive the message now
+  virtio_desc_t desc;
+  used = tipc_frontend->rx_queue().ReadFromUsed();
+  ASSERT_TRUE(used != nullptr);
+  EXPECT_EQ(tipc_frontend->rx_queue().queue()->ReadDesc(used->id, &desc),
+            ZX_OK);
+  EXPECT_TRUE(used->len == sizeof(msg));
+  EXPECT_STREQ(reinterpret_cast<const char*>(desc.addr), msg);
 }
 
 }  // namespace trusty

@@ -12,7 +12,13 @@
 
 namespace trusty {
 
-TipcDevice::TipcDevice(const tipc_vdev_descr& descr) : descr_(descr) {
+TipcDevice::TipcDevice(const tipc_vdev_descr& descr,
+                       async_t* async,
+                       zx::channel channel)
+    : descr_(descr),
+      channel_(fbl::move(channel)),
+      rx_stream_(async, rx_queue(), channel_.get()),
+      tx_stream_(async, tx_queue(), channel_.get()) {
   descr_.vdev.notifyid = notify_id();
 
   for (uint8_t i = 0; i < kTipcNumQueues; i++) {
@@ -95,6 +101,18 @@ zx_status_t TipcDevice::Probe(void* rsc_entry) {
     return status;
   }
 
+  status = rx_stream_.Start();
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to start rx stream: " << status;
+    return status;
+  }
+
+  status = tx_stream_.Start();
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to start tx stream: " << status;
+    return status;
+  }
+
   status = Online();
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to go online: " << status;
@@ -102,41 +120,6 @@ zx_status_t TipcDevice::Probe(void* rsc_entry) {
   }
 
   set_state(State::ACTIVE);
-
-  return ZX_OK;
-}
-
-zx_status_t TipcDevice::Connect(async_t* async, zx::channel channel) {
-  if (state() != State::ACTIVE) {
-    return ZX_ERR_BAD_STATE;
-  }
-
-  fbl::AllocChecker ac;
-  rx_stream_ =
-      fbl::make_unique_checked<Stream>(&ac, async, rx_queue(), channel.get());
-  if (!ac.check()) {
-    return ZX_ERR_NO_MEMORY;
-  }
-
-  tx_stream_ =
-      fbl::make_unique_checked<Stream>(&ac, async, tx_queue(), channel.get());
-  if (!ac.check()) {
-    return ZX_ERR_NO_MEMORY;
-  }
-
-  zx_status_t status = rx_stream_->Start();
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to start RX stream: " << status;
-    return status;
-  }
-
-  status = tx_stream_->Start();
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to start TX stream: " << status;
-    return status;
-  }
-
-  channel_ = fbl::move(channel);
   return ZX_OK;
 }
 
@@ -220,6 +203,11 @@ void TipcDevice::Stream::OnQueueReady(zx_status_t status, uint16_t index) {
     status = queue_->ReadDesc(head_, &desc_);
   }
 
+  if (status == ZX_ERR_OUT_OF_RANGE) {
+    DropBuffer();
+    return;
+  }
+
   if (status != ZX_OK) {
     OnStreamClosed(status, "reading descriptor");
     return;
@@ -228,6 +216,20 @@ void TipcDevice::Stream::OnQueueReady(zx_status_t status, uint16_t index) {
   status = WaitOnChannel();
   if (status != ZX_OK) {
     OnStreamClosed(status, "waiting on channel");
+  }
+}
+
+void TipcDevice::Stream::DropBuffer() {
+  FXL_LOG(WARNING) << "buffer not in shared memory, drop it";
+
+  zx_status_t status = queue_->Return(head_, 0);
+  if (status != ZX_OK) {
+    FXL_LOG(WARNING) << "Failed to return descriptor " << status;
+  }
+
+  status = WaitOnQueue();
+  if (status != ZX_OK) {
+    OnStreamClosed(status, "dropping buffer");
   }
 }
 

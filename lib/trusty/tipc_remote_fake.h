@@ -106,6 +106,7 @@ class TipcFrontendFake {
     if (!buf) {
       return ZX_ERR_NO_MEMORY;
     }
+    memset(buf, 0, size);
 
     vring->da = remote_->VirtToPhys(buf, size);
     queue->Init(vring);

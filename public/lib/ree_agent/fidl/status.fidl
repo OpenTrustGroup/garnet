@@ -1,0 +1,54 @@
+// Copyright 2018 Open Trust Group
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library ree_agent;
+
+// Based on trusty/external/lk/include/uapi/uapi/err.h
+enum Status : int32 {
+  OK = 0;
+  GENERIC = -1;
+  NOT_FOUND = -2;
+  NOT_READY = -3;
+  NO_MSG = -4;
+  NO_MEMORY = -5;
+  ALREADY_STARTED = -6;
+  NOT_VALID = -7;
+  INVALID_ARGS = -8;
+  NOT_ENOUGH_BUFFER = -9;
+  NOT_SUSPENDED = -10;
+  OBJECT_DESTROYED = -11;
+  NOT_BLOCKED = -12;
+  TIMED_OUT = -13;
+  ALREADY_EXISTS = -14;
+  CHANNEL_CLOSED = -15;
+  OFFLINE = -16;
+  NOT_ALLOWED = -17;
+  BAD_PATH = -18;
+  ALREADY_MOUNTED = -19;
+  IO = -20;
+  NOT_DIR = -21;
+  NOT_FILE = -22;
+  RECURSE_TOO_DEEP = -23;
+  NOT_SUPPORTED = -24;
+  TOO_BIG = -25;
+  CANCELLED = -26;
+  NOT_IMPLEMENTED = -27;
+  CHECKSUM_FAIL = -28;
+  CRC_FAIL = -29;
+  CMD_UNKNOWN = -30;
+  BAD_STATE = -31;
+  BAD_LEN = -32;
+  BUSY = -33;
+  THREAD_DETACHED = -34;
+  I2C_NACK = -35;
+  ALREADY_EXPIRED = -36;
+  OUT_OF_RANGE = -37;
+  NOT_CONFIGURED = -38;
+  NOT_MOUNTED = -39;
+  FAULT = -40;
+  NO_RESOURCES = -41;
+  BAD_HANDLE = -42;
+  ACCESS_DENIED = -43;
+  PARTIAL_WRITE = -44;
+};

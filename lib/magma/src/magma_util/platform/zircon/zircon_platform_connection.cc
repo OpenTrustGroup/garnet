@@ -5,9 +5,10 @@
 #include "platform_connection.h"
 #include "zircon_platform_event.h"
 
-#include "zx/channel.h"
-#include <fdio/io.h>
 #include <list>
+
+#include <fdio/io.h>
+#include <lib/zx/channel.h>
 #include <zircon/syscalls.h>
 #include <zircon/types.h>
 
@@ -438,7 +439,7 @@ private:
             op->context_id, op->commands_size, op->command_data(), op->semaphore_count,
             op->semaphores);
         if (!status)
-            SetError(status);
+            SetError(status.get());
         return true;
     }
 
@@ -457,7 +458,7 @@ private:
             delegate_->PageFlip(op->buffer_id, op->wait_semaphore_count, op->signal_semaphore_count,
                                 op->semaphore_ids, std::move(buffer_presented_semaphore));
         if (!status)
-            SetError(status);
+            SetError(status.get());
         return true;
     }
 

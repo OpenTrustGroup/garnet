@@ -5,7 +5,6 @@
 //! Main process for Fuchsia builds - uses fidl rather than stdin / stdout
 
 #![deny(warnings)]
-#![feature(conservative_impl_trait)]
 
 extern crate xi_core_lib;
 extern crate xi_rpc;

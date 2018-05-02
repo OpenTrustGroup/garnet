@@ -5,8 +5,8 @@
 #ifndef GARNET_LIB_UI_GFX_RESOURCES_IMAGE_PIPE_H_
 #define GARNET_LIB_UI_GFX_RESOURCES_IMAGE_PIPE_H_
 
-#include <zx/event.h>
-#include <zx/vmo.h>
+#include <lib/zx/event.h>
+#include <lib/zx/vmo.h>
 
 #include <queue>
 
@@ -18,7 +18,6 @@
 #include "garnet/lib/ui/gfx/resources/resource.h"
 #include "lib/escher/flib/fence_set_listener.h"
 #include "lib/fsl/tasks/message_loop.h"
-#include "lib/fsl/tasks/message_loop_handler.h"
 #include "lib/fxl/memory/weak_ptr.h"
 
 namespace scenic {

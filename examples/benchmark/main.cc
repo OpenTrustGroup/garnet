@@ -6,27 +6,17 @@
 
 #include <stdio.h>
 
-#include <lib/async/cpp/loop.h>
+#include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/task.h>
 #include <trace-provider/provider.h>
 #include <trace/event.h>
-
-namespace {
-
-zx_time_t now() {
-  return zx_clock_get(ZX_CLOCK_MONOTONIC);
-}
-
-}  // namespace
+#include <zx/time.h>
 
 int main(int argc, char** argv) {
   async::Loop loop;
   trace::TraceProvider provider(loop.async());
 
   puts("Starting Benchmark...");
-
-  zx_time_t start_time = now();
-  async::Task task(start_time);
 
   // Run the task for kIterationCount iterations.  We use a fixed number
   // of iterations (rather than iterating the test until a fixed amount
@@ -35,29 +25,27 @@ int main(int argc, char** argv) {
   const uint32_t kIterationCount = 1000;
   uint32_t iteration = 0;
 
-  task.set_handler(
-      [&task, &loop, &iteration](async_t* async, zx_status_t status) {
-        // `task_start` and `task_end` are used to measure the time between
-        // `example` benchmarks.  This is measured with a `time_between`
-        // measurement type.
-        TRACE_INSTANT("benchmark", "task_start", TRACE_SCOPE_PROCESS);
+  async::TaskClosure task([&loop, &task, &iteration] {
+    // `task_start` and `task_end` are used to measure the time between
+    // `example` benchmarks.  This is measured with a `time_between`
+    // measurement type.
+    TRACE_INSTANT("benchmark", "task_start", TRACE_SCOPE_PROCESS);
 
-        // An `example` benchmark measured with a `duration` measurement type.
-        TRACE_DURATION("benchmark", "example");
+    // An `example` benchmark measured with a `duration` measurement type.
+    TRACE_DURATION("benchmark", "example");
 
-        // Simulate some kind of workload.
-        zx_nanosleep(now() + ZX_USEC(1500));
+    // Simulate some kind of workload.
+    zx::nanosleep(zx::deadline_after(zx::usec(1500)));
 
-        if (++iteration >= kIterationCount) {
-          loop.Quit();
-          return ASYNC_TASK_FINISHED;
-        }
+    if (++iteration >= kIterationCount) {
+      loop.Quit();
+      return;
+    }
 
-        // Schedule another benchmark.
-        task.set_deadline(now() + ZX_USEC(500));
-        TRACE_INSTANT("benchmark", "task_end", TRACE_SCOPE_PROCESS);
-        return ASYNC_TASK_REPEAT;
-      });
+    // Schedule another benchmark.
+    TRACE_INSTANT("benchmark", "task_end", TRACE_SCOPE_PROCESS);
+    task.PostDelayed(loop.async(), zx::usec(500));
+  });
 
   task.Post(loop.async());
 

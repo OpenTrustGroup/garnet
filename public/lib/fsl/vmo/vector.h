@@ -5,7 +5,7 @@
 #ifndef LIB_FSL_VMO_VECTOR_H_
 #define LIB_FSL_VMO_VECTOR_H_
 
-#include <zx/vmo.h>
+#include <lib/zx/vmo.h>
 
 #include <vector>
 
@@ -23,7 +23,7 @@ FXL_EXPORT bool VectorFromVmo(const SizedVmo& shared_buffer,
                               std::vector<char>* vector_ptr);
 
 // Copy the contents of a shared buffer into a char vector.
-FXL_EXPORT bool VectorFromVmo(const SizedVmoTransport& shared_buffer,
+FXL_EXPORT bool VectorFromVmo(const mem::Buffer& shared_buffer,
                               std::vector<char>* vector_ptr);
 
 // Make a new shared buffer with the contents of a uint8_t vector.
@@ -35,7 +35,7 @@ FXL_EXPORT bool VectorFromVmo(const SizedVmo& shared_buffer,
                               std::vector<uint8_t>* vector_ptr);
 
 // Copy the contents of a shared buffer into a uint8_t vector.
-FXL_EXPORT bool VectorFromVmo(const SizedVmoTransport& shared_buffer,
+FXL_EXPORT bool VectorFromVmo(const mem::Buffer& shared_buffer,
                               std::vector<uint8_t>* vector_ptr);
 
 }  // namespace fsl

@@ -5,6 +5,9 @@
 #include "lib/ui/input/device_state.h"
 
 #include <fuchsia/cpp/input.h>
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
+
 #include "lib/fidl/cpp/clone.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/time/time_delta.h"
@@ -18,16 +21,13 @@ int64_t InputEventTimestampNow() {
 
 namespace mozart {
 
-constexpr fxl::TimeDelta kKeyRepeatSlow = fxl::TimeDelta::FromMilliseconds(250);
-constexpr fxl::TimeDelta kKeyRepeatFast = fxl::TimeDelta::FromMilliseconds(75);
-
-#pragma mark - KeyboardState
+constexpr zx::duration kKeyRepeatSlow = zx::msec(250);
+constexpr zx::duration kKeyRepeatFast = zx::msec(75);
 
 KeyboardState::KeyboardState(DeviceState* device_state)
     : device_state_(device_state),
       keymap_(qwerty_map),
-      weak_ptr_factory_(this),
-      task_runner_(fsl::MessageLoop::GetCurrent()->task_runner()) {
+      weak_ptr_factory_(this) {
   char* keys = getenv("gfxconsole.keymap");
   if (keys && !strcmp(keys, "dvorak")) {
     keymap_ = dvorak_map;
@@ -169,16 +169,16 @@ void KeyboardState::Repeat(uint64_t sequence) {
   ScheduleRepeat(sequence, kKeyRepeatFast);
 }
 
-void KeyboardState::ScheduleRepeat(uint64_t sequence, fxl::TimeDelta delta) {
-  task_runner_->PostDelayedTask(
-      [ weak = weak_ptr_factory_.GetWeakPtr(), sequence ] {
-        if (weak)
-          weak->Repeat(sequence);
-      },
-      delta);
+void KeyboardState::ScheduleRepeat(uint64_t sequence, zx::duration delta) {
+  async::PostDelayedTask(
+    async_get_default(),
+    [ weak = weak_ptr_factory_.GetWeakPtr(), sequence ] {
+      if (weak)
+        weak->Repeat(sequence);
+    },
+    delta
+  );
 }
-
-#pragma mark - MouseState
 
 void MouseState::OnRegistered() {}
 
@@ -237,8 +237,6 @@ void MouseState::Update(input::InputReport input_report,
     }
   }
 }
-
-#pragma mark - StylusState
 
 void StylusState::SendEvent(int64_t timestamp,
                             input::PointerEventPhase phase,
@@ -337,8 +335,6 @@ void StylusState::Update(input::InputReport input_report,
   }
 }
 
-#pragma mark - TouchscreenState
-
 void TouchscreenState::Update(input::InputReport input_report,
                               geometry::Size display_size) {
   FXL_DCHECK(input_report.touchscreen);
@@ -399,12 +395,8 @@ void TouchscreenState::Update(input::InputReport input_report,
 
     // For now when we get DOWN we need to fake trigger ADD first.
     if (pt.phase == input::PointerEventPhase::DOWN) {
-      input::InputEvent add_ev;
-      zx_status_t clone_result = fidl::Clone(ev, &add_ev);
-      FXL_DCHECK(clone_result);
-      input::PointerEvent add_pt;
-      clone_result = fidl::Clone(pt, &add_pt);
-      FXL_DCHECK(clone_result);
+      input::InputEvent add_ev = fidl::Clone(ev);
+      input::PointerEvent add_pt = fidl::Clone(pt);
       add_pt.phase = input::PointerEventPhase::ADD;
       add_ev.set_pointer(std::move(add_pt));
       device_state_->callback()(std::move(add_ev));
@@ -416,17 +408,14 @@ void TouchscreenState::Update(input::InputReport input_report,
 
   for (const auto& pointer : old_pointers) {
     input::InputEvent ev;
-    input::PointerEvent pt;
-    zx_status_t clone_result = fidl::Clone(pointer, &pt);
-    FXL_DCHECK(clone_result);
+    input::PointerEvent pt = fidl::Clone(pointer);
     pt.phase = input::PointerEventPhase::UP;
     pt.event_time = now;
     ev.set_pointer(std::move(pt));
     device_state_->callback()(std::move(ev));
 
     ev = input::InputEvent();
-    clone_result = fidl::Clone(pointer, &pt);
-    FXL_DCHECK(clone_result);
+    pt = fidl::Clone(pointer);
     pt.phase = input::PointerEventPhase::REMOVE;
     pt.event_time = now;
     ev.set_pointer(std::move(pt));
@@ -437,21 +426,36 @@ void TouchscreenState::Update(input::InputReport input_report,
 void SensorState::Update(input::InputReport input_report) {
   FXL_DCHECK(input_report.sensor);
   FXL_DCHECK(device_state_->sensor_descriptor());
+  // Every sensor report gets routed via unique device_id.
+  device_state_->sensor_callback()(device_state_->device_id(),
+                                   std::move(input_report));
 }
-
-#pragma mark - DeviceState
 
 DeviceState::DeviceState(uint32_t device_id,
                          input::DeviceDescriptor* descriptor,
                          OnEventCallback callback)
     : device_id_(device_id),
       descriptor_(descriptor),
-      callback_(callback),
       keyboard_(this),
       mouse_(this),
       stylus_(this),
       touchscreen_(this),
-      sensor_(this) {}
+      callback_(callback),
+      sensor_(this),
+      sensor_callback_(nullptr) {}
+
+DeviceState::DeviceState(uint32_t device_id,
+                         input::DeviceDescriptor* descriptor,
+                         OnSensorEventCallback callback)
+    : device_id_(device_id),
+      descriptor_(descriptor),
+      keyboard_(this),
+      mouse_(this),
+      stylus_(this),
+      touchscreen_(this),
+      callback_(nullptr),
+      sensor_(this),
+      sensor_callback_(callback) {}
 
 DeviceState::~DeviceState() {}
 

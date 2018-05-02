@@ -5,12 +5,16 @@
 #pragma once
 
 #include <vector>
+
+#include <lib/zx/process.h>
+#include <lib/zx/thread.h>
 #include <zircon/types.h>
-#include <zx/thread.h>
 
 #include "garnet/lib/debug_ipc/records.h"
 
 struct zx_info_process;
+
+namespace debug_agent {
 
 zx_status_t GetProcessInfo(zx_handle_t process, zx_info_process* info);
 
@@ -21,3 +25,9 @@ zx_status_t GetProcessThreads(zx_handle_t process,
 // Populates the given ThreadRecord with the information from the given thread.
 void FillThreadRecord(const zx::thread& thread,
                       debug_ipc::ThreadRecord* record);
+
+// Fills the given vector with the module information for the process.
+zx_status_t GetModulesForProcess(const zx::process& process,
+                                 std::vector<debug_ipc::Module>* modules);
+
+}  // namespace debug_agent

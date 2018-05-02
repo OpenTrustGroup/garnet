@@ -159,6 +159,8 @@ void Mesh::BindBuffers(const Buffer& index_buffer,
                        uint32_t vertex_count,
                        const float bounding_box_min[3],
                        const float bounding_box_max[3]) {
+  FXL_DCHECK(session() == index_buffer.session() &&
+             session() == vertex_buffer.session());
   session()->Enqueue(NewBindMeshBuffersCommand(
       id(), index_buffer.id(), index_format, index_offset, index_count,
       vertex_buffer.id(), std::move(vertex_format), vertex_offset, vertex_count,
@@ -434,6 +436,14 @@ LayerStack::~LayerStack() = default;
 
 void LayerStack::AddLayer(uint32_t layer_id) {
   session()->Enqueue(NewAddLayerCommand(id(), layer_id));
+}
+
+void LayerStack::RemoveLayer(uint32_t layer_id) {
+  session()->Enqueue(NewRemoveLayerCommand(id(), layer_id));
+}
+
+void LayerStack::RemoveAllLayers() {
+  session()->Enqueue(NewRemoveAllLayersCommand(id()));
 }
 
 DisplayCompositor::DisplayCompositor(Session* session) : Resource(session) {

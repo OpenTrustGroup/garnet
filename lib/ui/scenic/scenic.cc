@@ -17,7 +17,7 @@ Scenic::Scenic(component::ApplicationContext* app_context,
   FXL_DCHECK(task_runner_);
   FXL_DCHECK(clock_);
 
-  app_context->outgoing_services()->AddService<ui::Scenic>(
+  app_context->outgoing().AddPublicService<ui::Scenic>(
       [this](fidl::InterfaceRequest<ui::Scenic> request) {
         FXL_VLOG(1) << "Accepting connection to Scenic";
         scenic_bindings_.AddBinding(this, std::move(request));
@@ -90,6 +90,21 @@ void Scenic::GetDisplayInfo(ui::Scenic::GetDisplayInfoCallback callback) {
   TempSystemDelegate* delegate =
       reinterpret_cast<TempSystemDelegate*>(systems_[System::kGfx].get());
   delegate->GetDisplayInfo(callback);
+}
+
+void Scenic::TakeScreenshot(fidl::StringPtr filename,
+                            ui::Scenic::TakeScreenshotCallback callback) {
+  FXL_DCHECK(systems_[System::kGfx]);
+  TempSystemDelegate* delegate =
+      reinterpret_cast<TempSystemDelegate*>(systems_[System::kGfx].get());
+  delegate->TakeScreenshot(filename, callback);
+}
+
+void Scenic::GetOwnershipEvent(ui::Scenic::GetOwnershipEventCallback callback) {
+  FXL_DCHECK(systems_[System::kGfx]);
+  TempSystemDelegate* delegate =
+      reinterpret_cast<TempSystemDelegate*>(systems_[System::kGfx].get());
+  delegate->GetOwnershipEvent(callback);
 }
 
 }  // namespace scenic

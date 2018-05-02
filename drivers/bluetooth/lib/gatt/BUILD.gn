@@ -10,9 +10,18 @@ static_library("gatt") {
     "connection.h",
     "gatt.cc",
     "gatt.h",
+    "gatt_defs.cc",
     "gatt_defs.h",
+    "generic_attribute_service.cc",
+    "generic_attribute_service.h",
     "local_service_manager.cc",
     "local_service_manager.h",
+    "remote_characteristic.cc",
+    "remote_characteristic.h",
+    "remote_service.cc",
+    "remote_service.h",
+    "remote_service_manager.cc",
+    "remote_service_manager.h",
     "server.cc",
     "server.h",
     "types.cc",
@@ -35,6 +44,7 @@ source_set("testing") {
 
   public_deps = [
     ":gatt",
+    "//garnet/drivers/bluetooth/lib/common",
     "//garnet/public/lib/fxl",
     "//zircon/public/lib/fbl",
   ]
@@ -45,7 +55,11 @@ source_set("tests") {
 
   sources = [
     "client_unittest.cc",
+    "fake_client.cc",
+    "fake_client.h",
+    "generic_attribute_service_unittest.cc",
     "local_service_manager_unittest.cc",
+    "remote_service_manager_unittest.cc",
     "server_unittest.cc"
   ]
 
@@ -53,6 +67,7 @@ source_set("tests") {
     ":gatt",
     "//garnet/drivers/bluetooth/lib/att",
     "//garnet/drivers/bluetooth/lib/l2cap:testing",
+    "//garnet/drivers/bluetooth/lib/testing",
     "//third_party/googletest:gtest",
   ]
 }

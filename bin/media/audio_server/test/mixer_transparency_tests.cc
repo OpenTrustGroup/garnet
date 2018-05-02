@@ -37,12 +37,16 @@ TEST(DataFormats, PointSampler_16) {
                                  11025, Resampler::Default));
 }
 
+// Create PointSampler objects for incoming buffers of type float
+TEST(DataFormats, PointSampler_Float) {
+  EXPECT_NE(nullptr, SelectMixer(AudioSampleFormat::FLOAT, 2, 48000, 2, 16000));
+}
+
 // Create PointSampler objects for other formats of incoming buffers
 // This is not expected to work, as these are not yet implemented
 TEST(DataFormats, PointSampler_Other) {
   EXPECT_EQ(nullptr, SelectMixer(AudioSampleFormat::SIGNED_24_IN_32, 2, 8000, 1,
                                  8000, Resampler::SampleAndHold));
-  EXPECT_EQ(nullptr, SelectMixer(AudioSampleFormat::FLOAT, 2, 48000, 2, 16000));
 }
 
 // If the source sample rate is NOT an integer-multiple of the destination rate
@@ -67,13 +71,16 @@ TEST(DataFormats, LinearSampler_16) {
             SelectMixer(AudioSampleFormat::SIGNED_16, 8, 48000, 8, 44100));
 }
 
+// Create LinearSampler objects for incoming buffers of type float
+TEST(DataFormats, LinearSampler_Float) {
+  EXPECT_NE(nullptr, SelectMixer(AudioSampleFormat::FLOAT, 2, 48000, 2, 44100));
+}
+
 // Create LinearSampler objects for other formats of incoming buffers
 // This is not expected to work, as these are not yet implemented
 TEST(DataFormats, LinearSampler_Other) {
   EXPECT_EQ(nullptr,
             SelectMixer(AudioSampleFormat::SIGNED_24_IN_32, 2, 8000, 1, 11025));
-  EXPECT_EQ(nullptr, SelectMixer(AudioSampleFormat::FLOAT, 2, 48000, 2, 44100,
-                                 Resampler::LinearInterpolation));
 }
 
 // Create OutputFormatter objects for outgoing buffers of type uint8
@@ -86,12 +93,16 @@ TEST(DataFormats, OutputFormatter_16) {
   EXPECT_NE(nullptr, SelectOutputFormatter(AudioSampleFormat::SIGNED_16, 4));
 }
 
+// Create OutputFormatter objects for outgoing buffers of type float
+TEST(DataFormats, OutputFormatter_Float) {
+  EXPECT_NE(nullptr, SelectOutputFormatter(AudioSampleFormat::FLOAT, 1));
+}
+
 // Create OutputFormatter objects for other output formats
 // This is not expected to work, as these are not yet implemented
 TEST(DataFormats, OutputFormatter_Other) {
   EXPECT_EQ(nullptr,
             SelectOutputFormatter(AudioSampleFormat::SIGNED_24_IN_32, 3));
-  EXPECT_EQ(nullptr, SelectOutputFormatter(AudioSampleFormat::FLOAT, 4));
 }
 
 //
@@ -135,6 +146,30 @@ TEST(PassThru, Source_16) {
   ::memset(accum, 0, sizeof(accum));
   // Now try in 4-channel mode
   mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 4, 48000, 4, 48000,
+                      Resampler::SampleAndHold);
+  DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum) / 4);
+  EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
+}
+
+// Can float values flow unchanged (1-1, N-N) thru the system? With 1:1 frame
+// conversion, unity scale and no accumulation, we expect bit-equality.
+TEST(PassThru, Source_Float) {
+  float source[] = {-1.0,         0.999969482f,    -0.809783935f,
+                    0.603912353f, -0.00888061523f, 0.0f,
+                    0.296875f,    -0.357757568f};
+  int32_t accum[8];
+  int32_t expect[] = {-0x8000, 0x7FFF, -0x67A7, 0x4D4D,
+                      -0x123,  0,      0x2600,  -0x2DCB};
+
+  // Try in 1-channel mode
+  MixerPtr mixer = SelectMixer(AudioSampleFormat::FLOAT, 1, 48000, 1, 48000,
+                               Resampler::SampleAndHold);
+  DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum));
+  EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
+
+  ::memset(accum, 0, sizeof(accum));
+  // Now try in 4-channel mode
+  mixer = SelectMixer(AudioSampleFormat::FLOAT, 4, 48000, 4, 48000,
                       Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum) / 4);
   EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
@@ -189,16 +224,14 @@ TEST(PassThru, StereoToMono_Cancel) {
   EXPECT_TRUE(CompareBufferToVal(accum, 0, fbl::count_of(accum)));
 }
 
-// Do we correctly mix stereo->mono (shift? divide? truncate? round? dither?)
-// Our 2:1 folddown shifts (not div+round); leading to slight negative bias.
-// TODO(mpuryear): Adjust the expected values below, after we fix MTWN-81.
+// Validate that we correctly mix stereo->mono, including rounding.
 TEST(PassThru, StereoToMono_Round) {
   // pairs: positive even, neg even, pos odd, neg odd, pos limit, neg limit
   int16_t source[] = {-21,   12021, 123,   -345,  -1000,  1005,
                       -4155, -7000, 32767, 32767, -32768, -32768};
 
   int32_t accum[] = {-123, 234, -345, 456, -567, 678};
-  int32_t expect[] = {6000, -111, 2, -5578, 32767, -32768};
+  int32_t expect[] = {6000, -111, 3, -5578, 32767, -32768};
 
   MixerPtr mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 2, 48000, 1, 48000,
                                Resampler::SampleAndHold);
@@ -226,9 +259,8 @@ TEST(PassThru, Accumulate) {
 
 // Are all valid data values rounded correctly to 8-bit outputs?
 TEST(PassThru, Output_8) {
-  int32_t accum[] = {-32896, -32768, -16512, -1, 0, 16512, 32767, 32768};
-  // hex vals:       -x8080  -x8000  -x4080  -1  0  x4080  x7FFF  x8000
-  //                   ^^^^  we clamp these vals to uint8 limits   ^^^^
+  int32_t accum[] = {-0x8080, -0x8000, -0x4080, -1, 0, 0x4080, 0x7FFF, 0x8000};
+  //                    ^^^^     we clamp these vals to uint8 limits     ^^^^
 
   uint8_t dest[] = {12, 23, 34, 45, 56, 67, 78, 89, 42};
   // Dest completely overwritten, except for last value: we only mix(8)
@@ -245,19 +277,39 @@ TEST(PassThru, Output_8) {
 
 // Are all valid data values passed correctly to 16-bit outputs?
 TEST(PassThru, Output_16) {
-  int32_t accum[] = {-32896, -32768, -16512, -1, 0, 16512, 32767, 32768};
-  // hex vals:       -x8080  -x8000  -x4080  -1  0  x4080  x7FFF  x8000
-
+  int32_t accum[] = {-0x8080, -0x8000, -0x4080, -1, 0, 0x4080, 0x7FFF, 0x8000};
+  //                    ^^^^    we clamp these vals to int16_t limits    ^^^^
   int16_t dest[] = {0123, 1234, 2345, 3456, 4567, 5678, 6789, 7890, -42};
   // Dest buffer is overwritten, EXCEPT for last value: we only mix(8)
 
-  int16_t expect[] = {-32768, -32768, -16512, -1, 0, 16512, 32767, 32767, -42};
+  int16_t expect[] = {-0x8000, -0x8000, -0x4080, -1, 0,
+                      0x4080,  0x7FFF,  0x7FFF,  -42};
 
   OutputFormatterPtr output_formatter =
       SelectOutputFormatter(AudioSampleFormat::SIGNED_16, 2);
 
   output_formatter->ProduceOutput(accum, reinterpret_cast<void*>(dest),
                                   fbl::count_of(accum) / 2);
+  EXPECT_TRUE(CompareBuffers(dest, expect, fbl::count_of(dest)));
+}
+
+// Are all valid data values passed correctly to float outputs
+TEST(PassThru, Output_Float) {
+  int32_t accum[] = {-0x8080, -0x8000, -0x4080, -1, 0, 0x4080, 0x7FFF, 0x8080};
+  //                    ^^^^     we clamp these vals to float limits     ^^^^
+
+  float dest[] = {1.2f, 2.3f, 3.4f, 4.5f, 5.6f, 6.7f, 7.8f, 8.9f, 4.2f};
+  // Dest completely overwritten, except for last value: we only mix(8)
+
+  float expect[] = {-1.0f, -1.0f,       -0.50390625f, -0.000030517578f,
+                    0.0f,  0.50390625f, 0.99996948f,  1.0f,
+                    4.2f};
+
+  audio::OutputFormatterPtr output_formatter =
+      SelectOutputFormatter(AudioSampleFormat::FLOAT, 1);
+
+  output_formatter->ProduceOutput(accum, reinterpret_cast<void*>(dest),
+                                  fbl::count_of(accum));
   EXPECT_TRUE(CompareBuffers(dest, expect, fbl::count_of(dest)));
 }
 
@@ -291,6 +343,22 @@ TEST(PassThru, Output_16_Silence) {
   EXPECT_TRUE(CompareBufferToVal(dest, static_cast<int16_t>(0),
                                  fbl::count_of(dest) - 1));
   EXPECT_EQ(dest[fbl::count_of(dest) - 1], 7890);  // should survive
+}
+
+// Are float output buffers correctly silenced? Do we stop when we should?
+TEST(PassThru, Output_Float_Silence) {
+  float dest[] = {1.2f, 2.3f, 3.4f, 4.5f, 5.6f, 6.7f, 7.8f};
+  // should be overwritten, except for the last value: we only fill(6)
+
+  audio::OutputFormatterPtr output_formatter =
+      SelectOutputFormatter(AudioSampleFormat::FLOAT, 2);
+  ASSERT_NE(output_formatter, nullptr);
+
+  output_formatter->FillWithSilence(reinterpret_cast<void*>(dest),
+                                    (fbl::count_of(dest) - 1) / 2);
+  EXPECT_TRUE(CompareBufferToVal(dest, static_cast<float>(0.0f),
+                                 fbl::count_of(dest) - 1));
+  EXPECT_EQ(dest[fbl::count_of(dest) - 1], 7.8f);  // this val survives
 }
 
 }  // namespace test

@@ -4,15 +4,13 @@
 
 library input;
 
-// import "lib/ui/input/fidl/input_reports.fidl";
-
 // Service to receive input events.
 //
 // Input devices can describe their capabilities using |DeviceDescriptor|
 // and register themselves with the |InputDeviceRegistry|. They will receive
 // a |DeviceToken| which can be used to send |InputReports| and unregister
 // the device.
-[ServiceName="input::InputDeviceRegistry"]
+[Discoverable]
 interface InputDeviceRegistry {
   // Register a device with the capabilities described by |DeviceDescriptor|
   1: RegisterDevice(DeviceDescriptor descriptor, request<InputDevice> input_device);

@@ -3,7 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/package.gni")
-import("//garnet/public/lib/fidl/build/fidl/fidl.gni")
+import("//build/fidl/fidl.gni")
 
 # This executable runs the benchmarks via the gbenchmark library.  It is
 # not suitable for running via runtests because, by default (when run with
@@ -58,15 +58,14 @@ source_set("lib") {
     "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
     "//third_party/gflags",
-    "//third_party/rapidjson",
     "//zircon/public/lib/launchpad",
     "//zircon/public/lib/fbl",
-    "//zircon/public/lib/trace-provider",
     "//zircon/public/lib/zx",
     ":fidl_interface",
   ]
   public_deps = [
     "//third_party/benchmark",
+    "//zircon/public/lib/perftest",
   ]
   libs = [
     "zircon",
@@ -81,26 +80,13 @@ fidl("fidl_interface") {
   ]
 }
 
-# Copy the script that runs :bin with special flags.  This is needed because
-# runcmds cannot yet pass flags to individual binaries.
-copy("run_zircon_benchmarks") {
-  sources = [
-    "tools/run_zircon_benchmarks.sh",
-  ]
-
-  outputs = [
-    "$root_out_dir/run_zircon_benchmarks",
-  ]
-}
-
 package("zircon_benchmarks") {
   testonly = true
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     ":bin",
     ":test",
-    ":run_zircon_benchmarks",
   ]
 
   binaries = [ {
@@ -109,8 +95,5 @@ package("zircon_benchmarks") {
 
   tests = [ {
         name = "zircon_benchmarks_test"
-      }, {
-        name = "run_zircon_benchmarks"
-        dest = "perf/run_zircon_benchmarks"
       } ]
 }

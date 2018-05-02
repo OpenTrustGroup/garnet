@@ -1,0 +1,56 @@
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# This library contains helper classes used by both the debug_agent and zxdb
+# but that aren't directly related to the protocol.
+static_library("helper") {
+  sources = [
+    "buffered_fd.cc",
+    "buffered_fd.h",
+    "message_loop.cc",
+    "message_loop.h",
+    "stream_buffer.cc",
+    "stream_buffer.h",
+  ]
+
+  public_deps = [
+    #"//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/fxl",
+  ]
+
+  if (current_toolchain == host_toolchain) {
+    # Host toolchain.
+    sources += [
+      "message_loop_poll.cc",
+      "message_loop_poll.h",
+    ]
+  } else {
+    # Target toolchain.
+    sources += [
+      "buffered_zx_socket.cc",
+      "buffered_zx_socket.h",
+      "message_loop_zircon.cc",
+      "message_loop_zircon.h",
+    ]
+    public_deps += [
+      "//zircon/public/lib/fdio",
+      "//zircon/public/lib/zx",
+    ]
+  }
+}
+
+# Unit tests for this directory. These are intended to be referenced by unit
+# test targets for the consumers of this library.
+source_set("tests") {
+  testonly = true
+  sources = [
+    "message_loop_unittest.cc",
+    "stream_buffer_unittest.cc",
+  ]
+
+  deps = [
+    ":helper",
+    "//third_party/googletest:gtest",
+  ]
+}

@@ -22,9 +22,7 @@ DummyCommandDispatcher::DummyCommandDispatcher(CommandDispatcherContext context)
     : CommandDispatcher(std::move(context)) {}
 DummyCommandDispatcher::~DummyCommandDispatcher() = default;
 
-bool DummyCommandDispatcher::ApplyCommand(const ui::Command& command) {
-  return command.Which() == ui::Command::Tag::kDummy;
-}
+void DummyCommandDispatcher::DispatchCommand(ui::Command command) {}
 
 }  // namespace test
 }  // namespace scenic

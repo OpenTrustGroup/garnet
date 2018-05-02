@@ -6,13 +6,13 @@
 
 #include <memory>
 
+#include <lib/async/cpp/task.h>
+
 #include "garnet/drivers/bluetooth/lib/hci/acl_data_channel.h"
 #include "garnet/drivers/bluetooth/lib/hci/acl_data_packet.h"
 #include "garnet/drivers/bluetooth/lib/hci/device_wrapper.h"
 #include "garnet/drivers/bluetooth/lib/hci/transport.h"
 #include "garnet/drivers/bluetooth/lib/testing/test_base.h"
-#include "lib/fsl/tasks/message_loop.h"
-#include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/macros.h"
 
@@ -44,8 +44,9 @@ class FakeControllerTest : public TestBase {
  protected:
   // TestBase overrides:
   void SetUp() override {
-    SetUpTransport();
-    transport_->Initialize(fsl::MessageLoop::GetCurrent()->task_runner());
+    transport_ = hci::Transport::Create(
+        FakeControllerTest<FakeControllerType>::SetUpTestDevice());
+    transport_->Initialize(dispatcher());
   }
 
   void TearDown() override {
@@ -56,16 +57,11 @@ class FakeControllerTest : public TestBase {
       transport_->ShutDown();
     }
 
+    RunUntilIdle();
+
     transport_ = nullptr;
     test_device_ = nullptr;
-  }
-
-  // Creates a hci::Transport without directly initializing it (unlike SetUp(),
-  // which initializes the CommandChannel).
-  void SetUpTransport() {
-    transport_ = hci::Transport::Create(
-        FakeControllerTest<FakeControllerType>::SetUpTestDevice());
-  }
+ }
 
   // Directly initializes the ACL data channel and wires up its data rx
   // callback. It is OK to override the data rx callback after this is called.
@@ -78,14 +74,15 @@ class FakeControllerTest : public TestBase {
 
     transport_->acl_data_channel()->SetDataRxHandler(
         std::bind(&FakeControllerTest<FakeControllerType>::OnDataReceived, this,
-                  std::placeholders::_1));
+                  std::placeholders::_1),
+        TestBase::dispatcher());
 
     return true;
   }
 
   // Sets a callback which will be invoked when we receive packets from the test
-  // controller. |callback| will be posted on the test main loop (i.e.
-  // TestBase::message_loop_), thus no locking is necessary within the callback.
+  // controller. |callback| will be posted on the test loop, thus no locking is
+  // necessary within the callback.
   //
   // InitializeACLDataChannel() must be called once and its data rx handler must
   // not be overridden by tests for |callback| to work.
@@ -140,10 +137,10 @@ class FakeControllerTest : public TestBase {
     if (!data_received_callback_)
       return;
 
-    TestBase::message_loop()->task_runner()->PostTask(
-        fxl::MakeCopyable([this, packet = std::move(data_packet)]() mutable {
-          data_received_callback_(std::move(packet));
-        }));
+    async::PostTask(TestBase::dispatcher(),
+                    [this, packet = std::move(data_packet)]() mutable {
+                      data_received_callback_(std::move(packet));
+                    });
   }
 
   std::unique_ptr<FakeControllerType> test_device_;

@@ -5,17 +5,17 @@
 #pragma once
 
 #include <fbl/vmo_mapper.h>
-
+#include <fuchsia/cpp/media.h>
 #include "lib/app/cpp/application_context.h"
-#include <fuchsia/cpp/media.h>
-#include <fuchsia/cpp/media.h>
+#include "lib/fxl/functional/closure.h"
 
 namespace examples {
 
 class MediaApp {
  public:
-  MediaApp();
-  ~MediaApp();
+  MediaApp(fxl::Closure quit_callback);
+
+  void set_float(bool enable_float) { use_float_ = enable_float; }
 
   void Run(component::ApplicationContext* app_context);
 
@@ -32,11 +32,18 @@ class MediaApp {
 
   void Shutdown();
 
+  fxl::Closure quit_callback_;
+
   media::AudioRenderer2Ptr audio_renderer_;
 
   fbl::VmoMapper payload_buffer_;
+  size_t sample_size_;
+  size_t payload_size_;
+  size_t total_mapping_size_;
   size_t num_packets_sent_ = 0u;
   size_t num_packets_completed_ = 0u;
+
+  bool use_float_ = false;
 };
 
 }  // namespace examples

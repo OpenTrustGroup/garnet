@@ -8,10 +8,10 @@ executable("bin") {
   output_name = "bluetooth"
 
   sources = [
-    "adapter_manager.cc",
-    "adapter_manager.h",
-    "adapter_manager_server.cc",
-    "adapter_manager_server.h",
+    "bluetooth_manager.cc",
+    "bluetooth_manager.h",
+    "control_server.cc",
+    "control_server.h",
     "app.cc",
     "app.h",
     "main.cc",
@@ -21,6 +21,7 @@ executable("bin") {
     "//garnet/public/lib/app/cpp",
     "//garnet/public/lib/bluetooth/fidl",
     "//garnet/public/lib/fsl",
+    "//zircon/public/lib/async-loop-cpp",
 
     # Internal Bluetooth API
     "//garnet/lib/bluetooth/c",
@@ -53,7 +54,7 @@ executable("bluetooth_unittests") {
 
 package("bluetooth_tests") {
   testonly = true
-  system_image = true
+  deprecated_system_image = true
 
   package_name = "bluetooth_tests"
 

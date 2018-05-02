@@ -57,6 +57,9 @@ public:
             uint64_t bitmask;
         };
         std::vector<CorePowerState> power_states;
+        // Only accounts for recent past.
+        uint64_t total_time_ms;
+        uint64_t active_time_ms;
 
         uint32_t gpu_fault_status;
         uint64_t gpu_fault_address;
@@ -76,7 +79,8 @@ public:
         };
         std::vector<AddressSpaceStatus> address_space_status;
     };
-    static void DumpRegisters(const GpuFeatures& features, RegisterIo* io, DumpState* dump_state);
+    static void DumpRegisters(const GpuFeatures& features, magma::RegisterIo* io,
+                              DumpState* dump_state);
     void Dump(DumpState* dump_state);
     void DumpToString(std::string& dump_string);
     void FormatDump(DumpState& dump_state, std::string& dump_string);
@@ -90,6 +94,7 @@ public:
     {
         return cache_coherency_status_;
     }
+    magma::PlatformBusMapper* GetBusMapper() override { return bus_mapper_.get(); }
 
     magma_status_t QueryInfo(uint64_t id, uint64_t* value_out);
 
@@ -111,7 +116,7 @@ private:
     class ScheduleAtomRequest;
     class CancelAtomsRequest;
 
-    RegisterIo* register_io() override
+    magma::RegisterIo* register_io() override
     {
         DASSERT(register_io_);
         return register_io_.get();
@@ -135,13 +140,15 @@ private:
     magma::Status ProcessScheduleAtoms();
     magma::Status ProcessCancelAtoms(std::weak_ptr<MsdArmConnection> connection);
 
-    void ExecuteAtomOnDevice(MsdArmAtom* atom, RegisterIo* registers);
+    void ExecuteAtomOnDevice(MsdArmAtom* atom, magma::RegisterIo* registers);
 
+    // JobScheduler::Owner implementation.
     void RunAtom(MsdArmAtom* atom) override;
     void AtomCompleted(MsdArmAtom* atom, ArmMaliResultCode result) override;
     void HardStopAtom(MsdArmAtom* atom) override;
     void ReleaseMappingsForAtom(MsdArmAtom* atom) override;
     magma::PlatformPort* GetPlatformPort() override;
+    void UpdateGpuActive(bool active) override;
 
     static const uint32_t kMagic = 0x64657669; //"devi"
 
@@ -163,7 +170,7 @@ private:
     FXL_GUARDED_BY(schedule_mutex_) std::vector<std::shared_ptr<MsdArmAtom>> atoms_to_schedule_;
 
     std::unique_ptr<magma::PlatformDevice> platform_device_;
-    std::unique_ptr<RegisterIo> register_io_;
+    std::unique_ptr<magma::RegisterIo> register_io_;
     std::unique_ptr<magma::PlatformInterrupt> gpu_interrupt_;
     std::unique_ptr<magma::PlatformInterrupt> job_interrupt_;
     std::unique_ptr<magma::PlatformInterrupt> mmu_interrupt_;
@@ -174,6 +181,7 @@ private:
     std::unique_ptr<PowerManager> power_manager_;
     std::unique_ptr<AddressManager> address_manager_;
     std::unique_ptr<JobScheduler> scheduler_;
+    std::unique_ptr<magma::PlatformBusMapper> bus_mapper_;
 };
 
 #endif // MSD_ARM_DEVICE_H

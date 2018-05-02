@@ -22,8 +22,8 @@ use std::path::Path;
 
 mod sys;
 
-const DEV_TEST: &str = "/dev/misc/test";
-const DEV_WLANPHY: &str = "/dev/misc/test/wlan/wlanphy-test";
+const DEV_TEST: &str = "/dev/test/test";
+const DEV_WLANPHY: &str = "/dev/test/test/wlan/wlanphy-test";
 const WLAN: &str = "wlan";
 const WLAN_DRIVER_NAME: &str = "/system/driver/wlanphy-testdev.so";
 
@@ -103,13 +103,7 @@ fn destroy_wlanintf(id: u16) -> Result<(), Error> {
     executor.run_singlethreaded(fut).map_err(Into::into)
 }
 
-fn main() {
-    if let Err(e) = main_res() {
-        eprintln!("Error: {}", e);
-    }
-}
-
-fn main_res() -> Result<(), Error> {
+fn main() -> Result<(), Error> {
     let args: Vec<_> = std::env::args().collect();
     let appname = &args[0];
     if args.len() < 2 {

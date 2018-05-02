@@ -12,7 +12,6 @@
 #include "garnet/bin/mdns/service/mdns_fidl_util.h"
 #include "garnet/bin/mdns/service/mdns_names.h"
 #include "lib/app/cpp/application_context.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fsl/types/type_converters.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/type_converter.h"
@@ -22,7 +21,7 @@ namespace mdns {
 MdnsServiceImpl::MdnsServiceImpl(
     component::ApplicationContext* application_context)
     : application_context_(application_context) {
-  application_context_->outgoing_services()->AddService<MdnsService>(
+  application_context_->outgoing().AddPublicService<MdnsService>(
       [this](fidl::InterfaceRequest<MdnsService> request) {
         bindings_.AddBinding(this, std::move(request));
       });

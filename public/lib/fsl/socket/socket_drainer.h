@@ -7,7 +7,7 @@
 
 #include <lib/async/cpp/wait.h>
 #include <lib/async/default.h>
-#include <zx/socket.h>
+#include <lib/zx/socket.h>
 
 #include "lib/fxl/fxl_export.h"
 #include "lib/fxl/macros.h"
@@ -31,14 +31,15 @@ class FXL_EXPORT SocketDrainer {
   void Start(zx::socket source);
 
  private:
-  async_wait_result_t OnHandleReady(async_t* async,
-                                    zx_status_t status,
-                                    const zx_packet_signal_t* signal);
+  void OnHandleReady(async_t* async,
+                     async::WaitBase* wait,
+                     zx_status_t status,
+                     const zx_packet_signal_t* signal);
 
   Client* client_;
   async_t* async_;
   zx::socket source_;
-  async::Wait wait_;
+  async::WaitMethod<SocketDrainer, &SocketDrainer::OnHandleReady> wait_{this};
   bool* destruction_sentinel_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(SocketDrainer);

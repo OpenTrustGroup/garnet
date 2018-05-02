@@ -4,8 +4,8 @@
 
 use async;
 use failure::Error;
-use futures::future;
 use futures::prelude::*;
+use futures::{future, stream};
 use parking_lot::Mutex;
 use vfs_watcher;
 use wlan;
@@ -15,8 +15,8 @@ use zx;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 
 struct PhyDevice {
     id: u16,
@@ -77,41 +77,87 @@ impl DeviceManager {
     }
 
     /// Retrieves information about all the phy devices managed by this `DeviceManager`.
-    pub fn list_phys(&self) -> Vec<wlan::PhyInfo> {
+    // TODO(tkilbourn): this should return a simplified view of the Phy compared to query_phy. For
+    // now we just return the whole PhyInfo for each device.
+    pub fn list_phys(&self) -> impl Stream<Item = wlan::PhyInfo, Error = ()> {
         self.phys
             .values()
-            .filter_map(|phy| {
-                // TODO(tkilbourn): use the cached value of the query once it's available
-                phy.dev.query().ok().map(|mut info| {
-                    info.id = phy.id;
+            .map(|phy| {
+                let phy_id = phy.id;
+                let phy_path = phy.dev.path().to_string_lossy().into_owned();
+                // For now we query each device for every call to `list_phys`. We will need to
+                // decide how to handle queries for static vs dynamic data, caching response, etc.
+                phy.proxy.query().map_err(|_| ()).map(move |response| {
+                    let mut info = response.info;
+                    info.id = phy_id;
+                    info.dev_path = Some(phy_path);
                     info
                 })
             })
-            .collect()
+            .collect::<stream::FuturesUnordered<_>>()
+    }
+
+    pub fn query_phy(&self, id: u16) -> impl Future<Item = wlan::PhyInfo, Error = zx::Status> {
+        let phy = match self.phys.get(&id) {
+            Some(p) => p,
+            None => return future::err(zx::Status::NOT_FOUND).left_future(),
+        };
+        let phy_id = phy.id;
+        let phy_path = phy.dev.path().to_string_lossy().into_owned();
+        phy.proxy
+            .query()
+            .map_err(|_| zx::Status::INTERNAL)
+            .and_then(move |response| {
+                zx::Status::ok(response.status).into_future().map(move |()| {
+                    let mut info = response.info;
+                    info.id = phy_id;
+                    info.dev_path = Some(phy_path);
+                    info
+                })
+            })
+            .right_future()
     }
 
     /// Creates an interface on the phy with the given id.
-    pub fn create_iface(&mut self, phy_id: u16, role: wlan::MacRole) -> impl Future<Item = u16, Error = zx::Status> + Send {
+    pub fn create_iface(
+        &mut self,
+        phy_id: u16,
+        role: wlan::MacRole,
+    ) -> impl Future<Item = u16, Error = zx::Status> + Send {
         let phy = match self.phys.get(&phy_id) {
             Some(p) => p,
-            None => return future::err(zx::Status::INVALID_ARGS).left(),
+            None => return future::err(zx::Status::INVALID_ARGS).left_future(),
         };
         let mut req = wlan::CreateIfaceRequest { role };
-        phy.proxy.create_iface(&mut req)
+        phy.proxy
+            .create_iface(&mut req)
             .map_err(|_| zx::Status::IO)
             .and_then(|resp| {
-            if let Ok(()) = zx::Status::ok(resp.status) {
-                future::ok(resp.info.id)
-            } else {
-                future::err(zx::Status::from_raw(resp.status))
-            }
-        }).right()
+                if let Ok(()) = zx::Status::ok(resp.status) {
+                    future::ok(resp.info.id)
+                } else {
+                    future::err(zx::Status::from_raw(resp.status))
+                }
+            })
+            .right_future()
     }
 
     /// Destroys an interface with the given ids.
-    pub fn destroy_iface(&mut self, phy_id: u16, iface_id: u16) -> Result<(), Error> {
-        let phy = self.phys.get(&phy_id).ok_or(zx::Status::INVALID_ARGS)?;
-        phy.dev.destroy_iface(iface_id).map_err(|e| e.into())
+    pub fn destroy_iface(
+        &mut self,
+        phy_id: u16,
+        iface_id: u16,
+    ) -> impl Future<Item = (), Error = zx::Status> {
+        let phy = match self.phys.get(&phy_id) {
+            Some(p) => p,
+            None => return future::err(zx::Status::INVALID_ARGS).left_future(),
+        };
+        let mut req = wlan::DestroyIfaceRequest { id: iface_id };
+        phy.proxy
+            .destroy_iface(&mut req)
+            .map_err(|_| zx::Status::IO)
+            .and_then(|resp| zx::Status::ok(resp.status).into_future())
+            .right_future()
     }
 
     /// Adds an `EventListener`. The event methods will be called for each existing object tracked
@@ -137,28 +183,29 @@ where
     OnRm: Fn(DevMgrRef, &Path),
     P: AsRef<Path>,
 {
-    File::open(&path).into_future().err_into()
-    .and_then(|dev| {
-        vfs_watcher::Watcher::new(&dev).map_err(Into::into)
-    })
-    .and_then(|watcher| {
-        watcher.for_each(move |msg| {
-            let full_path = path.as_ref().join(msg.filename);
-            match msg.event {
-                vfs_watcher::WatchEvent::EXISTING | vfs_watcher::WatchEvent::ADD_FILE => {
-                    on_add(devmgr.clone(), &full_path);
-                }
-                vfs_watcher::WatchEvent::REMOVE_FILE => {
-                    on_rm(devmgr.clone(), &full_path);
-                }
-                vfs_watcher::WatchEvent::IDLE => debug!("device watcher idle"),
-                e => warn!("unknown watch event: {:?}", e),
-            }
-            Ok(())
-        })
-        .map(|_s| ())
+    File::open(&path)
+        .into_future()
         .err_into()
-    })
+        .and_then(|dev| vfs_watcher::Watcher::new(&dev).map_err(Into::into))
+        .and_then(|watcher| {
+            watcher
+                .for_each(move |msg| {
+                    let full_path = path.as_ref().join(msg.filename);
+                    match msg.event {
+                        vfs_watcher::WatchEvent::EXISTING | vfs_watcher::WatchEvent::ADD_FILE => {
+                            on_add(devmgr.clone(), &full_path);
+                        }
+                        vfs_watcher::WatchEvent::REMOVE_FILE => {
+                            on_rm(devmgr.clone(), &full_path);
+                        }
+                        vfs_watcher::WatchEvent::IDLE => debug!("device watcher idle"),
+                        e => warn!("unknown watch event: {:?}", e),
+                    }
+                    Ok(())
+                })
+                .map(|_s| ())
+                .err_into()
+        })
 }
 
 /// Creates a `futures::Stream` that adds phy devices to the `DeviceManager` as they appear at the
@@ -180,13 +227,14 @@ pub fn new_phy_watcher<P: AsRef<Path>>(
             // message and here. TODO(tkilbourn): handle this case more cleanly.
             let phy = PhyDevice::new(id, path).expect("Failed to open phy device");
             async::spawn(
-                phy.proxy.query()
+                phy.proxy
+                    .query()
                     .and_then(move |_resp| {
                         devmgr.lock().add_phy(phy);
                         Ok(())
                     })
-                    .recover(
-                        |e| eprintln!("Could not query/add wlan phy device: {:?}", e)));
+                    .recover(|e| eprintln!("Could not query/add wlan phy device: {:?}", e)),
+            );
         },
         |devmgr, path| {
             info!("removing phy at {}", path.to_string_lossy());

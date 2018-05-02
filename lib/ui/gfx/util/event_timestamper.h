@@ -7,10 +7,10 @@
 
 #include <functional>
 
-#include <lib/async/cpp/loop.h>
+#include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/task.h>
 #include <lib/async/cpp/wait.h>
-#include <zx/event.h>
+#include <lib/zx/event.h>
 
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/macros.h"
@@ -26,7 +26,7 @@ namespace gfx {
 // by everyone who needs event-timestamps.
 class EventTimestamper {
  private:
-  class Wait;
+  class Waiter;
 
  public:
   using Callback = std::function<void(zx_time_t timestamp)>;
@@ -61,7 +61,7 @@ class EventTimestamper {
     const zx::event& event() const;
 
    private:
-    Wait* wait_;
+    Waiter* waiter_;
     EventTimestamper* timestamper_;
 
     FXL_DISALLOW_COPY_AND_ASSIGN(Watch);
@@ -71,33 +71,34 @@ class EventTimestamper {
   // Helper object that stores state corresponding to a single Watch object.
   // Invariants:
   // - |state_| only changes on the main thread.
-  // - instances of Wait are only destroyed on the main thread.
-  class Wait {
+  // - instances of Waiter are only destroyed on the main thread.
+  class Waiter {
    public:
     enum class State { STARTED, STOPPED, ABANDONED };
 
-    Wait(const fxl::RefPtr<fxl::TaskRunner>& task_runner,
-         zx::event event,
-         zx_status_t trigger,
-         Callback callback);
-    ~Wait();
+    Waiter(const fxl::RefPtr<fxl::TaskRunner>& task_runner,
+           zx::event event,
+           zx_status_t trigger,
+           Callback callback);
+    ~Waiter();
 
     void set_state(State state) { state_ = state; }
     State state() const { return state_; }
 
-    async::Wait& wait() { return wait_; }
+    async::WaitBase& wait() { return wait_; }
     const zx::event& event() const { return event_; }
 
    private:
-    async_wait_result_t Handle(async_t* async,
-                               zx_status_t status,
-                               const zx_packet_signal_t* signal);
+    void Handle(async_t* async,
+                async::WaitBase* wait,
+                zx_status_t status,
+                const zx_packet_signal_t* signal);
 
     fxl::RefPtr<fxl::TaskRunner> task_runner_;
     zx::event event_;
     Callback callback_;
     State state_ = State::STOPPED;
-    async::Wait wait_;
+    async::WaitMethod<Waiter, &Waiter::Handle> wait_{this};
   };
 
   // Posts this EventTimestamper as a task on the background thread; when the
@@ -111,7 +112,7 @@ class EventTimestamper {
 
   fsl::MessageLoop* const main_loop_;
   async::Loop background_loop_;
-  async::Task task_;
+  async::TaskClosure task_;
 #ifndef NDEBUG
   size_t watch_count_ = 0;
 #endif

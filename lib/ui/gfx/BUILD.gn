@@ -46,6 +46,8 @@ source_set("gfx") {
     "engine/unresolved_imports.cc",
     "engine/unresolved_imports.h",
     "engine/update_scheduler.h",
+    "gfx_system.cc",
+    "gfx_system.h",
     "resources/buffer.cc",
     "resources/buffer.h",
     "resources/camera.cc",
@@ -122,8 +124,8 @@ source_set("gfx") {
     "resources/stereo_camera.h",
     "resources/variable.cc",
     "resources/variable.h",
-    "scenic_system.cc",
-    "scenic_system.h",
+    "screenshotter.cc",
+    "screenshotter.h",
     "swapchain/display_swapchain.cc",
     "swapchain/display_swapchain.h",
     "swapchain/magma_buffer.cc",
@@ -164,6 +166,7 @@ source_set("gfx") {
 
   deps = [
     "//garnet/lib/magma:libmagma",
+    "//garnet/public/lib/escher/util:check_vulkan_support",
     "//garnet/public/lib/ui/scenic:fidl_helpers",
     "//zircon/public/lib/trace",
   ]

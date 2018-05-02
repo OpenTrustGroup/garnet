@@ -796,6 +796,29 @@ macro_rules! fidl2_enum {
     }
 }
 
+impl Encodable for zx::Status {
+    fn inline_align(&self) -> usize { mem::size_of::<zx::sys::zx_status_t>() }
+    fn inline_size(&self) -> usize { mem::size_of::<zx::sys::zx_status_t>() }
+    fn encode(&mut self, encoder: &mut Encoder) -> Result<()> {
+        let slot = encoder.next_slice(mem::size_of::<zx::sys::zx_status_t>())?;
+        LittleEndian::write_i32(slot, self.into_raw());
+        Ok(())
+    }
+}
+
+
+impl Decodable for zx::Status {
+    fn new_empty() -> Self { Self::from_raw(0) }
+    fn inline_size() -> usize { mem::size_of::<zx::sys::zx_status_t>() }
+    fn inline_align() -> usize { mem::size_of::<zx::sys::zx_status_t>() }
+    fn decode(&mut self, decoder: &mut Decoder) -> Result<()> {
+        let end = mem::size_of::<zx::sys::zx_status_t>();
+        let range = split_off_front(&mut decoder.buf, end)?;
+        *self = Self::from_raw(LittleEndian::read_i32(range));
+        Ok(())
+    }
+}
+
 impl Encodable for zx::Handle {
     fn inline_align(&self) -> usize { 4 }
     fn inline_size(&self) -> usize { 4 }
@@ -831,8 +854,8 @@ impl Encodable for Option<zx::Handle> {
     fn inline_align(&self) -> usize { 4 }
     fn inline_size(&self) -> usize { 4 }
     fn encode(&mut self, encoder: &mut Encoder) -> Result<()> {
-        match *self {
-            Some(ref mut handle) => handle.encode(encoder),
+        match self {
+            Some(handle) => handle.encode(encoder),
             None => ALLOC_ABSENT_U32.encode(encoder),
         }
     }
@@ -896,8 +919,8 @@ macro_rules! handle_based_codable {
             fn encode(&mut self, encoder: &mut $crate::encoding2::Encoder)
                 -> $crate::Result<()>
             {
-                match *self {
-                    Some(ref mut handle) => fidl2_encode!(handle, encoder),
+                match self {
+                    Some(handle) => fidl2_encode!(handle, encoder),
                     None => fidl2_encode!(&mut $crate::encoding2::ALLOC_ABSENT_U32, encoder),
                 }
             }
@@ -954,8 +977,8 @@ impl<T: Autonull> Encodable for Option<Box<T>> {
         fidl2_inline_size!(u64)
     }
     fn encode(&mut self, encoder: &mut Encoder) -> Result<()> {
-        match *self {
-            Some(ref mut inner) => {
+        match self {
+            Some(inner) => {
                 ALLOC_PRESENT_U64.encode(encoder)?;
                 encoder.write_out_of_line(
                     (*inner).inline_size(),
@@ -989,7 +1012,7 @@ impl<T: Autonull> Decodable for Option<Box<T>> {
             ALLOC_PRESENT_U64 => {
                 // Loop will only run once to set `self` to `Some` before decoding innards
                 loop {
-                    if let Some(ref mut inner) = *self {
+                    if let Some(inner) = self {
                         return decoder.read_out_of_line(
                             <T as Decodable>::inline_size(),
                             |decoder| (*inner).decode(decoder));
@@ -1104,11 +1127,13 @@ macro_rules! fidl2_union {
             fn member_index(&self) -> u32 {
                 #![allow(unused)]
                 let mut index = 0;
+                // TODO(cramertj): switch to `if let` when irrefutable `if let` patterns
+                // stabilize
                 $(
-                    if let $name::$member_name(_) = *self {
-                        return index;
+                    match *self {
+                        $name::$member_name(_) => return index,
+                        _ => index += 1,
                     }
-                    index += 1;
                 )*
                 panic!("unreachable union member")
             }
@@ -1129,8 +1154,8 @@ macro_rules! fidl2_union {
                 fidl2_encode!(&mut member_index, encoder)?;
 
                 encoder.recurse(|encoder| {
-                    match *self { $(
-                        $name::$member_name ( ref mut val ) => {
+                    match self { $(
+                        $name::$member_name ( val ) => {
                             // Jump to offset minus 4-byte tag
                             encoder.next_slice($member_offset - 4)?;
                             // Encode value
@@ -1174,12 +1199,14 @@ macro_rules! fidl2_union {
                             // Loop will only ever run once-- if the variant is not correct,
                             // it is fixed up.
                             loop {
-                                if let $name::$member_name(ref mut val) = *self {
-                                    fidl2_decode!(val, decoder)?;
-                                    break;
-                                } else {
-                                    *self = $name::$member_name(fidl2_new_empty!($member_ty));
+                                match self {
+                                    $name::$member_name(val) => {
+                                        fidl2_decode!(val, decoder)?;
+                                        break;
+                                    }
+                                    _ => {}
                                 }
+                                *self = $name::$member_name(fidl2_new_empty!($member_ty));
                             }
                             // Skip to the end of the union's size
                             decoder.next_slice($size - (fidl2_inline_size!($member_ty) + $member_offset))?;
@@ -1187,7 +1214,7 @@ macro_rules! fidl2_union {
                         }
                         index += 1;
                     )*
-                    Err($crate::Error::Invalid)
+                    Err($crate::Error::UnknownUnionTag)
                 })
             }
         }
@@ -1618,8 +1645,8 @@ mod test {
         }
 
         for string in vec![String::new(), "hello world!".to_string()] {
-            match encode_decode(&mut NumOrStr::Str(string.clone())) {
-                NumOrStr::Str(ref out_str) if out_str == &string => {},
+            match &encode_decode(&mut NumOrStr::Str(string.clone())) {
+                NumOrStr::Str(out_str) if out_str == &string => {},
                 x => panic!("unexpected decoded value {:?}", x),
             }
         }

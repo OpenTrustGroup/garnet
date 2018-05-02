@@ -19,8 +19,17 @@ type EthInfo struct {
 	_        [12]uint32
 } // eth_info_t
 
-const FeatureWlan = 0x01
-const FeatureSynth = 0x02
+// LINT.IfChange
+const (
+	FeatureWlan     = 0x01
+	FeatureSynth    = 0x02
+	FeatureLoopback = 0x04
+)
+
+// LINT.ThenChange(
+//	 //zircon/system/public/zircon/device/ethernet.h,
+//	 //garnet/public/lib/netstack/fidl/netstack.fidl
+// )
 
 type ethfifos struct {
 	// fifo handles
@@ -42,6 +51,7 @@ const (
 	ioctlOpTXListenStop  = 6 // IOCTL_ETHERNET_TX_LISTEN_STOP,  IOCTL_KIND_DEFAULT
 	ioctlOpSetClientName = 7 // IOCTL_ETHERNET_SET_CLIENT_NAME, IOCTL_KIND_DEFAULT
 	ioctlOpGetStatus     = 8 // IOCTL_ETHERNET_GET_STATUS,      IOCTL_KIND_DEFAULT
+	ioctlOpSetPromisc    = 9 // IOCTL_ETHERNET_SET_PROMISC,     IOCTL_KIND_DEFAULT
 )
 
 func IoctlGetInfo(m fdio.FDIO) (info EthInfo, err error) {
@@ -130,4 +140,18 @@ func IoctlGetStatus(m fdio.FDIO) (status uint32, err error) {
 	}
 	status = binary.LittleEndian.Uint32(res)
 	return status, nil
+}
+
+func IoctlSetPromisc(m fdio.FDIO, enabled bool) error {
+	num := fdio.IoctlNum(fdio.IoctlKindDefault, ioctlFamilyETH, ioctlOpSetPromisc)
+	in := make([]byte, 1) // sizeof(bool); see zircon/system/public/zircon/device/ioctl-wrapper.h
+	if enabled {
+		in[0] = 1
+	}
+	_, err := m.Ioctl(num, in, nil)
+
+	if err != nil {
+		return fmt.Errorf("IOCTL_ETHERNET_SET_PROMISC: %v", err)
+	}
+	return nil
 }

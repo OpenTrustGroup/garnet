@@ -5,7 +5,7 @@
 #ifndef LIB_SVC_CPP_SERVICES_H_
 #define LIB_SVC_CPP_SERVICES_H_
 
-#include <zx/channel.h>
+#include <lib/zx/channel.h>
 
 #include <string>
 
@@ -78,7 +78,8 @@ class Services {
   // Connects to a service located at a path within the directory and binds it
   // to an untyped interface request.
   // By default, uses the interface name as the service's path.
-  void ConnectToService(zx::channel request, const std::string& service_path) {
+  void ConnectToService(zx::channel request,
+                        const std::string& service_path) const {
     component::ConnectToService(directory_, std::move(request), service_path);
   }
 
@@ -86,8 +87,9 @@ class Services {
   // to a fully-typed interface request.
   // By default, uses the interface name as the service's path.
   template <typename Interface>
-  void ConnectToService(fidl::InterfaceRequest<Interface> request,
-                        const std::string& service_path = Interface::Name_) {
+  void ConnectToService(
+      fidl::InterfaceRequest<Interface> request,
+      const std::string& service_path = Interface::Name_) const {
     component::ConnectToService<Interface>(directory_, std::move(request),
                                            service_path);
   }
@@ -97,7 +99,7 @@ class Services {
   // By default, uses the interface name as the service's path.
   template <typename Interface>
   fidl::InterfacePtr<Interface> ConnectToService(
-      const std::string& service_path = Interface::Name_) {
+      const std::string& service_path = Interface::Name_) const {
     return component::ConnectToService<Interface>(directory_, service_path);
   }
 

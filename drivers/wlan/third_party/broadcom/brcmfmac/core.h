@@ -23,9 +23,11 @@
 
 //#include <net/cfg80211.h>
 
-#include "linuxisms.h"
+#include <threads.h>
 
 #include "fweh.h"
+#include "linuxisms.h"
+#include "workqueue.h"
 
 #define TOE_TX_CSUM_OL 0x00000001
 #define TOE_RX_CSUM_OL 0x00000002
@@ -125,7 +127,7 @@ struct brcmf_pub {
     struct brcmf_if* iflist[BRCMF_MAX_IFS];
     int32_t if2bss[BRCMF_MAX_IFS];
 
-    struct mutex proto_block;
+    mtx_t proto_block;
     unsigned char proto_buf[BRCMF_DCMD_MAXLEN];
 
     struct brcmf_fweh_info fweh;
@@ -180,7 +182,8 @@ enum brcmf_netif_stop_reason {
  * @bsscfgidx: index of bss associated with this interface.
  * @mac_addr: assigned mac address.
  * @netif_stop: bitmap indicates reason why netif queues are stopped.
- * @netif_stop_lock: spinlock for update netif_stop from multiple sources.
+ * //@netif_stop_lock: spinlock for update netif_stop from multiple sources.
+ *  (replaced by irq_callback_lock)
  * @pend_8021x_cnt: tracks outstanding number of 802.1x frames.
  * @pend_8021x_wait: used for signalling change in count.
  */
@@ -195,7 +198,7 @@ struct brcmf_if {
     int32_t bsscfgidx;
     uint8_t mac_addr[ETH_ALEN];
     uint8_t netif_stop;
-    spinlock_t netif_stop_lock;
+    //spinlock_t netif_stop_lock;
     atomic_t pend_8021x_cnt;
     wait_queue_head_t pend_8021x_wait;
     struct in6_addr ipv6_addr_tbl[NDOL_MAX_ENTRIES];
@@ -216,7 +219,7 @@ void brcmf_txflowblock_if(struct brcmf_if* ifp, enum brcmf_netif_stop_reason rea
 void brcmf_txfinalize(struct brcmf_if* ifp, struct sk_buff* txp, bool success);
 void brcmf_netif_rx(struct brcmf_if* ifp, struct sk_buff* skb);
 void brcmf_net_setcarrier(struct brcmf_if* ifp, bool on);
-zx_status_t brcmf_core_init(void);
+zx_status_t brcmf_core_init(zx_device_t* dev);
 void brcmf_core_exit(void);
 
 #endif /* BRCMFMAC_CORE_H */

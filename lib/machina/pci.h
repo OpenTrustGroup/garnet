@@ -17,12 +17,11 @@
 // clang-format off
 
 #define PCI_DEVICE_INVALID          UINT16_MAX
-#define PCI_MAX_DEVICES             12u
+#define PCI_MAX_DEVICES             16u
 #define PCI_MAX_BARS                2u
 
 // PCI configuration constants.
 #define PCI_BAR_ASPACE_MASK         0x0001u
-#define PCI_BAR_ASPACE_PIO          0x0001u
 #define PCI_BAR_ASPACE_MMIO         0x0000u
 #define PCI_VENDOR_ID_INTEL         0x8086u
 #define PCI_DEVICE_ID_INTEL_Q35     0x29c0u
@@ -117,7 +116,7 @@ class PciDevice {
     return ZX_ERR_NOT_SUPPORTED;
   }
 
-  // Handle accesses to this devics config space.
+  // Handle accesses to this device config space.
   zx_status_t ReadConfig(uint64_t reg, IoValue* value) const;
   zx_status_t WriteConfig(uint64_t reg, const IoValue& value);
 
@@ -132,7 +131,7 @@ class PciDevice {
 
   // Returns a pointer to a base address register for this device.
   //
-  // Returns nullptr if the register is not implmeneted.
+  // Returns nullptr if the register is not implemented.
   const PciBar* bar(size_t n) const {
     return is_bar_implemented(n) ? &bar_[n] : nullptr;
   }
@@ -236,7 +235,7 @@ class PciBus {
            device_[device];
   }
 
-  // Current config address seleceted by the 0xcf8 IO port.
+  // Current config address selected by the 0xcf8 IO port.
   uint32_t config_addr();
   void set_config_addr(uint32_t addr);
 
@@ -258,8 +257,6 @@ class PciBus {
   InterruptController* interrupt_controller_ = nullptr;
   // Embedded root complex device.
   PciDevice root_complex_;
-  // Next pio window to be allocated to connected devices.
-  uint32_t pio_base_ = 0x8000;
   // Next mmio window to be allocated to connected devices.
   uint32_t mmio_base_ = kPciMmioBarPhysBase;
   // Pointer to the next open PCI slot.

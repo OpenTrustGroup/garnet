@@ -39,12 +39,32 @@ bool LayerStack::AddLayer(LayerPtr layer) {
   return true;
 }
 
+bool LayerStack::RemoveLayer(LayerPtr layer) {
+  if (layer->layer_stack_ != this) {
+    error_reporter()->ERROR()
+       << "LayerStack::RemoveLayer(): layer doesn't belong to this stack.";
+    return false;
+  }
+  layer->layer_stack_ = nullptr;
+  layers_.erase(layer);
+  return true;
+}
+
+bool LayerStack::RemoveAllLayers() {
+  for (const auto& layer : layers_) {
+    layer->layer_stack_ = nullptr;
+  }
+  layers_.clear();
+  return true;
+}
+
 void LayerStack::RemoveLayer(Layer* layer) {
   auto it = std::find_if(
       layers_.begin(), layers_.end(),
       [layer](const LayerPtr& layer_ptr) { return layer == layer_ptr.get(); });
   FXL_DCHECK(it != layers_.end());
   layers_.erase(it);
+  (*it)->layer_stack_ = nullptr;
 }
 
 }  // namespace gfx

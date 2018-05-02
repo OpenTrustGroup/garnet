@@ -79,7 +79,8 @@ bool VulkanTest::InitVulkan()
         return DRETF(false, "vkEnumerateInstanceExtensionProperties returned %d\n", result);
 
     std::vector<const char*> instance_extensions{
-        VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME};
+        VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
+        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME};
     std::vector<const char*> device_extensions{VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
                                                VK_KHR_EXTERNAL_SEMAPHORE_FUCHSIA_EXTENSION_NAME};
 
@@ -95,7 +96,11 @@ bool VulkanTest::InitVulkan()
     if (found_count != instance_extensions.size())
         return DRETF(false, "failed to find instance extensions");
 
-    std::vector<const char*> layers{"VK_LAYER_LUNARG_standard_validation"};
+    std::vector<const char*> layers;
+#if !defined(MAGMA_USE_SHIM)
+    // Vulkan loader is needed for loading layers.
+    layers.push_back("VK_LAYER_LUNARG_standard_validation");
+#endif
     VkInstanceCreateInfo create_info{
         VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, // VkStructureType             sType;
         nullptr,                                // const void*                 pNext;

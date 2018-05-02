@@ -12,9 +12,6 @@ namespace btlib {
 namespace att {
 namespace {
 
-// Short timeout interval used in test cases that exercise transaction timeouts.
-constexpr uint32_t kTestTimeoutMs = 10;
-
 constexpr OpCode kTestRequest = kFindInformationRequest;
 constexpr OpCode kTestResponse = kFindInformationResponse;
 constexpr OpCode kTestRequest2 = kExchangeMTURequest;
@@ -25,7 +22,7 @@ constexpr OpCode kTestResponse3 = kFindByTypeValueResponse;
 constexpr OpCode kTestCommand = kWriteCommand;
 
 void NopCallback(const PacketReader&) {}
-void NopErrorCallback(bool, ErrorCode, Handle) {}
+void NopErrorCallback(Status, Handle) {}
 void NopHandler(Bearer::TransactionId, const PacketReader&) {}
 
 class ATT_BearerTest : public l2cap::testing::FakeChannelTest {
@@ -46,6 +43,8 @@ class ATT_BearerTest : public l2cap::testing::FakeChannelTest {
   l2cap::testing::FakeChannel* fake_att_chan() const {
     return fake_att_chan_.get();
   }
+
+  void DeleteBearer() { bearer_ = nullptr; }
 
  private:
   fbl::RefPtr<l2cap::testing::FakeChannel> fake_att_chan_;
@@ -113,34 +112,28 @@ TEST_F(ATT_BearerTest, StartTransactionWrongMethodType) {
 }
 
 TEST_F(ATT_BearerTest, RequestTimeout) {
-  bearer()->set_transaction_timeout_ms(kTestTimeoutMs);
-
   // We expect the channel to be closed and the pending transaction to end in an
   // error.
   bool closed = false;
   bool err_cb_called = false;
   bearer()->set_closed_callback([&closed, &err_cb_called, this] {
     closed = true;
-    if (err_cb_called)
-      message_loop()->QuitNow();
   });
 
-  auto err_cb = [&closed, &err_cb_called, this](bool timeout, ErrorCode code,
-                                             Handle handle) {
-    EXPECT_TRUE(timeout);
-    EXPECT_EQ(ErrorCode::kNoError, code);
+  auto err_cb = [&closed, &err_cb_called, this](Status status, Handle handle) {
+    EXPECT_EQ(common::HostError::kTimedOut, status.error());
     EXPECT_EQ(0, handle);
 
     err_cb_called = true;
-    if (closed)
-      message_loop()->QuitNow();
   };
 
   ASSERT_FALSE(fake_att_chan()->link_error());
   EXPECT_TRUE(bearer()->StartTransaction(common::NewBuffer(kTestRequest),
                                          NopCallback, err_cb));
 
-  RunMessageLoop();
+  AdvanceTimeBy(zx::msec(kTransactionTimeoutMs));
+  RunUntilIdle();
+
   EXPECT_TRUE(closed);
   EXPECT_TRUE(err_cb_called);
   EXPECT_TRUE(fake_att_chan()->link_error());
@@ -148,8 +141,6 @@ TEST_F(ATT_BearerTest, RequestTimeout) {
 
 // Queue many requests but make sure that FakeChannel only receives one.
 TEST_F(ATT_BearerTest, RequestTimeoutMany) {
-  bearer()->set_transaction_timeout_ms(kTestTimeoutMs);
-
   constexpr unsigned int kTransactionCount = 2;
   unsigned int chan_count = 0;
   auto chan_cb = [&chan_count](auto cb_packet) {
@@ -157,26 +148,20 @@ TEST_F(ATT_BearerTest, RequestTimeoutMany) {
     // This should only be called once and for the first request.
     EXPECT_EQ(kTestRequest, (*cb_packet)[0]);
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   bool closed = false;
   unsigned int err_cb_count = 0u;
 
   bearer()->set_closed_callback([&err_cb_count, &closed, this] {
     closed = true;
-    if (err_cb_count == kTransactionCount)
-      message_loop()->QuitNow();
   });
 
-  auto err_cb = [&closed, &err_cb_count, this](bool timeout, ErrorCode code,
-                                            Handle handle) {
-    EXPECT_TRUE(timeout);
-    EXPECT_EQ(ErrorCode::kNoError, code);
+  auto err_cb = [&closed, &err_cb_count, this](Status status, Handle handle) {
+    EXPECT_EQ(common::HostError::kTimedOut, status.error());
     EXPECT_EQ(0, handle);
 
     err_cb_count++;
-    if (err_cb_count == kTransactionCount && closed)
-      message_loop()->QuitNow();
   };
 
   EXPECT_TRUE(bearer()->StartTransaction(
@@ -186,16 +171,23 @@ TEST_F(ATT_BearerTest, RequestTimeoutMany) {
       common::NewBuffer(kTestRequest2, 'T', 'e', 's', 't'), NopCallback,
       err_cb));
 
-  RunMessageLoop();
+  RunUntilIdle();
 
+  // The first indication should have been sent and the second one queued.
   EXPECT_EQ(1u, chan_count);
+
+  EXPECT_FALSE(closed);
+  EXPECT_EQ(0u, err_cb_count);
+
+  // Make the request timeout.
+  AdvanceTimeBy(zx::msec(kTransactionTimeoutMs));
+  RunUntilIdle();
+
   EXPECT_TRUE(closed);
   EXPECT_EQ(kTransactionCount, err_cb_count);
 }
 
 TEST_F(ATT_BearerTest, IndicationTimeout) {
-  bearer()->set_transaction_timeout_ms(kTestTimeoutMs);
-
   // We expect the channel to be closed and the pending transaction to end in an
   // error.
   bool closed = false;
@@ -203,33 +195,27 @@ TEST_F(ATT_BearerTest, IndicationTimeout) {
 
   bearer()->set_closed_callback([&closed, &err_cb_called, this] {
     closed = true;
-    if (err_cb_called)
-      message_loop()->QuitNow();
   });
 
-  auto err_cb = [&closed, &err_cb_called, this](bool timeout, ErrorCode code,
-                                             Handle handle) {
-    EXPECT_TRUE(timeout);
-    EXPECT_EQ(ErrorCode::kNoError, code);
+  auto err_cb = [&closed, &err_cb_called, this](Status status, Handle handle) {
+    EXPECT_EQ(common::HostError::kTimedOut, status.error());
     EXPECT_EQ(0, handle);
 
     err_cb_called = true;
-    if (closed)
-      message_loop()->QuitNow();
   };
 
   EXPECT_TRUE(bearer()->StartTransaction(
       common::NewBuffer(kIndication, 'T', 'e', 's', 't'), NopCallback, err_cb));
 
-  RunMessageLoop();
+  AdvanceTimeBy(zx::msec(kTransactionTimeoutMs));
+  RunUntilIdle();
+
   EXPECT_TRUE(closed);
   EXPECT_TRUE(err_cb_called);
 }
 
 // Queue many indications but make sure that FakeChannel only receives one.
 TEST_F(ATT_BearerTest, IndicationTimeoutMany) {
-  bearer()->set_transaction_timeout_ms(kTestTimeoutMs);
-
   constexpr unsigned int kTransactionCount = 2;
   constexpr uint8_t kIndValue1 = 1;
   constexpr uint8_t kIndValue2 = 2;
@@ -240,26 +226,20 @@ TEST_F(ATT_BearerTest, IndicationTimeoutMany) {
     // This should only be called once and for the first request.
     EXPECT_EQ(kIndValue1, (*cb_packet)[1]);
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   bool closed = false;
   unsigned int err_cb_count = 0u;
 
   bearer()->set_closed_callback([&closed, &err_cb_count, this] {
     closed = true;
-    if (err_cb_count == kTransactionCount)
-      message_loop()->QuitNow();
   });
 
-  auto err_cb = [&closed, &err_cb_count, this](bool timeout, ErrorCode code,
-                                            Handle handle) {
-    EXPECT_TRUE(timeout);
-    EXPECT_EQ(ErrorCode::kNoError, code);
+  auto err_cb = [&closed, &err_cb_count, this](Status status, Handle handle) {
+    EXPECT_EQ(common::HostError::kTimedOut, status.error());
     EXPECT_EQ(0, handle);
 
     err_cb_count++;
-    if (err_cb_count == kTransactionCount && closed)
-      message_loop()->QuitNow();
   };
 
   EXPECT_TRUE(bearer()->StartTransaction(
@@ -267,9 +247,18 @@ TEST_F(ATT_BearerTest, IndicationTimeoutMany) {
   EXPECT_TRUE(bearer()->StartTransaction(
       common::NewBuffer(kIndication, kIndValue2), NopCallback, err_cb));
 
-  RunMessageLoop();
+  RunUntilIdle();
 
+  // The first indication should have been sent and the second one queued.
   EXPECT_EQ(1u, chan_count);
+
+  EXPECT_FALSE(closed);
+  EXPECT_EQ(0u, err_cb_count);
+
+  // Make the request timeout.
+  AdvanceTimeBy(zx::msec(kTransactionTimeoutMs));
+  RunUntilIdle();
+
   EXPECT_TRUE(closed);
   EXPECT_EQ(kTransactionCount, err_cb_count);
 }
@@ -320,7 +309,7 @@ TEST_F(ATT_BearerTest, SendRequestWrongResponse) {
     // Send back the wrong response.
     fake_chan()->Receive(common::CreateStaticByteBuffer(kTestResponse2));
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   bool err_cb_called = false;
   bool closed = false;
@@ -329,10 +318,8 @@ TEST_F(ATT_BearerTest, SendRequestWrongResponse) {
     closed = true;
   });
 
-  auto err_cb = [&err_cb_called, this](bool timeout, ErrorCode code,
-                                             Handle handle) {
-    EXPECT_FALSE(timeout);
-    EXPECT_EQ(ErrorCode::kNoError, code);
+  auto err_cb = [&err_cb_called, this](Status status, Handle handle) {
+    EXPECT_EQ(common::HostError::kFailed, status.error());
     EXPECT_EQ(0, handle);
 
     err_cb_called = true;
@@ -363,7 +350,7 @@ TEST_F(ATT_BearerTest, SendRequestErrorResponseTooShort) {
     chan_cb_called = true;
     fake_chan()->Receive(malformed_error_rsp);
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   bool err_cb_called = false;
   bool closed = false;
@@ -372,11 +359,9 @@ TEST_F(ATT_BearerTest, SendRequestErrorResponseTooShort) {
     closed = true;
   });
 
-  auto err_cb = [&err_cb_called, this](bool timeout, ErrorCode code,
-                                             Handle handle) {
-    EXPECT_FALSE(timeout);
-    EXPECT_EQ(ErrorCode::kNoError, code);
+  auto err_cb = [&err_cb_called, this](Status status, Handle handle) {
     EXPECT_EQ(0, handle);
+    EXPECT_EQ(common::HostError::kFailed, status.error());
 
     err_cb_called = true;
   };
@@ -406,7 +391,7 @@ TEST_F(ATT_BearerTest, SendRequestErrorResponseTooLong) {
     chan_cb_called = true;
     fake_chan()->Receive(malformed_error_rsp);
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   bool err_cb_called = false;
   bool closed = false;
@@ -415,11 +400,9 @@ TEST_F(ATT_BearerTest, SendRequestErrorResponseTooLong) {
     closed = true;
   });
 
-  auto err_cb = [&err_cb_called, this](bool timeout, ErrorCode code,
-                                             Handle handle) {
-    EXPECT_FALSE(timeout);
-    EXPECT_EQ(ErrorCode::kNoError, code);
+  auto err_cb = [&err_cb_called, this](Status status, Handle handle) {
     EXPECT_EQ(0, handle);
+    EXPECT_EQ(common::HostError::kFailed, status.error());
 
     err_cb_called = true;
   };
@@ -454,7 +437,7 @@ TEST_F(ATT_BearerTest, SendRequestErrorResponseWrongOpCode) {
     chan_cb_called = true;
     fake_chan()->Receive(error_rsp);
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   bool err_cb_called = false;
   bool closed = false;
@@ -463,11 +446,9 @@ TEST_F(ATT_BearerTest, SendRequestErrorResponseWrongOpCode) {
     closed = true;
   });
 
-  auto err_cb = [&err_cb_called, this](bool timeout, ErrorCode code,
-                                             Handle handle) {
-    EXPECT_FALSE(timeout);
-    EXPECT_EQ(ErrorCode::kNoError, code);
+  auto err_cb = [&err_cb_called, this](Status status, Handle handle) {
     EXPECT_EQ(0, handle);
+    EXPECT_EQ(common::HostError::kFailed, status.error());
 
     err_cb_called = true;
   };
@@ -502,12 +483,12 @@ TEST_F(ATT_BearerTest, SendRequestErrorResponse) {
     chan_cb_called = true;
     fake_chan()->Receive(error_rsp);
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   bool err_cb_called = false;
-  auto err_cb = [&err_cb_called](bool timeout, ErrorCode code, Handle handle) {
-    EXPECT_FALSE(timeout);
-    EXPECT_EQ(ErrorCode::kRequestNotSupported, code);
+  auto err_cb = [&err_cb_called, this](Status status, Handle handle) {
+    EXPECT_TRUE(status.is_protocol_error());
+    EXPECT_EQ(ErrorCode::kRequestNotSupported, status.protocol_error());
     EXPECT_EQ(0x0001, handle);
 
     err_cb_called = true;
@@ -535,7 +516,7 @@ TEST_F(ATT_BearerTest, SendRequestSuccess) {
     chan_cb_called = true;
     fake_chan()->Receive(response);
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   bool cb_called = false;
   auto cb = [&cb_called, &response](const auto& rsp_packet) {
@@ -553,6 +534,34 @@ TEST_F(ATT_BearerTest, SendRequestSuccess) {
 
   // The channel should remain open
   EXPECT_TRUE(bearer()->is_open());
+}
+
+// Closing the L2CAP channel while ATT requests have been queued will cause the
+// error callbacks to be called. The code should fail gracefully if one of these
+// callbacks deletes the attribute bearer.
+TEST_F(ATT_BearerTest, CloseChannelAndDeleteBearerWhileRequestsArePending) {
+  // We expect the callback to be called 3 times since we queue 3 transactions
+  // below.
+  constexpr size_t kExpectedCount = 3;
+
+  size_t cb_count = 0;
+  auto error_cb = [this, &cb_count](Status, Handle) {
+    cb_count++;
+
+    // Delete the bearer on the first callback. The remaining callbacks should
+    // still run gracefully.
+    DeleteBearer();
+  };
+
+  bearer()->StartTransaction(common::NewBuffer(kTestRequest), NopCallback,
+                             error_cb);
+  bearer()->StartTransaction(common::NewBuffer(kTestRequest), NopCallback,
+                             error_cb);
+  bearer()->StartTransaction(common::NewBuffer(kTestRequest), NopCallback,
+                             error_cb);
+
+  fake_chan()->Close();
+  EXPECT_EQ(kExpectedCount, cb_count);
 }
 
 TEST_F(ATT_BearerTest, SendManyRequests) {
@@ -581,18 +590,17 @@ TEST_F(ATT_BearerTest, SendManyRequests) {
     else if (opcode == kTestRequest3)
       fake_chan()->Receive(response3);
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   unsigned int success_count = 0u;
   unsigned int error_count = 0u;
 
-  auto error_cb = [&success_count, &error_count](bool timeout, ErrorCode code,
-                                                 Handle handle) {
+  auto error_cb = [&success_count, &error_count](Status status, Handle handle) {
     // This should only be called for the second request (the first request
     // should have already succeeded).
     EXPECT_EQ(1u, success_count);
-    EXPECT_FALSE(timeout);
-    EXPECT_EQ(ErrorCode::kRequestNotSupported, code);
+    EXPECT_TRUE(status.is_protocol_error());
+    EXPECT_EQ(ErrorCode::kRequestNotSupported, status.protocol_error());
     EXPECT_EQ(0x0001, handle);
 
     error_count++;
@@ -649,7 +657,7 @@ TEST_F(ATT_BearerTest, SendIndicationSuccess) {
     chan_cb_called = true;
     fake_chan()->Receive(conf);
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   bool cb_called = false;
   auto cb = [&cb_called, &conf](const auto& packet) {
@@ -715,7 +723,7 @@ TEST_F(ATT_BearerTest, SendWithoutResponseMany) {
 
     chan_cb_count++;
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   for (OpCode opcode = 0; opcode < kExpectedCount; opcode++) {
     // Everything
@@ -773,7 +781,7 @@ TEST_F(ATT_BearerTest, RemoteTransactionNoHandler) {
     received_error_rsp = true;
     EXPECT_TRUE(common::ContainersEqual(error_rsp, *packet));
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
   fake_chan()->Receive(common::CreateStaticByteBuffer(kTestRequest));
 
   RunUntilIdle();
@@ -906,7 +914,7 @@ TEST_F(ATT_BearerTest, ReplyWithResponse) {
 
     EXPECT_EQ(kTestResponse, (*packet)[0]);
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   Bearer::TransactionId id;
   bool handler_called = false;
@@ -941,7 +949,7 @@ TEST_F(ATT_BearerTest, IndicationConfirmation) {
     conf_sent = true;
     EXPECT_EQ(kConfirmation, (*packet)[0]);
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   Bearer::TransactionId id;
   bool handler_called = false;
@@ -1005,7 +1013,7 @@ TEST_F(ATT_BearerTest, ReplyWithError) {
         kErrorResponse, kTestRequest, 0x00, 0x00, ErrorCode::kUnlikelyError);
     EXPECT_TRUE(common::ContainersEqual(expected, *packet));
   };
-  fake_chan()->SetSendCallback(chan_cb, message_loop()->task_runner());
+  fake_chan()->SetSendCallback(chan_cb, dispatcher());
 
   Bearer::TransactionId id;
   bool handler_called = false;

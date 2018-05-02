@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 #include <memory>
+#include <lib/async-loop/cpp/loop.h>
 
 #include "lib/app/cpp/application_context.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
 #include <fuchsia/cpp/gralloc.h>
 
@@ -26,7 +26,7 @@ class GrallocImpl : public gralloc::Gralloc {
 };
 
 int main(int argc, const char** argv) {
-  fsl::MessageLoop loop;
+  async::Loop loop(&kAsyncLoopConfigMakeDefault);
   std::unique_ptr<component::ApplicationContext> app_context(
       component::ApplicationContext::CreateFromStartupInfo());
 
@@ -34,7 +34,7 @@ int main(int argc, const char** argv) {
 
   fidl::BindingSet<gralloc::Gralloc> bindings;
 
-  app_context->outgoing_services()->AddService<gralloc::Gralloc>(
+  app_context->outgoing().AddPublicService<gralloc::Gralloc>(
       [&grallocator,
        &bindings](fidl::InterfaceRequest<gralloc::Gralloc> request) {
         bindings.AddBinding(&grallocator, std::move(request));

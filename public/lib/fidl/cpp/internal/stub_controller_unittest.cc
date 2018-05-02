@@ -4,7 +4,7 @@
 
 #include <lib/fidl/cpp/message_buffer.h>
 #include <lib/fidl/cpp/message_builder.h>
-#include <zx/channel.h>
+#include <lib/zx/channel.h>
 
 #include "gtest/gtest.h"
 #include "lib/fidl/cpp/internal/proxy_controller.h"
@@ -22,7 +22,7 @@ class CallbackStub : public Stub {
  public:
   std::function<zx_status_t(Message, PendingResponse)> callback;
 
-  zx_status_t Dispatch(Message message, PendingResponse response) override {
+  zx_status_t Dispatch_(Message message, PendingResponse response) override {
     return callback(std::move(message), std::move(response));
   }
 };

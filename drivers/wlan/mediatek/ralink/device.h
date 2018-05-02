@@ -8,11 +8,10 @@
 #include <ddk/usb-request.h>
 #include <driver/usb.h>
 #include <fbl/unique_ptr.h>
-#include <sync/completion.h>
+#include <lib/zx/time.h>
 #include <wlan/async/dispatcher.h>
 #include <wlan/protocol/mac.h>
 #include <zircon/compiler.h>
-#include <zx/time.h>
 
 #include <fuchsia/cpp/wlan_device.h>
 
@@ -22,6 +21,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 namespace ralink {
@@ -44,6 +44,9 @@ class WlanmacIfcProxy {
     }
     void CompleteTx(wlan_tx_packet_t* pkt, zx_status_t status) {
         ifc_->complete_tx(cookie_, pkt, status);
+    }
+    void Indication(uint32_t ind) {
+        ifc_->indication(cookie_, ind);
     }
 
    private:
@@ -74,6 +77,7 @@ class Device : public wlan_device::Phy {
     zx_status_t WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* pkt);
     zx_status_t WlanmacSetChannel(uint32_t options, wlan_channel_t* chan);
     zx_status_t WlanmacConfigureBss(uint32_t options, wlan_bss_config_t* config);
+    zx_status_t WlanmacEnableBeaconing(uint32_t options, bool enabled);
     zx_status_t WlanmacConfigureBeacon(uint32_t options, wlan_tx_packet_t* pkt);
     zx_status_t WlanmacSetKey(uint32_t options, wlan_key_config_t* key_config);
 
@@ -181,6 +185,9 @@ class Device : public wlan_device::Phy {
     // initialization functions
     zx_status_t LoadFirmware();
     zx_status_t EnableRadio();
+    zx_status_t StartInterruptPolling();
+    void StopInterruptPolling();
+    zx_status_t InterruptWorker();
     zx_status_t InitRegisters();
     zx_status_t InitBbp();
     zx_status_t InitBbp5592();
@@ -202,6 +209,9 @@ class Device : public wlan_device::Phy {
     zx_status_t ConfigureChannel5390(const wlan_channel_t& chan);
     zx_status_t ConfigureChannel5592(const wlan_channel_t& chan);
 
+    uint8_t GetEirpRegUpperBound(const wlan_channel_t& chan);
+    uint8_t GetPerChainTxPower(const wlan_channel_t& chan, uint8_t eirp_target);
+
     zx_status_t ConfigureTxPower(const wlan_channel_t& chan);
 
     template <typename R, typename Predicate>
@@ -214,6 +224,7 @@ class Device : public wlan_device::Phy {
                                 size_t aggr_payload_len);
     uint8_t LookupTxWcid(const uint8_t* addr1, bool protected_frame);
 
+    zx::duration RemainingTbttTime();
     zx_status_t EnableHwBcn(bool active);
 
     static void ReadRequestComplete(usb_request_t* request, void* cookie);
@@ -239,9 +250,8 @@ class Device : public wlan_device::Phy {
 
     std::mutex lock_;
     bool dead_ __TA_GUARDED(lock_) = false;
-    completion_t shutdown_completion_;
     fbl::unique_ptr<WlanmacIfcProxy> wlanmac_proxy_ __TA_GUARDED(lock_);
-    std::unique_ptr<wlan::async::Dispatcher<wlan_device::Phy>> dispatcher_;
+    wlan::async::Dispatcher<wlan_device::Phy> dispatcher_;
 
     constexpr static size_t kEepromSize = 0x0100;
     std::array<uint16_t, kEepromSize> eeprom_ = {};
@@ -279,6 +289,17 @@ class Device : public wlan_device::Phy {
 
     std::vector<usb_request_t*> free_write_reqs_ __TA_GUARDED(lock_);
     uint16_t iface_id_ = 0;
+    uint16_t iface_role_ = 0;
+
+    // Thread which periodically reads interrupt registers.
+    // Required because the device doesn't support USB interrupt endpoints.
+    constexpr static zx::duration kInterruptReadTimeout = zx::msec(1);
+    constexpr static zx::duration kPreTbttLeadTime = zx::msec(6);
+    // Message which will shut down the currently running interrupt thread.
+    static constexpr uint64_t kIntPortPktShutdown = 1;
+    std::thread interrupt_thrd_;
+    zx::port interrupt_port_;
+    zx::timer interrupt_timer_;
 };
 
 }  // namespace ralink

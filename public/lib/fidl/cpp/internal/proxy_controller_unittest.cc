@@ -4,7 +4,7 @@
 
 #include <lib/fidl/cpp/message_buffer.h>
 #include <lib/fidl/cpp/message_builder.h>
-#include <zx/channel.h>
+#include <lib/zx/channel.h>
 
 #include "gtest/gtest.h"
 #include "lib/fidl/cpp/internal/proxy_controller.h"
@@ -125,14 +125,15 @@ TEST(ProxyController, BadSend) {
   loop.RunUntilIdle();
   EXPECT_EQ(0, error_count);
 
-  zx_handle_close(controller.reader().channel().get());
+  EXPECT_EQ(ZX_OK, controller.reader().Unbind().replace(ZX_RIGHT_WAIT, &h1));
+  EXPECT_EQ(ZX_OK, controller.reader().Bind(std::move(h1)));
 
   encoder.Reset(35u);
   StringPtr string("hello!");
   string.Encode(&encoder, encoder.Alloc(sizeof(fidl_string_t)));
 
   EXPECT_EQ(0, error_count);
-  EXPECT_EQ(ZX_ERR_BAD_HANDLE,
+  EXPECT_EQ(ZX_ERR_ACCESS_DENIED,
             controller.Send(&unbounded_nonnullable_string_message_type,
                             encoder.GetMessage(), nullptr));
   EXPECT_EQ(0, error_count);

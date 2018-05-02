@@ -201,9 +201,9 @@ void AudioCapturerImpl::SetMediaType(MediaType media_type) {
     case AudioSampleFormat::UNSIGNED_8:
     case AudioSampleFormat::SIGNED_16:
     case AudioSampleFormat::SIGNED_24_IN_32:
+    case AudioSampleFormat::FLOAT:
       break;
 
-    case AudioSampleFormat::FLOAT:
     default:
       FXL_LOG(ERROR) << "Bad sample format " << details.sample_format;
       return;
@@ -789,7 +789,7 @@ zx_status_t AudioCapturerImpl::Process() {
     // If we need to poke the server thread, do so.
     if (wakeup_server_thread) {
       // clang-format off
-      owner_->ScheduleMessageLoopTask([ thiz = fbl::WrapRefPtr(this) ]() {
+      owner_->ScheduleMainThreadTask([ thiz = fbl::WrapRefPtr(this) ]() {
         thiz->FinishBuffersThunk();
       });
       // clang-format on
@@ -872,11 +872,11 @@ bool AudioCapturerImpl::MixToIntermediate(uint32_t mix_frames) {
 
     // Figure out the fixed point gain scalar we will apply to this mix
     // operation by composing our gain with the link gain state.  The link's
-    // gain helper class will re-compose the source/dest gain combination if
-    // needed.  If the gain scale is literally zero, the just skip this source.
-    // It will contribute nothing to this pass.
+    // gain helper class re-composes the source/dest gain combination if needed.
     Gain::AScale amplitude_scale = link->gain().GetGainScale(capture_gain);
-    if (amplitude_scale == 0) {
+    // If this gain scale is at or below our mute threshold, skip this source,
+    // as it will not contribute to this mix pass.
+    if (amplitude_scale <= Gain::MuteThreshold()) {
       continue;
     }
 
@@ -1172,7 +1172,7 @@ void AudioCapturerImpl::DoStopAsyncCapture() {
   // thread so it can complete the stop operation.
   state_.store(State::AsyncStoppingCallbackPending);
   // clang-format off
-  owner_->ScheduleMessageLoopTask([ thiz = fbl::WrapRefPtr(this) ]() {
+  owner_->ScheduleMainThreadTask([ thiz = fbl::WrapRefPtr(this) ]() {
     thiz->FinishAsyncStopThunk();
   });
   // clang-format on
@@ -1222,7 +1222,7 @@ void AudioCapturerImpl::ShutdownFromMixDomain() {
   state_.store(State::Shutdown);
 
   // clang-format off
-  owner_->ScheduleMessageLoopTask([ thiz = fbl::WrapRefPtr(this) ]() {
+  owner_->ScheduleMainThreadTask([ thiz = fbl::WrapRefPtr(this) ]() {
     thiz->Shutdown();
   });
   // clang-format on

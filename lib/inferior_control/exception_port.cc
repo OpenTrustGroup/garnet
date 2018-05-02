@@ -7,6 +7,8 @@
 #include <cinttypes>
 #include <string>
 
+#include <lib/async/default.h>
+#include <lib/async/cpp/task.h>
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/port.h>
 
@@ -49,9 +51,9 @@ std::string IOPortPacketTypeToString(const zx_port_packet_t& pkt) {
 // static
 ExceptionPort::Key ExceptionPort::g_key_counter = 0;
 
-ExceptionPort::ExceptionPort() : keep_running_(false) {
-  FXL_DCHECK(fsl::MessageLoop::GetCurrent());
-  origin_task_runner_ = fsl::MessageLoop::GetCurrent()->task_runner();
+ExceptionPort::ExceptionPort()
+  : keep_running_(false), origin_dispatcher_(async_get_default()) {
+  FXL_DCHECK(origin_dispatcher_);
 }
 
 ExceptionPort::~ExceptionPort() {
@@ -96,7 +98,7 @@ void ExceptionPort::Quit() {
     zx_port_packet_t packet;
     memset(&packet, 0, sizeof(packet));
     packet.type = ZX_PKT_TYPE_USER;
-    eport_handle_.queue(&packet, 0);
+    eport_handle_.queue(&packet, 1);
   }
 
   io_thread_.join();
@@ -194,7 +196,7 @@ void ExceptionPort::Worker() {
   while (keep_running_) {
     zx_port_packet_t packet;
     zx_status_t status =
-        zx_port_wait(eport, ZX_TIME_INFINITE, &packet, 0);
+        zx_port_wait(eport, ZX_TIME_INFINITE, &packet, 1);
     if (status < 0) {
       FXL_LOG(ERROR) << "zx_port_wait returned error: "
                      << util::ZxErrorString(status);
@@ -223,7 +225,7 @@ void ExceptionPort::Worker() {
     }
 
     // Handle the exception/signal on the main thread.
-    origin_task_runner_->PostTask([packet, this] {
+    async::PostTask(origin_dispatcher_, [packet, this] {
       const auto& iter = callbacks_.find(packet.key);
       if (iter == callbacks_.end()) {
         FXL_VLOG(1) << "No handler registered for exception";

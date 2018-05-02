@@ -9,9 +9,9 @@
 
 #include <utility>
 
-#include "zx/handle.h"
 #include <ddk/device.h>
 #include <ddk/protocol/pci.h>
+#include <lib/zx/handle.h>
 
 namespace magma {
 
@@ -22,14 +22,15 @@ public:
         DASSERT(handle_.get() != ZX_HANDLE_INVALID);
     }
 
-    void Signal() override { zx_interrupt_signal(handle_.get(), ZX_INTERRUPT_SLOT_USER, 0); }
+    void Signal() override {
+        zx_interrupt_destroy(handle_.get());
+    }
 
     bool Wait() override
     {
-        uint64_t slots;
-        zx_status_t status = zx_interrupt_wait(handle_.get(), &slots);
+        zx_status_t status = zx_interrupt_wait(handle_.get(), nullptr);
         if (status != ZX_OK)
-            return DRETF(false, "zx_interrupt_wait failed (%d)", status);
+            return DRETF(false, "zx_irq_wait failed (%d)", status);
         return true;
     }
 

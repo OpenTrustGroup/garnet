@@ -7,6 +7,7 @@
 #include <queue>
 #include <vector>
 
+#include <lib/async/dispatcher.h>
 #include "garnet/drivers/bluetooth/lib/common/byte_buffer.h"
 #include "garnet/drivers/bluetooth/lib/hci/hci.h"
 #include "garnet/drivers/bluetooth/lib/testing/fake_controller_base.h"
@@ -57,12 +58,11 @@ class TestController : public FakeControllerBase {
 
   // Callback to invoke when a packet is received over the data channel.
   using DataCallback = std::function<void(const common::ByteBuffer& packet)>;
-  void SetDataCallback(const DataCallback& callback,
-                       fxl::RefPtr<fxl::TaskRunner> task_runner);
+  void SetDataCallback(const DataCallback& callback, async_t* dispatcher);
 
   // Callback invoked when a transaction completes.
   void SetTransactionCallback(const fxl::Closure& callback,
-                              fxl::RefPtr<fxl::TaskRunner> task_runner);
+                              async_t* dispatcher);
 
  private:
   // FakeControllerBase overrides:
@@ -73,9 +73,9 @@ class TestController : public FakeControllerBase {
 
   std::queue<CommandTransaction> cmd_transactions_;
   DataCallback data_callback_;
-  fxl::RefPtr<fxl::TaskRunner> data_task_runner_;
+  async_t* data_dispatcher_;
   fxl::Closure transaction_callback_;
-  fxl::RefPtr<fxl::TaskRunner> transaction_task_runner_;
+  async_t* transaction_dispatcher_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TestController);
 };

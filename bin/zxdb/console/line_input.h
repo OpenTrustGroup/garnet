@@ -8,6 +8,10 @@
 #include <string>
 #include <vector>
 
+#if !defined(__Fuchsia__)
+struct termios;
+#endif
+
 namespace zxdb {
 
 // This class implements a push model for input of characters, allowing it to
@@ -20,7 +24,8 @@ namespace zxdb {
 //  1. Call BeginReadLine().
 //  2. Push data to it via OnInput() until it returns true.
 //  3. Get the input from line().
-//  4. Repeat.
+//  4. Add line to history if desired.
+//  5. Repeat.
 class LineInputBase {
  public:
   // Given some typing, returns a prioritized list of completions.
@@ -52,6 +57,12 @@ class LineInputBase {
   // is complete (the user has pressed enter).
   bool OnInput(char c);
 
+  // Adds the given line to history. If the history is longer than
+  // max_history_, the oldest thing will be deleted.
+  //
+  // Only valid to be called before BeginReadLine() starts the next line input.
+  void AddToHistory(const std::string& line);
+
   // The input can be hidden and re-shown. Hiding it will erase the current
   // line and put the cursor at the beginning of the line, but not change
   // any internal state. Showing it again will repaint the line at the new
@@ -66,6 +77,10 @@ class LineInputBase {
   // Abstract output function, overridden by a derived class to output to
   // screen.
   virtual void Write(const std::string& data) = 0;
+
+  // Enables and disables raw mode if applicable.
+  virtual void EnsureRawMode() {}
+  virtual void EnsureNoRawMode() {}
 
  private:
   void HandleEscapedInput(char c);
@@ -147,6 +162,21 @@ class LineInputStdout : public LineInputBase {
 
  protected:
   void Write(const std::string& str) override;
+
+  void EnsureRawMode() override;
+  void EnsureNoRawMode() override;
+
+ private:
+#if !defined(__Fuchsia__)
+  // The terminal is converted into raw mode when the prompt is visible and
+  // accepting input. Then it's switched back. This block tracks that
+  // information. Use unique_ptr to avoid bringing all terminal headers into
+  // this header.
+  bool raw_mode_enabled_ = false;
+  std::unique_ptr<termios> raw_termios_;
+  std::unique_ptr<termios> original_termios_;
+#endif
+
 };
 
 // A blocking implementation that reads from stdin and writes to stdout.

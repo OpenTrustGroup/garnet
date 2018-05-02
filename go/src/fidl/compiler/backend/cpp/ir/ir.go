@@ -22,10 +22,9 @@ type Decl interface {
 }
 
 type Type struct {
-	Decl      string
-	Dtor      string
-	DeclType  types.DeclType
-	IsPointer bool
+	Decl     string
+	Dtor     string
+	DeclType types.DeclType
 }
 
 type Const struct {
@@ -66,7 +65,6 @@ type UnionMember struct {
 type Struct struct {
 	Namespace string
 	Name      string
-	CName     string
 	TableType string
 	Members   []StructMember
 	Size      int
@@ -80,14 +78,15 @@ type StructMember struct {
 }
 
 type Interface struct {
-	Namespace     string
-	Name          string
-	ServiceName   string
-	ProxyName     string
-	StubName      string
-	SyncName      string
-	SyncProxyName string
-	Methods       []Method
+	Namespace       string
+	Name            string
+	ServiceName     string
+	ProxyName       string
+	StubName        string
+	EventSenderName string
+	SyncName        string
+	SyncProxyName   string
+	Methods         []Method
 }
 
 type Method struct {
@@ -326,25 +325,36 @@ func changeIfReserved(i types.Identifier, ext string) string {
 	return str
 }
 
-func formatDestructor(ei types.EncodedIdentifier) string {
-	val := types.ParseCompoundIdentifier(ei)
+func formatDestructor(eci types.EncodedCompoundIdentifier) string {
+	val := types.ParseCompoundIdentifier(eci)
 	return fmt.Sprintf("~%s", changeIfReserved(val.Name, ""))
 }
 
 type compiler struct {
-	namespace string
-	decls     *types.DeclMap
-	library   string
+	namespace       string
+	decls           *types.DeclMap
+	library         types.LibraryIdentifier
+	compiledLibrary string
 }
 
-func (c *compiler) compileCompoundIdentifier(ei types.EncodedIdentifier, ext string) string {
-	val := types.ParseCompoundIdentifier(ei)
-	strs := []string{}
-	if val.Library != "" {
-		strs = append(strs, changeIfReserved(val.Library, ""))
+func (c *compiler) isInExternalLibrary(ci types.CompoundIdentifier) bool {
+	if len(ci.Library) != len(c.library) {
+		return true
 	}
-	for _, v := range val.NestedDecls {
-		strs = append(strs, changeIfReserved(v, ""))
+	for i, part := range c.library {
+		if ci.Library[i] != part {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *compiler) compileCompoundIdentifier(eci types.EncodedCompoundIdentifier, ext string) string {
+	val := types.ParseCompoundIdentifier(eci)
+	strs := []string{}
+	if c.isInExternalLibrary(val) {
+		// TODO(FIDL-160) handle more than one library name component
+		strs = append(strs, changeIfReserved(val.Library[0], ""))
 	}
 	strs = append(strs, changeIfReserved(val.Name, ext))
 	return strings.Join(strs, "::")
@@ -432,7 +442,6 @@ func (c *compiler) compileType(val types.Type) Type {
 			if val.Nullable {
 				r.Decl = fmt.Sprintf("::std::unique_ptr<%s>", t)
 				r.Dtor = fmt.Sprintf("~unique_ptr")
-				r.IsPointer = true
 			} else {
 				r.Decl = t
 				r.Dtor = formatDestructor(val.Identifier)
@@ -508,9 +517,10 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 	r := Interface{
 		c.namespace,
 		c.compileCompoundIdentifier(val.Name, ""),
-		val.GetAttribute("ServiceName"),
+		val.GetServiceName(),
 		c.compileCompoundIdentifier(val.Name, "_Proxy"),
 		c.compileCompoundIdentifier(val.Name, "_Stub"),
+		c.compileCompoundIdentifier(val.Name, "_EventSender"),
 		c.compileCompoundIdentifier(val.Name, "_Sync"),
 		c.compileCompoundIdentifier(val.Name, "_SyncProxy"),
 		[]Method{},
@@ -522,6 +532,10 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 		if v.HasResponse {
 			callbackType = changeIfReserved(v.Name, "Callback")
 		}
+		responseTypeNameSuffix := "ResponseTable"
+		if !v.HasRequest {
+			responseTypeNameSuffix = "EventTable"
+		}
 		m := Method{
 			v.Ordinal,
 			fmt.Sprintf("k%s_%s_Ordinal", r.Name, v.Name),
@@ -529,11 +543,11 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 			v.HasRequest,
 			c.compileParameterArray(v.Request),
 			v.RequestSize,
-			fmt.Sprintf("%s%s%sRequestTable", c.library, r.Name, v.Name),
+			fmt.Sprintf("%s_%s%sRequestTable", c.compiledLibrary, r.Name, v.Name),
 			v.HasResponse,
 			c.compileParameterArray(v.Response),
 			v.ResponseSize,
-			fmt.Sprintf("%s%s%sResponseTable", c.library, r.Name, v.Name),
+			fmt.Sprintf("%s_%s%s%s", c.compiledLibrary, r.Name, v.Name, responseTypeNameSuffix),
 			callbackType,
 			fmt.Sprintf("%s_%s_ResponseHandler", r.Name, v.Name),
 			fmt.Sprintf("%s_%s_Responder", r.Name, v.Name),
@@ -565,8 +579,7 @@ func (c *compiler) compileStruct(val types.Struct) Struct {
 	r := Struct{
 		c.namespace,
 		name,
-		"::" + name,
-		fmt.Sprintf("%s%sTable", c.library, name),
+		fmt.Sprintf("%s_%sTable", c.compiledLibrary, name),
 		[]StructMember{},
 		val.Size,
 	}
@@ -606,15 +619,18 @@ func (c *compiler) compileUnion(val types.Union) Union {
 
 func Compile(r types.Root) Root {
 	root := Root{}
+	library := types.ParseLibraryName(r.Name)
 	c := compiler{
-		changeIfReserved(r.Name, ""),
+		// TODO(FIDL-160) handle more than one library name component
+		changeIfReserved(library[0], ""),
 		&r.Decls,
+		types.ParseLibraryName(r.Name),
 		string(r.Name),
 	}
 
 	root.Namespace = c.namespace
 
-	decls := map[types.EncodedIdentifier]Decl{}
+	decls := map[types.EncodedCompoundIdentifier]Decl{}
 
 	for _, v := range r.Consts {
 		d := c.compileConst(v)

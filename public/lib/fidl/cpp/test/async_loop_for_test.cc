@@ -4,15 +4,14 @@
 
 #include "lib/fidl/cpp/test/async_loop_for_test.h"
 
-#include <lib/async/cpp/loop.h>
-#include "lib/fidl/cpp/test/loop_config.h"
+#include <lib/async-loop/cpp/loop.h>
 
 namespace fidl {
 namespace test {
 
 class AsyncLoopForTestImpl {
  public:
-  AsyncLoopForTestImpl() : loop_(&fidl::kTestLoopConfig) {}
+  AsyncLoopForTestImpl() : loop_(&kAsyncLoopConfigMakeDefault) {}
   ~AsyncLoopForTestImpl() = default;
 
   async::Loop* loop() { return &loop_; }

@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "mock/mock_bus_mapper.h"
 #include "msd_arm_connection.h"
 #include "platform_port.h"
 #include "gtest/gtest.h"
@@ -27,16 +28,19 @@ public:
     }
     void HardStopAtom(MsdArmAtom* atom) override { stopped_atoms_.push_back(atom); }
     magma::PlatformPort* GetPlatformPort() override { return platform_port_.get(); }
+    void UpdateGpuActive(bool active) override { gpu_active_ = active; }
 
     std::vector<MsdArmAtom*>& run_list() { return run_list_; }
     std::vector<ResultPair>& completed_list() { return completed_list_; }
     std::vector<MsdArmAtom*>& stopped_atoms() { return stopped_atoms_; }
+    bool gpu_active() { return gpu_active_; }
 
 private:
     std::vector<MsdArmAtom*> run_list_;
     std::vector<ResultPair> completed_list_;
     std::vector<MsdArmAtom*> stopped_atoms_;
     std::unique_ptr<magma::PlatformPort> platform_port_;
+    bool gpu_active_ = false;
 };
 
 class TestAddressSpaceObserver : public AddressSpaceObserver {
@@ -54,9 +58,11 @@ public:
     void ScheduleAtom(std::shared_ptr<MsdArmAtom> atom) override {}
     void CancelAtoms(std::shared_ptr<MsdArmConnection> connection) override {}
     AddressSpaceObserver* GetAddressSpaceObserver() override { return &address_space_observer_; }
+    magma::PlatformBusMapper* GetBusMapper() override { return &bus_mapper_; }
 
 private:
     TestAddressSpaceObserver address_space_observer_;
+    MockBusMapper bus_mapper_;
 };
 }
 
@@ -79,14 +85,17 @@ public:
         MsdArmAtom* atom2_ptr = atom2.get();
         scheduler.EnqueueAtom(std::move(atom2));
         EXPECT_EQ(0u, owner.run_list().size());
+        EXPECT_FALSE(owner.gpu_active());
 
         scheduler.TryToSchedule();
         EXPECT_EQ(1u, owner.run_list().size());
         EXPECT_EQ(atom1_ptr, owner.run_list()[0]);
+        EXPECT_TRUE(owner.gpu_active());
         scheduler.JobCompleted(0, kArmMaliResultSuccess);
         EXPECT_EQ(2u, owner.run_list().size());
         EXPECT_EQ(atom2_ptr, owner.run_list()[1]);
         scheduler.JobCompleted(0, kArmMaliResultSuccess);
+        EXPECT_FALSE(owner.gpu_active());
     }
 
     void TestCancelJob()

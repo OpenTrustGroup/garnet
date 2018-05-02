@@ -7,12 +7,12 @@
 #include "garnet/bin/media/net_media_service/media_player_net_proxy.h"
 #include "garnet/bin/media/net_media_service/media_player_net_publisher.h"
 
-namespace media {
+namespace media_player {
 
 NetMediaServiceImpl::NetMediaServiceImpl(
     std::unique_ptr<component::ApplicationContext> application_context)
     : FactoryServiceBase(std::move(application_context)) {
-  this->application_context()->outgoing_services()->AddService<NetMediaService>(
+  this->application_context()->outgoing().AddPublicService<NetMediaService>(
       [this](fidl::InterfaceRequest<NetMediaService> request) {
         bindings_.AddBinding(this, std::move(request));
       });
@@ -35,4 +35,4 @@ void NetMediaServiceImpl::CreateMediaPlayerProxy(
       device_name, service_name, std::move(media_player_request), this));
 }
 
-}  // namespace media
+}  // namespace media_player

@@ -123,48 +123,9 @@ their stage in the flow of audio through the mixer:
 
 **Normalize (Ingest)**
 
-*   MTWN-85
-
-    As a future enhancement, the audio mixer should accept incoming audio data
-in float (32-bit) format, as is supported by certain audio renderer clients (or
-certain audio capture hardware). This can be easily added even before we support
-this format throughout the audio mixer's processing pipeline.
-
-*   MTWN-86
-
-    Expanding the width of our internal data processing pipeline -- whether
-moving to float32, or staying with fixed-point/int but increasing our number of
-fractional bits -- will require changes to all stages, including Normalize.
-
 **Rechannel**
 
-*   MTWN-81
-
-    When mixing from stereo to mono, our calculations have a negative bias:
-+1.5 rounds to 1, but -1.5 rounds to -2. This type of asymmetry causes slight
-distortion. To accomodate this in today's code, certain expected numerical
-results have been adjusted by 1 to reflect the reality of today's system.
-
-*   MTWN-86
-
-    Expanding the width of our internal data processing pipeline -- whether
-moving to float32, or staying with fixed-point/int but increasing our number of
-fractional bits -- will require changes to all stages, including Rechannel.
-
 **Interpolate**
-
-*   MTWN-74
-
-    During resampling, our interpolation uses *fractional* rates and positions
-for the 'source' data as it creates each 'destination' sample on an *integer*
-position. During interpolation, as we scale audio data up and down, we
-down-scale without first rounding, leading to off-by-one inaccuracies.
-
-*   MTWN-77
-
-    On the last sample of a mix, for certain combinations of buffer sizes for
-Dest and Source, the LinearSampler will point-sample instead of interpolate.
-(This very well could be by-design behavior; I just need to take a closer look.)
 
 *   MTWN-87
 
@@ -196,12 +157,6 @@ higher code resilience and easier future extensibility.
 we should consider adding new ones with increased fidelity. This would more
 fully allow clients to make the quality-vs.-performance tradeoff themselves.
 
-*   MTWN-86
-
-    Expanding the width of our internal data processing pipeline -- whether
-moving to float32, or staying with fixed-point/int but increasing our number of
-fractional bits -- will require changes to all stages, including Interpolation.
-
 **Gain**
 
 *   MTWN-70
@@ -213,33 +168,6 @@ clarified (might be as easy as changing a "should" to a "must"). Depending on
 whether single-threaded is a requirement, we will need additional product code
 and tests.
 
-*   MTWN-73
-
-    Applying gain to audio values requires scale-up and scale-down operations
-on both our fixed-point representation of gain and the resultant audio data,
-while being mindful of integer container size and precision. In the process, we
-down-scale the gain scalar itself without first rounding, leading to truncation.
-
-*   MTWN-80
-
-    Related to MTWN-73, once we have a gain scalar we apply it to audio data
-without first rounding, leading to truncation. This, and MTWN-73, contribute to
-our producing results that (for certain inputs) are "expected-1". Again, we have
-accomodated this in all related test code, annotating appropriately.
-
-*   MTWN-82
-
-    During gain-scaling, we clamp each stream individually before accumulation.
-This in large part eliminates the benefits of a wider accumulator, and is
-unneeded as the OutputFormatter object clamps the final mix before writing it
-to the output buffer.
-
-*   MTWN-86
-
-    Expanding the width of our internal data processing pipeline -- whether
-moving to float32, or staying with fixed-point/int but increasing our number of
-fractional bits -- will require changes to all stages, including Gain scaling.
-
 **Accumulate**
 
 *   MTWN-83
@@ -249,48 +177,19 @@ overflow, given a sufficient number of incoming streams. This limit is
 admittedly beyond any foreseeable scenario (65,000 streams), but this should be
 documented even if the code does not explicitly clamp.
 
-*   MTWN-76
-
-    Gain is applied to audio data during the interpolation-and-accumulation
-process. As an optimization, if gain is lower than 160 dB for a given stream,
-we skip any mixing and simply advance the positions accordingly. In the case
-where the 'accumulate' flag is NOT set, we should also zero-out the destination
-buffer. The proper fix for this might simply be to document this behavior,
-since the OutputBase object does zero-out a mix buffer before providing it to
-the Mixer object.
-
-*   MTWN-86
-
-    Expanding the width of our internal data processing pipeline -- whether
-moving to float32, or staying with fixed-point/int but increasing our number of
-fractional bits -- will require changes to all stages, including Accumulation.
-
 **Denormalize (Output)**
 
-*   MTWN-54
-
-    As a future enhancement, the audio mixer should output its mixed audio data
-in float (32-bit) format, as is supported by certain audio hardware (or as is
-expected by certain audio capturer clients). This is easily added even before
-we support this format throughout the audio mixer's processing pipeline.
+**Numerous Stages**
 
 *   MTWN-86
 
     Expanding the width of our internal data processing pipeline -- whether
 moving to float32, or staying with fixed-point/int but increasing our number of
-fractional bits -- will require changes to all stages, including Denormalize
-/Output.
+fractional bits -- will require changes to all stages, including
+Normalization-Input, Rechannelization, Interpolation, Gain Scaling, Accumulation
+and Denormalization-Output.
 
 **Interface to Renderer (or other parts of audio_server)**
-
-*   MTWN-78
-
-    If by chance the source and destination buffers are both fully completed on
-the last sample of a mix, the Mix function returns FALSE, which indicates that
-the source buffer has not been fully consumed and should be held. Although
-there could be scenarios in the future that take advantage of this, if the
-definition of this return value is "whether the source buffer can be safely
-released", then by this definition we should return TRUE in this case.
 
 *   MTWN-88
 
@@ -304,10 +203,3 @@ potential enabling) of scheduling these packets on fractional sample positions.
     The AudioSampleFormat enum includes entries for ALL and NONE, with the
 intention that these would be used in future scenarios. Until then, however,
 it might clarify things for client developers if we remove these.
-
-*   MTWN-44
-
-    Today, our AudioRenderer API accepts audio data in unsigned-8 and signed-16
-integer formats. It should also ingest audio in the 32-bit float format, even if
-(initially) it simply normalizes this into the highest-fidelity format that is
-supported natively by the system audio mixer.

@@ -75,14 +75,12 @@ enum {
 };
 
 enum {
-    // Device supports operation as a non-AP station (i.e., a client of an AP).
-    WLAN_MAC_MODE_STA = (1 << 0),
-    // Device supports operation as an access point.
-    WLAN_MAC_MODE_AP = (1 << 1),
+    // Device is operating as a non-AP station (i.e., a client of an AP).
+    WLAN_MAC_ROLE_CLIENT = 1,
+    // Device is operating as an access point.
+    WLAN_MAC_ROLE_AP = 2,
     // TODO: IBSS, PBSS, mesh
 };
-
-#define WLAN_MAC_MODE_ALL (WLAN_MAC_MODE_STA | WLAN_MAC_MODE_AP)
 
 // Basic capabilities. IEEE Std 802.11-2016, 9.4.1.4
 enum {
@@ -146,12 +144,12 @@ typedef struct wlan_band_info {
 
 typedef struct wlanmac_info {
     ethmac_info_t eth_info;
+    // The MAC role for the device.
+    uint16_t mac_role;
     // Bitmask indicating the WLAN_PHY_* values supported by the hardware.
     uint16_t supported_phys;
     // Bitmask indicating the WLAN_DRIVER_FEATURE_* values supported by the driver and hardware.
     uint32_t driver_features;
-    // Bitmask representing supported modes.
-    uint16_t mac_modes;
     // Bitmask indicating WLAN_CAP_* capabilities supported by the hardware.
     uint32_t caps;
     // Supported bands.
@@ -273,6 +271,11 @@ typedef struct wlan_tx_packet {
     wlan_tx_info_t info;
 } wlan_tx_packet_t;
 
+enum {
+    WLAN_INDICATION_PRE_TBTT = 1,
+    WLAN_INDICATION_BCN_TX_COMPLETE = 2,
+};
+
 typedef struct wlanmac_ifc {
     // Report the status of the wlanmac device.
     void (*status)(void* cookie, uint32_t status);
@@ -283,6 +286,9 @@ typedef struct wlanmac_ifc {
 
     // Complete the tx to return the ownership of the packet buffers to the wlan driver.
     void (*complete_tx)(void* cookie, wlan_tx_packet_t* packet, zx_status_t status);
+
+    // Reports an indication of a status, state or action to the wlan driver.
+    void (*indication)(void* cookie, uint32_t ind);
 } wlanmac_ifc_t;
 
 typedef struct wlanmac_protocol_ops {
@@ -316,6 +322,9 @@ typedef struct wlanmac_protocol_ops {
 
     // Configures a BSS which the STA is either joining or managing.
     zx_status_t (*configure_bss)(void* ctx, uint32_t options, wlan_bss_config_t* config);
+
+    // Enables or disables hardware Beaconing.
+    zx_status_t (*enable_beaconing)(void* ctx, uint32_t options, bool enabled);
 
     // Configures a Beacon frame in hardware to announce the BSS' existence.
     // Pass `nullptr` to disable hardware Beacons.

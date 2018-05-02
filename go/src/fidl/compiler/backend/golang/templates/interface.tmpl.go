@@ -24,11 +24,16 @@ const Interface = `
 
 type {{ .ProxyName }} _bindings.Proxy
 {{ range .Methods }}
-func (p *{{ $.ProxyName }}) {{ .Name }}(
+func (p *{{ $.ProxyName }}) {{ if .IsEvent -}}
+		{{ .EventExpectName }}
+	{{- else -}}
+		{{ .Name }}
+	{{- end -}}
+	(
 	{{- if .Request -}}
 	{{- range $index, $m := .Request.Members -}}
 		{{- if $index -}}, {{- end -}}
-		{{ $m.Name | privatize }} {{ $m.Type }}
+		{{ $m.PrivateName }} {{ $m.Type }}
 	{{- end -}}
 	{{- end -}}
 	)
@@ -42,7 +47,7 @@ func (p *{{ $.ProxyName }}) {{ .Name }}(
 	{{- if .Request }}
 	req_ := {{ .Request.Name }}{
 		{{- range .Request.Members }}
-		{{ .Name }}: {{ .Name | privatize }},
+		{{ .Name }}: {{ .PrivateName }},
 		{{- end }}
 	}
 	{{- end }}
@@ -70,42 +75,43 @@ func (p *{{ $.ProxyName }}) {{ .Name }}(
 }
 {{- end }}
 
+// {{ .Name }} server interface.
 type {{ .Name }} interface {
 {{- range .Methods }}
+	{{- if .Request }}
 	{{ .Name }}(
-	{{- if .Request -}}
 	{{- range $index, $m := .Request.Members -}}
 		{{- if $index -}}, {{- end -}}
-		{{ $m.Name | privatize }} {{ $m.Type }}
-	{{- end -}}
+		{{ $m.PrivateName }} {{ $m.Type }}
 	{{- end -}}
 	)
 	{{- if .Response -}}
 	{{- if len .Response.Members }} (
-	{{- range .Response.Members }}{{ .Name | privatize }} {{ .Type }}, {{ end -}}
+	{{- range .Response.Members }}{{ .PrivateName }} {{ .Type }}, {{ end -}}
 		err_ error)
 	{{- else }} error{{ end -}}
 	{{- else }} error{{ end }}
+	{{- end }}
 {{- end }}
 }
 
-type {{ .RequestName }} _zx.Channel
+type {{ .RequestName }} _bindings.InterfaceRequest
 
 func New{{ .RequestName }}() ({{ .RequestName }}, *{{ .ProxyName }}, error) {
 	req, cli, err := _bindings.NewInterfaceRequest()
 	return {{ .RequestName }}(req), (*{{ .ProxyName }})(cli), err
 }
 
-{{- if .ServiceName }}
+{{- if .ServiceNameString }}
 // Implements ServiceRequest.
 func (_ {{ .RequestName }}) Name() string {
-	return {{ .ServiceName }}
+	return {{ .ServiceNameString }}
 }
-func (c {{ .RequestName }}) Channel() _zx.Channel {
-	return _zx.Channel(c)
+func (c {{ .RequestName }}) ToChannel() _zx.Channel {
+	return c.Channel
 }
 
-const {{ .Name }}Name = {{ .ServiceName }}
+const {{ .ServiceNameConstant }} = {{ .ServiceNameString }}
 {{- end }}
 
 type {{ .StubName }} struct {
@@ -115,6 +121,7 @@ type {{ .StubName }} struct {
 func (s *{{ .StubName }}) Dispatch(ord uint32, b_ []byte, h_ []_zx.Handle) (_bindings.Payload, error) {
 	switch ord {
 	{{- range .Methods }}
+	{{- if not .IsEvent }}
 	case {{ .Ordinal }}:
 		{{- if .Request }}
 		in_ := {{ .Request.Name }}{}
@@ -126,7 +133,7 @@ func (s *{{ .StubName }}) Dispatch(ord uint32, b_ []byte, h_ []_zx.Handle) (_bin
 		out_ := {{ .Response.Name }}{}
 		{{- end }}
 		{{ if .Response }}
-		{{- range .Response.Members }}{{ .Name | privatize }}, {{ end -}}
+		{{- range .Response.Members }}{{ .PrivateName }}, {{ end -}}
 		{{- end -}}
 		err_ := s.Impl.{{ .Name }}(
 		{{- if .Request -}}
@@ -138,15 +145,52 @@ func (s *{{ .StubName }}) Dispatch(ord uint32, b_ []byte, h_ []_zx.Handle) (_bin
 		)
 		{{- if .Response }}
 		{{- range .Response.Members }}
-		out_.{{ .Name }} = {{ .Name | privatize }}
+		out_.{{ .Name }} = {{ .PrivateName }}
 		{{- end }}
 		return &out_, err_
 		{{- else }}
 		return nil, err_
 		{{- end }}
 	{{- end }}
+	{{- end }}
 	}
 	return nil, _bindings.ErrUnknownOrdinal
 }
+
+type {{ .ServerName }} struct {
+	_bindings.BindingSet
+}
+
+func (s *{{ .ServerName }}) Add(impl {{ .Name }}, c _zx.Channel, onError func(error)) (_bindings.BindingKey, error) {
+	return s.BindingSet.Add(&{{ .StubName }}{Impl: impl}, c, onError)
+}
+
+func (s *{{ .ServerName }}) EventProxyFor(key _bindings.BindingKey) (*{{ .EventProxyName }}, bool) {
+	pxy, err := s.BindingSet.ProxyFor(key)
+	return (*{{ .EventProxyName }})(pxy), err
+}
+
+type {{ .EventProxyName }} _bindings.Proxy
+{{ range .Methods }}
+{{- if .IsEvent }}
+func (p *{{ $.EventProxyName }}) {{ .Name }}(
+	{{- range $index, $m := .Response.Members -}}
+		{{- if $index -}}, {{- end -}}
+		{{ $m.PrivateName }} {{ $m.Type }}
+	{{- end -}}
+	) error {
+
+	{{- if .Response }}
+	event_ := {{ .Response.Name }}{
+		{{- range .Response.Members }}
+		{{ .Name }}: {{ .PrivateName }},
+		{{- end }}
+	}
+	{{- end }}
+	return ((*_bindings.Proxy)(p)).Send({{ .Ordinal }}, &event_)
+}
+{{- end }}
+{{- end }}
+
 {{ end -}}
 `

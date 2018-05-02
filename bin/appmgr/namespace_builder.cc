@@ -66,23 +66,25 @@ void NamespaceBuilder::AddSandbox(
     if (feature == "persistent-storage") {
       // TODO(flowerhack): Make this feature more fine-grained.
       PushDirectoryFromPath("/data");
-    } else if (feature == "root-ssl-certificates") {
-      PushDirectoryFromPath("/system/data/boringssl");
-      PushDirectoryFromPathAs("/system/data/boringssl", "/etc/ssl");
-    } else if (feature == "shell") {
-      // TODO(abarth): These permissions should depend on the envionment
-      // in some way so that a shell running at a user-level scope doesn't
-      // have access to all the device drivers and such.
-      PushDirectoryFromPath("/blob");
-      PushDirectoryFromPath("/boot");
-      PushDirectoryFromPath("/data");
-      PushDirectoryFromPath("/dev");
-      PushDirectoryFromChannel("/hub", hub_directory_factory());
-      PushDirectoryFromPath("/install");
-      PushDirectoryFromPath("/pkgfs");
-      PushDirectoryFromPath("/system");
-      PushDirectoryFromPath("/tmp");
-      PushDirectoryFromPath("/volume");
+    } else if (feature == "root-ssl-certificates" || feature == "shell") {
+      // "shell" implies "root-ssl-certificates"
+      PushDirectoryFromPathAs("/pkgfs/packages/root_ssl_certificates/0/data", "/config/ssl");
+
+      if (feature == "shell") {
+        // TODO(abarth): These permissions should depend on the envionment
+        // in some way so that a shell running at a user-level scope doesn't
+        // have access to all the device drivers and such.
+        PushDirectoryFromPath("/blob");
+        PushDirectoryFromPath("/boot");
+        PushDirectoryFromPath("/data");
+        PushDirectoryFromPath("/dev");
+        PushDirectoryFromChannel("/hub", hub_directory_factory());
+        PushDirectoryFromPath("/install");
+        PushDirectoryFromPath("/pkgfs");
+        PushDirectoryFromPath("/system");
+        PushDirectoryFromPath("/tmp");
+        PushDirectoryFromPath("/volume");
+      }
     } else if (feature == "system-temp") {
       PushDirectoryFromPath("/tmp");
     } else if (feature == "vulkan") {

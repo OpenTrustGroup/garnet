@@ -15,9 +15,13 @@ import (
 )
 
 const (
-	ProxySuffix   = "Interface"
-	StubSuffix    = "Stub"
-	RequestSuffix = "InterfaceRequest"
+	ProxySuffix       = "Interface"
+	StubSuffix        = "Stub"
+	EventProxySuffix  = "EventProxy"
+	ServiceSuffix     = "Service"
+	ServiceNameSuffix = "Name"
+	RequestSuffix     = "InterfaceRequest"
+	TagSuffix         = "Tag"
 
 	MessageHeaderSize = 16
 )
@@ -135,11 +139,48 @@ type StructMember struct {
 	// Name is the name of the golang struct member.
 	Name string
 
+	// PrivateName is the unexported version of the name of the struct member.
+	PrivateName string
+
 	// Type is the type of the golang struct member.
 	Type Type
 
 	// Tag is the golang struct member tag which holds additional metadata
 	// about the struct field.
+	Tag string
+}
+
+// Union represets a FIDL union as a golang struct.
+type Union struct {
+	// Name is the name of the FIDL union as a golang struct.
+	Name string
+
+	// TagName is the name of the golang enum type for the tag of the FIDL enum.
+	TagName string
+
+	// Members is a list of FIDL union members represented as golang struct members.
+	Members []UnionMember
+
+	// Size is the size of the FIDL union on the wire in bytes.
+	Size int
+
+	// Alignment is the alignment factor of the FIDL union on the wire in bytes.
+	Alignment int
+}
+
+// UnionMember represents a FIDL union member as a golang struct member.
+type UnionMember struct {
+	// Name is the exported name of the FIDL union member.
+	Name string
+
+	// PrivateName is the unexported name of the FIDL union member.
+	PrivateName string
+
+	// Type is the golang type of the union member.
+	Type Type
+
+	// Tag is the golang struct member tag which holds additional metadata
+	// about the union member.
 	Tag string
 }
 
@@ -154,11 +195,20 @@ type Interface struct {
 	// StubName is the name of the stub type for this FIDL interface.
 	StubName string
 
+	// EventProxyName is the name of the event proxy type for this FIDL interface.
+	EventProxyName string
+
 	// RequestName is the name of the interface request type for this FIDL interface.
 	RequestName string
 
-	// ServiceName is the service name for this FIDL interface.
-	ServiceName string
+	// ServerName is the name of the server type for this FIDL interface.
+	ServerName string
+
+	// ServiceNameString is the string service name for this FIDL interface.
+	ServiceNameString string
+
+	// ServiceNameConstant is the name of the service name constant for this FIDL interface.
+	ServiceNameConstant string
 
 	// Methods is a list of methods for this FIDL interface.
 	Methods []Method
@@ -177,6 +227,14 @@ type Method struct {
 
 	// Response represents an optional golang struct containing the response parameters.
 	Response *Struct
+
+	// EventExpectName is the name of the method for the client-side event proxy.
+	// Only relevant if the method is an event.
+	EventExpectName string
+
+	// IsEvent is set to true if the method is an event. In this case, Response will always be
+	// non-nil while Request will always be nil. EventExpectName will also be non-empty.
+	IsEvent bool
 }
 
 // Root is the root of the golang backend IR structure.
@@ -184,8 +242,6 @@ type Method struct {
 // The golang backend IR structure is loosely modeled after an abstract syntax
 // tree, and is used to generate golang code from templates.
 type Root struct {
-	// TODO(mknyszek): Support unions.
-
 	// Name is the name of the library.
 	Name string
 
@@ -197,6 +253,9 @@ type Root struct {
 
 	// Structs represents the list of FIDL structs represented as Go structs.
 	Structs []Struct
+
+	// Unions represents the list of FIDL unions represented as Go structs.
+	Unions []Union
 
 	// Interfaces represents the list of FIDL interfaces represented as Go types.
 	Interfaces []Interface
@@ -220,6 +279,9 @@ type compiler struct {
 
 	// decls contains all top-level declarations for the FIDL source.
 	decls types.DeclMap
+
+	// library is the name of the current library
+	library types.LibraryIdentifier
 }
 
 // Contains the full set of reserved golang keywords, in addition to a set of
@@ -302,7 +364,7 @@ var handleTypes = map[types.HandleSubtype]string{
 	types.Vmar:    "_zx.VMAR",
 }
 
-func exportIdentifier(name types.EncodedIdentifier) types.CompoundIdentifier {
+func exportIdentifier(name types.EncodedCompoundIdentifier) types.CompoundIdentifier {
 	ci := types.ParseCompoundIdentifier(name)
 	ci.Name = types.Identifier(common.ToUpperCamelCase(string(ci.Name)))
 	return ci
@@ -313,7 +375,7 @@ func isReservedWord(str string) bool {
 	return ok
 }
 
-func ChangeIfReserved(val types.Identifier, ext string) string {
+func changeIfReserved(val types.Identifier, ext string) string {
 	// TODO(mknyszek): Detect name collision within a scope as a result of transforming.
 	str := string(val) + ext
 	if isReservedWord(str) {
@@ -322,22 +384,36 @@ func ChangeIfReserved(val types.Identifier, ext string) string {
 	return str
 }
 
-func (_ *compiler) compileIdentifier(id types.Identifier, ext string) string {
-	str := string(id)
-	str = common.ToUpperCamelCase(str)
-	return ChangeIfReserved(types.Identifier(str), ext)
+func (c *compiler) inExternalLibrary(ci types.CompoundIdentifier) bool {
+	if len(ci.Library) != len(c.library) {
+		return true
+	}
+	for i, part := range c.library {
+		if ci.Library[i] != part {
+			return true
+		}
+	}
+	return false
 }
 
-func (_ *compiler) compileCompoundIdentifier(ei types.EncodedIdentifier, ext string) string {
-	ci := exportIdentifier(ei)
+func (_ *compiler) compileIdentifier(id types.Identifier, export bool, ext string) string {
+	str := string(id)
+	if export {
+		str = common.ToUpperCamelCase(str)
+	} else {
+		str = common.ToLowerCamelCase(str)
+	}
+	return changeIfReserved(types.Identifier(str), ext)
+}
+
+func (c *compiler) compileCompoundIdentifier(eci types.EncodedCompoundIdentifier, ext string) string {
+	ci := exportIdentifier(eci)
 	strs := []string{}
-	if ci.Library != "" {
-		strs = append(strs, ChangeIfReserved(ci.Library, "")+".")
+	if c.inExternalLibrary(ci) {
+		// TODO(FIDL-159) handle more than one library name component
+		strs = append(strs, changeIfReserved(ci.Library[0], "")+".")
 	}
-	for _, v := range ci.NestedDecls {
-		strs = append(strs, ChangeIfReserved(v, ""))
-	}
-	strs = append(strs, ChangeIfReserved(ci.Name, ext))
+	strs = append(strs, changeIfReserved(ci.Name, ext))
 	return strings.Join(strs, "")
 }
 
@@ -423,7 +499,6 @@ func (c *compiler) compileType(val types.Type) (r Type, t Tag) {
 		if !ok {
 			log.Fatal("Unknown identifier: ", val.Identifier)
 		}
-		// TODO(mknyszek): Support unions.
 		switch declType {
 		case types.EnumDeclType:
 			r = Type(e)
@@ -433,6 +508,8 @@ func (c *compiler) compileType(val types.Type) (r Type, t Tag) {
 			}
 			r = Type(e + ProxySuffix)
 		case types.StructDeclType:
+			fallthrough
+		case types.UnionDeclType:
 			if val.Nullable {
 				r = Type("*" + e)
 			} else {
@@ -452,15 +529,15 @@ func (c *compiler) compileConst(val types.Const) Const {
 	// to be either an enum, a primitive, or a string.
 	t, _ := c.compileType(val.Type)
 	return Const{
-		Name: c.compileCompoundIdentifier(val.Name, ""),
-		Type: t,
+		Name:  c.compileCompoundIdentifier(val.Name, ""),
+		Type:  t,
 		Value: c.compileConstant(val.Value),
 	}
 }
 
 func (c *compiler) compileEnumMember(val types.EnumMember) EnumMember {
 	return EnumMember{
-		Name:  c.compileIdentifier(val.Name, ""),
+		Name:  c.compileIdentifier(val.Name, true, ""),
 		Value: c.compileConstant(val.Value),
 	}
 }
@@ -479,9 +556,10 @@ func (c *compiler) compileEnum(val types.Enum) Enum {
 func (c *compiler) compileStructMember(val types.StructMember) StructMember {
 	ty, tag := c.compileType(val.Type)
 	return StructMember{
-		Type: ty,
-		Name: c.compileIdentifier(val.Name, ""),
-		Tag:  tag.String(),
+		Type:        ty,
+		Name:        c.compileIdentifier(val.Name, true, ""),
+		PrivateName: c.compileIdentifier(val.Name, false, ""),
+		Tag:         tag.String(),
 	}
 }
 
@@ -497,20 +575,46 @@ func (c *compiler) compileStruct(val types.Struct) Struct {
 	return r
 }
 
-func (c *compiler) compileParameter(p types.Parameter) StructMember {
-	ty, tag := c.compileType(p.Type)
-	return StructMember{
-		Type: ty,
-		Name: c.compileIdentifier(p.Name, ""),
-		Tag:  tag.String(),
+func (c *compiler) compileUnionMember(unionName string, val types.UnionMember) UnionMember {
+	ty, tag := c.compileType(val.Type)
+	return UnionMember{
+		Type:        ty,
+		Name:        c.compileIdentifier(val.Name, true, ""),
+		PrivateName: c.compileIdentifier(val.Name, false, ""),
+		Tag:         tag.String(),
 	}
 }
 
-func (c *compiler) compileMethod(ifaceName types.EncodedIdentifier, val types.Method) Method {
-	methodName := c.compileIdentifier(val.Name, "")
+func (c *compiler) compileUnion(val types.Union) Union {
+	r := Union{
+		Name:      c.compileCompoundIdentifier(val.Name, ""),
+		TagName:   c.compileCompoundIdentifier(val.Name, TagSuffix),
+		Size:      val.Size,
+		Alignment: val.Alignment,
+	}
+	for _, v := range val.Members {
+		r.Members = append(r.Members, c.compileUnionMember(r.Name, v))
+	}
+	return r
+}
+
+func (c *compiler) compileParameter(p types.Parameter) StructMember {
+	ty, tag := c.compileType(p.Type)
+	return StructMember{
+		Type:        ty,
+		Name:        c.compileIdentifier(p.Name, true, ""),
+		PrivateName: c.compileIdentifier(p.Name, false, ""),
+		Tag:         tag.String(),
+	}
+}
+
+func (c *compiler) compileMethod(ifaceName types.EncodedCompoundIdentifier, val types.Method) Method {
+	methodName := c.compileIdentifier(val.Name, true, "")
 	r := Method{
-		Name:    methodName,
-		Ordinal: val.Ordinal,
+		Name:            methodName,
+		Ordinal:         val.Ordinal,
+		EventExpectName: "Expect" + methodName,
+		IsEvent:         !val.HasRequest && val.HasResponse,
 	}
 	if val.HasRequest {
 		req := Struct{
@@ -541,11 +645,14 @@ func (c *compiler) compileMethod(ifaceName types.EncodedIdentifier, val types.Me
 
 func (c *compiler) compileInterface(val types.Interface) Interface {
 	r := Interface{
-		Name:        c.compileCompoundIdentifier(val.Name, ""),
-		ProxyName:   c.compileCompoundIdentifier(val.Name, ProxySuffix),
-		StubName:    c.compileCompoundIdentifier(val.Name, StubSuffix),
-		RequestName: c.compileCompoundIdentifier(val.Name, RequestSuffix),
-		ServiceName: val.GetAttribute("ServiceName"),
+		Name:                c.compileCompoundIdentifier(val.Name, ""),
+		ProxyName:           c.compileCompoundIdentifier(val.Name, ProxySuffix),
+		StubName:            c.compileCompoundIdentifier(val.Name, StubSuffix),
+		RequestName:         c.compileCompoundIdentifier(val.Name, RequestSuffix),
+		EventProxyName:      c.compileCompoundIdentifier(val.Name, EventProxySuffix),
+		ServerName:          c.compileCompoundIdentifier(val.Name, ServiceSuffix),
+		ServiceNameConstant: c.compileCompoundIdentifier(val.Name, ServiceNameSuffix),
+		ServiceNameString:   val.GetServiceName(),
 	}
 	for _, v := range val.Methods {
 		r.Methods = append(r.Methods, c.compileMethod(val.Name, v))
@@ -555,7 +662,8 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 
 // Compile translates parsed FIDL IR into golang backend IR for code generation.
 func Compile(fidlData types.Root) Root {
-	c := compiler{decls: fidlData.Decls}
+	libraryName := types.ParseLibraryName(fidlData.Name)
+	c := compiler{decls: fidlData.Decls, library: libraryName}
 	r := Root{Name: string(fidlData.Name)}
 	for _, v := range fidlData.Consts {
 		r.Consts = append(r.Consts, c.compileConst(v))
@@ -565,6 +673,9 @@ func Compile(fidlData types.Root) Root {
 	}
 	for _, v := range fidlData.Structs {
 		r.Structs = append(r.Structs, c.compileStruct(v))
+	}
+	for _, v := range fidlData.Unions {
+		r.Unions = append(r.Unions, c.compileUnion(v))
 	}
 	if len(fidlData.Interfaces) != 0 {
 		r.NeedsBindings = true

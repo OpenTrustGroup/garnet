@@ -62,7 +62,7 @@ foreach(entry, icd_list) {
     "\"file_format_version\": \"1.0.0\",",
     "\"ICD\": {",
     "\"library_path\": \"$icd_name.so\",",
-    "\"abi_versions\": \"1.0.3\"",
+    "\"api_version\": \"1.0.68\"",
     "}",
     "}",
   ]
@@ -70,69 +70,89 @@ foreach(entry, icd_list) {
 }
 
 package("magma") {
-  system_image = true
+  deprecated_system_image = true
   if (magma_enable_developer_build) {
     testonly = true
   }
 
-  deps = []
-  resources = []
-  if (have_libvulkan) {
-    deps += [
-      ":libmagma",
-      ":libvulkan",
-    ]
+  deps = [
+    ":libmagma",
+  ]
+  libraries = [
+    {
+      name = "libmagma.so"
+    },
+  ]
 
-    libraries = [
+  resources = []
+  drivers = []
+
+  if (have_libvulkan) {
+    deps += [ ":libvulkan" ]
+  }
+
+  if (build_intel_gen) {
+    # Remove
+    deps += [ "$msd_intel_gen_build_root:msd_intel_core" ]
+    drivers += [
       {
-        name = "libmagma.so"
+        name = "libmsd_intel_core.so"
       },
     ]
 
-    if (build_intel_gen) {
-      # Remove
-      deps += [ "$msd_intel_gen_build_root:msd_intel_core" ]
-      drivers = [
+    if (magma_enable_developer_build) {
+      deps += [ "$msd_intel_gen_build_root:msd_intel_test" ]
+      drivers += [
         {
-          name = "libmsd_intel_core.so"
+          name = "libmsd_intel_test.so"
         },
       ]
-
-      if (magma_enable_developer_build) {
-        deps += [ "$msd_intel_gen_build_root:msd_intel_test" ]
-        drivers += [
-          {
-            name = "libmsd_intel_test.so"
-          },
-        ]
-      } else {
-        deps += [ "$msd_intel_gen_build_root:msd_intel" ]
-        drivers += [
-          {
-            name = "libmsd_intel.so"
-          },
-        ]
-      }
+    } else {
+      deps += [ "$msd_intel_gen_build_root:msd_intel" ]
+      drivers += [
+        {
+          name = "libmsd_intel.so"
+        },
+      ]
     }
   }
 
   if (build_msd_arm_mali) {
     if (magma_enable_developer_build) {
       deps += [ "//garnet/drivers/gpu/msd-arm-mali:msd_arm_test" ]
-      drivers = [
+      drivers += [
         {
           name = "libmsd_arm_test.so"
         },
       ]
     } else {
       deps += [ "//garnet/drivers/gpu/msd-arm-mali:msd_arm" ]
-      drivers = [
+      drivers += [
         {
           name = "libmsd_arm.so"
         },
       ]
     }
   }
+
+  if (build_msd_vsl_gc) {
+    if (magma_enable_developer_build) {
+      deps += [ "//garnet/drivers/gpu/msd-vsl-gc:msd_vsl_test" ]
+      drivers += [
+        {
+          name = "libmsd_vsl_test.so"
+        },
+      ]
+    } else {
+      deps += [ "//garnet/drivers/gpu/msd-vsl-gc:msd_vsl" ]
+      drivers += [
+        {
+          name = "libmsd_vsl.so"
+        },
+      ]
+    }
+  }
+
   foreach(entry, icd_list) {
     icd_name = entry.name
     resources += [
@@ -159,7 +179,7 @@ package("magma") {
 }
 
 package("magma-tools") {
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     ":tools",
@@ -173,9 +193,9 @@ package("magma-tools") {
 }
 
 package("vkcube") {
-  system_image = true
+  deprecated_system_image = true
 
-  if (have_libvulkan) {
+  if (have_libvulkan || use_vulkan_loader_for_tests) {
     deps = [
       "//garnet/lib/magma/tests/vkcube",
     ]
@@ -183,21 +203,6 @@ package("vkcube") {
     binaries = [
       {
         name = "vkcube"
-      },
-    ]
-  }
-}
-
-package("display-pipe") {
-  system_image = true
-
-  if (target_cpu == "x64") {
-    deps = [
-      "//garnet/lib/magma/src/display_pipe:display_pipe_service",
-    ]
-    binaries = [
-      {
-        name = "display_pipe"
       },
     ]
   }
@@ -246,16 +251,6 @@ if (build_intel_gen) {
       "//third_party/zlib",
     ]
   }
-}
-
-# internal only
-source_set("libmsd") {
-  deps = [
-    "src/sys_driver",
-  ]
-  public_deps = [
-    "include:msd_abi",
-  ]
 }
 
 group("tools") {

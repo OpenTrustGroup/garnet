@@ -6,74 +6,75 @@
 
 #include <map>
 #include <memory>
-
+#include <zircon/types.h>
 #include "garnet/bin/debug_agent/debugged_process.h"
-#include "garnet/bin/debug_agent/exception_handler.h"
-#include "garnet/lib/debug_ipc/protocol.h"
+#include "garnet/bin/debug_agent/remote_api.h"
+#include "garnet/lib/debug_ipc/helper/stream_buffer.h"
 #include "garnet/public/lib/fxl/macros.h"
 
-// Main state and control for the debug agent. The exception handler reports
-// exceptions in the debugged program directly to this class and data from
-// the debugger client via a StreamBuffer.
-//
-// This class sends data back to the client via the same StreamBuffer.
-class DebugAgent : public ExceptionHandler::Sink {
+namespace debug_agent {
+
+// Main state and control for the debug agent.
+class DebugAgent : public RemoteAPI {
  public:
-  // The exception handler is non-owning and must outlive this class.
-  explicit DebugAgent(ExceptionHandler* handler);
+  // A MessageLoopZircon should already be set up on the current thread.
+  //
+  // The stream must outlive this class. It will be used to send data to the
+  // client. It will not be read (that's the job of the provider of the
+  // RemoteAPI).
+  explicit DebugAgent(debug_ipc::StreamBuffer* stream);
   ~DebugAgent();
 
-  debug_ipc::StreamBuffer& stream() { return handler_->socket_buffer(); }
+  debug_ipc::StreamBuffer* stream() { return stream_; }
 
-  // ExceptionHandler::Sink implementation.
-  void OnStreamData() override;
-  void OnProcessTerminated(zx_koid_t process_koid) override;
-  void OnThreadStarting(zx::thread thread, zx_koid_t process_koid,
-                        zx_koid_t thread_koid) override;
-  void OnThreadExiting(zx_koid_t proc_koid, zx_koid_t thread_koid) override;
-  void OnException(zx_koid_t proc_koid, zx_koid_t thread_koid,
-                   uint32_t type) override;
+  void RemoveDebuggedProcess(zx_koid_t process_koid);
 
  private:
-  // IPC handlers.
+  // RemoteAPI implementation.
   void OnHello(const debug_ipc::HelloRequest& request,
-               debug_ipc::HelloReply* reply);
+               debug_ipc::HelloReply* reply) override;
   void OnLaunch(const debug_ipc::LaunchRequest& request,
-                debug_ipc::LaunchReply* reply);
-  void OnAttach(std::vector<char> serialized);
+                debug_ipc::LaunchReply* reply) override;
+  void OnKill(const debug_ipc::KillRequest& request,
+              debug_ipc::KillReply* reply) override;
+  void OnAttach(std::vector<char> serialized) override;
   void OnDetach(const debug_ipc::DetachRequest& request,
-                debug_ipc::DetachReply* reply);
-  void OnContinue(const debug_ipc::ContinueRequest& request,
-                  debug_ipc::ContinueReply* reply);
+                debug_ipc::DetachReply* reply) override;
+  void OnPause(const debug_ipc::PauseRequest& request,
+               debug_ipc::PauseReply* reply) override;
+  void OnResume(const debug_ipc::ResumeRequest& request,
+                debug_ipc::ResumeReply* reply) override;
+  void OnModules(const debug_ipc::ModulesRequest& request,
+                 debug_ipc::ModulesReply* reply) override;
   void OnProcessTree(const debug_ipc::ProcessTreeRequest& request,
-                     debug_ipc::ProcessTreeReply* reply);
+                     debug_ipc::ProcessTreeReply* reply) override;
   void OnThreads(const debug_ipc::ThreadsRequest& request,
-                 debug_ipc::ThreadsReply* reply);
+                 debug_ipc::ThreadsReply* reply) override;
   void OnReadMemory(const debug_ipc::ReadMemoryRequest& request,
-                    debug_ipc::ReadMemoryReply* reply);
+                    debug_ipc::ReadMemoryReply* reply) override;
   void OnAddOrChangeBreakpoint(
       const debug_ipc::AddOrChangeBreakpointRequest& request,
-      debug_ipc::AddOrChangeBreakpointReply* reply);
-  void OnRemoveBreakpoint(
-      const debug_ipc::RemoveBreakpointRequest& request,
-      debug_ipc::RemoveBreakpointReply* reply);
+      debug_ipc::AddOrChangeBreakpointReply* reply) override;
+  void OnRemoveBreakpoint(const debug_ipc::RemoveBreakpointRequest& request,
+                          debug_ipc::RemoveBreakpointReply* reply) override;
+  void OnBacktrace(const debug_ipc::BacktraceRequest& request,
+                   debug_ipc::BacktraceReply* reply) override;
 
-  // Returns the debugged process for the given koid or null if not found.
+  // Returns the debugged process/thread for the given koid(s) or null if not
+  // found.
   DebuggedProcess* GetDebuggedProcess(zx_koid_t koid);
+  DebuggedThread* GetDebuggedThread(zx_koid_t process_koid,
+                                    zx_koid_t thread_koid);
 
   // Returns a pointer to the newly created object.
-  DebuggedProcess* AddDebuggedProcess(zx_koid_t koid, zx::process proc);
-  void RemoveDebuggedProcess(zx_koid_t koid);
+  DebuggedProcess* AddDebuggedProcess(zx_koid_t process_koid,
+                                      zx::process zx_proc);
 
-  // Sends all current threads or one specific thread information as new thread
-  // notifications about the given process.
-  void SendCurrentThreads(zx_handle_t process, zx_koid_t proc_koid);
-  void SendThreadNotification(zx_koid_t proc_koid,
-                              const debug_ipc::ThreadRecord& record);
-
-  ExceptionHandler* handler_;  // Non-owning.
+  debug_ipc::StreamBuffer* stream_;
 
   std::map<zx_koid_t, std::unique_ptr<DebuggedProcess>> procs_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(DebugAgent);
 };
+
+}  // namespace debug_agent

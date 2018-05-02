@@ -5,51 +5,10 @@
 package wlan
 
 import (
-	bindings "fidl/bindings"
 	"fmt"
 	mlme "fuchsia/go/wlan_mlme"
 	"log"
 )
-
-type APIHeader struct {
-	txid    uint64
-	flags   uint32
-	ordinal int32
-}
-
-func (h *APIHeader) Encode(enc *bindings.Encoder) error {
-	// Create a method call header, similar to that of FIDL2
-	enc.StartStruct(16, 0)
-	defer enc.Finish()
-
-	if err := enc.WriteUint64(h.txid); err != nil {
-		return fmt.Errorf("could not encode txid: %v", err)
-	}
-	if err := enc.WriteUint32(h.flags); err != nil {
-		return fmt.Errorf("could not encode flags: %v", err)
-	}
-	if err := enc.WriteInt32(h.ordinal); err != nil {
-		return fmt.Errorf("could not encode ordinal: %v", err)
-	}
-	return nil
-}
-
-func (h *APIHeader) Decode(decoder *bindings.Decoder) error {
-	_, err := decoder.StartStruct()
-	if err != nil {
-		return err
-	}
-	defer decoder.Finish()
-
-	if h.txid, err = decoder.ReadUint64(); err != nil {
-		return err
-	}
-	if h.flags, err = decoder.ReadUint32(); err != nil {
-		return err
-	}
-	h.ordinal, err = decoder.ReadInt32()
-	return err
-}
 
 func PrintBssDescription(bss *mlme.BssDescription) {
 	log.Printf("  * BSSID: %02x:%02x:%02x:%02x:%02x:%02x",
@@ -96,8 +55,8 @@ func PrintBssDescription(bss *mlme.BssDescription) {
 	}
 }
 
-func PrintScanResponse(resp *mlme.ScanResponse) {
-	log.Print("ScanResponse")
+func PrintScanConfirm(resp *mlme.ScanConfirm) {
+	log.Print("ScanConfirm")
 	var resCode string
 	switch resp.ResultCode {
 	case mlme.ScanResultCodesSuccess:
@@ -112,8 +71,8 @@ func PrintScanResponse(resp *mlme.ScanResponse) {
 	}
 }
 
-func PrintJoinResponse(resp *mlme.JoinResponse) {
-	log.Print("JoinResponse")
+func PrintJoinConfirm(resp *mlme.JoinConfirm) {
+	log.Print("JoinConfirm")
 	var resCode string
 	switch resp.ResultCode {
 	case mlme.JoinResultCodesSuccess:
@@ -124,8 +83,8 @@ func PrintJoinResponse(resp *mlme.JoinResponse) {
 	log.Print("  Result code: ", resCode)
 }
 
-func PrintAuthenticateResponse(resp *mlme.AuthenticateResponse) {
-	log.Print("AuthenticateResponse")
+func PrintAuthenticateConfirm(resp *mlme.AuthenticateConfirm) {
+	log.Print("AuthenticateConfirm")
 	var authType string
 	switch resp.AuthType {
 	case mlme.AuthenticationTypesOpenSystem:
@@ -156,8 +115,8 @@ func PrintAuthenticateResponse(resp *mlme.AuthenticateResponse) {
 	log.Print("  Result code: ", resCode)
 }
 
-func PrintAssociateResponse(resp *mlme.AssociateResponse) {
-	log.Print("AssociateResponse")
+func PrintAssociateConfirm(resp *mlme.AssociateConfirm) {
+	log.Print("AssociateConfirm")
 	var resCode string
 	switch resp.ResultCode {
 	case mlme.AssociateResultCodesSuccess:
@@ -192,8 +151,8 @@ func PrintDisassociateIndication(ind *mlme.DisassociateIndication) {
 	log.Print("  Reason code: ", ind.ReasonCode)
 }
 
-func PrintDeauthenticateResponse(ind *mlme.DeauthenticateResponse) {
-	log.Print("DeauthenticateResponse")
+func PrintDeauthenticateConfirm(ind *mlme.DeauthenticateConfirm) {
+	log.Print("DeauthenticateConfirm")
 	log.Printf("  MAC: %02x:%02x:%02x:%02x:%02x:%02x",
 		ind.PeerStaAddress[0], ind.PeerStaAddress[1], ind.PeerStaAddress[2],
 		ind.PeerStaAddress[3], ind.PeerStaAddress[4], ind.PeerStaAddress[5])
@@ -214,21 +173,19 @@ func PrintSignalReportIndication(ind *mlme.SignalReportIndication) {
 	log.Printf("  RSSI: %d", int8(ind.Rssi))
 }
 
-func PrintDeviceQueryResponse(resp *mlme.DeviceQueryResponse) {
-	log.Print("DeviceQueryResponse")
+func PrintDeviceQueryConfirm(resp *mlme.DeviceQueryConfirm) {
+	log.Print("DeviceQueryConfirm")
 	log.Printf("  MAC: %02x:%02x:%02x:%02x:%02x:%02x",
 		resp.MacAddr[0], resp.MacAddr[1], resp.MacAddr[2],
 		resp.MacAddr[3], resp.MacAddr[4], resp.MacAddr[5])
-	log.Print("  Modes:")
-	for _, mode := range resp.Modes {
-		switch mode {
-		case mlme.MacModeSta:
-			log.Print("    STA")
-		case mlme.MacModeAp:
-			log.Print("    AP")
-		default:
-			log.Printf("    Unknown(%v)", mode)
-		}
+	log.Print("  Role:")
+	switch resp.Role {
+	case mlme.MacRoleClient:
+		log.Print("    CLIENT")
+	case mlme.MacRoleAp:
+		log.Print("    AP")
+	default:
+		log.Printf("    Unknown(%v)", resp.Role)
 	}
 	for i, band := range resp.Bands {
 		log.Printf("  Band %v:", i)

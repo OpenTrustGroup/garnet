@@ -40,7 +40,6 @@ constexpr uint16_t kPciConfigAddressPortTop = 3;
 constexpr uint16_t kPciConfigDataPortBase = 4;
 constexpr uint16_t kPciConfigDataPortTop = 7;
 
-constexpr uint32_t kPioAddressMask = ~bit_mask<uint32_t>(2);
 constexpr uint32_t kMmioAddressMask = ~bit_mask<uint32_t>(4);
 
 // PCI capabilities register layout.
@@ -52,15 +51,13 @@ constexpr uint8_t kPciCapNextOffset = 1;
 // These are provided to the guest via the /pci@10000000 node within the device
 // tree, and via the _SB section in the DSDT ACPI table.
 //
-// The device tree and DSDT define interrupts for 12 devices (IRQ 32-43).
+// The device tree and DSDT define interrupts for 12 devices (IRQ 32-47).
 // Adding  additional devices beyond that will require updates to both.
 constexpr uint32_t kPciGlobalIrqAssigments[PCI_MAX_DEVICES] = {
-    32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43};
+    32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47};
 
 uint32_t PciBar::aspace() const {
   switch (trap_type) {
-    case TrapType::PIO_SYNC:
-      return PCI_BAR_ASPACE_PIO;
     case TrapType::MMIO_SYNC:
     case TrapType::MMIO_BELL:
       return PCI_BAR_ASPACE_MMIO;
@@ -71,8 +68,6 @@ uint32_t PciBar::aspace() const {
 
 uint32_t PciBar::base() const {
   switch (aspace()) {
-    case PCI_BAR_ASPACE_PIO:
-      return addr & kPioAddressMask;
     case PCI_BAR_ASPACE_MMIO:
       return addr & kMmioAddressMask;
     default:
@@ -162,40 +157,37 @@ void PciBus::set_config_addr(uint32_t addr) {
 }
 
 zx_status_t PciBus::Connect(PciDevice* device) {
-  if (next_open_slot_ >= PCI_MAX_DEVICES)
+  if (next_open_slot_ >= PCI_MAX_DEVICES) {
+    FXL_LOG(ERROR) << "Out of PCI devices";
     return ZX_ERR_OUT_OF_RANGE;
+  }
   ZX_DEBUG_ASSERT(device_[next_open_slot_] == nullptr);
   size_t slot = next_open_slot_++;
 
   // Initialize BAR registers.
   for (uint8_t bar_num = 0; bar_num < PCI_MAX_BARS; ++bar_num) {
-    PciBar* bar = &device->bar_[bar_num];
-
     // Skip unimplemented bars.
-    if (!device->is_bar_implemented(bar_num))
+    if (!device->is_bar_implemented(bar_num)) {
       break;
+    }
 
     device->bus_ = this;
-    if (device->bar_[bar_num].aspace() == PCI_BAR_ASPACE_PIO) {
-      // PCI LOCAL BUS SPECIFICATION, REV. 3.0 Section 6.2.5.1
-      //
-      // This design implies that all address spaces used are a power of two in
-      // size and are naturally aligned.
-      bar->size = round_up_pow2(bar->size);
-      bar->addr = align(pio_base_, bar->size);
-      pio_base_ = bar->addr + bar->size;
-    } else {
-      bar->size = static_cast<uint16_t>(align(bar->size, PAGE_SIZE));
-      bar->addr = mmio_base_;
-      mmio_base_ += bar->size;
-    }
+    PciBar* bar = &device->bar_[bar_num];
+    bar->size = static_cast<uint16_t>(align(bar->size, PAGE_SIZE));
+    bar->addr = mmio_base_;
+    mmio_base_ += bar->size;
   }
 
   device->command_ = kPciCommandIoEnable | kPciCommandMemEnable;
   device->global_irq_ = kPciGlobalIrqAssigments[slot];
   device_[slot] = device;
 
-  return device->SetupBarTraps(guest_);
+  zx_status_t status = device->SetupBarTraps(guest_);
+  if (status == ZX_OK) {
+    FXL_LOG(INFO) << "PCI bus connected device " << slot << " to device ID 0x"
+                  << std::hex << device->attrs_.device_id;
+  }
+  return status;
 }
 
 // PCI LOCAL BUS SPECIFICATION, REV. 3.0 Section 6.1: All PCI devices must

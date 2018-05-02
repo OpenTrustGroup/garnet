@@ -4,7 +4,6 @@
 
 #include "channel.h"
 
-#include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/string_printf.h"
 
@@ -28,10 +27,20 @@ Channel::Channel(ChannelId id, hci::Connection::LinkType link_type)
 
 namespace internal {
 
+void RunTask(async_t* dispatcher, fbl::Closure task) {
+  if (dispatcher) {
+    async::PostTask(dispatcher, std::move(task));
+    return;
+  }
+  task();
+}
+
 ChannelImpl::ChannelImpl(ChannelId id,
                          fxl::WeakPtr<internal::LogicalLink> link,
                          std::list<PDU> buffered_pdus)
     : Channel(id, link->type()),
+      active_(false),
+      dispatcher_(nullptr),
       link_(link),
       pending_rx_sdus_(std::move(buffered_pdus)) {
   FXL_DCHECK(link_);
@@ -39,35 +48,44 @@ ChannelImpl::ChannelImpl(ChannelId id,
 
 bool ChannelImpl::Activate(RxCallback rx_callback,
                            ClosedCallback closed_callback,
-                           fxl::RefPtr<fxl::TaskRunner> task_runner) {
+                           async_t* dispatcher) {
   FXL_DCHECK(rx_callback);
   FXL_DCHECK(closed_callback);
-  FXL_DCHECK(task_runner);
 
-  std::lock_guard<std::mutex> lock(mtx_);
+  fbl::Closure task;
+  bool run_task = false;
 
-  // Activating on a closed link has no effect. We also clear this on
-  // deactivation to prevent a channel from being activated more than once.
-  if (!link_)
-    return false;
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
 
-  FXL_DCHECK(!task_runner_);
-  task_runner_ = task_runner;
-  rx_cb_ = rx_callback;
-  closed_cb_ = closed_callback;
+    // Activating on a closed link has no effect. We also clear this on
+    // deactivation to prevent a channel from being activated more than once.
+    if (!link_)
+      return false;
 
-  // Route the buffered packets.
-  if (!pending_rx_sdus_.empty()) {
-    // TODO(armansito): Stop using MakeCopyable! (NET-425).
-    task_runner_->PostTask(fxl::MakeCopyable(
-        [func = rx_cb_, pending = std::move(pending_rx_sdus_)]() mutable {
-          while (!pending.empty()) {
-            func(std::move(pending.front()));
-            pending.pop();
-          }
-        }));
+    FXL_DCHECK(!active_);
+    active_ = true;
+    FXL_DCHECK(!dispatcher_);
+    dispatcher_ = dispatcher;
+    rx_cb_ = std::move(rx_callback);
+    closed_cb_ = std::move(closed_callback);
 
-    FXL_DCHECK(pending_rx_sdus_.empty());
+    // Route the buffered packets.
+    if (!pending_rx_sdus_.empty()) {
+      run_task = true;
+      dispatcher = dispatcher_;
+      task = [func = rx_cb_, pending = std::move(pending_rx_sdus_)]() mutable {
+        while (!pending.empty()) {
+          func(std::move(pending.front()));
+          pending.pop();
+        }
+      };
+      FXL_DCHECK(pending_rx_sdus_.empty());
+    }
+  }
+
+  if (run_task) {
+    RunTask(dispatcher, std::move(task));
   }
 
   return true;
@@ -77,18 +95,18 @@ void ChannelImpl::Deactivate() {
   std::lock_guard<std::mutex> lock(mtx_);
 
   // De-activating on a closed link has no effect.
-  if (!link_ || !task_runner_) {
+  if (!link_ || !active_) {
     link_.reset();
     return;
   }
 
-  FXL_DCHECK(task_runner_);
-  task_runner_ = nullptr;
+  active_ = false;
+  dispatcher_ = nullptr;
   rx_cb_ = {};
   closed_cb_ = {};
 
   // Tell the link to release this channel on its thread.
-  link_->task_runner()->PostTask([this, link = link_, id = id()] {
+  async::PostTask(link_->dispatcher(), [this, link = link_, id = id()] {
     // If |link| is still alive than |this| must be valid since |link| holds a
     // reference to us.
     if (link) {
@@ -103,10 +121,10 @@ void ChannelImpl::SignalLinkError() {
   std::lock_guard<std::mutex> lock(mtx_);
 
   // Cannot signal an error on a closed or deactivated link.
-  if (!link_ || !task_runner_)
+  if (!link_ || !active_)
     return;
 
-  link_->task_runner()->PostTask([link = link_] { link->SignalError(); });
+  async::PostTask(link_->dispatcher(), [link = link_] { link->SignalError(); });
 }
 
 bool ChannelImpl::Send(std::unique_ptr<const common::ByteBuffer> sdu) {
@@ -126,83 +144,66 @@ bool ChannelImpl::Send(std::unique_ptr<const common::ByteBuffer> sdu) {
   }
 
   // Drop the packet if the channel is inactive.
-  if (!task_runner_)
+  if (!active_)
     return false;
 
-  if (link_->task_runner()->RunsTasksOnCurrentThread()) {
-    link_->SendBasicFrame(id(), *sdu);
-  } else {
-    // TODO(armansito): Stop using MakeCopyable! (NET-425).
-    link_->task_runner()->PostTask(
-        fxl::MakeCopyable([id = id(), link = link_, sdu = std::move(sdu)] {
-          if (link) {
-            link->SendBasicFrame(id, *sdu);
-          }
-        }));
-  }
+  async::PostTask(link_->dispatcher(),
+                  [id = id(), link = link_, sdu = std::move(sdu)] {
+                    if (link) {
+                      link->SendBasicFrame(id, *sdu);
+                    }
+                  });
 
   return true;
 }
 
 void ChannelImpl::OnLinkClosed() {
-  mtx_.lock();
+  async_t* dispatcher;
+  fbl::Closure task;
 
-  if (!link_ || !task_runner_) {
-    link_.reset();
-    mtx_.unlock();
-    return;
+  {
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    if (!link_ || !active_) {
+      link_.reset();
+      return;
+    }
+
+    FXL_DCHECK(closed_cb_);
+    dispatcher = dispatcher_;
+    task = std::move(closed_cb_);
+    active_ = false;
+    dispatcher_ = nullptr;
   }
 
-  FXL_DCHECK(closed_cb_);
-
-  if (task_runner_->RunsTasksOnCurrentThread()) {
-    // Unlock the mutex before executing the callback synchronously to prevent
-    // deadlocks.
-    auto func = std::move(closed_cb_);
-    mtx_.unlock();
-
-    func();
-    return;
-  }
-
-  task_runner_->PostTask(std::move(closed_cb_));
-  task_runner_ = nullptr;
-  mtx_.unlock();
+  RunTask(dispatcher, std::move(task));
 }
 
 void ChannelImpl::HandleRxPdu(PDU&& pdu) {
-  // TODO(armansito): This is the point where the channel mode implementation
-  // should take over the PDU. Since we only support basic mode: SDU == PDU.
-  mtx_.lock();
+  async_t* dispatcher;
+  fbl::Closure task;
 
-  // This will only be called on a live link.
-  FXL_DCHECK(link_);
+  {
+    // TODO(armansito): This is the point where the channel mode implementation
+    // should take over the PDU. Since we only support basic mode: SDU == PDU.
 
-  // Buffer the packets if the channel hasn't been activated.
-  if (!task_runner_) {
-    pending_rx_sdus_.emplace(std::forward<PDU>(pdu));
-    mtx_.unlock();
-    return;
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    // This will only be called on a live link.
+    FXL_DCHECK(link_);
+
+    // Buffer the packets if the channel hasn't been activated.
+    if (!active_) {
+      pending_rx_sdus_.emplace(std::forward<PDU>(pdu));
+      return;
+    }
+
+    dispatcher = dispatcher_;
+    task = [func = rx_cb_, pdu = std::move(pdu)] { func(pdu); };
+
+    FXL_DCHECK(rx_cb_);
   }
-
-  FXL_DCHECK(rx_cb_);
-
-  // No need to post if we're already on |task_runner_|'s thread.
-  if (task_runner_->RunsTasksOnCurrentThread()) {
-    // Unlock the mutex before executing the callback synchronously to prevent
-    // deadlocks.
-    auto func = rx_cb_;
-    mtx_.unlock();
-
-    func(std::forward<PDU>(pdu));
-    return;
-  }
-
-  // TODO(armansito): Stop using MakeCopyable! (NET-425).
-  task_runner_->PostTask(
-      fxl::MakeCopyable([func = rx_cb_, pdu = std::move(pdu)] { func(pdu); }));
-
-  mtx_.unlock();
+  RunTask(dispatcher, std::move(task));
 }
 
 }  // namespace internal

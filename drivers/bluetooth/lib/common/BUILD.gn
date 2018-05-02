@@ -6,9 +6,6 @@ source_set("common") {
   sources = [
     "byte_buffer.cc",
     "byte_buffer.h",
-    "cancelable_callback.h",
-    "cancelable_task.cc",
-    "cancelable_task.h",
     "device_address.cc",
     "device_address.h",
     "device_class.cc",
@@ -25,6 +22,8 @@ source_set("common") {
     "slab_allocator.h",
     "slab_allocator_traits.h",
     "slab_buffer.h",
+    "status.cc",
+    "status.h",
     "task_domain.h",
     "test_helpers.h",
     "uint128.h",
@@ -36,6 +35,7 @@ source_set("common") {
     "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
     "//zircon/public/lib/async-cpp",
+    "//zircon/public/lib/async-default",
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/zx",
   ]
@@ -46,8 +46,6 @@ source_set("tests") {
 
   sources = [
     "byte_buffer_unittest.cc",
-    "cancelable_callback_unittest.cc",
-    "cancelable_task_unittest.cc",
     "device_address_unittest.cc",
     "device_class_unittest.cc",
     "manufacturer_names_unittest.cc",
@@ -56,6 +54,7 @@ source_set("tests") {
     "run_task_sync_unittest.cc",
     "slab_allocator_traits_unittest.cc",
     "slab_allocator_unittest.cc",
+    "status_unittest.cc",
     "task_domain_unittest.cc",
     "uuid_unittest.cc",
   ]

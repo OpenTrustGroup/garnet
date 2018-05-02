@@ -7,10 +7,6 @@ library presentation;
 using gfx;
 using input;
 
-// import "lib/ui/presentation/fidl/display_usage.fidl";
-// import "lib/ui/gfx/fidl/renderer.fidl";
-// import "lib/ui/input/fidl/input_events.fidl";
-
 // |Presentation.CaptureKeyboardEvent| will consume this listener interface and
 // call |OnEvent| when the registered keyboard event occurs.
 interface KeyboardCaptureListener {
@@ -47,4 +43,27 @@ interface Presentation {
   // it.
   6: CaptureKeyboardEvent(input.KeyboardEvent event_to_capture,
                           KeyboardCaptureListener listener);
+
+  // TODO(SCN-650): Determine better place for PresentationMode API.
+  8: GetPresentationMode() -> (PresentationMode mode);
+  9: SetPresentationModeListener(PresentationModeListener listener);
 };
+
+// Screen modes that can be detected via sensor data.
+// N.B. We use accelerometers to measure gravity when at rest, so detection is
+// limited to earth-relative orientations.
+enum PresentationMode {
+  CLOSED = 0;
+  LAPTOP = 1;
+  TABLET = 2;
+  TENT = 3;
+};
+
+// Tell client that the screen mode has changed, according to sensors.
+// N.B. There can be a race where the actual mode continues to change, after
+// the listener has been notified. The client must call GetPresentationMode(),
+// which will return the latest detected mode.
+interface PresentationModeListener {
+  1: OnModeChanged();
+};
+

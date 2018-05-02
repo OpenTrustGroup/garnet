@@ -79,6 +79,25 @@ class VirtioRelativePointer : public VirtioInput {
   zx_status_t WriteConfig(uint64_t addr, const IoValue& value) override;
 };
 
+class VirtioAbsolutePointer : public VirtioInput {
+ public:
+  VirtioAbsolutePointer(InputEventQueue* event_queue,
+                        const PhysMem& phys_mem,
+                        const char* device_name,
+                        const char* device_serial,
+                        uint32_t max_width,
+                        uint32_t max_height)
+      : VirtioInput(event_queue, phys_mem, device_name, device_serial),
+        max_width_(max_width),
+        max_height_(max_height) {}
+
+  zx_status_t WriteConfig(uint64_t addr, const IoValue& value) override;
+
+ private:
+  uint32_t max_width_;
+  uint32_t max_height_;
+};
+
 }  // namespace machina
 
 #endif  // GARNET_LIB_MACHINA_VIRTIO_INPUT_H_

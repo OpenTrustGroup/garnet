@@ -5,13 +5,12 @@
 #include "garnet/bin/media/net_media_service/media_player_net_publisher.h"
 
 #include <fcntl.h>
-
-#include "garnet/bin/media/util/file_channel.h"
-#include "lib/fxl/logging.h"
 #include <fuchsia/cpp/media.h>
+
+#include "lib/fxl/logging.h"
 #include "lib/url/gurl.h"
 
-namespace media {
+namespace media_player {
 
 // static
 std::shared_ptr<MediaPlayerNetPublisher> MediaPlayerNetPublisher::Create(
@@ -43,4 +42,4 @@ MediaPlayerNetPublisher::~MediaPlayerNetPublisher() {
   media_player_.Unbind();
 }
 
-}  // namespace media
+}  // namespace media_player

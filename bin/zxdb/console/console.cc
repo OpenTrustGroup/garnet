@@ -7,7 +7,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "garnet/bin/zxdb/console/output_buffer.h"
 #include "garnet/public/lib/fxl/logging.h"
 #include "garnet/bin/zxdb/client/err.h"
 #include "garnet/bin/zxdb/client/process.h"
@@ -15,6 +14,7 @@
 #include "garnet/bin/zxdb/client/thread.h"
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/command_parser.h"
+#include "garnet/bin/zxdb/console/output_buffer.h"
 #include "garnet/public/lib/fxl/strings/string_printf.h"
 
 namespace zxdb {
@@ -39,16 +39,9 @@ Console::~Console() {
 
 void Console::Init() {
   line_input_.BeginReadLine();
-}
 
-Console::Result Console::OnInput(char c) {
-  if (line_input_.OnInput(c)) {
-    Result result = DispatchInputLine(line_input_.line());
-    if (result == Result::kQuit)
-      return result;
-    line_input_.BeginReadLine();
-  }
-  return Result::kContinue;
+  stdio_watch_ = debug_ipc::MessageLoop::Current()->WatchFD(
+      debug_ipc::MessageLoop::WatchMode::kRead, STDIN_FILENO, this);
 }
 
 void Console::Output(OutputBuffer output) {
@@ -78,15 +71,24 @@ void Console::Output(const Err& err) {
 
 Console::Result Console::DispatchInputLine(const std::string& line) {
   Command cmd;
-  Err err = ParseCommand(line, &cmd);
+  Err err;
+  if (line.empty()) {
+    // Repeat the previous command, don't add to history.
+    cmd = previous_command_;
+  } else {
+    line_input_.AddToHistory(line);
+    err = ParseCommand(line, &cmd);
+  }
 
   if (err.ok()) {
     if (cmd.verb() == Verb::kQuit) {
       return Result::kQuit;
     } else {
       err = context_.FillOutCommand(&cmd);
-      if (!err.has_error())
+      if (!err.has_error()) {
         err = DispatchCommand(&context_, cmd);
+        previous_command_ = cmd;
+      }
     }
   }
 
@@ -96,6 +98,20 @@ Console::Result Console::DispatchInputLine(const std::string& line) {
     Output(std::move(out));
   }
   return Result::kContinue;
+}
+
+void Console::OnFDReadable(int fd) {
+  char ch;
+  while (read(STDIN_FILENO, &ch, 1) > 0) {
+    if (line_input_.OnInput(ch)) {
+      Result result = DispatchInputLine(line_input_.line());
+      if (result == Result::kQuit) {
+        debug_ipc::MessageLoop::Current()->QuitNow();
+        return;
+      }
+      line_input_.BeginReadLine();
+    }
+  }
 }
 
 }  // namespace zxdb

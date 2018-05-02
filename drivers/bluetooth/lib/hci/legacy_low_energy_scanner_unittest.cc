@@ -19,7 +19,7 @@ using ::btlib::testing::FakeController;
 using ::btlib::testing::FakeDevice;
 using TestingBase = ::btlib::testing::FakeControllerTest<FakeController>;
 
-constexpr int64_t kScanPeriodMs = 10;
+constexpr int64_t kScanPeriodMs = 10000;
 
 constexpr char kPlainAdvData[] = "Test";
 constexpr char kPlainScanRsp[] = "Data";
@@ -54,7 +54,7 @@ class LegacyLowEnergyScannerTest : public TestingBase,
     test_device()->set_settings(settings);
 
     scanner_ = std::make_unique<LegacyLowEnergyScanner>(
-        this, transport(), message_loop()->task_runner());
+        this, transport(), dispatcher());
 
     test_device()->StartCmdChannel(test_cmd_chan());
     test_device()->StartAclChannel(test_acl_chan());
@@ -141,14 +141,14 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StartScanHCIErrors) {
   EXPECT_FALSE(scanner()->IsScanning());
   EXPECT_FALSE(test_device()->le_scan_state().enabled);
 
-  LowEnergyScanner::Status status;
-  auto cb = [&status, this](LowEnergyScanner::Status in_status) {
+  LowEnergyScanner::ScanStatus status;
+  auto cb = [&status, this](LowEnergyScanner::ScanStatus in_status) {
     status = in_status;
   };
 
   // Set Scan Parameters will fail.
   test_device()->SetDefaultResponseStatus(kLESetScanParameters,
-                                          Status::kHardwareFailure);
+                                          StatusCode::kHardwareFailure);
   EXPECT_EQ(0, test_device()->le_scan_state().scan_interval);
 
   EXPECT_TRUE(scanner()->StartScan(
@@ -165,7 +165,7 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StartScanHCIErrors) {
   RunUntilIdle();
 
   // Status should be failure and the scan parameters shouldn't have applied.
-  EXPECT_EQ(LowEnergyScanner::Status::kFailed, status);
+  EXPECT_EQ(LowEnergyScanner::ScanStatus::kFailed, status);
   EXPECT_EQ(0, test_device()->le_scan_state().scan_interval);
   EXPECT_FALSE(test_device()->le_scan_state().enabled);
   EXPECT_EQ(LowEnergyScanner::State::kIdle, scanner()->state());
@@ -174,7 +174,7 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StartScanHCIErrors) {
   // Set Scan Parameters will succeed but Set Scan Enable will fail.
   test_device()->ClearDefaultResponseStatus(kLESetScanParameters);
   test_device()->SetDefaultResponseStatus(kLESetScanEnable,
-                                          Status::kHardwareFailure);
+                                          StatusCode::kHardwareFailure);
 
   EXPECT_TRUE(scanner()->StartScan(
       false, defaults::kLEScanInterval, defaults::kLEScanWindow, false,
@@ -184,7 +184,7 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StartScanHCIErrors) {
   RunUntilIdle();
 
   // Status should be failure but the scan parameters should have applied.
-  EXPECT_EQ(LowEnergyScanner::Status::kFailed, status);
+  EXPECT_EQ(LowEnergyScanner::ScanStatus::kFailed, status);
   EXPECT_EQ(defaults::kLEScanInterval,
             test_device()->le_scan_state().scan_interval);
   EXPECT_EQ(defaults::kLEScanWindow,
@@ -201,10 +201,9 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StartScan) {
   EXPECT_FALSE(scanner()->IsScanning());
   EXPECT_FALSE(test_device()->le_scan_state().enabled);
 
-  LowEnergyScanner::Status status;
-  auto cb = [&status, this](LowEnergyScanner::Status in_status) {
+  LowEnergyScanner::ScanStatus status;
+  auto cb = [&status, this](LowEnergyScanner::ScanStatus in_status) {
     status = in_status;
-    message_loop()->QuitNow();
   };
 
   EXPECT_TRUE(scanner()->StartScan(
@@ -216,7 +215,7 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StartScan) {
   RunUntilIdle();
 
   // Scan should have started.
-  EXPECT_EQ(LowEnergyScanner::Status::kStarted, status);
+  EXPECT_EQ(LowEnergyScanner::ScanStatus::kStarted, status);
   EXPECT_EQ(defaults::kLEScanInterval,
             test_device()->le_scan_state().scan_interval);
   EXPECT_EQ(defaults::kLEScanWindow,
@@ -235,9 +234,10 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StartScan) {
       true /* filter_duplicates */, LEScanFilterPolicy::kNoWhiteList,
       kScanPeriodMs, cb));
 
-  // After 10 ms (kScanPeriodMs) the scan should stop by itself.
-  RunMessageLoop();
-  EXPECT_EQ(LowEnergyScanner::Status::kComplete, status);
+  // After 10 s (kScanPeriodMs) the scan should stop by itself.
+  AdvanceTimeBy(zx::msec(kScanPeriodMs));
+  RunUntilIdle();
+  EXPECT_EQ(LowEnergyScanner::ScanStatus::kComplete, status);
   EXPECT_FALSE(test_device()->le_scan_state().enabled);
   EXPECT_EQ(LowEnergyScanner::State::kIdle, scanner()->state());
   EXPECT_FALSE(scanner()->IsScanning());
@@ -248,8 +248,8 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StopScan) {
   EXPECT_FALSE(scanner()->IsScanning());
   EXPECT_FALSE(test_device()->le_scan_state().enabled);
 
-  LowEnergyScanner::Status status;
-  auto cb = [&status, this](LowEnergyScanner::Status in_status) {
+  LowEnergyScanner::ScanStatus status;
+  auto cb = [&status, this](LowEnergyScanner::ScanStatus in_status) {
     status = in_status;
   };
 
@@ -267,7 +267,7 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StopScan) {
   RunUntilIdle();
 
   // Scan should have started.
-  EXPECT_EQ(LowEnergyScanner::Status::kStarted, status);
+  EXPECT_EQ(LowEnergyScanner::ScanStatus::kStarted, status);
   EXPECT_TRUE(test_device()->le_scan_state().enabled);
   EXPECT_EQ(LowEnergyScanner::State::kScanning, scanner()->state());
   EXPECT_TRUE(scanner()->IsScanning());
@@ -277,7 +277,7 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StopScan) {
   EXPECT_TRUE(scanner()->StopScan());
   RunUntilIdle();
 
-  EXPECT_EQ(LowEnergyScanner::Status::kStopped, status);
+  EXPECT_EQ(LowEnergyScanner::ScanStatus::kStopped, status);
   EXPECT_FALSE(test_device()->le_scan_state().enabled);
   EXPECT_EQ(LowEnergyScanner::State::kIdle, scanner()->state());
   EXPECT_FALSE(scanner()->IsScanning());
@@ -288,8 +288,8 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StopScanWhileInitiating) {
   EXPECT_FALSE(scanner()->IsScanning());
   EXPECT_FALSE(test_device()->le_scan_state().enabled);
 
-  LowEnergyScanner::Status status;
-  auto cb = [&status, this](LowEnergyScanner::Status in_status) {
+  LowEnergyScanner::ScanStatus status;
+  auto cb = [&status, this](LowEnergyScanner::ScanStatus in_status) {
     status = in_status;
   };
 
@@ -306,44 +306,56 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StopScanWhileInitiating) {
   EXPECT_TRUE(scanner()->StopScan());
   RunUntilIdle();
 
-  EXPECT_EQ(LowEnergyScanner::Status::kStopped, status);
+  EXPECT_EQ(LowEnergyScanner::ScanStatus::kStopped, status);
   EXPECT_FALSE(test_device()->le_scan_state().enabled);
   EXPECT_EQ(LowEnergyScanner::State::kIdle, scanner()->state());
   EXPECT_FALSE(scanner()->IsScanning());
 }
 
 TEST_F(HCI_LegacyLowEnergyScannerTest, ActiveScanResults) {
+  // Make the scan period never end. We end it manually below.
+  constexpr int64_t kTestPeriod = LowEnergyScanner::kPeriodInfinite;
+
+  // One of the 6 fake devices is scannable but never sends scan response
+  // packets. That device doesn't get reported until the end of the scan period.
+  constexpr size_t kExpectedResultCount = 5u;
+
   AddFakeDevices();
 
-  LowEnergyScanner::Status status;
-  auto cb = [&status, this](LowEnergyScanner::Status in_status) {
+  LowEnergyScanner::ScanStatus status;
+  auto cb = [&status, this](LowEnergyScanner::ScanStatus in_status) {
     status = in_status;
-    if (status == LowEnergyScanner::Status::kComplete)
-      message_loop()->QuitNow();
   };
 
   std::map<common::DeviceAddress, std::pair<LowEnergyScanResult, std::string>>
       results;
-  set_device_found_callback([&results](const auto& result, const auto& data) {
+  set_device_found_callback([&, this](const auto& result, const auto& data) {
     results[result.address] = std::make_pair(result, data.ToString());
   });
 
   // Perform an active scan.
   EXPECT_TRUE(scanner()->StartScan(
       true, defaults::kLEScanInterval, defaults::kLEScanWindow, true,
-      LEScanFilterPolicy::kNoWhiteList, kScanPeriodMs, cb));
-
+      LEScanFilterPolicy::kNoWhiteList, kTestPeriod, cb));
   EXPECT_EQ(LowEnergyScanner::State::kInitiating, scanner()->state());
-  // Results come in after a delay - the callback will exit this loop.
-  RunMessageLoop();
 
-  EXPECT_EQ(6u, results.size());
+  RunUntilIdle();
+
+  ASSERT_EQ(kExpectedResultCount, results.size());
+
+  // Ending the scan period should notify Fake Device #4.
+  scanner()->StopScanPeriodForTesting();
+  RunUntilIdle();
+  EXPECT_EQ(LowEnergyScanner::ScanStatus::kComplete, status);
+  ASSERT_EQ(kExpectedResultCount + 1, results.size());
 
   // Verify the 6 results against the fake devices that were set up by
   // AddFakeDevices(). Since the scan period ended naturally, LowEnergyScanner
   // should generate a device found event for all pending reports even if a scan
   // response was not received for a scannable device (see Fake Device 4, i.e.
-  // kAddress4): Result 0
+  // kAddress4).
+
+  // Result 0
   auto iter = results.find(kAddress0);
   EXPECT_NE(iter, results.end());
 
@@ -409,13 +421,9 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, ActiveScanResults) {
 TEST_F(HCI_LegacyLowEnergyScannerTest, StopDuringActiveScan) {
   AddFakeDevices();
 
-  LowEnergyScanner::Status status;
-  auto cb = [&status, this](LowEnergyScanner::Status in_status) {
+  LowEnergyScanner::ScanStatus status;
+  auto cb = [&status, this](LowEnergyScanner::ScanStatus in_status) {
     status = in_status;
-    //if (status == LowEnergyScanner::Status::kStarted ||
-    //    status == LowEnergyScanner::Status::kStopped) {
-    //  message_loop()->QuitNow();
-    //}
   };
 
   std::map<common::DeviceAddress, std::pair<LowEnergyScanResult, std::string>>
@@ -423,12 +431,6 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StopDuringActiveScan) {
   set_device_found_callback(
       [&results, this](const auto& result, const auto& data) {
         results[result.address] = std::make_pair(result, data.ToString());
-
-        // Stop the scan after observing the last fake device that we added.
-        // FakeController sends device found events for fake devices in the
-        // order in which they were added.
-        //if (result.address == kAddress5)
-        //  message_loop()->QuitNow();
       });
 
   // Perform an active scan indefinitely. This means that the scan period will
@@ -440,7 +442,7 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StopDuringActiveScan) {
   RunUntilIdle();
   EXPECT_EQ(LowEnergyScanner::State::kScanning, scanner()->state());
 
-  // Run the message loop until we've seen an event for the last device that we
+  // Run the loop until we've seen an event for the last device that we
   // added. Fake Device 4 (i.e. kAddress4) is scannable but it never sends a
   // scan response so we expect that remain in the scanner's pending reports
   // list.
@@ -459,33 +461,36 @@ TEST_F(HCI_LegacyLowEnergyScannerTest, StopDuringActiveScan) {
 }
 
 TEST_F(HCI_LegacyLowEnergyScannerTest, PassiveScanResults) {
+  // Make the scan period never end.
+  constexpr int64_t kTestPeriod = LowEnergyScanner::kPeriodInfinite;
+  constexpr size_t kExpectedResultCount = 6u;
   AddFakeDevices();
 
-  LowEnergyScanner::Status status;
-  auto cb = [&status, this](LowEnergyScanner::Status in_status) {
+  LowEnergyScanner::ScanStatus status;
+  auto cb = [&status, this](LowEnergyScanner::ScanStatus in_status) {
     status = in_status;
-    //if (status == LowEnergyScanner::Status::kComplete)
-    //  message_loop()->QuitNow();
   };
 
   std::map<common::DeviceAddress, std::pair<LowEnergyScanResult, std::string>>
       results;
-  set_device_found_callback([&results](const auto& result, const auto& data) {
+  set_device_found_callback([&, this](const auto& result, const auto& data) {
     results[result.address] = std::make_pair(result, data.ToString());
   });
 
   // Perform a passive scan.
   EXPECT_TRUE(scanner()->StartScan(
       false, defaults::kLEScanInterval, defaults::kLEScanWindow, true,
-      LEScanFilterPolicy::kNoWhiteList, kScanPeriodMs, cb));
+      LEScanFilterPolicy::kNoWhiteList, kTestPeriod, cb));
 
   EXPECT_EQ(LowEnergyScanner::State::kInitiating, scanner()->state());
-  RunUntilIdle();
 
-  EXPECT_EQ(6u, results.size());
+  RunUntilIdle();
+  ASSERT_EQ(kExpectedResultCount, results.size());
 
   // Verify the 6 results against the fake devices that were set up by
-  // AddFakeDevices(). All Scan Response PDUs should have been ignored. Result 0
+  // AddFakeDevices(). All Scan Response PDUs should have been ignored.
+
+  // Result 0
   auto iter = results.find(kAddress0);
   EXPECT_NE(iter, results.end());
 

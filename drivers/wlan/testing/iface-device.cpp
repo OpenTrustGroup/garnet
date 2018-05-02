@@ -14,19 +14,8 @@ namespace testing {
 #define DEV(c) static_cast<IfaceDevice*>(c)
 static zx_protocol_device_t wlanmac_test_device_ops = {
     .version = DEVICE_OPS_VERSION,
-    .get_protocol = nullptr,
-    .open = nullptr,
-    .open_at = nullptr,
-    .close = nullptr,
     .unbind = [](void* ctx) { DEV(ctx)->Unbind(); },
     .release = [](void* ctx) { DEV(ctx)->Release(); },
-    .read = nullptr,
-    .write = nullptr,
-    .get_size = nullptr,
-    .ioctl = nullptr,
-    .suspend = nullptr,
-    .resume = nullptr,
-    .rxrpc = nullptr,
 };
 
 static wlanmac_protocol_ops_t wlanmac_test_protocol_ops = {
@@ -46,6 +35,9 @@ static wlanmac_protocol_ops_t wlanmac_test_protocol_ops = {
     .configure_bss = [](void* ctx, uint32_t options, wlan_bss_config_t* config) -> zx_status_t {
         return ZX_OK;
     },
+    .enable_beaconing = [](void* ctx, uint32_t options, bool enabled) -> zx_status_t {
+        return ZX_OK;
+    },
     .configure_beacon = [](void* ctx, uint32_t options, wlan_tx_packet_t* pkt) -> zx_status_t {
         return ZX_OK;
     },
@@ -55,7 +47,7 @@ static wlanmac_protocol_ops_t wlanmac_test_protocol_ops = {
 };
 #undef DEV
 
-IfaceDevice::IfaceDevice(zx_device_t* device) : parent_(device) {}
+IfaceDevice::IfaceDevice(zx_device_t* device, uint16_t role) : parent_(device), role_(role) {}
 
 zx_status_t IfaceDevice::Bind() {
     zxlogf(INFO, "wlan::testing::IfaceDevice::Bind()\n");
@@ -95,7 +87,7 @@ zx_status_t IfaceDevice::Query(uint32_t options, wlanmac_info_t* info) {
     // Fill out a minimal set of wlan device capabilities
     info->supported_phys = WLAN_PHY_DSSS | WLAN_PHY_CCK | WLAN_PHY_OFDM | WLAN_PHY_HT;
     info->driver_features = 0;
-    info->mac_modes = WLAN_MAC_MODE_STA;
+    info->mac_role = role_;
     info->caps = 0;
     info->num_bands = 2;
     // clang-format off

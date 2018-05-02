@@ -11,8 +11,9 @@ namespace zxdb {
 
 namespace {
 
-const char kNormalEscapeCode[] = "\x1b[0m";
-const char kBoldEscapeCode[] = "\x1b[1m";
+const char kNormalEscapeCode[] = "\x1b[0m";   // "[0m" = Normal.
+const char kBoldEscapeCode[] = "\x1b[1m";     // "[1m" = Bold.
+const char kCommentEscapeCode[] = "\x1b[2m";  // "[2m" = Faint.
 
 }  // namespace
 
@@ -49,11 +50,13 @@ void OutputBuffer::OutputErr(const Err& err) {
   spans_.push_back(Span(Syntax::kNormal, err.msg()));
 }
 
-void OutputBuffer::WriteToStdout() {
+void OutputBuffer::WriteToStdout() const {
   bool ended_in_newline = false;
   for (const Span& span : spans_) {
     if (span.syntax == Syntax::kHeading)
       fwrite(kBoldEscapeCode, 1, strlen(kBoldEscapeCode), stdout);
+    else if (span.syntax == Syntax::kComment)
+      fwrite(kCommentEscapeCode, 1, strlen(kCommentEscapeCode), stdout);
 
     fwrite(span.text.data(), 1, span.text.size(), stdout);
 
@@ -66,6 +69,13 @@ void OutputBuffer::WriteToStdout() {
 
   if (!ended_in_newline)
     fwrite("\n", 1, 1, stdout);
+}
+
+std::string OutputBuffer::AsString() const {
+  std::string result;
+  for (const Span& span : spans_)
+    result.append(span.text);
+  return result;
 }
 
 }  // namespace zxdb

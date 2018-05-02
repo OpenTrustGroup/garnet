@@ -4,11 +4,12 @@
 
 #include "garnet/lib/ui/gfx/engine/session.h"
 
+#include <utility>
+
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
+#include <lib/zx/time.h>
 #include <trace/event.h>
-#include <zx/time.h>
-#include <utility>
 
 #include <fuchsia/cpp/gfx.h>
 #include "garnet/lib/ui/gfx/engine/hit_tester.h"
@@ -133,6 +134,9 @@ bool Session::ApplyCommand(::gfx::Command command) {
     case ::gfx::Command::Tag::kSetHitTestBehavior:
       return ApplySetHitTestBehaviorCommand(
           std::move(command.set_hit_test_behavior()));
+    case ::gfx::Command::Tag::kSetSpaceProperties:
+      return ApplySetSpacePropertiesCommand(
+          std::move(command.set_space_properties()));
     case ::gfx::Command::Tag::kSetCamera:
       return ApplySetCameraCommand(std::move(command.set_camera()));
     case ::gfx::Command::Tag::kSetCameraTransform:
@@ -167,6 +171,11 @@ bool Session::ApplyCommand(::gfx::Command command) {
           std::move(command.bind_mesh_buffers()));
     case ::gfx::Command::Tag::kAddLayer:
       return ApplyAddLayerCommand(std::move(command.add_layer()));
+    case ::gfx::Command::Tag::kRemoveLayer:
+      return ApplyRemoveLayerCommand(std::move(command.remove_layer()));
+    case ::gfx::Command::Tag::kRemoveAllLayers:
+      return ApplyRemoveAllLayersCommand(
+          std::move(command.remove_all_layers()));
     case ::gfx::Command::Tag::kSetLayerStack:
       return ApplySetLayerStackCommand(std::move(command.set_layer_stack()));
     case ::gfx::Command::Tag::kSetRenderer:
@@ -239,6 +248,11 @@ bool Session::ApplyCreateResourceCommand(::gfx::CreateResourceCommand command) {
                                    std::move(command.resource.entity_node()));
     case ::gfx::ResourceArgs::Tag::kShapeNode:
       return ApplyCreateShapeNode(id, std::move(command.resource.shape_node()));
+    case ::gfx::ResourceArgs::Tag::kSpaceNode:
+      return ApplyCreateSpace(id, std::move(command.resource.space_node()));
+    case ::gfx::ResourceArgs::Tag::kSpaceHolderNode:
+      return ApplyCreateSpaceHolder(
+          id, std::move(command.resource.space_holder_node()));
     case ::gfx::ResourceArgs::Tag::kDisplayCompositor:
       return ApplyCreateDisplayCompositor(
           id, std::move(command.resource.display_compositor()));
@@ -447,6 +461,12 @@ bool Session::ApplySetHitTestBehaviorCommand(
   return false;
 }
 
+bool Session::ApplySetSpacePropertiesCommand(
+    ::gfx::SetSpacePropertiesCommand command) {
+  error_reporter()->ERROR() << "SetSpacePropertiesCommand not implemented.";
+  return false;
+}
+
 bool Session::ApplySetCameraCommand(::gfx::SetCameraCommand command) {
   if (auto renderer = resources_.FindResource<Renderer>(command.renderer_id)) {
     if (command.camera_id == 0) {
@@ -517,6 +537,26 @@ bool Session::ApplyAddLayerCommand(::gfx::AddLayerCommand command) {
   auto layer = resources_.FindResource<Layer>(command.layer_id);
   if (layer_stack && layer) {
     return layer_stack->AddLayer(std::move(layer));
+  }
+  return false;
+}
+
+bool Session::ApplyRemoveLayerCommand(::gfx::RemoveLayerCommand command) {
+  auto layer_stack =
+      resources_.FindResource<LayerStack>(command.layer_stack_id);
+  auto layer = resources_.FindResource<Layer>(command.layer_id);
+  if (layer_stack && layer) {
+    return layer_stack->RemoveLayer(std::move(layer));
+  }
+  return false;
+}
+
+bool Session::ApplyRemoveAllLayersCommand(
+    ::gfx::RemoveAllLayersCommand command) {
+  auto layer_stack =
+      resources_.FindResource<LayerStack>(command.layer_stack_id);
+  if (layer_stack) {
+    return layer_stack->RemoveAllLayers();
   }
   return false;
 }
@@ -892,6 +932,19 @@ bool Session::ApplyCreateShapeNode(scenic::ResourceId id,
   return node ? resources_.AddResource(id, std::move(node)) : false;
 }
 
+bool Session::ApplyCreateSpace(scenic::ResourceId id, ::gfx::SpaceArgs args) {
+  error_reporter()->ERROR()
+      << "scenic::gfx::Session::ApplyCreateSpace(): unimplemented";
+  return false;
+}
+
+bool Session::ApplyCreateSpaceHolder(scenic::ResourceId id,
+                                     ::gfx::SpaceHolderArgs args) {
+  error_reporter()->ERROR()
+      << "scenic::gfx::Session::ApplyCreateSpaceHolder(): unimplemented";
+  return false;
+}
+
 bool Session::ApplyCreateDisplayCompositor(scenic::ResourceId id,
                                            ::gfx::DisplayCompositorArgs args) {
   auto compositor = CreateDisplayCompositor(id, std::move(args));
@@ -1246,10 +1299,10 @@ bool Session::ScheduleUpdate(uint64_t presentation_time,
     // zero acquire fences).
 
     acquire_fence_set->WaitReadyAsync(
-        [weak = weak_factory_.GetWeakPtr(), presentation_time] {
+        [ weak = weak_factory_.GetWeakPtr(), presentation_time ] {
           if (weak)
             weak->engine_->session_manager()->ScheduleUpdateForSession(
-                presentation_time, SessionPtr(weak.get()));
+                weak->engine_, presentation_time, SessionPtr(weak.get()));
         });
 
     scheduled_updates_.push(Update{presentation_time, std::move(commands),
@@ -1265,8 +1318,8 @@ void Session::ScheduleImagePipeUpdate(uint64_t presentation_time,
     scheduled_image_pipe_updates_.push(
         {presentation_time, std::move(image_pipe)});
 
-    engine_->session_manager()->ScheduleUpdateForSession(presentation_time,
-                                                         SessionPtr(this));
+    engine_->session_manager()->ScheduleUpdateForSession(
+        engine_, presentation_time, SessionPtr(this));
   }
 }
 
@@ -1340,22 +1393,10 @@ bool Session::ApplyScheduledUpdates(uint64_t presentation_time,
 }
 
 void Session::EnqueueEvent(::gfx::Event event) {
-  if (is_valid()) {
-    if (buffered_events_->empty()) {
-      async::PostTask(async_get_default(), [weak = weak_factory_.GetWeakPtr()] {
-        if (weak)
-          weak->FlushEvents();
-      });
-    }
+  if (is_valid() && event_reporter_) {
     ui::Event scenic_event;
     scenic_event.set_gfx(std::move(event));
-    buffered_events_.push_back(std::move(scenic_event));
-  }
-}
-
-void Session::FlushEvents() {
-  if (!buffered_events_->empty() && event_reporter_) {
-    event_reporter_->SendEvents(std::move(buffered_events_));
+    event_reporter_->EnqueueEvent(std::move(scenic_event));
   }
 }
 
@@ -1413,7 +1454,6 @@ void Session::HitTestDeviceRay(::gfx::vec3 ray_origin,
 
 void Session::BeginTearDown() {
   engine()->session_manager()->TearDownSession(id());
-  FXL_DCHECK(!is_valid());
 }
 
 }  // namespace gfx

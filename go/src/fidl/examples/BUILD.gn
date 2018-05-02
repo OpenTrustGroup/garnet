@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//garnet/public/lib/fidl/build/fidl/fidl.gni")
+import("//build/fidl/fidl.gni")
 
 template("fidl_example") {
   not_needed(invoker, "*")
@@ -10,13 +10,14 @@ template("fidl_example") {
     forward_variables_from(invoker, [ "name" ])
 
     sources = [
-      "//zircon/system/host/fidl/examples/${target_name}.fidl2"
+      "//zircon/system/host/fidl/examples/${target_name}.fidl"
     ]
   }
 }
 
 fidl_example("alignment") {}
 fidl_example("enums") {}
+fidl_example("events") {}
 fidl_example("example-0") { name = "example_0" }
 fidl_example("example-1") { name = "example_1" }
 fidl_example("example-2") { name = "example_2" }
@@ -34,13 +35,13 @@ fidl_example("types") {}
 
 fidl("point") {
   sources = [
-    "//zircon/system/host/fidl/examples/library-a/point.fidl2"
+    "//zircon/system/host/fidl/examples/library-a/point.fidl"
   ]
 }
 
 fidl("view") {
   sources = [
-    "//zircon/system/host/fidl/examples/library-b/view.fidl2"
+    "//zircon/system/host/fidl/examples/library-b/view.fidl"
   ]
 
   deps = [
@@ -52,6 +53,7 @@ group("examples") {
   deps = [
     ":alignment",
     ":enums",
+    ":events",
     ":example-0",
     ":example-1",
     ":example-2",

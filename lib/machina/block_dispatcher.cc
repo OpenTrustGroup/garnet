@@ -14,13 +14,14 @@
 #include <fbl/unique_fd.h>
 #include <fbl/unique_ptr.h>
 #include <fdio/watcher.h>
+#include <trace/event.h>
 #include <virtio/virtio_ids.h>
 #include <virtio/virtio_ring.h>
 #include <zircon/compiler.h>
 #include <zircon/device/block.h>
 
-#include "garnet/lib/machina/fifo_block_dispatcher.h"
 #include "garnet/lib/machina/phys_mem.h"
+#include "garnet/lib/machina/qcow.h"
 #include "garnet/lib/machina/volatile_write_block_dispatcher.h"
 #include "lib/fxl/logging.h"
 
@@ -55,7 +56,11 @@ class FdioBlockDispatcher : public BlockDispatcher {
   }
 
   zx_status_t Read(off_t disk_offset, void* buf, size_t size) override {
+    TRACE_DURATION("machina", "io_block_read", "offset", disk_offset, "buf",
+                   buf, "size", size);
+
     fbl::AutoLock lock(&file_mutex_);
+
     off_t off = lseek(fd_, disk_offset, SEEK_SET);
     if (off < 0)
       return ZX_ERR_IO;
@@ -67,7 +72,11 @@ class FdioBlockDispatcher : public BlockDispatcher {
   }
 
   zx_status_t Write(off_t disk_offset, const void* buf, size_t size) override {
+    TRACE_DURATION("machina", "io_block_write", "offset", disk_offset, "buf",
+                   buf, "size", size);
+
     fbl::AutoLock lock(&file_mutex_);
+
     off_t off = lseek(fd_, disk_offset, SEEK_SET);
     if (off < 0)
       return ZX_ERR_IO;
@@ -192,9 +201,8 @@ zx_status_t BlockDispatcher::CreateFromFd(
   switch (data_plane) {
     case DataPlane::FDIO:
       return FdioBlockDispatcher::Create(fd, file_size, read_only, dispatcher);
-    case DataPlane::FIFO:
-      return FifoBlockDispatcher::Create(fd, file_size, read_only, phys_mem,
-                                         dispatcher);
+    case DataPlane::QCOW:
+      return QcowDispatcher::Create(fd, read_only, dispatcher);
     default:
       FXL_LOG(ERROR) << "Unsupported block dispatcher data plane";
       return ZX_ERR_INVALID_ARGS;

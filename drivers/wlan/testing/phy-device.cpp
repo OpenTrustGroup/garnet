@@ -20,22 +20,12 @@ namespace testing {
 #define DEV(c) static_cast<PhyDevice*>(c)
 static zx_protocol_device_t wlanphy_test_device_ops = {
     .version = DEVICE_OPS_VERSION,
-    .get_protocol = nullptr,
-    .open = nullptr,
-    .open_at = nullptr,
-    .close = nullptr,
     .unbind = [](void* ctx) { DEV(ctx)->Unbind(); },
     .release = [](void* ctx) { DEV(ctx)->Release(); },
-    .read = nullptr,
-    .write = nullptr,
-    .get_size = nullptr,
     .ioctl = [](void* ctx, uint32_t op, const void* in_buf, size_t in_len, void* out_buf,
                 size_t out_len, size_t* out_actual) -> zx_status_t {
         return DEV(ctx)->Ioctl(op, in_buf, in_len, out_buf, out_len, out_actual);
     },
-    .suspend = nullptr,
-    .resume = nullptr,
-    .rxrpc = nullptr,
 };
 #undef DEV
 
@@ -92,6 +82,11 @@ zx_status_t PhyDevice::Ioctl(uint32_t op, const void* in_buf, size_t in_len, voi
 namespace {
 wlan_device::PhyInfo get_info() {
     wlan_device::PhyInfo info;
+
+    // The "local" bit is set to prevent collisions with globally-administered MAC addresses.
+    static const uint8_t kTestMacAddr[] = { 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, };
+    memcpy(info.hw_mac_address.mutable_data(), kTestMacAddr, info.hw_mac_address.count());
+
     info.supported_phys.resize(0);
     info.driver_features.resize(0);
     info.mac_roles.resize(0);
@@ -179,8 +174,22 @@ void PhyDevice::CreateIface(wlan_device::CreateIfaceRequest req,
         return;
     }
 
+    uint16_t role = 0;
+    switch (req.role) {
+    case wlan_device::MacRole::CLIENT:
+        role = WLAN_MAC_ROLE_CLIENT;
+        break;
+    case wlan_device::MacRole::AP:
+        role = WLAN_MAC_ROLE_AP;
+        break;
+    default:
+        resp.status = ZX_ERR_NOT_SUPPORTED;
+        callback(std::move(resp));
+        return;
+    }
+
     // Create the interface device and bind it.
-    auto macdev = std::make_unique<IfaceDevice>(zxdev_);
+    auto macdev = std::make_unique<IfaceDevice>(zxdev_, role);
     zx_status_t status = macdev->Bind();
     if (status != ZX_OK) {
         zxlogf(ERROR, "could not bind child wlanmac device: %d\n", status);

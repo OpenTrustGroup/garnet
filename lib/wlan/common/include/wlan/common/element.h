@@ -133,7 +133,7 @@ class ElementWriter {
 
 // IEEE Std 802.11-2016, 9.4.2.2
 struct SsidElement : public Element<SsidElement, element_id::kSsid> {
-    static bool Create(uint8_t* buf, size_t len, size_t* actual, const char* ssid);
+    static bool Create(void* buf, size_t len, size_t* actual, const char* ssid);
     static const size_t kMinLen = 0;
     static const size_t kMaxLen = 32;
 
@@ -143,7 +143,7 @@ struct SsidElement : public Element<SsidElement, element_id::kSsid> {
 
 // IEEE Std 802.11-2016, 9.4.2.3
 struct SupportedRatesElement : public Element<SupportedRatesElement, element_id::kSuppRates> {
-    static bool Create(uint8_t* buf, size_t len, size_t* actual, const std::vector<uint8_t>& rates);
+    static bool Create(void* buf, size_t len, size_t* actual, const std::vector<uint8_t>& rates);
     static const size_t kMinLen = 1;
     static const size_t kMaxLen = 8;
 
@@ -153,7 +153,7 @@ struct SupportedRatesElement : public Element<SupportedRatesElement, element_id:
 
 // IEEE Std 802.11-2016, 9.4.2.4
 struct DsssParamSetElement : public Element<DsssParamSetElement, element_id::kDsssParamSet> {
-    static bool Create(uint8_t* buf, size_t len, size_t* actual, uint8_t chan);
+    static bool Create(void* buf, size_t len, size_t* actual, uint8_t chan);
     static const size_t kMinLen = 1;
     static const size_t kMaxLen = 1;
 
@@ -163,7 +163,7 @@ struct DsssParamSetElement : public Element<DsssParamSetElement, element_id::kDs
 
 // IEEE Std 802.11-2016, 9.4.2.5
 struct CfParamSetElement : public Element<CfParamSetElement, element_id::kCfParamSet> {
-    static bool Create(uint8_t* buf, size_t len, size_t* actual, uint8_t count, uint8_t period,
+    static bool Create(void* buf, size_t len, size_t* actual, uint8_t count, uint8_t period,
                        uint16_t max_duration, uint16_t dur_remaining);
     static const size_t kMinLen = 6;
     static const size_t kMaxLen = 6;
@@ -184,7 +184,7 @@ class BitmapControl : public common::BitField<uint8_t> {
 
 // IEEE Std 802.11-2016, 9.4.2.6
 struct TimElement : public Element<TimElement, element_id::kTim> {
-    static bool Create(uint8_t* buf, size_t len, size_t* actual, uint8_t dtim_count,
+    static bool Create(void* buf, size_t len, size_t* actual, uint8_t dtim_count,
                        uint8_t dtim_period, BitmapControl bmp_ctrl, const uint8_t* bmp,
                        size_t bmp_len);
     static const size_t kMinLenBmp = 1;
@@ -206,22 +206,47 @@ struct TimElement : public Element<TimElement, element_id::kTim> {
     bool traffic_buffered(uint16_t aid) const;
 } __PACKED;
 
+// IEEE Std 802.11-2016, 9.4.2.9. Figure 9-131, 9-132.
+struct SubbandTriplet {
+    uint8_t first_channel_number;
+    uint8_t number_of_channels;
+    uint8_t max_tx_power;  // dBm
+} __PACKED;
+
 // IEEE Std 802.11-2016, 9.4.2.9
 struct CountryElement : public Element<CountryElement, element_id::kCountry> {
-    static bool Create(uint8_t* buf, size_t len, size_t* actual, const char* country);
+    static bool Create(void* buf, size_t len, size_t* actual, const uint8_t* country,
+                       const std::vector<SubbandTriplet>& subbands);
     static const size_t kCountryLen = 3;
     static const size_t kMinLen = 3;  // TODO(porce): revisit the spec.
     static const size_t kMaxLen = 255;
 
     ElementHeader hdr;
-    char country[kCountryLen];
-    uint8_t triplets[];  // TODO(tkilbourn): define these
+
+    // TODO(NET-799): Validate dot11CountryString
+    // Note, country octets is not a null-terminated string.
+    // IEEE802.11-MIB Object Identifier 1.2.840.10036.1.1.1.23: dot11CountryString
+    // First two octets is the two character country code defined in ISO/IEC 3166-1
+    // The third octets
+    // - ASCII space character: all environments
+    // - ASCII 'O' : Outdoor environment only
+    // - ASCII 'I' : Indoor environment only
+    // - ASCII 'X' : Noncountry entity
+    // - Binary value of the Operating Class table number. Annex E Table E-1 becomes 0x01.
+    uint8_t country[kCountryLen];
+    static_assert(sizeof(SubbandTriplet) == 3,
+                  "Wireformat for SubbandTriplet is of length 3 octets.");
+
+    // One or more SubbandTriplet, if dot11OperatingClassesRequired is false.
+    // TODO(porce): Revisit for VHT, and if dot11OperatingClassesRequired is true.
+    uint8_t triplets[];
+    // Zero-padding, zero or one octect. Make the length of the CountryElement be even.
 } __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.13
 struct ExtendedSupportedRatesElement
     : public Element<ExtendedSupportedRatesElement, element_id::kExtSuppRates> {
-    static bool Create(uint8_t* buf, size_t len, size_t* actual, const std::vector<uint8_t>& rates);
+    static bool Create(void* buf, size_t len, size_t* actual, const std::vector<uint8_t>& rates);
     static const size_t kMinLen = 1;
     static const size_t kMaxLen = 255;
 
@@ -235,14 +260,153 @@ const uint16_t kEapolProtocolId = 0x888E;
 // The MLME always forwards the RSNE and never requires to decode the element itself. Hence, support
 // for accessing optional fields is left out and implemented only by the SME.
 struct RsnElement : public Element<RsnElement, element_id::kRsn> {
-    static bool Create(uint8_t* buf, size_t len, size_t* actual, const uint8_t* raw,
-                       size_t raw_len);
+    static bool Create(void* buf, size_t len, size_t* actual, const uint8_t* raw, size_t raw_len);
     static const size_t kMinLen = 2;
     static const size_t kMaxLen = 255;
 
     ElementHeader hdr;
     uint16_t version;
     uint8_t fields[];
+} __PACKED;
+
+// IEEE Std 802.11-2016, 9.4.1.17
+class QosInfo : public common::BitField<uint8_t> {
+   public:
+    constexpr explicit QosInfo(uint8_t value) : common::BitField<uint8_t>(value) {}
+    constexpr QosInfo() = default;
+
+    // AP specific QoS Info structure: IEEE Std 802.11-2016, 9.4.1.17, Figure 9-82
+    WLAN_BIT_FIELD(edca_param_set_update_count, 0, 4);
+    WLAN_BIT_FIELD(qack, 4, 1);
+    WLAN_BIT_FIELD(queue_request, 5, 1);
+    WLAN_BIT_FIELD(txop_request, 6, 1);
+    // 8th bit reserved
+
+    // Non-AP STA specific QoS Info structure: IEEE Std 802.11-2016, 9.4.1.17, Figure 9-83
+    WLAN_BIT_FIELD(ac_vo_uapsd_flag, 0, 1);
+    WLAN_BIT_FIELD(ac_vi_uapsd_flag, 1, 1);
+    WLAN_BIT_FIELD(ac_bk_uapsd_flag, 2, 1);
+    WLAN_BIT_FIELD(ac_be_uapsd_flag, 3, 1);
+    // qack already defined in AP specific structure.
+    WLAN_BIT_FIELD(max_sp_len, 5, 1);
+    WLAN_BIT_FIELD(more_data_ack, 6, 1);
+    // 8th bit reserved
+} __PACKED;
+
+// IEEE Std 802.11-2016, 9.4.2.30, Table 9-139
+enum TsDirection : uint8_t {
+    kUplink = 0,
+    kDownlink = 1,
+    kDirectLink = 2,
+    kBidirectionalLink = 3,
+};
+
+// IEEE Std 802.11-2016, 9.4.2.30, Table 9-140
+enum TsAccessPolicy : uint8_t {
+    // 0 reserved
+    kEdca = 1,
+    kHccaSpca = 2,
+    kMixedMode = 3,
+};
+
+// IEEE Std 802.11-2016, 9.4.2.30, Table 9-141
+namespace ts_ack_policy {
+enum TsAckPolicy : uint8_t {
+    kNormalAck = 0,
+    kNoAck = 1,
+    // 2 reserved
+    kBlockAck = 3,
+};
+}  // namespace ts_ack_policy
+
+// IEEE Std 802.11-2016, 9.4.2.30, Table 9-142
+// Only used if TsInfo's access policy uses EDCA.
+// Schedule Setting depends on TsInfo's ASPD and schedule fields.
+enum TsScheduleSetting : uint8_t {
+    kNoSchedule = 0,
+    kUnschedledApsd = 1,
+    kScheduledPsmp_GcrSp = 2,
+    kScheduledApsd = 3,
+};
+
+// IEEE Std 802.11-2016, 9.4.2.30, Figure 9-266
+class TsInfoPart1 : public common::BitField<uint16_t> {
+   public:
+    WLAN_BIT_FIELD(traffic_type, 0, 1);
+    WLAN_BIT_FIELD(tsid, 1, 4);
+    WLAN_BIT_FIELD(direction, 5, 2);
+    WLAN_BIT_FIELD(access_policy, 7, 2);
+    WLAN_BIT_FIELD(aggregation, 9, 1);
+    WLAN_BIT_FIELD(apsd, 10, 1);
+    WLAN_BIT_FIELD(user_priority, 11, 3);
+    WLAN_BIT_FIELD(ack_policy, 14, 2);
+} __PACKED;
+
+// IEEE Std 802.11-2016, 9.4.2.30, Figure 9-266
+class TsInfoPart2 : public common::BitField<uint8_t> {
+   public:
+    WLAN_BIT_FIELD(schedule, 0, 1);
+    // Bit 17-23 reserved.
+} __PACKED;
+
+// IEEE Std 802.11-2016, 9.4.2.30, Figure 9-266
+// Note: In order to use a 3 byte packed struct, the TsInfo was split into two parts.
+struct TsInfo {
+    TsInfoPart1 p1;
+    TsInfoPart2 p2;
+
+    bool IsValidAggregation() const {
+        if (p1.access_policy() == TsAccessPolicy::kHccaSpca) { return true; }
+        return p1.access_policy() == TsAccessPolicy::kEdca && p2.schedule();
+    }
+
+    bool IsScheduleReserved() const { return p1.access_policy() != TsAccessPolicy::kEdca; }
+
+    TsScheduleSetting GetScheduleSetting() const {
+        return static_cast<TsScheduleSetting>(p1.apsd() | (p2.schedule() << 1));
+    }
+} __PACKED;
+
+// IEEE Std 802.11-2016, 9.4.2.30, Figure 9-267
+struct NominalMsduSize : public common::BitField<uint16_t> {
+    WLAN_BIT_FIELD(size, 0, 15);
+    WLAN_BIT_FIELD(fixed, 15, 1);
+} __PACKED;
+
+// IEEE Std 802.11-2016, 9.4.2.30
+struct TspecElement : public Element<TspecElement, element_id::kTspec> {
+    // TODO(hahnr): The element will for now only be read by the AP when received from an associated
+    // client and there is no need for providing a custom constructor yet.
+
+    ElementHeader hdr;
+    TsInfo ts_info;
+    NominalMsduSize nominal_msdu_size;
+    uint16_t max_msdu_size;
+    uint32_t min_service_interval;
+    uint32_t max_service_interval;
+    uint32_t inactivity_interval;
+    uint32_t suspension_interval;
+    uint32_t service_start_time;
+    uint32_t min_data_rate;
+    uint32_t mean_data_rate;
+    uint32_t peak_data_rate;
+    uint32_t burst_size;
+    uint32_t delay_bound;
+    uint32_t min_phy_rate;
+    uint16_t surplus_bw_allowance;
+    uint16_t medium_time;
+
+    // TODO(hahnr): Add min/mean/peak data rate support based on the provided fields.
+    // TODO(hahnr): Add min PHY rate support based on the provided field.
+    // TODO(hahnr): Add DMG support.
+} __PACKED;
+
+// IEEE Std 802.11-2016, 9.4.2.35
+struct QosCapabilityElement : public Element<QosCapabilityElement, element_id::kQosCapability> {
+    static bool Create(void* buf, size_t len, size_t* actual, const QosInfo& qos_info);
+
+    ElementHeader hdr;
+    QosInfo qos_info;
 } __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.56.2
@@ -285,7 +449,7 @@ class HtCapabilityInfo : public common::BitField<uint16_t> {
         OCTETS_3839 = 0,
         OCTETS_7935 = 1,
     };
-};
+} __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.56.3
 class AmpduParams : public common::BitField<uint8_t> {
@@ -309,7 +473,7 @@ class AmpduParams : public common::BitField<uint8_t> {
         EIGHT_USEC = 6,
         SIXTEEN_USEC = 7,
     };
-};
+} __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.56.4
 class SupportedMcsRxMcsHead : public common::BitField<uint64_t> {
@@ -320,7 +484,7 @@ class SupportedMcsRxMcsHead : public common::BitField<uint64_t> {
     // HT-MCS table in IEEE Std 802.11-2016, Annex B.4.17.2
     // VHT-MCS tables in IEEE Std 802.11-2016, 21.5
     WLAN_BIT_FIELD(bitmask, 0, 64);
-};
+} __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.56.4
 class SupportedMcsRxMcsTail : public common::BitField<uint32_t> {
@@ -332,7 +496,7 @@ class SupportedMcsRxMcsTail : public common::BitField<uint32_t> {
     WLAN_BIT_FIELD(reserved1, 13, 3);
     WLAN_BIT_FIELD(highest_rate, 16, 10);  // Mbps. Rx Highest Supported Rate.
     WLAN_BIT_FIELD(reserved2, 26, 6);
-};
+} __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.56.4
 class SupportedMcsTxMcs : public common::BitField<uint32_t> {
@@ -354,7 +518,7 @@ class SupportedMcsTxMcs : public common::BitField<uint32_t> {
         if (num > kUpperbound) num = kUpperbound;
         set_max_ss(num - 1);
     }
-};
+} __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.56.4
 struct SupportedMcsSet {
@@ -393,7 +557,7 @@ class HtExtCapabilities : public common::BitField<uint16_t> {
         MCS_UNSOLICIED = 2,
         MCS_BOTH = 3,
     };
-};
+} __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.56.6
 class TxBfCapability : public common::BitField<uint32_t> {
@@ -490,7 +654,7 @@ class TxBfCapability : public common::BitField<uint32_t> {
         if (num > kUpperbound) num = kUpperbound;
         set_chan_estimation(num - 1);
     }
-};
+} __PACKED;
 
 class AselCapability : public common::BitField<uint8_t> {
    public:
@@ -505,11 +669,11 @@ class AselCapability : public common::BitField<uint8_t> {
     WLAN_BIT_FIELD(rx_asel, 5, 1);
     WLAN_BIT_FIELD(tx_sounding_ppdu, 6, 1);
     WLAN_BIT_FIELD(reserved, 7, 1);
-};
+} __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.56
 struct HtCapabilities : public Element<HtCapabilities, element_id::kHtCapabilities> {
-    static bool Create(uint8_t* buf, size_t len, size_t* actual, HtCapabilityInfo ht_cap_info,
+    static bool Create(void* buf, size_t len, size_t* actual, HtCapabilityInfo ht_cap_info,
                        AmpduParams ampdu_params, SupportedMcsSet mcs_set,
                        HtExtCapabilities ht_ext_cap, TxBfCapability txbf_cap,
                        AselCapability asel_cap);
@@ -568,7 +732,7 @@ class HtOpInfoHead : public common::BitField<uint32_t> {
         TWENTY_MHZ = 2,
         NON_HT_MIXED = 3,
     };
-};
+} __PACKED;
 
 class HtOpInfoTail : public common::BitField<uint8_t> {
    public:
@@ -580,11 +744,11 @@ class HtOpInfoTail : public common::BitField<uint8_t> {
     WLAN_BIT_FIELD(pco_active, 2, 1);
     WLAN_BIT_FIELD(pco_phase, 3, 1);
     WLAN_BIT_FIELD(reserved5, 4, 4);
-};
+} __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.57
 struct HtOperation : public Element<HtOperation, element_id::kHtOperation> {
-    static bool Create(uint8_t* buf, size_t len, size_t* actual, uint8_t primary_chan,
+    static bool Create(void* buf, size_t len, size_t* actual, uint8_t primary_chan,
                        HtOpInfoHead head, HtOpInfoTail tail, SupportedMcsSet mcs_set);
     static constexpr size_t kMinLen = 22;
     static constexpr size_t kMaxLen = 22;
@@ -601,7 +765,7 @@ struct HtOperation : public Element<HtOperation, element_id::kHtOperation> {
 
 // IEEE Std 802.11-2016, 9.4.2.126
 struct GcrGroupAddressElement {
-    static bool Create(uint8_t* buf, size_t len, size_t* actual, const common::MacAddr& addr);
+    static bool Create(void* buf, size_t len, size_t* actual, const common::MacAddr& addr);
     static const size_t kMinLen = common::kMacAddrLen;
     static const size_t kMaxLen = common::kMacAddrLen;
 

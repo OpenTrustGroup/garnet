@@ -14,7 +14,7 @@ package {{ .Name }}
 
 import (
 {{- if .NeedsBindings }}
-	_bindings "fidl/bindings2"
+	_bindings "fidl/bindings"
 {{- end }}
 {{- if .NeedsSyscallZx }}
 	_zx "syscall/zx"
@@ -36,6 +36,9 @@ const (
 {{ end -}}
 {{ range $struct := .Structs -}}
 {{ template "StructDefinition" $struct }}
+{{ end -}}
+{{ range $union := .Unions -}}
+{{ template "UnionDefinition" $union }}
 {{ end -}}
 {{ range $interface := .Interfaces -}}
 {{ template "InterfaceDefinition" $interface }}

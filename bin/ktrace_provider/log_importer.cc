@@ -9,14 +9,11 @@
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/log.h>
 
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
 
 namespace ktrace_provider {
 
-LogImporter::LogImporter() {
-  wait_.set_handler(fbl::BindMember(this, &LogImporter::Handle));
-}
+LogImporter::LogImporter() = default;
 
 LogImporter::~LogImporter() {
   Stop();
@@ -26,7 +23,7 @@ void LogImporter::Start() {
   if (log_)
     return;
 
-  zx_status_t status = zx::log::create(&log_, ZX_LOG_FLAG_READABLE);
+  zx_status_t status = zx::log::create(ZX_LOG_FLAG_READABLE, &log_);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to open kernel log: status=" << status;
     return;
@@ -45,15 +42,19 @@ void LogImporter::Stop() {
   if (!log_)
     return;
 
-  zx_status_t status = wait_.Cancel(async_get_default());
+  zx_status_t status = wait_.Cancel();
   FXL_CHECK(status == ZX_OK) << "status=" << status;
 
   log_.reset();
 }
 
-async_wait_result_t LogImporter::Handle(async_t* async,
-                                        zx_status_t status,
-                                        const zx_packet_signal_t* signal) {
+void LogImporter::Handle(async_t* async,
+                         async::WaitBase* wait,
+                         zx_status_t status,
+                         const zx_packet_signal_t* signal) {
+  if (status != ZX_OK)
+    return;
+
   alignas(zx_log_record_t) char log_buffer[ZX_LOG_RECORD_MAX];
   zx_log_record_t* log_record = reinterpret_cast<zx_log_record_t*>(log_buffer);
 
@@ -76,7 +77,7 @@ async_wait_result_t LogImporter::Handle(async_t* async,
     }
   }
 
-  return ASYNC_WAIT_AGAIN;
+  wait->Begin(async); // ignore errors
 }
 
 }  // namespace ktrace_provider

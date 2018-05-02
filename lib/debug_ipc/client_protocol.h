@@ -27,6 +27,14 @@ bool ReadReply(MessageReader* reader,
                LaunchReply* reply,
                uint32_t* transaction_id);
 
+// Stop.
+void WriteRequest(const KillRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer);
+bool ReadReply(MessageReader* reader,
+               KillReply* reply,
+               uint32_t* transaction_id);
+
 // Attach.
 void WriteRequest(const AttachRequest& request,
                   uint32_t transaction_id,
@@ -43,12 +51,20 @@ bool ReadReply(MessageReader* reader,
                DetachReply* reply,
                uint32_t* transaction_id);
 
-// Continue.
-void WriteRequest(const ContinueRequest& request,
+// Pause.
+void WriteRequest(const PauseRequest& request,
                   uint32_t transaction_id,
                   MessageWriter* writer);
 bool ReadReply(MessageReader* reader,
-               ContinueReply* reply,
+               PauseReply* reply,
+               uint32_t* transaction_id);
+
+// Resume.
+void WriteRequest(const ResumeRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer);
+bool ReadReply(MessageReader* reader,
+               ResumeReply* reply,
                uint32_t* transaction_id);
 
 // ProcessTree.
@@ -89,6 +105,22 @@ void WriteRequest(const RemoveBreakpointRequest& request,
                   MessageWriter* writer);
 bool ReadReply(MessageReader* reader,
                RemoveBreakpointReply* reply,
+               uint32_t* transaction_id);
+
+// Backtrace.
+void WriteRequest(const BacktraceRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer);
+bool ReadReply(MessageReader* reader,
+               BacktraceReply* reply,
+               uint32_t* transaction_id);
+
+// Modules.
+void WriteRequest(const ModulesRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer);
+bool ReadReply(MessageReader* reader,
+               ModulesReply* reply,
                uint32_t* transaction_id);
 
 // Notifications ---------------------------------------------------------------

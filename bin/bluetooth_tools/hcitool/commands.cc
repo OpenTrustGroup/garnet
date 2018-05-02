@@ -32,10 +32,10 @@ void StatusFilterCallback(fxl::Closure complete_cb,
                           ::btlib::hci::CommandChannel::TransactionId id,
                           const ::btlib::hci::EventPacket& event) {
   if (event.event_code() == ::btlib::hci::kCommandStatusEventCode) {
-    auto status = event.status();
-    std::cout << "  Command Status: " << fxl::StringPrintf("0x%02x", status)
-              << " (id=" << id << ")" << std::endl;
-    if (status != ::btlib::hci::Status::kSuccess)
+    auto status = event.ToStatus();
+    std::cout << "  Command Status: " << status.ToString() << " (id=" << id
+              << ")" << std::endl;
+    if (status != ::btlib::hci::StatusCode::kSuccess)
       complete_cb();
     return;
   }
@@ -48,11 +48,11 @@ void StatusFilterCallback(fxl::Closure complete_cb,
     const ::btlib::hci::CommandChannel::CommandCallback& cb,
     const fxl::Closure& complete_cb) {
   return cmd_data->cmd_channel()->SendCommand(
-      std::move(packet), cmd_data->task_runner(),
+      std::move(packet), cmd_data->dispatcher(),
       std::bind(&StatusFilterCallback, complete_cb, cb, _1, _2));
 }
 
-void LogCommandResult(::btlib::hci::Status status,
+void LogCommandResult(::btlib::hci::StatusCode status,
                       ::btlib::hci::CommandChannel::TransactionId id,
                       const std::string& event_name = "Command Complete") {
   std::cout << fxl::StringPrintf("  %s - status: 0x%02x (id=%lu)\n",
@@ -224,7 +224,7 @@ bool HandleVersionInfo(const CommandData* cmd_data,
     auto params =
         event.return_params<::btlib::hci::ReadLocalVersionInfoReturnParams>();
     LogCommandResult(params->status, id);
-    if (params->status != ::btlib::hci::Status::kSuccess) {
+    if (params->status != ::btlib::hci::StatusCode::kSuccess) {
       complete_cb();
       return;
     }
@@ -279,7 +279,7 @@ bool HandleReadBDADDR(const CommandData* cmd_data,
     auto return_params =
         event.return_params<::btlib::hci::ReadBDADDRReturnParams>();
     LogCommandResult(return_params->status, id);
-    if (return_params->status != ::btlib::hci::Status::kSuccess) {
+    if (return_params->status != ::btlib::hci::StatusCode::kSuccess) {
       complete_cb();
       return;
     }
@@ -310,7 +310,7 @@ bool HandleReadLocalName(const CommandData* cmd_data,
     auto return_params =
         event.return_params<::btlib::hci::ReadLocalNameReturnParams>();
     LogCommandResult(return_params->status, id);
-    if (return_params->status != ::btlib::hci::Status::kSuccess) {
+    if (return_params->status != ::btlib::hci::StatusCode::kSuccess) {
       complete_cb();
       return;
     }
@@ -680,7 +680,7 @@ bool HandleLEScan(const CommandData* cmd_data,
   };
   auto event_handler_id = cmd_data->cmd_channel()->AddLEMetaEventHandler(
       ::btlib::hci::kLEAdvertisingReportSubeventCode, le_adv_report_cb,
-      cmd_data->task_runner());
+      cmd_data->dispatcher());
 
   auto cleanup_cb =
       [ complete_cb, event_handler_id, cmd_channel = cmd_data->cmd_channel() ] {
@@ -714,17 +714,17 @@ bool HandleLEScan(const CommandData* cmd_data,
   };
 
   auto cb = [scan_disable_cb, cleanup_cb, timeout,
-             task_runner = cmd_data->task_runner()](
+             dispatcher = cmd_data->dispatcher()](
                 ::btlib::hci::CommandChannel::TransactionId id,
                 const ::btlib::hci::EventPacket& event) {
     auto return_params =
         event.return_params<::btlib::hci::SimpleReturnParams>();
     LogCommandResult(return_params->status, id);
-    if (return_params->status != ::btlib::hci::Status::kSuccess) {
+    if (return_params->status != ::btlib::hci::StatusCode::kSuccess) {
       cleanup_cb();
       return;
     }
-    task_runner->PostDelayedTask(scan_disable_cb, timeout);
+    async::PostDelayedTask(dispatcher, scan_disable_cb, zx::duration(timeout.ToNanoseconds()));
   };
 
   auto id = SendCommand(cmd_data, std::move(packet), cb, complete_cb);
@@ -759,7 +759,7 @@ bool HandleBRScan(const CommandData* cmd_data,
     return false;
   }
 
-  auto timeout = fxl::TimeDelta::FromSeconds(30);  // Default 30 seconds.
+  auto timeout = zx::sec(30);  // Default 30 seconds.
   std::string timeout_str;
   if (cmd_line.GetOptionValue("timeout", &timeout_str)) {
     uint32_t time_seconds;
@@ -774,7 +774,7 @@ bool HandleBRScan(const CommandData* cmd_data,
       return false;
     }
 
-    timeout = fxl::TimeDelta::FromSeconds(time_seconds);
+    timeout = zx::sec(time_seconds);
   }
 
   std::string filter;
@@ -836,7 +836,7 @@ bool HandleBRScan(const CommandData* cmd_data,
 
   event_handler_ids->push_back(cmd_data->cmd_channel()->AddEventHandler(
       ::btlib::hci::kInquiryResultEventCode, inquiry_result_cb,
-      cmd_data->task_runner()));
+      cmd_data->dispatcher()));
 
   // The callback invoked for an Inquiry Complete response.
   auto inquiry_complete_cb =
@@ -850,7 +850,7 @@ bool HandleBRScan(const CommandData* cmd_data,
 
   event_handler_ids->push_back(cmd_data->cmd_channel()->AddEventHandler(
       ::btlib::hci::kInquiryCompleteEventCode, inquiry_complete_cb,
-      cmd_data->task_runner()));
+      cmd_data->dispatcher()));
 
   // Delayed task that stops scanning.
   auto inquiry_cancel_cb = [cleanup_cb, cmd_data] {
@@ -861,24 +861,24 @@ bool HandleBRScan(const CommandData* cmd_data,
   };
 
   auto cb = [inquiry_cancel_cb, cleanup_cb, timeout,
-             task_runner = cmd_data->task_runner()](
+             dispatcher = cmd_data->dispatcher()](
                 ::btlib::hci::CommandChannel::TransactionId id,
                 const ::btlib::hci::EventPacket& event) {
     auto return_params =
         event.view().payload<::btlib::hci::CommandStatusEventParams>();
     LogCommandResult(return_params.status, id, "Command Status");
-    if (return_params.status != ::btlib::hci::Status::kSuccess) {
+    if (return_params.status != ::btlib::hci::StatusCode::kSuccess) {
       cleanup_cb();
       return;
     }
-    task_runner->PostDelayedTask(inquiry_cancel_cb, timeout);
+    async::PostDelayedTask(dispatcher, inquiry_cancel_cb, timeout);
   };
 
   // Inquiry sends a Command Status, and then we wait for the Inquiry Complete,
   // or the timer to run out, for a long time. Count this as "complete" when the
   // Status comes in.
   auto id = cmd_data->cmd_channel()->SendCommand(
-      std::move(packet), cmd_data->task_runner(), cb,
+      std::move(packet), cmd_data->dispatcher(), cb,
       ::btlib::hci::kCommandStatusEventCode);
   std::cout << "  Sent HCI_Inquiry (id=" << id << ")" << std::endl;
 

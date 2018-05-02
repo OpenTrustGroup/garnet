@@ -3,6 +3,12 @@
 // found in the LICENSE file.
 
 #include "msd_arm_device.h"
+
+#include <bitset>
+#include <cinttypes>
+#include <cstdio>
+#include <string>
+
 #include "job_scheduler.h"
 #include "lib/fxl/arraysize.h"
 #include "lib/fxl/strings/string_printf.h"
@@ -11,10 +17,7 @@
 #include "magma_vendor_queries.h"
 #include "platform_port.h"
 #include "platform_trace.h"
-#include <bitset>
-#include <cstdio>
 #include <ddk/debug.h>
-#include <string>
 
 #include "registers.h"
 
@@ -159,7 +162,7 @@ bool MsdArmDevice::Init(void* device_handle)
     if (!mmio)
         return DRETF(false, "failed to map registers");
 
-    register_io_ = std::make_unique<RegisterIo>(std::move(mmio));
+    register_io_ = std::make_unique<magma::RegisterIo>(std::move(mmio));
 
     gpu_features_.ReadFrom(register_io_.get());
     magma::log(magma::LOG_INFO, "ARM mali ID %x", gpu_features_.gpu_id.reg_value());
@@ -179,6 +182,10 @@ bool MsdArmDevice::Init(void* device_handle)
 
     scheduler_ = std::make_unique<JobScheduler>(this, 3);
     address_manager_ = std::make_unique<AddressManager>(this, gpu_features_.address_space_count);
+
+    bus_mapper_ = magma::PlatformBusMapper::Create(platform_device_->GetBusTransactionInitiator());
+    if (!bus_mapper_)
+        return DRETF(false, "Failed to create bus mapper");
 
     if (!InitializeInterrupts())
         return false;
@@ -576,7 +583,10 @@ void MsdArmDevice::CancelAtoms(std::shared_ptr<MsdArmConnection> connection)
 
 magma::PlatformPort* MsdArmDevice::GetPlatformPort() { return device_port_.get(); }
 
-void MsdArmDevice::DumpRegisters(const GpuFeatures& features, RegisterIo* io, DumpState* dump_state)
+void MsdArmDevice::UpdateGpuActive(bool active) { power_manager_->UpdateGpuActive(active); }
+
+void MsdArmDevice::DumpRegisters(const GpuFeatures& features, magma::RegisterIo* io,
+                                 DumpState* dump_state)
 {
     static struct {
         const char* name;
@@ -627,6 +637,14 @@ void MsdArmDevice::DumpRegisters(const GpuFeatures& features, RegisterIo* io, Du
 void MsdArmDevice::Dump(DumpState* dump_state)
 {
     DumpRegisters(gpu_features_, register_io_.get(), dump_state);
+
+    std::chrono::steady_clock::duration total_time;
+    std::chrono::steady_clock::duration active_time;
+    power_manager_->GetGpuActiveInfo(&total_time, &active_time);
+    dump_state->total_time_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(total_time).count();
+    dump_state->active_time_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(active_time).count();
 }
 
 void MsdArmDevice::DumpToString(std::string& dump_string)
@@ -644,6 +662,8 @@ void MsdArmDevice::FormatDump(DumpState& dump_state, std::string& dump_string)
         fxl::StringAppendf(&dump_string, "Core type %s state %s bitmap: 0x%lx\n", state.core_type,
                            state.status_type, state.bitmask);
     }
+    fxl::StringAppendf(&dump_string, "Total ms %" PRIu64 " Active ms %" PRIu64 "\n",
+                       dump_state.total_time_ms, dump_state.active_time_ms);
     fxl::StringAppendf(&dump_string, "Gpu fault status 0x%x, address 0x%lx\n",
                        dump_state.gpu_fault_status, dump_state.gpu_fault_address);
     for (size_t i = 0; i < dump_state.job_slot_status.size(); i++) {
@@ -690,7 +710,7 @@ magma::Status MsdArmDevice::ProcessCancelAtoms(std::weak_ptr<MsdArmConnection> c
     return MAGMA_STATUS_OK;
 }
 
-void MsdArmDevice::ExecuteAtomOnDevice(MsdArmAtom* atom, RegisterIo* register_io)
+void MsdArmDevice::ExecuteAtomOnDevice(MsdArmAtom* atom, magma::RegisterIo* register_io)
 {
     TRACE_DURATION("magma", "ExecuteAtomOnDevice", "address", atom->gpu_address(), "slot",
                    atom->slot());

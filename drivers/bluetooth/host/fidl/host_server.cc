@@ -25,14 +25,14 @@ void HostServer::GetInfo(GetInfoCallback callback) {
   callback(fidl_helpers::NewAdapterInfo(*adapter()));
 }
 
-void HostServer::RequestControlAdapter(
-    fidl::InterfaceRequest<bluetooth_control::Adapter> request) {
+void HostServer::RequestAdapter(
+    fidl::InterfaceRequest<bluetooth_host::Adapter> request) {
   BindServer<AdapterServer>(std::move(request));
 }
 
 void HostServer::RequestLowEnergyCentral(
     fidl::InterfaceRequest<bluetooth_low_energy::Central> request) {
-  BindServer<LowEnergyCentralServer>(std::move(request));
+  BindServer<LowEnergyCentralServer>(std::move(request), gatt_host_);
 }
 
 void HostServer::RequestLowEnergyPeripheral(

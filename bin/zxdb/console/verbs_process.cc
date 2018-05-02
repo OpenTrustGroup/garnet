@@ -4,11 +4,12 @@
 
 #include "garnet/bin/zxdb/console/verbs.h"
 
+#include <algorithm>
 #include <inttypes.h>
 
 #include "garnet/bin/zxdb/client/err.h"
-#include "garnet/bin/zxdb/client/session.h"
 #include "garnet/bin/zxdb/client/process.h"
+#include "garnet/bin/zxdb/client/session.h"
 #include "garnet/bin/zxdb/client/target.h"
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/command_utils.h"
@@ -37,18 +38,27 @@ Err AssertRunnableTarget(Target* target) {
   return Err();
 }
 
-// Callback for both "run" and "attach". The verb affects the message printed
-// to the screen.
-void RunAndAttachCallback(const char* verb, Target* target, const Err& err) {
+// Callback for "run", "attach", "detach" and "stop". The verb affects the
+// message printed to the screen.
+void ProcessCommandCallback(const char* verb,
+                            fxl::WeakPtr<Target> target,
+                            bool display_message_on_success,
+                            const Err& err) {
+  if (!display_message_on_success && !err.has_error())
+    return;
+
   Console* console = Console::get();
 
   OutputBuffer out;
   if (err.has_error()) {
-    out.Append(fxl::StringPrintf("Process %d %s failed.\n",
-                                 console->context().IdForTarget(target), verb));
+    if (target) {
+      out.Append(fxl::StringPrintf("Process %d %s failed.\n",
+                                   console->context().IdForTarget(target.get()),
+                                   verb));
+    }
     out.OutputErr(err);
-  } else {
-    out.Append(DescribeTarget(&console->context(), target, false));
+  } else if (target) {
+    out.Append(DescribeTarget(&console->context(), target.get(), false));
   }
 
   console->Output(std::move(out));
@@ -68,6 +78,9 @@ const char kNewHelp[] =
   process is specified ("process 2 new"), the new process context will clone
   the given one. The new context will be the active context.
 
+  A process noun must be specified. Long-term we want to add support to "new"
+  multiple things.
+
 Hints
 
   To see a list of available process contexts, type "process". To switch the
@@ -80,12 +93,19 @@ Example
 
   [zxdb] run chrome
   Process 1 Running 3456 chrome
-  [zxdb] new
+  [zxdb] process new
   Process 2 created.
   [zxdb] attach 1239
   Process 2 Running 1239
 )";
 Err DoNew(ConsoleContext* context, const Command& cmd) {
+  Err err = cmd.ValidateNouns({Noun::kProcess});
+  if (err.has_error())
+    return err;
+
+  if (!cmd.HasNoun(Noun::kProcess))
+    return Err("Use \"process new\" to create a new process context.");
+
   Target* new_target =
       context->session()->system().CreateNewTarget(cmd.target());
   context->SetActiveTarget(new_target);
@@ -142,8 +162,41 @@ Err DoRun(ConsoleContext* context, const Command& cmd) {
     cmd.target()->SetArgs(cmd.args());
   }
 
-  cmd.target()->Launch([](Target* target, const Err& err) {
-    RunAndAttachCallback("launch", target, err);
+  cmd.target()->Launch([](fxl::WeakPtr<Target> target, const Err& err) {
+    ProcessCommandCallback("launch", target, true, err);
+  });
+  return Err();
+}
+
+// kill ----------------------------------------------------------------------
+
+const char kKillShortHelp[] = "kill / k: terminate a process";
+const char kKillHelp[] =
+    R"(kill
+  Terminates a process from the debugger.
+Hints
+
+  By default the current process is detached.
+  To detach a different process prefix with "process N"
+
+Examples
+
+  kill
+      Kills the current process.
+
+  process 4 kill
+      Kills process 4.
+)";
+Err DoKill(ConsoleContext* context, const Command& cmd) {
+  // Only a process can be detached.
+  Err err = cmd.ValidateNouns({Noun::kProcess});
+  if (err.has_error())
+    return err;
+
+  cmd.target()->Detach([](fxl::WeakPtr<Target> target, const Err& err) {
+    // The ConsoleContext displays messages for stopped processes, so don't
+    // display messages when successfully killing.
+    ProcessCommandCallback("kill", target, false, err);
   });
   return Err();
 }
@@ -185,8 +238,8 @@ Err DoAttach(ConsoleContext* context, const Command& cmd) {
   if (err.has_error())
     return err;
 
-  cmd.target()->Attach(koid, [](Target* target, const Err& err) {
-    RunAndAttachCallback("attach", target, err);
+  cmd.target()->Attach(koid, [](fxl::WeakPtr<Target> target, const Err& err) {
+    ProcessCommandCallback("attach", target, true, err);
   });
   return Err();
 }
@@ -219,19 +272,75 @@ Err DoDetach(ConsoleContext* context, const Command& cmd) {
   if (err.has_error())
     return err;
 
+  if (!cmd.args().empty())
+    return Err(ErrType::kInput, "\"detach\" takes no parameters.");
+
   // Only print something when there was an error detaching. The console
   // context will watch for Process destruction and print messages for each one
   // in the success case.
-  cmd.target()->Detach([](Target* target, const Err& err) {
-    if (err.has_error()) {
-      Console* console = Console::get();
-      OutputBuffer out;
-      out.Append(fxl::StringPrintf("Process %d detach failed.\n",
-          console->context().IdForTarget(target)));
-      out.OutputErr(err);
-      console->Output(std::move(out));
-    }
+  cmd.target()->Detach([](fxl::WeakPtr<Target> target, const Err& err) {
+    // The ConsoleContext displays messages for stopped processes, so don't
+    // display messages when successfully detaching.
+    ProcessCommandCallback("detach", target, false, err);
   });
+  return Err();
+}
+
+// libs ------------------------------------------------------------------------
+
+const char kLibsShortHelp[] = "libs: Show loaded libraries for a process.";
+const char kLibsHelp[] =
+    R"(libs
+
+  Shows the loaded library information for the given process.
+
+Examples
+
+  libs
+  process 2 libs
+)";
+
+// Completion callback for DoLibs().
+void OnLibsComplete(const Err& err, std::vector<debug_ipc::Module> modules) {
+  Console* console = Console::get();
+  if (err.has_error()) {
+    console->Output(err);
+    return;
+  }
+
+  // Sort by load address.
+  std::sort(modules.begin(), modules.end(),
+            [](const debug_ipc::Module& a, const debug_ipc::Module& b) {
+              return a.base < b.base;
+            });
+
+  std::vector<std::vector<std::string>> rows;
+  for (const auto& module : modules) {
+    rows.push_back(std::vector<std::string>{
+        fxl::StringPrintf("0x%" PRIx64, module.base), module.name});
+  }
+
+  OutputBuffer out;
+  FormatColumns({ColSpec(Align::kRight, 0, "Load address", 2),
+                 ColSpec(Align::kLeft, 0, "Name", 1)},
+                rows, &out);
+  console->Output(std::move(out));
+}
+
+Err DoLibs(ConsoleContext* context, const Command& cmd) {
+  // Only a process can be specified.
+  Err err = cmd.ValidateNouns({Noun::kProcess});
+  if (err.has_error())
+    return err;
+
+  if (!cmd.args().empty())
+    return Err(ErrType::kInput, "\"libs\" takes no parameters.");
+
+  err = AssertRunningTarget(context, "libs", cmd.target());
+  if (err.has_error())
+    return err;
+
+  cmd.target()->GetProcess()->GetModules(&OnLibsComplete);
   return Err();
 }
 
@@ -241,10 +350,14 @@ void AppendProcessVerbs(std::map<Verb, VerbRecord>* verbs) {
   (*verbs)[Verb::kNew] = VerbRecord(&DoNew, {"new"}, kNewShortHelp, kNewHelp);
   (*verbs)[Verb::kRun] =
       VerbRecord(&DoRun, {"run", "r"}, kRunShortHelp, kRunHelp);
+  (*verbs)[Verb::kKill] =
+      VerbRecord(&DoKill, {"kill", "k"}, kKillShortHelp, kKillHelp);
   (*verbs)[Verb::kAttach] =
       VerbRecord(&DoAttach, {"attach"}, kAttachShortHelp, kAttachHelp);
   (*verbs)[Verb::kDetach] =
       VerbRecord(&DoDetach, {"detach"}, kDetachShortHelp, kDetachHelp);
+  (*verbs)[Verb::kLibs] =
+      VerbRecord(&DoLibs, {"libs"}, kLibsShortHelp, kLibsHelp);
 }
 
 }  // namespace zxdb

@@ -23,9 +23,6 @@ source_set("nonhardware_tests") {
   testonly = true
 
   sources = [
-    "modeset/example_edid.cc",
-    "modeset/test_displayport.cc",
-    "modeset/test_edid.cc",
     "test_buffer.cc",
     "test_cache_config.cc",
     "test_context.cc",
@@ -74,6 +71,7 @@ group("test_deps") {
     "$magma_build_root/tests/helper:command_buffer_helper",
     "$magma_build_root/tests/helper:platform_device_helper",
     "$magma_build_root/tests/mock:mmio",
+    "$magma_build_root/tests/mock:bus_mapper",
     "$msd_intel_gen_build_root/src",
     "$msd_intel_gen_build_root/tests/mock",
     "//third_party/googletest:gtest",

@@ -5,12 +5,19 @@
 package pkgfs
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"log"
 	"os"
 	"regexp"
 	"strings"
 	"time"
 
 	"thinfs/fs"
+
+	"fuchsia.googlesource.com/far"
+	"fuchsia.googlesource.com/pm/pkg"
 )
 
 const (
@@ -176,16 +183,19 @@ func (f *installFile) open() error {
 		return fs.ErrInvalidArgs
 	}
 
-	if f.fs.blobfs.HasBlob(f.name) {
+	var err error
+	// TODO(raggi): propagate flags instead to allow for resumption and so on
+	f.blob, err = os.OpenFile(f.fs.blobfs.PathOf(f.name), os.O_WRONLY|os.O_CREATE, os.ModePerm)
+	// permission errors from blobfs are returned when the blob already exists and
+	// is no longer writable
+	if os.IsPermission(err) {
+		f.blob.Close()
 		return fs.ErrAlreadyExists
 	}
-
-	var err error
-	f.blob, err = os.Create(f.fs.blobfs.PathOf(f.name))
 	if err != nil {
-		return goErrToFSErr(err)
+		f.blob.Close()
 	}
-	return nil
+	return goErrToFSErr(err)
 }
 
 func (f *installFile) Write(p []byte, off int64, whence int) (int, error) {
@@ -198,16 +208,12 @@ func (f *installFile) Write(p []byte, off int64, whence int) (int, error) {
 	f.written += uint64(n)
 
 	if f.written >= f.size && err == nil {
+		f.fs.index.Fulfill(f.name)
+
 		if f.isPkg {
 			// TODO(raggi): use already open file instead of re-opening the file
 			importPackage(f.fs, f.name)
 		}
-
-		// TODO(raggi): check which of these really needs to be done, and/or move them into checkNeeds:
-		os.Remove(f.fs.index.NeedsBlob(f.name))
-		os.Remove(f.fs.index.NeedsFile(f.name))
-
-		checkNeeds(f.fs, f.name)
 	}
 
 	return n, goErrToFSErr(err)
@@ -226,11 +232,138 @@ func (f *installFile) Truncate(sz uint64) error {
 	err := f.blob.Truncate(int64(f.size))
 
 	if f.size == 0 && f.name == identityBlob && err == nil {
-		// TODO(raggi): check which of these really needs to be done, and/or move them into checkNeeds:
-		os.Remove(f.fs.index.NeedsBlob(f.name))
-		os.Remove(f.fs.index.NeedsFile(f.name))
-		checkNeeds(f.fs, f.name)
+		f.fs.index.Fulfill(f.name)
 	}
 
 	return goErrToFSErr(err)
+}
+
+// importPackage reads a package far from blobfs, given a content key, and imports it into the package index
+func importPackage(fs *Filesystem, root string) {
+	log.Printf("pkgfs: importing package from %q", root)
+
+	f, err := fs.blobfs.Open(root)
+	if err != nil {
+		log.Printf("error importing package: %s", err)
+		return
+	}
+	defer f.Close()
+
+	// TODO(raggi): this is a bit messy, the system could instead force people to
+	// write to specific paths in the incoming directory
+	if !far.IsFAR(f) {
+		log.Printf("pkgfs:importPackage: %q is not a package, ignoring import", root)
+		return
+	}
+	f.Seek(0, io.SeekStart)
+
+	r, err := far.NewReader(f)
+	if err != nil {
+		log.Printf("error reading package archive package: %s", err)
+		return
+	}
+
+	// TODO(raggi): this can also be replaced if we enforce writes into specific places in the incoming tree
+	var isPkg bool
+	for _, f := range r.List() {
+		if strings.HasPrefix(f, "meta/") {
+			isPkg = true
+		}
+	}
+	if !isPkg {
+		log.Printf("pkgfs: %q does not contain a meta directory, assuming it is not a package", root)
+		return
+	}
+
+	pf, err := r.ReadFile("meta/package")
+	if err != nil {
+		log.Printf("error reading package metadata: %s", err)
+		return
+	}
+
+	var p pkg.Package
+	err = json.Unmarshal(pf, &p)
+	if err != nil {
+		log.Printf("error parsing package metadata: %s", err)
+		return
+	}
+
+	if err := p.Validate(); err != nil {
+		log.Printf("pkgfs: package is invalid: %s", err)
+		return
+	}
+
+	contents, err := r.ReadFile("meta/contents")
+	if err != nil {
+		log.Printf("pkgfs: error parsing package contents file for %s: %s", p, err)
+		return
+	}
+
+	files := bytes.Split(contents, []byte{'\n'})
+
+	// Note: the following heuristic is coarse and not easy to compute. For small
+	// packages enumerating all blobs in blobfs will be slow, but for very large
+	// packages it's more likely that polling blobfs the expensive way for missing
+	// blobs is going to be expensive. This can be improved by blobfs providing an
+	// API to handle this case of "which of the following blobs are already
+	// readable"
+	mayHaveBlob := func(root string) bool { return true }
+	if len(files) > 20 {
+		d, err := os.Open(fs.blobfs.Root)
+		if err != nil {
+			log.Printf("pkgfs: error open(%q): %s", fs.blobfs.Root, err)
+			return
+		}
+		dnames, err := d.Readdirnames(-1)
+		d.Close()
+		if err != nil {
+			log.Printf("pkgfs: error readdir(%q): %s", fs.blobfs.Root, err)
+			return
+		}
+		names := map[string]struct{}{}
+		for _, name := range dnames {
+			names[name] = struct{}{}
+		}
+		mayHaveBlob = func(root string) bool {
+			_, found := names[root]
+			return found
+		}
+	}
+
+	needBlobs := map[string]struct{}{}
+	for i := range files {
+		parts := bytes.SplitN(files[i], []byte{'='}, 2)
+		if len(parts) != 2 {
+			// TODO(raggi): log illegal contents format?
+			continue
+		}
+		root := string(parts[1])
+
+		// XXX(raggi): this can race, which can deadlock package installs
+		if mayHaveBlob(root) && fs.blobfs.HasBlob(root) {
+			log.Printf("pkgfs: blob already present for %s: %q", p, root)
+			continue
+		}
+
+		needBlobs[root] = struct{}{}
+	}
+
+	if len(needBlobs) == 0 {
+		fs.index.Add(p, root)
+	} else {
+		fs.index.AddNeeds(root, p, needBlobs)
+	}
+
+	// in order to background the amber calls, we have to make a new copy of the
+	// blob list, as the index has taken write ownership over the map via AddNeeds
+	var needList = make([]string, 0, len(needBlobs))
+	for blob := range needBlobs {
+		needList = append(needList, blob)
+	}
+	go func() {
+		log.Printf("pkgfs: asking amber to fetch %d blobs for %s", len(needList), p)
+		for _, root := range needList {
+			fs.amberPxy.GetBlob(root)
+		}
+	}()
 }

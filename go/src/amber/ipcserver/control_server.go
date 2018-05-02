@@ -7,25 +7,30 @@ package ipcserver
 import (
 	"fmt"
 	"strings"
+	"sync"
 
-	"fidl/bindings2"
+	"fidl/bindings"
 
 	"fuchsia/go/amber"
 
 	"amber/daemon"
 	"amber/pkg"
+	"amber/source"
 
 	"syscall/zx"
 )
 
 type ControlSrvr struct {
-	daemon *daemon.Daemon
-	bs     bindings2.BindingSet
+	daemonSrc  *daemon.DaemonProvider
+	daemonGate sync.Once
+	daemon     *daemon.Daemon
+	pinger     *source.TickGenerator
+	bs         bindings.BindingSet
 }
 
-func NewControlSrvr(d *daemon.Daemon) *ControlSrvr {
-	go bindings2.Serve()
-	return &ControlSrvr{daemon: d}
+func NewControlSrvr(d *daemon.DaemonProvider, r *source.TickGenerator) *ControlSrvr {
+	go bindings.Serve()
+	return &ControlSrvr{daemonSrc: d, pinger: r}
 }
 
 func (c *ControlSrvr) DoTest(in int32) (out string, err error) {
@@ -66,6 +71,7 @@ func (c *ControlSrvr) GetUpdate(name string, version *string) (*string, error) {
 	pkg := pkg.Package{Name: name, Version: *version}
 	ps.Add(&pkg)
 
+	c.initDaemon()
 	updates := c.daemon.GetUpdates(ps)
 	res, ok := updates[pkg]
 	if !ok {
@@ -88,6 +94,7 @@ func (c *ControlSrvr) GetBlob(merkle string) error {
 		return fmt.Errorf("Supplied merkle root is empty")
 	}
 
+	c.initDaemon()
 	return c.daemon.GetBlob(merkle)
 }
 
@@ -97,5 +104,14 @@ func (c *ControlSrvr) Quit() {
 
 func (c *ControlSrvr) Bind(ch zx.Channel) error {
 	s := amber.ControlStub{Impl: c}
-	return c.bs.Add(&s, ch)
+	_, err := c.bs.Add(&s, ch, nil)
+	return err
+}
+
+func (c *ControlSrvr) initDaemon() {
+	c.daemonGate.Do(func() {
+		c.pinger.GenerateTick()
+		c.daemon = c.daemonSrc.Daemon()
+		c.pinger = nil
+	})
 }

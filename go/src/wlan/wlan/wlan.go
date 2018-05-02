@@ -5,7 +5,7 @@
 package wlan
 
 import (
-	bindings "fidl/bindings2"
+	bindings "fidl/bindings"
 	"fmt"
 	mlme "fuchsia/go/wlan_mlme"
 	"fuchsia/go/wlan_service"
@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"syscall/zx"
 	"syscall/zx/mxerror"
+	"syscall/zx/zxwait"
 	"time"
 	"wlan/eapol"
 )
@@ -48,9 +49,8 @@ type Client struct {
 	apCfg    *APConfig
 	ap       *AP
 	staAddr  [6]uint8
-	txid     uint32
 	eapolC   *eapol.Client
-	wlanInfo *mlme.DeviceQueryResponse
+	wlanInfo *mlme.DeviceQueryConfirm
 
 	state state
 }
@@ -238,8 +238,9 @@ event_loop:
 }
 
 func (c *Client) SendMessage(msg bindings.Payload, ordinal uint32) error {
+	// All MLME messages are one-way, so the txid is 0.
 	h := &bindings.MessageHeader{
-		Txid:    c.nextTxid(),
+		Txid:    0,
 		Flags:   0,
 		Ordinal: ordinal,
 	}
@@ -266,7 +267,7 @@ func (c *Client) watchMLMEChan(timeout time.Duration) *mlmeResult {
 		deadline = zx.Sys_deadline_after(
 			zx.Duration(timeout.Nanoseconds()))
 	}
-	obs, err := c.mlmeChan.Handle().WaitOne(
+	obs, err := zxwait.Wait(*c.mlmeChan.Handle(),
 		zx.SignalChannelReadable|zx.SignalChannelPeerClosed,
 		deadline)
 	return &mlmeResult{obs, err}
@@ -312,12 +313,6 @@ func (c *Client) handleResponse(obs zx.Signals, err error) (state, error) {
 	return nextState, nil
 }
 
-func (c *Client) nextTxid() (txid uint32) {
-	txid = c.txid
-	c.txid++
-	return
-}
-
 func parseResponse(buf []byte) (interface{}, error) {
 	var header bindings.MessageHeader
 	if err := bindings.UnmarshalHeader(buf, &header); err != nil {
@@ -326,27 +321,27 @@ func parseResponse(buf []byte) (interface{}, error) {
 	buf = buf[bindings.MessageHeaderSize:]
 	switch header.Ordinal {
 	case uint32(mlme.MethodScanConfirm):
-		var resp mlme.ScanResponse
+		var resp mlme.ScanConfirm
 		if err := bindings.Unmarshal(buf, nil, &resp); err != nil {
-			return nil, fmt.Errorf("could not decode ScanResponse: %v", err)
+			return nil, fmt.Errorf("could not decode ScanConfirm: %v", err)
 		}
 		return &resp, nil
 	case uint32(mlme.MethodJoinConfirm):
-		var resp mlme.JoinResponse
+		var resp mlme.JoinConfirm
 		if err := bindings.Unmarshal(buf, nil, &resp); err != nil {
-			return nil, fmt.Errorf("could not decode JoinResponse: %v", err)
+			return nil, fmt.Errorf("could not decode JoinConfirm: %v", err)
 		}
 		return &resp, nil
 	case uint32(mlme.MethodAuthenticateConfirm):
-		var resp mlme.AuthenticateResponse
+		var resp mlme.AuthenticateConfirm
 		if err := bindings.Unmarshal(buf, nil, &resp); err != nil {
-			return nil, fmt.Errorf("could not decode AuthenticateResponse: %v", err)
+			return nil, fmt.Errorf("could not decode AuthenticateConfirm: %v", err)
 		}
 		return &resp, nil
 	case uint32(mlme.MethodDeauthenticateConfirm):
-		var resp mlme.DeauthenticateResponse
+		var resp mlme.DeauthenticateConfirm
 		if err := bindings.Unmarshal(buf, nil, &resp); err != nil {
-			return nil, fmt.Errorf("could not decode DeauthenticateResponse: %v", err)
+			return nil, fmt.Errorf("could not decode DeauthenticateConfirm: %v", err)
 		}
 		return &resp, nil
 	case uint32(mlme.MethodDeauthenticateIndication):
@@ -356,9 +351,9 @@ func parseResponse(buf []byte) (interface{}, error) {
 		}
 		return &ind, nil
 	case uint32(mlme.MethodAssociateConfirm):
-		var resp mlme.AssociateResponse
+		var resp mlme.AssociateConfirm
 		if err := bindings.Unmarshal(buf, nil, &resp); err != nil {
-			return nil, fmt.Errorf("could not decode AssociateResponse: %v", err)
+			return nil, fmt.Errorf("could not decode AssociateConfirm: %v", err)
 		}
 		return &resp, nil
 	case uint32(mlme.MethodDisassociateIndication):
@@ -380,12 +375,12 @@ func parseResponse(buf []byte) (interface{}, error) {
 		}
 		return &ind, nil
 	case uint32(mlme.MethodEapolConfirm):
-		var resp mlme.EapolResponse
+		var resp mlme.EapolConfirm
 		return &resp, nil
 	case uint32(mlme.MethodDeviceQueryConfirm):
-		var resp mlme.DeviceQueryResponse
+		var resp mlme.DeviceQueryConfirm
 		if err := bindings.Unmarshal(buf, nil, &resp); err != nil {
-			return nil, fmt.Errorf("could not decode DeviceQueryResponse: %v", err)
+			return nil, fmt.Errorf("could not decode DeviceQueryConfirm: %v", err)
 		}
 		return &resp, nil
 	default:

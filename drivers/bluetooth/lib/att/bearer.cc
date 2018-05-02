@@ -4,10 +4,11 @@
 
 #include "bearer.h"
 
+#include <lib/async/default.h>
+
 #include "garnet/drivers/bluetooth/lib/common/slab_allocator.h"
 #include "garnet/drivers/bluetooth/lib/l2cap/channel.h"
 
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/strings/string_printf.h"
 
 namespace btlib {
@@ -117,9 +118,8 @@ OpCode MatchingTransactionCode(OpCode transaction_end_code) {
 }  // namespace
 
 // static
-fxl::RefPtr<Bearer> Bearer::Create(fbl::RefPtr<l2cap::Channel> chan,
-                                   uint32_t timeout) {
-  auto bearer = fxl::AdoptRef(new Bearer(std::move(chan), timeout));
+fxl::RefPtr<Bearer> Bearer::Create(fbl::RefPtr<l2cap::Channel> chan) {
+  auto bearer = fxl::AdoptRef(new Bearer(std::move(chan)));
   return bearer->Activate() ? bearer : nullptr;
 }
 
@@ -140,9 +140,16 @@ Bearer::PendingRemoteTransaction::PendingRemoteTransaction(TransactionId id,
                                                            OpCode opcode)
     : id(id), opcode(opcode) {}
 
+Bearer::TransactionQueue::TransactionQueue(TransactionQueue&& other)
+    : queue_(std::move(other.queue_)), current_(std::move(other.current_)) {
+  // The move constructor is only used during shut down below. So we simply
+  // cancel the task and not worry about moving it.
+  other.timeout_task_.Cancel();
+}
+
 Bearer::PendingTransactionPtr Bearer::TransactionQueue::ClearCurrent() {
   FXL_DCHECK(current_);
-  FXL_DCHECK(timeout_task_.posted());
+  FXL_DCHECK(timeout_task_.is_pending());
 
   timeout_task_.Cancel();
 
@@ -154,7 +161,7 @@ void Bearer::TransactionQueue::Enqueue(PendingTransactionPtr transaction) {
 }
 
 void Bearer::TransactionQueue::TrySendNext(l2cap::Channel* chan,
-                                           fxl::Closure timeout_cb,
+                                           async::Task::Handler timeout_cb,
                                            uint32_t timeout_ms) {
   FXL_DCHECK(chan);
 
@@ -165,8 +172,9 @@ void Bearer::TransactionQueue::TrySendNext(l2cap::Channel* chan,
   // Advance to the next transaction.
   current_ = queue_.pop_front();
   if (current()) {
-    FXL_DCHECK(!timeout_task_.posted());
-    timeout_task_.Post(std::move(timeout_cb), zx::msec(timeout_ms));
+    FXL_DCHECK(!timeout_task_.is_pending());
+    timeout_task_.set_handler(std::move(timeout_cb));
+    timeout_task_.PostDelayed(async_get_default(), zx::msec(timeout_ms));
     chan->Send(std::move(current()->pdu));
   }
 }
@@ -177,22 +185,19 @@ void Bearer::TransactionQueue::Reset() {
   current_ = nullptr;
 }
 
-void Bearer::TransactionQueue::InvokeErrorAll(bool timeout,
-                                              ErrorCode error_code) {
+void Bearer::TransactionQueue::InvokeErrorAll(Status status) {
   if (current_) {
-    current_->error_callback(timeout, error_code, kInvalidHandle);
+    current_->error_callback(status, kInvalidHandle);
   }
 
   for (const auto& t : queue_) {
     if (t.error_callback)
-      t.error_callback(timeout, error_code, kInvalidHandle);
+      t.error_callback(status, kInvalidHandle);
   }
 }
 
-Bearer::Bearer(fbl::RefPtr<l2cap::Channel> chan,
-               uint32_t transaction_timeout_ms)
+Bearer::Bearer(fbl::RefPtr<l2cap::Channel> chan)
     : chan_(std::move(chan)),
-      transaction_timeout_ms_(transaction_timeout_ms),
       next_remote_transaction_id_(1u),
       next_handler_id_(1u) {
   FXL_DCHECK(chan_);
@@ -220,37 +225,48 @@ Bearer::~Bearer() {
 
 bool Bearer::Activate() {
   FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+
   rx_task_.Reset(fbl::BindMember(this, &Bearer::OnRxBFrame));
-  return chan_->Activate(rx_task_.callback(),
-                         fbl::BindMember(this, &Bearer::OnChannelClosed),
-                         fsl::MessageLoop::GetCurrent()->task_runner());
+  chan_closed_cb_.Reset(fbl::BindMember(this, &Bearer::OnChannelClosed));
+
+  return chan_->Activate(rx_task_.callback(), chan_closed_cb_.callback(),
+                         async_get_default());
 }
 
 void Bearer::ShutDown() {
-  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   if (is_open())
     ShutDownInternal(false /* due_to_timeout */);
 }
 
 void Bearer::ShutDownInternal(bool due_to_timeout) {
   FXL_DCHECK(is_open());
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
 
   FXL_VLOG(1) << "att: Bearer shutting down";
 
   rx_task_.Cancel();
+  chan_closed_cb_.Cancel();
 
   // This will have no effect if the channel is already closed (e.g. if
   // ShutDown() was called by OnChannelClosed()).
   chan_->SignalLinkError();
   chan_ = nullptr;
 
-  request_queue_.InvokeErrorAll(due_to_timeout, ErrorCode::kNoError);
-  request_queue_.Reset();
-  indication_queue_.InvokeErrorAll(due_to_timeout, ErrorCode::kNoError);
-  indication_queue_.Reset();
+  // Move the contents to temporaries. This prevents a potential memory
+  // corruption in InvokeErrorAll if the Bearer gets deleted by one of the
+  // invoked error callbacks.
+  TransactionQueue req_queue(std::move(request_queue_));
+  TransactionQueue ind_queue(std::move(indication_queue_));
 
   if (closed_cb_)
     closed_cb_();
+
+  // Terminate all remaining procedures with an error. This is safe even if
+  // the bearer got deleted by |closed_cb_|.
+  Status status(due_to_timeout ? common::HostError::kTimedOut
+                               : common::HostError::kFailed);
+  req_queue.InvokeErrorAll(status);
+  ind_queue.InvokeErrorAll(status);
 }
 
 bool Bearer::StartTransaction(common::ByteBufferPtr pdu,
@@ -432,8 +448,11 @@ void Bearer::TryStartNextTransaction(TransactionQueue* tq) {
   FXL_DCHECK(tq);
 
   tq->TrySendNext(chan_.get(),
-                  [this] { ShutDownInternal(true /* due_to_timeout */); },
-                  transaction_timeout_ms_);
+                  [this](async_t*, async::Task*, zx_status_t status) {
+                    if (status == ZX_OK)
+                      ShutDownInternal(true /* due_to_timeout */);
+                  },
+                  kTransactionTimeoutMs);
 }
 
 void Bearer::SendErrorResponse(OpCode request_opcode,
@@ -513,7 +532,7 @@ void Bearer::HandleEndTransaction(TransactionQueue* tq,
   if (!report_error)
     transaction->callback(packet);
   else if (transaction->error_callback)
-    transaction->error_callback(false /* timeout */, error_code, attr_in_error);
+    transaction->error_callback(Status(error_code), attr_in_error);
 }
 
 Bearer::HandlerId Bearer::NextHandlerId() {

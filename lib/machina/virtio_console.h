@@ -5,16 +5,26 @@
 #ifndef GARNET_LIB_MACHINA_VIRTIO_CONSOLE_H_
 #define GARNET_LIB_MACHINA_VIRTIO_CONSOLE_H_
 
+#include <lib/async/cpp/wait.h>
+#include <lib/zx/socket.h>
 #include <virtio/console.h>
 #include <virtio/virtio_ids.h>
-#include <zx/socket.h>
+#include <array>
 
 #include "garnet/lib/machina/virtio_device.h"
 #include "garnet/lib/machina/virtio_queue_waiter.h"
 
 namespace machina {
 
-static constexpr uint16_t kVirtioConsoleNumQueues = 2;
+static constexpr uint16_t kVirtioConsoleMaxNumPorts = 1;
+static_assert(kVirtioConsoleMaxNumPorts > 0,
+              "virtio-console must have at least 1 port");
+
+// Each port has a pair of input and output virtqueues. The port 0 RX and TX
+// queues always exist: other queues (including an additional per-device pair
+// of control IO virtqueues) only exist if VIRTIO_CONSOLE_F_MULTIPORT is set.
+static constexpr uint16_t kVirtioConsoleNumQueues =
+    kVirtioConsoleMaxNumPorts == 1 ? 2 : (kVirtioConsoleMaxNumPorts + 1) * 2;
 static_assert(kVirtioConsoleNumQueues % 2 == 0,
               "There must be a queue for both RX and TX");
 
@@ -23,44 +33,16 @@ class VirtioConsole : public VirtioDeviceBase<VIRTIO_ID_CONSOLE,
                                               virtio_console_config_t> {
  public:
   VirtioConsole(const PhysMem&, async_t* async, zx::socket socket);
-  ~VirtioConsole() override;
+  ~VirtioConsole();
 
   zx_status_t Start();
 
-  VirtioQueue* rx_queue() { return queue(0); }
-  VirtioQueue* tx_queue() { return queue(1); }
-
  private:
-  zx::socket socket_;
+  class Port;
 
-  // Represents an single, unidirectional serial stream.
-  class Stream {
-   public:
-    Stream(async_t* async, VirtioQueue* queue, zx_handle_t socket);
-    zx_status_t Start();
-    void Stop();
-
-   private:
-    zx_status_t WaitOnQueue();
-    void OnQueueReady(zx_status_t status, uint16_t index);
-    zx_status_t WaitOnSocket();
-    async_wait_result_t OnSocketReady(async_t* async,
-                                      zx_status_t status,
-                                      const zx_packet_signal_t* signal);
-
-    void OnStreamClosed(zx_status_t status, const char* action);
-
-    async_t* async_;
-    zx_handle_t socket_;
-    VirtioQueue* queue_;
-    VirtioQueueWaiter queue_wait_;
-    async::Wait socket_wait_;
-    uint16_t head_;
-    virtio_desc_t desc_;
-  };
-
-  Stream rx_stream_;
-  Stream tx_stream_;
+  fbl::Mutex mutex_;
+  std::array<std::unique_ptr<Port>, kVirtioConsoleMaxNumPorts> ports_
+      __TA_GUARDED(mutex_);
 };
 
 }  // namespace machina

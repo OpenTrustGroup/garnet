@@ -6,7 +6,6 @@
 
 #include <iostream>
 
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/functional/auto_call.h"
 #include "lib/fxl/strings/string_printf.h"
 
@@ -18,10 +17,17 @@ namespace bluetoothcli {
 namespace commands {
 namespace {
 
+bool HandleHelp(const App* app,
+                const fxl::CommandLine& cmd_line,
+                const fxl::Closure& complete_cb) {
+  app->command_dispatcher().DescribeAllCommands();
+  return false;
+}
+
 bool HandleAvailable(const App* app,
                      const fxl::CommandLine& cmd_line,
                      const fxl::Closure& complete_cb) {
-  app->adapter_manager()->IsBluetoothAvailable([complete_cb](bool available) {
+  app->control()->IsBluetoothAvailable([complete_cb](bool available) {
     CLI_LOG() << fxl::StringPrintf("Bluetooth is %savailable",
                                    available ? "" : "not ");
     complete_cb();
@@ -32,7 +38,7 @@ bool HandleAvailable(const App* app,
 bool HandleListAdapters(const App* app,
                         const fxl::CommandLine& cmd_line,
                         const fxl::Closure& complete_cb) {
-  app->adapter_manager()->ListAdapters(
+  app->control()->GetAdapters(
       [complete_cb](fidl::VectorPtr<bluetooth_control::AdapterInfo> adapters) {
         auto ac = fxl::MakeAutoCall(complete_cb);
 
@@ -53,63 +59,54 @@ bool HandleListAdapters(const App* app,
 bool HandleActiveAdapter(const App* app,
                          const fxl::CommandLine& cmd_line,
                          const fxl::Closure& complete_cb) {
-  if (!app->active_adapter()) {
-    CLI_LOG() << "No active adapter";
-    return false;
-  }
-
-  app->active_adapter()->GetInfo(
-      [complete_cb](bluetooth_control::AdapterInfo adapter_info) {
-        PrintAdapterInfo(adapter_info);
-        complete_cb();
-      });
-
-  return true;
-}
-
-bool HandleExit(const App* app,
-                const fxl::CommandLine& cmd_line,
-                const fxl::Closure& complete_cb) {
-  fsl::MessageLoop::GetCurrent()->QuitNow();
-  return true;
-}
-
-bool HandleStartDiscovery(const App* app,
-                          const fxl::CommandLine& cmd_line,
-                          const fxl::Closure& complete_cb) {
-  if (!app->active_adapter()) {
-    CLI_LOG() << "No default adapter";
-    return false;
-  }
-
-  app->active_adapter()->StartDiscovery([complete_cb](bluetooth::Status status) {
-    if (status.error) {
-      CLI_LOG() << "StartDiscovery failed: " << status.error->description
-                << ", (error = " << ErrorCodeToString(status.error->error_code)
-                << ")";
+  app->control()->GetActiveAdapterInfo([complete_cb](auto adapter_info) {
+    if (!adapter_info) {
+      CLI_LOG() << "No active adapter";
+      complete_cb();
+      return;
     }
-
+    PrintAdapterInfo(*adapter_info, 1);
     complete_cb();
   });
 
   return true;
 }
 
-bool HandleStopDiscovery(const App* app,
-                         const fxl::CommandLine& cmd_line,
-                         const fxl::Closure& complete_cb) {
-  if (!app->active_adapter()) {
-    CLI_LOG() << "No default adapter";
-    return false;
-  }
+bool HandleExit(App* app,
+                const fxl::CommandLine& cmd_line,
+                const fxl::Closure& complete_cb) {
+  app->Quit();
+  return true;
+}
 
-  app->active_adapter()->StopDiscovery([complete_cb](bluetooth::Status status) {
+bool HandleStartDiscovery(App* app,
+                          const fxl::CommandLine& cmd_line,
+                          const fxl::Closure& complete_cb) {
+  app->control()->RequestDiscovery(true, [complete_cb](auto status) {
     if (status.error) {
-      CLI_LOG() << "StopDiscovery failed: " << status.error->description
+      CLI_LOG() << "Starting Discovery failed: " << status.error->description
                 << ", (error = " << ErrorCodeToString(status.error->error_code)
                 << ")";
+    } else {
+      CLI_LOG() << "Started discovery";
     }
+    complete_cb();
+  });
 
+  return true;
+}
+
+bool HandleStopDiscovery(App* app,
+                         const fxl::CommandLine& cmd_line,
+                         const fxl::Closure& complete_cb) {
+  app->control()->RequestDiscovery(false, [complete_cb](auto status) {
+    if (status.error) {
+      CLI_LOG() << "Stopping Discovery failed: " << status.error->description
+                << ", (error = " << ErrorCodeToString(status.error->error_code)
+                << ")";
+    } else {
+      CLI_LOG() << "Stopped discovery";
+    }
     complete_cb();
   });
 
@@ -121,7 +118,7 @@ bool HandleListDevices(const App* app,
                        const fxl::Closure& complete_cb) {
   if (app->discovered_devices().empty()) {
     CLI_LOG() << "No devices discovered";
-    return true;
+    return false;
   }
 
   for (const auto& iter : app->discovered_devices()) {
@@ -129,8 +126,7 @@ bool HandleListDevices(const App* app,
     PrintRemoteDevice(iter.second, 1);
   }
 
-  complete_cb();
-  return true;
+  return false;
 }
 
 }  // namespace
@@ -142,6 +138,8 @@ void RegisterCommands(App* app,
 #define BIND(handler) \
   std::bind(&handler, app, std::placeholders::_1, std::placeholders::_2)
 
+  dispatcher->RegisterHandler("help", "Print command descriptions",
+                              BIND(HandleHelp));
   dispatcher->RegisterHandler("exit", "Exit the tool", BIND(HandleExit));
   dispatcher->RegisterHandler(
       "available", "Check if Bluetooth is available on this platform",

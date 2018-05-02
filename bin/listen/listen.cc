@@ -7,9 +7,11 @@
 #include <fdio/io.h>
 #include <fdio/util.h>
 #include <launchpad/launchpad.h>
-#include <lib/async/cpp/auto_wait.h>
-#include <lib/async/cpp/loop.h>
+#include <lib/async/cpp/wait.h>
+#include <lib/async-loop/cpp/loop.h>
 #include <lib/async/default.h>
+#include <lib/zx/job.h>
+#include <lib/zx/process.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -20,8 +22,6 @@
 #include <unistd.h>
 #include <zircon/process.h>
 #include <zircon/processargs.h>
-#include <zx/job.h>
-#include <zx/process.h>
 
 #include <map>
 #include <memory>
@@ -146,16 +146,15 @@ class Service {
       return;
     }
 
-    std::unique_ptr<async::AutoWait> waiter = std::make_unique<async::AutoWait>(
-        async_get_default(), process.get(), ZX_PROCESS_TERMINATED);
+    std::unique_ptr<async::Wait> waiter = std::make_unique<async::Wait>(
+        process.get(), ZX_PROCESS_TERMINATED);
     waiter->set_handler(
         [this, process = std::move(process), job = std::move(child_job)](
-            async_t*, zx_status_t status,
+            async_t*, async::Wait*, zx_status_t status,
             const zx_packet_signal_t* signal) mutable {
           ProcessTerminated(std::move(process), std::move(job));
-          return ASYNC_WAIT_FINISHED;
         });
-    waiter->Begin();
+    waiter->Begin(async_get_default());
     process_waiters_.push_back(std::move(waiter));
   }
 
@@ -167,7 +166,7 @@ class Service {
     // Find the waiter.
     auto i =
         std::find_if(process_waiters_.begin(), process_waiters_.end(),
-                     [&process](const std::unique_ptr<async::AutoWait>& w) {
+                     [&process](const std::unique_ptr<async::Wait>& w) {
                        return w->object() == process.get();
                      });
     // And remove it.
@@ -183,7 +182,7 @@ class Service {
   fsl::FDWaiter waiter_;
   zx::job job_;
 
-  std::vector<std::unique_ptr<async::AutoWait>> process_waiters_;
+  std::vector<std::unique_ptr<async::Wait>> process_waiters_;
 };
 
 void usage(const char* command) {

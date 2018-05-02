@@ -27,6 +27,14 @@ void WriteReply(const LaunchReply& reply,
                 uint32_t transaction_id,
                 MessageWriter* writer);
 
+// Stop.
+bool ReadRequest(MessageReader* reader,
+                 KillRequest* request,
+                 uint32_t* transaction_id);
+void WriteReply(const KillReply& reply,
+                uint32_t transaction_id,
+                MessageWriter* writer);
+
 // Attach.
 bool ReadRequest(MessageReader* reader,
                  AttachRequest* request,
@@ -43,11 +51,19 @@ void WriteReply(const DetachReply& reply,
                 uint32_t transaction_id,
                 MessageWriter* writer);
 
-// Continue.
+// Pause.
 bool ReadRequest(MessageReader* reader,
-                 ContinueRequest* request,
+                 PauseRequest* request,
                  uint32_t* transaction_id);
-void WriteReply(const ContinueReply& reply,
+void WriteReply(const PauseReply& reply,
+                uint32_t transaction_id,
+                MessageWriter* writer);
+
+// Resume.
+bool ReadRequest(MessageReader* reader,
+                 ResumeRequest* request,
+                 uint32_t* transaction_id);
+void WriteReply(const ResumeReply& reply,
                 uint32_t transaction_id,
                 MessageWriter* writer);
 
@@ -91,12 +107,29 @@ void WriteReply(const RemoveBreakpointReply& reply,
                 uint32_t transaction_id,
                 MessageWriter* writer);
 
+// Backtrace
+bool ReadRequest(MessageReader* reader,
+                 BacktraceRequest* request,
+                 uint32_t* transaction_id);
+void WriteReply(const BacktraceReply& reply,
+                uint32_t transaction_id,
+                MessageWriter* writer);
+
+// Modules
+bool ReadRequest(MessageReader* reader,
+                 ModulesRequest* request,
+                 uint32_t* transaction_id);
+void WriteReply(const ModulesReply& reply,
+                uint32_t transaction_id,
+                MessageWriter* writer);
+
 // Notifications ---------------------------------------------------------------
 //
 // (These don't have a "request"/"reply".)
 
 void WriteNotifyProcess(const NotifyProcess& notify, MessageWriter* writer);
-void WriteNotifyThread(MsgHeader::Type type, const NotifyThread& notify,
+void WriteNotifyThread(MsgHeader::Type type,
+                       const NotifyThread& notify,
                        MessageWriter* writer);
 void WriteNotifyException(const NotifyException& notify, MessageWriter* writer);
 

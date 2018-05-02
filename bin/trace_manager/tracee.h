@@ -6,8 +6,8 @@
 #define GARNET_BIN_TRACE_MANAGER_TRACEE_H_
 
 #include <lib/async/cpp/wait.h>
-#include <zx/socket.h>
-#include <zx/vmo.h>
+#include <lib/zx/socket.h>
+#include <lib/zx/vmo.h>
 
 #include <functional>
 #include <iosfwd>
@@ -63,9 +63,11 @@ class Tracee {
 
  private:
   void TransitionToState(State new_state);
-  async_wait_result_t OnHandleReady(async_t* async,
-                                    zx_status_t status,
-                                    const zx_packet_signal_t* signal);
+  void OnHandleReady(async_t* async,
+                     async::WaitBase* wait,
+                     zx_status_t status,
+                     const zx_packet_signal_t* signal);
+  void OnHandleError(zx_status_t status);
 
   TransferStatus WriteProviderInfoRecord(const zx::socket& socket) const;
   TransferStatus WriteProviderBufferOverflowEvent(

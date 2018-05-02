@@ -10,6 +10,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <lib/async/dispatcher.h>
+
 #include "garnet/drivers/bluetooth/lib/gap/gap.h"
 #include "garnet/drivers/bluetooth/lib/gatt/gatt.h"
 #include "garnet/drivers/bluetooth/lib/hci/command_channel.h"
@@ -21,7 +23,6 @@
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/ref_ptr.h"
 #include "lib/fxl/memory/weak_ptr.h"
-#include "lib/fxl/tasks/task_runner.h"
 
 namespace btlib {
 
@@ -112,11 +113,11 @@ class LowEnergyConnectionManager final {
   //     The status of the procedure is reported in |callback| in the case of an
   //     error.
   //
-  // |callback| is posted on the creation thread's task runner.
+  // |callback| is posted on the creation thread's dispatcher.
   using ConnectionResultCallback =
-      std::function<void(hci::Status, LowEnergyConnectionRefPtr)>;
+      fbl::Function<void(hci::Status, LowEnergyConnectionRefPtr)>;
   bool Connect(const std::string& device_identifier,
-               const ConnectionResultCallback& callback);
+               ConnectionResultCallback callback);
 
   // Disconnects any existing LE connection to |device_identifier|, invalidating
   // all active LowEnergyConnectionRefs. Returns false if |device_identifier| is
@@ -170,15 +171,15 @@ class LowEnergyConnectionManager final {
   class PendingRequestData {
    public:
     PendingRequestData(const common::DeviceAddress& address,
-                       const ConnectionResultCallback& first_callback);
+                       ConnectionResultCallback first_callback);
     PendingRequestData() = default;
     ~PendingRequestData() = default;
 
     PendingRequestData(PendingRequestData&&) = default;
     PendingRequestData& operator=(PendingRequestData&&) = default;
 
-    void AddCallback(const ConnectionResultCallback& cb) {
-      callbacks_.push_back(cb);
+    void AddCallback(ConnectionResultCallback cb) {
+      callbacks_.push_back(std::move(cb));
     }
 
     // Notifies all elements in |callbacks| with |status| and the result of
@@ -249,7 +250,6 @@ class LowEnergyConnectionManager final {
 
   // Called by |connector_| to indicate the result of a connect request.
   void OnConnectResult(const std::string& device_identifier,
-                       hci::LowEnergyConnector::Result result,
                        hci::Status status,
                        hci::ConnectionPtr link);
 
@@ -305,8 +305,8 @@ class LowEnergyConnectionManager final {
   // is configurable to allow unit tests to set a shorter value.
   int64_t request_timeout_ms_;
 
-  // The task runner for all asynchronous tasks.
-  fxl::RefPtr<fxl::TaskRunner> task_runner_;
+  // The dispather for all asynchronous tasks.
+  async_t* dispatcher_;
 
   // The device cache is used to look up and persist remote device data that is
   // relevant during connection establishment (such as the address, preferred

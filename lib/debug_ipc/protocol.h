@@ -10,27 +10,35 @@ namespace debug_ipc {
 
 constexpr uint32_t kProtocolVersion = 1;
 
+enum class Arch {
+  kUnknown = 0,
+  kX64,
+  kArm64
+};
+
 #pragma pack(push, 8)
 
 // A message consists of a MsgHeader followed by a serialized version of
-// whatever struct is
-// associated with that message type. Use the MessageWriter class to build this
-// up, which will
-// reserve room for the header and allows the structs to be appended, possibly
-// dynamically.
+// whatever struct is associated with that message type. Use the MessageWriter
+// class to build this up, which will reserve room for the header and allows
+// the structs to be appended, possibly dynamically.
 struct MsgHeader {
   enum class Type : uint32_t {
     kNone = 0,
     kHello,
     kLaunch,
+    kKill,
     kAttach,
     kDetach,
-    kContinue,
+    kModules,
+    kPause,
+    kResume,
     kProcessTree,
     kThreads,
     kReadMemory,
     kAddOrChangeBreakpoint,
     kRemoveBreakpoint,
+    kBacktrace,
 
     // The "notify" messages are sent unrequested from the agent to the client.
     kNotifyProcessExiting,
@@ -59,7 +67,15 @@ struct MsgHeader {
 
 struct HelloRequest {};
 struct HelloReply {
-  uint32_t version = 0;
+  // Stream signature to make sure we're talking to the right service.
+  // This number is ASCII for "zxdbIPC>".
+  static constexpr uint64_t kStreamSignature = 0x7a7864624950433e;
+
+  static constexpr uint32_t kCurrentVersion = 1;
+
+  uint64_t signature = kStreamSignature;
+  uint32_t version = kCurrentVersion;
+  Arch arch = Arch::kUnknown;
 };
 
 struct LaunchRequest {
@@ -70,6 +86,13 @@ struct LaunchReply {
   uint32_t status = 0;  // zx_status_t value from launch, ZX_OK on success.
   uint64_t process_koid = 0;
   std::string process_name;
+};
+
+struct KillRequest {
+  uint64_t process_koid = 0;
+};
+struct KillReply {
+  uint32_t status = 0;
 };
 
 // The debug agent will follow a successful AttachReply with notifications for
@@ -89,14 +112,33 @@ struct DetachReply {
   uint32_t status = 0;
 };
 
-struct ContinueRequest {
-  // If 0, all debugged processes will be continued.
+struct PauseRequest {
+  // If 0, all threads of all debugged processes will be paused.
+  uint64_t process_koid = 0;
+
+  // If 0, all threads in the given process will be paused.
+  uint64_t thread_koid = 0;
+};
+struct PauseReply {
+};
+
+struct ResumeRequest {
+  enum class How : uint32_t {
+    kContinue = 0,  // Continue execution without stopping.
+    kStepInstruction,  // Step one machine instruction.
+
+    kLast  // Not a real state, used for validation.
+  };
+
+  // If 0, all threads of all debugged processes will be continued.
   uint64_t process_koid = 0;
 
   // If 0, all threads in the given process will be continued.
   uint64_t thread_koid = 0;
+
+  How how = How::kContinue;
 };
-struct ContinueReply {
+struct ResumeReply {
 };
 
 struct ProcessTreeRequest {};
@@ -126,7 +168,7 @@ struct AddOrChangeBreakpointRequest {
   BreakpointSettings breakpoint;
 };
 struct AddOrChangeBreakpointReply {
-  // If the satatus is not ZX_OK (0), the breakpoint add/change did not
+  // If the status is not ZX_OK (0), the breakpoint add/change did not
   // succeded. In the case of changed breakpoints failing to modify, the
   // breakpoint with the given ID will be removed so the client and agent can
   // be in a consistent state (error always means it doesn't exist).
@@ -140,6 +182,24 @@ struct RemoveBreakpointRequest {
 };
 struct RemoveBreakpointReply {
 };
+
+struct BacktraceRequest {
+  uint64_t process_koid = 0;
+  uint32_t thread_koid = 0;
+};
+struct BacktraceReply {
+  // Will be empty if the thread doesn't exist or isn't stopped.
+  std::vector<StackFrame> frames;
+};
+
+struct ModulesRequest {
+  uint64_t process_koid = 0;
+};
+struct ModulesReply {
+  std::vector<Module> modules;
+};
+
+// Notifications ---------------------------------------------------------------
 
 // Data for process destroyed messages (process created messages are in
 // response to launch commands so is just the reply to that message).
@@ -169,8 +229,8 @@ struct NotifyException {
 
   Type type = Type::kGeneral;
 
-  uint64_t ip = 0;  // Instruction pointer.
-  uint64_t sp = 0;  // Stack pointer.
+  // The frame of the top of the stack.
+  StackFrame frame;
 };
 
 #pragma pack(pop)

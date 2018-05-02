@@ -44,9 +44,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"syscall/zx"
+	"syscall/zx/zxwait"
 	"unsafe"
 
 	"netstack/trace"
@@ -177,22 +179,36 @@ func (c *Client) changeStateLocked(s State) {
 	}()
 }
 
-// Start restarts the interface.
-func (c *Client) Start() {
+// Up enables the interface.
+func (c *Client) Up() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.state != StateStarted {
+		m := syscall.FDIOForFD(int(c.f.Fd()))
+		err := IoctlStart(m)
+		if err != nil {
+			return err
+		}
 		c.changeStateLocked(StateStarted)
 	}
+
+	return nil
 }
 
 // Down disables the interface.
-func (c *Client) Down() {
+func (c *Client) Down() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.state != StateDown {
 		c.changeStateLocked(StateDown)
+
+		m := syscall.FDIOForFD(int(c.f.Fd()))
+		err := IoctlStop(m)
+		if err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // Close closes a Client, releasing any held resources.
@@ -208,7 +224,13 @@ func (c *Client) closeLocked() {
 	}
 
 	m := syscall.FDIOForFD(int(c.f.Fd()))
-	IoctlStop(m)
+	if err := IoctlStop(m); err == nil {
+		if fp, fperr := filepath.Abs(c.f.Name()); fperr != nil {
+			log.Printf("Failed to close ethernet file %s, error: %s", c.f.Name(), err)
+		} else {
+			log.Printf("Failed to close ethernet path %s, error: %s", fp, err)
+		}
+	}
 
 	c.tx.Close()
 	c.rx.Close()
@@ -218,6 +240,14 @@ func (c *Client) closeLocked() {
 	c.f.Close()
 	c.arena.freeAll(c)
 	c.changeStateLocked(StateClosed)
+}
+
+func (c *Client) SetPromiscuousMode(enabled bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	m := syscall.FDIOForFD(int(c.f.Fd()))
+	return IoctlSetPromisc(m, enabled)
 }
 
 // AllocForSend returns a Buffer to be passed to Send.
@@ -254,7 +284,7 @@ func (c *Client) Send(b Buffer) error {
 	c.sendbuf = append(c.sendbuf, c.arena.entry(b))
 	entries, entriesSize := fifoEntries(c.sendbuf)
 	var count uint32
-	status := zx.Sys_fifo_write(c.tx, entries, entriesSize, &count)
+	status := zx.Sys_fifo_write_old(c.tx, entries, entriesSize, &count)
 	copy(c.sendbuf, c.sendbuf[count:])
 	c.sendbuf = c.sendbuf[:len(c.sendbuf)-int(count)]
 	if status != zx.ErrOk && status != zx.ErrShouldWait {
@@ -282,7 +312,7 @@ func (c *Client) txCompleteLocked() (bool, error) {
 	buf := c.tmpbuf[:c.txDepth]
 	entries, entriesSize := fifoEntries(buf)
 	var count uint32
-	status := zx.Sys_fifo_read(c.tx, entries, entriesSize, &count)
+	status := zx.Sys_fifo_read_old(c.tx, entries, entriesSize, &count)
 	n := int(count)
 
 	c.txInFlight -= n
@@ -319,7 +349,7 @@ func (c *Client) Recv() (b Buffer, err error) {
 	}
 	entries, entriesSize := fifoEntries(c.recvbuf[:cap(c.recvbuf)])
 	var count uint32
-	status := zx.Sys_fifo_read(c.rx, entries, entriesSize, &count)
+	status := zx.Sys_fifo_read_old(c.rx, entries, entriesSize, &count)
 	n := int(count)
 	c.recvbuf = c.recvbuf[:n]
 	c.rxInFlight -= n
@@ -343,7 +373,7 @@ func (c *Client) rxCompleteLocked() error {
 	}
 	entries, entriesSize := fifoEntries(buf)
 	var count uint32
-	status := zx.Sys_fifo_write(c.rx, entries, entriesSize, &count)
+	status := zx.Sys_fifo_write_old(c.rx, entries, entriesSize, &count)
 	for _, entry := range buf[count:] {
 		b := c.arena.bufferFromEntry(entry)
 		c.arena.free(c, b)
@@ -366,7 +396,7 @@ func (c *Client) WaitSend() error {
 			return err
 		}
 		// Errors from waiting handled in txComplete.
-		c.tx.WaitOne(zx.SignalFIFOReadable|zx.SignalFIFOPeerClosed, zx.TimensecInfinite)
+		zxwait.Wait(c.tx, zx.SignalFIFOReadable|zx.SignalFIFOPeerClosed, zx.TimensecInfinite)
 	}
 }
 
@@ -374,7 +404,7 @@ func (c *Client) WaitSend() error {
 // or the client is closed.
 func (c *Client) WaitRecv() {
 	for {
-		obs, err := c.rx.WaitOne(zx.SignalFIFOReadable|zx.SignalFIFOPeerClosed|ZXSIO_ETH_SIGNAL_STATUS, zx.TimensecInfinite)
+		obs, err := zxwait.Wait(c.rx, zx.SignalFIFOReadable|zx.SignalFIFOPeerClosed|ZXSIO_ETH_SIGNAL_STATUS, zx.TimensecInfinite)
 		if err != nil || obs&zx.SignalFIFOPeerClosed != 0 {
 			c.Close()
 		} else if obs&ZXSIO_ETH_SIGNAL_STATUS != 0 {

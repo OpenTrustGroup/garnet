@@ -3,19 +3,19 @@
 // found in the LICENSE file.
 #![allow(dead_code)]
 
-use auth::{config, psk};
-use futures::Future;
+use bytes::Bytes;
+use crypto_utils;
 use integrity;
+use integrity::hmac_sha1::HmacSha1;
 use keywrap;
 use std::fmt;
 use suite_selector;
 use {Error, Result};
-use crypto_utils;
 
 macro_rules! return_none_if_unknown_algo {
     ($e:expr) => {
         if !$e.has_known_algorithm() {
-            return None
+            return None;
         }
     };
 }
@@ -37,14 +37,14 @@ pub const EAP_SUITEB_SHA384: u8 = 12;
 pub const FT_EAP_SHA384: u8 = 13;
 // 14-255 - Reserved.
 
-pub struct Akm<'a> {
-    pub oui: &'a [u8],
+pub struct Akm {
+    pub oui: Bytes,
     pub suite_type: u8,
 }
 
-impl<'a> Akm<'a> {
+impl Akm {
     /// Only AKMs specified in IEEE 802.11-2016, 9.4.2.25.4, Table 9-133 have known algorithms.
-    fn has_known_algorithm(&self) -> bool {
+    pub fn has_known_algorithm(&self) -> bool {
         if self.is_reserved() || self.is_vendor_specific() {
             false
         } else {
@@ -54,7 +54,7 @@ impl<'a> Akm<'a> {
 
     pub fn is_vendor_specific(&self) -> bool {
         // IEEE 802.11-2016, 9.4.2.25.4, Table 9-133
-        !self.oui.eq(&suite_selector::OUI)
+        !&self.oui[..].eq(&suite_selector::OUI)
     }
 
     pub fn is_reserved(&self) -> bool {
@@ -67,7 +67,7 @@ impl<'a> Akm<'a> {
 
         // IEEE 802.11-2016, 12.7.3, Table 12-8
         match self.suite_type {
-            1 ... 11 => Some(16),
+            1...11 => Some(16),
             12 | 13 => Some(24),
             _ => None,
         }
@@ -78,7 +78,7 @@ impl<'a> Akm<'a> {
 
         // IEEE 802.11-2016, 12.7.3, Table 12-8
         match self.suite_type {
-            1 ... 11 => Some(128),
+            1...11 => Some(128),
             12 | 13 => Some(192),
             _ => None,
         }
@@ -89,7 +89,7 @@ impl<'a> Akm<'a> {
 
         // IEEE 802.11-2016, 12.7.3, Table 12-8
         match self.suite_type {
-            1 ... 11 => Some(128),
+            1...11 => Some(128),
             12 | 13 => Some(256),
             _ => None,
         }
@@ -100,7 +100,7 @@ impl<'a> Akm<'a> {
 
         // IEEE 802.11-2016, 12.7.1.3
         match self.suite_type {
-            1 ... 11 | 13 => Some(256),
+            1...11 | 13 => Some(256),
             12 => Some(384),
             _ => None,
         }
@@ -111,10 +111,10 @@ impl<'a> Akm<'a> {
 
         // IEEE 802.11-2016, 12.7.3, Table 12-8
         match self.suite_type {
-            1 | 2 => Some(Box::new(integrity::HmacSha1128)),
+            1 | 2 => Some(Box::new(HmacSha1::new())),
             // TODO(hahnr): Add remaining integrity algorithms.
-            3 ... 13 => None,
-            _ => None
+            3...13 => None,
+            _ => None,
         }
     }
 
@@ -123,30 +123,8 @@ impl<'a> Akm<'a> {
 
         // IEEE 802.11-2016, 12.7.3, Table 12-8
         match self.suite_type {
-            1 ... 13 => Some(Box::new(keywrap::aes::NistAes)),
-            _ => None
-        }
-    }
-
-    /// Returns `None` if there is no known authentication method associated with this AKM.
-    /// Else, returns a `Result` which indicates an error if the given `config` is incompatible with
-    /// the AKM, or succeeds if the authentication method was successfully created.
-    pub fn auth_method(&self, config: config::Config)
-                       -> Option<Result<Box<Future<Item=Vec<u8>, Error=Error>>>> {
-        return_none_if_unknown_algo!(self);
-
-        // IEEE 802.11-2016, 9.4.2.25.3, Table 9-133
-        match self.suite_type {
-            2 => Some(match config {
-                // TODO(hahnr): Due to a compiler bug we cannot use `.map` on the newly created PSK,
-                // and instead must manually map the result to a boxed Future.
-                config::Config::Psk(c) => match psk::new(c) {
-                    Ok(psk) => Ok(Box::new(psk)),
-                    Err(e) => Err(e),
-                },
-                _ => Err(Error::IncompatibleConfig(config, "PSK".to_string()))
-            }),
-            _ => None
+            1...13 => Some(Box::new(keywrap::aes::NistAes)),
+            _ => None,
         }
     }
 
@@ -155,16 +133,16 @@ impl<'a> Akm<'a> {
 
         // IEEE 802.11-2016, 12.7.1.2
         match self.suite_type {
-            1 ... 4 | 8 | 9 => Some(crypto_utils::prf(k, a, b, bits)),
-            _ => None
+            1...4 | 8 | 9 => Some(crypto_utils::prf(k, a, b, bits)),
+            _ => None,
         }
     }
 }
 
-impl<'a> suite_selector::Factory<'a> for Akm<'a> {
-    type Suite = Akm<'a>;
+impl suite_selector::Factory for Akm {
+    type Suite = Akm;
 
-    fn new(oui: &'a [u8], suite_type: u8) -> Result<Self::Suite> {
+    fn new(oui: Bytes, suite_type: u8) -> Result<Self::Suite> {
         if oui.len() != 3 {
             Err(Error::InvalidOuiLength(oui.len()))
         } else {
@@ -173,8 +151,12 @@ impl<'a> suite_selector::Factory<'a> for Akm<'a> {
     }
 }
 
-impl<'a> fmt::Debug for Akm<'a> {
+impl fmt::Debug for Akm {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:02X}-{:02X}-{:02X}:{}", self.oui[0], self.oui[1], self.oui[2], self.suite_type)
+        write!(
+            f,
+            "{:02X}-{:02X}-{:02X}:{}",
+            self.oui[0], self.oui[1], self.oui[2], self.suite_type
+        )
     }
 }

@@ -57,6 +57,16 @@ bool Deserialize(MessageReader* reader, MemoryBlock* block) {
   return true;
 }
 
+bool Deserialize(MessageReader* reader, Module* module) {
+  if (!reader->ReadString(&module->name))
+    return false;
+  return reader->ReadUint64(&module->base);
+};
+
+bool Deserialize(MessageReader* reader, StackFrame* frame) {
+  return reader->ReadBytes(sizeof(StackFrame), frame);
+}
+
 // Hello -----------------------------------------------------------------------
 
 void WriteRequest(const HelloRequest& request,
@@ -97,6 +107,28 @@ bool ReadReply(MessageReader* reader,
   if (!reader->ReadUint64(&reply->process_koid))
     return false;
   if (!reader->ReadString(&reply->process_name))
+    return false;
+  return true;
+}
+
+// Kill ----------------------------------------------------------------------
+
+void WriteRequest(const KillRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer) {
+  writer->WriteHeader(MsgHeader::Type::kKill, transaction_id);
+  writer->WriteUint64(request.process_koid);
+}
+
+bool ReadReply(MessageReader* reader,
+               KillReply* reply,
+               uint32_t* transaction_id) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  *transaction_id = header.transaction_id;
+
+  if (!reader->ReadUint32(&reply->status))
     return false;
   return true;
 }
@@ -147,18 +179,39 @@ bool ReadReply(MessageReader* reader,
   return true;
 }
 
-// Continue --------------------------------------------------------------------
+// Pause -----------------------------------------------------------------------
 
-void WriteRequest(const ContinueRequest& request,
+void WriteRequest(const PauseRequest& request,
                   uint32_t transaction_id,
                   MessageWriter* writer) {
-  writer->WriteHeader(MsgHeader::Type::kContinue, transaction_id);
+  writer->WriteHeader(MsgHeader::Type::kPause, transaction_id);
   writer->WriteUint64(request.process_koid);
   writer->WriteUint64(request.thread_koid);
 }
 
 bool ReadReply(MessageReader* reader,
-               ContinueReply* reply,
+               PauseReply* reply,
+               uint32_t* transaction_id) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  *transaction_id = header.transaction_id;
+  return true;
+}
+
+// Resume ----------------------------------------------------------------------
+
+void WriteRequest(const ResumeRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer) {
+  writer->WriteHeader(MsgHeader::Type::kResume, transaction_id);
+  writer->WriteUint64(request.process_koid);
+  writer->WriteUint64(request.thread_koid);
+  writer->WriteUint32(static_cast<uint32_t>(request.how));
+}
+
+bool ReadReply(MessageReader* reader,
+               ResumeReply* reply,
                uint32_t* transaction_id) {
   MsgHeader header;
   if (!reader->ReadHeader(&header))
@@ -267,6 +320,48 @@ bool ReadReply(MessageReader* reader,
   return true;
 }
 
+// Backtrace -------------------------------------------------------------------
+
+void WriteRequest(const BacktraceRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer) {
+  writer->WriteHeader(MsgHeader::Type::kBacktrace, transaction_id);
+  writer->WriteBytes(&request, sizeof(BacktraceRequest));
+}
+
+bool ReadReply(MessageReader* reader,
+               BacktraceReply* reply,
+               uint32_t* transaction_id) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  *transaction_id = header.transaction_id;
+
+  Deserialize(reader, &reply->frames);
+  return true;
+}
+
+// Modules ---------------------------------------------------------------------
+
+void WriteRequest(const ModulesRequest& request,
+                  uint32_t transaction_id,
+                  MessageWriter* writer) {
+  writer->WriteHeader(MsgHeader::Type::kModules, transaction_id);
+  writer->WriteBytes(&request, sizeof(ModulesRequest));
+}
+
+bool ReadReply(MessageReader* reader,
+               ModulesReply* reply,
+               uint32_t* transaction_id) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  *transaction_id = header.transaction_id;
+
+  Deserialize(reader, &reply->modules);
+  return true;
+}
+
 // Notifications ---------------------------------------------------------------
 
 bool ReadNotifyProcess(MessageReader* reader, NotifyProcess* process) {
@@ -304,12 +399,7 @@ bool ReadNotifyException(MessageReader* reader, NotifyException* notify) {
     return false;
   notify->type = static_cast<NotifyException::Type>(type);
 
-  if (!reader->ReadUint64(&notify->ip))
-    return false;
-  if (!reader->ReadUint64(&notify->sp))
-    return false;
-
-  return true;
+  return Deserialize(reader, &notify->frame);
 }
 
 }  // namespace debug_ipc

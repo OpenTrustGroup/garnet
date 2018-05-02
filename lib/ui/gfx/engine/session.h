@@ -19,7 +19,7 @@
 namespace scenic {
 namespace gfx {
 
-using SessionId = uint64_t;
+using SessionId = ::scenic::SessionId;
 
 class Image;
 using ImagePtr = ::fxl::RefPtr<Image>;
@@ -90,8 +90,8 @@ class Session : public fxl::RefCountedThreadSafe<Session> {
   bool ApplyScheduledUpdates(uint64_t presentation_time,
                              uint64_t presentation_interval);
 
-  // Add an event to our queue, which will be scheduled to be flushed and sent
-  // to the event reporter later.
+  // Convenience.  Wraps a ::gfx::Event in a ui::Event, then forwards it to
+  // the EventReporter.
   void EnqueueEvent(::gfx::Event event);
 
   // Called by SessionHandler::HitTest().
@@ -142,6 +142,7 @@ class Session : public fxl::RefCountedThreadSafe<Session> {
   bool ApplySetShapeCommand(::gfx::SetShapeCommand command);
   bool ApplySetMaterialCommand(::gfx::SetMaterialCommand command);
   bool ApplySetClipCommand(::gfx::SetClipCommand command);
+  bool ApplySetSpacePropertiesCommand(::gfx::SetSpacePropertiesCommand command);
   bool ApplySetHitTestBehaviorCommand(::gfx::SetHitTestBehaviorCommand command);
   bool ApplySetCameraCommand(::gfx::SetCameraCommand command);
   bool ApplySetCameraTransformCommand(::gfx::SetCameraTransformCommand command);
@@ -160,6 +161,8 @@ class Session : public fxl::RefCountedThreadSafe<Session> {
   bool ApplySetColorCommand(::gfx::SetColorCommand command);
   bool ApplyBindMeshBuffersCommand(::gfx::BindMeshBuffersCommand command);
   bool ApplyAddLayerCommand(::gfx::AddLayerCommand command);
+  bool ApplyRemoveLayerCommand(::gfx::RemoveLayerCommand command);
+  bool ApplyRemoveAllLayersCommand(::gfx::RemoveAllLayersCommand command);
   bool ApplySetLayerStackCommand(::gfx::SetLayerStackCommand command);
   bool ApplySetRendererCommand(::gfx::SetRendererCommand command);
   bool ApplySetRendererParamCommand(::gfx::SetRendererParamCommand command);
@@ -190,6 +193,9 @@ class Session : public fxl::RefCountedThreadSafe<Session> {
   bool ApplyCreateClipNode(scenic::ResourceId id, ::gfx::ClipNodeArgs args);
   bool ApplyCreateEntityNode(scenic::ResourceId id, ::gfx::EntityNodeArgs args);
   bool ApplyCreateShapeNode(scenic::ResourceId id, ::gfx::ShapeNodeArgs args);
+  bool ApplyCreateSpace(scenic::ResourceId id, ::gfx::SpaceArgs args);
+  bool ApplyCreateSpaceHolder(scenic::ResourceId id,
+                              ::gfx::SpaceHolderArgs args);
   bool ApplyCreateDisplayCompositor(scenic::ResourceId id,
                                     ::gfx::DisplayCompositorArgs args);
   bool ApplyCreateImagePipeCompositor(scenic::ResourceId id,
@@ -253,8 +259,6 @@ class Session : public fxl::RefCountedThreadSafe<Session> {
     return AssertValueIsOfType(value, tags.data(), N);
   }
 
-  void FlushEvents();
-
   friend class Resource;
   void IncrementResourceCount() { ++resource_count_; }
   void DecrementResourceCount() { --resource_count_; }
@@ -286,7 +290,6 @@ class Session : public fxl::RefCountedThreadSafe<Session> {
     }
   };
   std::priority_queue<ImagePipeUpdate> scheduled_image_pipe_updates_;
-  ::fidl::VectorPtr<ui::Event> buffered_events_;
 
   const SessionId id_;
   Engine* const engine_;

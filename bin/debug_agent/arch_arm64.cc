@@ -4,6 +4,7 @@
 
 #include "garnet/bin/debug_agent/arch.h"
 
+namespace debug_agent {
 namespace arch {
 
 // "BRK 0" instruction.
@@ -51,4 +52,9 @@ uint64_t* SPInRegs(zx_thread_state_general_regs* regs) {
   return &regs->sp;
 }
 
+::debug_ipc::Arch GetArch() {
+  return ::debug_ipc::Arch::kArm64;
+}
+
 }  // namespace arch
+}  // namespace debug_agent

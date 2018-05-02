@@ -12,41 +12,46 @@
 #include <fs/pseudo-dir.h>
 #include <fs/service.h>
 #include <fs/vfs.h>
+#include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/task.h>
 #include <zircon/process.h>
 #include <zircon/processargs.h>
 
-#include "garnet/bin/appmgr/config.h"
 #include "garnet/bin/appmgr/dynamic_library_loader.h"
 #include "garnet/bin/appmgr/job_holder.h"
 #include "garnet/bin/appmgr/root_application_loader.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/files/file.h"
 #include "lib/fxl/log_settings.h"
 
-constexpr char kDefaultConfigPath[] = "/system/data/appmgr/initial.config";
-constexpr char kRootLabel[] = "root";
+namespace {
+
+constexpr char kRootLabel[] = "app";
+
+void PublishRootDir(component::JobHolder* root, fs::ManagedVfs* vfs) {
+  static zx_handle_t request = zx_get_startup_handle(PA_DIRECTORY_REQUEST);
+  if (request == ZX_HANDLE_INVALID)
+    return;
+  fbl::RefPtr<fs::PseudoDir> dir(fbl::AdoptRef(new fs::PseudoDir()));
+  auto svc = fbl::AdoptRef(new fs::Service([root](zx::channel channel) {
+    return root->BindSvc(std::move(channel));
+  }));
+  dir->AddEntry("hub", root->info_dir());
+  dir->AddEntry("svc", svc);
+
+  vfs->ServeDirectory(dir, zx::channel(request));
+  request = ZX_HANDLE_INVALID;
+}
+
+}  // namespace
 
 int main(int argc, char** argv) {
   auto command_line = fxl::CommandLineFromArgcArgv(argc, argv);
 
-  std::string config_file;
-  command_line.GetOptionValue("config", &config_file);
+  async::Loop loop(&kAsyncLoopConfigMakeDefault);
 
-  const auto& positional_args = command_line.positional_args();
-  if (config_file.empty() && positional_args.empty())
-    config_file = kDefaultConfigPath;
-
-  component::Config config;
-  if (!config_file.empty()) {
-    config.ReadIfExistsFrom(config_file);
-  }
-
-  fsl::MessageLoop message_loop;
-
-  fs::ManagedVfs vfs(message_loop.async());
-  component::RootApplicationLoader root_loader(config.TakePath());
+  fs::ManagedVfs vfs(loop.async());
+  component::RootApplicationLoader root_loader;
   fbl::RefPtr<fs::PseudoDir> directory(fbl::AdoptRef(new fs::PseudoDir()));
   directory->AddEntry(
       component::ApplicationLoader::Name_,
@@ -63,20 +68,22 @@ int main(int argc, char** argv) {
   if (vfs.ServeDirectory(directory, std::move(h2)) != ZX_OK)
     return -1;
   component::JobHolder root_job_holder(nullptr, std::move(h1), kRootLabel);
+  fs::ManagedVfs publish_vfs(loop.async());
+  PublishRootDir(&root_job_holder, &vfs);
 
   component::ApplicationControllerPtr sysmgr;
   auto run_sysmgr = [&root_job_holder, &sysmgr] {
     component::ApplicationLaunchInfo launch_info;
     launch_info.url = "sysmgr";
-    root_job_holder.CreateApplication(
-        std::move(launch_info), sysmgr.NewRequest());
+    root_job_holder.CreateApplication(std::move(launch_info),
+                                      sysmgr.NewRequest());
   };
 
-  async::PostTask(message_loop.async(), [&run_sysmgr, &sysmgr] {
+  async::PostTask(loop.async(), [&run_sysmgr, &sysmgr] {
     run_sysmgr();
     sysmgr.set_error_handler(run_sysmgr);
   });
 
-  message_loop.Run();
+  loop.Run();
   return 0;
 }

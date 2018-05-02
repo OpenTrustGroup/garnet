@@ -8,6 +8,7 @@ group("tests") {
   testonly = true
   public_deps = [
     ":common_tests",
+    ":dispatcher_tests",
     ":mac_tests",
     ":scanner_tests",
   ]
@@ -17,6 +18,7 @@ source_set("test_main") {
   testonly = true
 
   sources = [
+    "mock_device.h",
     "test_main.cpp",
   ]
 
@@ -35,9 +37,11 @@ executable("mac_tests") {
   sources = [
     "channel_unittest.cpp",
     "element_unittest.cpp",
+    "energy_unittest.cpp",
     "mac_frame_unittest.cpp",
     "macaddr_unittest.cpp",
     "sequence_unittest.cpp",
+    "tim_unittest.cpp",
   ]
 
   deps = [
@@ -56,6 +60,24 @@ executable("scanner_tests") {
 
   sources = [
     "scanner_unittest.cpp",
+  ]
+
+  deps = [
+    ":test_main",
+    "//garnet/lib/wlan/mlme",
+    "//third_party/googletest:gtest",
+  ]
+
+  configs += [ "//garnet/lib/wlan/mlme:wlan_mlme_config" ]
+}
+
+executable("dispatcher_tests") {
+  output_name = "wlan_dispatcher_unittest"
+
+  testonly = true
+
+  sources = [
+    "dispatcher_unittest.cpp",
   ]
 
   deps = [
@@ -87,7 +109,7 @@ executable("common_tests") {
 
 package("wlan_tests") {
   testonly = true
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     ":tests",
@@ -103,6 +125,10 @@ package("wlan_tests") {
   tests = [
     {
       name = "wlan_mac_unittest"
+    },
+
+    {
+      name = "wlan_dispatcher_unittest"
     },
 
     {

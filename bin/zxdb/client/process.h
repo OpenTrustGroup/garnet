@@ -12,10 +12,12 @@
 #include "garnet/bin/zxdb/client/client_object.h"
 #include "garnet/bin/zxdb/client/process_observer.h"
 #include "garnet/public/lib/fxl/macros.h"
+#include "garnet/public/lib/fxl/memory/weak_ptr.h"
 #include "garnet/public/lib/fxl/observer_list.h"
 
 namespace debug_ipc {
 struct MemoryBlock;
+struct Module;
 struct ThreadRecord;
 }
 
@@ -34,6 +36,8 @@ class Process : public ClientObject {
   void AddObserver(ProcessObserver* observer);
   void RemoveObserver(ProcessObserver* observer);
 
+  fxl::WeakPtr<Process> GetWeakPtr();
+
   // Returns the target associated with this process. Guaranteed non-null.
   virtual Target* GetTarget() const = 0;
 
@@ -43,6 +47,12 @@ class Process : public ClientObject {
   // Returns the "name" of the process. This is the process object name which
   // is normally based on the file name, but isn't the same as the file name.
   virtual const std::string& GetName() const = 0;
+
+  // Queries the process for the currently-loaded modules (this always
+  // recomputes the list).
+  virtual void GetModules(
+      std::function<void(const Err&, std::vector<debug_ipc::Module>)>)
+      const = 0;
 
   // Returns all threads in the process. This is as of the last update from
   // the system. If the program is currently running, the actual threads may be
@@ -70,7 +80,8 @@ class Process : public ClientObject {
   // To get the computed threads, call GetThreads() once the callback runs.
   virtual void SyncThreads(std::function<void()> callback) = 0;
 
-  // Continues execution of all threads in the process.
+  // Applies to all threads in the process.
+  virtual void Pause() = 0;
   virtual void Continue() = 0;
 
   // Reads memory from the debugged process.
@@ -84,6 +95,7 @@ class Process : public ClientObject {
 
  private:
   fxl::ObserverList<ProcessObserver> observers_;
+  fxl::WeakPtrFactory<Process> weak_factory_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Process);
 };

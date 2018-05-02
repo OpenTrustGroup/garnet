@@ -26,9 +26,9 @@ constexpr uint16_t kBREDRMinMTU = 48;
 // The maximum length of an attribute value (v5.0, Vol 3, Part F, 3.2.9).
 constexpr size_t kMaxAttributeValueLength = 512;
 
-// The default ATT protocol transaction timeout in milliseconds
+// The ATT protocol transaction timeout in milliseconds
 // (see v5.0, Vol 3, Part F, Section 3.3.3).
-constexpr uint32_t kDefaultTransactionTimeoutMs = 30000;
+constexpr uint32_t kTransactionTimeoutMs = 30000;
 
 // A server identifies each attribute using a 16-bit handle.
 using Handle = uint16_t;
@@ -266,8 +266,8 @@ constexpr OpCode kReadByGroupTypeResponse = 0x11;
 constexpr uint8_t kMaxReadByGroupTypeValueLength = 251;
 
 // The Read By Group Type and Read By Type requests use identical payloads.
-template <UUIDType Format>
-using ReadByGroupTypeRequestParams = ReadByTypeRequestParams<Format>;
+using ReadByGroupTypeRequestParams16 = ReadByTypeRequestParams16;
+using ReadByGroupTypeRequestParams128 = ReadByTypeRequestParams128;
 
 struct AttributeGroupDataEntry {
   FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(AttributeGroupDataEntry);

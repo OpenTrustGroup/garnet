@@ -5,17 +5,15 @@
 #include "zircon_platform_bus_mapper.h"
 #include "platform_trace.h"
 #include <ddk/driver.h>
+#include <lib/zx/process.h>
 
 namespace magma {
 
 ZirconPlatformBusMapper::BusMapping::~BusMapping()
 {
-    auto bti = bus_transaction_initiator_.lock();
-    if (bti) {
-        zx_status_t status = zx_bti_unpin(bti->get(), page_addr_[0]);
-        if (status != ZX_OK) {
-            printf("zx_bti_unpin failed: %d\n", status);
-        }
+    zx_status_t status = pmt_.unpin();
+    if (status != ZX_OK) {
+        DLOG("zx_pmt_unpin failed: %d\n", status);
     }
 }
 
@@ -29,8 +27,8 @@ ZirconPlatformBusMapper::MapPageRangeBus(magma::PlatformBuffer* buffer, uint32_t
     if ((page_count == 0) || (start_page_index + page_count) * PAGE_SIZE > buffer->size())
         return DRETP(nullptr, "Invalid range: %d, %d\n", start_page_index, page_count);
 
-    auto mapping =
-        std::make_unique<BusMapping>(start_page_index, page_count, bus_transaction_initiator_);
+    std::vector<uint64_t> page_addr(page_count);
+    zx::pmt pmt;
 
     zx_status_t status;
     {
@@ -39,10 +37,31 @@ ZirconPlatformBusMapper::MapPageRangeBus(magma::PlatformBuffer* buffer, uint32_t
                             ZX_BTI_PERM_READ | ZX_BTI_PERM_WRITE | ZX_BTI_PERM_EXECUTE,
                             static_cast<ZirconPlatformBuffer*>(buffer)->handle(),
                             start_page_index * PAGE_SIZE, page_count * PAGE_SIZE,
-                            mapping->Get().data(), page_count);
+                            page_addr.data(), page_count,
+                            pmt.reset_and_get_address());
     }
-    if (status != ZX_OK)
-        return DRETP(nullptr, "zx_bti_pin failed: %d", status);
+    if (status != ZX_OK) {
+        zx_info_kmem_stats_t kmem_stats;
+        zx_object_get_info(get_root_resource(), ZX_INFO_KMEM_STATS, &kmem_stats, sizeof(kmem_stats),
+                           nullptr, nullptr);
+        zx_info_task_stats_t task_stats = {};
+        zx::process::self().get_info(ZX_INFO_TASK_STATS, &task_stats, sizeof(task_stats), nullptr,
+                                     nullptr);
+        magma::log(magma::LOG_WARNING,
+                   "Failed to pin 0x%x pages (0x%lx bytes) with status %d. Out of Memory?\n"
+                   "mem_mapped_bytes: 0x%lx mem_private_bytes: 0x%lx mem_shared_bytes: 0x%lx\n"
+                   "total_bytes: 0x%lx free_bytes 0x%lx: wired_bytes: 0x%lx vmo_bytes: 0x%lx\n"
+                   "mmu_overhead_bytes: 0x%lx other_bytes: 0x%lx\n",
+                   page_count, static_cast<uint64_t>(page_count) * PAGE_SIZE, status,
+                   task_stats.mem_mapped_bytes, task_stats.mem_private_bytes,
+                   task_stats.mem_shared_bytes, kmem_stats.total_bytes, kmem_stats.free_bytes,
+                   kmem_stats.wired_bytes, kmem_stats.vmo_bytes, kmem_stats.mmu_overhead_bytes,
+                   kmem_stats.other_bytes);
+        return nullptr;
+    }
+
+    auto mapping =
+        std::make_unique<BusMapping>(start_page_index, std::move(page_addr), std::move(pmt));
 
     return mapping;
 }

@@ -45,13 +45,13 @@ LegacyLowEnergyScanner::PendingScanResult::PendingScanResult(
 LegacyLowEnergyScanner::LegacyLowEnergyScanner(
     Delegate* delegate,
     fxl::RefPtr<Transport> hci,
-    fxl::RefPtr<fxl::TaskRunner> task_runner)
-    : LowEnergyScanner(delegate, hci, task_runner), active_scanning_(false) {
+    async_t* dispatcher)
+    : LowEnergyScanner(delegate, hci, dispatcher), active_scanning_(false) {
   event_handler_id_ = transport()->command_channel()->AddLEMetaEventHandler(
       kLEAdvertisingReportSubeventCode,
       std::bind(&LegacyLowEnergyScanner::OnAdvertisingReportEvent, this,
                 std::placeholders::_1),
-      this->task_runner());
+      this->dispatcher());
 }
 
 LegacyLowEnergyScanner::~LegacyLowEnergyScanner() {
@@ -64,8 +64,8 @@ bool LegacyLowEnergyScanner::StartScan(bool active,
                                        bool filter_duplicates,
                                        LEScanFilterPolicy filter_policy,
                                        int64_t period_ms,
-                                       const StatusCallback& callback) {
-  FXL_DCHECK(task_runner()->RunsTasksOnCurrentThread());
+                                       const ScanStatusCallback& callback) {
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   FXL_DCHECK(callback);
   FXL_DCHECK(period_ms == kPeriodInfinite || period_ms > 0);
   FXL_DCHECK(scan_interval <= kLEScanIntervalMax &&
@@ -116,19 +116,19 @@ bool LegacyLowEnergyScanner::StartScan(bool active,
                                          : GenericEnableParam::kDisable;
 
   hci_cmd_runner()->QueueCommand(std::move(command));
-  hci_cmd_runner()->RunCommands([this, period_ms](hci::Status status) {
+  hci_cmd_runner()->RunCommands([this, period_ms](Status status) {
     FXL_DCHECK(scan_cb_);
     FXL_DCHECK(state() == State::kInitiating);
 
-    if (status != hci::Status::kSuccess) {
+    if (!status) {
       auto cb = scan_cb_;
 
       scan_cb_ = nullptr;
       set_state(State::kIdle);
 
       FXL_LOG(ERROR) << "gap: LegacyLowEnergyScanner: failed to start scan: "
-                     << StatusToString(status);
-      cb(Status::kFailed);
+                     << status.ToString();
+      cb(ScanStatus::kFailed);
       return;
     }
 
@@ -138,21 +138,21 @@ bool LegacyLowEnergyScanner::StartScan(bool active,
         if (IsScanning())
           StopScanInternal(false);
       });
-      task_runner()->PostDelayedTask(
+      async::PostDelayedTask(dispatcher(),
           scan_timeout_cb_.callback(),
-          fxl::TimeDelta::FromMilliseconds(period_ms));
+          zx::msec(period_ms));
     }
 
     set_state(State::kScanning);
 
-    scan_cb_(Status::kStarted);
+    scan_cb_(ScanStatus::kStarted);
   });
 
   return true;
 }
 
 bool LegacyLowEnergyScanner::StopScan() {
-  FXL_DCHECK(task_runner()->RunsTasksOnCurrentThread());
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
 
   if (state() == State::kStopping || state() == State::kIdle) {
     FXL_VLOG(1)
@@ -172,6 +172,11 @@ bool LegacyLowEnergyScanner::StopScan() {
   StopScanInternal(true);
 
   return true;
+}
+
+void LegacyLowEnergyScanner::StopScanPeriodForTesting() {
+  FXL_DCHECK(IsScanning());
+  StopScanInternal(false);
 }
 
 void LegacyLowEnergyScanner::StopScanInternal(bool stopped) {
@@ -203,16 +208,16 @@ void LegacyLowEnergyScanner::StopScanInternal(bool stopped) {
   enable_params->filter_duplicates = GenericEnableParam::kDisable;
 
   hci_cmd_runner()->QueueCommand(std::move(command));
-  hci_cmd_runner()->RunCommands([this, stopped](hci::Status status) {
+  hci_cmd_runner()->RunCommands([this, stopped](Status status) {
     FXL_DCHECK(scan_cb_);
     FXL_DCHECK(state() == State::kStopping);
 
-    if (status != hci::Status::kSuccess) {
+    if (!status) {
       FXL_LOG(WARNING) << "gap: LegacyLowEnergyScanner: Failed to stop scan: "
-                       << StatusToString(status);
+                       << status.ToString();
       // Something went wrong but there isn't really a meaningful way to
       // recover, so we just fall through and notify the caller with
-      // Status::kFailed instead.
+      // ScanStatus::kFailed instead.
     }
 
     auto cb = scan_cb_;
@@ -220,9 +225,8 @@ void LegacyLowEnergyScanner::StopScanInternal(bool stopped) {
     scan_cb_ = nullptr;
     set_state(State::kIdle);
 
-    cb(status != hci::Status::kSuccess
-           ? Status::kFailed
-           : (stopped ? Status::kStopped : Status::kComplete));
+    cb(!status ? ScanStatus::kFailed
+               : (stopped ? ScanStatus::kStopped : ScanStatus::kComplete));
   });
 }
 

@@ -28,14 +28,21 @@ class FakeLayer final : public GATT {
                        ServiceIdCallback callback,
                        ReadHandler read_handler,
                        WriteHandler write_handler,
-                       ClientConfigCallback ccc_callback,
-                       fxl::RefPtr<fxl::TaskRunner> task_runner) override;
+                       ClientConfigCallback ccc_callback) override;
   void UnregisterService(IdType service_id) override;
   void SendNotification(IdType service_id,
                         IdType chrc_id,
                         std::string peer_id,
                         ::fidl::VectorPtr<uint8_t> value,
                         bool indicate) override;
+  void RegisterRemoteServiceWatcher(RemoteServiceWatcher callback,
+                                    async_t* dispatcher) override;
+  void ListServices(std::string peer_id,
+                    std::vector<common::UUID> uuids,
+                    ServiceListCallback callback) override;
+  void FindService(std::string peer_id,
+                   IdType service_id,
+                   RemoteServiceCallback callback) override;
 
  private:
   friend class fbl::RefPtr<FakeLayer>;

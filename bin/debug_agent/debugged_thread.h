@@ -4,14 +4,18 @@
 
 #pragma once
 
+#include <zx/thread.h>
+
+#include "garnet/lib/debug_ipc/protocol.h"
 #include "garnet/public/lib/fxl/macros.h"
 
-#include <zx/thread.h>
+struct zx_thread_state_general_regs;
+
+namespace debug_agent {
 
 class DebugAgent;
 class DebuggedProcess;
 class ProcessBreakpoint;
-struct zx_thread_state_general_regs;
 
 class DebuggedThread {
  public:
@@ -27,9 +31,6 @@ class DebuggedThread {
     // Exception from the program.
     kException,
 
-    // Hit a breakpoint.
-    kBreakpoint,
-
     // Anything else.
     kOther
   };
@@ -38,8 +39,10 @@ class DebuggedThread {
   // will be suspended, but when we attach to a process with existing threads
   // it won't in in this state. The |starting| flag indicates that this is
   // a thread discoverd via a debug notification.
-  DebuggedThread(DebuggedProcess* process, zx::thread thread,
-                 zx_koid_t thread_koid, bool starting);
+  DebuggedThread(DebuggedProcess* process,
+                 zx::thread thread,
+                 zx_koid_t thread_koid,
+                 bool starting);
   ~DebuggedThread();
 
   zx::thread& thread() { return thread_; }
@@ -47,14 +50,25 @@ class DebuggedThread {
 
   void OnException(uint32_t type);
 
-  // Continues execution of the thread. The thead should currently be in a
+  // Pauses execution of the thread. If it is already stopped, this will be
+  // ignored. Pausing happens asynchronously so the thread will not necessarily
+  // have stopped when this returns.
+  void Pause();
+
+  // Resumes execution of the thread. The thead should currently be in a
   // stopped state. If it's not stopped, this will be ignored.
-  void Continue(bool single_step);
+  void Resume(debug_ipc::ResumeRequest::How how);
+
+  // Fills in the backtrace if available. Otherwise fills in nothing.
+  void GetBacktrace(std::vector<debug_ipc::StackFrame>* frames) const;
+
+  // Sends a notification to the client about the state of this thread.
+  void SendThreadNotification() const;
 
  private:
   enum class AfterBreakpointStep {
     kContinue,  // Resume execution.
-    kBreak  // Send the client the exception and keep stopped.
+    kBreak      // Send the client the exception and keep stopped.
   };
 
   void UpdateForSoftwareBreakpoint(zx_thread_state_general_regs* regs);
@@ -62,7 +76,7 @@ class DebuggedThread {
   // Sets or clears the single step bit on the thread.
   void SetSingleStep(bool single_step);
 
-  DebugAgent* debug_agent_;  // Non-owning.
+  DebugAgent* debug_agent_;   // Non-owning.
   DebuggedProcess* process_;  // Non-owning.
   zx::thread thread_;
   zx_koid_t koid_;
@@ -85,3 +99,5 @@ class DebuggedThread {
 
   FXL_DISALLOW_COPY_AND_ASSIGN(DebuggedThread);
 };
+
+}  // namespace debug_agent

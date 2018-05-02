@@ -5,6 +5,7 @@
 #include "garnet/bin/ui/root_presenter/presentation.h"
 
 #include <cmath>
+#include <utility>
 
 #if defined(countof)
 // Workaround for compiler error due to Zircon defining countof() as a macro.
@@ -46,42 +47,36 @@ constexpr float kCursorElevation = 800;
 }  // namespace
 
 Presentation::Presentation(views_v1::ViewManager* view_manager,
-                           ui::Scenic* scenic)
+                           ui::Scenic* scenic,
+                           scenic_lib::Session* session)
     : view_manager_(view_manager),
       scenic_(scenic),
-      session_(scenic_),
-      compositor_(&session_),
-      layer_stack_(&session_),
-      layer_(&session_),
-      renderer_(&session_),
-      scene_(&session_),
+      session_(session),
+      layer_(session_),
+      renderer_(session_),
+      scene_(session_),
       camera_(scene_),
-      ambient_light_(&session_),
-      directional_light_(&session_),
-      root_view_host_node_(&session_),
-      root_view_parent_node_(&session_),
-      content_view_host_node_(&session_),
-      cursor_shape_(&session_,
+      ambient_light_(session_),
+      directional_light_(session_),
+      root_view_host_node_(session_),
+      root_view_parent_node_(session_),
+      content_view_host_node_(session_),
+      cursor_shape_(session_,
                     kCursorWidth,
                     kCursorHeight,
                     0u,
                     kCursorRadius,
                     kCursorRadius,
                     kCursorRadius),
-      cursor_material_(&session_),
+      cursor_material_(session_),
       presentation_binding_(this),
       tree_listener_binding_(this),
       tree_container_listener_binding_(this),
       view_container_listener_binding_(this),
       view_listener_binding_(this),
       weak_factory_(this) {
-  session_.set_error_handler([this] {
-    FXL_LOG(ERROR)
-        << "Root presenter: Scene manager session died unexpectedly.";
-    Shutdown();
-  });
-
   renderer_.SetCamera(camera_);
+  layer_.SetRenderer(renderer_);
   scene_.AddChild(root_view_host_node_);
 
   scene_.AddLight(ambient_light_);
@@ -91,10 +86,6 @@ Presentation::Presentation(views_v1::ViewManager* view_manager,
   light_direction_ = glm::vec3(1.f, 1.f, -2.f);
   directional_light_.SetDirection(light_direction_.x, light_direction_.y,
                                   light_direction_.z);
-
-  layer_.SetRenderer(renderer_);
-  layer_stack_.AddLayer(layer_);
-  compositor_.SetLayerStack(layer_stack_);
 
   root_view_host_node_.ExportAsRequest(&root_view_host_import_token_);
   root_view_parent_node_.BindAsRequest(&root_view_parent_export_token_);
@@ -108,21 +99,23 @@ Presentation::~Presentation() {}
 void Presentation::Present(
     views_v1_token::ViewOwnerPtr view_owner,
     fidl::InterfaceRequest<presentation::Presentation> presentation_request,
-    fxl::Closure shutdown_callback) {
+    YieldCallback yield_callback,
+    ShutdownCallback shutdown_callback) {
   FXL_DCHECK(view_owner);
   FXL_DCHECK(!display_model_initialized_);
 
+  yield_callback_ = std::move(yield_callback);
   shutdown_callback_ = std::move(shutdown_callback);
 
-  scenic_->GetDisplayInfo(fxl::MakeCopyable(
-      [weak = weak_factory_.GetWeakPtr(), view_owner = std::move(view_owner),
-       presentation_request = std::move(presentation_request)](
-          gfx::DisplayInfo display_info) mutable {
-        if (weak)
-          weak->CreateViewTree(std::move(view_owner),
-                               std::move(presentation_request),
-                               std::move(display_info));
-      }));
+  scenic_->GetDisplayInfo(fxl::MakeCopyable([
+    weak = weak_factory_.GetWeakPtr(), view_owner = std::move(view_owner),
+    presentation_request = std::move(presentation_request)
+  ](gfx::DisplayInfo display_info) mutable {
+    if (weak)
+      weak->CreateViewTree(std::move(view_owner),
+                           std::move(presentation_request),
+                           std::move(display_info));
+  }));
 }
 
 void Presentation::CreateViewTree(
@@ -196,8 +189,7 @@ void Presentation::CreateViewTree(
   PresentScene();
 }
 
-void Presentation::InitializeDisplayModel(
-    gfx::DisplayInfo display_info) {
+void Presentation::InitializeDisplayModel(gfx::DisplayInfo display_info) {
   FXL_DCHECK(!display_model_initialized_);
 
   // Save previous display values. These could have been overriden by earlier
@@ -251,7 +243,9 @@ void Presentation::SetDisplaySizeInMm(float width_in_mm, float height_in_mm) {
                 << display_model_simulated_.display_info().height_in_mm
                 << "mm.";
 
-  ApplyDisplayModelChanges(true);
+  if (ApplyDisplayModelChanges(true)) {
+    PresentScene();
+  }
 }
 
 bool Presentation::SetDisplaySizeInMmWithoutApplyingChanges(float width_in_mm,
@@ -313,7 +307,9 @@ void Presentation::SetDisplayUsage(presentation::DisplayUsage usage) {
     return;
   }
 
-  ApplyDisplayModelChanges(true);
+  if (ApplyDisplayModelChanges(true)) {
+    PresentScene();
+  }
 
   FXL_LOG(INFO) << "Presentation::SetDisplayUsage: changing display usage to "
                 << GetDisplayUsageAsString(
@@ -381,10 +377,23 @@ void Presentation::OnDeviceAdded(mozart::InputDeviceImpl* input_device) {
   FXL_VLOG(1) << "OnDeviceAdded: device_id=" << input_device->id();
 
   FXL_DCHECK(device_states_by_id_.count(input_device->id()) == 0);
-  std::unique_ptr<mozart::DeviceState> state =
-      std::make_unique<mozart::DeviceState>(
-          input_device->id(), input_device->descriptor(),
-          [this](input::InputEvent event) { OnEvent(std::move(event)); });
+
+  std::unique_ptr<mozart::DeviceState> state;
+  if (input_device->descriptor()->sensor) {
+    mozart::OnSensorEventCallback callback = [this](uint32_t device_id,
+                                                    input::InputReport event) {
+      OnSensorEvent(device_id, std::move(event));
+    };
+    state = std::make_unique<mozart::DeviceState>(
+        input_device->id(), input_device->descriptor(), callback);
+  } else {
+    mozart::OnEventCallback callback = [this](input::InputEvent event) {
+      OnEvent(std::move(event));
+    };
+    state = std::make_unique<mozart::DeviceState>(
+        input_device->id(), input_device->descriptor(), callback);
+  }
+
   mozart::DeviceState* state_ptr = state.get();
   auto device_pair = std::make_pair(input_device, std::move(state));
   state_ptr->OnRegistered();
@@ -428,11 +437,12 @@ void Presentation::OnReport(uint32_t device_id,
 
 void Presentation::CaptureKeyboardEvent(
     input::KeyboardEvent event_to_capture,
-    fidl::InterfaceHandle<presentation::KeyboardCaptureListener> listener_handle) {
+    fidl::InterfaceHandle<presentation::KeyboardCaptureListener>
+        listener_handle) {
   presentation::KeyboardCaptureListenerPtr listener;
   listener.Bind(std::move(listener_handle));
   // Auto-remove listeners if the interface closes.
-  listener.set_error_handler([this, listener = listener.get()] {
+  listener.set_error_handler([ this, listener = listener.get() ] {
     captured_keybindings_.erase(
         std::remove_if(captured_keybindings_.begin(),
                        captured_keybindings_.end(),
@@ -446,11 +456,34 @@ void Presentation::CaptureKeyboardEvent(
       KeyboardCaptureItem{std::move(event_to_capture), std::move(listener)});
 }
 
+void Presentation::GetPresentationMode(GetPresentationModeCallback callback) {
+  callback(presentation_mode_);
+}
+
+void Presentation::SetPresentationModeListener(
+    fidl::InterfaceHandle<presentation::PresentationModeListener> listener) {
+  if (presentation_mode_listener_) {
+    FXL_LOG(ERROR) << "Cannot listen to presentation mode; already listening.";
+    return;
+  }
+
+  if (presentation_mode_detector_ == nullptr) {
+    const size_t kDetectorHistoryLength = 5;
+    presentation_mode_detector_ =
+        std::make_unique<presentation_mode::Detector>(kDetectorHistoryLength);
+  }
+
+  presentation_mode_listener_.Bind(std::move(listener));
+  FXL_LOG(INFO) << "Presentation mode, now listening.";
+}
+
+
 bool Presentation::GlobalHooksHandleEvent(const input::InputEvent& event) {
   return display_rotater_.OnEvent(event, this) ||
          display_usage_switcher_.OnEvent(event, this) ||
          display_size_switcher_.OnEvent(event, this) ||
-         perspective_demo_mode_.OnEvent(event, this);
+         perspective_demo_mode_.OnEvent(event, this) ||
+         presentation_switcher_.OnEvent(event, this);
 }
 
 void Presentation::OnEvent(input::InputEvent event) {
@@ -499,8 +532,7 @@ void Presentation::OnEvent(input::InputEvent event) {
 
       for (size_t i = 0; i < captured_keybindings_.size(); i++) {
         const auto& event = captured_keybindings_[i].event;
-        if ((kbd.modifiers & event.modifiers) &&
-            (event.phase == kbd.phase) &&
+        if ((kbd.modifiers & event.modifiers) && (event.phase == kbd.phase) &&
             (event.code_point == kbd.code_point)) {
           input::KeyboardEvent clone;
           fidl::Clone(kbd, &clone);
@@ -518,6 +550,28 @@ void Presentation::OnEvent(input::InputEvent event) {
     input_dispatcher_->DispatchEvent(std::move(event));
 }
 
+void Presentation::OnSensorEvent(uint32_t device_id, input::InputReport event) {
+  FXL_VLOG(2) << "OnSensorEvent(device_id=" << device_id << "): " << event;
+
+  FXL_DCHECK(device_states_by_id_.count(device_id) > 0);
+  FXL_DCHECK(device_states_by_id_[device_id].first);
+  FXL_DCHECK(device_states_by_id_[device_id].first->descriptor());
+  FXL_DCHECK(device_states_by_id_[device_id].first->descriptor()->sensor.get());
+
+  if (presentation_mode_listener_) {
+    const input::SensorDescriptor* sensor_descriptor =
+        device_states_by_id_[device_id].first->descriptor()->sensor.get();
+    std::pair<bool, presentation::PresentationMode> update =
+        presentation_mode_detector_->Update(*sensor_descriptor,
+                                            std::move(event));
+    if (update.first && update.second != presentation_mode_) {
+      presentation_mode_ = update.second;
+      presentation_mode_listener_->OnModeChanged();
+    }
+  }
+}
+
+
 void Presentation::OnChildAttached(uint32_t child_key,
                                    views_v1::ViewInfo child_view_info,
                                    OnChildAttachedCallback callback) {
@@ -528,9 +582,8 @@ void Presentation::OnChildAttached(uint32_t child_key,
   callback();
 }
 
-void Presentation::OnChildUnavailable(
-    uint32_t child_key,
-    OnChildUnavailableCallback callback) {
+void Presentation::OnChildUnavailable(uint32_t child_key,
+                                      OnChildUnavailableCallback callback) {
   if (kRootViewKey == child_key) {
     FXL_LOG(ERROR) << "Root presenter: Root view terminated unexpectedly.";
     Shutdown();
@@ -541,36 +594,45 @@ void Presentation::OnChildUnavailable(
   callback();
 }
 
-void Presentation::OnPropertiesChanged(
-    views_v1::ViewProperties properties,
-    OnPropertiesChangedCallback callback) {
+void Presentation::OnPropertiesChanged(views_v1::ViewProperties properties,
+                                       OnPropertiesChangedCallback callback) {
   // Nothing to do right now.
   callback();
 }
 
 // |Presentation|
 void Presentation::EnableClipping(bool enabled) {
-  FXL_LOG(INFO) << "Presentation Controller method called: EnableClipping!!";
+  if (presentation_clipping_enabled_ != enabled) {
+    FXL_LOG(INFO) << "enable clipping: " << (enabled ? "true" : "false");
+    presentation_clipping_enabled_ = enabled;
+    PresentScene();
+  }
 }
 
 // |Presentation|
 void Presentation::UseOrthographicView() {
-  FXL_LOG(INFO)
-      << "Presentation Controller method called: UseOrthographicView!!";
+  FXL_LOG(INFO) << "Presentation Controller method called: "
+                   "UseOrthographicView!! (not implemented)";
 }
 
 // |Presentation|
 void Presentation::UsePerspectiveView() {
-  FXL_LOG(INFO)
-      << "Presentation Controller method called: UsePerspectiveView!!";
+  FXL_LOG(INFO) << "Presentation Controller method called: "
+                   "UsePerspectiveView!! (not implemented)";
 }
 
 void Presentation::PresentScene() {
+  bool use_clipping =
+      presentation_clipping_enabled_ && perspective_demo_mode_.WantsClipping();
+  renderer_.SetDisableClipping(!use_clipping);
+
+  // TODO(SCN-631): Individual Presentations shouldn't directly manage cursor
+  // state.
   for (auto it = cursors_.begin(); it != cursors_.end(); ++it) {
     CursorState& state = it->second;
     if (state.visible) {
       if (!state.created) {
-        state.node = std::make_unique<scenic_lib::ShapeNode>(&session_);
+        state.node = std::make_unique<scenic_lib::ShapeNode>(session_);
         state.node->SetShape(cursor_shape_);
         state.node->SetMaterial(cursor_material_);
         scene_.AddChild(*state.node);
@@ -588,7 +650,7 @@ void Presentation::PresentScene() {
     }
   }
 
-  session_.Present(
+  session_->Present(
       0, [weak = weak_factory_.GetWeakPtr()](images::PresentationInfo info) {
         if (auto self = weak.get()) {
           uint64_t next_presentation_time =
@@ -610,7 +672,7 @@ void Presentation::SetRendererParams(
   for (size_t i = 0; i < params->size(); ++i) {
     renderer_.SetParam(std::move(params->at(i)));
   }
-  session_.Present(0, [](images::PresentationInfo info) {});
+  session_->Present(0, [](images::PresentationInfo info) {});
 }
 
 }  // namespace root_presenter

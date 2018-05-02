@@ -4,6 +4,8 @@
 
 #include <wlan/mlme/ap/infra_bss.h>
 
+#include <wlan/common/channel.h>
+#include <wlan/mlme/debug.h>
 #include <wlan/mlme/mlme.h>
 #include <wlan/mlme/packet.h>
 #include <wlan/mlme/service.h>
@@ -36,6 +38,12 @@ void InfraBss::Start(const wlan_mlme::StartRequest& req) {
         .cbw = CBW20,
     };
 
+    if (IsCbw40RxReady()) {
+        wlan_channel_t chan_override = chan;
+        chan_override.cbw = CBW40;
+        chan.cbw = common::GetValidCbw(chan_override);
+    }
+
     auto status = device_->SetChannel(chan);
     if (status != ZX_OK) {
         errorf("[infra-bss] [%s] requested start on channel %u failed: %d\n",
@@ -43,15 +51,29 @@ void InfraBss::Start(const wlan_mlme::StartRequest& req) {
     }
     chan_ = chan;
 
+    ZX_DEBUG_ASSERT(req.dtim_period > 0);
+    if (req.dtim_period == 0) {
+        ps_cfg_.SetDtimPeriod(1);
+        warnf(
+            "[infra-bss] [%s] received start request with reserved DTIM period of 0; falling back "
+            "to DTIM period of 1\n",
+            bssid_.ToString().c_str());
+    } else {
+        ps_cfg_.SetDtimPeriod(req.dtim_period);
+    }
+
     debugbss("[infra-bss] [%s] starting BSS\n", bssid_.ToString().c_str());
     debugbss("    SSID: %s\n", req.ssid->data());
     debugbss("    Beacon Period: %u\n", req.beacon_period);
     debugbss("    DTIM Period: %u\n", req.dtim_period);
     debugbss("    Channel: %u\n", req.channel);
 
+    // Keep track of start request which holds important configuration information.
+    req.Clone(&start_req_);
+
     // Start sending Beacon frames.
     started_at_ = zx_clock_get(ZX_CLOCK_MONOTONIC);
-    bcn_sender_->Start(this, req);
+    bcn_sender_->Start(this, ps_cfg_, req);
 }
 
 void InfraBss::Stop() {
@@ -106,6 +128,29 @@ zx_status_t InfraBss::HandleDataFrame(const DataFrameHeader& hdr) {
     return ZX_OK;
 }
 
+zx_status_t InfraBss::HandleEthFrame(const ImmutableBaseFrame<EthernetII>& frame) {
+    // Lookup client associated with incoming unicast frame.
+    auto& dest_addr = frame.hdr->dest;
+    if (dest_addr.IsUcast()) {
+        if (clients_.Has(dest_addr)) {
+            ForwardCurrentFrameTo(clients_.GetClient(dest_addr));
+        } else {
+            // TODO(hahnr): Add warning once bridge is more mature.
+        }
+        return ZX_OK;
+    }
+
+    // Process multicast frames ourselves.
+    fbl::unique_ptr<Packet> out_frame;
+    auto status = EthToDataFrame(frame, &out_frame);
+    if (status != ZX_OK) {
+        errorf("[infra-bss] [%s] couldn't convert ethernet frame: %d\n", bssid_.ToString().c_str(),
+               status);
+        return status;
+    }
+    return SendDataFrame(fbl::move(out_frame));
+}
+
 zx_status_t InfraBss::HandleAuthentication(const ImmutableMgmtFrame<Authentication>& frame,
                                            const wlan_rx_info_t& rxinfo) {
     // If the client is already known, there is no work to be done here.
@@ -146,29 +191,24 @@ zx_status_t InfraBss::HandlePsPollFrame(const ImmutableCtrlFrame<PsPollFrame>& f
     return ZX_OK;
 }
 
-void InfraBss::HandleClientStateChange(const common::MacAddr& client, RemoteClient::StateId from,
-                                       RemoteClient::StateId to) {
+zx_status_t InfraBss::HandleClientDeauth(const common::MacAddr& client) {
     debugfn();
-    // Ignore when transitioning from `uninitialized` state.
-    if (from == RemoteClient::StateId::kUninitialized) { return; }
-
     ZX_DEBUG_ASSERT(clients_.Has(client));
     if (!clients_.Has(client)) {
-        errorf("[infra-bss] [%s] state change %hhu -> %hhu reported for unknown client: %s\n",
-               bssid_.ToString().c_str(), from, to, client.ToString().c_str());
-        return;
+        errorf("[infra-bss] [%s] unknown client deauthenticated: %s\n", bssid_.ToString().c_str(),
+               client.ToString().c_str());
+        return ZX_ERR_BAD_STATE;
     }
 
-    // If client enters deauthenticated state after being authenticated, remove client.
-    if (to == RemoteClient::StateId::kDeauthenticated) {
-        debugbss("[infra-bss] [%s] removing client %s\n", bssid_.ToString().c_str(),
-                client.ToString().c_str());
-        auto status = clients_.Remove(client);
-        if (status != ZX_OK) {
-            errorf("[infra-bss] [%s] couldn't remove client %s: %d\n", bssid_.ToString().c_str(),
-                   client.ToString().c_str(), status);
-        }
+    debugbss("[infra-bss] [%s] removing client %s\n", bssid_.ToString().c_str(),
+             client.ToString().c_str());
+    auto status = clients_.Remove(client);
+    if (status != ZX_OK) {
+        errorf("[infra-bss] [%s] couldn't remove client %s: %d\n", bssid_.ToString().c_str(),
+               client.ToString().c_str(), status);
+        return status;
     }
+    return ZX_ERR_STOP;
 }
 
 void InfraBss::HandleClientBuChange(const common::MacAddr& client, size_t bu_count) {
@@ -181,8 +221,7 @@ void InfraBss::HandleClientBuChange(const common::MacAddr& client, size_t bu_cou
         return;
     }
 
-    tim_.SetTrafficIndication(aid, bu_count > 0);
-    bcn_sender_->UpdateBeacon(tim_);
+    ps_cfg_.GetTim()->SetTrafficIndication(aid, bu_count > 0);
 }
 
 zx_status_t InfraBss::AssignAid(const common::MacAddr& client, aid_t* out_aid) {
@@ -206,13 +245,8 @@ zx_status_t InfraBss::ReleaseAid(const common::MacAddr& client) {
         return ZX_ERR_NOT_FOUND;
     }
 
-    tim_.SetTrafficIndication(aid, false);
-    bcn_sender_->UpdateBeacon(tim_);
+    ps_cfg_.GetTim()->SetTrafficIndication(aid, false);
     return clients_.ReleaseAid(client);
-}
-
-fbl::unique_ptr<Buffer> InfraBss::GetPowerSavingBuffer(size_t len) {
-    return GetBuffer(len);
 }
 
 zx_status_t InfraBss::CreateClientTimer(const common::MacAddr& client_addr,
@@ -229,6 +263,160 @@ zx_status_t InfraBss::CreateClientTimer(const common::MacAddr& client_addr,
         return status;
     }
     return ZX_OK;
+}
+
+bool InfraBss::ShouldBufferFrame(const common::MacAddr& receiver_addr) const {
+    // Buffer non-GCR-SP frames when at least one client is dozing.
+    // Note: Currently group addressed service transmission is not supported and thus, every group
+    // message should get buffered.
+    return receiver_addr.IsGroupAddr() && ps_cfg_.GetTim()->HasDozingClients();
+}
+
+zx_status_t InfraBss::BufferFrame(fbl::unique_ptr<Packet> packet) {
+    // Drop oldest frame if queue reached its limit.
+    if (bu_queue_.size() >= kMaxGroupAddressedBu) {
+        bu_queue_.Dequeue();
+        warnf("[infra-bss] [%s] dropping oldest group addressed frame\n",
+              bssid_.ToString().c_str());
+    }
+
+    debugps("[infra-bss] [%s] buffer outbound frame\n", bssid_.ToString().c_str());
+    bu_queue_.Enqueue(fbl::move(packet));
+    ps_cfg_.GetTim()->SetTrafficIndication(kGroupAdressedAid, true);
+    return ZX_OK;
+}
+
+zx_status_t InfraBss::SendDataFrame(fbl::unique_ptr<Packet> packet) {
+    ZX_DEBUG_ASSERT(packet->len() >= sizeof(DataFrameHeader));
+    if (packet->len() < sizeof(DataFrameHeader)) { return ZX_ERR_INVALID_ARGS; }
+
+    auto hdr = packet->field<DataFrameHeader>(0);
+    if (ShouldBufferFrame(hdr->addr1)) { return BufferFrame(fbl::move(packet)); }
+
+    return device_->SendWlan(fbl::move(packet));
+}
+
+zx_status_t InfraBss::SendMgmtFrame(fbl::unique_ptr<Packet> packet) {
+    ZX_DEBUG_ASSERT(packet->len() >= sizeof(MgmtFrameHeader));
+    if (packet->len() < sizeof(MgmtFrameHeader)) { return ZX_ERR_INVALID_ARGS; }
+
+    auto hdr = packet->field<MgmtFrameHeader>(0);
+    if (ShouldBufferFrame(hdr->addr1)) { return BufferFrame(fbl::move(packet)); }
+
+    return device_->SendWlan(fbl::move(packet));
+}
+
+zx_status_t InfraBss::SendEthFrame(fbl::unique_ptr<Packet> packet) {
+    return device_->SendEthernet(fbl::move(packet));
+}
+
+zx_status_t InfraBss::SendNextBu() {
+    ZX_DEBUG_ASSERT(bu_queue_.size() > 0);
+    if (bu_queue_.size() == 0) { return ZX_ERR_BAD_STATE; }
+
+    auto packet = bu_queue_.Dequeue();
+    ZX_DEBUG_ASSERT(packet->len() > sizeof(FrameControl));
+    if (packet->len() < sizeof(FrameControl)) { return ZX_ERR_BAD_STATE; }
+
+    // Set `more` bit if there are more BU available.
+    // IEEE Std 802.11-2016, 9.2.4.1.8
+    auto fc = packet->mut_field<FrameControl>(0);
+    fc->set_more_data(bu_queue_.size() > 0 ? 1 : 0);
+
+    debugps("[infra-bss] [%s] sent group addressed BU\n", bssid_.ToString().c_str());
+    return device_->SendWlan(fbl::move(packet));
+}
+
+zx_status_t InfraBss::EthToDataFrame(const ImmutableBaseFrame<EthernetII>& frame,
+                                     fbl::unique_ptr<Packet>* out_packet) {
+    const size_t buf_len = kDataFrameHdrLenMax + sizeof(LlcHeader) + frame.body_len;
+    auto buffer = GetBuffer(buf_len);
+    if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
+
+    *out_packet = fbl::make_unique<Packet>(std::move(buffer), buf_len);
+    (*out_packet)->set_peer(Packet::Peer::kWlan);
+
+    auto hdr = (*out_packet)->mut_field<DataFrameHeader>(0);
+    hdr->fc.clear();
+    hdr->fc.set_type(FrameType::kData);
+    hdr->fc.set_subtype(DataSubtype::kDataSubtype);
+    hdr->fc.set_from_ds(1);
+    // TODO(hahnr): Protect outgoing frames when RSNA is established.
+    hdr->addr1 = frame.hdr->dest;
+    hdr->addr2 = bssid_;
+    hdr->addr3 = frame.hdr->src;
+
+    hdr->sc.set_seq(NextSeq(*hdr));
+
+    wlan_tx_info_t txinfo = {
+        // TODO(porce): Determine PHY and CBW based on the association negotiation.
+        .tx_flags = 0x0,
+        .valid_fields =
+            WLAN_TX_INFO_VALID_PHY | WLAN_TX_INFO_VALID_CHAN_WIDTH | WLAN_TX_INFO_VALID_MCS,
+        .phy = WLAN_PHY_HT,
+        .cbw = CBW20,
+        //.date_rate = 0x0,
+        .mcs = 0x7,
+    };
+
+    if (IsCbw40TxReady()) {
+        // Ralink appears to setup BlockAck session AND AMPDU handling
+        // TODO(porce): Use a separate sequence number space in that case
+        if (hdr->addr3.IsUcast()) {
+            // 40MHz direction does not matter here.
+            // Radio uses the operational channel setting. This indicates the bandwidth without
+            // direction.
+            txinfo.cbw = CBW40;
+        }
+    }
+
+    auto llc = (*out_packet)->mut_field<LlcHeader>(hdr->len());
+    llc->dsap = kLlcSnapExtension;
+    llc->ssap = kLlcSnapExtension;
+    llc->control = kLlcUnnumberedInformation;
+    std::memcpy(llc->oui, kLlcOui, sizeof(llc->oui));
+    llc->protocol_id = frame.hdr->ether_type;
+    std::memcpy(llc->payload, frame.body, frame.body_len);
+
+    auto frame_len = hdr->len() + sizeof(LlcHeader) + frame.body_len;
+    auto status = (*out_packet)->set_len(frame_len);
+    if (status != ZX_OK) {
+        errorf("[infra-bss] [%s] could not set data frame length to %zu: %d\n",
+               bssid_.ToString().c_str(), frame_len, status);
+        return status;
+    }
+
+    finspect("Outbound data frame: len %zu, hdr_len:%u body_len:%zu frame_len:%zu\n",
+             (*out_packet)->len(), hdr->len(), frame.body_len, frame_len);
+    finspect("  wlan hdr: %s\n", debug::Describe(*hdr).c_str());
+    finspect("  llc  hdr: %s\n", debug::Describe(*llc).c_str());
+    finspect("  frame   : %s\n", debug::HexDump((*out_packet)->data(), frame_len).c_str());
+
+    (*out_packet)->CopyCtrlFrom(txinfo);
+
+    return ZX_OK;
+}
+
+void InfraBss::OnPreTbtt() {
+    bcn_sender_->UpdateBeacon(ps_cfg_);
+    ps_cfg_.NextDtimCount();
+}
+
+void InfraBss::OnBcnTxComplete() {
+    // Only send out multicast frames if the Beacon we just sent was a DTIM.
+    if (ps_cfg_.LastDtimCount() != 0) { return; }
+    if (bu_queue_.size() == 0) { return; }
+
+    debugps("[infra-bss] [%s] sending %zu group addressed BU\n", bssid_.ToString().c_str(),
+            bu_queue_.size());
+    while (bu_queue_.size() > 0) {
+        auto status = SendNextBu();
+        if (status != ZX_OK) {
+            errorf("[infra-bss] [%s] could not send group addressed BU: %d\n",
+                   bssid_.ToString().c_str(), status);
+            return;
+        }
+    }
 }
 
 const common::MacAddr& InfraBss::bssid() const {
@@ -253,9 +441,13 @@ seq_t InfraBss::NextSeq(const DataFrameHeader& hdr) {
     return NextSeqNo(hdr, &seq_);
 }
 
+bool InfraBss::IsRsn() const {
+    return !start_req_.rsne.is_null();
+}
+
 bool InfraBss::IsHTReady() const {
     // TODO(NET-567): Reflect hardware capabilities and association negotiation
-    return false;
+    return true;
 }
 
 bool InfraBss::IsCbw40RxReady() const {
@@ -354,8 +546,23 @@ HtOperation InfraBss::BuildHtOperation(const wlan_channel_t& chan) const {
 
     hto.primary_chan = chan.primary;
     HtOpInfoHead& head = hto.head;
-    head.set_secondary_chan_offset(HtOpInfoHead::SECONDARY_NONE);  // TODO(porce): CBW
-    head.set_sta_chan_width(HtOpInfoHead::TWENTY);                 // TODO(porce): CBW
+
+    switch (chan.cbw) {
+    case CBW40ABOVE:
+        head.set_secondary_chan_offset(HtOpInfoHead::SECONDARY_ABOVE);
+        head.set_sta_chan_width(HtOpInfoHead::ANY);
+        break;
+    case CBW40BELOW:
+        head.set_secondary_chan_offset(HtOpInfoHead::SECONDARY_ABOVE);
+        head.set_sta_chan_width(HtOpInfoHead::ANY);
+        break;
+    case CBW20:
+    default:
+        head.set_secondary_chan_offset(HtOpInfoHead::SECONDARY_NONE);
+        head.set_sta_chan_width(HtOpInfoHead::TWENTY);
+        break;
+    }
+
     head.set_rifs_mode(0);
     head.set_reserved1(0);  // TODO(porce): Tweak this for 802.11n D1.10 compatibility
     head.set_ht_protect(HtOpInfoHead::NONE);

@@ -8,16 +8,17 @@
 #include <fbl/ref_ptr.h>
 #include <fbl/type_support.h>
 
-#include "lib/fsl/tasks/message_loop.h"
-#include "lib/fsl/threading/create_thread.h"
+#include <lib/async-loop/cpp/loop.h>
+#include <lib/async/cpp/task.h>
+#include <lib/async/dispatcher.h>
+
 #include "lib/fxl/memory/ref_ptr.h"
-#include "lib/fxl/tasks/task_runner.h"
 
 namespace btlib {
 namespace common {
 
 // A task domain is a mixin for objects that maintain state that needs to be
-// accessed exclusively on a specific thread's TaskRunner.
+// accessed exclusively on a specific async dispatcher.
 //
 //   * A TaskDomain can be initialized with a task runner representing the
 //     serialization domain. If not, TaskDomain will spawn a thread with the
@@ -41,12 +42,13 @@ namespace common {
 //   class MyObject : public fbl::RefCounted<MyObject>,
 //                    public TaskDomain<MyObject> {
 //    public:
-//     // Initialize spawning a thread.
-//     MyObject() : common::TaskDomain<MyObject>("my-thread") {}
+//     // Initialize by spawning a thread with a dispatcher owned by this
+//     // domain.
+//     MyObject() : common::TaskDomain<MyObject>(this, "my-thread") {}
 //
-//     // Initialize to run on |task_runner|.
-//     MyObject(fxl::RefPtr<fxl::TaskRunner> task_runner)
-//        : common::TaskDomain<MyObject>(task_runner) {}
+//     // Initialize to run on |dispatcher|.
+//     explicit MyObject(async_t* dispatcher)
+//        : common::TaskDomain<MyObject>(this, dispatcher) {}
 //
 //     void CleanUp()
 //
@@ -84,21 +86,21 @@ DECLARE_HAS_MEMBER_FN_WITH_SIGNATURE(has_clean_up, CleanUp, void (T::*)(void));
 template <typename T, typename RefCountedType = T>
 class TaskDomain {
  protected:
-  // Initializes this domain by spawning a new thread with a TaskRunner.
+  // Initializes this domain by spawning a new thread with a dispatcher.
   // |name| is assigned to the thread.
-  TaskDomain(T* obj, std::string name) : owns_thread_(true) {
+  TaskDomain(T* obj, std::string name) {
     Init(obj);
 
-    std::thread thrd = fsl::CreateThread(&task_runner_, std::move(name));
-    FXL_DCHECK(task_runner_);
-    thrd.detach();
+    loop_ = std::make_unique<async::Loop>();
+    loop_->StartThread(name.c_str());
+    dispatcher_ = loop_->async();
   }
 
-  // Initializes this domain by assigning the given |task_runner| to it.
-  TaskDomain(T* obj, fxl::RefPtr<fxl::TaskRunner> task_runner)
-      : owns_thread_(false), task_runner_(task_runner) {
+  // Initializes this domain by assigning the given |dispatcher| to it.
+  TaskDomain(T* obj, async_t* dispatcher) : dispatcher_(dispatcher) {
     Init(obj);
-    FXL_DCHECK(task_runner_);
+
+    FXL_DCHECK(dispatcher_);
   }
 
   virtual ~TaskDomain() {
@@ -106,7 +108,7 @@ class TaskDomain {
         << "ScheduleCleanUp() must be called before destruction";
   }
 
-  // Runs the object's CleanUp() handler on the domain's TaskRunner. Quits the
+  // Runs the object's CleanUp() handler on the domain's dispatcher. Quits the
   // event loop if the domain owns its thread.
   void ScheduleCleanUp() {
     PostMessage([obj = obj_, this] {
@@ -114,27 +116,42 @@ class TaskDomain {
       obj->CleanUp();
 
       // Quit the thread if it's owned by this object.
-      if (owns_thread_) {
-        fsl::MessageLoop::GetCurrent()->QuitNow();
+      if (loop_) {
+        loop_->Quit();
+      }
+    });
+
+    // Block until the clean up task has run.
+    if (loop_) {
+      loop_->JoinThreads();
+    }
+  }
+
+  async_t* dispatcher() const { return dispatcher_; }
+
+  void PostMessage(fbl::Closure func) {
+    // |objref| is captured here to make sure |obj_| stays alive until |func|
+    // has run.
+    async::PostTask(dispatcher_, [this, func = std::move(func),
+                                  objref = fbl::WrapRefPtr(obj_)] {
+      if (alive_) {
+        func();
       }
     });
   }
 
-  fxl::RefPtr<fxl::TaskRunner> task_runner() const { return task_runner_; }
+  // Asserts that this domain's dispatcher is assigned as the current thread's
+  // default. This is purely intended for debug assertions and should not be
+  // used for any other purpose.
+  inline void AssertOnDispatcherThread() const {
+    FXL_DCHECK(async_get_default() == dispatcher());
+  }
 
-  void PostMessage(std::function<void()> func) {
-    if (alive_) {
-      if (task_runner_->RunsTasksOnCurrentThread()) {
-        func();
-      } else {
-        task_runner_->PostTask(
-            [this, func = std::move(func), objref = fbl::WrapRefPtr(obj_)] {
-              if (alive_) {
-                func();
-              }
-            });
-      }
-    }
+  // Returns true if this domain is still alive. This function is only safe to
+  // call on the domain thread.
+  bool alive() const {
+    AssertOnDispatcherThread();
+    return alive_;
   }
 
  private:
@@ -153,8 +170,12 @@ class TaskDomain {
 
   T* obj_;
   std::atomic_bool alive_;
-  bool owns_thread_;
-  fxl::RefPtr<fxl::TaskRunner> task_runner_;
+
+  // |loop_| is null if this TaskDomain gets initialized with an existing
+  // dispatcher. Otherwise it will be valid and |dispatcher_| will point to
+  // |loop_|'s dispatcher. |dispatcher_| is never null.
+  async_t* dispatcher_;
+  std::unique_ptr<async::Loop> loop_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TaskDomain);
 };

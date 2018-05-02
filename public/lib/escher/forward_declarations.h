@@ -13,6 +13,8 @@ namespace escher {
 
 class Buffer;
 class Camera;
+class DescriptorSetAllocator;
+struct DescriptorSetLayout;
 class Escher;
 class Frame;
 class Framebuffer;
@@ -90,7 +92,9 @@ typedef fxl::RefPtr<ModelPipelineCache> ModelPipelineCachePtr;
 typedef fxl::RefPtr<ModelRenderer> ModelRendererPtr;
 typedef fxl::RefPtr<ModelRenderPass> ModelRenderPassPtr;
 typedef fxl::RefPtr<Pipeline> PipelinePtr;
-
 }  // namespace impl
-
 }  // namespace escher
+
+namespace shaderc {
+class Compiler;
+}

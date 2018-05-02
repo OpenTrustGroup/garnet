@@ -5,7 +5,7 @@
 package context
 
 import (
-	"fidl/bindings2"
+	"fidl/bindings"
 	"fmt"
 	"svc/svcns"
 
@@ -16,13 +16,18 @@ import (
 	"fuchsia/go/component"
 )
 
+type Connector struct {
+	serviceRoot zx.Handle
+}
+
 type Context struct {
+	connector *Connector
+
 	Environment     *component.ApplicationEnvironmentInterface
 	OutgoingService *svcns.Namespace
-	serviceRoot     zx.Handle
 	Launcher        *component.ApplicationLauncherInterface
 	appServices     zx.Handle
-	services        bindings2.BindingSet
+	services        bindings.BindingSet
 }
 
 // TODO: define these in syscall/zx/mxruntime
@@ -45,9 +50,11 @@ func getServiceRoot() zx.Handle {
 	return zx.Handle(c1)
 }
 
-func New(serviceRoot, serviceRequest, appServices zx.Handle) *Context {
+func New(serviceRoot, directoryRequest, appServices zx.Handle) *Context {
 	c := &Context{
-		serviceRoot: serviceRoot,
+		connector: &Connector{
+			serviceRoot: serviceRoot,
+		},
 		appServices: appServices,
 	}
 
@@ -67,29 +74,37 @@ func New(serviceRoot, serviceRequest, appServices zx.Handle) *Context {
 	c.Launcher = p2
 	c.ConnectToEnvService(r2)
 
-	if serviceRequest.IsValid() {
-		c.OutgoingService.ServeDirectory(serviceRequest)
+	if directoryRequest.IsValid() {
+		c.OutgoingService.ServeDirectory(directoryRequest)
 	}
 
 	return c
 }
 
+func (c *Context) GetConnector() *Connector {
+	return c.connector
+}
+
 func (c *Context) Serve() {
 	if c.appServices.IsValid() {
 		stub := component.ServiceProviderStub{Impl: c.OutgoingService}
-		c.services.Add(&stub, zx.Channel(c.appServices))
-		go bindings2.Serve()
+		c.services.Add(&stub, zx.Channel(c.appServices), nil)
+		go bindings.Serve()
 	}
 	if c.OutgoingService.Dispatcher != nil {
 		go c.OutgoingService.Dispatcher.Serve()
 	}
 }
 
-func (c *Context) ConnectToEnvService(r bindings2.ServiceRequest) {
-	c.ConnectToEnvServiceAt(r.Name(), r.Channel())
+func (c *Context) ConnectToEnvService(r bindings.ServiceRequest) {
+	c.connector.ConnectToEnvService(r)
 }
 
-func (c *Context) ConnectToEnvServiceAt(name string, h zx.Channel) {
+func (c *Connector) ConnectToEnvService(r bindings.ServiceRequest) {
+	c.ConnectToEnvServiceAt(r.Name(), r.ToChannel())
+}
+
+func (c *Connector) ConnectToEnvServiceAt(name string, h zx.Channel) {
 	err := fdio.ServiceConnectAt(c.serviceRoot, name, zx.Handle(h))
 	if err != nil {
 		panic(fmt.Sprintf("ConnectToEnvService: %v: %v", name, err))
@@ -97,9 +112,9 @@ func (c *Context) ConnectToEnvServiceAt(name string, h zx.Channel) {
 }
 
 func CreateFromStartupInfo() *Context {
-	serviceRequest := mxruntime.GetStartupHandle(
+	directoryRequest := mxruntime.GetStartupHandle(
 		mxruntime.HandleInfo{Type: HandleDirectoryRequest, Arg: 0})
 	appServices := mxruntime.GetStartupHandle(
 		mxruntime.HandleInfo{Type: HandleAppServices, Arg: 0})
-	return New(getServiceRoot(), serviceRequest, appServices)
+	return New(getServiceRoot(), directoryRequest, appServices)
 }

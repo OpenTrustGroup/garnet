@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#![feature(conservative_impl_trait)]
 #![deny(warnings)]
 
 extern crate failure;
@@ -61,8 +60,8 @@ struct BluetoothError(bt::Error);
 
 impl fmt::Display for BluetoothError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self.0.description {
-            Some(ref msg) => f.write_str(msg),
+        match &self.0.description {
+            Some(msg) => f.write_str(msg),
             None => write!(f, "unknown bluetooth error"),
         }
     }
@@ -75,7 +74,7 @@ struct BatteryState {
     level: u8,
 
     // The proxy we use to send GATT characteristic value notifications.
-    service: gatt::Service_Proxy,
+    service: gatt::LocalServiceProxy,
 
     // A set of remote LE device IDs that have subscribed to battery level
     // notifications.
@@ -239,8 +238,8 @@ fn main() {
 }
 
 fn main_res() -> Result<(), Error> {
-    let listen = match std::env::args().nth(1) {
-        Some(ref flag) => {
+    let listen = &match std::env::args().nth(1) {
+        Some(flag) => {
             match flag.as_ref() {
                 "--listen" => true,
                 "--help" => {
@@ -277,10 +276,7 @@ fn main_res() -> Result<(), Error> {
     let characteristic = gatt::Characteristic {
         id: BATTERY_LEVEL_ID,
         type_: BATTERY_LEVEL_UUID.to_string(),
-        properties: vec![
-            gatt::CharacteristicProperty::Read,
-            gatt::CharacteristicProperty::Notify,
-        ],
+        properties: gatt::PROPERTY_READ | gatt::PROPERTY_NOTIFY,
         permissions: Some(Box::new(gatt::AttributePermissions {
             read: Some(read_sec),
             write: None,
@@ -305,8 +301,8 @@ fn main_res() -> Result<(), Error> {
     // Publish service and register service delegate.
     let (service_local, service_remote) = zx::Channel::create()?;
     let service_local = async::Channel::from_channel(service_local)?;
-    let mut service_server = fidl::endpoints2::ServerEnd::<gatt::Service_Marker>::new(service_remote);
-    let service_proxy = gatt::Service_Proxy::new(service_local);
+    let mut service_server = fidl::endpoints2::ServerEnd::<gatt::LocalServiceMarker>::new(service_remote);
+    let service_proxy = gatt::LocalServiceProxy::new(service_local);
 
     let (delegate_local, delegate_remote) = zx::Channel::create()?;
     let delegate_local = async::Channel::from_channel(delegate_local)?;

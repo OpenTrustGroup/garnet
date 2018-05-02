@@ -4,10 +4,6 @@
 
 library component;
 
-// import "lib/app/fidl/application_controller.fidl";
-// import "lib/app/fidl/flat_namespace.fidl";
-// import "lib/app/fidl/service_provider.fidl";
-
 // An FDIO file descriptor.
 // TODO(abarth): Use the real FDIO declaration once FDIO converts to FIDL2.
 struct FileDescriptor {
@@ -73,7 +69,7 @@ struct ServiceList {
 // An interface for creating application instances.
 //
 // Typically obtained via |ApplicationEnvironment.GetApplicationLauncher|.
-[ServiceName="component.ApplicationLauncher"]
+[Discoverable]
 interface ApplicationLauncher {
   // Creates a new instance of the application described by |launch_info|.
   //

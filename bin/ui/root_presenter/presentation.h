@@ -8,25 +8,25 @@
 #include <map>
 #include <memory>
 
+#include <fuchsia/cpp/geometry.h>
+#include <fuchsia/cpp/input.h>
+#include <fuchsia/cpp/presentation.h>
+#include <fuchsia/cpp/views_v1.h>
+
+#include "garnet/bin/ui/presentation_mode/detector.h"
 #include "garnet/bin/ui/root_presenter/display_rotater.h"
 #include "garnet/bin/ui/root_presenter/display_size_switcher.h"
 #include "garnet/bin/ui/root_presenter/display_usage_switcher.h"
 #include "garnet/bin/ui/root_presenter/displays/display_metrics.h"
 #include "garnet/bin/ui/root_presenter/displays/display_model.h"
 #include "garnet/bin/ui/root_presenter/perspective_demo_mode.h"
+#include "garnet/bin/ui/root_presenter/presentation_switcher.h"
 #include "lib/fidl/cpp/binding.h"
-#include "lib/fxl/functional/closure.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
-#include <fuchsia/cpp/geometry.h>
 #include "lib/ui/input/device_state.h"
-#include <fuchsia/cpp/input.h>
-#include <fuchsia/cpp/input.h>
 #include "lib/ui/input/input_device_impl.h"
-#include <fuchsia/cpp/presentation.h>
 #include "lib/ui/scenic/client/resources.h"
-#include <fuchsia/cpp/views_v1.h>
-#include <fuchsia/cpp/views_v1.h>
 #if defined(countof)
 // Workaround for compiler error due to Zircon defining countof() as a macro.
 // Redefines countof() using GLM_COUNTOF(), which currently provides a more
@@ -65,7 +65,14 @@ class Presentation : private views_v1::ViewTreeListener,
                      private views_v1::ViewContainerListener,
                      private presentation::Presentation {
  public:
-  Presentation(views_v1::ViewManager* view_manager, ui::Scenic* scenic);
+  // Callback when the presentation yields to the next/previous one.
+  using YieldCallback = std::function<void(bool yield_to_next)>;
+  // Callback when the presentation is shut down.
+  using ShutdownCallback = std::function<void()>;
+
+  Presentation(views_v1::ViewManager* view_manager,
+               ui::Scenic* scenic,
+               scenic_lib::Session* session);
 
   ~Presentation() override;
 
@@ -76,17 +83,21 @@ class Presentation : private views_v1::ViewTreeListener,
   void Present(
       views_v1_token::ViewOwnerPtr view_owner,
       fidl::InterfaceRequest<presentation::Presentation> presentation_request,
-      fxl::Closure shutdown_callback);
+      YieldCallback yield_callback,
+      ShutdownCallback shutdown_callback);
 
   void OnReport(uint32_t device_id, input::InputReport report);
   void OnDeviceAdded(mozart::InputDeviceImpl* input_device);
   void OnDeviceRemoved(uint32_t device_id);
+
+  const scenic_lib::Layer& layer() const { return layer_; }
 
  private:
   friend class DisplayRotater;
   friend class DisplayUsageSwitcher;
   friend class PerspectiveDemoMode;
   friend class DisplaySizeSwitcher;
+  friend class PresentationSwitcher;
 
   // Sets |display_metrics_| and updates view_manager and Scenic.
   // Returns false if the updates were skipped (if display initialization hasn't
@@ -101,9 +112,8 @@ class Presentation : private views_v1::ViewTreeListener,
                           OnChildUnavailableCallback callback) override;
 
   // |ViewListener|:
-  void OnPropertiesChanged(
-      views_v1::ViewProperties properties,
-      OnPropertiesChangedCallback callback) override;
+  void OnPropertiesChanged(views_v1::ViewProperties properties,
+                           OnPropertiesChangedCallback callback) override;
 
   // |Presentation|
   void EnableClipping(bool enabled) override;
@@ -115,8 +125,7 @@ class Presentation : private views_v1::ViewTreeListener,
   void UsePerspectiveView() override;
 
   // |Presentation|
-  void SetRendererParams(
-      ::fidl::VectorPtr<gfx::RendererParam> params) override;
+  void SetRendererParams(::fidl::VectorPtr<gfx::RendererParam> params) override;
 
   void InitializeDisplayModel(gfx::DisplayInfo display_info);
 
@@ -137,7 +146,16 @@ class Presentation : private views_v1::ViewTreeListener,
   // |Presentation|
   void CaptureKeyboardEvent(
       input::KeyboardEvent event_to_capture,
-      fidl::InterfaceHandle<presentation::KeyboardCaptureListener> listener) override;
+      fidl::InterfaceHandle<presentation::KeyboardCaptureListener> listener)
+      override;
+
+  // |Presentation|
+  void GetPresentationMode(GetPresentationModeCallback callback) override;
+
+  // |Presentation|
+  void SetPresentationModeListener(
+      fidl::InterfaceHandle<presentation::PresentationModeListener> listener)
+      override;
 
   void CreateViewTree(
       views_v1_token::ViewOwnerPtr view_owner,
@@ -148,16 +166,15 @@ class Presentation : private views_v1::ViewTreeListener,
   bool GlobalHooksHandleEvent(const input::InputEvent& event);
 
   void OnEvent(input::InputEvent event);
+  void OnSensorEvent(uint32_t device_id, input::InputReport event);
 
   void PresentScene();
   void Shutdown();
 
   views_v1::ViewManager* const view_manager_;
   ui::Scenic* const scenic_;
+  scenic_lib::Session* const session_;
 
-  scenic_lib::Session session_;
-  scenic_lib::DisplayCompositor compositor_;
-  scenic_lib::LayerStack layer_stack_;
   scenic_lib::Layer layer_;
   scenic_lib::Renderer renderer_;
   // TODO(MZ-254): put camera before scene.
@@ -178,6 +195,8 @@ class Presentation : private views_v1::ViewTreeListener,
   DisplayModel display_model_actual_;
   DisplayModel display_model_simulated_;
 
+  bool presentation_clipping_enabled_ = true;
+
   bool display_model_initialized_ = false;
 
   // |display_metrics_| must be recalculated anytime
@@ -186,14 +205,17 @@ class Presentation : private views_v1::ViewTreeListener,
 
   views_v1::ViewPtr root_view_;
 
-  fxl::Closure shutdown_callback_;
+  YieldCallback yield_callback_;
+  ShutdownCallback shutdown_callback_;
 
   geometry::PointF mouse_coordinates_;
 
   fidl::Binding<presentation::Presentation> presentation_binding_;
   fidl::Binding<views_v1::ViewTreeListener> tree_listener_binding_;
-  fidl::Binding<views_v1::ViewContainerListener> tree_container_listener_binding_;
-  fidl::Binding<views_v1::ViewContainerListener> view_container_listener_binding_;
+  fidl::Binding<views_v1::ViewContainerListener>
+      tree_container_listener_binding_;
+  fidl::Binding<views_v1::ViewContainerListener>
+      view_container_listener_binding_;
   fidl::Binding<views_v1::ViewListener> view_listener_binding_;
 
   views_v1::ViewTreePtr tree_;
@@ -211,6 +233,9 @@ class Presentation : private views_v1::ViewTreeListener,
 
   // Toggles through different display sizes.
   DisplaySizeSwitcher display_size_switcher_;
+
+  // Toggles through different presentations.
+  PresentationSwitcher presentation_switcher_;
 
   struct CursorState {
     bool created;
@@ -232,6 +257,12 @@ class Presentation : private views_v1::ViewTreeListener,
     presentation::KeyboardCaptureListenerPtr listener;
   };
   std::vector<KeyboardCaptureItem> captured_keybindings_;
+
+  // Listener for changes in presentation mode.
+  presentation::PresentationModeListenerPtr presentation_mode_listener_;
+  // Presentation mode, based on last N measurements
+  presentation::PresentationMode presentation_mode_;
+  std::unique_ptr<presentation_mode::Detector> presentation_mode_detector_;
 
   fxl::WeakPtrFactory<Presentation> weak_factory_;
 

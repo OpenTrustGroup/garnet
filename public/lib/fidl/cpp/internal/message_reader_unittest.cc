@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <zx/channel.h>
+#include <lib/zx/channel.h>
 
 #include "gtest/gtest.h"
 #include "lib/fidl/cpp/internal/message_reader.h"
@@ -220,22 +220,13 @@ TEST(MessageReader, WaitAndDispatchOneMessageUntilErrors) {
   EXPECT_EQ(0, error_count);
   EXPECT_TRUE(reader.is_bound());
 
-  zx_handle_close(reader.channel().get());
+  reader.Bind(std::move(h2));
 
   EXPECT_EQ(0, error_count);
   EXPECT_TRUE(reader.is_bound());
-  EXPECT_EQ(ZX_ERR_BAD_HANDLE,
-            reader.WaitAndDispatchOneMessageUntil(zx::time()));
-  EXPECT_EQ(1, error_count);
-  EXPECT_FALSE(reader.is_bound());
-
-  reader.Bind(std::move(h2));
-
-  EXPECT_EQ(1, error_count);
-  EXPECT_TRUE(reader.is_bound());
   EXPECT_EQ(ZX_ERR_PEER_CLOSED,
             reader.WaitAndDispatchOneMessageUntil(zx::time()));
-  EXPECT_EQ(2, error_count);
+  EXPECT_EQ(1, error_count);
   EXPECT_FALSE(reader.is_bound());
 }
 

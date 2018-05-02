@@ -13,7 +13,6 @@
 #include "garnet/bin/netconnector/device_service_provider.h"
 #include "garnet/bin/netconnector/host_name.h"
 #include "garnet/bin/netconnector/netconnector_params.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 
@@ -26,8 +25,10 @@ const std::string NetConnectorImpl::kFuchsiaServiceName = "_fuchsia._tcp.";
 // static
 const std::string NetConnectorImpl::kLocalDeviceName = "local";
 
-NetConnectorImpl::NetConnectorImpl(NetConnectorParams* params)
+NetConnectorImpl::NetConnectorImpl(NetConnectorParams* params,
+                                   fxl::Closure quit_callback)
     : params_(params),
+      quit_callback_(quit_callback),
       application_context_(
           component::ApplicationContext::CreateFromStartupInfo()),
       // TODO(dalesat): Create a new RespondingServiceHost per user.
@@ -36,10 +37,13 @@ NetConnectorImpl::NetConnectorImpl(NetConnectorParams* params)
       // created with that environment so that responding services are
       // launched in the correct environment.
       responding_service_host_(application_context_->environment()) {
+  FXL_DCHECK(quit_callback_);
+
   if (!params->listen()) {
     // Start the listener.
-    NetConnectorPtr net_connector =
-        application_context_->ConnectToEnvironmentService<NetConnector>();
+    NetConnectorSyncPtr net_connector;
+    application_context_->ConnectToEnvironmentService(
+        net_connector.NewRequest());
     mdns::MdnsServicePtr mdns_service =
         application_context_->ConnectToEnvironmentService<mdns::MdnsService>();
 
@@ -48,30 +52,26 @@ NetConnectorImpl::NetConnectorImpl(NetConnectorParams* params)
     }
 
     if (params_->show_devices()) {
-      net_connector->GetKnownDeviceNames(
-          kInitialKnownDeviceNames,
-          fxl::MakeCopyable([this, net_connector = std::move(net_connector)](
-                                uint64_t version,
-                                fidl::VectorPtr<fidl::StringPtr> device_names) {
-            if (device_names->size() == 0) {
-              std::cout << "No remote devices found\n";
-            } else {
-              for (auto& device_name : *device_names) {
-                std::cout << device_name << "\n";
-              }
-            }
+      uint64_t version;
+      fidl::VectorPtr<fidl::StringPtr> device_names;
+      net_connector->GetKnownDeviceNames(kInitialKnownDeviceNames, &version,
+                                         &device_names);
 
-            fsl::MessageLoop::GetCurrent()->PostQuitTask();
-          }));
-    } else {
-      fsl::MessageLoop::GetCurrent()->PostQuitTask();
+      if (device_names->size() == 0) {
+        std::cout << "No remote devices found\n";
+      } else {
+        for (auto& device_name : *device_names) {
+          std::cout << device_name << "\n";
+        }
+      }
     }
 
+    quit_callback_();
     return;
   }
 
   // Running as listener.
-  application_context_->outgoing_services()->AddService<NetConnector>(
+  application_context_->outgoing().AddPublicService<NetConnector>(
       [this](fidl::InterfaceRequest<NetConnector> request) {
         bindings_.AddBinding(this, std::move(request));
       });

@@ -29,8 +29,7 @@ void FakeLayer::RegisterService(ServicePtr service,
                                 ServiceIdCallback callback,
                                 ReadHandler read_handler,
                                 WriteHandler write_handler,
-                                ClientConfigCallback ccc_callback,
-                                fxl::RefPtr<fxl::TaskRunner> task_runner) {
+                                ClientConfigCallback ccc_callback) {
   // TODO: implement
 }
 
@@ -43,6 +42,23 @@ void FakeLayer::SendNotification(IdType service_id,
                                  std::string peer_id,
                                  ::fidl::VectorPtr<uint8_t> value,
                                  bool indicate) {
+  // TODO: implement
+}
+
+void FakeLayer::RegisterRemoteServiceWatcher(RemoteServiceWatcher callback,
+                                             async_t* dispatcher) {
+  // TODO: implement
+}
+
+void FakeLayer::ListServices(std::string peer_id,
+                             std::vector<common::UUID> uuids,
+                             ServiceListCallback callback) {
+  // TODO: implement
+}
+
+void FakeLayer::FindService(std::string peer_id,
+                            IdType service_id,
+                            RemoteServiceCallback callback) {
   // TODO: implement
 }
 

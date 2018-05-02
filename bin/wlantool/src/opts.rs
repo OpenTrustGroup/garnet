@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#![allow(deprecated)] // Necessary for AsciiExt usage from clap args_enum macro
+
 use wlan;
 
 arg_enum!{
@@ -37,6 +39,13 @@ pub enum PhyCmd {
     #[structopt(name = "list")]
     /// lists phy devices
     List,
+    #[structopt(name = "query")]
+    /// queries a phy device
+    Query {
+        #[structopt(raw(required = "true"))]
+        /// id of the phy to query
+        phy_id: u16,
+    },
 }
 
 #[derive(StructOpt, Copy, Clone, Debug)]

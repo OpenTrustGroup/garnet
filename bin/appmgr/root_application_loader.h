@@ -10,7 +10,7 @@
 #include <tuple>
 #include <vector>
 
-#include <zx/vmo.h>
+#include <lib/zx/vmo.h>
 
 #include <fuchsia/cpp/component.h>
 #include "lib/fidl/cpp/binding_set.h"
@@ -20,7 +20,7 @@ namespace component {
 
 class RootApplicationLoader : public ApplicationLoader {
  public:
-  explicit RootApplicationLoader(std::vector<std::string> path);
+  explicit RootApplicationLoader();
   ~RootApplicationLoader() override;
 
   void LoadApplication(fidl::StringPtr url,
@@ -29,8 +29,6 @@ class RootApplicationLoader : public ApplicationLoader {
   void AddBinding(fidl::InterfaceRequest<ApplicationLoader> request);
 
  private:
-  std::vector<std::string> path_;
-
   fidl::BindingSet<ApplicationLoader> bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(RootApplicationLoader);

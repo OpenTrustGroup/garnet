@@ -6,16 +6,16 @@ import("//build/package.gni")
 
 package("scenic_tests") {
   testonly = true
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
-    "gfx/tests",
     "ime/tests",
     "input_reader/tests",
+    "presentation_mode/tests",
     "view_manager/tests",
     "//garnet/lib/ui/gfx/tests",
     "//garnet/lib/ui/scenic/tests",
-    "//garnet/public/lib/ui/geometry/cpp:apptests",
+    "//garnet/public/lib/ui/geometry/cpp:tests",
   ]
 
   tests = [
@@ -33,6 +33,9 @@ package("scenic_tests") {
     },
     {
       name = "input_apptests"
+    },
+    {
+      name = "presentation_mode_unittests"
     },
     {
       name = "scenic_unittests"
@@ -96,13 +99,22 @@ package("scenic") {
   ]
 }
 
+package("screencap") {
+  deps = [
+    "screencap",
+  ]
+
+  binary = "screencap"
+}
+
 package("scenic_tools") {
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     "input",
     "print_input",
     "set_root_view",
+    "screencap",
   ]
 
   binaries = [
@@ -114,6 +126,9 @@ package("scenic_tools") {
     },
     {
       name = "print_input"
+    },
+    {
+      name = "screencap"
     },
   ]
 }

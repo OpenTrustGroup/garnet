@@ -5,9 +5,9 @@
 #ifndef LIB_ESCHER_FLIB_FENCE_SET_LISTENER_H_
 #define LIB_ESCHER_FLIB_FENCE_SET_LISTENER_H_
 
-#include <zx/event.h>
+#include <lib/zx/event.h>
 
-#include <lib/async/cpp/auto_wait.h>
+#include <lib/async/cpp/wait.h>
 #include "lib/escher/flib/fence.h"
 #include "lib/fidl/cpp/vector.h"
 #include "lib/fxl/functional/closure.h"
@@ -33,18 +33,18 @@ class FenceSetListener {
   bool ready() const { return num_signalled_fences_ == fences_->size(); }
 
  private:
-  async_wait_result_t OnFenceSignalled(zx_koid_t import_koid,
-                                       zx_status_t status,
-                                       const zx_packet_signal* signal);
+  void OnFenceSignalled(zx_koid_t import_koid,
+                        zx_status_t status,
+                        const zx_packet_signal* signal);
 
   void ClearHandlers();
 
   ::fidl::VectorPtr<zx::event> fences_;
   uint32_t num_signalled_fences_ = 0;
 
-  // async::AutoWait-ers, each corresponding to an |zx::event| with the same
+  // Each wait corresponds to an |zx::event| with the same
   // index in |fences_|. The size of this array must match that of |fences_|.
-  std::vector<std::unique_ptr<async::AutoWait>> waiters_;
+  std::vector<std::unique_ptr<async::Wait>> waiters_;
 
   fxl::Closure ready_callback_;
 

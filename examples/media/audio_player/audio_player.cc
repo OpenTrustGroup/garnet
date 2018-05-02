@@ -4,39 +4,45 @@
 
 #include "garnet/examples/media/audio_player/audio_player.h"
 
-#include <fcntl.h>
-
 #include <iomanip>
 
+#include <fcntl.h>
 #include <fuchsia/cpp/media.h>
+#include <lib/async-loop/loop.h>
+#include <lib/async/default.h>
 
-#include "garnet/bin/media/util/file_channel.h"
 #include "garnet/examples/media/audio_player/audio_player_params.h"
 #include "lib/app/cpp/connect.h"
 #include "lib/fidl/cpp/optional.h"
-#include "lib/fsl/tasks/message_loop.h"
+#include "lib/fsl/io/fd.h"
 #include "lib/fxl/logging.h"
 #include "lib/media/timeline/timeline.h"
 #include "lib/url/gurl.h"
 
+using media_player::MediaPlayer;
+using media_player::MediaPlayerStatus;
+using media_player::MediaPlayerStatusPtr;
+using media_player::NetMediaService;
+
 namespace examples {
 
-AudioPlayer::AudioPlayer(const AudioPlayerParams& params)
-    : quit_when_done_(!params.stay()) {
+AudioPlayer::AudioPlayer(const AudioPlayerParams& params,
+                         fxl::Closure quit_callback)
+    : quit_callback_(quit_callback), quit_when_done_(!params.stay()) {
   FXL_DCHECK(params.is_valid());
+  FXL_DCHECK(quit_callback_);
 
   auto application_context =
       component::ApplicationContext::CreateFromStartupInfo();
 
   media_player_ =
-      application_context->ConnectToEnvironmentService<media::MediaPlayer>();
+      application_context->ConnectToEnvironmentService<MediaPlayer>();
 
   if (!params.service_name().empty()) {
     auto net_media_service =
-        application_context
-            ->ConnectToEnvironmentService<media::NetMediaService>();
+        application_context->ConnectToEnvironmentService<NetMediaService>();
 
-    fidl::InterfaceHandle<media::MediaPlayer> media_player_handle;
+    fidl::InterfaceHandle<MediaPlayer> media_player_handle;
     media_player_->AddBinding(media_player_handle.NewRequest());
 
     net_media_service->PublishMediaPlayer(params.service_name(),
@@ -47,8 +53,8 @@ AudioPlayer::AudioPlayer(const AudioPlayerParams& params)
     url::GURL url = url::GURL(params.url());
 
     if (url.SchemeIsFile()) {
-      media_player_->SetFileSource(media::ChannelFromFd(
-          fxl::UniqueFD(open(url.path().c_str(), O_RDONLY))));
+      media_player_->SetFileSource(fsl::CloneChannelFromFileDescriptor(
+          fxl::UniqueFD(open(url.path().c_str(), O_RDONLY)).get()));
     } else {
       media_player_->SetHttpSource(params.url());
     }
@@ -62,11 +68,11 @@ AudioPlayer::AudioPlayer(const AudioPlayerParams& params)
 AudioPlayer::~AudioPlayer() {}
 
 void AudioPlayer::HandleStatusUpdates(uint64_t version,
-                                      media::MediaPlayerStatusPtr status) {
+                                      MediaPlayerStatusPtr status) {
   if (status) {
     // Process status received from the player.
     if (status->end_of_stream && quit_when_done_) {
-      fsl::MessageLoop::GetCurrent()->PostQuitTask();
+      quit_callback_();
       FXL_LOG(INFO) << "Reached end-of-stream. Quitting.";
     }
 
@@ -76,7 +82,7 @@ void AudioPlayer::HandleStatusUpdates(uint64_t version,
                        << status->problem->details;
         problem_shown_ = true;
         if (quit_when_done_) {
-          fsl::MessageLoop::GetCurrent()->PostQuitTask();
+          quit_callback_();
           FXL_LOG(INFO) << "Problem detected. Quitting.";
         }
       }
@@ -112,7 +118,7 @@ void AudioPlayer::HandleStatusUpdates(uint64_t version,
 
   // Request a status update.
   media_player_->GetStatus(
-      version, [this](uint64_t version, media::MediaPlayerStatus status) {
+      version, [this](uint64_t version, MediaPlayerStatus status) {
         HandleStatusUpdates(version, fidl::MakeOptional(std::move(status)));
       });
 }

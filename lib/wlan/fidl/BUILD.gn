@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//garnet/public/lib/fidl/build/fidl/fidl.gni")
+import("//build/fidl/fidl.gni")
 
 fidl("fidl") {
   name = "wlan_device"
@@ -18,6 +18,18 @@ fidl("service") {
 
   sources = [
     "service.fidl",
+  ]
+
+  public_deps = [
+    ":fidl",
+  ]
+}
+
+fidl("wlantap") {
+  name = "wlantap"
+
+  sources = [
+    "wlantap.fidl"
   ]
 
   public_deps = [

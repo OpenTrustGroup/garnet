@@ -29,22 +29,21 @@ class FakeChannel : public Channel {
               hci::Connection::LinkType link_type);
   ~FakeChannel() override = default;
 
-  // Routes the given data over to the rx handler as if it was received from the
-  // controller.
+  // Routes the given data over to the rx handler as if it were received from
+  // the controller.
   void Receive(const common::ByteBuffer& data);
 
   // Sets a delegate to notify when a frame was sent over the channel.
   using SendCallback =
       std::function<void(std::unique_ptr<const common::ByteBuffer>)>;
-  void SetSendCallback(const SendCallback& callback,
-                       fxl::RefPtr<fxl::TaskRunner> task_runner);
+  void SetSendCallback(const SendCallback& callback, async_t* dispatcher);
 
   // Sets a callback to emulate the result of "SignalLinkError()". In
   // production, this callback is invoked by the link. This will be internally
   // set up for FakeChannels that are obtained from a
   // l2cap::testing::FakeLayer.
   void SetLinkErrorCallback(L2CAP::LinkErrorCallback callback,
-                            fxl::RefPtr<fxl::TaskRunner> task_runner);
+                            async_t* dispatcher);
 
   // Emulates channel closure.
   void Close();
@@ -63,26 +62,33 @@ class FakeChannel : public Channel {
   // Channel overrides:
   bool Activate(RxCallback rx_callback,
                 ClosedCallback closed_callback,
-                fxl::RefPtr<fxl::TaskRunner> task_runner) override;
+                async_t* dispatcher) override;
   void Deactivate() override;
   void SignalLinkError() override;
   bool Send(std::unique_ptr<const common::ByteBuffer> sdu) override;
 
  private:
+  void set_peer(fxl::WeakPtr<FakeChannel> peer) { peer_ = peer; }
+
+  hci::ConnectionHandle handle_;
   Fragmenter fragmenter_;
 
   ClosedCallback closed_cb_;
   RxCallback rx_cb_;
-  fxl::RefPtr<fxl::TaskRunner> task_runner_;
+  async_t* dispatcher_;
 
   SendCallback send_cb_;
-  fxl::RefPtr<fxl::TaskRunner> send_task_runner_;
+  async_t* send_dispatcher_;
 
   L2CAP::LinkErrorCallback link_err_cb_;
-  fxl::RefPtr<fxl::TaskRunner> link_err_runner_;
+  async_t* link_err_dispatcher_;
 
   bool activate_fails_;
   bool link_error_;
+
+  // Another fake channel that this was paired with, if any. Paired channels
+  // bounce packets between eachother.
+  fxl::WeakPtr<FakeChannel> peer_;
 
   fxl::WeakPtrFactory<FakeChannel> weak_ptr_factory_;
 

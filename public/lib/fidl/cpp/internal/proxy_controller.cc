@@ -10,6 +10,11 @@
 
 namespace fidl {
 namespace internal {
+namespace {
+
+constexpr uint32_t kUserspaceTxidMask = 0x7FFFFFFF;
+
+}  // namespace
 
 ProxyController::ProxyController() : reader_(this), next_txid_(1) {}
 
@@ -39,9 +44,9 @@ zx_status_t ProxyController::Send(
     std::unique_ptr<MessageHandler> response_handler) {
   zx_txid_t txid = 0;
   if (response_handler) {
-    txid = next_txid_++;
+    txid = next_txid_++ & kUserspaceTxidMask;
     while (!txid || handlers_.find(txid) != handlers_.end())
-      txid = next_txid_++;
+      txid = next_txid_++ & kUserspaceTxidMask;
     message.set_txid(txid);
   }
   const char* error_msg = nullptr;
@@ -51,8 +56,10 @@ zx_status_t ProxyController::Send(
     return status;
   }
   status = message.Write(reader_.channel().get(), 0);
-  if (status != ZX_OK)
+  if (status != ZX_OK) {
+    FIDL_REPORT_CHANNEL_WRITING_ERROR(message, type, status);
     return status;
+  }
   if (response_handler)
     handlers_.emplace(txid, std::move(response_handler));
   return ZX_OK;
@@ -67,9 +74,11 @@ zx_status_t ProxyController::OnMessage(Message message) {
   if (!message.has_header())
     return ZX_ERR_INVALID_ARGS;
   zx_txid_t txid = message.txid();
-  // TODO(abarth): Implement events.
-  if (!txid)
-    return ZX_ERR_NOT_SUPPORTED;
+  if (!txid) {
+    if (!proxy_)
+      return ZX_ERR_NOT_SUPPORTED;
+    return proxy_->Dispatch_(std::move(message));
+  }
   auto it = handlers_.find(txid);
   if (it == handlers_.end())
     return ZX_ERR_NOT_FOUND;

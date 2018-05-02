@@ -4,13 +4,10 @@
 
 library presentation;
 
-// import "lib/ui/presentation/fidl/presentation.fidl";
-// import "lib/ui/views/fidl/view_token.fidl";
-
 // The Presenter service provides a way for applications to ask that a
 // specified view be added to a view tree, leaving any window management
 // concerns up to the discretion of the presenter implementation.
-[ServiceName="presentation::Presenter"]
+[Discoverable]
 interface Presenter {
   1: Present(views_v1_token.ViewOwner view_owner, request<Presentation>? presentation_request);
 };

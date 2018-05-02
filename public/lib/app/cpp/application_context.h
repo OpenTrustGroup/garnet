@@ -5,18 +5,13 @@
 #ifndef LIB_APP_CPP_APPLICATION_CONTEXT_H_
 #define LIB_APP_CPP_APPLICATION_CONTEXT_H_
 
-#include <fs/pseudo-dir.h>
+#include <fuchsia/cpp/component.h>
 
 #include <memory>
 
+#include "lib/app/cpp/outgoing.h"
 #include "lib/app/cpp/service_provider_impl.h"
-#include <fuchsia/cpp/component.h>
-#include <fuchsia/cpp/component.h>
-#include <fuchsia/cpp/component.h>
-#include <fuchsia/cpp/component.h>
-#include "lib/fidl/cpp/interface_handle.h"
-#include "lib/fidl/cpp/interface_request.h"
-#include "lib/svc/cpp/service_namespace.h"
+#include "lib/svc/cpp/services.h"
 
 namespace component {
 
@@ -25,10 +20,12 @@ namespace component {
 class ApplicationContext {
  public:
   // The constructor is normally called by CreateFromStartupInfo().
-  ApplicationContext(zx::channel service_root,
-                     zx::channel directory_request);
+  ApplicationContext(zx::channel service_root, zx::channel directory_request);
 
   ~ApplicationContext();
+
+  ApplicationContext(const ApplicationContext&) = delete;
+  ApplicationContext& operator=(const ApplicationContext&) = delete;
 
   // Creates the application context from the process startup info.
   //
@@ -56,7 +53,9 @@ class ApplicationContext {
   const ApplicationEnvironmentPtr& environment() const { return environment_; }
 
   // Whether this application was given services by its environment.
-  bool has_environment_services() const { return !!service_root_; }
+  bool has_environment_services() const {
+    return !!incoming_services().directory();
+  }
 
   // Gets the application launcher service provided to the application by
   // its environment.
@@ -64,52 +63,21 @@ class ApplicationContext {
   // May be null if the application does not have access to its environment.
   const ApplicationLauncherPtr& launcher() const { return launcher_; }
 
+  const Services& incoming_services() const { return incoming_services_; }
+  const Outgoing& outgoing() const { return outgoing_; }
+
   // Gets a service provider implementation by which the application can
   // provide outgoing services back to its creator.
   ServiceNamespace* outgoing_services() {
-    return &deprecated_outgoing_services_;
+    return outgoing().deprecated_services();
   }
-
-  // Gets the directory which is the root of the tree of file-system objects
-  // exported by this application to the rest of the system.
-  //
-  // Clients should organize exported objects into sub-directories by role
-  // using conventions such as the following:
-  // - svc: public services exported by the application
-  // - debug: debugging information exported by the application
-  // - fs: the mounted file-system (for applications which are file-systems)
-  const fbl::RefPtr<fs::PseudoDir>& export_dir() const {
-    return export_dir_;
-  }
-
-  // Gets an export sub-directory called "public" for publishing services for
-  // clients.
-  const fbl::RefPtr<fs::PseudoDir>& public_export_dir() const {
-    return public_export_dir_;
-  }
-
-  // Gets an export sub-directory called "debug" for publishing debugging
-  // information.
-  const fbl::RefPtr<fs::PseudoDir>& debug_export_dir() const {
-    return debug_export_dir_;
-  }
-
-  // Gets an export sub-directory called "ctrl" for publishing services for
-  // appmgr.
-  const fbl::RefPtr<fs::PseudoDir>& ctrl_export_dir() const {
-    return ctrl_export_dir_;
-  }
-
 
   // Connects to a service provided by the application's environment,
   // returning an interface pointer.
   template <typename Interface>
   fidl::InterfacePtr<Interface> ConnectToEnvironmentService(
       const std::string& interface_name = Interface::Name_) {
-    fidl::InterfacePtr<Interface> interface_ptr;
-    ConnectToEnvironmentService(interface_name,
-                                interface_ptr.NewRequest().TakeChannel());
-    return interface_ptr;
+    return incoming_services().ConnectToService<Interface>(interface_name);
   }
 
   // Connects to a service provided by the application's environment,
@@ -118,7 +86,8 @@ class ApplicationContext {
   void ConnectToEnvironmentService(
       fidl::InterfaceRequest<Interface> request,
       const std::string& interface_name = Interface::Name_) {
-    ConnectToEnvironmentService(interface_name, request.TakeChannel());
+    return incoming_services().ConnectToService(std::move(request),
+                                                interface_name);
   }
 
   // Connects to a service provided by the application's environment,
@@ -127,20 +96,11 @@ class ApplicationContext {
                                    zx::channel channel);
 
  private:
+  Services incoming_services_;
+  Outgoing outgoing_;
+
   ApplicationEnvironmentPtr environment_;
   ApplicationLauncherPtr launcher_;
-
-  fs::ManagedVfs vfs_;
-  fbl::RefPtr<fs::PseudoDir> export_dir_;
-  fbl::RefPtr<fs::PseudoDir> public_export_dir_;
-  fbl::RefPtr<fs::PseudoDir> debug_export_dir_;
-  fbl::RefPtr<fs::PseudoDir> ctrl_export_dir_;
-
-  zx::channel service_root_;
-
-  ServiceNamespace deprecated_outgoing_services_;
-
-  FXL_DISALLOW_COPY_AND_ASSIGN(ApplicationContext);
 };
 
 }  // namespace component

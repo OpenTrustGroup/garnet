@@ -7,7 +7,6 @@
 // These features both have stable implementations and will become available on stable compilers
 // soon. They allow return types of `impl Future` rather than boxing or otherwise having to name
 // the future types.
-#![feature(conservative_impl_trait, universal_impl_trait)]
 #![deny(warnings)]
 #![deny(missing_docs)]
 
@@ -25,8 +24,8 @@ extern crate futures;
 extern crate log;
 extern crate parking_lot;
 
-mod logger;
 mod device;
+mod logger;
 mod service;
 
 use component::server::ServicesServer;
@@ -37,20 +36,12 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use wlan_service::DeviceServiceMarker;
 
-
 const MAX_LOG_LEVEL: log::LogLevelFilter = log::LogLevelFilter::Info;
 
 const PHY_PATH: &str = "/dev/class/wlanphy";
 const IFACE_PATH: &str = "/dev/class/wlanif";
 
-fn main() {
-    if let Err(e) = main_res() {
-        error!("Error: {:?}", e);
-    }
-    info!("Exiting");
-}
-
-fn main_res() -> Result<(), Error> {
+fn main() -> Result<(), Error> {
     log::set_logger(|max_level| {
         max_level.set(MAX_LOG_LEVEL);
         Box::new(logger::Logger)
@@ -65,10 +56,9 @@ fn main_res() -> Result<(), Error> {
     let iface_watcher = device::new_iface_watcher(IFACE_PATH, devmgr.clone());
 
     let services_server = ServicesServer::new()
-        .add_service((DeviceServiceMarker::NAME,
-                      move |channel|
-                            async::spawn(service::device_service(devmgr.clone(), channel)))
-                     )
+        .add_service((DeviceServiceMarker::NAME, move |channel| {
+            async::spawn(service::device_service(devmgr.clone(), channel))
+        }))
         .start()
         .context("error configuring device service")?;
 

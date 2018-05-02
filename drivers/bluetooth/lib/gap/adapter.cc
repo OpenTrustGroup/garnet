@@ -6,7 +6,6 @@
 
 #include <endian.h>
 
-#include "garnet/drivers/bluetooth/lib/gap/remote_device.h"
 #include "garnet/drivers/bluetooth/lib/hci/connection.h"
 #include "garnet/drivers/bluetooth/lib/hci/legacy_low_energy_advertiser.h"
 #include "garnet/drivers/bluetooth/lib/hci/low_energy_connector.h"
@@ -14,12 +13,13 @@
 #include "garnet/drivers/bluetooth/lib/hci/transport.h"
 #include "garnet/drivers/bluetooth/lib/hci/util.h"
 #include "garnet/drivers/bluetooth/lib/l2cap/channel_manager.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/random/uuid.h"
 
+#include "bredr_discovery_manager.h"
 #include "low_energy_advertising_manager.h"
 #include "low_energy_connection_manager.h"
 #include "low_energy_discovery_manager.h"
+#include "remote_device.h"
 
 namespace btlib {
 namespace gap {
@@ -28,6 +28,7 @@ Adapter::Adapter(fxl::RefPtr<hci::Transport> hci,
                  fbl::RefPtr<l2cap::L2CAP> l2cap,
                  fbl::RefPtr<gatt::GATT> gatt)
     : identifier_(fxl::GenerateUUID()),
+      dispatcher_(async_get_default()),
       hci_(hci),
       init_state_(State::kNotInitialized),
       l2cap_(l2cap),
@@ -37,13 +38,11 @@ Adapter::Adapter(fxl::RefPtr<hci::Transport> hci,
   FXL_DCHECK(l2cap_);
   FXL_DCHECK(gatt_);
 
-  auto message_loop = fsl::MessageLoop::GetCurrent();
-  FXL_DCHECK(message_loop)
-      << "gap: Adapter: Must be created on a valid MessageLoop";
+  FXL_DCHECK(dispatcher_)
+      << "gap: Adapter: Must be created on a thread with a dispatcher";
 
-  task_runner_ = message_loop->task_runner();
   init_seq_runner_ =
-      std::make_unique<hci::SequentialCommandRunner>(task_runner_, hci_);
+      std::make_unique<hci::SequentialCommandRunner>(dispatcher_, hci_);
 
   auto self = weak_ptr_factory_.GetWeakPtr();
   hci_->SetTransportClosedCallback(
@@ -51,7 +50,7 @@ Adapter::Adapter(fxl::RefPtr<hci::Transport> hci,
         if (self)
           self->OnTransportClosed();
       },
-      task_runner_);
+      dispatcher_);
 }
 
 Adapter::~Adapter() {
@@ -61,7 +60,7 @@ Adapter::~Adapter() {
 
 bool Adapter::Initialize(const InitializeCallback& callback,
                          const fxl::Closure& transport_closed_cb) {
-  FXL_DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   FXL_DCHECK(callback);
   FXL_DCHECK(transport_closed_cb);
 
@@ -71,11 +70,6 @@ bool Adapter::Initialize(const InitializeCallback& callback,
   }
 
   FXL_DCHECK(!IsInitializing());
-
-  if (!hci_->Initialize()) {
-    FXL_LOG(ERROR) << "gap: Adapter: Failed to initialize HCI transport";
-    return false;
-  }
 
   init_state_ = State::kInitializing;
 
@@ -134,10 +128,10 @@ bool Adapter::Initialize(const InitializeCallback& callback,
       });
 
   init_seq_runner_->RunCommands([callback, this](hci::Status status) {
-    if (status != hci::Status::kSuccess) {
+    if (!status) {
       FXL_LOG(ERROR)
           << "gap: Adapter: Failed to obtain initial controller information: "
-          << StatusToString(status);
+          << status.ToString();
       CleanUp();
       callback(false);
       return;
@@ -150,7 +144,7 @@ bool Adapter::Initialize(const InitializeCallback& callback,
 }
 
 void Adapter::ShutDown() {
-  FXL_DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   FXL_VLOG(1) << "gap: shutting down";
 
   if (IsInitializing()) {
@@ -161,8 +155,12 @@ void Adapter::ShutDown() {
   CleanUp();
 }
 
+bool Adapter::IsDiscovering() const {
+  return le_discovery_manager_ && le_discovery_manager_->discovering();
+}
+
 void Adapter::InitializeStep2(const InitializeCallback& callback) {
-  FXL_DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   FXL_DCHECK(IsInitializing());
 
   // Low Energy MUST be supported. We don't support BR/EDR-only controllers.
@@ -262,10 +260,10 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
   }
 
   init_seq_runner_->RunCommands([callback, this](hci::Status status) {
-    if (status != hci::Status::kSuccess) {
+    if (!status) {
       FXL_LOG(ERROR) << "gap: Adapter: Failed to obtain initial controller "
                         "information (step 2): "
-                     << StatusToString(status);
+                     << status.ToString();
       CleanUp();
       callback(false);
       return;
@@ -276,7 +274,7 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
 }
 
 void Adapter::InitializeStep3(const InitializeCallback& callback) {
-  FXL_DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   FXL_DCHECK(IsInitializing());
 
   if (!state_.bredr_data_buffer_info().IsAvailable() &&
@@ -363,10 +361,10 @@ void Adapter::InitializeStep3(const InitializeCallback& callback) {
   }
 
   init_seq_runner_->RunCommands([callback, this](hci::Status status) {
-    if (status != hci::Status::kSuccess) {
+    if (!status) {
       FXL_LOG(ERROR) << "gap: Adapter: Failed to obtain initial controller "
                         "information (step 3): "
-                     << StatusToString(status);
+                     << status.ToString();
       CleanUp();
       callback(false);
       return;
@@ -402,7 +400,7 @@ void Adapter::InitializeStep4(const InitializeCallback& callback) {
 
   hci_le_advertiser_ = std::make_unique<hci::LegacyLowEnergyAdvertiser>(hci_);
   hci_le_connector_ = std::make_unique<hci::LowEnergyConnector>(
-      hci_, task_runner_, std::move(incoming_conn_cb));
+      hci_, dispatcher_, std::move(incoming_conn_cb));
 
   le_discovery_manager_ = std::make_unique<LowEnergyDiscoveryManager>(
       Mode::kLegacy, hci_, &device_cache_);
@@ -411,6 +409,9 @@ void Adapter::InitializeStep4(const InitializeCallback& callback) {
       hci_, hci_le_connector_.get(), &device_cache_, l2cap_, gatt_);
   le_advertising_manager_ =
       std::make_unique<LowEnergyAdvertisingManager>(hci_le_advertiser_.get());
+
+  bredr_discovery_manager_ =
+      std::make_unique<BrEdrDiscoveryManager>(hci_, &device_cache_);
 
   // This completes the initialization sequence.
   init_state_ = State::kInitialized;
@@ -425,6 +426,12 @@ uint64_t Adapter::BuildEventMask() {
       static_cast<uint64_t>(hci::EventMask::kDisconnectionCompleteEvent);
   event_mask |= static_cast<uint64_t>(hci::EventMask::kHardwareErrorEvent);
   event_mask |= static_cast<uint64_t>(hci::EventMask::kLEMetaEvent);
+  event_mask |= static_cast<uint64_t>(hci::EventMask::kInquiryCompleteEvent);
+  event_mask |= static_cast<uint64_t>(hci::EventMask::kInquiryResultEvent);
+  event_mask |=
+      static_cast<uint64_t>(hci::EventMask::kInquiryResultWithRSSIEvent);
+  event_mask |=
+      static_cast<uint64_t>(hci::EventMask::kExtendedInquiryResultEvent);
 
   return event_mask;
 }
@@ -441,11 +448,13 @@ uint64_t Adapter::BuildLEEventMask() {
 }
 
 void Adapter::CleanUp() {
-  FXL_DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
 
   init_state_ = State::kNotInitialized;
   state_ = AdapterState();
   transport_closed_cb_ = nullptr;
+
+  bredr_discovery_manager_ = nullptr;
 
   le_advertising_manager_ = nullptr;
   le_connection_manager_ = nullptr;

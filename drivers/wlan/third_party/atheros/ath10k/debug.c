@@ -55,7 +55,7 @@ struct ath10k_tlv_dump_data {
 
     /* pad to 32-bit boundaries as needed */
     uint8_t tlv_data[];
-} __packed;
+} __PACKED;
 
 struct ath10k_dump_file_data {
     /* dump file information */
@@ -111,7 +111,7 @@ struct ath10k_dump_file_data {
 
     /* struct ath10k_tlv_dump_data + more */
     uint8_t data[0];
-} __packed;
+} __PACKED;
 
 void ath10k_debug_print_hwfw_info(struct ath10k* ar) {
     const struct firmware* firmware;
@@ -140,9 +140,9 @@ void ath10k_debug_print_hwfw_info(struct ath10k* ar) {
 
     ath10k_trace("firmware ver %s api %d features %s crc32 %08x\n",
                  ar->hw->wiphy->fw_version,
-                ar->fw_api,
-                fw_features,
-                crc);
+                 ar->fw_api,
+                 fw_features,
+                 crc);
 }
 
 void ath10k_debug_print_board_info(struct ath10k* ar) {
@@ -179,7 +179,6 @@ void ath10k_print_driver_info(struct ath10k* ar) {
     ath10k_debug_print_board_info(ar);
     ath10k_debug_print_boot_info(ar);
 }
-EXPORT_SYMBOL(ath10k_print_driver_info);
 
 #ifdef CONFIG_ATH10K_DEBUGFS
 
@@ -668,7 +667,6 @@ ath10k_debug_get_new_fw_crash_data(struct ath10k* ar) {
 
     return crash_data;
 }
-EXPORT_SYMBOL(ath10k_debug_get_new_fw_crash_data);
 
 static struct ath10k_dump_file_data* ath10k_build_dump_file(struct ath10k* ar,
         bool mark_read) {
@@ -1341,7 +1339,7 @@ static const char ath10k_gstrings_stats[][ETH_GSTRING_LEN] = {
     "d_fw_cold_reset_count",
 };
 
-#define ATH10K_SSTATS_LEN ARRAY_SIZE(ath10k_gstrings_stats)
+#define ATH10K_SSTATS_LEN countof(ath10k_gstrings_stats)
 
 void ath10k_debug_get_et_strings(struct ieee80211_hw* hw,
                                  struct ieee80211_vif* vif,
@@ -2489,7 +2487,6 @@ void ath10k_dbg(struct ath10k* ar, enum ath10k_debug_mask mask,
 
     va_end(args);
 }
-EXPORT_SYMBOL(ath10k_dbg);
 
 void ath10k_dbg_dump(struct ath10k* ar,
                      enum ath10k_debug_mask mask,
@@ -2522,6 +2519,5 @@ void ath10k_dbg_dump(struct ath10k* ar,
     trace_ath10k_log_dbg_dump(ar, msg ? msg : "", prefix ? prefix : "",
                               buf, len);
 }
-EXPORT_SYMBOL(ath10k_dbg_dump);
 
 #endif /* CONFIG_ATH10K_DEBUG */

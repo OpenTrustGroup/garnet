@@ -6,7 +6,7 @@ import("//build/package.gni")
 
 package("escher_tests") {
   testonly = true
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     "test:escher_unittests",
@@ -19,10 +19,15 @@ package("escher_tests") {
   ]
 }
 
-# When targeting Linux, we use a LunarG Vulkan SDK that we download from
-# Google storage (see //garnet/public/lib/escher/scripts/).
-if (is_linux) {
-  config("vulkan_linux") {
+config("vulkan_config") {
+  defines = [
+    "VULKAN_HPP_NO_EXCEPTIONS",
+    "VULKAN_HPP_NO_SMART_HANDLE",
+  ]
+
+  # When targeting Linux, we use a LunarG Vulkan SDK that we download from
+  # Google storage (see //garnet/public/lib/escher/scripts/).
+  if (is_linux) {
     vulkan_sdk = "//garnet/public/lib/escher/third_party/vulkansdk/x86_64"
     include_dirs = [ "$vulkan_sdk/include" ]
     lib_dirs = [ "$vulkan_sdk/lib" ]
@@ -30,13 +35,20 @@ if (is_linux) {
   }
 }
 
-config("public_includes") {
-  include_dirs = [ "//third_party/glm" ]
+source_set("vulkan") {
+  public_configs = [ ":vulkan_config" ]
+
+  if (is_fuchsia) {
+    public_deps = [
+      "//garnet/public/lib/vulkan",
+    ]
+  }
 }
 
-config("public_preprocessor_definitions") {
+config("glm_config") {
+  include_dirs = [ "//third_party/glm" ]
+
   defines = [
-    "VULKAN_HPP_NO_EXCEPTIONS",
     "GLM_ENABLE_EXPERIMENTAL",
 
     # Use Vulkan NDC (normalized depth coordinates): [0..1] instead of [-1..1]
@@ -61,13 +73,16 @@ source_set("escher") {
   ]
 
   deps = [
+    "//third_party/shaderc/libshaderc",
     "//third_party/shaderc/third_party/glslang",
     "//third_party/shaderc/third_party/glslang:SPIRV",
     "//third_party/shaderc/third_party/glslang:glslang-default-resource-limits",
     "//third_party/shaderc/third_party/spirv-tools:spirv-tools-opt",
+    "//third_party/spirv-cross",
   ]
 
   public_deps = [
+    ":vulkan",
     "//garnet/public/lib/escher/base:escher_base",
     "//garnet/public/lib/fxl",
   ]
@@ -82,6 +97,8 @@ source_set("escher") {
     "escher_process_init.cc",
     "escher_process_init.h",
     "forward_declarations.h",
+    "fs/hack_filesystem.cc",
+    "fs/hack_filesystem.h",
     "geometry/bounding_box.cc",
     "geometry/bounding_box.h",
     "geometry/quad.cc",
@@ -237,15 +254,29 @@ source_set("escher") {
     "util/align.h",
     "util/depth_to_color.cc",
     "util/depth_to_color.h",
+    "util/enum_cast.h",
+    "util/enum_count.h",
     "util/epsilon_compare.h",
+    "util/hash.h",
+    "util/hash_cache.h",
+    "util/hash_fnv_1a.h",
+    "util/hash_map.h",
+    "util/hashable.h",
+    "util/hasher.h",
     "util/image_utils.cc",
     "util/image_utils.h",
+    "util/intrusive_list.h",
+    "util/object_pool.h",
     "util/stopwatch.h",
     "util/trace_macros.h",
     "vk/buffer.cc",
     "vk/buffer.h",
     "vk/buffer_factory.cc",
     "vk/buffer_factory.h",
+    "vk/descriptor_set_allocator.cc",
+    "vk/descriptor_set_allocator.h",
+    "vk/descriptor_set_layout.cc",
+    "vk/descriptor_set_layout.h",
     "vk/framebuffer.cc",
     "vk/framebuffer.h",
     "vk/gpu_allocator.cc",
@@ -258,6 +289,10 @@ source_set("escher") {
     "vk/naive_gpu_allocator.h",
     "vk/render_pass.cc",
     "vk/render_pass.h",
+    "vk/shader_module.cc",
+    "vk/shader_module.h",
+    "vk/shader_module_template.cc",
+    "vk/shader_module_template.h",
     "vk/simple_image_factory.cc",
     "vk/simple_image_factory.h",
     "vk/texture.cc",
@@ -267,6 +302,7 @@ source_set("escher") {
     "vk/vulkan_device_queues.h",
     "vk/vulkan_instance.cc",
     "vk/vulkan_instance.h",
+    "vk/vulkan_limits.h",
     "vk/vulkan_swapchain.h",
     "vk/vulkan_swapchain_helper.cc",
     "vk/vulkan_swapchain_helper.h",
@@ -290,25 +326,17 @@ source_set("escher") {
   ]
 
   public_configs = [
-    ":public_includes",
-    ":public_preprocessor_definitions",
+    ":glm_config",
     ":thread_safety_warning",
   ]
 
   if (is_fuchsia) {
-    public_deps += [
-      "//garnet/public/lib/images/fidl",
-      "//garnet/public/lib/vulkan",
-    ]
+    public_deps += [ "//garnet/public/lib/images/fidl" ]
     deps += [ "//zircon/public/lib/trace" ]
     sources += [
       "util/fuchsia_utils.cc",
       "util/fuchsia_utils.h",
     ]
-  }
-
-  if (is_linux) {
-    public_configs += [ "//garnet/public/lib/escher:vulkan_linux" ]
   }
 }
 

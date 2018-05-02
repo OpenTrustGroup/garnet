@@ -7,7 +7,7 @@
 #include <memory>
 #include <unordered_map>
 
-#include <zx/channel.h>
+#include <lib/zx/channel.h>
 
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/macros.h"
@@ -33,8 +33,8 @@ class HostServer : public AdapterServerBase<::bluetooth_host::Host> {
  private:
   // ::bluetooth_host::Host overrides:
   void GetInfo(GetInfoCallback callback) override;
-  void RequestControlAdapter(
-      ::fidl::InterfaceRequest<bluetooth_control::Adapter> adapter) override;
+  void RequestAdapter(
+      ::fidl::InterfaceRequest<bluetooth_host::Adapter> adapter) override;
   void RequestLowEnergyCentral(
       ::fidl::InterfaceRequest<bluetooth_low_energy::Central> central)
       override;
@@ -50,10 +50,10 @@ class HostServer : public AdapterServerBase<::bluetooth_host::Host> {
 
   // Helper for binding a fidl::InterfaceRequest to a FIDL server of type
   // ServerType.
-  template <typename ServerType, typename InterfaceType>
-  void BindServer(fidl::InterfaceRequest<InterfaceType> request) {
+  template <typename ServerType, typename... Args>
+  void BindServer(Args... args) {
     auto server = std::make_unique<ServerType>(adapter()->AsWeakPtr(),
-                                               std::move(request));
+                                               std::move(args)...);
     server->set_error_handler(
         std::bind(&HostServer::OnConnectionError, this, server.get()));
     servers_[server.get()] = std::move(server);

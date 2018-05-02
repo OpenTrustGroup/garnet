@@ -2,16 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <lib/async-loop/cpp/loop.h>
+
 #include "garnet/bin/media/audio_server/audio_server_impl.h"
 #include "lib/app/cpp/application_context.h"
-#include "lib/fsl/tasks/message_loop.h"
 
 int main(int argc, const char** argv) {
-  fsl::MessageLoop loop;
-
-  media::audio::AudioServerImpl impl(
-      component::ApplicationContext::CreateFromStartupInfo());
-
+  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  media::audio::AudioServerImpl impl;
   loop.Run();
   return 0;
 }

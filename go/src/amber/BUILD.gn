@@ -43,21 +43,6 @@ common_dependencies = [
   },
 ]
 
-fidl_dependencies = [
-      {
-        package = "fidl"
-        source = "//garnet/public/lib/fidl/go/src/fidl"
-      },
-      {
-        package = "application/lib/app"
-        source = "//garnet/public/lib/app/go/src/app"
-      },
-      {
-        package = "svc"
-        source = "//garnet/public/lib/svc/go/src/svc"
-      },
-    ]
-
 amber_target_binaries = [
   {
     target = "amber_bin"
@@ -74,6 +59,13 @@ amber_target_binaries = [
   },
 ]
 
+common_extra_dependencies = [
+  "//garnet/public/lib/amber/fidl($go_toolchain)",
+  "//garnet/public/lib/app/fidl($go_toolchain)",
+  "//garnet/public/lib/app/go/src/app",
+  "//garnet/public/lib/fidl/go/src/fidl",
+]
+
 foreach(tgt, amber_target_binaries) {
   target_name = tgt.name
   if (defined(tgt.target)) {
@@ -84,12 +76,9 @@ foreach(tgt, amber_target_binaries) {
 
     gopackage = tgt.gopkg
 
-    extra_dependencies = [
-      "//garnet/public/lib/amber/fidl($go_toolchain)",
-      "//garnet/public/lib/app/fidl($go_toolchain)",
-    ]
+    extra_dependencies = common_extra_dependencies
 
-    go_dependencies = common_dependencies + fidl_dependencies
+    go_dependencies = common_dependencies
   }
 }
 
@@ -115,12 +104,12 @@ package("amber") {
     {
       path = rebase_path("//garnet/bin/appmgr/legacy_flat_exported_dir")
       dest = "legacy_flat_exported_dir"
-    }
+    },
   ]
 }
 
 package("amber_tools") {
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     ":amber_ctl",
@@ -186,13 +175,10 @@ foreach(test, test_targets) {
   go_test(test.name) {
     gopackage = test.gopkg
 
-    extra_dependencies = [
-      "//garnet/public/lib/amber/fidl($go_toolchain)",
-      "//garnet/public/lib/app/fidl($go_toolchain)",
-    ]
+    extra_dependencies = common_extra_dependencies
 
     go_dependencies =
-        common_dependencies + fidl_dependencies + [
+        common_dependencies + [
           {
             package = "github.com/google/go-cmp/cmp"
             source = "//third_party/golibs/github.com/google/go-cmp/cmp"
@@ -202,7 +188,7 @@ foreach(test, test_targets) {
 }
 
 package("amber_tests") {
-  system_image = true
+  deprecated_system_image = true
   testonly = true
 
   deps = []
@@ -228,5 +214,16 @@ copy("amber-srv-keys") {
   ]
   outputs = [
     "$root_out_dir/{{source_file_part}}",
+  ]
+}
+
+package("config") {
+  deprecated_system_image = true
+  package_name = "amber_config"
+  resources = [
+    {
+      dest = "sysmgr/amber.config"
+      path = rebase_path("startup.config")
+    },
   ]
 }

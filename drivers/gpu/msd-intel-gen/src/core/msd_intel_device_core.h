@@ -27,6 +27,8 @@ public:
 
     ~MsdIntelDeviceCore();
 
+    magma::PlatformBusMapper* GetBusMapper() override { return bus_mapper_.get(); }
+
     bool RegisterCallback(InterruptManager::InterruptCallback callback, void* data,
                           uint32_t interrupt_mask)
     {
@@ -74,8 +76,8 @@ private:
 
     void ReadDisplaySize();
 
-    RegisterIo* register_io_for_interrupt() override { return register_io_.get(); }
-    RegisterIo* register_io() { return register_io_.get(); }
+    magma::RegisterIo* register_io_for_interrupt() override { return register_io_.get(); }
+    magma::RegisterIo* register_io() { return register_io_.get(); }
 
     magma::Status
     ProcessFlip(std::shared_ptr<MsdIntelBuffer> buffer,
@@ -100,8 +102,9 @@ private:
 
     std::shared_ptr<Gtt> gtt_;
     std::unique_ptr<magma::PlatformPciDevice> platform_device_;
-    std::unique_ptr<RegisterIo> register_io_;
+    std::unique_ptr<magma::RegisterIo> register_io_;
     std::unique_ptr<InterruptManager> interrupt_manager_;
+    std::unique_ptr<magma::PlatformBusMapper> bus_mapper_;
 
     std::mutex pageflip_request_mutex_;
     std::queue<std::unique_ptr<DeviceRequest>> pageflip_pending_queue_;

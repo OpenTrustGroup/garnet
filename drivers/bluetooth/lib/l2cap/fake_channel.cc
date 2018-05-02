@@ -4,7 +4,7 @@
 
 #include "fake_channel.h"
 
-#include "lib/fxl/functional/make_copyable.h"
+#include <lib/async/cpp/task.h>
 
 namespace btlib {
 namespace l2cap {
@@ -14,34 +14,39 @@ FakeChannel::FakeChannel(ChannelId id,
                          hci::ConnectionHandle handle,
                          hci::Connection::LinkType link_type)
     : Channel(id, link_type),
+      handle_(handle),
       fragmenter_(handle),
+      dispatcher_(nullptr),
+      send_dispatcher_(nullptr),
+      link_err_dispatcher_(nullptr),
       activate_fails_(false),
       link_error_(false),
-      weak_ptr_factory_(this) {}
+      weak_ptr_factory_(this) {
+  FXL_DCHECK(handle_);
+}
 
 void FakeChannel::Receive(const common::ByteBuffer& data) {
-  FXL_DCHECK(rx_cb_ && task_runner_);
+  FXL_DCHECK(rx_cb_ && dispatcher_);
 
   auto pdu = fragmenter_.BuildBasicFrame(id(), data);
-  task_runner_->PostTask(
-      fxl::MakeCopyable([cb = rx_cb_, pdu = std::move(pdu)] { cb(pdu); }));
+  async::PostTask(dispatcher_,
+                  [cb = rx_cb_, pdu = std::move(pdu)] { cb(pdu); });
 }
 
 void FakeChannel::SetSendCallback(const SendCallback& callback,
-                                  fxl::RefPtr<fxl::TaskRunner> task_runner) {
-  FXL_DCHECK(static_cast<bool>(callback) == static_cast<bool>(task_runner));
+                                  async_t* dispatcher) {
+  FXL_DCHECK(static_cast<bool>(callback) == static_cast<bool>(dispatcher));
 
   send_cb_ = callback;
-  send_task_runner_ = task_runner;
+  send_dispatcher_ = dispatcher;
 }
 
-void FakeChannel::SetLinkErrorCallback(
-    L2CAP::LinkErrorCallback callback,
-    fxl::RefPtr<fxl::TaskRunner> task_runner) {
-  FXL_DCHECK(static_cast<bool>(callback) == static_cast<bool>(task_runner));
+void FakeChannel::SetLinkErrorCallback(L2CAP::LinkErrorCallback callback,
+                                       async_t* dispatcher) {
+  FXL_DCHECK(static_cast<bool>(callback) == static_cast<bool>(dispatcher));
 
   link_err_cb_ = std::move(callback);
-  link_err_runner_ = task_runner;
+  link_err_dispatcher_ = dispatcher;
 }
 
 void FakeChannel::Close() {
@@ -51,24 +56,24 @@ void FakeChannel::Close() {
 
 bool FakeChannel::Activate(RxCallback rx_callback,
                            ClosedCallback closed_callback,
-                           fxl::RefPtr<fxl::TaskRunner> task_runner) {
+                           async_t* dispatcher) {
   FXL_DCHECK(rx_callback);
   FXL_DCHECK(closed_callback);
-  FXL_DCHECK(task_runner);
-  FXL_DCHECK(!task_runner_);
+  FXL_DCHECK(dispatcher);
+  FXL_DCHECK(!dispatcher_);
 
   if (activate_fails_)
     return false;
 
-  task_runner_ = task_runner;
-  closed_cb_ = closed_callback;
+  dispatcher_ = dispatcher;
+  closed_cb_ = std::move(closed_callback);
   rx_cb_ = rx_callback;
 
   return true;
 }
 
 void FakeChannel::Deactivate() {
-  task_runner_ = nullptr;
+  dispatcher_ = nullptr;
   closed_cb_ = {};
   rx_cb_ = {};
 }
@@ -77,19 +82,26 @@ void FakeChannel::SignalLinkError() {
   link_error_ = true;
 
   if (link_err_cb_) {
-    link_err_runner_->PostTask(link_err_cb_);
+    async::PostTask(link_err_dispatcher_, link_err_cb_);
   }
 }
 
 bool FakeChannel::Send(std::unique_ptr<const common::ByteBuffer> sdu) {
-  if (!send_cb_)
-    return false;
-
   FXL_DCHECK(sdu);
-  FXL_DCHECK(send_task_runner_);
 
-  send_task_runner_->PostTask(fxl::MakeCopyable(
-      [cb = send_cb_, sdu = std::move(sdu)]() mutable { cb(std::move(sdu)); }));
+  if (!send_cb_) {
+    if (peer_) {
+      peer_->Receive(*sdu);
+      return true;
+    }
+
+    return false;
+  }
+
+  FXL_DCHECK(send_dispatcher_);
+  async::PostTask(
+      send_dispatcher_,
+      [cb = send_cb_, sdu = std::move(sdu)]() mutable { cb(std::move(sdu)); });
 
   return true;
 }

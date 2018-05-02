@@ -582,7 +582,7 @@ struct amsdu_subframe_hdr {
     uint8_t dst[ETH_ALEN];
     uint8_t src[ETH_ALEN];
     __be16 len;
-} __packed;
+} __PACKED;
 
 #define GROUP_ID_IS_SU_MIMO(x) ((x) == 0 || (x) == 63)
 
@@ -2223,7 +2223,7 @@ static inline bool is_valid_legacy_rate(uint8_t rate) {
                                           };
     int i;
 
-    for (i = 0; i < ARRAY_SIZE(legacy_rates); i++) {
+    for (i = 0; i < countof(legacy_rates); i++) {
         if (rate == legacy_rates[i]) {
             return true;
         }
@@ -2520,14 +2520,12 @@ bool ath10k_htt_t2h_msg_handler(struct ath10k* ar, struct sk_buff* skb) {
     }
     return true;
 }
-EXPORT_SYMBOL(ath10k_htt_t2h_msg_handler);
 
 void ath10k_htt_rx_pktlog_completion_handler(struct ath10k* ar,
         struct sk_buff* skb) {
     trace_ath10k_htt_pktlog(ar, skb->data, skb->len);
     dev_kfree_skb_any(skb);
 }
-EXPORT_SYMBOL(ath10k_htt_rx_pktlog_completion_handler);
 
 int ath10k_htt_txrx_compl_task(struct ath10k* ar, int budget) {
     struct ath10k_htt* htt = &ar->htt;
@@ -2632,4 +2630,3 @@ exit:
 
     return done;
 }
-EXPORT_SYMBOL(ath10k_htt_txrx_compl_task);

@@ -4,6 +4,10 @@
 
 import("//build/package.gni")
 
+# Set manually to true to compile the zxdb_test_app.cc file for manual debugger
+# testing of various conditions.
+include_test_app = false
+
 static_library("lib") {
   sources = [
     "arch.h",
@@ -13,8 +17,6 @@ static_library("lib") {
     "debugged_process.h",
     "debugged_thread.cc",
     "debugged_thread.h",
-    "exception_handler.cc",
-    "exception_handler.h",
     "launcher.cc",
     "launcher.h",
     "object_util.cc",
@@ -23,8 +25,13 @@ static_library("lib") {
     "process_info.h",
     "process_breakpoint.cc",
     "process_breakpoint.h",
+    "remote_api.h",
+    "remote_api_adapter.cc",
+    "remote_api_adapter.h",
     "system_info.cc",
     "system_info.h",
+    "unwind.cc",
+    "unwind.h",
   ]
 
   if (current_cpu == "x64") {
@@ -43,10 +50,23 @@ static_library("lib") {
 
   public_deps = [
     "//garnet/lib/debug_ipc:agent",
+    "//garnet/lib/debug_ipc/helper",
     "//garnet/public/lib/app/cpp",
     "//garnet/public/lib/fxl",
     "//zircon/public/lib/launchpad",
+    "//zircon/public/lib/ngunwind",
   ]
+}
+
+if (include_test_app) {
+  executable("zxdb_test_app") {
+    sources = [
+      "zxdb_test_app.cc",
+    ]
+    deps = [
+      "//zircon/public/lib/zx",
+    ]
+  }
 }
 
 executable("bin") {
@@ -61,7 +81,7 @@ executable("bin") {
 }
 
 package("debug_agent") {
-  system_image = true
+  deprecated_system_image = true
   deps = [
     ":bin",
   ]
@@ -84,8 +104,6 @@ executable("unittests") {
 
   deps = [
     ":lib",
-
-    # This target also runs these debug_ipc tests.
     "//garnet/lib/debug_ipc:tests",
     "//garnet/public/lib/fxl/test:gtest_main",
     "//third_party/googletest:gtest",
@@ -94,7 +112,7 @@ executable("unittests") {
 
 package("debug_agent_tests") {
   testonly = true
-  system_image = true
+  deprecated_system_image = true
 
   package_name = "debug_agent_tests"
 
@@ -107,4 +125,9 @@ package("debug_agent_tests") {
       name = "debug_agent_tests"
     },
   ]
+
+  if (include_test_app) {
+    deps += [ ":zxdb_test_app" ]
+    tests += [ { name = "zxdb_test_app" } ]
+  }
 }

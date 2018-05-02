@@ -4,29 +4,33 @@
 
 #include "garnet/lib/machina/virtio_net.h"
 
-#include <zircon/device/ethernet.h>
-#include <zx/fifo.h>
-
+#include <atomic>
 #include <fcntl.h>
 #include <string.h>
+
+#include <trace/event.h>
+#include <trace-engine/types.h>
+#include <zircon/device/ethernet.h>
+#include <zx/fifo.h>
 
 #include "lib/fxl/logging.h"
 
 namespace machina {
 
-VirtioNet::Stream::Stream(VirtioNet* device, async_t* async)
-    : device_(device), async_(async), queue_wait_(async) {
-  fifo_writable_wait_.set_handler(
-      fbl::BindMember(this, &VirtioNet::Stream::OnFifoWritable));
-  fifo_readable_wait_.set_handler(
-      fbl::BindMember(this, &VirtioNet::Stream::OnFifoReadable));
+VirtioNet::Stream::Stream(VirtioNet* device, async_t* async, VirtioQueue* queue,
+                          std::atomic<trace_async_id_t>* trace_flow_id)
+    : device_(device),
+      async_(async),
+      queue_(queue),
+      trace_flow_id_(trace_flow_id),
+      queue_wait_(async,
+                  queue,
+                  fbl::BindMember(this, &VirtioNet::Stream::OnQueueReady)) {
 }
 
-zx_status_t VirtioNet::Stream::Start(VirtioQueue* queue,
-                                     zx_handle_t fifo,
+zx_status_t VirtioNet::Stream::Start(zx_handle_t fifo,
                                      size_t fifo_max_entries,
                                      bool rx) {
-  queue_ = queue;
   fifo_ = fifo;
   rx_ = rx;
   eth_fifo_entry_t* entries = new eth_fifo_entry_t[fifo_max_entries];
@@ -49,13 +53,21 @@ zx_status_t VirtioNet::Stream::Start(VirtioQueue* queue,
 }
 
 zx_status_t VirtioNet::Stream::WaitOnQueue() {
-  return queue_wait_.Wait(
-      queue_, fbl::BindMember(this, &VirtioNet::Stream::OnQueueReady));
+  return queue_wait_.Begin();
 }
 
-void VirtioNet::Stream::OnQueueReady(zx_status_t status, uint16_t head) {
+void VirtioNet::Stream::OnQueueReady(zx_status_t status, uint16_t index) {
   if (status != ZX_OK) {
     return;
+  }
+
+  // Attempt to correlate the processing of descriptors with a previous kick.
+  // As noted in virtio_device.cc this should be considered best-effort only.
+  const trace_async_id_t flow_id = trace_flow_id_->load();
+  TRACE_DURATION("machina", "virtio_net_packet_read_from_queue", "direction",
+                 TA_STRING_LITERAL(rx_ ? "RX" : "TX"), "flow_id", flow_id);
+  if (flow_id != 0) {
+    TRACE_FLOW_STEP("machina", "io_queue_signal", flow_id);
   }
 
   FXL_DCHECK(fifo_num_entries_ == 0);
@@ -63,7 +75,7 @@ void VirtioNet::Stream::OnQueueReady(zx_status_t status, uint16_t head) {
   fifo_num_entries_ = 0;
   fifo_entries_write_index_ = 0;
   do {
-    status = queue_->ReadDesc(head, &desc);
+    status = queue_->ReadDesc(index, &desc);
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "Failed to read descriptor from queue";
       return;
@@ -107,10 +119,10 @@ void VirtioNet::Stream::OnQueueReady(zx_status_t status, uint16_t head) {
         .offset = static_cast<uint32_t>(packet_offset),
         .length = static_cast<uint16_t>(packet_length),
         .flags = 0,
-        .cookie = reinterpret_cast<void*>(head),
+        .cookie = reinterpret_cast<void*>(index),
     };
   } while (fifo_num_entries_ < fifo_entries_.size() &&
-           queue_->NextAvail(&head) == ZX_OK);
+           queue_->NextAvail(&index) == ZX_OK);
 
   status = WaitOnFifoWritable();
   if (status != ZX_OK) {
@@ -122,17 +134,26 @@ zx_status_t VirtioNet::Stream::WaitOnFifoWritable() {
   return fifo_writable_wait_.Begin(async_);
 }
 
-async_wait_result_t VirtioNet::Stream::OnFifoWritable(
+void VirtioNet::Stream::OnFifoWritable(
     async_t* async,
+    async::WaitBase* wait,
     zx_status_t status,
     const zx_packet_signal_t* signal) {
   if (status != ZX_OK) {
     FXL_LOG(INFO) << "Async wait failed on fifo writable: " << status;
-    return ASYNC_WAIT_FINISHED;
+    return;
+  }
+
+  // Attempt to correlate the processing of packets with an existing flow.
+  const trace_async_id_t flow_id = trace_flow_id_->load();
+  TRACE_DURATION("machina", "virtio_net_packet_pipe_to_fifo", "direction",
+                 TA_STRING_LITERAL(rx_ ? "RX" : "TX"), "flow_id", flow_id);
+  if (flow_id != 0) {
+    TRACE_FLOW_STEP("machina", "io_queue_signal", flow_id);
   }
 
   uint32_t num_entries_written = 0;
-  status = zx_fifo_write(
+  status = zx_fifo_write_old(
       fifo_,
       static_cast<const void*>(&fifo_entries_[fifo_entries_write_index_]),
       fifo_num_entries_ * sizeof(fifo_entries_[0]), &num_entries_written);
@@ -140,7 +161,11 @@ async_wait_result_t VirtioNet::Stream::OnFifoWritable(
   fifo_num_entries_ -= num_entries_written;
   if (status == ZX_ERR_SHOULD_WAIT ||
       (status == ZX_OK && fifo_num_entries_ > 0)) {
-    return ASYNC_WAIT_AGAIN;
+    status = wait->Begin(async);
+    if (status != ZX_OK) {
+      FXL_LOG(INFO) << "Async wait failed on fifo writable: " << status;
+    }
+    return;
   }
   if (status == ZX_OK) {
     status = WaitOnQueue();
@@ -148,33 +173,45 @@ async_wait_result_t VirtioNet::Stream::OnFifoWritable(
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed write entries to fifo: " << status;
   }
-  return ASYNC_WAIT_FINISHED;
 }
 
 zx_status_t VirtioNet::Stream::WaitOnFifoReadable() {
   return fifo_readable_wait_.Begin(async_);
 }
 
-async_wait_result_t VirtioNet::Stream::OnFifoReadable(
+void VirtioNet::Stream::OnFifoReadable(
     async_t* async,
+    async::WaitBase* wait,
     zx_status_t status,
     const zx_packet_signal_t* signal) {
   if (status != ZX_OK) {
     FXL_LOG(INFO) << "Async wait failed on fifo readable: " << status;
-    return ASYNC_WAIT_FINISHED;
+    return;
+  }
+
+  // Attempt to correlate the processing of packets with an existing flow.
+  const trace_async_id_t flow_id = trace_flow_id_->exchange(0);
+  TRACE_DURATION("machina", "virtio_net_packet_return_to_queue", "direction",
+                 TA_STRING_LITERAL(rx_ ? "RX" : "TX"), "flow_id", flow_id);
+  if (flow_id != 0) {
+    TRACE_FLOW_END("machina", "io_queue_signal", flow_id);
   }
 
   // Dequeue entries for the Ethernet device.
   uint32_t num_entries_read;
   eth_fifo_entry_t entries[fifo_entries_.size()];
-  status = zx_fifo_read(fifo_, static_cast<void*>(entries), sizeof(entries),
-                        &num_entries_read);
+  status = zx_fifo_read_old(fifo_, static_cast<void*>(entries), sizeof(entries),
+                            &num_entries_read);
   if (status == ZX_ERR_SHOULD_WAIT) {
-    return ASYNC_WAIT_AGAIN;
+    status = wait->Begin(async);
+    if (status != ZX_OK) {
+      FXL_LOG(INFO) << "Async wait failed on fifo readable: " << status;
+    }
+    return;
   }
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to read from fifo: " << status;
-    return ASYNC_WAIT_FINISHED;
+    return;
   }
 
   for (uint32_t i = 0; i < num_entries_read; i++) {
@@ -183,16 +220,20 @@ async_wait_result_t VirtioNet::Stream::OnFifoReadable(
     status = queue_->Return(head, length);
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "Failed to return descriptor to the queue " << status;
-      return ASYNC_WAIT_FINISHED;
+      return;
     }
   }
-  return ASYNC_WAIT_AGAIN;
+
+  status = wait->Begin(async);
+  if (status != ZX_OK) {
+    FXL_LOG(INFO) << "Async wait failed on fifo readable: " << status;
+  }
 }
 
 VirtioNet::VirtioNet(const PhysMem& phys_mem, async_t* async)
     : VirtioDeviceBase(phys_mem),
-      rx_stream_(this, async),
-      tx_stream_(this, async) {
+      rx_stream_(this, async, rx_queue(), rx_trace_flow_id()),
+      tx_stream_(this, async, tx_queue(), tx_trace_flow_id()) {
   config_.status = VIRTIO_NET_S_LINK_UP;
   config_.max_virtqueue_pairs = 1;
   // TODO(abdulla): Support VIRTIO_NET_F_STATUS via IOCTL_ETHERNET_GET_STATUS.
@@ -200,8 +241,6 @@ VirtioNet::VirtioNet(const PhysMem& phys_mem, async_t* async)
 }
 
 VirtioNet::~VirtioNet() {
-  rx_stream_.Stop();
-  tx_stream_.Stop();
   zx_handle_close(fifos_.tx_fifo);
   zx_handle_close(fifos_.rx_fifo);
 }
@@ -258,10 +297,9 @@ zx_status_t VirtioNet::Start(const char* path) {
 }
 
 zx_status_t VirtioNet::WaitOnFifos(const eth_fifos_t& fifos) {
-  zx_status_t status =
-      rx_stream_.Start(rx_queue(), fifos.rx_fifo, fifos.rx_depth, true);
+  zx_status_t status = rx_stream_.Start(fifos.rx_fifo, fifos.rx_depth, true);
   if (status == ZX_OK) {
-    status = tx_stream_.Start(tx_queue(), fifos.tx_fifo, fifos.tx_depth, false);
+    status = tx_stream_.Start(fifos.tx_fifo, fifos.tx_depth, false);
   }
   return status;
 }

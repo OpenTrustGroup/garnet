@@ -39,12 +39,21 @@ class InfraBss : public BssInterface, public FrameHandler, public RemoteClient::
     void Stop() override;
     zx_status_t AssignAid(const common::MacAddr& client, aid_t* out_aid) override;
     zx_status_t ReleaseAid(const common::MacAddr& client) override;
-    fbl::unique_ptr<Buffer> GetPowerSavingBuffer(size_t len) override;
+
+    zx_status_t SendMgmtFrame(fbl::unique_ptr<Packet> packet) override;
+    zx_status_t SendDataFrame(fbl::unique_ptr<Packet> packet) override;
+    zx_status_t SendEthFrame(fbl::unique_ptr<Packet> packet) override;
 
     seq_t NextSeq(const MgmtFrameHeader& hdr) override;
     seq_t NextSeq(const MgmtFrameHeader& hdr, uint8_t aci) override;
     seq_t NextSeq(const DataFrameHeader& hdr) override;
 
+    zx_status_t EthToDataFrame(const ImmutableBaseFrame<EthernetII>& frame,
+                               fbl::unique_ptr<Packet>* out_packet) override;
+    void OnPreTbtt() override;
+    void OnBcnTxComplete() override;
+
+    bool IsRsn() const override;
     bool IsHTReady() const override;
     bool IsCbw40RxReady() const override;
     bool IsCbw40TxReady() const override;
@@ -54,7 +63,12 @@ class InfraBss : public BssInterface, public FrameHandler, public RemoteClient::
     wlan_channel_t Chan() const override { return chan_; }
 
    private:
+    // Maximum number of group addressed packets buffered while at least one client is dozing.
+    // TODO(NET-687): Find good BU limit.
+    static constexpr size_t kMaxGroupAddressedBu = 128;
+
     // FrameHandler implementation
+    zx_status_t HandleEthFrame(const ImmutableBaseFrame<EthernetII>& frame) override;
     zx_status_t HandleDataFrame(const DataFrameHeader& hdr) override;
     zx_status_t HandleMgmtFrame(const MgmtFrameHeader& hdr) override;
     zx_status_t HandleAuthentication(const ImmutableMgmtFrame<Authentication>& frame,
@@ -63,12 +77,15 @@ class InfraBss : public BssInterface, public FrameHandler, public RemoteClient::
                                   const wlan_rx_info_t& rxinfo) override;
 
     // RemoteClient::Listener implementation
-    void HandleClientStateChange(const common::MacAddr& client, RemoteClient::StateId from,
-                                 RemoteClient::StateId to) override;
+    zx_status_t HandleClientDeauth(const common::MacAddr& client) override;
     void HandleClientBuChange(const common::MacAddr& client, size_t bu_count) override;
 
     zx_status_t CreateClientTimer(const common::MacAddr& client_addr,
                                   fbl::unique_ptr<Timer>* out_timer);
+    // Returns `true` if a frame with the given destination should get buffered.
+    bool ShouldBufferFrame(const common::MacAddr& dest) const;
+    zx_status_t BufferFrame(fbl::unique_ptr<Packet> packet);
+    zx_status_t SendNextBu();
 
     const common::MacAddr bssid_;
     DeviceInterface* device_;
@@ -76,9 +93,12 @@ class InfraBss : public BssInterface, public FrameHandler, public RemoteClient::
     zx_time_t started_at_;
     BssClientMap clients_;
     Sequence seq_;
-    TrafficIndicationMap tim_;
-
+    // Queue which holds buffered non-GCR-SP frames when at least one client is dozing.
+    PacketQueue bu_queue_;
+    PsCfg ps_cfg_;
     wlan_channel_t chan_;
+    // MLME-START.request holds all information required to correctly configure and start a BSS.
+    wlan_mlme::StartRequest start_req_;
 };
 
 }  // namespace wlan

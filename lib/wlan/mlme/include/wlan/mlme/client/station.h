@@ -5,15 +5,18 @@
 #pragma once
 
 #include <wlan/mlme/device_interface.h>
+#include <wlan/mlme/eapol.h>
 #include <wlan/mlme/frame_handler.h>
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/sequence.h>
 
+#include <fuchsia/c/wlan_stats.h>
 #include <fuchsia/cpp/wlan_mlme.h>
 
 #include <fbl/unique_ptr.h>
 #include <wlan/common/macaddr.h>
 #include <wlan/common/moving_average.h>
+#include <wlan/common/stats.h>
 #include <wlan/protocol/mac.h>
 #include <zircon/types.h>
 
@@ -25,8 +28,6 @@ class Timer;
 class Station : public FrameHandler {
    public:
     Station(DeviceInterface* device, fbl::unique_ptr<Timer> timer);
-
-    enum class PortState : bool { kBlocked = false, kOpen = true };
 
     enum class WlanState {
         // State 0
@@ -145,9 +146,10 @@ class Station : public FrameHandler {
     uint16_t aid_ = 0;
     common::MovingAverage<uint8_t, uint16_t, 20> avg_rssi_;
     AuthAlgorithm auth_alg_ = AuthAlgorithm::kOpenSystem;
-    PortState controlled_port_ = PortState::kBlocked;
+    eapol::PortState controlled_port_ = eapol::PortState::kBlocked;
 
     wlan_channel_t join_chan_;
+    common::WlanStats<common::ClientMlmeStats, wlan_stats_ClientMlmeStats> stats_;
 };
 
 }  // namespace wlan

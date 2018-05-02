@@ -8,17 +8,19 @@ group("ui") {
   public_deps = [
     "hello_pose_buffer",
     "hello_scenic",
+    "hello_spaces",
     "shadertoy/client",
     "shadertoy/service",
     "shapes",
     "sketchy",
     "spinning_square",
     "tile",
+    "video_display",
   ]
 }
 
 package("hello_scenic") {
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     "hello_scenic",
@@ -31,8 +33,21 @@ package("hello_scenic") {
   ]
 }
 
+package("hello_spaces") {
+  deprecated_system_image = true
+
+  deps = [
+    "hello_spaces",
+  ]
+
+  binaries = [
+    {
+      name = "hello_spaces"
+    },
+  ]
+}
 package("hello_pose_buffer") {
-  system_image = true
+  deprecated_system_image = true
   deps = [
     "hello_pose_buffer",
   ]
@@ -76,7 +91,7 @@ package("shapes_view") {
 }
 
 package("sketchy_client") {
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     "sketchy",
@@ -103,4 +118,18 @@ package("tile_view") {
   ]
 
   binary = "tile_view"
+}
+
+package("video_display") {
+
+  deps = [
+    "video_display",
+  ]
+
+  binary = "video_display"
+
+  meta = [ {
+        path = rebase_path("video_display/meta/sandbox")
+        dest = "sandbox"
+      } ]
 }

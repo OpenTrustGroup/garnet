@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"app/context"
-	"fidl/bindings2"
+	"fidl/bindings"
 	"netstack/link/eth"
 	"syscall/zx"
 
@@ -86,6 +86,7 @@ func getInterfaces() (out []nsfidl.NetInterface) {
 		outif := nsfidl.NetInterface{
 			Id:        uint32(nicid),
 			Flags:     flags,
+			Features:  ifs.nic.Features,
 			Name:      ifs.nic.Name,
 			Addr:      toNetAddress(ifs.nic.Addr),
 			Netmask:   toNetAddress(tcpip.Address(ifs.nic.Netmask)),
@@ -103,7 +104,7 @@ func getInterfaces() (out []nsfidl.NetInterface) {
 }
 
 func (ni *netstackImpl) RegisterListener(listener nsfidl.NotificationListenerInterface) (err error) {
-	if bindings2.Proxy(listener).IsValid() {
+	if bindings.Proxy(listener).IsValid() {
 		ni.listener = listener
 	}
 	return nil
@@ -248,13 +249,32 @@ func (ni *netstackImpl) SetInterfaceAddress(nicid uint32, address nsfidl.NetAddr
 	return nsfidl.NetErr{nsfidl.StatusOk, ""}, nil
 }
 
+func (ni *netstackImpl) BridgeInterfaces(nicids []uint32) (nsfidl.NetErr, error) {
+	nics := make([]tcpip.NICID, len(nicids))
+	for i, n := range nicids {
+		nics[i] = tcpip.NICID(n)
+	}
+	err := ns.Bridge(nics)
+	if err != nil {
+		return nsfidl.NetErr{Status: nsfidl.StatusUnknownError}, nil
+	}
+	return nsfidl.NetErr{Status: nsfidl.StatusOk}, nil
+}
+
 func (ni *netstackImpl) GetAggregateStats() (stats nsfidl.AggregateStats, err error) {
 	s := ns.stack.Stats()
 	return nsfidl.AggregateStats{
-		UnknownProtocolReceivedPackets:        s.UnknownProtocolRcvdPackets,
-		UnknownNetworkEndpointReceivedPackets: s.UnknownNetworkEndpointRcvdPackets,
-		MalformedReceivedPackets:              s.MalformedRcvdPackets,
-		DroppedPackets:                        s.DroppedPackets,
+		UnknownProtocolReceivedPackets: s.UnknownProtocolRcvdPackets,
+		MalformedReceivedPackets:       s.MalformedRcvdPackets,
+		DroppedPackets:                 s.DroppedPackets,
+		IpStats: nsfidl.IpStats{
+			PacketsReceived:          s.IP.PacketsReceived,
+			InvalidAddressesReceived: s.IP.InvalidAddressesReceived,
+			PacketsDiscarded:         s.IP.PacketsDiscarded,
+			PacketsDelivered:         s.IP.PacketsDelivered,
+			PacketsSent:              s.IP.PacketsSent,
+			OutgoingPacketErrors:     s.IP.OutgoingPacketErrors,
+		},
 		TcpStats: nsfidl.TcpStats{
 			ActiveConnectionOpenings:  s.TCP.ActiveConnectionOpenings,
 			PassiveConnectionOpenings: s.TCP.PassiveConnectionOpenings,
@@ -295,7 +315,7 @@ func (ni *netstackImpl) SetInterfaceStatus(nicid uint32, enabled bool) (err erro
 	}
 
 	if enabled {
-		ifState.eth.Start()
+		ifState.eth.Up()
 	} else {
 		ifState.eth.Down()
 	}
@@ -313,12 +333,12 @@ func (ni *netstackImpl) SetDhcpClientStatus(nicid uint32, enabled bool) (result 
 }
 
 func (ni *netstackImpl) onInterfacesChanged(interfaces []nsfidl.NetInterface) {
-	if bindings2.Proxy(ni.listener).IsValid() {
+	if bindings.Proxy(ni.listener).IsValid() {
 		ni.listener.OnInterfacesChanged(interfaces)
 	}
 }
 
-var netstackService *bindings2.BindingSet
+var netstackService *bindings.BindingSet
 
 // AddNetstackService registers the NetstackService with the application context,
 // allowing it to respond to FIDL queries.
@@ -326,11 +346,12 @@ func AddNetstackService(ctx *context.Context) error {
 	if netstackService != nil {
 		return fmt.Errorf("AddNetworkService must be called only once")
 	}
-	netstackService = &bindings2.BindingSet{}
+	netstackService = &bindings.BindingSet{}
 	ctx.OutgoingService.AddService(nsfidl.NetstackName, func(c zx.Channel) error {
-		return netstackService.Add(&nsfidl.NetstackStub{
+		_, err := netstackService.Add(&nsfidl.NetstackStub{
 			Impl: &netstackImpl{},
-		}, c)
+		}, c, nil)
+		return err
 	})
 	return nil
 }

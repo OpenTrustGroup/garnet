@@ -6,6 +6,8 @@
 
 #include <zx/process.h>
 
+#include "garnet/lib/debug_ipc/protocol.h"
+
 #if defined(__x86_64__)
 #include "garnet/bin/debug_agent/arch_x64.h"
 #elif defined(__aarch64__)
@@ -14,6 +16,7 @@
 #error
 #endif
 
+namespace debug_agent {
 namespace arch {
 
 extern const BreakInstructionType kBreakInstruction;
@@ -37,4 +40,7 @@ bool IsBreakpointInstruction(zx::process& process, uint64_t address);
 uint64_t* IPInRegs(zx_thread_state_general_regs* regs);
 uint64_t* SPInRegs(zx_thread_state_general_regs* regs);
 
+::debug_ipc::Arch GetArch();
+
 }  // namespace arch
+}  // namespace debug_agent

@@ -15,6 +15,7 @@ namespace zxdb {
 
 class Breakpoint;
 class ConsoleContext;
+class Frame;
 class Target;
 class Thread;
 
@@ -45,15 +46,22 @@ enum class Verb {
   kAttach,
   kBreak,
   kClear,
+  kConnect,
   kContinue,
   kDetach,
+  kDisassemble,
+  kDisconnect,
   kEdit,
   kHelp,
+  kLibs,
   kListProcesses,
   kMemRead,
   kNew,
+  kPause,
   kQuit,
   kRun,
+  kStepi,
+  kKill,
 
   // Adding a new one? Add in one of the functions GetVerbs() calls.
   kLast  // Not a real verb, keep last.
@@ -112,6 +120,8 @@ class Command {
   //
   // If HasNoun() returns true, the corresponding getter here is guaranteed
   // non-null.
+  Frame* frame() const { return frame_; }
+  void set_frame(Frame* f) { frame_ = f; }
   Target* target() const { return target_; }
   void set_target(Target* t) { target_ = t; }
   Thread* thread() const { return thread_; }
@@ -131,7 +141,7 @@ class Command {
   // will inherit the default.
   Target* target_ = nullptr;  // Guaranteed non-null for valid commands.
   Thread* thread_ = nullptr;  // Will be null if not running.
-  // Frame* frame_ = nullptr;  // TODO(brettw) do frame support.
+  Frame* frame_ = nullptr;  // Will be null if no valid thread stopped.
   Breakpoint* breakpoint_ = nullptr;  // May be null.
 
   Verb verb_ = Verb::kNone;

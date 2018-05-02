@@ -6,7 +6,6 @@
         "garnet/packages/prod/auth",
         "garnet/packages/prod/bluetooth",
         "garnet/packages/prod/boringssl",
-        "garnet/packages/prod/boringssl_libssl",
         "garnet/packages/prod/broadcom",
         "garnet/packages/prod/build_info",
         "garnet/packages/prod/cmdutils",
@@ -16,10 +15,11 @@
         "garnet/packages/prod/device_settings",
         "garnet/packages/prod/drivers",
         "garnet/packages/prod/far",
+        "garnet/packages/prod/ffmpeg",
         "garnet/packages/prod/fonts",
         "garnet/packages/prod/fortune",
         "garnet/packages/prod/gralloc",
-        "garnet/packages/prod/guest_tool",
+        "garnet/packages/prod/guest_runner",
         "garnet/packages/prod/icu_data",
         "garnet/packages/prod/image_pipe_swapchain",
         "garnet/packages/prod/insntrace",
@@ -46,6 +46,8 @@
         "garnet/packages/prod/pm",
         "garnet/packages/prod/pkgsvr",
         "garnet/packages/prod/power_manager",
+        "garnet/packages/prod/ralink",
+        "garnet/packages/prod/root_ssl_certificates",
         "garnet/packages/prod/run",
         "garnet/packages/prod/runtime",
         "garnet/packages/prod/sbase",
@@ -62,9 +64,11 @@
         "garnet/packages/prod/vim",
         "garnet/packages/prod/vulkan",
         "garnet/packages/prod/wlan",
+        "garnet/packages/prod/wlan_drivers",
+        "garnet/packages/prod/wlan_tools",
         "garnet/packages/prod/wlancfg",
         "garnet/packages/prod/wlanstack",
-        "garnet/packages/prod/xi_core",
-        "garnet/packages/prod/zxdb"
+        "garnet/packages/prod/wlantap",
+        "garnet/packages/prod/xi_core"
     ]
 }

@@ -5,19 +5,15 @@
 #include "garnet/lib/ui/gfx/util/event_timestamper.h"
 
 #include "lib/fsl/tasks/message_loop.h"
-#include "lib/fsl/threading/create_thread.h"
 
 namespace scenic {
 namespace gfx {
 
 EventTimestamper::EventTimestamper()
-    : main_loop_(fsl::MessageLoop::GetCurrent()), task_(0u) {
+    : main_loop_(fsl::MessageLoop::GetCurrent()),
+      task_([] { zx_thread_set_priority(24 /* HIGH_PRIORITY in LK */); }) {
   FXL_DCHECK(main_loop_);
   background_loop_.StartThread();
-  task_.set_handler([](async_t*, zx_status_t) {
-    zx_thread_set_priority(24 /* HIGH_PRIORITY in LK */);
-    return ASYNC_TASK_FINISHED;
-  });
 
   IncreaseBackgroundThreadPriority();
 }
@@ -33,16 +29,16 @@ void EventTimestamper::IncreaseBackgroundThreadPriority() {
   task_.Post(background_loop_.async());
 }
 
-EventTimestamper::Watch::Watch() : wait_(nullptr), timestamper_(nullptr) {}
+EventTimestamper::Watch::Watch() : waiter_(nullptr), timestamper_(nullptr) {}
 
 EventTimestamper::Watch::Watch(EventTimestamper* ts,
                                zx::event event,
                                zx_status_t trigger,
                                Callback callback)
-    : wait_(new EventTimestamper::Wait(ts->main_loop_->task_runner(),
-                                       std::move(event),
-                                       trigger,
-                                       std::move(callback))),
+    : waiter_(new EventTimestamper::Waiter(ts->main_loop_->task_runner(),
+                                           std::move(event),
+                                           trigger,
+                                           std::move(callback))),
       timestamper_(ts) {
   FXL_DCHECK(timestamper_);
 #ifndef NDEBUG
@@ -51,23 +47,23 @@ EventTimestamper::Watch::Watch(EventTimestamper* ts,
 }
 
 EventTimestamper::Watch::Watch(Watch&& rhs)
-    : wait_(rhs.wait_), timestamper_(rhs.timestamper_) {
-  rhs.wait_ = nullptr;
+    : waiter_(rhs.waiter_), timestamper_(rhs.timestamper_) {
+  rhs.waiter_ = nullptr;
   rhs.timestamper_ = nullptr;
 }
 
 EventTimestamper::Watch& EventTimestamper::Watch::operator=(
     EventTimestamper::Watch&& rhs) {
-  FXL_DCHECK(!wait_ && !timestamper_);
-  wait_ = rhs.wait_;
+  FXL_DCHECK(!waiter_ && !timestamper_);
+  waiter_ = rhs.waiter_;
   timestamper_ = rhs.timestamper_;
-  rhs.wait_ = nullptr;
+  rhs.waiter_ = nullptr;
   rhs.timestamper_ = nullptr;
   return *this;
 }
 
 EventTimestamper::Watch::~Watch() {
-  if (!wait_) {
+  if (!waiter_) {
     // Was moved.
     return;
   }
@@ -75,55 +71,57 @@ EventTimestamper::Watch::~Watch() {
   --timestamper_->watch_count_;
 #endif
 
-  switch (wait_->state()) {
-    case Wait::State::STOPPED:
-      delete wait_;
+  switch (waiter_->state()) {
+    case Waiter::State::STOPPED:
+      delete waiter_;
       break;
-    case Wait::State::STARTED:
-      if (ZX_OK ==
-          wait_->wait().Cancel(timestamper_->background_loop_.async())) {
-        delete wait_;
-      } else {
-        wait_->set_state(Wait::State::ABANDONED);
+    case Waiter::State::STARTED:
+      waiter_->set_state(Waiter::State::ABANDONED);
+      if (ZX_OK == waiter_->wait().Cancel()) {
+        // We successfully cancelled the async::Wait, so we can/must delete the
+        // Waiter ourselves.  Otherwise we must not delete it, because it will
+        // delete itself when it sees that it has been abandoned.
+        delete waiter_;
       }
       break;
-    case Wait::State::ABANDONED:
+    case Waiter::State::ABANDONED:
       FXL_DCHECK(false) << "internal error.";
       break;
   }
 }
 
 void EventTimestamper::Watch::Start() {
-  FXL_DCHECK(wait_) << "invalid Watch (was it std::move()d?).";
-  FXL_DCHECK(wait_->state() == Wait::State::STOPPED)
+  FXL_DCHECK(waiter_) << "invalid Watch (was it std::move()d?).";
+  FXL_DCHECK(waiter_->state() == Waiter::State::STOPPED)
       << "illegal to call Start() again before callback has been received.";
-  wait_->set_state(Wait::State::STARTED);
-  wait_->wait().Begin(timestamper_->background_loop_.async());
+  waiter_->set_state(Waiter::State::STARTED);
+  waiter_->wait().Begin(timestamper_->background_loop_.async());
 }
 
 // Return the watched event (or a null handle, if this Watch was moved).
 const zx::event& EventTimestamper::Watch::event() const {
   static const zx::event null_handle;
-  return wait_ ? wait_->event() : null_handle;
+  return waiter_ ? waiter_->event() : null_handle;
 }
 
-EventTimestamper::Wait::Wait(const fxl::RefPtr<fxl::TaskRunner>& task_runner,
-                             zx::event event,
-                             zx_status_t trigger,
-                             Callback callback)
+EventTimestamper::Waiter::Waiter(
+    const fxl::RefPtr<fxl::TaskRunner>& task_runner,
+    zx::event event,
+    zx_status_t trigger,
+    Callback callback)
     : task_runner_(task_runner),
       event_(std::move(event)),
       callback_(std::move(callback)),
-      wait_(event_.get(), trigger) {
-  wait_.set_handler(fbl::BindMember(this, &EventTimestamper::Wait::Handle));
+      wait_(this, event_.get(), trigger) {
 }
 
-EventTimestamper::Wait::~Wait() {
+EventTimestamper::Waiter::~Waiter() {
   FXL_DCHECK(state_ == State::STOPPED || state_ == State::ABANDONED);
 }
 
-async_wait_result_t EventTimestamper::Wait::Handle(
+void EventTimestamper::Waiter::Handle(
     async_t* async,
+    async::WaitBase* wait,
     zx_status_t status,
     const zx_packet_signal_t* signal) {
   zx_time_t now = zx_clock_get(ZX_CLOCK_MONOTONIC);
@@ -138,8 +136,6 @@ async_wait_result_t EventTimestamper::Wait::Handle(
     state_ = State::STOPPED;
     callback_(now);
   });
-
-  return ASYNC_WAIT_FINISHED;
 }
 
 }  // namespace gfx

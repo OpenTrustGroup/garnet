@@ -2,23 +2,23 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//garnet/public/lib/fidl/build/fidl/fidl.gni")
+import("//build/fidl/fidl.gni")
 
 fidl("fidl") {
   name = "ui"
+
+  sdk_candidate = true
 
   sources = [
     "commands.fidl",
     "events.fidl",
     "scenic.fidl",
     "session.fidl",
-    "space_provider.fidl",
   ]
 
   public_deps = [
     "//garnet/public/lib/images/fidl",
     "//garnet/public/lib/ui/gfx/fidl",
-    "//garnet/public/lib/ui/scenic/fidl/dummy_system:fidl",
     "//garnet/public/lib/ui/views/fidl:v2",
   ]
 }

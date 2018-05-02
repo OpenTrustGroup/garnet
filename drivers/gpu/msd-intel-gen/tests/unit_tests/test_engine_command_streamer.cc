@@ -7,6 +7,7 @@
 #include "gtt.h"
 #include "instructions.h"
 #include "mock/mock_address_space.h"
+#include "mock/mock_bus_mapper.h"
 #include "mock/mock_mapped_batch.h"
 #include "mock/mock_mmio.h"
 #include "register_tracer.h"
@@ -48,10 +49,18 @@ class TestEngineCommandStreamer : public EngineCommandStreamer::Owner,
 public:
     static constexpr uint32_t kFirstSequenceNumber = 5;
 
+    class AddressSpaceOwner : public AddressSpace::Owner {
+    public:
+        virtual ~AddressSpaceOwner() = default;
+        magma::PlatformBusMapper* GetBusMapper() override { return &bus_mapper_; }
+
+    private:
+        MockBusMapper bus_mapper_;
+    };
+
     TestEngineCommandStreamer(uint32_t device_id = 0x1916) : device_id_(device_id)
     {
-        register_io_ =
-            std::unique_ptr<RegisterIo>(new RegisterIo(MockMmio::Create(8 * 1024 * 1024)));
+        register_io_ = std::make_unique<magma::RegisterIo>(MockMmio::Create(8 * 1024 * 1024));
 
         std::weak_ptr<MsdIntelConnection> connection;
 
@@ -60,7 +69,9 @@ public:
 
         mock_status_page_ = std::unique_ptr<MockStatusPageBuffer>(new MockStatusPageBuffer());
 
-        address_space_ = std::shared_ptr<AddressSpace>(new MockAddressSpace(0, PAGE_SIZE * 100));
+        address_space_owner_ = std::make_unique<AddressSpaceOwner>();
+        address_space_ =
+            std::make_shared<MockAddressSpace>(address_space_owner_.get(), 0, PAGE_SIZE * 100);
 
         engine_cs_ = RenderEngineCommandStreamer::Create(this);
 
@@ -261,9 +272,9 @@ public:
 
     void Reset()
     {
-        class Hook : public RegisterIo::Hook {
+        class Hook : public magma::RegisterIo::Hook {
         public:
-            Hook(RegisterIo* register_io) : register_io_(register_io) {}
+            Hook(magma::RegisterIo* register_io) : register_io_(register_io) {}
 
             void Write32(uint32_t offset, uint32_t val) override
             {
@@ -290,7 +301,7 @@ public:
             void Read64(uint32_t offset, uint64_t val) override {}
 
         private:
-            RegisterIo* register_io_;
+            magma::RegisterIo* register_io_;
         };
 
         register_io_->InstallHook(std::make_unique<Hook>(register_io_.get()));
@@ -299,7 +310,7 @@ public:
     }
 
 private:
-    RegisterIo* register_io() override { return register_io_.get(); }
+    magma::RegisterIo* register_io() override { return register_io_.get(); }
 
     Sequencer* sequencer() override { return sequencer_.get(); }
 
@@ -328,8 +339,15 @@ private:
         return nullptr;
     }
 
+    magma::PlatformBusMapper* GetBusMapper() override
+    {
+        DASSERT(false);
+        return nullptr;
+    }
+
     uint32_t device_id_;
-    std::unique_ptr<RegisterIo> register_io_;
+    std::unique_ptr<magma::RegisterIo> register_io_;
+    std::unique_ptr<AddressSpaceOwner> address_space_owner_;
     std::shared_ptr<AddressSpace> address_space_;
     std::shared_ptr<MsdIntelContext> context_;
     std::unique_ptr<MockStatusPageBuffer> mock_status_page_;

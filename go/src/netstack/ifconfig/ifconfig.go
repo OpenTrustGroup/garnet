@@ -14,11 +14,13 @@ import (
 	"app/context"
 
 	"fuchsia/go/netstack"
+	"fuchsia/go/wlan_service"
 )
 
 type netstackClientApp struct {
 	ctx      *context.Context
 	netstack *netstack.NetstackInterface
+	wlan     *wlan_service.WlanInterface
 }
 
 func (a *netstackClientApp) printAll() {
@@ -62,6 +64,10 @@ func (a *netstackClientApp) printIface(iface netstack.NetInterface) {
 		fmt.Printf("\tinet6 addr: %s/%d Scope:Link\n", netAddrToString(addr.Addr), addr.PrefixLen)
 	}
 	fmt.Printf("\t%s\n", flagsToString(iface.Flags))
+
+	if isWLAN(iface.Features) {
+		fmt.Printf("\tWLAN Status: %s\n", a.wlanStatus())
+	}
 
 	fmt.Printf("\tRX packets:%d\n", stats.Rx.PktsTotal)
 	fmt.Printf("\tTX packets:%d\n", stats.Tx.PktsTotal)
@@ -143,6 +149,27 @@ func (a *netstackClientApp) addRoute(r netstack.RouteTableEntry) error {
 	return a.netstack.SetRouteTable(append(rs, r))
 }
 
+func (a *netstackClientApp) bridge(ifNames []string) error {
+	ifs := make([]*netstack.NetInterface, len(ifNames))
+	nicIDs := make([]uint32, len(ifNames))
+	// first, validate that all interfaces exist
+	for i, ifName := range ifNames {
+		iface := a.getIfaceByName(ifName)
+		if iface == nil {
+			return fmt.Errorf("no such interface '%s'\n", ifName)
+		}
+		ifs[i] = iface
+		nicIDs[i] = iface.Id
+	}
+
+	result, _ := a.netstack.BridgeInterfaces(nicIDs)
+	if result.Status != netstack.StatusOk {
+		return fmt.Errorf("error bridging interfaces: %s, result: %s", result, ifs)
+	}
+
+	return nil
+}
+
 func (a *netstackClientApp) setDHCP(iface netstack.NetInterface, startStop string) {
 	switch startStop {
 	case "start":
@@ -152,6 +179,52 @@ func (a *netstackClientApp) setDHCP(iface netstack.NetInterface, startStop strin
 	default:
 		usage()
 	}
+}
+
+func (a *netstackClientApp) wlanStatus() string {
+	if a.wlan == nil {
+		return "failed to query (FIDL service unintialized)"
+	}
+	res, err := a.wlan.Status()
+	if err != nil {
+		return fmt.Sprintf("failed to query (error: %v)", err)
+	} else if res.Error.Code != wlan_service.ErrCodeOk {
+		return fmt.Sprintf("failed to query (err: code(%v) desc(%v)", res.Error.Code, res.Error.Description)
+	} else {
+		status := wlanStateToStr(res.State)
+		if res.CurrentAp != nil {
+			ap := res.CurrentAp
+			isSecureStr := ""
+			if ap.IsSecure {
+				isSecureStr = "*"
+			}
+			status += fmt.Sprintf(" BSSID: %x SSID: %q Security: %v RSSI: %d",
+				ap.Bssid, ap.Ssid, isSecureStr, ap.LastRssi)
+		}
+		return status
+	}
+}
+
+func wlanStateToStr(state wlan_service.State) string {
+	switch state {
+	case wlan_service.StateBss:
+		return "starting-bss"
+	case wlan_service.StateQuerying:
+		return "querying"
+	case wlan_service.StateScanning:
+		return "scanning"
+	case wlan_service.StateJoining:
+		return "joining"
+	case wlan_service.StateAuthenticating:
+		return "authenticating"
+	case wlan_service.StateAssociating:
+		return "associating"
+	case wlan_service.StateAssociated:
+		return "associated"
+	default:
+		return "unknown"
+	}
+
 }
 
 func hwAddrToString(hwaddr []uint8) string {
@@ -203,6 +276,10 @@ func toNetAddress(addr net.IP) netstack.NetAddress {
 	return out
 }
 
+func isWLAN(features uint32) bool {
+	return features&uint32(netstack.InterfaceFeatureWlan) != 0
+}
+
 // bytesToString returns a human-friendly display of the given byte count.
 // Values over 1K have an approximation appended in parentheses.
 // bytesToString(42) => "42"
@@ -234,7 +311,9 @@ func usage() {
 	fmt.Printf("  %s [<interface>]\n", os.Args[0])
 	fmt.Printf("  %s [<interface>] [up|down]\n", os.Args[0])
 	fmt.Printf("  %s [<interface>] [add|del] [<address>]/[<mask>]\n", os.Args[0])
-	fmt.Printf("  %s [<interface>] dhcp [start|stop]", os.Args[0])
+	fmt.Printf("  %s [<interface>] dhcp [start|stop]\n", os.Args[0])
+	fmt.Printf("  %s route [add|del] [<address>]/[<mask>]\n", os.Args[0])
+	fmt.Printf("  %s bridge [<interface>]+\n", os.Args[0])
 	os.Exit(1)
 }
 
@@ -247,6 +326,13 @@ func main() {
 	a.netstack = pxy
 	defer a.netstack.Close()
 	a.ctx.ConnectToEnvService(req)
+
+	reqWlan, pxyWlan, errWlan := wlan_service.NewWlanInterfaceRequest()
+	if errWlan == nil {
+		a.wlan = pxyWlan
+		defer a.wlan.Close()
+		a.ctx.ConnectToEnvService(reqWlan)
+	}
 
 	if len(os.Args) == 1 {
 		a.printAll()
@@ -275,6 +361,15 @@ func main() {
 			usage()
 		}
 
+		return
+	case "bridge":
+		ifaces := os.Args[2:]
+		err := a.bridge(ifaces)
+		if err != nil {
+			fmt.Printf("error creating bridge: %s", err)
+		}
+		// fmt.Printf("Created virtual nic %s", bridge)
+		fmt.Printf("Bridged interfaces %s\n", ifaces)
 		return
 	default:
 		iface = a.getIfaceByName(os.Args[1])

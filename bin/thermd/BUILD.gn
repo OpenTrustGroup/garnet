@@ -39,7 +39,18 @@ package("thermd") {
       },
     ]
   } else {
-    # An empty system_image package is really nothing at all.
-    system_image = true
+    # An empty deprecated_system_image package is really nothing at all.
+    deprecated_system_image = true
   }
+}
+
+package("config") {
+  deprecated_system_image = true
+  package_name = "thermd_config"
+  resources = [
+    {
+      dest = "sysmgr/thermd.config"
+      path = rebase_path("thermd.config")
+    },
+  ]
 }

@@ -1,12 +1,12 @@
 // Copyright 2018 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-#[allow(dead_code)]
+
+use Result;
 use bytes::{BufMut, BytesMut, LittleEndian};
 use crypto_utils::prf;
 use num::bigint::{BigUint, RandBigInt};
 use rand::OsRng;
-use Result;
 use time;
 
 pub struct NonceReader {
@@ -24,7 +24,9 @@ impl NonceReader {
         buf.put_slice(&sta_addr[..]);
         let k = OsRng::new()?.gen_biguint(256).to_bytes_le();
         let init = prf(&k[..], "Init Counter", &buf[..], 256)?;
-        Ok(NonceReader { key_counter: BigUint::from_bytes_le(&init[..]) })
+        Ok(NonceReader {
+            key_counter: BigUint::from_bytes_le(&init[..]),
+        })
     }
 
     pub fn next(&mut self) -> Vec<u8> {

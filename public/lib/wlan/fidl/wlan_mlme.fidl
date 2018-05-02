@@ -77,6 +77,7 @@ struct BSSDescription {
     uint32 dtim_period;
     uint64 timestamp;
     uint64 local_time;
+    // TODO(hahnr): This field represents an IE and should thus be named RSNE.
     vector<uint8>? rsn;
 
     WlanChan chan;
@@ -94,7 +95,7 @@ enum ScanResultCodes {
     //LAST = NOT_SUPPORTED;
 };
 
-struct ScanResponse {
+struct ScanConfirm {
     vector<BSSDescription> bss_description_set;
     // BSSDescriptionFromMeasurementPilotSet
     ScanResultCodes result_code;
@@ -119,7 +120,7 @@ enum JoinResultCodes {
     //LAST = JOIN_FAILURE_TIMEOUT;
 };
 
-struct JoinResponse {
+struct JoinConfirm {
     JoinResultCodes result_code;
 };
 
@@ -153,12 +154,30 @@ enum AuthenticateResultCodes {
     //LAST = AUTH_FAILURE_TIMEOUT;
 };
 
-struct AuthenticateResponse {
+struct AuthenticateConfirm {
     array<uint8>:6 peer_sta_address;
     AuthenticationTypes auth_type;
     AuthenticateResultCodes result_code;
 
     // etc
+};
+
+// MLME-AUTHENTICATE.indication (IEEE Std 802.11-2016, 6.3.5.4)
+
+struct AuthenticateIndication {
+  array<uint8>:6 peer_sta_address;
+  AuthenticationTypes auth_type;
+
+  // etc
+};
+
+// MLME-AUTHENTICATE.response (IEEE Std 802.11-2016, 6.3.5.5)
+
+struct AuthenticateResponse {
+  array<uint8>:6 peer_sta_address;
+  AuthenticateResultCodes result_code;
+
+  // etc
 };
 
 // MLME-DEAUTHENTICATE.request (IEEE Std 802.11-2016, 6.3.6.2)
@@ -172,7 +191,7 @@ struct DeauthenticateRequest {
 
 // MLME-DEAUTHENTICATE.confirm (IEEE Std 802.11-2016, 6.3.6.3)
 
-struct DeauthenticateResponse {
+struct DeauthenticateConfirm {
     array <uint8>:6 peer_sta_address;
 };
 
@@ -189,6 +208,7 @@ struct DeauthenticateIndication {
 
 struct AssociateRequest {
     array<uint8>:6 peer_sta_address;
+    // TODO(hahnr): This field represents an IE and should thus be named RSNE.
     vector<uint8>? rsn;
 
     // etc
@@ -208,12 +228,36 @@ enum AssociateResultCodes {
     REFUSED_TEMPORARILY = 8;
 };
 
-struct AssociateResponse {
+struct AssociateConfirm {
     AssociateResultCodes result_code;
     // CapabilityInformation
     uint16 association_id;
 
     // etc
+};
+
+// MLME-ASSOCIATE.indication (IEEE Std 802.11-2016, 6.3.7.4)
+
+struct AssociateIndication {
+  array<uint8>:6 peer_sta_address;
+  // CapabilityInformation
+  uint16 listen_interval;
+  vector<uint8>? ssid;
+  // OperationalRateSet
+  // BSSMembershipSelectorSet
+  vector<uint8>? rsn;
+
+  // etc
+};
+
+// MLME-ASSOCIATE.response (IEEE Std 802.11-2016, 6.3.7.5)
+
+struct AssociateResponse {
+  array<uint8>:6 peer_sta_address;
+  AssociateResultCodes result_code;
+  uint16 association_id;
+
+  // etc
 };
 
 // MLME-DISASSOCIATE.request (IEEE Std 802.11-2016, 6.3.9.1)
@@ -227,7 +271,7 @@ struct DisassociateRequest {
 
 // MLME-DISASSOCIATE.confirm (IEEE Std 802.11-2016, 6.3.9.2)
 
-struct DisassociateResponse {
+struct DisassociateConfirm {
     int32 @status;
 };
 
@@ -260,6 +304,12 @@ struct StartRequest {
     uint8 channel;
 
     // TODO(hahnr): Add additional elements.
+
+    // Although MLME-START.request is used to start a BSS, IEEE does not include an RSNE in this
+    // primitive. However, IEEE doesn't define any other primitive to configure the RSN after its
+    // BSS was started. The RSNE must be available when the BSS is started, and thus, this is the
+    // right place to transfer the RSNE to the MLME.
+    vector<uint8>? rsne;
 };
 
 // MLME-START.confirm (IEEE Std 802.11-2016, 6.3.11.3)
@@ -271,7 +321,7 @@ enum StartResultCodes {
     NOT_SUPPORTED = 3;
 };
 
-struct StartResponse {
+struct StartConfirm {
     StartResultCodes result_code;
 };
 
@@ -335,7 +385,7 @@ enum EapolResultCodes {
     //LAST = TRANSMISSION_FAILURE;
 };
 
-struct EapolResponse {
+struct EapolConfirm {
     EapolResultCodes result_code;
 };
 
@@ -344,109 +394,125 @@ struct EapolResponse {
 enum Method {
     // MLME-SCAN.request
     // Args: ScanRequest
-    SCAN_request = 0;
+    SCAN_request = 1;
 
     // MLME-SCAN.confirm
-    // Args: ScanResponse
-    SCAN_confirm = 1;
+    // Args: ScanConfirm
+    SCAN_confirm = 2;
 
     // MLME-JOIN.request
     // Args: JoinRequest
-    JOIN_request = 2;
+    JOIN_request = 3;
 
     // MLME-JOIN.confirm
-    // Args: JoinResponse
-    JOIN_confirm = 3;
+    // Args: JoinConfirm
+    JOIN_confirm = 4;
 
     // MLME-AUTHENTICATE.request
     // Args: AuthenticateRequest
-    AUTHENTICATE_request = 4;
+    AUTHENTICATE_request = 5;
 
     // MLME-AUTHENTICATE.confirm
+    // Args: AuthenticateConfirm
+    AUTHENTICATE_confirm = 6;
+
+    // MLME-AUTHENTICATE.indication
+    // Args: AuthenticateIndication
+    AUTHENTICATE_indication = 7;
+
+    // MLME-AUTHENTICATE.response
     // Args: AuthenticateResponse
-    AUTHENTICATE_confirm = 5;
+    AUTHENTICATE_response = 8;
 
     // MLME-DEAUTHENTICATE.request
     // Args: DeauthenticateRequest
-    DEAUTHENTICATE_request = 6;
+    DEAUTHENTICATE_request = 9;
 
     // MLME-DEAUTHENTICATE.confirm
-    // Args: DeauthenticateResponse
-    DEAUTHENTICATE_confirm = 7;
+    // Args: DeauthenticateConfirm
+    DEAUTHENTICATE_confirm = 10;
 
     // MLME-DEAUTHENTICATE.indication
     // Args: DeauthenticateIndication
-    DEAUTHENTICATE_indication = 8;
+    DEAUTHENTICATE_indication = 11;
 
     // MLME-ASSOCIATE.request
     // Args: AssociateRequest
-    ASSOCIATE_request = 9;
+    ASSOCIATE_request = 12;
 
     // MLME-ASSOCIATE.confirm
+    // Args: AssociateConfirm
+    ASSOCIATE_confirm = 13;
+
+    // MLME-ASSOCIATE.indication
+    // Args: AssociateIndication
+    ASSOCIATE_indication = 14;
+
+    // MLME-ASSOCIATE.response
     // Args: AssociateResponse
-    ASSOCIATE_confirm = 10;
+    ASSOCIATE_response = 15;
 
     // MLME-DISASSOCIATE.request
     // Args: DisassociateRequest
-    DISASSOCIATE_request = 11;
+    DISASSOCIATE_request = 16;
 
     // MLME-DISASSOCIATE.confirm
-    // Args: DisassociateResponse
-    DISASSOCIATE_confirm = 12;
+    // Args: DisassociateConfirm
+    DISASSOCIATE_confirm = 17;
 
     // MLME-DISASSOCIATE.indication
     // Args: DisassociateIndication
-    DISASSOCIATE_indication = 13;
+    DISASSOCIATE_indication = 18;
 
     // MLME-RESET.request
     // Args: ResetRequest
-    RESET_request = 14;
+    RESET_request = 19;
 
     // MLME-START.request
     // Args: StartRequest
-    START_request = 15;
+    START_request = 20;
 
     // MLME-START.confirm
-    // Args: StartResponse
-    START_confirm = 16;
+    // Args: StartConfirm
+    START_confirm = 21;
 
     // MLME-STOP.request
     // Args: StopRequest
-    STOP_request = 17;
+    STOP_request = 22;
 
     // MLME-STOP.confirm
-    // Args: StopResponse
-    STOP_confirm = 18;
+    // Args: StopConfirm
+    STOP_confirm = 23;
 
     // MLME-SETKEYS.request
     // Args: SetKeysRequest
-    SETKEYS_request = 19;
+    SETKEYS_request = 24;
 
     // MLME-DELETEKEYS.request
     // Args: DeleteKeysRequest
-    DELETEKEYS_request = 20;
+    DELETEKEYS_request = 25;
 
     // MLME-EAPOL.request
     // Args: EapolRequest
-    EAPOL_request = 21;
+    EAPOL_request = 26;
 
     // MLME-EAPOL.confirm
-    // Args: EapolResponse
-    EAPOL_confirm = 22;
+    // Args: EapolConfirm
+    EAPOL_confirm = 27;
 
 
     // Custom primitives extending 802.11 MLME SAP interface.
     // See: wlan_mlme_ext.fidl
 
     // Args: SignalReportIndication
-    SIGNAL_REPORT_indication = 23;
+    SIGNAL_REPORT_indication = 28;
 
     // Args: EapolIndication
-    EAPOL_indication = 24;
+    EAPOL_indication = 29;
 
     // Args: DeviceQueryRequest
-    DEVICE_QUERY_request = 25;
+    DEVICE_QUERY_request = 30;
 
-    // Args: DeviceQueryResponse
-    DEVICE_QUERY_confirm = 26;
+    // Args: DeviceQueryConfirm
+    DEVICE_QUERY_confirm = 31;
 };

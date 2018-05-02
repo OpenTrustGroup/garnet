@@ -4,6 +4,7 @@
 
 #include <wlan/mlme/ap/beacon_sender.h>
 
+#include <wlan/common/channel.h>
 #include <wlan/common/logging.h>
 #include <wlan/mlme/ap/bss_interface.h>
 #include <wlan/mlme/ap/tim.h>
@@ -23,25 +24,34 @@ BeaconSender::~BeaconSender() {
     Stop();
 }
 
-void BeaconSender::Start(BssInterface* bss, const wlan_mlme::StartRequest& req) {
+void BeaconSender::Start(BssInterface* bss, const PsCfg& ps_cfg,
+                         const wlan_mlme::StartRequest& req) {
     ZX_DEBUG_ASSERT(!IsStarted());
+
     bss_ = bss;
     req.Clone(&req_);
-    WriteBeacon(nullptr);
-    debugbss("[bcn-sender] [%s] started sending Beacons\n", bss_->bssid().ToString().c_str());
+
+    auto status = device_->EnableBeaconing(true);
+    if (status != ZX_OK) {
+        errorf("[bcn-sender] [%s] could not start beacon sending: %d\n",
+               bss_->bssid().ToString().c_str(), status);
+        return;
+    }
+
+    debugbss("[bcn-sender] [%s] enabled Beacon sending\n", bss_->bssid().ToString().c_str());
 }
 
 void BeaconSender::Stop() {
     if (!IsStarted()) { return; }
 
-    auto status = device_->ConfigureBeacon(nullptr);
+    auto status = device_->EnableBeaconing(false);
     if (status != ZX_OK) {
         errorf("[bcn-sender] [%s] could not stop beacon sending: %d\n",
                bss_->bssid().ToString().c_str(), status);
         return;
     }
 
-    debugbss("[bcn-sender] [%s] stopped sending Beacons\n", bss_->bssid().ToString().c_str());
+    debugbss("[bcn-sender] [%s] disabled Beacon sending\n", bss_->bssid().ToString().c_str());
     bss_ = nullptr;
 }
 
@@ -62,8 +72,15 @@ zx_status_t BeaconSender::HandleProbeRequest(const ImmutableMgmtFrame<ProbeReque
         case element_id::kSsid: {
             auto ie = reader.read<SsidElement>();
             if (ie == nullptr) { return ZX_ERR_STOP; };
+            if (hdr->len == 0) {
+                // Wildcard ProbeRequest
+                break;
+            }
             size_t ssid_len = strlen(req_.ssid->data());
-            if (strncmp(ie->ssid, req_.ssid->data(), ssid_len) != 0) { return ZX_ERR_STOP; }
+            if (hdr->len != ssid_len || strncmp(ie->ssid, req_.ssid->data(), ssid_len) != 0) {
+                // Probe request was broadcast but not intended for this BSS.
+                return ZX_ERR_STOP;
+            }
 
             break;
         }
@@ -78,12 +95,7 @@ zx_status_t BeaconSender::HandleProbeRequest(const ImmutableMgmtFrame<ProbeReque
     return SendProbeResponse(frame);
 }
 
-zx_status_t BeaconSender::UpdateBeacon(const TrafficIndicationMap& tim) {
-    debugfn();
-    return WriteBeacon(&tim);
-}
-
-zx_status_t BeaconSender::WriteBeacon(const TrafficIndicationMap* tim) {
+zx_status_t BeaconSender::UpdateBeacon(const PsCfg& ps_cfg) {
     debugfn();
     ZX_DEBUG_ASSERT(IsStarted());
     if (!IsStarted()) { return ZX_ERR_BAD_STATE; }
@@ -119,12 +131,10 @@ zx_status_t BeaconSender::WriteBeacon(const TrafficIndicationMap* tim) {
     status = WriteDsssParamSet(&w);
     if (status != ZX_OK) { return status; }
 
-    if (tim) {
-        status = WriteTim(&w, *tim);
-        if (status != ZX_OK) { return status; }
-    }
+    status = WriteTim(&w, ps_cfg);
+    if (status != ZX_OK) { return status; }
 
-    status = WriteExtendedSupportedRates(&w);
+    status = WriteCountry(&w);
     if (status != ZX_OK) { return status; }
 
     if (bss_->IsHTReady()) {
@@ -196,7 +206,7 @@ zx_status_t BeaconSender::SendProbeResponse(const ImmutableMgmtFrame<ProbeReques
     status = WriteDsssParamSet(&w);
     if (status != ZX_OK) { return status; }
 
-    status = WriteExtendedSupportedRates(&w);
+    status = WriteCountry(&w);
     if (status != ZX_OK) { return status; }
 
     if (bss_->IsHTReady()) {
@@ -242,8 +252,8 @@ zx_status_t BeaconSender::WriteSsid(ElementWriter* w) {
 }
 
 zx_status_t BeaconSender::WriteSupportedRates(ElementWriter* w) {
-    // Rates (in Mbps): 1 (basic), 2 (basic), 5.5 (basic), 6, 9, 11 (basic), 12, 18
-    std::vector<uint8_t> rates = {0x82, 0x84, 0x8b, 0x0c, 0x12, 0x96, 0x18, 0x24};
+    // Rates (in Mbps): 6(B), 9, 12(B), 18, 24(B), 36, 48, 54
+    std::vector<uint8_t> rates = {0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c};
     if (!w->write<SupportedRatesElement>(std::move(rates))) {
         errorf("[bcn-sender] [%s] could not write supported rates\n",
                bss_->bssid().ToString().c_str());
@@ -261,26 +271,56 @@ zx_status_t BeaconSender::WriteDsssParamSet(ElementWriter* w) {
     return ZX_OK;
 }
 
-zx_status_t BeaconSender::WriteTim(ElementWriter* w, const TrafficIndicationMap& tim) {
+zx_status_t BeaconSender::WriteTim(ElementWriter* w, const PsCfg& ps_cfg) {
     size_t bitmap_len;
     uint8_t bitmap_offset;
-    auto status = tim.WritePartialVirtualBitmap(pvb_, sizeof(pvb_), &bitmap_len, &bitmap_offset);
+    auto status =
+        ps_cfg.GetTim()->WritePartialVirtualBitmap(pvb_, sizeof(pvb_), &bitmap_len, &bitmap_offset);
     if (status != ZX_OK) {
         errorf("[bcn-sender] [%s] could not write Partial Virtual Bitmap: %d\n",
                bss_->bssid().ToString().c_str(), status);
         return status;
     }
 
-    // TODO(NET-579): Add support for DTIM count. For now always send DTIMs with no BU.
-    uint8_t dtim_count = 0;
-    uint8_t dtim_period = req_.dtim_period;
+    uint8_t dtim_count = ps_cfg.dtim_count();
+    uint8_t dtim_period = ps_cfg.dtim_period();
+    ZX_DEBUG_ASSERT(dtim_count != dtim_period);
+    if (dtim_count == dtim_period) {
+        warnf("[bcn-sender] [%s] illegal DTIM state", bss_->bssid().ToString().c_str());
+    }
+
     BitmapControl bmp_ctrl;
     bmp_ctrl.set_offset(bitmap_offset);
-    // TODO(NET-579): Write group traffic indication to bitmap control.
+    if (ps_cfg.IsDtim()) { bmp_ctrl.set_group_traffic_ind(ps_cfg.GetTim()->HasGroupTraffic()); }
     if (!w->write<TimElement>(dtim_count, dtim_period, bmp_ctrl, pvb_, bitmap_len)) {
         errorf("[bcn-sender] [%s] could not write TIM element\n", bss_->bssid().ToString().c_str());
         return ZX_ERR_IO;
     }
+    return ZX_OK;
+}
+
+zx_status_t BeaconSender::WriteCountry(ElementWriter* w) {
+    // TODO(NET-799): Read from dot11CountryString MIB
+    const uint8_t kCountry[3] = {'U', 'S', ' '};
+
+    std::vector<SubbandTriplet> subbands;
+
+    // TODO(porce): Read from the AP's regulatory domain
+    if (wlan::common::Is2Ghz(bss_->Chan())) {
+        subbands.push_back({1, 11, 36});
+    } else {
+        subbands.push_back({36, 4, 36});
+        subbands.push_back({52, 4, 30});
+        subbands.push_back({100, 12, 30});
+        subbands.push_back({149, 5, 36});
+    }
+
+    if (!w->write<CountryElement>(kCountry, subbands)) {
+        errorf("[bcn-sender] [%s] could not write CountryElement\n",
+               bss_->bssid().ToString().c_str());
+        return ZX_ERR_IO;
+    }
+
     return ZX_OK;
 }
 

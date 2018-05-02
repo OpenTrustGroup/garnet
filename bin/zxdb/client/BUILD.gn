@@ -3,12 +3,16 @@
 # found in the LICENSE file.
 
 static_library("client") {
+  friend = [ ":tests" ]
+
   public = [
-    "agent_connection.h",
+    "arch_info.h",
     "breakpoint.h",
     "breakpoint_observer.h",
     "client_object.h",
+    "disassembler.h",
     "err.h",
+    "frame.h",
     "memory_dump.h",
     "process.h",
     "process_observer.h",
@@ -22,12 +26,16 @@ static_library("client") {
   ]
 
   sources = [
-    "agent_connection.cc",
+    "arch_info.cc",
     "breakpoint.cc",
     "breakpoint_impl.cc",
     "breakpoint_impl.h",
     "client_object.cc",
+    "disassembler.cc",
     "err.cc",
+    "frame.cc",
+    "frame_impl.cc",
+    "frame_impl.h",
     "memory_dump.cc",
     "process.cc",
     "process_impl.cc",
@@ -46,13 +54,17 @@ static_library("client") {
 
   public_deps = [
     "//garnet/lib/debug_ipc:client",
+    "//garnet/lib/debug_ipc/helper",
     "//garnet/public/lib/fxl",
+    "//third_party/llvm/lib/Target/AArch64/Disassembler",
+    "//third_party/llvm/lib/Target/X86/Disassembler",
   ]
 }
 
 source_set("tests") {
   testonly = true
   sources = [
+    "disassembler_unittest.cc",
     "memory_dump_unittest.cc",
   ]
 
@@ -61,4 +73,3 @@ source_set("tests") {
     "//third_party/googletest:gtest",
   ]
 }
-

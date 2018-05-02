@@ -107,8 +107,6 @@ source_set("fxl_lib") {
     "strings/trim.h",
     "strings/utf_codecs.cc",
     "strings/utf_codecs.h",
-    "synchronization/sleep.cc",
-    "synchronization/sleep.h",
     "synchronization/thread_annotations.h",
     "synchronization/thread_checker.h",
     "synchronization/waitable_event.cc",
@@ -276,7 +274,7 @@ executable("fxl_unittests") {
 if (is_fuchsia) {
   package("unittests_package") {
     testonly = true
-    system_image = true
+    deprecated_system_image = true
 
     package_name = "fxl_unittests"
 

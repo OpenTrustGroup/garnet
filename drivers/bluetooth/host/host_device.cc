@@ -8,8 +8,6 @@
 
 #include "garnet/drivers/bluetooth/lib/hci/device_wrapper.h"
 #include "garnet/lib/bluetooth/c/bt_host.h"
-#include "lib/fsl/threading/create_thread.h"
-#include "lib/fxl/functional/make_copyable.h"
 
 #include "host.h"
 
@@ -78,12 +76,13 @@ zx_status_t HostDevice::Bind() {
     return status;
   }
 
-  std::thread host_thread =
-      fsl::CreateThread(&host_thread_runner_, "bt-host (gap)");
+  loop_.StartThread("bt-host (gap)");
 
   // Send the bootstrap message to Host. The Host object can only be accessed on
   // the Host thread.
-  host_thread_runner_->PostTask([hci_proto, this] {
+  async::PostTask(loop_.async(), [hci_proto, this] {
+    FXL_VLOG(2) << "bt-host: host thread start";
+
     std::lock_guard<std::mutex> lock(mtx_);
     host_ = fxl::MakeRefCounted<Host>(hci_proto);
     host_->Initialize([host = host_, this](bool success) {
@@ -91,11 +90,13 @@ zx_status_t HostDevice::Bind() {
         std::lock_guard<std::mutex> lock(mtx_);
 
         // Abort if CleanUp has been called.
-        if (!host_thread_runner_)
+        if (!host_)
           return;
 
         if (success) {
           FXL_VLOG(1) << "bt-host: Adapter initialized; make device visible";
+          host_->gatt_host()->SetRemoteServiceWatcher(
+              fbl::BindMember(this, &HostDevice::OnRemoteGattServiceAdded));
           device_make_visible(dev_);
           return;
         }
@@ -105,11 +106,9 @@ zx_status_t HostDevice::Bind() {
       }
 
       host->ShutDown();
-      fsl::MessageLoop::GetCurrent()->PostQuitTask();
+      loop_.Shutdown();
     });
   });
-
-  host_thread.detach();
 
   return ZX_OK;
 }
@@ -119,10 +118,19 @@ void HostDevice::Unbind() {
 
   std::lock_guard<std::mutex> lock(mtx_);
 
-  host_thread_runner_->PostTask([host = host_] {
+  if (!host_)
+    return;
+
+  // Do this immediately to stop receiving new service callbacks.
+  host_->gatt_host()->SetRemoteServiceWatcher({});
+
+  async::PostTask(loop_.async(), [this, host = host_] {
     host->ShutDown();
-    fsl::MessageLoop::GetCurrent()->QuitNow();
+    loop_.Quit();
   });
+
+  // Make sure that the ShutDown task runs before this returns.
+  loop_.JoinThreads();
 
   CleanUp();
 }
@@ -160,11 +168,11 @@ zx_status_t HostDevice::Ioctl(uint32_t op,
   std::lock_guard<std::mutex> lock(mtx_);
 
   // Tell Host to start processing messages on this handle.
-  FXL_DCHECK(host_thread_runner_);
-  host_thread_runner_->PostTask(
-      fxl::MakeCopyable([host = host_, chan = std::move(local)]() mutable {
-        host->BindHostInterface(std::move(chan));
-      }));
+  FXL_DCHECK(host_);
+  async::PostTask(loop_.async(),
+                  [host = host_, chan = std::move(local)]() mutable {
+                    host->BindHostInterface(std::move(chan));
+                  });
 
   zx_handle_t* reply = static_cast<zx_handle_t*>(out_buf);
   *reply = remote.release();
@@ -173,9 +181,14 @@ zx_status_t HostDevice::Ioctl(uint32_t op,
   return ZX_OK;
 }
 
+void HostDevice::OnRemoteGattServiceAdded(
+    const std::string& peer_id,
+    fbl::RefPtr<btlib::gatt::RemoteService> service) {
+  // TODO(armansito): Publish a bt-gatt-svc device attached to |service|.
+}
+
 void HostDevice::CleanUp() {
   host_ = nullptr;
-  host_thread_runner_ = nullptr;
 
   device_remove(dev_);
   dev_ = nullptr;

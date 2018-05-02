@@ -9,8 +9,6 @@ shared_library("machina") {
     "bits.h",
     "block_dispatcher.cc",
     "block_dispatcher.h",
-    "fifo_block_dispatcher.cc",
-    "fifo_block_dispatcher.h",
     "framebuffer_scanout.cc",
     "framebuffer_scanout.h",
     "gpu_bitmap.cc",
@@ -33,6 +31,10 @@ shared_library("machina") {
     "pci.h",
     "phys_mem.cc",
     "phys_mem.h",
+    "qcow.cc",
+    "qcow.h",
+    "qcow_refcount.cc",
+    "qcow_refcount.h",
     "vcpu.cc",
     "vcpu.h",
     "virtio_balloon.cc",
@@ -55,6 +57,8 @@ shared_library("machina") {
     "virtio_queue.h",
     "virtio_queue_waiter.cc",
     "virtio_queue_waiter.h",
+    "virtio_vsock.cc",
+    "virtio_vsock.h",
     "volatile_write_block_dispatcher.cc",
     "volatile_write_block_dispatcher.h",
   ]
@@ -94,9 +98,12 @@ shared_library("machina") {
   public_deps = [
     "//garnet/lib/machina/fidl",
     "//garnet/public/lib/app/cpp",
+    "//zircon/public/lib/bitmap",
     "//zircon/public/lib/ddk",
     "//zircon/public/lib/hid",
     "//zircon/public/lib/virtio",
+    "//zircon/public/lib/trace",
+    "//zircon/public/lib/trace-engine",
     "//zircon/public/lib/zx",
   ]
 
@@ -107,7 +114,6 @@ shared_library("machina") {
     "//garnet/public/lib/fxl",
     "//zircon/public/lib/async-cpp",
     "//zircon/public/lib/async-loop-cpp",
-    "//zircon/public/lib/bitmap",
     "//zircon/public/lib/block-client",
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/fdio",
@@ -126,6 +132,7 @@ executable("machina_unittests") {
     "hid_event_source-unittest.cc",
     "input_dispatcher-unittest.cc",
     "pci-unittest.cc",
+    "qcow-unittest.cc",
     "run_all_unittests.cc",
     "virtio_block-unittest.cc",
     "virtio_device_fake.h",
@@ -135,6 +142,7 @@ executable("machina_unittests") {
     "virtio_queue_fake.cc",
     "virtio_queue_fake.h",
     "virtio_queue_waiter-unittest.cc",
+    "virtio_vsock-unittest.cc",
     "volatile_write_block_dispatcher-unittest.cc",
   ]
 
@@ -156,7 +164,7 @@ executable("machina_unittests") {
 
 package("machina_tests") {
   testonly = true
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     ":machina_unittests",

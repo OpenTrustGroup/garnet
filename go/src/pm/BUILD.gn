@@ -10,6 +10,7 @@ import("//build/package.gni")
 go_binary("pm_bin") {
   output_name = "pm"
   gopackage = "fuchsia.googlesource.com/pm/cmd/pm"
+  sdk_candidate = true
   go_dependencies = [
     {
       package = "fuchsia.googlesource.com/pm"
@@ -30,7 +31,7 @@ go_binary("pm_bin") {
 }
 
 package("pm") {
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     ":pm_bin",

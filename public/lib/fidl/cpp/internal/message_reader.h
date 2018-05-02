@@ -5,10 +5,10 @@
 #ifndef LIB_FIDL_CPP_INTERNAL_MESSAGE_READER_H_
 #define LIB_FIDL_CPP_INTERNAL_MESSAGE_READER_H_
 
+#include <lib/async/wait.h>
 #include <lib/fidl/cpp/message.h>
 #include <lib/fidl/cpp/message_buffer.h>
-#include <lib/async/wait.h>
-#include <zx/channel.h>
+#include <lib/zx/channel.h>
 
 #include <functional>
 #include <memory>
@@ -106,13 +106,13 @@ class MessageReader {
   }
 
  private:
-  static async_wait_result_t CallHandler(async_t* async,
-                                         async_wait_t* wait,
-                                         zx_status_t status,
-                                         const zx_packet_signal_t* signal);
-  async_wait_result_t OnHandleReady(async_t* async,
-                                    zx_status_t status,
-                                    const zx_packet_signal_t* signal);
+  static void CallHandler(async_t* async,
+                          async_wait_t* wait,
+                          zx_status_t status,
+                          const zx_packet_signal_t* signal);
+  void OnHandleReady(async_t* async,
+                     zx_status_t status,
+                     const zx_packet_signal_t* signal);
   zx_status_t ReadAndDispatchMessage(MessageBuffer* buffer);
   void NotifyError();
   void Stop();

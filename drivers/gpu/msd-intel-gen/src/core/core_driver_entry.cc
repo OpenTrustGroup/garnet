@@ -9,16 +9,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "zx/channel.h"
+#include <atomic>
+#include <map>
+#include <unordered_map>
+#include <thread>
+
 #include <ddk/binding.h>
 #include <ddk/device.h>
 #include <ddk/driver.h>
 #include <ddk/protocol/display.h>
 #include <ddk/protocol/intel-gpu-core.h>
 
-#include <atomic>
-#include <map>
-#include <thread>
+#include <lib/zx/channel.h>
+
 #include <zircon/process.h>
 #include <zircon/types.h>
 
@@ -46,7 +49,8 @@ struct sysdrv_device_t {
     zx_display_cb_t ownership_change_callback{nullptr};
     void* ownership_change_cookie{nullptr};
 
-    std::map<uint64_t, std::unique_ptr<magma::PlatformBuffer::BusMapping>> client_gtt_allocations;
+    std::map<uint64_t, std::unique_ptr<magma::PlatformBusMapper::BusMapping>>
+        client_gtt_allocations;
     std::unordered_map<uint32_t, std::unique_ptr<magma::PlatformMmio>> client_mmio_allocations;
 
     std::unique_ptr<MagmaDriver> magma_driver;
@@ -93,6 +97,14 @@ static zx_status_t unmap_pci_mmio(void* ctx, uint32_t pci_bar)
 {
     if (get_device(ctx)->client_mmio_allocations.erase(pci_bar) != 1)
         return DRET_MSG(ZX_ERR_INTERNAL, "failed to erase mmio mapping for pci_bar %d", pci_bar);
+    return ZX_OK;
+}
+
+static zx_status_t get_pci_bti(void* ctx, uint32_t index,
+                               zx_handle_t* bus_transaction_initiator_out)
+{
+    *bus_transaction_initiator_out =
+        get_device(ctx)->core_device->platform_device()->GetBusTransactionInitiator()->release();
     return ZX_OK;
 }
 
@@ -147,7 +159,8 @@ static zx_status_t gtt_insert(void* ctx, uint64_t addr, zx_handle_t buffer_handl
     if (!buffer)
         return DRET_MSG(ZX_ERR_NO_MEMORY, "failed to import buffer handle");
 
-    auto bus_mapping = buffer->MapPageRangeBus(page_offset, page_count);
+    auto bus_mapping = get_device(ctx)->core_device->GetBusMapper()->MapPageRangeBus(
+        buffer.get(), page_offset, page_count);
     if (!bus_mapping)
         return DRET_MSG(ZX_ERR_NO_MEMORY, "failed to map page range to bus");
 
@@ -163,6 +176,7 @@ static zx_intel_gpu_core_protocol_ops_t sysdrv_gpu_core_protocol_ops = {
     .read_pci_config_16 = read_pci_config_16,
     .map_pci_mmio = map_pci_mmio,
     .unmap_pci_mmio = unmap_pci_mmio,
+    .get_pci_bti = get_pci_bti,
     .register_interrupt_callback = register_interrupt_callback,
     .unregister_interrupt_callback = unregister_interrupt_callback,
     .gtt_get_size = gtt_get_size,

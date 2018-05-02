@@ -17,13 +17,33 @@
 #ifndef BRCMF_DEVICE_H
 #define BRCMF_DEVICE_H
 
+#include <ddk/driver.h>
+#include <ddk/protocol/pci.h>
+#include <pthread.h>
+#include <threads.h>
 #include <zircon/types.h>
 
 struct brcmf_device {
     void* of_node;
     void* parent;
     void* drvdata;
+    zx_device_t* zxdev;
+};
+
+struct brcmf_pci_device {
+    struct brcmf_device dev;
+    int vendor;
+    int device;
+    int irq;
+    int bus_number;
+    int domain;
     zx_handle_t bti;
+    pci_protocol_t pci_proto;
+};
+
+struct brcmf_firmware {
+    size_t size;
+    void* data;
 };
 
 struct brcmf_bus* dev_get_drvdata(struct brcmf_device* dev);
@@ -31,5 +51,11 @@ struct brcmf_bus* dev_get_drvdata(struct brcmf_device* dev);
 void dev_set_drvdata(struct brcmf_device* dev, struct brcmf_bus* bus);
 
 struct brcmfmac_platform_data* dev_get_platdata(struct brcmf_device* dev);
+
+// TODO(cphoenix): Wrap around whatever completion functions exist in PCIE and SDIO.
+// TODO(cphoenix): To improve efficiency, analyze which spinlocks only need to protect small
+// critical subsections of the completion functions. For those, bring back the individual spinlock.
+// Note: This is a pthread_mutex_t instead of mtx_t because mtx_t doesn't implement recursive.
+extern pthread_mutex_t irq_callback_lock;
 
 #endif /* BRCMF_DEVICE_H */

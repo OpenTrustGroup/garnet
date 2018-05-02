@@ -19,11 +19,14 @@
 
 #include "flowring.h"
 
+#include <threads.h>
+
 #include "brcmu_utils.h"
 #include "bus.h"
 #include "common.h"
 #include "core.h"
 #include "debug.h"
+#include "device.h"
 #include "linuxisms.h"
 #include "msgbuf.h"
 #include "proto.h"
@@ -173,13 +176,14 @@ static void brcmf_flowring_block(struct brcmf_flowring* flow, uint16_t flowid, b
     bool currently_blocked;
     int i;
     uint8_t ifidx;
-    unsigned long flags;
 
-    spin_lock_irqsave(&flow->block_lock, flags);
+    //spin_lock_irqsave(&flow->block_lock, flags);
+    pthread_mutex_lock(&irq_callback_lock);
 
     ring = flow->rings[flowid];
     if (ring->blocked == blocked) {
-        spin_unlock_irqrestore(&flow->block_lock, flags);
+        //spin_unlock_irqrestore(&flow->block_lock, flags);
+        pthread_mutex_unlock(&irq_callback_lock);
         return;
     }
     ifidx = brcmf_flowring_ifidx_get(flow, flowid);
@@ -198,7 +202,8 @@ static void brcmf_flowring_block(struct brcmf_flowring* flow, uint16_t flowid, b
     }
     flow->rings[flowid]->blocked = blocked;
     if (currently_blocked) {
-        spin_unlock_irqrestore(&flow->block_lock, flags);
+        //spin_unlock_irqrestore(&flow->block_lock, flags);
+        pthread_mutex_unlock(&irq_callback_lock);
         return;
     }
 
@@ -207,7 +212,8 @@ static void brcmf_flowring_block(struct brcmf_flowring* flow, uint16_t flowid, b
     ifp = brcmf_get_ifp(drvr, ifidx);
     brcmf_txflowblock_if(ifp, BRCMF_NETIF_STOP_REASON_FLOW, blocked);
 
-    spin_unlock_irqrestore(&flow->block_lock, flags);
+    //spin_unlock_irqrestore(&flow->block_lock, flags);
+    pthread_mutex_unlock(&irq_callback_lock);
 }
 
 void brcmf_flowring_delete(struct brcmf_flowring* flow, uint16_t flowid) {
@@ -238,7 +244,7 @@ void brcmf_flowring_delete(struct brcmf_flowring* flow, uint16_t flowid) {
         skb = skb_dequeue(&ring->skblist);
     }
 
-    kfree(ring);
+    free(ring);
 }
 
 uint32_t brcmf_flowring_enqueue(struct brcmf_flowring* flow, uint16_t flowid, struct sk_buff* skb) {
@@ -332,11 +338,11 @@ struct brcmf_flowring* brcmf_flowring_attach(struct brcmf_device* dev, uint16_t 
     struct brcmf_flowring* flow;
     uint32_t i;
 
-    flow = kzalloc(sizeof(*flow), GFP_KERNEL);
+    flow = calloc(1, sizeof(*flow));
     if (flow) {
         flow->dev = dev;
         flow->nrofrings = nrofrings;
-        spin_lock_init(&flow->block_lock);
+        //spin_lock_init(&flow->block_lock);
         for (i = 0; i < ARRAY_SIZE(flow->addr_mode); i++) {
             flow->addr_mode[i] = ADDR_INDIRECT;
         }
@@ -345,7 +351,7 @@ struct brcmf_flowring* brcmf_flowring_attach(struct brcmf_device* dev, uint16_t 
         }
         flow->rings = kcalloc(nrofrings, sizeof(*flow->rings), GFP_KERNEL);
         if (!flow->rings) {
-            kfree(flow);
+            free(flow);
             flow = NULL;
         }
     }
@@ -370,10 +376,10 @@ void brcmf_flowring_detach(struct brcmf_flowring* flow) {
     while (search) {
         remove = search;
         search = search->next;
-        kfree(remove);
+        free(remove);
     }
-    kfree(flow->rings);
-    kfree(flow);
+    free(flow->rings);
+    free(flow);
 }
 
 void brcmf_flowring_configure_addr_mode(struct brcmf_flowring* flow, int ifidx,
@@ -438,7 +444,7 @@ void brcmf_flowring_delete_peer(struct brcmf_flowring* flow, int ifidx, uint8_t 
         } else {
             flow->tdls_entry = search->next;
         }
-        kfree(search);
+        free(search);
         if (flow->tdls_entry == NULL) {
             flow->tdls_active = false;
         }
@@ -476,5 +482,5 @@ void brcmf_flowring_add_tdls_peer(struct brcmf_flowring* flow, int ifidx, uint8_
     return;
 
 free_entry:
-    kfree(tdls_entry);
+    free(tdls_entry);
 }

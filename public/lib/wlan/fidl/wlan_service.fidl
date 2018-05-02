@@ -19,7 +19,7 @@ struct Error {
 
 struct AP {
   vector<uint8> bssid;
-  string       ssid;
+  string       ssid; // TODO(NET-698): ssid should be []byte for unicode handling
   int32        last_rssi; // dBm (some vendors may not support dBm)
   bool         is_secure;
 };
@@ -60,11 +60,14 @@ struct WlanStatus {
 
 struct BssConfig {
   string ssid;
+  int32 beaconPeriod;
+  int32 dtimPeriod;
+  uint8 channel;
 };
 
 // Stub interface; eventually to be replaced by something based on the 802.11
 // SME / MSGCF.
-[ServiceName="wlan::WlanService"]
+[Discoverable]
 interface Wlan {
   1: Scan(ScanRequest req) -> (ScanResult result);
   2: Connect(ConnectConfig req) -> (Error error);

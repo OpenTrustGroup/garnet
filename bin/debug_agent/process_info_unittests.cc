@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <zx/process.h>
-#include <zx/thread.h>
+#include <lib/zx/process.h>
+#include <lib/zx/thread.h>
 
 #include "garnet/bin/debug_agent/object_util.h"
 #include "garnet/bin/debug_agent/process_info.h"
 #include "gtest/gtest.h"
+
+namespace debug_agent {
 
 TEST(ProcessInfo, GetProcessThreads) {
   zx_handle_t current_thread = zx_thread_self();
@@ -39,3 +41,5 @@ TEST(ProcessInfo, GetProcessThreads) {
   zx_object_set_property(current_thread, ZX_PROP_NAME, old_name.c_str(),
                          old_name.size());
 }
+
+}  // namespace debug_agent

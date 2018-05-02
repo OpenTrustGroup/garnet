@@ -43,6 +43,13 @@ static const struct {
         .min_frames_per_second = media::kMinLpcmFramesPerSecond,
         .max_frames_per_second = media::kMaxLpcmFramesPerSecond,
     },
+    {
+        .sample_format = AudioSampleFormat::FLOAT,
+        .min_channels = media::kMinLpcmChannelCount,
+        .max_channels = media::kMaxLpcmChannelCount,
+        .min_frames_per_second = media::kMinLpcmFramesPerSecond,
+        .max_frames_per_second = media::kMaxLpcmFramesPerSecond,
+    },
 };
 
 AudioRenderer1Impl::AudioRenderer1Impl(
@@ -327,10 +334,6 @@ void AudioRenderer1Impl::OnPacketReceived(fbl::RefPtr<AudioPacketRef> packet) {
   FXL_DCHECK(packet);
   FXL_DCHECK(format_info_valid());
 
-  if (throttle_output_link_ != nullptr) {
-    throttle_output_link_->PushToPendingQueue(packet);
-  }
-
   {
     fbl::AutoLock links_lock(&links_lock_);
     for (const auto& link : dest_links_) {
@@ -351,10 +354,6 @@ bool AudioRenderer1Impl::OnFlushRequested(
     MediaPacketConsumer::FlushCallback cbk) {
   fbl::RefPtr<PendingFlushToken> flush_token =
       PendingFlushToken::Create(owner_, cbk);
-
-  if (throttle_output_link_ != nullptr) {
-    throttle_output_link_->FlushPendingQueue(flush_token);
-  }
 
   {
     fbl::AutoLock links_lock(&links_lock_);

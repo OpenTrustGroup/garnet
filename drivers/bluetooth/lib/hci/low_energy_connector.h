@@ -6,7 +6,9 @@
 
 #include <memory>
 
-#include "garnet/drivers/bluetooth/lib/common/cancelable_task.h"
+#include <lib/async/cpp/task.h>
+#include <lib/async/dispatcher.h>
+
 #include "garnet/drivers/bluetooth/lib/common/device_address.h"
 #include "garnet/drivers/bluetooth/lib/common/optional.h"
 #include "garnet/drivers/bluetooth/lib/hci/command_channel.h"
@@ -18,7 +20,7 @@
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/ref_ptr.h"
 #include "lib/fxl/memory/weak_ptr.h"
-#include "lib/fxl/tasks/task_runner.h"
+#include "lib/fxl/synchronization/thread_checker.h"
 
 namespace btlib {
 namespace hci {
@@ -40,7 +42,7 @@ class LowEnergyConnector {
   // The constructor expects the following arguments:
   //   - |hci|: The HCI transport this should operate on.
   //
-  //   - |task_runner|: The task runner that will be used to run all
+  //   - |dispatcher|: The dispatcher that will be used to run all
   //     asynchronous operations. This must be bound to the thread on which the
   //     LowEnergyConnector is created.
   //
@@ -49,7 +51,7 @@ class LowEnergyConnector {
   using IncomingConnectionDelegate =
       std::function<void(ConnectionPtr connection)>;
   LowEnergyConnector(fxl::RefPtr<Transport> hci,
-                     fxl::RefPtr<fxl::TaskRunner> task_runner,
+                     async_t* dispatcher,
                      IncomingConnectionDelegate delegate);
 
   // Deleting an instance cancels any pending connection request.
@@ -66,20 +68,13 @@ class LowEnergyConnector {
   // determine which advertiser to connect to. Otherwise, the controller will
   // connect to |peer_address|.
   //
-  // |result_callback| is called asynchronously to notify the status of the
+  // |status_callback| is called asynchronously to notify the status of the
   // operation. A valid |link| will be provided on success.
   //
   // |timeout_ms| specifies a time period after which the request will time out.
-  // When a request to create connection times out, |result_callback| will be
-  // called with its |result| parameter set to Result::kFailed and |hci_status|
-  // set to Status::kCommandTimeout.
-  enum class Result {
-    kSuccess,
-    kCanceled,
-    kFailed,
-  };
-  using ResultCallback =
-      std::function<void(Result result, Status hci_status, ConnectionPtr link)>;
+  // When a request to create connection times out, |status_callback| will be
+  // called with a null |link| and a |status| with error Host::Error::kTimedOut.
+  using StatusCallback = std::function<void(Status status, ConnectionPtr link)>;
   bool CreateConnection(
       LEOwnAddressType own_address_type,
       bool use_whitelist,
@@ -87,7 +82,7 @@ class LowEnergyConnector {
       uint16_t scan_interval,
       uint16_t scan_window,
       const LEPreferredConnectionParameters& initial_parameters,
-      const ResultCallback& result_callback,
+      const StatusCallback& status_callback,
       int64_t timeout_ms);
 
   // Cancels the currently pending connection attempt.
@@ -98,18 +93,18 @@ class LowEnergyConnector {
 
   // Returns true if a connection timeout has been posted. Returns false if it
   // was not posted or was canceled. This is intended for unit tests.
-  bool timeout_posted() const { return request_timeout_task_.posted(); }
+  bool timeout_posted() const { return request_timeout_task_.is_pending(); }
 
  private:
   struct PendingRequest {
     PendingRequest() = default;
     PendingRequest(const common::DeviceAddress& peer_address,
-                   const ResultCallback& result_callback);
+                   const StatusCallback& status_callback);
 
     bool canceled;
     bool timed_out;
     common::DeviceAddress peer_address;
-    ResultCallback result_callback;
+    StatusCallback status_callback;
   };
 
   // Called by Cancel() and by OnCreateConnectionTimeout().
@@ -119,15 +114,13 @@ class LowEnergyConnector {
   void OnConnectionCompleteEvent(const EventPacket& event);
 
   // Called when a LE Create Connection request has completed.
-  void OnCreateConnectionComplete(Result result,
-                                  Status hci_status,
-                                  ConnectionPtr link);
+  void OnCreateConnectionComplete(Status status, ConnectionPtr link);
 
   // Called when a LE Create Connection request has timed out.
   void OnCreateConnectionTimeout();
 
   // Task runner for all asynchronous tasks.
-  fxl::RefPtr<fxl::TaskRunner> task_runner_;
+  async_t* dispatcher_;
 
   // The HCI transport.
   fxl::RefPtr<Transport> hci_;
@@ -142,10 +135,14 @@ class LowEnergyConnector {
   // Task that runs when a request to create connection times out. We do not
   // rely on CommandChannel's timer since that request completes when we receive
   // the HCI Command Status event.
-  common::CancelableTask request_timeout_task_;
+  async::TaskClosureMethod<LowEnergyConnector,
+                           &LowEnergyConnector::OnCreateConnectionTimeout>
+                               request_timeout_task_{this};
 
   // Our event handle ID for the LE Connection Complete event.
   CommandChannel::EventHandlerId event_handler_id_;
+
+  fxl::ThreadChecker thread_checker_;
 
   // Keep this as the last member to make sure that all weak pointers are
   // invalidated before other members get destroyed.

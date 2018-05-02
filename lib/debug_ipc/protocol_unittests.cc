@@ -103,6 +103,26 @@ TEST(Protocol, LaunchReply) {
   EXPECT_EQ(initial.process_name, second.process_name);
 }
 
+// Kill ----------------------------------------------------------------------
+
+TEST(Protocol, KillRequest) {
+  KillRequest initial;
+  initial.process_koid = 5678;
+
+  KillRequest second;
+  ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+}
+
+TEST(Protocol, KillReply) {
+  KillReply initial;
+  initial.status = 67;
+
+  KillReply second;
+  ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
+  EXPECT_EQ(initial.status, second.status);
+}
+
 // Attach ----------------------------------------------------------------------
 
 TEST(Protocol, AttachRequest) {
@@ -145,17 +165,32 @@ TEST(Protocol, DetachReply) {
   EXPECT_EQ(initial.status, second.status);
 }
 
-// Continue --------------------------------------------------------------------
+// Pause ---------------------------------------------------------------------
 
-TEST(Protocol, ContinueRequest) {
-  ContinueRequest initial;
+TEST(Protocol, PauseRequest) {
+  PauseRequest initial;
   initial.process_koid = 3746234;
   initial.thread_koid = 123523;
 
-  ContinueRequest second;
+  PauseRequest second;
   ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
   EXPECT_EQ(initial.process_koid, second.process_koid);
   EXPECT_EQ(initial.thread_koid, second.thread_koid);
+}
+
+// Resume --------------------------------------------------------------------
+
+TEST(Protocol, ResumeRequest) {
+  ResumeRequest initial;
+  initial.process_koid = 3746234;
+  initial.thread_koid = 123523;
+  initial.how = ResumeRequest::How::kStepInstruction;
+
+  ResumeRequest second;
+  ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+  EXPECT_EQ(initial.thread_koid, second.thread_koid);
+  EXPECT_EQ(initial.how, second.how);
 }
 
 // ProcessTree -----------------------------------------------------------------
@@ -316,6 +351,68 @@ TEST(Protocol, RemoveBreakpointReply) {
   ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
 }
 
+// Backtrace -------------------------------------------------------------------
+
+TEST(Protocol, BacktraceRequest) {
+  BacktraceRequest initial;
+  initial.process_koid = 1234;
+  initial.thread_koid = 8976;
+
+  BacktraceRequest second;
+  ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
+
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+  EXPECT_EQ(initial.thread_koid, second.thread_koid);
+}
+
+TEST(Protocol, BacktraceReply) {
+  BacktraceReply initial;
+  initial.frames.resize(2);
+  initial.frames[0].ip = 1234;
+  initial.frames[0].sp = 9875;
+  initial.frames[1].ip = 71562341;
+  initial.frames[1].sp = 89236413;
+
+  BacktraceReply second;
+  ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
+
+  EXPECT_EQ(2u, second.frames.size());
+  EXPECT_EQ(initial.frames[0].ip, second.frames[0].ip);
+  EXPECT_EQ(initial.frames[0].sp, second.frames[0].sp);
+  EXPECT_EQ(initial.frames[1].ip, second.frames[1].ip);
+  EXPECT_EQ(initial.frames[1].sp, second.frames[1].sp);
+}
+
+// Modules ---------------------------------------------------------------------
+
+TEST(Protocol, ModulesRequest) {
+  ModulesRequest initial;
+  initial.process_koid = 1234;
+
+  ModulesRequest second;
+  ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
+
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+}
+
+TEST(Protocol, ModulesReply) {
+  ModulesReply initial;
+  initial.modules.resize(2);
+  initial.modules[0].name = "winnt.dll";
+  initial.modules[0].base = 0x1234567890;
+  initial.modules[1].name = "libncurses.so.1.0.0";
+  initial.modules[1].base = 0x1000;
+
+  ModulesReply second;
+  ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
+
+  EXPECT_EQ(2u, second.modules.size());
+  EXPECT_EQ(initial.modules[0].name, second.modules[0].name);
+  EXPECT_EQ(initial.modules[0].base, second.modules[0].base);
+  EXPECT_EQ(initial.modules[1].name, second.modules[1].name);
+  EXPECT_EQ(initial.modules[1].base, second.modules[1].base);
+}
+
 // Notifications ---------------------------------------------------------------
 
 TEST(Protocol, NotifyThread) {
@@ -343,8 +440,8 @@ TEST(Protocol, NotifyException) {
   initial.process_koid = 23;
   initial.thread.name = "foo";
   initial.type = NotifyException::Type::kHardware;
-  initial.ip = 0x7647342634;
-  initial.sp = 0x9861238251;
+  initial.frame.ip = 0x7647342634;
+  initial.frame.sp = 0x9861238251;
 
   NotifyException second;
   ASSERT_TRUE(SerializeDeserializeNotification(
@@ -353,8 +450,8 @@ TEST(Protocol, NotifyException) {
   EXPECT_EQ(initial.process_koid, second.process_koid);
   EXPECT_EQ(initial.thread.name, second.thread.name);
   EXPECT_EQ(initial.type, second.type);
-  EXPECT_EQ(initial.ip, second.ip);
-  EXPECT_EQ(initial.sp, second.sp);
+  EXPECT_EQ(initial.frame.ip, second.frame.ip);
+  EXPECT_EQ(initial.frame.sp, second.frame.sp);
 }
 
 }  // namespace debug_ipc

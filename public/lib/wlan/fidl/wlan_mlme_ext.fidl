@@ -31,8 +31,8 @@ struct DeviceQueryRequest {
 
 // DEVICE_QUERY.confirm
 
-enum MacMode {
-    STA = 1;
+enum MacRole {
+    CLIENT = 1;
     AP = 2;
 };
 
@@ -44,9 +44,9 @@ struct BandCapabilities {
 
 // TODO(tkilbourn): add more fields for debugging. For now, we just have the information
 // necessary for the SME.
-struct DeviceQueryResponse {
+struct DeviceQueryConfirm {
     array<uint8>:6 mac_addr;
-    vector<MacMode> modes;
+    MacRole role;
     vector<BandCapabilities> bands;
 };
 

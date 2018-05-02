@@ -19,7 +19,7 @@ import (
 	"syscall/zx/fdio"
 	"time"
 
-	"application/lib/app/context"
+	"app/context"
 	"fuchsia/go/amber"
 	"thinfs/fs"
 	"thinfs/zircon/rpc"
@@ -41,14 +41,15 @@ type Filesystem struct {
 
 // New initializes a new pkgfs filesystem server
 func New(indexDir, blobDir string) (*Filesystem, error) {
-	bm, err := blobfs.New(blobDir, "")
+	bm, err := blobfs.New(blobDir)
 	if err != nil {
 		return nil, fmt.Errorf("pkgfs: open blobfs: %s", err)
 	}
 
+	static := index.NewStatic()
 	f := &Filesystem{
-		static: index.NewStatic(),
-		index:  index.NewDynamic(indexDir),
+		static: static,
+		index:  index.NewDynamic(indexDir, static),
 		blobfs: bm,
 		mountInfo: mountInfo{
 			parentFd: -1,
@@ -60,10 +61,6 @@ func New(indexDir, blobDir string) (*Filesystem, error) {
 		fs:                   f,
 
 		dirs: map[string]fs.Directory{
-			"incoming": &inDirectory{
-				unsupportedDirectory: unsupportedDirectory("/incoming"),
-				fs:                   f,
-			},
 			"install": &installDir{
 				unsupportedDirectory: unsupportedDirectory("/install"),
 				fs:                   f,
@@ -137,8 +134,8 @@ func (f *Filesystem) Size() int64 {
 }
 
 func (f *Filesystem) Close() error {
-	debugLog("fs close")
-	return fs.ErrNotSupported
+	f.Unmount()
+	return nil
 }
 
 func (f *Filesystem) RootDirectory() fs.Directory {
@@ -167,7 +164,7 @@ func (f *Filesystem) Serve(c zx.Channel) error {
 	f.mountInfo.serveChannel = c
 
 	// TODO(raggi): serve has no quit/shutdown path.
-	go vfs.Serve()
+	vfs.Serve()
 	return nil
 }
 

@@ -1547,8 +1547,6 @@ TEST_F(GATT_ServerTest, WriteCommandSuccess) {
     EXPECT_EQ(0u, offset);
     EXPECT_TRUE(common::ContainersEqual(
         common::CreateStaticByteBuffer('t', 'e', 's', 't'), value));
-    // validated side effect, exit loop
-    fsl::MessageLoop::GetCurrent()->QuitNow();
   });
   grp->set_active(true);
 
@@ -1560,7 +1558,7 @@ TEST_F(GATT_ServerTest, WriteCommandSuccess) {
   // clang-format on
 
   fake_chan()->Receive(kCmd);
-  RunMessageLoop();
+  RunUntilIdle();
 }
 
 TEST_F(GATT_ServerTest, ReadRequestInvalidPDU) {
@@ -1990,7 +1988,7 @@ TEST_F(GATT_ServerTest, SendNotificationEmpty) {
   );
   // clang-format on
 
-  async::PostTask(message_loop()->async(), [=] {
+  async::PostTask(dispatcher(), [=] {
     server()->SendNotification(kHandle, kTestValue, false);
   });
 
@@ -2009,7 +2007,7 @@ TEST_F(GATT_ServerTest, SendNotification) {
   );
   // clang-format on
 
-  async::PostTask(message_loop()->async(), [=] {
+  async::PostTask(dispatcher(), [=] {
     server()->SendNotification(kHandle, kTestValue, false);
   });
 
@@ -2027,7 +2025,7 @@ TEST_F(GATT_ServerTest, SendIndicationEmpty) {
   );
   // clang-format on
 
-  async::PostTask(message_loop()->async(), [=] {
+  async::PostTask(dispatcher(), [=] {
     server()->SendNotification(kHandle, kTestValue, true);
   });
 
@@ -2046,7 +2044,7 @@ TEST_F(GATT_ServerTest, SendIndication) {
   );
   // clang-format on
 
-  async::PostTask(message_loop()->async(), [=] {
+  async::PostTask(dispatcher(), [=] {
     server()->SendNotification(kHandle, kTestValue, true);
   });
 

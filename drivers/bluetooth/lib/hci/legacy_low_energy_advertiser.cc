@@ -9,7 +9,6 @@
 #include "garnet/drivers/bluetooth/lib/common/byte_buffer.h"
 #include "garnet/drivers/bluetooth/lib/hci/transport.h"
 #include "garnet/drivers/bluetooth/lib/hci/util.h"
-#include "lib/fsl/tasks/message_loop.h"
 
 namespace btlib {
 namespace hci {
@@ -120,7 +119,7 @@ uint16_t TimeslicesToMilliseconds(uint16_t timeslices) {
 LegacyLowEnergyAdvertiser::LegacyLowEnergyAdvertiser(fxl::RefPtr<Transport> hci)
     : hci_(hci), starting_(false), connect_callback_(nullptr) {
   hci_cmd_runner_ = std::make_unique<SequentialCommandRunner>(
-      fsl::MessageLoop::GetCurrent()->task_runner(), hci_);
+      async_get_default(), hci_);
 }
 
 LegacyLowEnergyAdvertiser::~LegacyLowEnergyAdvertiser() {
@@ -138,43 +137,43 @@ void LegacyLowEnergyAdvertiser::StartAdvertising(
     const ConnectionCallback& connect_callback,
     uint32_t interval_ms,
     bool anonymous,
-    const AdvertisingResultCallback& callback) {
+    AdvertisingStatusCallback callback) {
   FXL_DCHECK(callback);
   FXL_DCHECK(address.type() != common::DeviceAddress::Type::kBREDR);
 
   if (anonymous) {
-    FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: anonymous advertising not "
+    FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: anonymous advertising not "
                    "supported";
-    callback(0, kUnsupportedFeatureOrParameter);
+    callback(0, Status(common::HostError::kNotSupported));
     return;
   }
 
   if (advertising()) {
     if (address != advertised_) {
-      FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: already advertising";
-      callback(0, kConnectionLimitExceeded);
+      FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: already advertising";
+      callback(0, Status(common::HostError::kNotSupported));
       return;
     }
     FXL_VLOG(1)
-        << "gap: LegacyLowEnergyAdvertiser: updating existing advertisement";
+        << "hci: LegacyLowEnergyAdvertiser: updating existing advertisement";
   }
 
   if (data.size() > GetSizeLimit()) {
-    FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: advertising data too large";
-    callback(0, kMemoryCapacityExceeded);
+    FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: advertising data too large";
+    callback(0, Status(common::HostError::kInvalidParameters));
     return;
   }
 
   if (scan_rsp.size() > GetSizeLimit()) {
-    FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: scan response too large";
-    callback(0, kMemoryCapacityExceeded);
+    FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: scan response too large";
+    callback(0, Status(common::HostError::kInvalidParameters));
     return;
   }
 
   if (!hci_cmd_runner_->IsReady()) {
     if (starting_) {
-      FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: already starting";
-      callback(0, kRepeatedAttempts);
+      FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: already starting";
+      callback(0, Status(common::HostError::kInProgress));
       return;
     }
 
@@ -226,23 +225,27 @@ void LegacyLowEnergyAdvertiser::StartAdvertising(
   // Enable advertising.
   hci_cmd_runner_->QueueCommand(BuildEnablePacket(GenericEnableParam::kEnable));
 
-  hci_cmd_runner_->RunCommands([this, address, interval_slices, callback,
-                                connect_callback](hci::Status status) {
+  hci_cmd_runner_->RunCommands([this, address, interval_slices,
+                                callback = std::move(callback),
+                                connect_callback](Status status) mutable {
     FXL_DCHECK(starting_);
     starting_ = false;
 
-    FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: advertising started ("
-                << StatusToString(status) << ")";
+    FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: advertising status: "
+                << status.ToString();
 
-    if (status == Status::kSuccess) {
+    uint16_t interval;
+    if (status) {
       advertised_ = address;
       connect_callback_ = connect_callback;
-      callback(TimeslicesToMilliseconds(interval_slices), kSuccess);
+      interval = TimeslicesToMilliseconds(interval_slices);
     } else {
       // Clear out the advertising data if it partially succeeded.
       StopAdvertisingInternal();
-      callback(0, status);
+      interval = 0;
     }
+
+    callback(interval, status);
   });
 }
 
@@ -261,7 +264,7 @@ void LegacyLowEnergyAdvertiser::StopAdvertisingInternal() {
 
   if (!hci_cmd_runner_->IsReady()) {
     if (!starting_) {
-      FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: already stopping";
+      FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: already stopping";
 
       // The advertised address must have been cleared in this state.
       FXL_DCHECK(!advertising());
@@ -295,21 +298,21 @@ void LegacyLowEnergyAdvertiser::StopAdvertisingInternal() {
   scan_rsp_packet->mutable_view()->mutable_payload_data().SetToZeros();
   hci_cmd_runner_->QueueCommand(std::move(scan_rsp_packet));
 
-  hci_cmd_runner_->RunCommands([](hci::Status status) {
-    FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: advertising stopped ("
-                << StatusToString(status) << ")";
+  hci_cmd_runner_->RunCommands([](Status status) {
+    FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: advertising stopped: "
+                << status.ToString();
   });
 }
 
 void LegacyLowEnergyAdvertiser::OnIncomingConnection(ConnectionPtr link) {
   if (!advertising()) {
-    FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: connection received "
+    FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: connection received "
                    "without advertising!";
     return;
   }
 
   if (!connect_callback_) {
-    FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: connection received when "
+    FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: connection received when "
                    "not connectable!";
     return;
   }

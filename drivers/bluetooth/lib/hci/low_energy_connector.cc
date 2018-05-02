@@ -16,22 +16,24 @@
 namespace btlib {
 namespace hci {
 
+using common::HostError;
+
 LowEnergyConnector::PendingRequest::PendingRequest(
     const common::DeviceAddress& peer_address,
-    const ResultCallback& result_callback)
+    const StatusCallback& status_callback)
     : canceled(false),
       timed_out(false),
       peer_address(peer_address),
-      result_callback(result_callback) {}
+      status_callback(status_callback) {}
 
 LowEnergyConnector::LowEnergyConnector(fxl::RefPtr<Transport> hci,
-                                       fxl::RefPtr<fxl::TaskRunner> task_runner,
+                                       async_t* dispatcher,
                                        IncomingConnectionDelegate delegate)
-    : task_runner_(task_runner),
+    : dispatcher_(dispatcher),
       hci_(hci),
       delegate_(std::move(delegate)),
       weak_ptr_factory_(this) {
-  FXL_DCHECK(task_runner_);
+  FXL_DCHECK(dispatcher_);
   FXL_DCHECK(hci_);
   FXL_DCHECK(delegate_);
 
@@ -42,7 +44,7 @@ LowEnergyConnector::LowEnergyConnector(fxl::RefPtr<Transport> hci,
         if (self)
           self->OnConnectionCompleteEvent(event);
       },
-      task_runner_);
+      dispatcher_);
 }
 
 LowEnergyConnector::~LowEnergyConnector() {
@@ -58,18 +60,18 @@ bool LowEnergyConnector::CreateConnection(
     uint16_t scan_interval,
     uint16_t scan_window,
     const LEPreferredConnectionParameters& initial_parameters,
-    const ResultCallback& result_callback,
+    const StatusCallback& status_callback,
     int64_t timeout_ms) {
-  FXL_DCHECK(task_runner_->RunsTasksOnCurrentThread());
-  FXL_DCHECK(result_callback);
+  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+  FXL_DCHECK(status_callback);
   FXL_DCHECK(peer_address.type() != common::DeviceAddress::Type::kBREDR);
   FXL_DCHECK(timeout_ms > 0);
 
   if (request_pending())
     return false;
 
-  FXL_DCHECK(!request_timeout_task_.posted());
-  pending_request_ = PendingRequest(peer_address, result_callback);
+  FXL_DCHECK(!request_timeout_task_.is_pending());
+  pending_request_ = PendingRequest(peer_address, status_callback);
 
   auto request = CommandPacket::New(kLECreateConnection,
                                     sizeof(LECreateConnectionCommandParams));
@@ -105,9 +107,9 @@ bool LowEnergyConnector::CreateConnection(
     if (!self)
       return;
 
-    Status hci_status = event.status();
-    if (hci_status != Status::kSuccess) {
-      self->OnCreateConnectionComplete(Result::kFailed, hci_status, nullptr);
+    Status status = event.ToStatus();
+    if (!status) {
+      self->OnCreateConnectionComplete(Status(status), nullptr);
       return;
     }
 
@@ -115,19 +117,11 @@ bool LowEnergyConnector::CreateConnection(
     // timeout period. NOTE: The request will complete when the controller
     // asynchronously notifies us of with a LE Connection Complete event.
     self->request_timeout_task_.Cancel();
-
-    // TODO: optionally pass async_t?
-    self->request_timeout_task_.Post(
-        [self] {
-          // If |self| was destroyed then this callback should have been
-          // canceled.
-          FXL_DCHECK(self);
-          self->OnCreateConnectionTimeout();
-        },
-        zx::msec(timeout_ms));
+    self->request_timeout_task_.PostDelayed(async_get_default(),
+                                            zx::msec(timeout_ms));
   };
 
-  hci_->command_channel()->SendCommand(std::move(request), task_runner_,
+  hci_->command_channel()->SendCommand(std::move(request), dispatcher_,
                                        complete_cb, kCommandStatusEventCode);
 
   return true;
@@ -160,16 +154,17 @@ void LowEnergyConnector::CancelInternal(bool timed_out) {
     if (!self) {
       return;
     }
-    Status status = event.return_params<SimpleReturnParams>()->status;
-    if (status != Status::kSuccess) {
+
+    Status status = event.ToStatus();
+    if (!status) {
       FXL_LOG(WARNING) << "Failed to cancel connection request - status: "
-                       << std::hex << status;
+                       << status.ToString();
       return;
     }
   };
 
   auto cancel = CommandPacket::New(kLECreateConnectionCancel);
-  hci_->command_channel()->SendCommand(std::move(cancel), task_runner_,
+  hci_->command_channel()->SendCommand(std::move(cancel), dispatcher_,
                                        complete_cb);
 }
 
@@ -187,21 +182,22 @@ void LowEnergyConnector::OnConnectionCompleteEvent(const EventPacket& event) {
   bool matches_pending_request =
       pending_request_ && (pending_request_->peer_address == peer_address);
 
-  if (params->status != Status::kSuccess) {
+  Status status(params->status);
+  if (!status) {
     if (matches_pending_request) {
       // The "Unknown Connect Identifier" error code is returned if this event
       // was sent due to a successful cancelation via the
       // HCI_LE_Create_Connection_Cancel command (sent by Cancel()).
-      OnCreateConnectionComplete(
-          params->status == Status::kUnknownConnectionId ? Result::kCanceled
-                                                         : Result::kFailed,
-          pending_request_->timed_out ? Status::kCommandTimeout
-                                      : params->status,
-          nullptr);
+      if (pending_request_->timed_out) {
+        status = Status(HostError::kTimedOut);
+      } else if (params->status == StatusCode::kUnknownConnectionId) {
+        status = Status(HostError::kCanceled);
+      }
+      OnCreateConnectionComplete(status, nullptr);
     } else {
       FXL_LOG(WARNING)
-          << "Unexpected LE Connection Complete event with error received: 0x"
-          << std::hex << params->status;
+          << "Unexpected LE Connection Complete event with error received: "
+          << status.ToString();
     }
     return;
   }
@@ -219,20 +215,20 @@ void LowEnergyConnector::OnConnectionCompleteEvent(const EventPacket& event) {
       peer_address, connection_params, hci_);
 
   if (matches_pending_request) {
-    bool canceled = pending_request_->canceled;
-    bool timed_out = pending_request_->timed_out;
+    Status status;
+    if (pending_request_->timed_out) {
+      status = Status(HostError::kTimedOut);
+    } else if (pending_request_->canceled) {
+      status = Status(HostError::kCanceled);
+    }
 
     // If we were requested to cancel the connection after the logical link
     // is created we disconnect it.
-    if (canceled) {
+    if (!status) {
       connection = nullptr;
     }
 
-    OnCreateConnectionComplete(
-        canceled ? Result::kCanceled : Result::kSuccess,
-        timed_out ? Status::kCommandTimeout : Status::kSuccess,
-        std::move(connection));
-
+    OnCreateConnectionComplete(status, std::move(connection));
     return;
   }
 
@@ -241,17 +237,16 @@ void LowEnergyConnector::OnConnectionCompleteEvent(const EventPacket& event) {
   delegate_(std::move(connection));
 }
 
-void LowEnergyConnector::OnCreateConnectionComplete(Result result,
-                                                    Status hci_status,
+void LowEnergyConnector::OnCreateConnectionComplete(Status status,
                                                     ConnectionPtr link) {
   FXL_DCHECK(pending_request_);
 
   request_timeout_task_.Cancel();
 
-  auto result_cb = std::move(pending_request_->result_callback);
+  auto status_cb = std::move(pending_request_->status_callback);
   pending_request_.Reset();
 
-  result_cb(result, hci_status, std::move(link));
+  status_cb(status, std::move(link));
 }
 
 void LowEnergyConnector::OnCreateConnectionTimeout() {

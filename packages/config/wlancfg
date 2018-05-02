@@ -1,0 +1,8 @@
+{
+    "imports": [
+      "garnet/packages/config/services"
+    ],
+    "packages": {
+        "wlancfg_config": "//garnet/bin/wlancfg:config"
+    }
+}

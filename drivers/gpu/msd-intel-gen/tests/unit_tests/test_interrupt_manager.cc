@@ -29,6 +29,8 @@ class MockPlatformDevice : public magma::PlatformPciDevice {
 public:
     void* GetDeviceHandle() override { return nullptr; }
 
+    std::unique_ptr<magma::PlatformHandle> GetBusTransactionInitiator() override { return nullptr; }
+
     std::unique_ptr<magma::PlatformInterrupt> RegisterInterrupt() override
     {
         auto interrupt = std::make_unique<MockInterrupt>();
@@ -45,8 +47,8 @@ public:
     {
         platform_device_ = std::make_unique<MockPlatformDevice>();
 
-        register_io_ =
-            std::unique_ptr<RegisterIo>(new RegisterIo(MockMmio::Create(8 * 1024 * 1024)));
+        register_io_ = std::unique_ptr<magma::RegisterIo>(
+            new magma::RegisterIo(MockMmio::Create(8 * 1024 * 1024)));
 
         interrupt_manager_ = InterruptManager::CreateCore(this);
     }
@@ -55,9 +57,9 @@ public:
 
     static constexpr uint32_t kRegisterStatus = 0x10;
 
-    class Hook : public RegisterIo::Hook {
+    class Hook : public magma::RegisterIo::Hook {
     public:
-        Hook(RegisterIo* register_io) : register_io_(register_io) {}
+        Hook(magma::RegisterIo* register_io) : register_io_(register_io) {}
 
         void Write32(uint32_t offset, uint32_t val) override
         {
@@ -74,7 +76,7 @@ public:
         void Read64(uint32_t offset, uint64_t val) override {}
 
     private:
-        RegisterIo* register_io_;
+        magma::RegisterIo* register_io_;
     };
 
     void Basic()
@@ -113,12 +115,12 @@ public:
     }
 
 private:
-    RegisterIo* register_io_for_interrupt() override { return register_io_.get(); }
+    magma::RegisterIo* register_io_for_interrupt() override { return register_io_.get(); }
 
     magma::PlatformPciDevice* platform_device() override { return platform_device_.get(); }
 
     std::unique_ptr<MockPlatformDevice> platform_device_;
-    std::unique_ptr<RegisterIo> register_io_;
+    std::unique_ptr<magma::RegisterIo> register_io_;
     std::unique_ptr<InterruptManager> interrupt_manager_;
     std::atomic_uint32_t callback_count_{};
 };

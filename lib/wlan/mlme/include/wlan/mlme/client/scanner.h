@@ -10,9 +10,9 @@
 #include <fuchsia/cpp/wlan_mlme.h>
 
 #include <fbl/unique_ptr.h>
+#include <lib/zx/time.h>
 #include <wlan/protocol/mac.h>
 #include <zircon/types.h>
-#include <zx/time.h>
 
 #include <unordered_map>
 
@@ -54,7 +54,7 @@ class Scanner : public FrameHandler {
 
    private:
     zx::time InitialTimeout() const;
-    zx_status_t SendScanResponse();
+    zx_status_t SendScanConfirm();
     zx_status_t SendProbeRequest();
     // Removes stale BSS entries from the neighbor BSS map. Pruning will only take effect every
     // kBssPruneDelay seconds, and hence, multiple calls to this method in a short time frame have
@@ -68,7 +68,7 @@ class Scanner : public FrameHandler {
     DeviceInterface* device_;
     fbl::unique_ptr<Timer> timer_;
     wlan_mlme::ScanRequestPtr req_ = nullptr;
-    wlan_mlme::ScanResponsePtr resp_ = nullptr;
+    wlan_mlme::ScanConfirmPtr resp_ = nullptr;
 
     size_t channel_index_ = 0;
     zx::time channel_start_;

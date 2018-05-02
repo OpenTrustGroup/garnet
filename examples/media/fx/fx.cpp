@@ -2,32 +2,34 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <inttypes.h>
+#include <stdio.h>
+
 #include <audio-utils/audio-input.h>
 #include <fbl/algorithm.h>
 #include <fbl/auto_call.h>
 #include <fbl/limits.h>
 #include <fbl/unique_ptr.h>
 #include <fbl/vmo_mapper.h>
-#include <inttypes.h>
-#include <stdio.h>
-
 #include <fuchsia/cpp/media.h>
+#include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
+#include <lib/zx/time.h>
+#include <lib/zx/vmar.h>
+#include <lib/zx/vmo.h>
 #include <zircon/compiler.h>
 #include <zircon/errors.h>
 #include <zircon/types.h>
-#include <zx/vmar.h>
-#include <zx/vmo.h>
-#include <zx/time.h>
 
 #include "lib/app/cpp/application_context.h"
 #include "lib/app/cpp/connect.h"
 #include "lib/fsl/tasks/fd_waiter.h"
-#include "lib/fsl/tasks/message_loop.h"
+#include "lib/fxl/functional/closure.h"
 #include "lib/media/timeline/timeline_function.h"
 
 #include "garnet/lib/media/wav_writer/wav_writer.h"
+
 constexpr bool kWavWriterEnabled = false;
 
 using media::TimelineFunction;
@@ -76,9 +78,13 @@ using audio::utils::AudioInput;
 
 class FxProcessor : public media::AudioRendererMinLeadTimeChangedEvent {
  public:
-  FxProcessor(fbl::unique_ptr<AudioInput> input)
-    : input_(fbl::move(input)),
-      lead_time_event_binding_(this) {}
+  FxProcessor(fbl::unique_ptr<AudioInput> input, fxl::Closure quit_callback)
+      : input_(fbl::move(input)),
+        quit_callback_(quit_callback),
+        lead_time_event_binding_(this) {
+    FXL_DCHECK(quit_callback_);
+  }
+
   void Startup(media::AudioServerPtr audio_server);
 
   // media::AudioRendererMinLeadTimeChangedEvent
@@ -156,6 +162,7 @@ class FxProcessor : public media::AudioRendererMinLeadTimeChangedEvent {
   uint16_t preamp_gain_fixed_;
 
   fbl::unique_ptr<AudioInput> input_;
+  fxl::Closure quit_callback_;
   uint32_t input_buffer_frames_ = 0;
   media::AudioRenderer2Ptr audio_renderer_;
   media::TimelineFunction clock_mono_to_input_wr_ptr_;
@@ -163,7 +170,7 @@ class FxProcessor : public media::AudioRendererMinLeadTimeChangedEvent {
   media::audio::WavWriter<kWavWriterEnabled> wav_writer_;
 
   fidl::Binding<media::AudioRendererMinLeadTimeChangedEvent>
-    lead_time_event_binding_;
+      lead_time_event_binding_;
   int64_t lead_time_frames_ = 0;
   bool lead_time_frames_known_ = false;
 };
@@ -181,8 +188,9 @@ void FxProcessor::Startup(media::AudioServerPtr audio_server) {
   FXL_DCHECK((input_->ring_buffer_bytes() % input_->frame_sz()) == 0);
   input_buffer_frames_ = input_->ring_buffer_bytes() / input_->frame_sz();
 
-  if (!wav_writer_.Initialize("/tmp/fx.wav", input_->channel_cnt(),
-                              input_->frame_rate(), 16)) {
+  if (!wav_writer_.Initialize(
+          "/tmp/fx.wav", media::AudioSampleFormat::SIGNED_16,
+          input_->channel_cnt(), input_->frame_rate(), 16)) {
     printf("Unable to initialize WAV file for recording.\n");
     return;
   }
@@ -209,11 +217,8 @@ void FxProcessor::Startup(media::AudioServerPtr audio_server) {
 
   zx::vmo rend_vmo;
   zx_status_t res = output_buf_.CreateAndMap(
-      output_buf_sz_,
-      ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE,
-      nullptr,
-      &rend_vmo,
-      ZX_RIGHT_READ | ZX_RIGHT_MAP | ZX_RIGHT_TRANSFER);
+      output_buf_sz_, ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE, nullptr,
+      &rend_vmo, ZX_RIGHT_READ | ZX_RIGHT_MAP | ZX_RIGHT_TRANSFER);
 
   audio_renderer_->SetPayloadBuffer(std::move(rend_vmo));
 
@@ -304,7 +309,7 @@ void FxProcessor::OnMinLeadTimeChanged(int64_t new_min_lead_time_nsec) {
     //
     // Right now, there are no policy APIs which would allow us to acomplish any
     // of this, so this is the best we can do for the time being.
-    lead_time_frames_  = new_lead_time_frames;
+    lead_time_frames_ = new_lead_time_frames;
   }
 
   // If this is the first time we are learning about our lead time requirements,
@@ -446,7 +451,7 @@ void FxProcessor::Shutdown(const char* reason) {
   lead_time_event_binding_.Unbind();
   audio_renderer_.Unbind();
   input_.reset();
-  fsl::MessageLoop::GetCurrent()->PostQuitTask();
+  quit_callback_();
 }
 
 void FxProcessor::ProcessInput() {
@@ -741,7 +746,7 @@ int main(int argc, char** argv) {
     return res;
   }
 
-  fsl::MessageLoop loop;
+  async::Loop loop(&kAsyncLoopConfigMakeDefault);
 
   std::unique_ptr<component::ApplicationContext> application_context =
       component::ApplicationContext::CreateFromStartupInfo();
@@ -749,7 +754,9 @@ int main(int argc, char** argv) {
   media::AudioServerPtr audio_server =
       application_context->ConnectToEnvironmentService<media::AudioServer>();
 
-  FxProcessor fx(fbl::move(input));
+  FxProcessor fx(fbl::move(input), [&loop]() {
+    async::PostTask(loop.async(), [&loop]() { loop.Quit(); });
+  });
   fx.Startup(std::move(audio_server));
 
   loop.Run();

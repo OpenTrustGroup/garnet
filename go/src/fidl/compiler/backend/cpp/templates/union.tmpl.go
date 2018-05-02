@@ -147,7 +147,7 @@ zx_status_t {{ .Name }}::Clone({{ .Name }}* result) const {
       return ::fidl::Clone({{ .StorageName }}, &result->{{ .StorageName }});
     {{- end }}
      default:
-      return ZX_ERR_INVALID_ARGS;
+      return ZX_OK;
   }
 }
 
@@ -157,10 +157,12 @@ bool operator==(const {{ .Name }}& lhs, const {{ .Name }}& rhs) {
   }
   switch (lhs.tag_) {
     {{- range $index, $member := .Members }}
-     case {{ $index }}:
-      return lhs.{{ .StorageName }} == rhs.{{ .StorageName }};
+    case {{ $index }}:
+      return fidl::Equals(lhs.{{ .StorageName }}, rhs.{{ .StorageName }});
     {{- end }}
-     default:
+    case ::std::numeric_limits<::fidl_union_tag_t>::max():
+      return true;
+    default:
       return false;
   }
 }

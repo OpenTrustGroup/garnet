@@ -9,25 +9,25 @@
 #include "garnet/lib/machina/virtio_queue_fake.h"
 #include "gtest/gtest.h"
 
-#define QUEUE_SIZE 8u
-
 namespace machina {
 namespace {
+
+static constexpr uint16_t kVirtioNetQueueSize = 8;
 
 class VirtioNetTest : public testing::Test {
  public:
   VirtioNetTest() : net_(phys_mem_, loop_.async()), queue_(net_.rx_queue()) {}
 
   void SetUp() override {
-    ASSERT_EQ(queue_.Init(QUEUE_SIZE), ZX_OK);
-    ASSERT_EQ(zx_fifo_create(QUEUE_SIZE, sizeof(eth_fifo_entry_t), 0,
+    ASSERT_EQ(queue_.Init(kVirtioNetQueueSize), ZX_OK);
+    ASSERT_EQ(zx_fifo_create(kVirtioNetQueueSize, sizeof(eth_fifo_entry_t), 0,
                              &fifos_.rx_fifo, &fifo_[0]),
               ZX_OK);
-    ASSERT_EQ(zx_fifo_create(QUEUE_SIZE, sizeof(eth_fifo_entry_t), 0,
+    ASSERT_EQ(zx_fifo_create(kVirtioNetQueueSize, sizeof(eth_fifo_entry_t), 0,
                              &fifos_.tx_fifo, &fifo_[1]),
               ZX_OK);
-    fifos_.rx_depth = QUEUE_SIZE;
-    fifos_.tx_depth = QUEUE_SIZE;
+    fifos_.rx_depth = kVirtioNetQueueSize;
+    fifos_.tx_depth = kVirtioNetQueueSize;
     ASSERT_EQ(net_.WaitOnFifos(fifos_), ZX_OK);
   }
 
@@ -36,7 +36,7 @@ class VirtioNetTest : public testing::Test {
   PhysMemFake phys_mem_;
   VirtioNet net_;
   VirtioQueueFake queue_;
-  // Fifo entpoints to provide to the net device.
+  // Fifo endpoints to provide to the net device.
   eth_fifos_t fifos_;
   // Fifo endpoints to simulate ethernet device activity.
   zx_handle_t fifo_[2];
@@ -58,10 +58,10 @@ TEST_F(VirtioNetTest, DrainQueue) {
   ASSERT_EQ(0u, net_.rx_queue()->ring()->used->idx);
 
   // Return a descriptor to the queue, this should trigger it to be returned.
-  ASSERT_EQ(ZX_OK, zx_fifo_read(fifo_[0], entry, sizeof(entry), &count));
+  ASSERT_EQ(ZX_OK, zx_fifo_read_old(fifo_[0], entry, sizeof(entry), &count));
   ASSERT_EQ(1u, count);
   ASSERT_EQ(ZX_OK,
-            zx_fifo_write(fifo_[0], &entry[0], sizeof(entry[0]), &count));
+            zx_fifo_write_old(fifo_[0], &entry[0], sizeof(entry[0]), &count));
   ASSERT_EQ(1u, count);
 
   // Run the async tasks, verify buffers are returned.
@@ -87,7 +87,7 @@ TEST_F(VirtioNetTest, HeaderOnDifferentBuffer) {
   eth_fifo_entry_t entry[fifos_.rx_depth];
 
   // Read the fifo entry.
-  ASSERT_EQ(ZX_OK, zx_fifo_read(fifo_[0], entry, sizeof(entry), &count));
+  ASSERT_EQ(ZX_OK, zx_fifo_read_old(fifo_[0], entry, sizeof(entry), &count));
   ASSERT_EQ(1u, count);
   ASSERT_EQ(reinterpret_cast<uintptr_t>(packet_ptr), entry[0].offset);
   ASSERT_EQ(packet_len, entry[0].length);
@@ -107,7 +107,7 @@ TEST_F(VirtioNetTest, InvalidDesc) {
   loop_.RunUntilIdle();
   uint32_t count;
   eth_fifo_entry_t entry[fifos_.rx_depth];
-  ASSERT_EQ(zx_fifo_read(fifo_[0], entry, sizeof(entry), &count),
+  ASSERT_EQ(zx_fifo_read_old(fifo_[0], entry, sizeof(entry), &count),
             ZX_ERR_SHOULD_WAIT);
 }
 

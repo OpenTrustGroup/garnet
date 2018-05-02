@@ -10,10 +10,10 @@
 #include <vector>
 
 #include "garnet/bin/zxdb/client/client_object.h"
-#include "garnet/bin/zxdb/client/weak_thunk.h"
 #include "garnet/lib/debug_ipc/protocol.h"
-#include "garnet/public/lib/fxl/observer_list.h"
 #include "garnet/public/lib/fxl/macros.h"
+#include "garnet/public/lib/fxl/memory/weak_ptr.h"
+#include "garnet/public/lib/fxl/observer_list.h"
 
 namespace zxdb {
 
@@ -32,7 +32,9 @@ class TargetObserver;
 // launch the process again with the same configuration.
 class Target : public ClientObject {
  public:
-  using Callback = std::function<void(Target*, const Err&)>;
+  // Note that the callback will be issued in all cases which may be after the
+  // target is destroyed. In this case the weak pointer will be null.
+  using Callback = std::function<void(fxl::WeakPtr<Target> target, const Err&)>;
 
   enum State {
     // There is no process currently running. From here, it can only transition
@@ -53,6 +55,8 @@ class Target : public ClientObject {
   void AddObserver(TargetObserver* observer);
   void RemoveObserver(TargetObserver* observer);
 
+  fxl::WeakPtr<Target> GetWeakPtr();
+
   // Returns the current process state.
   virtual State GetState() const = 0;
 
@@ -69,12 +73,16 @@ class Target : public ClientObject {
   // program name configured via SetArgs().
   virtual void Launch(Callback callback) = 0;
 
+  // Kills the process with the given koid. The callback will be
+  // executed when the kill is complete (or fails).
+  virtual void Kill(Callback callback) = 0;
+
   // Attaches to the process with the given koid. The callback will be
-  // executed with the attach is complete (or fails).
+  // executed when the attach is complete (or fails).
   virtual void Attach(uint64_t koid, Callback callback) = 0;
 
   // Detaches from the process with the given koid. The callback will be
-  // executed with the detach is complete (or fails).
+  // executed when the detach is complete (or fails).
   virtual void Detach(Callback callback) = 0;
 
   // Notification from the agent that a process has exited.
@@ -87,6 +95,7 @@ class Target : public ClientObject {
 
  private:
   fxl::ObserverList<TargetObserver> observers_;
+  fxl::WeakPtrFactory<Target> weak_factory_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Target);
 };

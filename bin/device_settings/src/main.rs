@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 // #![deny(warnings)]
-#![feature(conservative_impl_trait)]
 
 extern crate failure;
 extern crate fdio;

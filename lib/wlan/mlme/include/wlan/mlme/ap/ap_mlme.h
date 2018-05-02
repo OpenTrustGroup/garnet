@@ -15,7 +15,7 @@
 
 namespace wlan {
 
-// ApMlme is an MLME which operates in AP mode. It is not thread-safe.
+// ApMlme is an MLME which operates in AP role. It is not thread-safe.
 class ApMlme : public Mlme {
    public:
     explicit ApMlme(DeviceInterface* device);
@@ -30,6 +30,7 @@ class ApMlme : public Mlme {
     zx_status_t PreChannelChange(wlan_channel_t chan) override;
     zx_status_t PostChannelChange() override;
     zx_status_t HandleTimeout(const ObjectId id) override;
+    void HwIndication(uint32_t ind) override;
 
    private:
     DeviceInterface* const device_;

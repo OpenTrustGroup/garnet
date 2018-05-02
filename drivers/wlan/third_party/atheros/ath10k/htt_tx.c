@@ -467,7 +467,6 @@ void ath10k_htt_htc_tx_complete(struct ath10k* ar, struct sk_buff* skb) {
 void ath10k_htt_hif_tx_complete(struct ath10k* ar, struct sk_buff* skb) {
     dev_kfree_skb_any(skb);
 }
-EXPORT_SYMBOL(ath10k_htt_hif_tx_complete);
 
 int ath10k_htt_h2t_ver_req_msg(struct ath10k_htt* htt) {
     struct ath10k* ar = htt->ar;
@@ -1081,7 +1080,7 @@ int ath10k_htt_tx(struct ath10k_htt* htt, enum ath10k_hw_txrx_mode txmode,
 
     res = ath10k_hif_tx_sg(htt->ar,
                            htt->ar->htc.endpoint[htt->eid].ul_pipe_id,
-                           sg_items, ARRAY_SIZE(sg_items));
+                           sg_items, countof(sg_items));
     if (res) {
         goto err_unmap_msdu;
     }

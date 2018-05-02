@@ -6,7 +6,7 @@ package main
 
 import (
 	"app/context"
-	"fidl/bindings2"
+	"fidl/bindings"
 
 	"fuchsia/go/wlan_service"
 	"netstack/watcher"
@@ -124,7 +124,7 @@ func (ws *Wlanstack) StartBss(sc_cfg wlan_service.BssConfig) (wserr wlan_service
 		return wlan_service.Error{wlan_service.ErrCodeNotFound, "No wlan interface found"}, nil
 	}
 
-	cfg := wlan.NewAPConfig(sc_cfg.Ssid)
+	cfg := wlan.NewAPConfig(sc_cfg.Ssid, sc_cfg.BeaconPeriod, sc_cfg.DtimPeriod, sc_cfg.Channel)
 	respC := make(chan *wlan.CommandResult, 1)
 	cli.PostCommand(wlan.CmdStartBSS, cfg, respC)
 
@@ -159,12 +159,13 @@ func main() {
 
 	ws := &Wlanstack{}
 
-	service := &bindings2.BindingSet{}
+	service := &bindings.BindingSet{}
 	ctx := context.CreateFromStartupInfo()
 	ctx.OutgoingService.AddService(wlan_service.WlanName, func(c zx.Channel) error {
-		return service.Add(&wlan_service.WlanStub{Impl: ws}, c)
+		_, err := service.Add(&wlan_service.WlanStub{Impl: ws}, c, nil)
+		return err
 	})
-	go bindings2.Serve()
+	go bindings.Serve()
 	ctx.Serve()
 
 	ws.readConfigFile()

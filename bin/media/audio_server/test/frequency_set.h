@@ -41,6 +41,32 @@ namespace test {
 // simulate a 1 kHz sinusoid would be 1363.
 //
 static constexpr uint32_t kFreqTestBufSize = 65536;
+//
+// To better model how our resamplers are used by the rest of the system, when
+// testing our resamplers, we use multiple smaller jobs rather than mixing the
+// entire 64k samples at one go. Breaking our 64k buffer into 256 subjobs will
+// emulate ~5.33ms buffers (64k/256 = 256 samples @ 48kHz); breaking it into 128
+// (512-sample packets) will model client submissions of ~10.67ms, etc.
+//
+// Note: because of MTWN-49, our linear interpolator accumulates position error,
+// which is reset at the beginning of each packet. Using larger (fewer) packets
+// exposes the issue clearly, via degraded frequency response and SINAD.
+// Once MTWN-49 is fixed we should be able to set this const to any power-of-two
+// integer between 1 and 32768 without affecting FreqResp or SINAD.
+//
+// In our audio fidelity tests (noise floor, frequency response, SINAD, dynamic
+// range, plus others in the future), we compare current measurements to
+// previous results. For any set of inputs, our results are always exactly the
+// same -- but we should note that (as currently implementated), configuration
+// changes (such as adjustments to the below const) affect frequency response
+// and SINAD results in ways that differ by frequency. Doubling the resampling
+// packet size, as an example, may improve frequency response at 25 Hz but
+// degrade it at 10 kHz. With this in mind, the values we have saved as
+// thresholds represent the worst-case results across kResamplerTestNumPackets
+// values of [256, 512, 1024, 2048, 4096, 8192, 16384, 32768].
+//
+// Again, once MTWN-49 is fixed, changing this const should NOT affect results.
+static constexpr uint32_t kResamplerTestNumPackets = 256;
 
 class FrequencySet {
  public:
@@ -48,13 +74,9 @@ class FrequencySet {
 
   // The full-spectrum audio tests use a broad set of standard frequencies.
   static constexpr uint32_t kNumReferenceFreqs = 47;
-  // Summary audio tests use a small frequency set taken from the full list.
-  static constexpr uint32_t kNumSummaryIdxs = 3;
 
   // Each val represents a standard frequency within the broad set.
   static const std::array<uint32_t, kNumReferenceFreqs> kReferenceFreqs;
-  // Each val is a kReferenceFreqs index, pointing to a summary freq.
-  static const std::array<uint32_t, kNumSummaryIdxs> kSummaryIdxs;
 
   // Because of translation between power-of-two-sized buffers and sample rate,
   // values in kReferenceFreqs translate into the following actual frequencies:
@@ -62,8 +84,14 @@ class FrequencySet {
 
   // Certain tests (such as noise floor and sinad) are evaluated with a
   // sinusoidal input at a single reference frequency (usually close to 1 kHz).
-  static constexpr uint32_t kRefFreqIdx = 20;  // 1kHz reference tone
+  static constexpr uint32_t kRefFreqIdx = 20;  // [20] is 1kHz reference tone.
   static const uint32_t kReferenceFreq;
+
+  // Summary audio tests use a small frequency set taken from the full list.
+  static constexpr uint32_t kNumSummaryIdxs = 3;
+
+  // Each val is a kReferenceFreqs index, pointing to a summary freq.
+  static const std::array<uint32_t, kNumSummaryIdxs> kSummaryIdxs;
 
   // class is static only - prevent attempts to instantiate it
   FrequencySet() = delete;

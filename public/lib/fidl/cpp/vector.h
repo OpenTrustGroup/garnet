@@ -6,6 +6,7 @@
 #define LIB_FIDL_CPP_VECTOR_H_
 
 #include <lib/fidl/cpp/builder.h>
+#include <lib/fidl/cpp/comparison.h>
 #include <lib/fidl/cpp/vector_view.h>
 
 #include <utility>
@@ -26,13 +27,13 @@ namespace fidl {
 template <typename T>
 class VectorPtr {
  public:
-  VectorPtr() : is_null_(true) {}
+  VectorPtr() : is_null_if_empty_(true) {}
   ~VectorPtr() = default;
-  VectorPtr(std::nullptr_t) : is_null_(true) {}
+  VectorPtr(std::nullptr_t) : is_null_if_empty_(true) {}
   explicit VectorPtr(size_t size)
-      : vec_(std::vector<T>(size)), is_null_(false) {}
+      : vec_(std::vector<T>(size)), is_null_if_empty_(false) {}
   explicit VectorPtr(std::vector<T> vec)
-      : vec_(std::move(vec)), is_null_(false) {}
+      : vec_(std::move(vec)), is_null_if_empty_(false) {}
 
   VectorPtr(const VectorPtr&) = delete;
   VectorPtr& operator=(const VectorPtr&) = delete;
@@ -52,7 +53,7 @@ class VectorPtr {
   //
   // After this method returns, the VectorPtr is null.
   std::vector<T> take() {
-    is_null_ = true;
+    is_null_if_empty_ = true;
     return std::move(vec_);
   }
 
@@ -61,12 +62,12 @@ class VectorPtr {
   // After this method returns, the VectorPtr is non-null.
   void reset(std::vector<T> vec) {
     vec_ = vec;
-    is_null_ = false;
+    is_null_if_empty_ = false;
   }
 
   void reset() {
     vec_.clear();
-    is_null_ = true;
+    is_null_if_empty_ = true;
   }
 
   // Resizes the underlying std::vector in this VectorPtr to the given size.
@@ -74,7 +75,7 @@ class VectorPtr {
   // After this method returns, the VectorPtr is non-null.
   void resize(size_t size) {
     vec_.resize(size);
-    is_null_ = false;
+    is_null_if_empty_ = false;
   }
 
   // Pushes |value| onto the back of this VectorPtr.
@@ -82,7 +83,7 @@ class VectorPtr {
   // If this vector was null, it will become non-null with a size of 1.
   void push_back(const T& value) {
     vec_.push_back(value);
-    is_null_ = false;
+    is_null_if_empty_ = false;
   }
 
   // Pushes |value| onto the back of this VectorPtr.
@@ -90,13 +91,13 @@ class VectorPtr {
   // If this vector was null, it will become non-null with a size of 1.
   void push_back(T&& value) {
     vec_.push_back(std::forward<T>(value));
-    is_null_ = false;
+    is_null_if_empty_ = false;
   }
 
   void swap(VectorPtr& other) {
     using std::swap;
     swap(vec_, other.vec_);
-    swap(is_null_, other.is_null_);
+    swap(is_null_if_empty_, other.is_null_if_empty_);
   }
 
   // Returns a copy of this VectorPtr.
@@ -104,7 +105,7 @@ class VectorPtr {
   // Unlike fidl::Clone, this function can never fail. However, this function
   // works only if T is copiable.
   VectorPtr Clone() const {
-    if (is_null_)
+    if (is_null())
       return VectorPtr();
     return VectorPtr(vec_);
   }
@@ -112,10 +113,10 @@ class VectorPtr {
   // Whether this VectorPtr is null.
   //
   // The null state is separate from the empty state.
-  bool is_null() const { return is_null_ && vec_.empty(); }
+  bool is_null() const { return is_null_if_empty_ && vec_.empty(); }
 
   // Tests as true if non-null, false if null.
-  explicit operator bool() const { return !is_null_; }
+  explicit operator bool() const { return !is_null(); }
 
   // Provides access to the underlying std::vector.
   std::vector<T>* operator->() { return &vec_; }
@@ -129,7 +130,7 @@ class VectorPtr {
 
  private:
   std::vector<T> vec_;
-  bool is_null_;
+  bool is_null_if_empty_;
 };
 
 template <class T>
@@ -137,12 +138,46 @@ inline bool operator==(const VectorPtr<T>& lhs, const VectorPtr<T>& rhs) {
   if (lhs.is_null() || rhs.is_null()) {
     return lhs.is_null() == rhs.is_null();
   }
-  return *lhs == *rhs;
+  if (lhs->size() != rhs->size()) {
+    return false;
+  }
+  for (size_t i = 0; i < lhs->size(); ++i) {
+    if (!Equals(lhs->at(i), rhs->at(i))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 template <class T>
 inline bool operator!=(const VectorPtr<T>& lhs, const VectorPtr<T>& rhs) {
   return !(lhs == rhs);
+}
+
+template <class T>
+inline bool operator<(const VectorPtr<T>& lhs, const VectorPtr<T>& rhs) {
+  if (lhs.is_null() || rhs.is_null()) {
+    return !rhs.is_null();
+  }
+  return *lhs < *rhs;
+}
+
+template <class T>
+inline bool operator>(const VectorPtr<T>& lhs, const VectorPtr<T>& rhs) {
+  if (lhs.is_null() || rhs.is_null()) {
+    return !lhs.is_null();
+  }
+  return *lhs > *rhs;
+}
+
+template <class T>
+inline bool operator<=(const VectorPtr<T>& lhs, const VectorPtr<T>& rhs) {
+  return !(lhs > rhs);
+}
+
+template <class T>
+inline bool operator>=(const VectorPtr<T>& lhs, const VectorPtr<T>& rhs) {
+  return !(lhs < rhs);
 }
 
 }  // namespace fidl

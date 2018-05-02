@@ -9,7 +9,6 @@
 #include "global_context.h"
 #include "magma_util/dlog.h"
 #include "magma_util/macros.h"
-#include "modeset/displayport.h"
 #include "msd_intel_semaphore.h"
 #include "platform_trace.h"
 #include "registers.h"
@@ -164,6 +163,17 @@ std::unique_ptr<MsdIntelConnection> MsdIntelDevice::Open(msd_client_id_t client_
 
 bool MsdIntelDevice::Init(void* device_handle)
 {
+    if (!BaseInit(device_handle))
+        return DRETF(false, "BaseInit failed");
+
+    if (!RenderEngineInit(true))
+        return DRETF(false, "RenderEngineInit failed");
+
+    return true;
+}
+
+bool MsdIntelDevice::BaseInit(void* device_handle)
+{
     DASSERT(!platform_device_);
 
     DLOG("Init device_handle %p", device_handle);
@@ -190,7 +200,7 @@ bool MsdIntelDevice::Init(void* device_handle)
     if (!mmio)
         return DRETF(false, "failed to map pci bar 0");
 
-    register_io_ = std::unique_ptr<RegisterIo>(new RegisterIo(std::move(mmio)));
+    register_io_ = std::make_unique<magma::RegisterIo>(std::move(mmio));
 
     if (DeviceId::is_gen9(device_id_)) {
         ForceWake::reset(register_io_.get(), registers::ForceWake::GEN9_RENDER);
@@ -199,6 +209,10 @@ bool MsdIntelDevice::Init(void* device_handle)
         magma::log(magma::LOG_WARNING, "Unrecognized graphics PCI device id 0x%x", device_id_);
         return false;
     }
+
+    bus_mapper_ = magma::PlatformBusMapper::Create(platform_device_->GetBusTransactionInitiator());
+    if (!bus_mapper_)
+        return DRETF(false, "failed to create bus mapper");
 
     // Clear faults
     registers::AllEngineFault::clear(register_io_.get());
@@ -229,21 +243,12 @@ bool MsdIntelDevice::Init(void* device_handle)
     if (!global_context_->Map(gtt_, render_engine_cs_->id()))
         return DRETF(false, "global context init failed");
 
-    if (!RenderEngineInit())
-        return DRETF(false, "failed to init render engine");
-
     device_request_semaphore_ = magma::PlatformSemaphore::Create();
-
-#if MSD_INTEL_ENABLE_MODESETTING
-    // The modesetting code is only tested on gen 9 (Skylake).
-    if (DeviceId::is_gen9(device_id_))
-        DisplayPort::PartiallyBringUpDisplays(register_io_.get());
-#endif
 
     return true;
 }
 
-bool MsdIntelDevice::RenderEngineInit()
+bool MsdIntelDevice::RenderEngineInit(bool execute_init_batch)
 {
     CHECK_THREAD_IS_CURRENT(device_thread_id_);
 
@@ -251,12 +256,14 @@ bool MsdIntelDevice::RenderEngineInit()
 
     render_engine_cs_->InitHardware();
 
-    auto init_batch = render_engine_cs_->CreateRenderInitBatch(device_id_);
-    if (!init_batch)
-        return DRETF(false, "failed to create render init batch");
+    if (execute_init_batch) {
+        auto init_batch = render_engine_cs_->CreateRenderInitBatch(device_id_);
+        if (!init_batch)
+            return DRETF(false, "failed to create render init batch");
 
-    if (!render_engine_cs_->RenderInit(global_context_, std::move(init_batch), gtt_))
-        return DRETF(false, "render_engine_cs failed RenderInit");
+        if (!render_engine_cs_->RenderInit(global_context_, std::move(init_batch), gtt_))
+            return DRETF(false, "render_engine_cs failed RenderInit");
+    }
 
     return true;
 }
@@ -269,7 +276,7 @@ bool MsdIntelDevice::RenderEngineReset()
 
     registers::AllEngineFault::clear(register_io_.get());
 
-    return RenderEngineInit();
+    return RenderEngineInit(true);
 }
 
 void MsdIntelDevice::StartDeviceThread()
@@ -304,7 +311,7 @@ void MsdIntelDevice::InterruptCallback(void* data, uint32_t master_interrupt_con
     DASSERT(data);
     auto device = reinterpret_cast<MsdIntelDevice*>(data);
 
-    RegisterIo* register_io = device->register_io_for_interrupt();
+    magma::RegisterIo* register_io = device->register_io_for_interrupt();
     uint64_t now = get_current_time_ns();
     uint32_t render_interrupt_status = 0;
 

@@ -12,7 +12,6 @@
 #include "garnet/drivers/bluetooth/host/host.h"
 
 #include "lib/fxl/macros.h"
-#include "lib/fxl/tasks/task_runner.h"
 
 namespace bthost {
 
@@ -54,6 +53,11 @@ class HostDevice final {
                     size_t out_len,
                     size_t* out_actual);
 
+  // Called when a new remote GATT service has been found.
+  void OnRemoteGattServiceAdded(
+      const std::string& peer_id,
+      fbl::RefPtr<btlib::gatt::RemoteService> service);
+
   void CleanUp() __TA_REQUIRES(mtx_);
 
   zx_device_t* dev_;     // The bt-host device we published.
@@ -65,9 +69,12 @@ class HostDevice final {
   // Guards access to members below.
   std::mutex mtx_;
 
-  // This task runner is used to post messages to the host thread. All public
-  // methods of |host_| must be accessed on this thread.
-  fxl::RefPtr<fxl::TaskRunner> host_thread_runner_ __TA_GUARDED(mtx_);
+  // Host processes all its messages on |loop_|. |loop_| is initialized to run
+  // in its own thread.
+  //
+  // This is necessary as Host owns FIDL bindings which require a
+  // single-threaded dispatcher.
+  async::Loop loop_;
   fxl::RefPtr<Host> host_ __TA_GUARDED(mtx_);
 
   FXL_DISALLOW_COPY_AND_ASSIGN(HostDevice);

@@ -10,6 +10,7 @@
 #include <ddk/protocol/bt-hci.h>
 #include <zircon/types.h>
 
+#include "garnet/drivers/bluetooth/host/gatt_host.h"
 #include "garnet/drivers/bluetooth/lib/gap/adapter.h"
 #include "garnet/drivers/bluetooth/lib/gatt/gatt.h"
 #include "garnet/drivers/bluetooth/lib/l2cap/l2cap.h"
@@ -19,7 +20,6 @@
 
 namespace bthost {
 
-class GattHost;
 class HostServer;
 
 // Host is the top-level object of this driver and it is responsible for
@@ -57,12 +57,17 @@ class Host final : public fxl::RefCountedThreadSafe<Host> {
   // Binds the given |channel| to a Host FIDL interface server.
   void BindHostInterface(zx::channel channel);
 
+  // Returns a reference to the GATT host.
+  fbl::RefPtr<GattHost> gatt_host() const { return gatt_host_; }
+
  private:
   FRIEND_MAKE_REF_COUNTED(Host);
   FRIEND_REF_COUNTED_THREAD_SAFE(Host);
 
   explicit Host(const bt_hci_protocol_t& hci_proto);
   ~Host();
+
+  bt_hci_protocol_t hci_proto_;
 
   fbl::RefPtr<::btlib::l2cap::L2CAP> l2cap_;
   std::unique_ptr<::btlib::gap::Adapter> gap_;

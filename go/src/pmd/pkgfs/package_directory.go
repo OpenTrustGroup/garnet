@@ -149,8 +149,8 @@ func (d *packageDir) Open(name string, flags fs.OpenFlags) (fs.File, fs.Director
 	}
 
 	if name == "meta" {
-		mfd, err := newMetaFarDir(d.name, d.version, d.contents[name], d.fs)
-		return nil, mfd, nil, err
+		mfd := newMetaFarDir(d.name, d.version, d.contents[name], d.fs)
+		return nil, mfd, nil, nil
 	}
 
 	if strings.HasPrefix(name, "meta/") {
@@ -158,11 +158,7 @@ func (d *packageDir) Open(name string, flags fs.OpenFlags) (fs.File, fs.Director
 			return nil, nil, nil, fs.ErrNotFound
 		}
 
-		mfd, err := newMetaFarDir(d.name, d.version, d.contents["meta"], d.fs)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		defer mfd.Close()
+		mfd := newMetaFarDir(d.name, d.version, d.contents["meta"], d.fs)
 		return mfd.Open(strings.TrimPrefix(name, "meta"), flags)
 	}
 
@@ -189,6 +185,12 @@ func (d *packageDir) Read() ([]fs.Dirent, error) {
 	dirs := map[string]struct{}{}
 	dents := []fs.Dirent{}
 	dents = append(dents, dirDirEnt("."))
+
+	if d.subdir == nil {
+		dirs["meta"] = struct{}{}
+		dents = append(dents, dirDirEnt("meta"))
+	}
+
 	for name := range d.contents {
 		if d.subdir != nil {
 			if !strings.HasPrefix(name, *d.subdir) {
@@ -205,7 +207,13 @@ func (d *packageDir) Read() ([]fs.Dirent, error) {
 			}
 
 		} else {
-			dents = append(dents, fileDirEnt(parts[0]))
+			// TODO(PKG-44): fix the potential for discrepancies here
+			// most of the time there are no pointers in contents for dirs, but the
+			// exception is the meta pointer which this would mistake for a file, so we
+			// must check for a name collision here too.
+			if _, ok := dirs[parts[0]]; !ok {
+				dents = append(dents, fileDirEnt(parts[0]))
+			}
 		}
 	}
 	return dents, nil

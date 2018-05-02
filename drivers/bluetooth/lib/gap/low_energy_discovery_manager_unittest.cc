@@ -34,6 +34,8 @@ const common::DeviceAddress kAddress2(common::DeviceAddress::Type::kLEPublic,
 const common::DeviceAddress kAddress3(common::DeviceAddress::Type::kLEPublic,
                                       "00:00:00:00:00:04");
 
+constexpr int64_t kTestScanPeriodMs = 10000;
+
 class LowEnergyDiscoveryManagerTest : public TestingBase {
  public:
   LowEnergyDiscoveryManagerTest() = default;
@@ -43,7 +45,6 @@ class LowEnergyDiscoveryManagerTest : public TestingBase {
     TestingBase::SetUp();
 
     scan_enabled_ = false;
-    quit_message_loop_on_scan_state_change_ = false;
 
     FakeController::Settings settings;
     settings.ApplyLegacyLEConfig();
@@ -54,7 +55,7 @@ class LowEnergyDiscoveryManagerTest : public TestingBase {
     test_device()->SetScanStateCallback(
         std::bind(&LowEnergyDiscoveryManagerTest::OnScanStateChanged, this,
                   std::placeholders::_1),
-        message_loop()->task_runner());
+        dispatcher());
     test_device()->StartCmdChannel(test_cmd_chan());
     test_device()->StartAclChannel(test_acl_chan());
   }
@@ -73,17 +74,26 @@ class LowEnergyDiscoveryManagerTest : public TestingBase {
   // Returns the last reported scan state of the FakeController.
   bool scan_enabled() const { return scan_enabled_; }
 
-  // If set to true, this will quit the message loop whenever the FakeController
-  // notifies us of a change in scan state.
-  void set_quit_message_loop_on_scan_state_change(bool value) {
-    quit_message_loop_on_scan_state_change_ = value;
+  // The scan states that the FakeController has transitioned through.
+  const std::vector<bool> scan_states() const { return scan_states_; }
+
+  // Sets a callback that will run when the scan state transitions |count|
+  // times.
+  void set_scan_state_handler(size_t count, fbl::Closure callback) {
+    scan_state_callbacks_[count] = std::move(callback);
   }
 
   // Called by FakeController when the scan state changes.
   void OnScanStateChanged(bool enabled) {
+    FXL_VLOG(1) << "test: FakeController scan state: "
+                << (enabled ? "enabled" : "disabled");
     scan_enabled_ = enabled;
-    if (quit_message_loop_on_scan_state_change_)
-      message_loop()->QuitNow();
+    scan_states_.push_back(enabled);
+
+    auto iter = scan_state_callbacks_.find(scan_states_.size());
+    if (iter != scan_state_callbacks_.end()) {
+      iter->second();
+    }
   }
 
   // Registers the following fake devices with the FakeController:
@@ -175,7 +185,8 @@ class LowEnergyDiscoveryManagerTest : public TestingBase {
   std::unique_ptr<LowEnergyDiscoveryManager> discovery_manager_;
 
   bool scan_enabled_;
-  bool quit_message_loop_on_scan_state_change_;
+  std::vector<bool> scan_states_;
+  std::unordered_map<size_t, fbl::Closure> scan_state_callbacks_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(LowEnergyDiscoveryManagerTest);
 };
@@ -230,22 +241,19 @@ TEST_F(GAP_LowEnergyDiscoveryManagerTest, StartDiscoveryAndStopByDeleting) {
 }
 
 TEST_F(GAP_LowEnergyDiscoveryManagerTest, StartDiscoveryAndStopInCallback) {
-  set_quit_message_loop_on_scan_state_change(true);
-
   // Start discovery but don't acquire ownership of the received session. This
   // should terminate the session when |session| goes out of scope.
   discovery_manager()->StartDiscovery([](auto session) {});
 
-  RunMessageLoop();
-  EXPECT_TRUE(scan_enabled());
-
-  RunMessageLoop();
-  EXPECT_FALSE(scan_enabled());
+  RunUntilIdle();
+  ASSERT_EQ(2u, scan_states().size());
+  EXPECT_TRUE(scan_states()[0]);
+  EXPECT_FALSE(scan_states()[1]);
 }
 
 TEST_F(GAP_LowEnergyDiscoveryManagerTest, StartDiscoveryFailure) {
   test_device()->SetDefaultResponseStatus(hci::kLESetScanEnable,
-                                          hci::Status::kCommandDisallowed);
+                                          hci::StatusCode::kCommandDisallowed);
 
   // |session| should contain nullptr.
   discovery_manager()->StartDiscovery(
@@ -350,8 +358,7 @@ TEST_F(GAP_LowEnergyDiscoveryManagerTest,
 
   // Deleting the only remaning session should stop the scan.
   session = nullptr;
-  set_quit_message_loop_on_scan_state_change(true);
-  RunMessageLoop();
+  RunUntilIdle();
   EXPECT_FALSE(scan_enabled());
 }
 
@@ -374,25 +381,19 @@ TEST_F(GAP_LowEnergyDiscoveryManagerTest, StartDiscoveryWhilePendingStop) {
   // the ongoing one stops.
   discovery_manager()->StartDiscovery([this, &session](auto cb_session) {
     session = std::move(cb_session);
-    message_loop()->QuitNow();
   });
 
-  // We want to observe the scan state change to "disabled".
-  set_quit_message_loop_on_scan_state_change(true);
-  RunMessageLoop();
-  EXPECT_FALSE(scan_enabled());
-  EXPECT_FALSE(session);
-
-  // Keep running until we obtain the session.
-  set_quit_message_loop_on_scan_state_change(false);
-  RunMessageLoop();
-  EXPECT_TRUE(scan_enabled());
-  EXPECT_TRUE(session);
+  // Discovery should stop and start again.
+  RunUntilIdle();
+  ASSERT_EQ(3u, scan_states().size());
+  EXPECT_TRUE(scan_states()[0]);
+  EXPECT_FALSE(scan_states()[1]);
+  EXPECT_TRUE(scan_states()[2]);
 }
 
 TEST_F(GAP_LowEnergyDiscoveryManagerTest, StartDiscoveryFailureManyPending) {
   test_device()->SetDefaultResponseStatus(hci::kLESetScanEnable,
-                                          hci::Status::kCommandDisallowed);
+                                          hci::StatusCode::kCommandDisallowed);
 
   constexpr size_t kExpectedSessionCount = 5;
   size_t cb_count = 0u;
@@ -411,144 +412,169 @@ TEST_F(GAP_LowEnergyDiscoveryManagerTest, StartDiscoveryFailureManyPending) {
 }
 
 TEST_F(GAP_LowEnergyDiscoveryManagerTest, ScanPeriodRestart) {
-  // Set a very short scan period for the sake of the test.
-  discovery_manager()->set_scan_period(1);
+  constexpr size_t kNumScanStates = 3;
+
+  discovery_manager()->set_scan_period(kTestScanPeriodMs);
 
   std::unique_ptr<LowEnergyDiscoverySession> session;
   discovery_manager()->StartDiscovery(
       [&session](auto cb_session) { session = std::move(cb_session); });
 
   // We should observe the scan state become enabled -> disabled -> enabled.
-  set_quit_message_loop_on_scan_state_change(true);
-  RunMessageLoop();
-  EXPECT_TRUE(scan_enabled());
-
-  RunMessageLoop();
-  EXPECT_FALSE(scan_enabled());
-
-  RunMessageLoop();
-  EXPECT_TRUE(scan_enabled());
-
-  // Allow enough time for the discovery manager to process the updated scan
-  // state.
   RunUntilIdle();
+  EXPECT_TRUE(scan_enabled());
+
+  // End the scan period.
+  AdvanceTimeBy(zx::msec(kTestScanPeriodMs));
+  RunUntilIdle();
+  ASSERT_EQ(kNumScanStates, scan_states().size());
+  EXPECT_TRUE(scan_states()[0]);
+  EXPECT_FALSE(scan_states()[1]);
+  EXPECT_TRUE(scan_states()[2]);
 }
 
 TEST_F(GAP_LowEnergyDiscoveryManagerTest, ScanPeriodRestartFailure) {
-  // Set a very short scan period for the sake of the test.
-  discovery_manager()->set_scan_period(1);
-  set_quit_message_loop_on_scan_state_change(true);
+  constexpr size_t kNumScanStates = 2;
+
+  discovery_manager()->set_scan_period(kTestScanPeriodMs);
 
   std::unique_ptr<LowEnergyDiscoverySession> session;
-  discovery_manager()->StartDiscovery(
-      [&session](auto cb_session) { session = std::move(cb_session); });
-
-  // We should observe the scan state become enabled -> disabled -> enabled.
-  RunMessageLoop();
-  EXPECT_TRUE(scan_enabled());
-
-  RunMessageLoop();
-  EXPECT_FALSE(scan_enabled());
-
-  // The controller will fail to restart scanning.
-  test_device()->SetDefaultResponseStatus(hci::kLESetScanEnable,
-                                          hci::Status::kCommandDisallowed);
-
   bool session_error = false;
-  session->set_error_callback([&session_error, this] {
-    session_error = true;
+  discovery_manager()->StartDiscovery([&](auto cb_session) {
+    session = std::move(cb_session);
+    session->set_error_callback(
+        [&session_error, this] { session_error = true; });
+  });
+
+  // The controller will fail to restart scanning after scanning stops at the
+  // end of the period. The scan state will transition twice (-> enabled ->
+  // disabled).
+  set_scan_state_handler(kNumScanStates, [this] {
+    test_device()->SetDefaultResponseStatus(
+        hci::kLESetScanEnable, hci::StatusCode::kCommandDisallowed);
   });
 
   RunUntilIdle();
-  EXPECT_FALSE(scan_enabled());
+  EXPECT_TRUE(scan_enabled());
+
+  // End the scan period. The scan should not restart.
+  AdvanceTimeBy(zx::msec(kTestScanPeriodMs));
+  RunUntilIdle();
+
+  ASSERT_EQ(kNumScanStates, scan_states().size());
+  EXPECT_TRUE(scan_states()[0]);
+  EXPECT_FALSE(scan_states()[1]);
   EXPECT_TRUE(session_error);
 }
 
 TEST_F(GAP_LowEnergyDiscoveryManagerTest, ScanPeriodRestartRemoveSession) {
-  // Set a very short scan period for the sake of the test.
-  discovery_manager()->set_scan_period(1);
-  set_quit_message_loop_on_scan_state_change(true);
+  constexpr size_t kNumScanStates = 4;
+
+  discovery_manager()->set_scan_period(kTestScanPeriodMs);
 
   std::unique_ptr<LowEnergyDiscoverySession> session;
   discovery_manager()->StartDiscovery(
       [&session](auto cb_session) { session = std::move(cb_session); });
 
-  // We should observe the scan state become enabled -> disabled -> enabled.
-  RunMessageLoop();
+  // We should observe 3 scan state transitions (-> enabled -> disabled ->
+  // enabled).
+  set_scan_state_handler(kNumScanStates - 1, [this, &session] {
+    ASSERT_TRUE(session);
+    EXPECT_TRUE(scan_enabled());
+
+    // At this point the fake controller has updated its state but the discovery
+    // manager has not processed the restarted scan. We should be able to remove
+    // the current session and the state should ultimately become disabled.
+    session->Stop();
+  });
+
+  RunUntilIdle();
   EXPECT_TRUE(scan_enabled());
 
-  RunMessageLoop();
-  EXPECT_FALSE(scan_enabled());
+  // End the scan period.
+  AdvanceTimeBy(zx::msec(kTestScanPeriodMs));
+  RunUntilIdle();
 
-  RunMessageLoop();
-  EXPECT_TRUE(scan_enabled());
-
-  // At this point the fake controller has updated its state but the discovery
-  // manager has not processed the restarted scan. We should be able to remove
-  // the current session and the state should ultimately become disabled.
-  session->Stop();
-  RunMessageLoop();
-  EXPECT_FALSE(scan_enabled());
+  ASSERT_EQ(kNumScanStates, scan_states().size());
+  EXPECT_TRUE(scan_states()[0]);
+  EXPECT_FALSE(scan_states()[1]);
+  EXPECT_TRUE(scan_states()[2]);
+  EXPECT_FALSE(scan_states()[3]);
 }
 
 TEST_F(GAP_LowEnergyDiscoveryManagerTest,
        ScanPeriodRemoveSessionDuringRestart) {
+  constexpr size_t kNumScanStates = 2;
+
   // Set a very short scan period for the sake of the test.
-  discovery_manager()->set_scan_period(1);
-  set_quit_message_loop_on_scan_state_change(true);
+  discovery_manager()->set_scan_period(kTestScanPeriodMs);
 
   std::unique_ptr<LowEnergyDiscoverySession> session;
   discovery_manager()->StartDiscovery(
       [&session](auto cb_session) { session = std::move(cb_session); });
 
-  // We should observe the scan state become enabled -> disabled.
-  RunMessageLoop();
+  // The controller will fail to restart scanning after scanning stops at the
+  // end of the period. The scan state will transition twice (-> enabled ->
+  // disabled).
+  set_scan_state_handler(kNumScanStates, [this, &session] {
+    ASSERT_TRUE(session);
+    EXPECT_FALSE(scan_enabled());
+
+    // Stop the session before the discovery manager processes the event. It
+    // should detect this and discontinue the scan.
+    session->Stop();
+  });
+
+  RunUntilIdle();
   EXPECT_TRUE(scan_enabled());
 
-  RunMessageLoop();
-  EXPECT_FALSE(scan_enabled());
+  // End the scan period.
+  AdvanceTimeBy(zx::msec(kTestScanPeriodMs));
+  RunUntilIdle();
 
-  // Stop the session before the discovery manager processes the event. It
-  // should detect this and discontinue the scan.
-  session->Stop();
-  EXPECT_FALSE(scan_enabled());
-
-  message_loop()->RunUntilIdle();
-  EXPECT_FALSE(scan_enabled());
+  ASSERT_EQ(kNumScanStates, scan_states().size());
+  EXPECT_TRUE(scan_states()[0]);
+  EXPECT_FALSE(scan_states()[1]);
 }
 
 TEST_F(GAP_LowEnergyDiscoveryManagerTest,
        ScanPeriodRestartRemoveAndAddSession) {
+  constexpr size_t kNumScanPeriodRestartStates = 3;
+  constexpr size_t kTotalNumStates = 5;
+
   // Set a very short scan period for the sake of the test.
-  discovery_manager()->set_scan_period(1);
-  set_quit_message_loop_on_scan_state_change(true);
+  discovery_manager()->set_scan_period(kTestScanPeriodMs);
 
   std::unique_ptr<LowEnergyDiscoverySession> session;
   auto cb = [&session](auto cb_session) { session = std::move(cb_session); };
   discovery_manager()->StartDiscovery(cb);
 
-  // We should observe the scan state become enabled -> disabled -> enabled.
-  RunMessageLoop();
+  // We should observe 3 scan state transitions (-> enabled -> disabled ->
+  // enabled).
+  set_scan_state_handler(kNumScanPeriodRestartStates, [this, &session, cb] {
+    ASSERT_TRUE(session);
+    EXPECT_TRUE(scan_enabled());
+
+    // At this point the fake controller has updated its state but the discovery
+    // manager has not processed the restarted scan. We should be able to remove
+    // the current session and create a new one and the state should update
+    // accordingly.
+    session->Stop();
+    discovery_manager()->StartDiscovery(cb);
+  });
+
+  RunUntilIdle();
   EXPECT_TRUE(scan_enabled());
 
-  RunMessageLoop();
-  EXPECT_FALSE(scan_enabled());
+  // End the scan period.
+  AdvanceTimeBy(zx::msec(kTestScanPeriodMs));
+  RunUntilIdle();
 
-  RunMessageLoop();
-  EXPECT_TRUE(scan_enabled());
-
-  // At this point the fake controller has updated its state but the discovery
-  // manager has not processed the restarted scan. We should be able to remove
-  // the current session and create a new one and the state should update
-  // accordingly.
-  session->Stop();
-  discovery_manager()->StartDiscovery(cb);
-
-  RunMessageLoop();
-  EXPECT_FALSE(scan_enabled());
-
-  RunMessageLoop();
-  EXPECT_TRUE(scan_enabled());
+  // Scan should have been disabled and re-enabled.
+  ASSERT_EQ(kTotalNumStates, scan_states().size());
+  EXPECT_TRUE(scan_states()[0]);
+  EXPECT_FALSE(scan_states()[1]);
+  EXPECT_TRUE(scan_states()[2]);
 }
 
 TEST_F(GAP_LowEnergyDiscoveryManagerTest, StartDiscoveryWithFilters) {
@@ -567,6 +593,7 @@ TEST_F(GAP_LowEnergyDiscoveryManagerTest, StartDiscoveryWithFilters) {
         devices_session0.insert(device.address());
       };
   sessions.push_back(StartDiscoverySession());
+  sessions[0]->filter()->SetGeneralDiscoveryFlags();
   sessions[0]->SetResultCallback(result_cb);
 
   // Session 1 is interested in performing limited discovery.
@@ -616,29 +643,32 @@ TEST_F(GAP_LowEnergyDiscoveryManagerTest, StartDiscoveryWithFilters) {
   EXPECT_TRUE(dev_list.find(addr) != dev_list.end())
   // At this point all sessions should have processed all devices at least once.
 
-  // Session 0: Should have seen all devices at least once.
+  // Session 0: Should have seen all devices except for device 3, which is
+  // non-discoverable.
   EXPECT_EQ(3u, devices_session0.size());
   EXPECT_CONTAINS(kAddress0, devices_session0);
   EXPECT_CONTAINS(kAddress1, devices_session0);
   EXPECT_CONTAINS(kAddress2, devices_session0);
 
-  // Session 1: Should have only seen Device 1.
+  // Session 1: Should have only seen device 1.
   EXPECT_EQ(1u, devices_session1.size());
   EXPECT_CONTAINS(kAddress1, devices_session1);
 
-  // Session 2: Should have only seen Devices 0 and 1
+  // Session 2: Should have only seen devices 0 and 1
   EXPECT_EQ(2u, devices_session2.size());
   EXPECT_CONTAINS(kAddress0, devices_session2);
   EXPECT_CONTAINS(kAddress1, devices_session2);
 
-  // Session 3: Should have only seen Devices 0 and 2
-  EXPECT_EQ(2u, devices_session3.size());
+  // Session 3: Should have only seen devices 0, 2, and 3
+  EXPECT_EQ(3u, devices_session3.size());
   EXPECT_CONTAINS(kAddress0, devices_session3);
   EXPECT_CONTAINS(kAddress2, devices_session3);
+  EXPECT_CONTAINS(kAddress3, devices_session3);
 
-  // Session 4: Should have only seen Device 2
-  EXPECT_EQ(1u, devices_session4.size());
+  // Session 4: Should have seen devices 2
+  EXPECT_EQ(2u, devices_session4.size());
   EXPECT_CONTAINS(kAddress2, devices_session4);
+  EXPECT_CONTAINS(kAddress3, devices_session4);
 
 #undef EXPECT_CONTAINS
 }
@@ -660,6 +690,7 @@ TEST_F(GAP_LowEnergyDiscoveryManagerTest,
         devices_session0.insert(device.address());
       };
   sessions.push_back(StartDiscoverySession());
+  sessions[0]->filter()->SetGeneralDiscoveryFlags();
   sessions[0]->SetResultCallback(result_cb);
 
   RunUntilIdle();
@@ -712,29 +743,32 @@ TEST_F(GAP_LowEnergyDiscoveryManagerTest,
   // without running the message loop; results for Sessions 1, 2, 3, and 4 should
   // have come from the cache.
 
-  // Session 0: Should have seen all devices at least once.
+  // Session 0: Should have seen all devices except for device 3, which is
+  // non-discoverable.
   EXPECT_EQ(3u, devices_session0.size());
   EXPECT_CONTAINS(kAddress0, devices_session0);
   EXPECT_CONTAINS(kAddress1, devices_session0);
   EXPECT_CONTAINS(kAddress2, devices_session0);
 
-  // Session 1: Should have only seen Device 1.
+  // Session 1: Should have only seen device 1.
   EXPECT_EQ(1u, devices_session1.size());
   EXPECT_CONTAINS(kAddress1, devices_session1);
 
-  // Session 2: Should have only seen Devices 0 and 1
+  // Session 2: Should have only seen devices 0 and 1
   EXPECT_EQ(2u, devices_session2.size());
   EXPECT_CONTAINS(kAddress0, devices_session2);
   EXPECT_CONTAINS(kAddress1, devices_session2);
 
-  // Session 3: Should have only seen Devices 0 and 2
-  EXPECT_EQ(2u, devices_session3.size());
+  // Session 3: Should have only seen devices 0, 2, and 3
+  EXPECT_EQ(3u, devices_session3.size());
   EXPECT_CONTAINS(kAddress0, devices_session3);
   EXPECT_CONTAINS(kAddress2, devices_session3);
+  EXPECT_CONTAINS(kAddress3, devices_session3);
 
-  // Session 4: Should have only seen Device 2
-  EXPECT_EQ(1u, devices_session4.size());
+  // Session 4: Should have seen devices 2 and 3
+  EXPECT_EQ(2u, devices_session4.size());
   EXPECT_CONTAINS(kAddress2, devices_session4);
+  EXPECT_CONTAINS(kAddress3, devices_session4);
 
 #undef EXPECT_CONTAINS
 }

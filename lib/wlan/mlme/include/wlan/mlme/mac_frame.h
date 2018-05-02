@@ -8,18 +8,24 @@
 
 #include <fbl/type_support.h>
 #include <fbl/unique_ptr.h>
+#include <lib/zx/time.h>
 #include <wlan/common/bitfield.h>
 #include <wlan/common/mac_frame.h>
 #include <wlan/common/macaddr.h>
 #include <zircon/compiler.h>
 #include <zircon/types.h>
-#include <zx/time.h>
 
 #include <cstdint>
 
 namespace wlan {
 
 class Packet;
+
+// TODO(hahnr): This isn't a great location for these definitions.
+using aid_t = size_t;
+static constexpr aid_t kGroupAdressedAid = 0;
+static constexpr aid_t kMaxBssClients = 2008;
+static constexpr aid_t kUnknownAid = kMaxBssClients + 1;
 
 template <typename Body>
 MgmtFrame<Body> BuildMgmtFrame(fbl::unique_ptr<Packet>* packet, size_t body_payload_len = 0,

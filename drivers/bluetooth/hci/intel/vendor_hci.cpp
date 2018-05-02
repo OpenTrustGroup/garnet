@@ -6,8 +6,8 @@
 #include "logging.h"
 
 #include <fbl/algorithm.h>
+#include <lib/zx/time.h>
 #include <zircon/status.h>
-#include <zx/time.h>
 
 namespace btintel {
 
@@ -33,7 +33,7 @@ ReadVersionReturnParams VendorHci::SendReadVersion() const {
   }
   errorf("VendorHci: ReadVersion: Error reading response!\n");
   return ReadVersionReturnParams{.status =
-                                     btlib::hci::Status::kUnspecifiedError};
+                                     btlib::hci::StatusCode::kUnspecifiedError};
 }
 
 ReadBootParamsReturnParams VendorHci::SendReadBootParams() const {
@@ -46,8 +46,8 @@ ReadBootParamsReturnParams VendorHci::SendReadBootParams() const {
       return *params;
   }
   errorf("VendorHci: ReadBootParams: Error reading response!\n");
-  return ReadBootParamsReturnParams{.status =
-                                        btlib::hci::Status::kUnspecifiedError};
+  return ReadBootParamsReturnParams{
+      .status = btlib::hci::StatusCode::kUnspecifiedError};
 }
 
 void VendorHci::SendReset() const {

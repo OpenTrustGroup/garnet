@@ -19,28 +19,16 @@ static constexpr uint32_t kMapFlags =
 
 namespace trusty {
 
-zx_status_t SharedMem::Create(zx::vmo vmo, fbl::RefPtr<SharedMem>* out) {
-  size_t vmo_size;
-  zx_status_t status = vmo.get_size(&vmo_size);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to get vmo size: " << status;
-    return status;
-  }
-
+zx_status_t SharedMem::Create(zx::vmo vmo, zx_info_ns_shm_t vmo_info, fbl::RefPtr<SharedMem>* out) {
+  size_t vmo_size = vmo_info.size;
   uintptr_t vaddr;
-  status = zx::vmar::root_self().map(0, vmo, 0, vmo_size, kMapFlags, &vaddr);
+  zx_status_t status = zx::vmar::root_self().map(0, vmo, 0, vmo_size, kMapFlags, &vaddr);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to map vmo: " << status;
     return status;
   }
 
-  uintptr_t paddr;
-  status = vmo.op_range(ZX_VMO_OP_LOOKUP, 0, PAGE_SIZE, &paddr, sizeof(paddr));
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to do vmo lookup: " << status;
-    return status;
-  }
-
+  uintptr_t paddr = vmo_info.base_phys;
   fbl::AllocChecker ac;
   *out = fbl::AdoptRef(new (&ac)
                            SharedMem(fbl::move(vmo), vmo_size, vaddr, paddr));

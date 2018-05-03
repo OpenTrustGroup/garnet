@@ -8,46 +8,65 @@
 
 namespace trusty {
 
-VirtioQueueWaiter::VirtioQueueWaiter(async_t* async) : async_(async) {
-  FXL_DCHECK(async_);
+VirtioQueueWaiter::VirtioQueueWaiter(async_t* async,
+                                     VirtioQueue* queue,
+                                     Handler handler)
+    : wait_(this, queue->event(), VirtioQueue::SIGNAL_QUEUE_AVAIL),
+      async_(async),
+      queue_(queue),
+      handler_(fbl::move(handler)) {
 }
 
-zx_status_t VirtioQueueWaiter::Wait(VirtioQueue* queue, Callback callback) {
-  callback_ = fbl::move(callback);
-  queue_ = queue;
-  wait_.set_object(queue->event());
-  wait_.set_trigger(VirtioQueue::SIGNAL_QUEUE_AVAIL);
-  wait_.set_handler(fbl::BindMember(this, &VirtioQueueWaiter::Handler));
-  zx_status_t status = wait_.Begin(async_);
-  if (status != ZX_OK) {
-    callback_ = Callback();
-    queue_ = nullptr;
+VirtioQueueWaiter::~VirtioQueueWaiter() {
+  Cancel();
+}
+
+zx_status_t VirtioQueueWaiter::Begin() {
+  zx_status_t status = ZX_OK;
+
+  fbl::AutoLock lock(&mutex_);
+  if (!pending_) {
+    status = wait_.Begin(async_);
+    if (status == ZX_OK) {
+      pending_ = true;
+    }
   }
   return status;
 }
 
 void VirtioQueueWaiter::Cancel() {
-  wait_.Cancel(async_);
-  callback_ = Callback();
-  queue_ = nullptr;
+  fbl::AutoLock lock(&mutex_);
+  if (pending_) {
+    wait_.Cancel();
+    pending_ = false;
+  }
 }
 
-async_wait_result_t VirtioQueueWaiter::Handler(
+void VirtioQueueWaiter::WaitHandler(
     async_t* async,
+    async::WaitBase* wait,
     zx_status_t status,
     const zx_packet_signal_t* signal) {
   uint16_t index = 0;
-  if (status == ZX_OK) {
-    status = queue_->NextAvail(&index);
-    if (status == ZX_ERR_SHOULD_WAIT) {
-      return ASYNC_WAIT_AGAIN;
+  {
+    fbl::AutoLock lock(&mutex_);
+    if (!pending_) {
+      return;
     }
+
+    // Only invoke the handler if we can get a descriptor.
+    if (status == ZX_OK) {
+      status = queue_->NextAvail(&index);
+      if (status == ZX_ERR_SHOULD_WAIT) {
+        status = wait->Begin(async);
+        if (status == ZX_OK) {
+          return;
+        }
+      }
+    }
+    pending_ = false;
   }
-
-  Callback callback = std::move(callback_);
-  callback(status, index);
-
-  return ASYNC_WAIT_FINISHED;
+  handler_(status, index);
 }
 
 }  // namespace trusty

@@ -119,9 +119,10 @@ class TipcDevice : public VirtioDevice {
     zx_status_t WaitOnQueue();
     void OnQueueReady(zx_status_t status, uint16_t index);
     zx_status_t WaitOnChannel();
-    async_wait_result_t OnChannelReady(async_t* async,
-                                       zx_status_t status,
-                                       const zx_packet_signal_t* signal);
+    void OnChannelReady(async_t* async,
+                        async::WaitBase* wait,
+                        zx_status_t status,
+                        const zx_packet_signal_t* signal);
 
     void OnStreamClosed(zx_status_t status, const char* action);
     void DropBuffer();
@@ -130,7 +131,7 @@ class TipcDevice : public VirtioDevice {
     zx_handle_t channel_;
     VirtioQueue* queue_;
     VirtioQueueWaiter queue_wait_;
-    async::Wait channel_wait_;
+    async::WaitMethod<Stream, &Stream::OnChannelReady> channel_wait_{this};
     uint16_t head_;
     virtio_desc_t desc_;
   };

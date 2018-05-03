@@ -5,9 +5,10 @@
 #include <fbl/alloc_checker.h>
 #include <fbl/auto_call.h>
 #include <fbl/unique_ptr.h>
-#include <lib/async/cpp/loop.h>
+#include <lib/async-loop/cpp/loop.h>
 #include <virtio/virtio.h>
 #include <virtio/virtio_ring.h>
+#include <zircon/syscalls.h>
 #include <zircon/syscalls/smc.h>
 #include <zx/channel.h>
 #include <zx/vmo.h>
@@ -27,16 +28,17 @@ const tipc_vdev_descr kTipcDescriptors[] = {
     DECLARE_TIPC_DEVICE_DESCR("dev2", 28, 32),
 };
 
-static zx_status_t alloc_shm_vmo(zx::vmo* out) {
+static zx_status_t alloc_shm_vmo(zx::vmo* out, zx_info_ns_shm_t* vmo_info) {
   zx_handle_t smc;
   zx_handle_t shm_vmo;
-
-  zx_status_t status = zx_smc_create(0, &smc, &shm_vmo);
+  zx_info_smc_t smc_info;
+  zx_status_t status = zx_smc_create(0, &smc_info, sizeof(zx_info_smc_t), &smc, &shm_vmo);
   if (status != ZX_OK) {
     return status;
   }
 
   out->reset(shm_vmo);
+  *vmo_info = smc_info.ns_shm;
   zx_handle_close(smc);
 
   return ZX_OK;
@@ -47,8 +49,9 @@ class ResourceTableTest : public ::testing::Test {
   virtual void SetUp() {
     // Create Shared Memory
     zx::vmo shm_vmo;
-    ASSERT_EQ(alloc_shm_vmo(&shm_vmo), ZX_OK);
-    ASSERT_EQ(SharedMem::Create(fbl::move(shm_vmo), &shared_mem_), ZX_OK);
+    zx_info_ns_shm_t vmo_info;
+    ASSERT_EQ(alloc_shm_vmo(&shm_vmo, &vmo_info), ZX_OK);
+    ASSERT_EQ(SharedMem::Create(fbl::move(shm_vmo), vmo_info, &shared_mem_), ZX_OK);
 
     // Create VirtioBus
     fbl::AllocChecker ac;
@@ -137,8 +140,9 @@ class TransactionTest : public ::testing::Test {
   virtual void SetUp() {
     // Create Shared Memory
     zx::vmo shm_vmo;
-    ASSERT_EQ(alloc_shm_vmo(&shm_vmo), ZX_OK);
-    ASSERT_EQ(SharedMem::Create(fbl::move(shm_vmo), &shared_mem_), ZX_OK);
+    zx_info_ns_shm_t vmo_info;
+    ASSERT_EQ(alloc_shm_vmo(&shm_vmo, &vmo_info), ZX_OK);
+    ASSERT_EQ(SharedMem::Create(fbl::move(shm_vmo), vmo_info, &shared_mem_), ZX_OK);
 
     // Create VirtioBus
     fbl::AllocChecker ac;

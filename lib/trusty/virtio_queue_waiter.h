@@ -15,22 +15,27 @@ namespace trusty {
 // Helper for performing async waits against a virtio queue.
 class VirtioQueueWaiter {
  public:
-  VirtioQueueWaiter(async_t* async);
-  using Callback = fbl::Function<void(zx_status_t, uint16_t index)>;
+  using Handler = fbl::Function<void(zx_status_t, uint16_t index)>;
+  VirtioQueueWaiter(async_t* async, VirtioQueue* queue, Handler handler);
+  ~VirtioQueueWaiter();
 
-  zx_status_t Wait(VirtioQueue* queue, Callback callback);
-
+  zx_status_t Begin();
   void Cancel();
 
  private:
-  async_wait_result_t Handler(async_t* async,
-                              zx_status_t status,
-                              const zx_packet_signal_t* signal);
+  void WaitHandler(async_t* async,
+                   async::WaitBase* wait,
+                   zx_status_t status,
+                   const zx_packet_signal_t* signal);
 
+  fbl::Mutex mutex_;
+  async::WaitMethod<VirtioQueueWaiter,
+                    &VirtioQueueWaiter::WaitHandler> wait_
+                    __TA_GUARDED(mutex_) {this};
   async_t* const async_;
-  async::Wait wait_;
-  VirtioQueue* queue_;
-  Callback callback_;
+  VirtioQueue* const queue_ __TA_GUARDED(mutex_);
+  const Handler handler_;
+  bool pending_ __TA_GUARDED(mutex_) = false;
 };
 
 }  // namespace trusty

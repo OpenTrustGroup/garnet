@@ -235,8 +235,11 @@ class VirtioQueue {
   // Returns a circular index into a Virtio ring.
   uint32_t RingIndexLocked(uint32_t index) const __TA_REQUIRES(mutex_);
 
-  async_wait_result_t InvokeAsyncHandler(virtio_queue_poll_fn_t handler,
-                                         void* ctx);
+  void InvokeAsyncHandler(async_t* async,
+                          async::Wait* wait,
+                          zx_status_t status,
+                          virtio_queue_poll_fn_t handler,
+                          void* ctx);
 
   mutable fbl::Mutex mutex_;
   trusty::VirtioDevice* device_;

@@ -37,7 +37,6 @@ class TipcPortImpl : public TipcPort {
   }
 
  private:
-  TipcPort();
   void OnConnectionRequest(
       fidl::InterfaceRequest<TipcChannel> channel) override;
 

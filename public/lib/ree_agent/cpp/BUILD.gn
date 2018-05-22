@@ -4,8 +4,11 @@
 
 source_set("cpp") {
   sources = [
+    "channel.cc",
+    "channel.h",
     "port.cc",
     "port.h",
+    "msg_item.h",
   ]
 
   public_deps = [

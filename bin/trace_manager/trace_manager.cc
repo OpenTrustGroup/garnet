@@ -5,16 +5,17 @@
 #include <algorithm>
 #include <iostream>
 
+#include <lib/zx/time.h>
+
 #include "garnet/bin/trace_manager/trace_manager.h"
 #include "lib/fidl/cpp/clone.h"
-#include "lib/fsl/tasks/message_loop.h"
 
 namespace tracing {
 namespace {
 
 // For large traces or when verbosity is on it can take awhile to write out
 // all the records. E.g., ipm_provider can take 40 seconds with --verbose=2
-const fxl::TimeDelta kStopTimeout = fxl::TimeDelta::FromSeconds(60);
+constexpr zx::duration kStopTimeout = zx::sec(60);
 static constexpr uint32_t kMinBufferSizeMegabytes = 1;
 static constexpr uint32_t kMaxBufferSizeMegabytes = 64;
 
@@ -32,8 +33,7 @@ TraceManager::TraceManager(component::ApplicationContext* context,
 
 TraceManager::~TraceManager() = default;
 
-void TraceManager::StartTracing(TraceOptions options,
-                                zx::socket output,
+void TraceManager::StartTracing(TraceOptions options, zx::socket output,
                                 StartTracingCallback start_callback) {
   if (session_) {
     FXL_LOG(ERROR) << "Trace already in progress";
@@ -55,8 +55,7 @@ void TraceManager::StartTracing(TraceOptions options,
   }
 
   session_->WaitForProvidersToStart(
-      start_callback,
-      fxl::TimeDelta::FromMilliseconds(options.start_timeout_milliseconds));
+      start_callback, zx::msec(options.start_timeout_milliseconds));
 }
 
 void TraceManager::StopTracing() {
@@ -81,7 +80,7 @@ void TraceManager::GetKnownCategories(GetKnownCategoriesCallback callback) {
 }
 
 void TraceManager::RegisterTraceProvider(
-    fidl::InterfaceHandle<trace_link::Provider> handle) {
+    fidl::InterfaceHandle<fuchsia::tracelink::Provider> handle) {
   auto it = providers_.emplace(
       providers_.end(),
       TraceProviderBundle{handle.Bind(), next_provider_id_++});
@@ -120,7 +119,7 @@ void TraceManager::LaunchConfiguredProviders() {
       }
       FXL_VLOG(2) << "Args:" << args;
     }
-    component::ApplicationLaunchInfo launch_info;
+    component::LaunchInfo launch_info;
     launch_info.url = pair.second->url;
     fidl::Clone(pair.second->arguments, &launch_info.arguments);
     context_->launcher()->CreateApplication(std::move(launch_info), nullptr);

@@ -4,12 +4,13 @@
 
 #pragma once
 
+#include <wlan/common/energy.h>
 #include <wlan/common/macaddr.h>
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/packet.h>
 #include <zircon/fidl.h>
 
-#include <fuchsia/cpp/wlan_mlme.h>
+#include <wlan_mlme/cpp/fidl.h>
 
 #include <lib/fidl/cpp/decoder.h>
 #include <lib/fidl/cpp/message.h>
@@ -19,12 +20,12 @@ namespace wlan {
 class DeviceInterface;
 
 template <typename T>
-zx_status_t DeserializeServiceMsg(const Packet& packet, wlan_mlme::Method m, T* out) {
+zx_status_t DeserializeServiceMsg(const Packet& packet, uint32_t ordinal, T* out) {
     if (out == nullptr) return ZX_ERR_INVALID_ARGS;
 
     // Verify that the message header contains the ordinal we expect.
     auto h = packet.mut_field<fidl_message_header_t>(0);
-    if (static_cast<wlan_mlme::Method>(h->ordinal) != m) return ZX_ERR_IO;
+    if (h->ordinal != ordinal) return ZX_ERR_IO;
 
     // Extract the message contents and decode in-place (i.e., fixup all the out-of-line pointers to
     // be offsets into the buffer).
@@ -44,9 +45,9 @@ zx_status_t DeserializeServiceMsg(const Packet& packet, wlan_mlme::Method m, T* 
     return ZX_OK;
 }
 
-template <typename T> zx_status_t SerializeServiceMsg(Packet* packet, wlan_mlme::Method m, T* msg) {
+template <typename T> zx_status_t SerializeServiceMsg(Packet* packet, uint32_t ordinal, T* msg) {
     // Create an encoder that sets the ordinal to m.
-    fidl::Encoder enc(static_cast<uint32_t>(m));
+    fidl::Encoder enc(ordinal);
 
     // Encode our message of type T. The encoder will take care of extending the buffer to
     // accommodate out-of-line data (e.g., vectors, strings, and nullable data).
@@ -83,13 +84,13 @@ zx_status_t SendAuthConfirm(DeviceInterface* device, const common::MacAddr& peer
                             wlan_mlme::AuthenticateResultCodes code);
 zx_status_t SendDeauthConfirm(DeviceInterface* device, const common::MacAddr& peer_sta);
 zx_status_t SendDeauthIndication(DeviceInterface* device, const common::MacAddr& peer_sta,
-                                 uint16_t code);
+                                 wlan_mlme::ReasonCode code);
 zx_status_t SendAssocConfirm(DeviceInterface* device, wlan_mlme::AssociateResultCodes code,
                              uint16_t aid = 0);
 zx_status_t SendDisassociateIndication(DeviceInterface* device, const common::MacAddr& peer_sta,
                                        uint16_t code);
 
-zx_status_t SendSignalReportIndication(DeviceInterface* device, uint8_t rssi);
+zx_status_t SendSignalReportIndication(DeviceInterface* device, common::dBm rssi_dbm);
 
 zx_status_t SendEapolConfirm(DeviceInterface* device, wlan_mlme::EapolResultCodes result_code);
 zx_status_t SendEapolIndication(DeviceInterface* device, const EapolFrame& eapol,

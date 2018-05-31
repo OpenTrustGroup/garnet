@@ -6,13 +6,13 @@
 
 namespace sketchy_example {
 
-View::View(component::ApplicationContext* application_context,
-           views_v1::ViewManagerPtr view_manager,
-           fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request)
-    : BaseView(std::move(view_manager),
-               std::move(view_owner_request),
+View::View(async::Loop* loop,
+           component::ApplicationContext* application_context,
+           ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
+           fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request)
+    : BaseView(std::move(view_manager), std::move(view_owner_request),
                "Sketchy Example"),
-      canvas_(application_context),
+      canvas_(application_context, loop),
       background_node_(session()),
       import_node_holder_(session()),
       import_node_(&canvas_, import_node_holder_),
@@ -29,43 +29,41 @@ View::View(component::ApplicationContext* application_context,
   import_node_.AddChild(stable_group_);
 }
 
-void View::OnPropertiesChanged(views_v1::ViewProperties old_properties) {
+void View::OnPropertiesChanged(::fuchsia::ui::views_v1::ViewProperties old_properties) {
   float width = properties().view_layout->size.width;
   float height = properties().view_layout->size.height;
   scenic_lib::Rectangle background_shape(session(), width, height);
   background_node_.SetShape(background_shape);
   background_node_.SetTranslation(width * .5f, height * .5f, .1f);
   canvas_.Present(zx_clock_get(ZX_CLOCK_MONOTONIC),
-                  [](images::PresentationInfo info) {});
+                  [](fuchsia::images::PresentationInfo info) {});
 }
 
-bool View::OnInputEvent(input::InputEvent event) {
+bool View::OnInputEvent(fuchsia::ui::input::InputEvent event) {
   if (event.is_pointer()) {
     const auto& pointer = event.pointer();
     switch (pointer.phase) {
-      case input::PointerEventPhase::DOWN: {
+      case fuchsia::ui::input::PointerEventPhase::DOWN: {
         auto stroke = fxl::MakeRefCounted<Stroke>(&canvas_);
         pointer_id_to_stroke_map_.insert({pointer.pointer_id, stroke});
         scratch_group_.AddStroke(*stroke);
         stroke->Begin({pointer.x, pointer.y});
         canvas_.Present(zx_clock_get(ZX_CLOCK_MONOTONIC),
-                        [](images::PresentationInfo info) {});
+                        [](fuchsia::images::PresentationInfo info) {});
         return true;
       }
-      case input::PointerEventPhase::MOVE: {
+      case fuchsia::ui::input::PointerEventPhase::MOVE: {
         const auto& stroke =
             pointer_id_to_stroke_map_.find(pointer.pointer_id)->second;
         if (!stroke) {
           return false;
         }
         stroke->Extend({{pointer.x, pointer.y}});
-        // TODO(MZ-269): The current stroke fitter would simply connect the
-        // point if Canvas::Present() is called after extending with one point.
         canvas_.Present(zx_clock_get(ZX_CLOCK_MONOTONIC),
-                        [](images::PresentationInfo info) {});
+                        [](fuchsia::images::PresentationInfo info) {});
         return true;
       }
-      case input::PointerEventPhase::UP: {
+      case fuchsia::ui::input::PointerEventPhase::UP: {
         auto it = pointer_id_to_stroke_map_.find(pointer.pointer_id);
         const auto& stroke = it->second;
         if (!stroke) {
@@ -76,7 +74,7 @@ bool View::OnInputEvent(input::InputEvent event) {
         stable_group_.AddStroke(*stroke);
         pointer_id_to_stroke_map_.erase(it);
         canvas_.Present(zx_clock_get(ZX_CLOCK_MONOTONIC),
-                        [](images::PresentationInfo info) {});
+                        [](fuchsia::images::PresentationInfo info) {});
         return true;
       }
       default:
@@ -86,11 +84,11 @@ bool View::OnInputEvent(input::InputEvent event) {
 
   if (event.is_keyboard()) {
     const auto& keyboard = event.keyboard();
-    if (keyboard.phase == input::KeyboardEventPhase::PRESSED &&
+    if (keyboard.phase == fuchsia::ui::input::KeyboardEventPhase::PRESSED &&
         keyboard.hid_usage == 6 /* c */) {
       stable_group_.Clear();
       canvas_.Present(zx_clock_get(ZX_CLOCK_MONOTONIC),
-                      [](images::PresentationInfo info) {});
+                      [](fuchsia::images::PresentationInfo info) {});
       return true;
     }
   }

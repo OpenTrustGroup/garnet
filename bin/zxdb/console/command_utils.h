@@ -7,7 +7,7 @@
 #include <initializer_list>
 #include <string>
 
-#include "garnet/bin/zxdb/client/breakpoint.h"
+#include "garnet/bin/zxdb/client/breakpoint_settings.h"
 #include "garnet/bin/zxdb/client/target.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
 #include "garnet/lib/debug_ipc/protocol.h"
@@ -15,10 +15,12 @@
 
 namespace zxdb {
 
+class Breakpoint;
 class Command;
 class ConsoleContext;
 class Err;
 class Frame;
+class Location;
 class Thread;
 
 // Ensures the target is currently running (it has a current Process associated
@@ -54,24 +56,25 @@ std::string TargetStateToString(Target::State state);
 std::string ThreadStateToString(debug_ipc::ThreadRecord::State state);
 
 std::string BreakpointScopeToString(const ConsoleContext* context,
-                                    const Breakpoint* breakpoint);
-std::string BreakpointStopToString(debug_ipc::Stop stop);
+                                    const BreakpointSettings& settings);
+std::string BreakpointStopToString(BreakpointSettings::StopMode mode);
+const char* BreakpointEnabledToString(bool enabled);
 
 std::string ExceptionTypeToString(debug_ipc::NotifyException::Type type);
 
-// Returns a string describing the given thing in the given context. If
-// columns is set, there will be extra padding added so that multiple things
-// line up when printed vertically.
 std::string DescribeTarget(const ConsoleContext* context,
-                           const Target* target,
-                           bool columns);
-std::string DescribeThread(const ConsoleContext* context,
-                           const Thread* thread,
-                           bool columns);
+                           const Target* target);
+
+// Returns the process name of the given target, depending on the running
+// process or the current app name, as applicable.
+std::string DescribeTargetName(const Target* target);
+
+std::string DescribeThread(const ConsoleContext* context, const Thread* thread);
 std::string DescribeFrame(const Frame* frame, int id);
 std::string DescribeBreakpoint(const ConsoleContext* context,
-                               const Breakpoint* breakpoint,
-                               bool columns);
+                               const Breakpoint* breakpoint);
+
+std::string DescribeLocation(const Location& loc);
 
 enum class Align { kLeft, kRight };
 

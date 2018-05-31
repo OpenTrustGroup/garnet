@@ -52,10 +52,10 @@ struct ScanRequest {
     array<uint8>:6 bssid;
     string ssid;
     ScanTypes scan_type;
-    uint32 probe_delay;
+    uint32 probe_delay;  // in TimeUnits
     vector<uint8>? channel_list;
-    uint32 min_channel_time;
-    uint32 max_channel_time;
+    uint32 min_channel_time;  // in TimeUnits
+    uint32 max_channel_time;  // in TimeUnits
     // RequestInformation
     vector<string>? ssid_list;
     // ChannelUsage
@@ -73,7 +73,7 @@ struct BSSDescription {
     array<uint8>:6 bssid;
     string ssid;
     BSSTypes bss_type;
-    uint32 beacon_period;
+    uint32 beacon_period;  // in TimeUnits
     uint32 dtim_period;
     uint64 timestamp;
     uint64 local_time;
@@ -83,9 +83,9 @@ struct BSSDescription {
     WlanChan chan;
 
     // For the following measurements, 255 means measurement not available.
-    uint8 rssi_measurement;  // not in the standard
-    uint8 rcpi_measurement;
-    uint8 rsni_measurement;
+    int8 rssi_dbm;   // dBm. This field is not in the standard
+    int16 rcpi_dbmh; // 0.5 step dBm. Do not use encoding from IEEE Std 802.11-2016 9.4.2.38.
+    int16 rsni_dbh;  // 0.5 step dB.  Do not use encoding from IEEE Std 802.11-2016 9.4.2.41.
     // etc
 };
 
@@ -182,10 +182,79 @@ struct AuthenticateResponse {
 
 // MLME-DEAUTHENTICATE.request (IEEE Std 802.11-2016, 6.3.6.2)
 
+// IEEE Std 802.11-2016, 9.4.1.7, Table 9-45
+enum ReasonCode : uint16 {
+    // 0 Reserved
+    UNSPECIFIED_REASON = 1;
+    INVALID_AUTHENTICATION = 2;
+    LEAVING_NETWORK_DEAUTH = 3;
+    REASON_INACTIVITY = 4;
+    NO_MORE_STAS = 5;
+    INVALID_CLASS2_FRAME = 6;
+    INVALID_CLASS3_FRAME = 7;
+    LEAVING_NETWORK_DISASSOC = 8;
+    NOT_AUTHENTICATED = 9;
+    UNACCEPTABLE_POWER_CA = 10;
+    UNACCEPTABLE_SUPPORTED_CHANNELS = 11;
+    BSS_TRANSITION_DISASSOC = 12;
+    REASON_INVALID_ELEMENT = 13;
+    MIC_FAILURE = 14;
+    FOURWAY_HANDSHAKE_TIMEOUT = 15;
+    GK_HANDSHAKE_TIMEOUT = 16;
+    HANDSHAKE_ELEMENT_MISMATCH = 17;
+    REASON_INVALID_GROUP_CIPHER = 18;
+    REASON_INVALID_PAIRWISE_CIPHER = 19;
+    REASON_INVALID_AKMP = 20;
+    UNSUPPORTED_RSNE_VERSION = 21;
+    INVALID_RSNE_CAPABILITIES = 22;
+    IEEE802_1_X_AUTH_FAILED = 23;
+    REASON_CIPHER_OUT_OF_POLICY = 24;
+    TDLS_PEER_UNREACHABLE = 25;
+    TDLS_UNSPECIFIED_REASON = 26;
+    SSP_REQUESTED_DISASSOC = 27;
+    NO_SSP_ROAMING_AGREEMENT = 28;
+    BAD_CIPHER_OR_AKM = 29;
+    NOT_AUTHORIZED_THIS_LOCATION = 30;
+    SERVICE_CHANGE_PRECLUDES_TS = 31;
+    UNSPECIFIED_QOS_REASON = 32;
+    NOT_ENOUGH_BANDWIDTH = 33;
+    MISSING_ACKS = 34;
+    EXCEEDED_TXOP = 35;
+    STA_LEAVING = 36;
+    // Values 37 and 38 are overloaded but should be clear from context.
+    END_TS_BA_DLS = 37;
+    UNKNOWN_TS_BA = 38;
+    TIMEOUT = 39;
+    // 40-44 Reserved
+    PEERKEY_MISMATCH = 45;
+    PEER_INITIATED = 46;
+    AP_INITIATED = 47;
+    REASON_INVALID_FT_ACTION_FRAME_COUNT = 48;
+    REASON_INVALID_PMKID = 49;
+    REASON_INVALID_MDE = 50;
+    REASON_INVALID_FTE = 51;
+    MESH_PEERING_CANCELED = 52;
+    MESH_MAX_PEERS = 53;
+    MESH_CONFIGURATION_POLICY_VIOLATION = 54;
+    MESH_CLOSE_RCVD = 55;
+    MESH_MAX_RETRIES = 56;
+    MESH_CONFIRM_TIMEOUT = 57;
+    MESH_INVALID_GTK = 58;
+    MESH_INCONSISTENT_PARAMETERS = 59;
+    MESH_INVALID_SECURITY_CAPABILITY = 60;
+    MESH_PATH_ERROR_NO_PROXY_INFORMATION = 61;
+    MESH_PATH_ERROR_NO_FORWARDING_INFORMATION = 62;
+    MESH_PATH_ERROR_DESTINATION_UNREACHABLE = 63;
+    MAC_ADDRESS_ALREADY_EXISTS_IN_MBSS = 64;
+    MESH_CHANNEL_SWITCH_REGULATORY_REQUIREMENTS = 65;
+    MESH_CHANNEL_SWITCH_UNSPECIFIED = 66;
+    // 67 - 65535 Reserved
+};
+
 struct DeauthenticateRequest {
     array <uint8>:6 peer_sta_address;
     // TODO(tkilbourn): define a ReasonCode enum for FIDL
-    uint16 reason_code;
+    ReasonCode reason_code;
     // VendorSpecificInfo
 };
 
@@ -200,7 +269,7 @@ struct DeauthenticateConfirm {
 struct DeauthenticateIndication {
     array<uint8>:6 peer_sta_address;
     // TODO(tkilbourn): define a ReasonCode enum for FIDL
-    uint16 reason_code;
+    ReasonCode reason_code;
     // VendorSpecificInfo
 };
 
@@ -389,130 +458,59 @@ struct EapolConfirm {
     EapolResultCodes result_code;
 };
 
-// Method ordinals
-// To be replaced by FIDL2 interfaces soon.
-enum Method {
-    // MLME-SCAN.request
-    // Args: ScanRequest
-    SCAN_request = 1;
+// Because these methods rely on an external entity to provide a response, events are used instead
+// of return values.
+interface MLME {
+    1: ScanReq(ScanRequest req);
+    2: -> ScanConf(ScanConfirm resp);
 
-    // MLME-SCAN.confirm
-    // Args: ScanConfirm
-    SCAN_confirm = 2;
+    3: JoinReq(JoinRequest req);
+    4: -> JoinConf(JoinConfirm resp);
 
-    // MLME-JOIN.request
-    // Args: JoinRequest
-    JOIN_request = 3;
+    5: AuthenticateReq(AuthenticateRequest req);
+    6: -> AuthenticateConf(AuthenticateConfirm resp);
 
-    // MLME-JOIN.confirm
-    // Args: JoinConfirm
-    JOIN_confirm = 4;
+    7: AuthenticateInd(AuthenticateIndication ind);
+    8: -> AuthenticateResp(AuthenticateResponse resp);
 
-    // MLME-AUTHENTICATE.request
-    // Args: AuthenticateRequest
-    AUTHENTICATE_request = 5;
+    9: DeauthenticateReq(DeauthenticateRequest req);
+    10: -> DeauthenticateConf(DeauthenticateConfirm resp);
 
-    // MLME-AUTHENTICATE.confirm
-    // Args: AuthenticateConfirm
-    AUTHENTICATE_confirm = 6;
+    11: -> DeauthenticateInd(DeauthenticateIndication ind);
 
-    // MLME-AUTHENTICATE.indication
-    // Args: AuthenticateIndication
-    AUTHENTICATE_indication = 7;
+    12: AssociateReq(AssociateRequest req);
+    13: -> AssociateConf(AssociateConfirm resp);
 
-    // MLME-AUTHENTICATE.response
-    // Args: AuthenticateResponse
-    AUTHENTICATE_response = 8;
+    14: AssociateInd(AssociateIndication ind);
+    15: -> AssociateResp(AssociateResponse resp);
 
-    // MLME-DEAUTHENTICATE.request
-    // Args: DeauthenticateRequest
-    DEAUTHENTICATE_request = 9;
+    16: DisassociateReq(DisassociateRequest req);
+    17: -> DisassociateConf(DisassociateConfirm resp);
 
-    // MLME-DEAUTHENTICATE.confirm
-    // Args: DeauthenticateConfirm
-    DEAUTHENTICATE_confirm = 10;
+    18: -> DisassociateInd(DisassociateIndication ind);
 
-    // MLME-DEAUTHENTICATE.indication
-    // Args: DeauthenticateIndication
-    DEAUTHENTICATE_indication = 11;
+    19: ResetReq(ResetRequest req);
 
-    // MLME-ASSOCIATE.request
-    // Args: AssociateRequest
-    ASSOCIATE_request = 12;
+    20: StartReq(StartRequest req);
+    21: -> StartConf(StartConfirm resp);
 
-    // MLME-ASSOCIATE.confirm
-    // Args: AssociateConfirm
-    ASSOCIATE_confirm = 13;
+    22: StopReq(StopRequest req);
+    23: -> StopConf();
 
-    // MLME-ASSOCIATE.indication
-    // Args: AssociateIndication
-    ASSOCIATE_indication = 14;
+    24: SetKeysReq(SetKeysRequest req);
 
-    // MLME-ASSOCIATE.response
-    // Args: AssociateResponse
-    ASSOCIATE_response = 15;
+    25: DeleteKeysReq(DeleteKeysRequest req);
 
-    // MLME-DISASSOCIATE.request
-    // Args: DisassociateRequest
-    DISASSOCIATE_request = 16;
-
-    // MLME-DISASSOCIATE.confirm
-    // Args: DisassociateConfirm
-    DISASSOCIATE_confirm = 17;
-
-    // MLME-DISASSOCIATE.indication
-    // Args: DisassociateIndication
-    DISASSOCIATE_indication = 18;
-
-    // MLME-RESET.request
-    // Args: ResetRequest
-    RESET_request = 19;
-
-    // MLME-START.request
-    // Args: StartRequest
-    START_request = 20;
-
-    // MLME-START.confirm
-    // Args: StartConfirm
-    START_confirm = 21;
-
-    // MLME-STOP.request
-    // Args: StopRequest
-    STOP_request = 22;
-
-    // MLME-STOP.confirm
-    // Args: StopConfirm
-    STOP_confirm = 23;
-
-    // MLME-SETKEYS.request
-    // Args: SetKeysRequest
-    SETKEYS_request = 24;
-
-    // MLME-DELETEKEYS.request
-    // Args: DeleteKeysRequest
-    DELETEKEYS_request = 25;
-
-    // MLME-EAPOL.request
-    // Args: EapolRequest
-    EAPOL_request = 26;
-
-    // MLME-EAPOL.confirm
-    // Args: EapolConfirm
-    EAPOL_confirm = 27;
+    26: EapolReq(EapolRequest req);
+    27: -> EapolConf(EapolConfirm resp);
 
 
-    // Custom primitives extending 802.11 MLME SAP interface.
-    // See: wlan_mlme_ext.fidl
+    // The following are extensions to the 802.11 MLME SAP interface.
 
-    // Args: SignalReportIndication
-    SIGNAL_REPORT_indication = 28;
+    0x1001: -> SignalReport(SignalReportIndication ind);
 
-    // Args: EapolIndication
-    EAPOL_indication = 29;
+    0x1002: -> EapolInd(EapolIndication ind);
 
-    // Args: DeviceQueryRequest
-    DEVICE_QUERY_request = 30;
-
-    // Args: DeviceQueryConfirm
-    DEVICE_QUERY_confirm = 31;
+    0x1003: DeviceQueryReq(DeviceQueryRequest req);
+    0x1004: -> DeviceQueryConf(DeviceQueryConfirm resp);
 };

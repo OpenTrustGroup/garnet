@@ -22,18 +22,17 @@ ImagePipe::ImagePipe(Session* session, scenic::ResourceId id)
       weak_ptr_factory_(this),
       images_(session->error_reporter()) {}
 
-ImagePipe::ImagePipe(Session* session,
-                     scenic::ResourceId id,
-                     ::fidl::InterfaceRequest<images::ImagePipe> request)
+ImagePipe::ImagePipe(
+    Session* session, scenic::ResourceId id,
+    ::fidl::InterfaceRequest<fuchsia::images::ImagePipe> request)
     : ImageBase(session, id, ImagePipe::kTypeInfo),
       weak_ptr_factory_(this),
       handler_(std::make_unique<ImagePipeHandler>(std::move(request), this)),
       images_(session->error_reporter()) {}
 
 void ImagePipe::AddImage(uint32_t image_id,
-                         images::ImageInfo image_info,
-                         zx::vmo vmo,
-                         images::MemoryType memory_type,
+                         fuchsia::images::ImageInfo image_info, zx::vmo vmo,
+                         fuchsia::images::MemoryType memory_type,
                          uint64_t memory_offset) {
   if (image_id == 0) {
     session()->error_reporter()->ERROR()
@@ -44,11 +43,11 @@ void ImagePipe::AddImage(uint32_t image_id,
   vk::Device device = session()->engine()->vk_device();
   MemoryPtr memory;
   switch (memory_type) {
-    case images::MemoryType::VK_DEVICE_MEMORY:
+    case fuchsia::images::MemoryType::VK_DEVICE_MEMORY:
       memory = GpuMemory::New(session(), 0u, device, std::move(vmo),
                               session()->error_reporter());
       break;
-    case images::MemoryType::HOST_MEMORY:
+    case fuchsia::images::MemoryType::HOST_MEMORY:
       memory = HostMemory::New(session(), 0u, device, std::move(vmo),
                                session()->error_reporter());
       break;
@@ -80,13 +79,10 @@ void ImagePipe::CloseConnectionAndCleanUp() {
   session()->engine()->ScheduleUpdate(0);
 }
 
-void ImagePipe::OnConnectionError() {
-  CloseConnectionAndCleanUp();
-}
+void ImagePipe::OnConnectionError() { CloseConnectionAndCleanUp(); }
 
-ImagePtr ImagePipe::CreateImage(Session* session,
-                                MemoryPtr memory,
-                                const images::ImageInfo& image_info,
+ImagePtr ImagePipe::CreateImage(Session* session, MemoryPtr memory,
+                                const fuchsia::images::ImageInfo& image_info,
                                 uint64_t memory_offset,
                                 ErrorReporter* error_reporter) {
   return Image::New(session, 0u, memory, image_info, memory_offset,
@@ -103,11 +99,11 @@ void ImagePipe::RemoveImage(uint32_t image_id) {
   }
 };
 
-void ImagePipe::PresentImage(uint32_t image_id,
-                             uint64_t presentation_time,
-                             ::fidl::VectorPtr<zx::event> acquire_fences,
-                             ::fidl::VectorPtr<zx::event> release_fences,
-                             images::ImagePipe::PresentImageCallback callback) {
+void ImagePipe::PresentImage(
+    uint32_t image_id, uint64_t presentation_time,
+    ::fidl::VectorPtr<zx::event> acquire_fences,
+    ::fidl::VectorPtr<zx::event> release_fences,
+    fuchsia::images::ImagePipe::PresentImageCallback callback) {
   if (!frames_.empty() &&
       presentation_time < frames_.back().presentation_time) {
     session()->error_reporter()->ERROR()
@@ -168,7 +164,7 @@ bool ImagePipe::Update(uint64_t presentation_time,
     }
     next_release_fences = std::move(frames_.front().release_fences);
 
-    auto info = images::PresentationInfo();
+    auto info = fuchsia::images::PresentationInfo();
     info.presentation_time = presentation_time;
     info.presentation_interval = presentation_interval;
     if (frames_.front().present_image_callback) {

@@ -8,12 +8,12 @@ source_set("lib") {
   visibility = [ ":*" ]
 
   sources = [
-    "kernel.cc",
-    "kernel.h",
     "guest_config.cc",
     "guest_config.h",
     "guest_view.cc",
     "guest_view.h",
+    "kernel.cc",
+    "kernel.h",
     "linux.cc",
     "linux.h",
     "zircon.cc",
@@ -24,10 +24,11 @@ source_set("lib") {
     "//garnet/bin/guest/third_party/fdt",
     "//garnet/lib/machina",
     "//garnet/public/lib/fsl",
+    "//garnet/public/lib/guest/fidl",
     "//garnet/public/lib/ui/view_framework:view_provider",
-    "//zircon/public/lib/trace-provider",
     "//third_party/rapidjson",
     "//zircon/public/lib/fbl",
+    "//zircon/public/lib/trace-provider",
   ]
 
   defines = [ "_ALL_SOURCE=1" ]
@@ -56,9 +57,9 @@ package("vmm") {
 
   meta = [
     {
-      path = rebase_path("//garnet/bin/guest/vmm/meta/sandbox")
-      dest = "sandbox"
-    }
+      path = rebase_path("//garnet/bin/guest/vmm/meta/vmm.cmx")
+      dest = "vmm.cmx"
+    },
   ]
 
   if (target_cpu == "arm64") {
@@ -88,12 +89,11 @@ executable("vmm_unittests") {
 
   sources = [
     "guest_config-unittest.cc",
-    "run_all_unittests.cc",
   ]
 
   deps = [
     ":lib",
-    "//third_party/googletest:gtest",
+    "//third_party/googletest:gtest_main",
     "//zircon/public/lib/fbl",
   ]
 }

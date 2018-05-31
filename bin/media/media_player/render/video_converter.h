@@ -7,8 +7,8 @@
 
 #include <memory>
 
-#include <fuchsia/cpp/geometry.h>
-#include <fuchsia/cpp/media.h>
+#include <fuchsia/math/cpp/fidl.h>
+#include <media/cpp/fidl.h>
 #include "garnet/bin/media/media_player/framework/types/video_stream_type.h"
 
 namespace media_player {
@@ -24,10 +24,10 @@ class VideoConverter {
   void SetStreamType(std::unique_ptr<StreamType> stream_type);
 
   // Gets the size of the video.
-  geometry::Size GetSize() const;
+  fuchsia::math::Size GetSize() const;
 
   // Gets the pixel aspect ratio of the video.
-  geometry::Size GetPixelAspectRatio() const;
+  fuchsia::math::Size GetPixelAspectRatio() const;
 
   // Converts the frame in the payload into the provided RGBA buffer.
   void ConvertFrame(uint8_t* rgba_buffer,

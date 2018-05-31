@@ -19,9 +19,9 @@ struct WlanRxInfo {
   uint32 data_rate;
   wlan_device.Channel chan;
   uint8 mcs;
-  uint8 rssi;
-  uint8 rcpi;
-  uint8 snr;
+  int8 rssi_dbm;
+  int16 rcpi_dbmh;
+  int16 snr_dbh;
 };
 
 // See wlan_tx_info_t
@@ -32,6 +32,11 @@ struct WlanTxInfo {
   uint8 cbw;
   uint32 data_rate;
   uint8 mcs;
+};
+
+struct WlanTxPacket {
+  vector<uint8> data;
+  WlanTxInfo info;
 };
 
 // See wlan_bss_config_t
@@ -56,17 +61,35 @@ interface WlantapPhy {
   // wlanmac_ifc_t callbacks
   1: Rx(uint16 wlanmac_id, vector<uint8> data, WlanRxInfo info);
   2: Status(uint16 wlanmac_id, uint32 st);
-};
-
-// These really should be events in WlantapPhy, but events are
-// not implemented yet.
-interface WlantapPhyEvents {
   // wlanmac_protocol_ops_t
-  3: Tx(vector<uint8> data, WlanTxInfo info);
-  4: SetChannel(wlan_device.Channel chan);
-  5: ConfigureBss(WlanBssConfig config);
+  3: -> Tx(TxArgs args);
+  4: -> SetChannel(SetChannelArgs args);
+  5: -> ConfigureBss(ConfigureBssArgs args);
   // TODO: ConfigureBeacon
-  7: SetKey(WlanKeyConfig config);
+  7: -> SetKey(SetKeyArgs args);
+  8: -> WlanmacStart(WlanmacStartArgs args);
 };
 
+struct TxArgs {
+  uint16 wlanmac_id;
+  WlanTxPacket packet;
+};
 
+struct SetChannelArgs {
+  uint16 wlanmac_id;
+  wlan_device.Channel chan;
+};
+
+struct ConfigureBssArgs {
+  uint16 wlanmac_id;
+  WlanBssConfig config;
+};
+
+struct SetKeyArgs {
+  uint16 wlanmac_id;
+  WlanKeyConfig config;
+};
+
+struct WlanmacStartArgs {
+  uint16 wlanmac_id;
+};

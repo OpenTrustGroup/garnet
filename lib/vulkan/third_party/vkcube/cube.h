@@ -33,15 +33,17 @@
 #include <vulkan/vulkan.h>
 #endif
 
+
 #if defined(CUBE_USE_IMAGE_PIPE)
+#include <lib/async-loop/cpp/loop.h>
+
 #include "lib/app/cpp/application_context.h"
 #include "lib/app/cpp/connect.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/log_settings.h"
 #include "lib/fxl/logging.h"
 
-#include <fuchsia/cpp/gfx.h>
+#include <fuchsia/ui/gfx/cpp/fidl.h>
 #include "garnet/public/lib/ui/scenic/fidl_helpers.h"
 #include "garnet/public/lib/ui/scenic/types.h"
 #include "lib/ui/scenic/client/resources.h"
@@ -83,9 +85,9 @@ typedef struct {
 
 #if defined(VK_USE_PLATFORM_MAGMA_KHR) && defined(CUBE_USE_IMAGE_PIPE)
 struct FuchsiaState {
-    fsl::MessageLoop loop;
+    async::Loop loop;
     uint32_t image_pipe_handle = 0;
-    images::ImagePipePtr pipe;
+    fuchsia::images::ImagePipePtr pipe;
     std::unique_ptr<mozart::ViewProviderService> view_provider_service;
     uint32_t num_frames = 60;
     uint32_t elapsed_frames = 0;
@@ -140,11 +142,13 @@ struct demo {
     PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR fpGetPhysicalDeviceSurfaceCapabilitiesKHR;
     PFN_vkGetPhysicalDeviceSurfaceFormatsKHR fpGetPhysicalDeviceSurfaceFormatsKHR;
     PFN_vkGetPhysicalDeviceSurfacePresentModesKHR fpGetPhysicalDeviceSurfacePresentModesKHR;
+    PFN_vkGetPhysicalDeviceFeatures2KHR fpGetPhysicalDeviceFeatures2KHR;
     PFN_vkCreateSwapchainKHR fpCreateSwapchainKHR;
     PFN_vkDestroySwapchainKHR fpDestroySwapchainKHR;
     PFN_vkGetSwapchainImagesKHR fpGetSwapchainImagesKHR;
     PFN_vkAcquireNextImageKHR fpAcquireNextImageKHR;
     PFN_vkQueuePresentKHR fpQueuePresentKHR;
+    PFN_vkCreateSamplerYcbcrConversionKHR fpCreateSamplerYcbcrConversionKHR;
     uint32_t swapchainImageCount;
     VkSwapchainKHR swapchain;
     SwapchainBuffers* buffers;

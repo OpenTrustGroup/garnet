@@ -15,6 +15,7 @@
 #include "garnet/drivers/bluetooth/lib/l2cap/channel_manager.h"
 #include "lib/fxl/random/uuid.h"
 
+#include "bredr_connection_manager.h"
 #include "bredr_discovery_manager.h"
 #include "low_energy_advertising_manager.h"
 #include "low_energy_connection_manager.h"
@@ -156,7 +157,38 @@ void Adapter::ShutDown() {
 }
 
 bool Adapter::IsDiscovering() const {
-  return le_discovery_manager_ && le_discovery_manager_->discovering();
+  return (le_discovery_manager_ && le_discovery_manager_->discovering()) ||
+         (bredr_discovery_manager_ && bredr_discovery_manager_->discovering());
+}
+
+void Adapter::SetLocalName(std::string name, hci::StatusCallback callback) {
+  // TODO(jamuraa): set the public LE advertisement name from |name|
+  bool null_term = true;
+  if (name.size() >= hci::kMaxLocalNameLength) {
+    name.resize(hci::kMaxLocalNameLength);
+    null_term = false;
+  }
+  auto write_name = hci::CommandPacket::New(
+      hci::kWriteLocalName, sizeof(hci::WriteLocalNameCommandParams));
+  auto name_buf = common::MutableBufferView(
+      write_name->mutable_view()
+          ->mutable_payload<hci::WriteLocalNameCommandParams>()
+          ->local_name,
+      hci::kMaxLocalNameLength);
+  name_buf.Write(reinterpret_cast<const uint8_t*>(name.data()), name.size());
+  if (null_term) {
+    name_buf[name.size()] = 0;
+  }
+  hci_->command_channel()->SendCommand(
+      std::move(write_name), dispatcher_,
+      [cb = std::move(callback)](auto, const hci::EventPacket& event) mutable {
+        auto status = event.ToStatus();
+        if (!status) {
+          FXL_LOG(WARNING) << "gap: Adapter: set local name failure: "
+                           << status.ToString();
+        }
+        cb(status);
+      });
 }
 
 void Adapter::InitializeStep2(const InitializeCallback& callback) {
@@ -232,6 +264,23 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
               hci::DataBufferInfo(mtu, max_count);
         }
       });
+
+  if (state_.HasLMPFeatureBit(0u, hci::LMPFeature::kSecureSimplePairing)) {
+    // HCI_Write_Simple_Pairing_Mode
+    auto write_ssp = hci::CommandPacket::New(
+        hci::kWriteSimplePairingMode,
+        sizeof(hci::WriteSimplePairingModeCommandParams));
+    write_ssp->mutable_view()
+        ->mutable_payload<hci::WriteSimplePairingModeCommandParams>()
+        ->simple_pairing_mode = hci::GenericEnableParam::kEnable;
+    init_seq_runner_->QueueCommand(std::move(write_ssp), [](const auto& event) {
+      auto status = event.ToStatus();
+      if (!status) {
+        FXL_LOG(WARNING) << "gap: Adapter: Couldn't set simple pairing mode: "
+                         << status.ToString();
+      }
+    });
+  }
 
   // If there are extended features then try to read the first page of the
   // extended features.
@@ -410,18 +459,23 @@ void Adapter::InitializeStep4(const InitializeCallback& callback) {
   le_advertising_manager_ =
       std::make_unique<LowEnergyAdvertisingManager>(hci_le_advertiser_.get());
 
+  bredr_connection_manager_ = std::make_unique<BrEdrConnectionManager>(
+      hci_, &device_cache_,
+      state_.HasLMPFeatureBit(0, hci::LMPFeature::kInterlacedPageScan));
   bredr_discovery_manager_ =
       std::make_unique<BrEdrDiscoveryManager>(hci_, &device_cache_);
 
   // This completes the initialization sequence.
-  init_state_ = State::kInitialized;
+  self->init_state_ = State::kInitialized;
   callback(true);
 }
 
 uint64_t Adapter::BuildEventMask() {
   uint64_t event_mask = 0;
 
-  // Enable events that are needed for basic flow control.
+  // Enable events that are needed for basic functionality.
+  event_mask |= static_cast<uint64_t>(hci::EventMask::kConnectionCompleteEvent);
+  event_mask |= static_cast<uint64_t>(hci::EventMask::kConnectionRequestEvent);
   event_mask |=
       static_cast<uint64_t>(hci::EventMask::kDisconnectionCompleteEvent);
   event_mask |= static_cast<uint64_t>(hci::EventMask::kHardwareErrorEvent);
@@ -432,6 +486,15 @@ uint64_t Adapter::BuildEventMask() {
       static_cast<uint64_t>(hci::EventMask::kInquiryResultWithRSSIEvent);
   event_mask |=
       static_cast<uint64_t>(hci::EventMask::kExtendedInquiryResultEvent);
+  event_mask |=
+      static_cast<uint64_t>(hci::EventMask::kIOCapabilityRequestEvent);
+  event_mask |=
+      static_cast<uint64_t>(hci::EventMask::kIOCapabilityResponseEvent);
+  event_mask |=
+      static_cast<uint64_t>(hci::EventMask::kUserConfirmationRequestEvent);
+  event_mask |= static_cast<uint64_t>(hci::EventMask::kUserPasskeyRequestEvent);
+  event_mask |=
+      static_cast<uint64_t>(hci::EventMask::kRemoteOOBDataRequestEvent);
 
   return event_mask;
 }

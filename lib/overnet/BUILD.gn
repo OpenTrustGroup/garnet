@@ -1,0 +1,87 @@
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/package.gni")
+import("//build/test.gni")
+
+source_set("overnet") {
+  sources = [
+    "ack_frame.h",
+    "ack_frame.cc",
+    "broadcast_sink.h",
+    "callback.h",
+    "fork_frame.h",
+    "fork_frame.cc",
+    "linearizer.h",
+    "linearizer.cc",
+    "node_id.h",
+    "node_id.cc",
+    "optional.h",
+    "receive_mode.h",
+    "receive_mode.cc",
+    "reliability_and_ordering.h",
+    "reliability_and_ordering.cc",
+    "router.h",
+    "router.cc",
+    "router_endpoint.h",
+    "router_endpoint.cc",
+    "routing_header.h",
+    "routing_header.cc",
+    "seq_num.h",
+    "seq_num.cc",
+    "serialization_helpers.h",
+    "sink.h",
+    "slice.h",
+    "slice.cc",
+    "status.h",
+    "status.cc",
+    "stream_id.h",
+    "stream_id.cc",
+    "varint.h",
+    "varint.cc",
+  ]
+}
+
+test("overnet_unittests") {
+  sources = [
+    "run_all_tests.cc",
+    "ack_frame_test.cc",
+    "broadcast_sink_test.cc",
+    "callback_test.cc",
+    "fork_frame_test.cc",
+    "linearizer_fuzzer_helpers.h",
+    "linearizer_test.cc",
+    "optional_test.cc",
+    "receive_mode_fuzzer_helpers.h",
+    "receive_mode_test.cc",
+    "router_test.cc",
+    "router_endpoint_2node_test.cc",
+    "routing_header_test.cc",
+    "sink_test.cc",
+    "slice_test.cc",
+    "status_test.cc",
+    "varint_test.cc",
+  ]
+
+  deps = [
+    ":overnet",
+    "//third_party/googletest:gtest",
+    "//third_party/googletest:gmock",
+  ]
+}
+
+package("overnet_tests") {
+  testonly = true
+  deprecated_system_image = true
+
+  deps = [
+    ":overnet_unittests",
+  ]
+
+  tests = [
+    {
+       name = "overnet_unittests"
+    }
+  ]
+}

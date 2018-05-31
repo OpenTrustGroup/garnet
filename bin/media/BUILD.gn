@@ -27,8 +27,8 @@ package("audio_server") {
 
   meta = [
     {
-      path = rebase_path("audio_server/meta/sandbox")
-      dest = "sandbox"
+      path = rebase_path("audio_server/meta/audio_server.cmx")
+      dest = "audio_server.cmx"
     },
   ]
 }
@@ -55,6 +55,7 @@ package("tests") {
 
   deps = [
     "//garnet/bin/media/audio_server:tests",
+    "//garnet/bin/media/audio_server/mixer:tests",
     "//garnet/bin/media/media_player:tests",
     "//garnet/bin/media/media_player/demux:tests",
     "//garnet/bin/media/media_player/player:tests",
@@ -71,6 +72,10 @@ package("tests") {
     },
 
     {
+      name = "audio_server_tests"
+    },
+
+    {
       name = "media_client_tests"
     },
 
@@ -84,6 +89,10 @@ package("tests") {
 
     {
       name = "media_lib_transport_tests"
+    },
+
+    {
+      name = "media_player_tests"
     },
 
     {

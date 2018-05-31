@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <fuchsia/cpp/echo2.h>
+#include <echo2/cpp/fidl.h>
 #include <launchpad/launchpad.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/default.h>
@@ -21,8 +21,8 @@ class EchoClientApp {
 
   echo2::EchoPtr& echo() { return echo_; }
 
-  void Start(std::string server_url, std::string msg) {
-    component::ApplicationLaunchInfo launch_info;
+  void Start(std::string server_url) {
+    component::LaunchInfo launch_info;
     launch_info.url = server_url;
     launch_info.directory_request = echo_provider_.NewRequest();
     context_->launcher()->CreateApplication(std::move(launch_info),
@@ -37,9 +37,8 @@ class EchoClientApp {
   EchoClientApp& operator=(const EchoClientApp&) = delete;
 
   std::unique_ptr<component::ApplicationContext> context_;
-  zx::process server_;
   component::Services echo_provider_;
-  component::ApplicationControllerPtr controller_;
+  component::ComponentControllerPtr controller_;
   echo2::EchoPtr echo_;
 };
 
@@ -60,7 +59,7 @@ int main(int argc, const char** argv) {
   async::Loop loop(&kAsyncLoopConfigMakeDefault);
 
   echo2::EchoClientApp app;
-  app.Start(server_url, msg);
+  app.Start(server_url);
 
   app.echo()->EchoString(msg, [](fidl::StringPtr value) {
     printf("***** Response: %s\n", value->data());

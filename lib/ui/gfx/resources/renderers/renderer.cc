@@ -11,6 +11,7 @@
 #include "lib/escher/scene/model.h"
 #include "lib/escher/scene/stage.h"
 
+#include "garnet/lib/ui/gfx/engine/session.h"
 #include "garnet/lib/ui/gfx/resources/camera.h"
 #include "garnet/lib/ui/gfx/resources/dump_visitor.h"
 #include "garnet/lib/ui/gfx/resources/import.h"
@@ -42,8 +43,7 @@ Renderer::Renderer(Session* session, scenic::ResourceId id)
 Renderer::~Renderer() = default;
 
 std::vector<escher::Object> Renderer::CreateDisplayList(
-    const ScenePtr& scene,
-    escher::vec2 screen_dimensions) {
+    const ScenePtr& scene, escher::vec2 screen_dimensions) {
   TRACE_DURATION("gfx", "Renderer::CreateDisplayList");
 
   // Construct a display list from the tree.
@@ -52,13 +52,17 @@ std::vector<escher::Object> Renderer::CreateDisplayList(
   return v.TakeDisplayList();
 }
 
-void Renderer::SetCamera(CameraPtr camera) {
-  camera_ = std::move(camera);
-}
+void Renderer::SetCamera(CameraPtr camera) { camera_ = std::move(camera); }
 
-bool Renderer::SetShadowTechnique(::gfx::ShadowTechnique technique) {
+bool Renderer::SetShadowTechnique(
+    ::fuchsia::ui::gfx::ShadowTechnique technique) {
   shadow_technique_ = technique;
   return true;
+}
+
+void Renderer::SetRenderContinuously(bool render_continuously) {
+  session()->engine()->frame_scheduler()->SetRenderContinuously(
+      render_continuously);
 }
 
 void Renderer::DisableClipping(bool disable_clipping) {
@@ -74,29 +78,17 @@ std::vector<escher::Object> Renderer::Visitor::TakeDisplayList() {
   return std::move(display_list_);
 }
 
-void Renderer::Visitor::Visit(GpuMemory* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(GpuMemory* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(HostMemory* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(HostMemory* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(Image* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(Image* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(ImagePipe* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(ImagePipe* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(Buffer* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(Buffer* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(EntityNode* r) {
-  VisitNode(r);
-}
+void Renderer::Visitor::Visit(EntityNode* r) { VisitNode(r); }
 
 void Renderer::Visitor::VisitNode(Node* r) {
   // If not clipping, recursively visit all descendants in the normal fashion.
@@ -165,21 +157,13 @@ void Renderer::Visitor::VisitNode(Node* r) {
       escher::Object(std::move(clippers), std::move(clippees)));
 }
 
-void Renderer::Visitor::Visit(Scene* r) {
-  VisitNode(r);
-}
+void Renderer::Visitor::Visit(Scene* r) { VisitNode(r); }
 
-void Renderer::Visitor::Visit(DisplayCompositor* r) {
-  FXL_DCHECK(false);
-}
+void Renderer::Visitor::Visit(DisplayCompositor* r) { FXL_DCHECK(false); }
 
-void Renderer::Visitor::Visit(LayerStack* r) {
-  FXL_DCHECK(false);
-}
+void Renderer::Visitor::Visit(LayerStack* r) { FXL_DCHECK(false); }
 
-void Renderer::Visitor::Visit(Layer* r) {
-  FXL_DCHECK(false);
-}
+void Renderer::Visitor::Visit(Layer* r) { FXL_DCHECK(false); }
 
 void Renderer::Visitor::Visit(ShapeNode* r) {
   auto& shape = r->shape();
@@ -196,50 +180,30 @@ void Renderer::Visitor::Visit(ShapeNode* r) {
   // children or parts.
 }
 
-void Renderer::Visitor::Visit(CircleShape* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(CircleShape* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(RectangleShape* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(RectangleShape* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(RoundedRectangleShape* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(RoundedRectangleShape* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(MeshShape* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(MeshShape* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(Material* r) {
-  r->UpdateEscherMaterial();
-}
+void Renderer::Visitor::Visit(Material* r) { r->UpdateEscherMaterial(); }
 
-void Renderer::Visitor::Visit(Import* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(Import* r) { FXL_CHECK(false); }
 
 void Renderer::Visitor::Visit(Camera* r) {
   // TODO: use camera's projection matrix.
   Visit(r->scene().get());
 }
 
-void Renderer::Visitor::Visit(Renderer* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(Renderer* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(Light* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(Light* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(AmbientLight* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(AmbientLight* r) { FXL_CHECK(false); }
 
-void Renderer::Visitor::Visit(DirectionalLight* r) {
-  FXL_CHECK(false);
-}
+void Renderer::Visitor::Visit(DirectionalLight* r) { FXL_CHECK(false); }
 
 }  // namespace gfx
 }  // namespace scenic

@@ -13,9 +13,7 @@ namespace internal {
 
 StubController::StubController() : weak_(nullptr), reader_(this) {}
 
-StubController::~StubController() {
-  InvalidateWeakIfNeeded();
-}
+StubController::~StubController() { InvalidateWeakIfNeeded(); }
 
 zx_status_t StubController::Send(const fidl_type_t* type, Message message) {
   const char* error_msg = nullptr;
@@ -40,9 +38,7 @@ zx_status_t StubController::OnMessage(Message message) {
   return stub_->Dispatch_(std::move(message), PendingResponse(txid, weak));
 }
 
-void StubController::OnChannelGone() {
-  InvalidateWeakIfNeeded();
-}
+void StubController::OnChannelGone() { InvalidateWeakIfNeeded(); }
 
 void StubController::InvalidateWeakIfNeeded() {
   if (!weak_)

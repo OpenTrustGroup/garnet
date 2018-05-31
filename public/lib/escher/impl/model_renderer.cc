@@ -43,16 +43,10 @@ ModelRenderer::ModelRenderer(Escher* escher, ModelDataPtr model_data)
 ModelRenderer::~ModelRenderer() {}
 
 ModelDisplayListPtr ModelRenderer::CreateDisplayList(
-    const Stage& stage,
-    const Model& model,
-    const Camera& camera,
-    const ModelRenderPassPtr& render_pass,
-    ModelDisplayListFlags flags,
-    float scale,
-    const TexturePtr& shadow_texture,
-    const mat4& shadow_matrix,
-    vec3 ambient_light_color,
-    vec3 direct_light_color,
+    const Stage& stage, const Model& model, const Camera& camera,
+    const ModelRenderPassPtr& render_pass, ModelDisplayListFlags flags,
+    float scale, const TexturePtr& shadow_texture, const mat4& shadow_matrix,
+    vec3 ambient_light_color, vec3 direct_light_color,
     CommandBuffer* command_buffer) {
   TRACE_DURATION("gfx", "escher::ModelRenderer::CreateDisplayList",
                  "object_count", model.objects().size());
@@ -125,10 +119,11 @@ ModelDisplayListPtr ModelRenderer::CreateDisplayList(
 // TODO: stage shouldn't be necessary.
 void ModelRenderer::Draw(const Stage& stage,
                          const ModelDisplayListPtr& display_list,
-                         CommandBuffer* command_buffer) {
+                         CommandBuffer* command_buffer,
+                         const Camera::Viewport& viewport) {
   TRACE_DURATION("gfx", "escher::ModelRenderer::Draw");
 
-  vk::CommandBuffer vk_command_buffer = command_buffer->get();
+  vk::CommandBuffer vk_command_buffer = command_buffer->vk();
 
   for (const TexturePtr& texture : display_list->textures()) {
     // TODO: it would be nice if Resource::TakeWaitSemaphore() were virtual
@@ -145,18 +140,20 @@ void ModelRenderer::Draw(const Stage& stage,
         vk::PipelineStageFlagBits::eFragmentShader);
   }
 
-  vk::Viewport viewport;
-  viewport.width = stage.viewing_volume().width();
-  viewport.height = stage.viewing_volume().height();
+  vk::Viewport vk_viewport;
+  vk_viewport.x = stage.viewing_volume().width() * viewport.x;
+  vk_viewport.y = stage.viewing_volume().height() * viewport.y;
+  vk_viewport.width = stage.viewing_volume().width() * viewport.width;
+  vk_viewport.height = stage.viewing_volume().height() * viewport.height;
   // We normalize all depths to the range [0,1].  If we didn't, then Vulkan
   // would clip them anyway.  NOTE: this is only true because we are using an
   // orthonormal projection; otherwise the depth computed by the vertex shader
   // could be outside [0,1] as long as the perspective division brought it back.
   // In this case, it might make sense to use different values for viewport
   // min/max depth.
-  viewport.minDepth = 0.f;
-  viewport.maxDepth = 1.f;
-  vk_command_buffer.setViewport(0, 1, &viewport);
+  vk_viewport.minDepth = 0.f;
+  vk_viewport.maxDepth = 1.f;
+  vk_command_buffer.setViewport(0, 1, &vk_viewport);
 
   // Retain all display-list resources until the frame is finished rendering.
   command_buffer->KeepAlive(display_list);
@@ -164,7 +161,6 @@ void ModelRenderer::Draw(const Stage& stage,
   vk::Pipeline current_pipeline;
   vk::PipelineLayout current_pipeline_layout;
   uint32_t current_stencil_reference = 0;
-  vk_command_buffer.setStencilReference(vk::StencilFaceFlagBits::eFront, 0);
   for (const ModelDisplayList::Item& item : display_list->items()) {
     // Bind new pipeline and PerModel descriptor set, if necessary.
     if (current_pipeline != item.pipeline->pipeline()) {

@@ -6,6 +6,7 @@
 //! [syscalls](https://fuchsia.googlesource.com/zircon/+/master/docs/syscalls.md).
 
 #![deny(warnings)]
+#![feature(repr_transparent)]
 
 #[macro_use]
 extern crate bitflags;
@@ -130,6 +131,11 @@ pub mod prelude {
 /// Convenience re-export of `Status::ok`.
 pub fn ok(raw: sys::zx_status_t) -> Result<(), Status> {
     Status::ok(raw)
+}
+
+/// Convenience re-export of `Status::ioctl_ok`.
+pub fn ioctl_ok(raw: sys::zx_status_t) -> Result<u32, Status> {
+    Status::ioctl_ok(raw)
 }
 
 /// A "wait item" containing a handle reference and information about what signals

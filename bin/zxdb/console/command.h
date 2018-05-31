@@ -43,6 +43,7 @@ std::string NounToString(Noun n);
 enum class Verb {
   kNone = 0,
 
+  kAspace,
   kAttach,
   kBreak,
   kClear,
@@ -61,6 +62,8 @@ enum class Verb {
   kQuit,
   kRun,
   kStepi,
+  kSymNear,
+  kSymStat,
   kKill,
 
   // Adding a new one? Add in one of the functions GetVerbs() calls.

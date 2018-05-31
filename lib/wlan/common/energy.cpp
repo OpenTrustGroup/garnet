@@ -4,6 +4,7 @@
 
 #include <math.h>
 #include <wlan/common/energy.h>
+#include <limits>
 
 namespace wlan {
 namespace common {
@@ -49,8 +50,6 @@ dBh operator-(const dBh& lhs, const dBh& rhs) {
 dBh operator-(const dBh& rhs) {
     return dBh(-rhs.val);
 }
-
-dBm::dBm(int8_t v) : EnergyType<int8_t, dBm>(v) {}
 
 dBm operator+(const dBm& lhs, const dB& rhs) {
     return dBm(lhs.val + rhs.val);
@@ -136,6 +135,17 @@ Rcpi to_Rcpi(dBmh u, bool measured) {
     if (u.val >= 0) { return 220; }
 
     return static_cast<uint8_t>(u.val + 220);  // 2 * (dBm + 100)
+}
+
+dBm to_dBm(FemtoWatt fw) {
+    if (fw.val == 0) {
+        return dBm(std::numeric_limits<int8_t>::min());
+    }
+    // This shouldn't be called too often, so we use log10() to make it simple.
+    double dbm = 10.0 * (log10(static_cast<double>(fw.val)) - 12.0);
+    // Casting to int8_t is safe since the resulting value will always be between
+    // -120 and 73 for all possible uint64_t inputs
+    return dBm(static_cast<int8_t>(round(dbm)));
 }
 
 }  // namespace common

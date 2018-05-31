@@ -4,17 +4,17 @@
 
 #include "garnet/bin/media/media_player/player/player.h"
 
+#include <queue>
+#include <unordered_set>
+
+#include <lib/async/cpp/task.h>
 #include <lib/async/dispatcher.h>
 
+#include "garnet/bin/media/media_player/framework/formatting.h"
 #include "garnet/bin/media/media_player/util/callback_joiner.h"
 #include "lib/fxl/logging.h"
 
 namespace media_player {
-namespace {
-
-static const Problem kMediaTypeNotSupported{kProblemMediaTypeNotSupported, ""};
-
-}  // namespace
 
 Player::Player(async_t* async) : graph_(async), async_(async) {}
 
@@ -23,21 +23,11 @@ Player::~Player() {}
 void Player::SetSourceSegment(std::unique_ptr<SourceSegment> source_segment,
                               fxl::Closure callback) {
   if (source_segment_) {
-    source_segment_->Flush(false);
-    source_segment_->Deprovision();
-
     while (!streams_.empty()) {
       OnStreamRemoval(streams_.size() - 1);
     }
 
-    for (auto& stream : streams_) {
-      if (stream.sink_segment_) {
-        if (stream.sink_segment_->connected()) {
-          stream.sink_segment_->Unprepare();
-          stream.sink_segment_->Disconnect();
-        }
-      }
-    }
+    source_segment_->Deprovision();
   }
 
   source_segment_ = std::move(source_segment);
@@ -116,12 +106,16 @@ void Player::Prime(fxl::Closure callback) {
     }
   }
 
-  callback_joiner->WhenJoined(callback);
+  callback_joiner->WhenJoined(
+      [this, callback]() { async::PostTask(async_, callback); });
 }
 
-void Player::Flush(bool hold_frame) {
+void Player::Flush(bool hold_frame, fxl::Closure callback) {
   if (source_segment_) {
-    source_segment_->Flush(hold_frame);
+    source_segment_->Flush(
+        hold_frame, [this, callback]() { async::PostTask(async_, callback); });
+  } else {
+    async::PostTask(async_, callback);
   }
 }
 
@@ -151,11 +145,11 @@ void Player::SetTimelineFunction(media::TimelineFunction timeline_function,
     }
   }
 
-  callback_joiner->WhenJoined(callback);
+  callback_joiner->WhenJoined(
+      [this, callback]() { async::PostTask(async_, callback); });
 }
 
-void Player::SetProgramRange(uint64_t program,
-                             int64_t min_pts,
+void Player::SetProgramRange(uint64_t program, int64_t min_pts,
                              int64_t max_pts) {
   for (auto& stream : streams_) {
     if (stream.sink_segment_) {
@@ -166,9 +160,10 @@ void Player::SetProgramRange(uint64_t program,
 
 void Player::Seek(int64_t position, fxl::Closure callback) {
   if (source_segment_) {
-    source_segment_->Seek(position, callback);
+    source_segment_->Seek(
+        position, [this, callback]() { async::PostTask(async_, callback); });
   } else {
-    callback();
+    async::PostTask(async_, callback);
   }
 }
 
@@ -200,22 +195,6 @@ const Problem* Player::problem() const {
   // First, see if the source segment has a problem to report.
   if (source_segment_ && source_segment_->problem()) {
     return source_segment_->problem();
-  }
-
-  // If there's video and a video sink segment, but we couldn't connect it,
-  // report that as a problem.
-  if (content_has_medium(StreamType::Medium::kVideo) &&
-      has_sink_segment(StreamType::Medium::kVideo) &&
-      !medium_connected(StreamType::Medium::kVideo)) {
-    return &kMediaTypeNotSupported;
-  }
-
-  // If there's audio and a audio sink segment, but we couldn't connect it,
-  // report that as a problem.
-  if (content_has_medium(StreamType::Medium::kAudio) &&
-      has_sink_segment(StreamType::Medium::kAudio) &&
-      !medium_connected(StreamType::Medium::kAudio)) {
-    return &kMediaTypeNotSupported;
   }
 
   // See if any of the sink segments have a problem to report.
@@ -259,8 +238,7 @@ SinkSegment* Player::GetParkedSinkSegment(StreamType::Medium medium) const {
   return iter == parked_sink_segments_.end() ? nullptr : iter->second.get();
 }
 
-void Player::OnStreamUpdated(size_t index,
-                             const StreamType& type,
+void Player::OnStreamUpdated(size_t index, const StreamType& type,
                              OutputRef output) {
   if (streams_.size() < index + 1) {
     streams_.resize(index + 1);
@@ -369,7 +347,12 @@ void Player::ConnectAndPrepareStream(Stream* stream) {
 
   stream->sink_segment_->Connect(
       *stream->stream_type_, stream->output_,
-      [this, medium = stream->stream_type_->medium()]() {
+      [this, medium = stream->stream_type_->medium()](Result result) {
+        if (result != Result::kOk) {
+          // The segment will report a problem separately.
+          return;
+        }
+
         Stream* stream = GetStream(medium);
         if (stream && stream->sink_segment_) {
           stream->sink_segment_->Prepare();
@@ -380,7 +363,36 @@ void Player::ConnectAndPrepareStream(Stream* stream) {
 }
 
 void Player::Dump(std::ostream& os) const {
-  source_node().GetGenericNode()->Dump(os, source_node());
+  std::queue<NodeRef> backlog;
+  std::unordered_set<GenericNode*> visited;
+
+  backlog.push(source_node());
+  visited.insert(source_node().GetGenericNode());
+
+  while (!backlog.empty()) {
+    NodeRef node = backlog.front();
+    backlog.pop();
+
+    os << newl << newl;
+    node.GetGenericNode()->Dump(os);
+
+    for (size_t output_index = 0; output_index < node.output_count();
+         ++output_index) {
+      OutputRef output = node.output(output_index);
+      if (!output.connected()) {
+        continue;
+      }
+
+      NodeRef downstream = output.mate().node();
+      GenericNode* downstream_generic_node = downstream.GetGenericNode();
+      if (visited.find(downstream_generic_node) != visited.end()) {
+        continue;
+      }
+
+      backlog.push(downstream);
+      visited.insert(downstream_generic_node);
+    }
+  }
 }
 
 }  // namespace media_player

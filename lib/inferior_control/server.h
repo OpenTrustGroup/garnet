@@ -9,6 +9,7 @@
 #include <queue>
 
 #include <lib/async-loop/cpp/loop.h>
+#include <lib/zx/job.h>
 
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/macros.h"
@@ -26,7 +27,7 @@ namespace debugserver {
 // NOTE: This class is generally not thread safe. Care must be taken when
 // calling methods such as set_current_process() and SetCurrentThread()
 // which modify its internal state.
-class Server : public IOLoop::Delegate, public Process::Delegate {
+class Server : public Process::Delegate {
  public:
   // Starts the main loop, and returns when the main loop exits.
   // Returns true if the main loop exits cleanly, or false in the case of an
@@ -35,6 +36,9 @@ class Server : public IOLoop::Delegate, public Process::Delegate {
   // TODO(dje): This mightn't need to be virtual, but it provides consistency
   // among the uses.
   virtual bool Run() = 0;
+
+  zx_handle_t job_for_search() const { return job_for_search_.get(); }
+  zx_handle_t job_for_launch() const { return job_for_launch_.get(); }
 
   // Returns a raw pointer to the current inferior. The instance pointed to by
   // the returned pointer is owned by this Server instance and should not be
@@ -55,20 +59,31 @@ class Server : public IOLoop::Delegate, public Process::Delegate {
 
   // Returns a mutable reference to the main message loop. The returned instance
   // is owned by this Server instance and should not be deleted.
-  async::Loop* message_loop() { return &message_loop_; }
+  async::Loop& message_loop() { return message_loop_; }
 
   // Returns a mutable reference to the exception port. The returned instance is
   // owned by this Server instance and should not be deleted.
-  ExceptionPort* exception_port() { return &exception_port_; }
+  ExceptionPort& exception_port() { return exception_port_; }
 
-  // Call this to schedule termination of gdbserver.
-  // Any outstanding messages will be sent first.
+  // Call this to schedule termination of the server.
   // N.B. The Server will exit its main loop asynchronously so any
   // subsequently posted tasks will be dropped.
   void PostQuitMessageLoop(bool status);
 
+ private:
+  // Returns a borrowed handle of the job whose processes we may attach to.
+  // If this is ZX_HANDLE_INVALID then we may not attach to any process.
+  zx::job job_for_search_;
+
+  // Returns a borrowed handle of the job where processes are launched.
+  // This is not necessarily |job_for_search_|, we may be able to attach to
+  // any process but not necessarily want to start new processes in the root
+  // job itself. If this is ZX_HANDLE_INVALID then starting new processes is
+  // not allowed.
+  zx::job job_for_launch_;
+
  protected:
-  Server();
+  Server(zx::job job_for_search, zx::job job_for_launch);
   virtual ~Server();
 
   // Sets the run status and quits the main message loop.
@@ -80,15 +95,6 @@ class Server : public IOLoop::Delegate, public Process::Delegate {
 
   // The main loop.
   async::Loop message_loop_;
-
-  // The IOLoop used for blocking I/O operations over |client_sock_|.
-  // |message_loop_| and |client_sock_| both MUST outlive |io_loop_|. We take
-  // care to clean it up in the destructor.
-  std::unique_ptr<IOLoop> io_loop_;
-
-  // File descriptor for the socket (or terminal) used for communication.
-  // TODO(dje): Rename from *sock* after things are working.
-  fxl::UniqueFD client_sock_;
 
   // The ExceptionPort used by inferiors to receive exceptions.
   // (This is declared after |message_loop_| since that needs to have been
@@ -105,8 +111,25 @@ class Server : public IOLoop::Delegate, public Process::Delegate {
   // for "Run()" when |message_loop_| exits.
   bool run_status_;
 
- private:
+private:
   FXL_DISALLOW_COPY_AND_ASSIGN(Server);
+};
+
+// Same as Server, but provides I/O support.
+// An example use-case is debugserver for gdb.
+class ServerWithIO : public Server, public IOLoop::Delegate {
+protected:
+  ServerWithIO(zx::job job_for_search, zx::job job_for_launch);
+  virtual ~ServerWithIO();
+
+  // The IOLoop used for blocking I/O operations over |client_sock_|.
+  // |message_loop_| and |client_sock_| both MUST outlive |io_loop_|. We take
+  // care to clean it up in the destructor.
+  std::unique_ptr<IOLoop> io_loop_;
+
+  // File descriptor for the socket (or terminal) used for communication.
+  // TODO(dje): Rename from *sock* after things are working.
+  fxl::UniqueFD client_sock_;
 };
 
 }  // namespace debugserver

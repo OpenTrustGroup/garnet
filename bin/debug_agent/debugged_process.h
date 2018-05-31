@@ -8,19 +8,24 @@
 #include <lib/zx/thread.h>
 #include <map>
 #include <memory>
+#include <vector>
 
+#include "garnet/bin/debug_agent/process_memory_accessor.h"
 #include "garnet/lib/debug_ipc/protocol.h"
 #include "garnet/lib/debug_ipc/helper/message_loop.h"
 #include "garnet/lib/debug_ipc/helper/zircon_exception_watcher.h"
+
 #include "garnet/public/lib/fxl/macros.h"
 
 namespace debug_agent {
 
+class Breakpoint;
 class DebugAgent;
 class DebuggedThread;
 class ProcessBreakpoint;
 
-class DebuggedProcess : public debug_ipc::ZirconExceptionWatcher {
+class DebuggedProcess : public debug_ipc::ZirconExceptionWatcher,
+                        public ProcessMemoryAccessor {
  public:
   // Caller must call Init immediately after construction and delete the
   // object if that fails.
@@ -41,13 +46,10 @@ class DebuggedProcess : public debug_ipc::ZirconExceptionWatcher {
   void OnResume(const debug_ipc::ResumeRequest& request);
   void OnReadMemory(const debug_ipc::ReadMemoryRequest& request,
                     debug_ipc::ReadMemoryReply* reply);
-  void OnAddOrChangeBreakpoint(
-      const debug_ipc::AddOrChangeBreakpointRequest& request,
-      debug_ipc::AddOrChangeBreakpointReply* reply);
-  void OnRemoveBreakpoint(const debug_ipc::RemoveBreakpointRequest& request,
-                          debug_ipc::RemoveBreakpointReply* reply);
   void OnKill(const debug_ipc::KillRequest& request,
               debug_ipc::KillReply* reply);
+  void OnAddressSpace(const debug_ipc::AddressSpaceRequest& request,
+                      debug_ipc::AddressSpaceReply* reply);
 
   // Returns the thread or null if there is no known thread for this koid.
   DebuggedThread* GetThread(zx_koid_t thread_koid);
@@ -57,9 +59,14 @@ class DebuggedProcess : public debug_ipc::ZirconExceptionWatcher {
   // new thread notifications.
   void PopulateCurrentThreads();
 
-  // Looks for a breakpoint that could have generated a software breakpoint
-  // at the given address. Returns null if none found.
-  ProcessBreakpoint* FindBreakpointForAddr(uint64_t address);
+  // Looks for breakpoints at the given address. Null if no breakpoints are
+  // at that address.
+  ProcessBreakpoint* FindProcessBreakpointForAddr(uint64_t address);
+
+  // Notifications when breakpoints are added or removed that affect this
+  // process.
+  zx_status_t RegisterBreakpoint(Breakpoint* bp, uint64_t address);
+  void UnregisterBreakpoint(Breakpoint* bp, uint64_t address);
 
  private:
   // ZirconExceptionWatcher implementation.
@@ -72,6 +79,13 @@ class DebuggedProcess : public debug_ipc::ZirconExceptionWatcher {
                    zx_koid_t thread_koid,
                    uint32_t type) override;
 
+  // ProcessMemoryAccessor implementation.
+  zx_status_t ReadProcessMemory(
+      uintptr_t address, void* buffer, size_t len, size_t* actual) override;
+  zx_status_t WriteProcessMemory(
+      uintptr_t address, const void* buffer, size_t len, size_t* actual)
+    override;
+
   DebugAgent* debug_agent_;  // Non-owning.
   zx_koid_t koid_;
   zx::process process_;
@@ -81,12 +95,9 @@ class DebuggedProcess : public debug_ipc::ZirconExceptionWatcher {
 
   std::map<zx_koid_t, std::unique_ptr<DebuggedThread>> threads_;
 
-  // List of breakpoints indexed by IDs (IDs are assigned by the client).
-  std::map<uint32_t, std::unique_ptr<ProcessBreakpoint>> breakpoints_;
-
-  // Maps the address of each breakpoint to the unique ID used by the
-  // breakpoints_ map.
-  std::map<uint64_t, uint32_t> address_to_breakpoint_id_;
+  // Maps addresses to the ProcessBreakpoint at a location. The
+  // ProcessBreakpoint can hold multiple Breakpoint objects.
+  std::map<uint64_t, std::unique_ptr<ProcessBreakpoint>> breakpoints_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(DebuggedProcess);
 };

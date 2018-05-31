@@ -12,7 +12,7 @@
 #include "garnet/lib/media/client/audio_output_device.h"
 #include "garnet/lib/media/client/audio_output_manager.h"
 
-#include <fuchsia/cpp/media.h>
+#include <media/cpp/fidl.h>
 #include "lib/app/cpp/environment_services.h"
 #include "lib/fidl/cpp/synchronous_interface_ptr.h"
 #include "lib/fxl/logging.h"
@@ -27,9 +27,7 @@ constexpr size_t kBufferId = 0;
 
 AudioOutputStream::AudioOutputStream() {}
 
-AudioOutputStream::~AudioOutputStream() {
-  Stop();
-}
+AudioOutputStream::~AudioOutputStream() { Stop(); }
 
 bool AudioOutputStream::Initialize(fuchsia_audio_parameters* params,
                                    AudioOutputDevice* device) {
@@ -216,19 +214,16 @@ int AudioOutputStream::SetGain(float db_gain) {
   return ZX_OK;
 }
 
-int AudioOutputStream::Write(float* client_buffer,
-                             int num_samples,
+int AudioOutputStream::Write(float* client_buffer, int num_samples,
                              zx_time_t pres_time) {
   FXL_DCHECK(client_buffer);
   FXL_DCHECK(pres_time <= FUCHSIA_AUDIO_NO_TIMESTAMP);
   FXL_DCHECK(num_samples > 0);
   FXL_DCHECK(num_samples % num_channels_ == 0);
 
-  if (!active_)
-    return ZX_ERR_CONNECTION_ABORTED;
+  if (!active_) return ZX_ERR_CONNECTION_ABORTED;
 
-  if (num_samples > total_mapping_samples_)
-    return ZX_ERR_OUT_OF_RANGE;
+  if (num_samples > total_mapping_samples_) return ZX_ERR_OUT_OF_RANGE;
 
   if (pres_time == FUCHSIA_AUDIO_NO_TIMESTAMP && !received_first_frame_)
     return ZX_ERR_BAD_STATE;

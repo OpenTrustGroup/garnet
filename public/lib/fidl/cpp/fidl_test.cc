@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <fuchsia/cpp/fidl_test.h>
+#include <fidl/test/misc/cpp/fidl.h>
 
 #include <list>
 
@@ -11,7 +11,9 @@
 #include "lib/fidl/cpp/clone.h"
 #include "lib/fidl/cpp/optional.h"
 
-namespace fidl_test {
+namespace fidl {
+namespace test {
+namespace misc {
 namespace {
 
 // Takes a collection of distincts elements, and checks that the comparison
@@ -96,8 +98,7 @@ TEST(FidlTest, UnionComparison) {
 // generator generates values ordered by the given index.
 template <typename A>
 std::vector<fidl::VectorPtr<A>> BuildSortedVector(
-    size_t size,
-    const std::function<A(int32_t)>& generator) {
+    size_t size, const fit::function<A(int32_t)>& generator) {
   constexpr int32_t kNbBaseElement = 3;
 
   std::vector<fidl::VectorPtr<A>> result;
@@ -156,7 +157,7 @@ TEST(FidlTest, VectorOfOptionalStructComparison) {
 // Build a vector of arrays containing distincts values.
 template <typename A>
 std::vector<fidl::Array<A, 3>> BuildArray(
-    const std::function<A(int32_t)>& generator) {
+    const fit::function<A(int32_t)>& generator) {
   std::vector<fidl::Array<A, 3>> arrays;
   for (int32_t i = 0; i < 3; ++i) {
     for (int32_t j = 0; j < 3; ++j) {
@@ -194,4 +195,6 @@ TEST(FidlTest, ArrayOfOptionalStructComparison) {
 }
 
 }  // namespace
-}  // namespace fidl_test
+}  // namespace misc
+}  // namespace test
+}  // namespace fidl

@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_ESCHER_RESOURCES_RESOURCE_TYPE_INFO_H_
+#define LIB_ESCHER_RESOURCES_RESOURCE_TYPE_INFO_H_
 
 #include "lib/escher/base/type_info.h"
 
@@ -16,11 +17,12 @@ enum class ResourceType {
 
   // Concrete subclasses.
   kImage = 1 << 2,
-  kTexture = 1 << 3,
-  kFramebuffer = 1 << 4,
-  kBuffer = 1 << 5,
-  kMesh = 1 << 6,
-  kRenderPass = 1 << 7,
+  kImageView = 1 << 3,
+  kTexture = 1 << 4,
+  kFramebuffer = 1 << 5,
+  kBuffer = 1 << 6,
+  kMesh = 1 << 7,
+  kRenderPass = 1 << 8,
 
   // Resources defined in escher::impl namespace.
   kImplModelPipelineCache = 1 << 29,
@@ -31,3 +33,5 @@ enum class ResourceType {
 typedef TypeInfo<ResourceType> ResourceTypeInfo;
 
 }  // namespace escher
+
+#endif  // LIB_ESCHER_RESOURCES_RESOURCE_TYPE_INFO_H_

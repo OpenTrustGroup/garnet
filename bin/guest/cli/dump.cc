@@ -4,11 +4,11 @@
 
 #include "garnet/bin/guest/cli/dump.h"
 
+#include <fuchsia/guest/cpp/fidl.h>
 #include <pretty/hexdump.h>
 #include <iostream>
 
-#include "garnet/bin/guest/cli/service.h"
-#include "lib/fsl/tasks/message_loop.h"
+#include "lib/app/cpp/environment_services.h"
 
 static void dump(zx::vmo vmo, zx_vaddr_t addr, size_t len) {
   uint64_t vmo_size;
@@ -34,18 +34,20 @@ static void dump(zx::vmo vmo, zx_vaddr_t addr, size_t len) {
   hexdump_ex(reinterpret_cast<void*>(guest_addr + addr), len, addr);
 }
 
-void handle_dump(zx_vaddr_t addr, size_t len) {
-  zx_status_t status = connect(inspect_svc.NewRequest());
-  if (status != ZX_OK) {
-    return;
+void handle_dump(uint32_t env_id, uint32_t cid, zx_vaddr_t addr, size_t len) {
+  // Connect to environment.
+  fuchsia::guest::GuestManagerSyncPtr guestmgr;
+  component::ConnectToEnvironmentService(guestmgr.NewRequest());
+  fuchsia::guest::GuestEnvironmentSyncPtr env_ptr;
+  guestmgr->ConnectToEnvironment(env_id, env_ptr.NewRequest());
+
+  fuchsia::guest::GuestControllerSyncPtr guest_controller;
+  env_ptr->ConnectToGuest(cid, guest_controller.NewRequest());
+
+  // Fetch the VMO and dump.
+  zx::vmo vmo;
+  guest_controller->GetPhysicalMemory(&vmo);
+  if (vmo) {
+    dump(std::move(vmo), addr, len);
   }
-  inspect_svc.set_error_handler([] {
-    std::cerr << "Package is not running\n";
-    fsl::MessageLoop::GetCurrent()->PostQuitTask();
-  });
-  inspect_svc->FetchGuestMemory([addr, len](zx::vmo vmo) {
-    dump(fbl::move(vmo), addr, len);
-    inspect_svc.Unbind();
-    fsl::MessageLoop::GetCurrent()->PostQuitTask();
-  });
 }

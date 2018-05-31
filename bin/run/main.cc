@@ -6,16 +6,15 @@
 #include <fdio/util.h>
 #include <stdio.h>
 
+#include <component/cpp/fidl.h>
 #include "lib/app/cpp/environment_services.h"
-#include <fuchsia/cpp/component.h>
-#include <fuchsia/cpp/component.h>
 
 static component::FileDescriptorPtr CloneFileDescriptor(int fd) {
-  zx_handle_t handles[FDIO_MAX_HANDLES] = { 0, 0, 0 };
+  zx_handle_t handles[FDIO_MAX_HANDLES] = {0, 0, 0};
   uint32_t types[FDIO_MAX_HANDLES] = {
-    ZX_HANDLE_INVALID,
-    ZX_HANDLE_INVALID,
-    ZX_HANDLE_INVALID,
+      ZX_HANDLE_INVALID,
+      ZX_HANDLE_INVALID,
+      ZX_HANDLE_INVALID,
   };
   zx_status_t status = fdio_clone_fd(fd, 0, handles, types);
   if (status <= 0)
@@ -35,7 +34,7 @@ int main(int argc, const char** argv) {
     fprintf(stderr, "Usage: run <program> <args>*\n");
     return 1;
   }
-  component::ApplicationLaunchInfo launch_info;
+  component::LaunchInfo launch_info;
   launch_info.url = argv[1];
   for (int i = 0; i < argc - 2; ++i) {
     launch_info.arguments.push_back(argv[2 + i]);
@@ -48,9 +47,8 @@ int main(int argc, const char** argv) {
   component::ApplicationLauncherSyncPtr launcher;
   component::ConnectToEnvironmentService(launcher.NewRequest());
 
-  component::ApplicationControllerSyncPtr controller;
-  launcher->CreateApplication(std::move(launch_info),
-                              controller.NewRequest());
+  component::ComponentControllerSyncPtr controller;
+  launcher->CreateApplication(std::move(launch_info), controller.NewRequest());
 
   int32_t return_code;
   if (!controller->Wait(&return_code)) {

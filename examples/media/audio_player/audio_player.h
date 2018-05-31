@@ -5,8 +5,8 @@
 #ifndef GARNET_EXAMPLES_MEDIA_AUDIO_PLAYER_AUDIO_PLAYER_H_
 #define GARNET_EXAMPLES_MEDIA_AUDIO_PLAYER_AUDIO_PLAYER_H_
 
-#include <fuchsia/cpp/media.h>
-#include <fuchsia/cpp/media_player.h>
+#include <media/cpp/fidl.h>
+#include <media_player/cpp/fidl.h>
 
 #include "garnet/examples/media/audio_player/audio_player_params.h"
 #include "lib/app/cpp/application_context.h"
@@ -23,10 +23,8 @@ class AudioPlayer {
   ~AudioPlayer();
 
  private:
-  // Handles a status update from the player. When called with the default
-  // argument values, initiates status updates.
-  void HandleStatusUpdates(uint64_t version = media::kInitialStatus,
-                           media_player::MediaPlayerStatusPtr status = nullptr);
+  // Handles a status update from the player.
+  void HandleStatusChanged(const media_player::MediaPlayerStatus& status);
 
   fxl::Closure quit_callback_;
   media_player::MediaPlayerPtr media_player_;

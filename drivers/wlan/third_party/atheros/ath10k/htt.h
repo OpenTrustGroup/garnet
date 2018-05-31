@@ -18,10 +18,12 @@
 #ifndef _HTT_H_
 #define _HTT_H_
 
+#include <ddk/driver.h>
+
 #include "htc.h"
 #include "hw.h"
 #include "rx_desc.h"
-#include "hw.h"
+#include "sparse_array.h"
 
 enum htt_dbg_stats_type {
     HTT_DBG_STATS_WAL_PDEV_TXRX = 1 << 0,
@@ -100,11 +102,11 @@ struct htt_msdu_ext_desc {
     struct htt_data_tx_desc_frag frags[6];
 };
 
-#define HTT_MSDU_EXT_DESC_FLAG_IPV4_CSUM_ENABLE     BIT(0)
-#define HTT_MSDU_EXT_DESC_FLAG_UDP_IPV4_CSUM_ENABLE BIT(1)
-#define HTT_MSDU_EXT_DESC_FLAG_UDP_IPV6_CSUM_ENABLE BIT(2)
-#define HTT_MSDU_EXT_DESC_FLAG_TCP_IPV4_CSUM_ENABLE BIT(3)
-#define HTT_MSDU_EXT_DESC_FLAG_TCP_IPV6_CSUM_ENABLE BIT(4)
+#define HTT_MSDU_EXT_DESC_FLAG_IPV4_CSUM_ENABLE     (1 << 0)
+#define HTT_MSDU_EXT_DESC_FLAG_UDP_IPV4_CSUM_ENABLE (1 << 1)
+#define HTT_MSDU_EXT_DESC_FLAG_UDP_IPV6_CSUM_ENABLE (1 << 2)
+#define HTT_MSDU_EXT_DESC_FLAG_TCP_IPV4_CSUM_ENABLE (1 << 3)
+#define HTT_MSDU_EXT_DESC_FLAG_TCP_IPV6_CSUM_ENABLE (1 << 4)
 
 #define HTT_MSDU_CHECKSUM_ENABLE (HTT_MSDU_EXT_DESC_FLAG_IPV4_CSUM_ENABLE \
                  | HTT_MSDU_EXT_DESC_FLAG_UDP_IPV4_CSUM_ENABLE \
@@ -282,6 +284,7 @@ struct htt_aggr_conf {
     uint8_t max_num_ampdu_subframes;
     /* amsdu_subframes is limited by 0x1F mask */
     uint8_t max_num_amsdu_subframes;
+    uint8_t pad;
 } __PACKED;
 
 #define HTT_MGMT_FRM_HDR_DOWNLOAD_LEN 32
@@ -633,7 +636,7 @@ struct htt_rx_indication {
     struct fw_rx_desc_base fw_desc;
 
     /*
-     * %mpdu_ranges starts after &%prefix + roundup(%fw_rx_desc_bytes, 4)
+     * %mpdu_ranges starts after &%prefix + ROUNDUP(%fw_rx_desc_bytes, 4)
      * and has %num_mpdu_ranges elements.
      */
     struct htt_rx_indication_mpdu_range mpdu_ranges[0];
@@ -646,7 +649,7 @@ htt_rx_ind_get_mpdu_ranges(struct htt_rx_indication* rx_ind) {
     ptr += sizeof(rx_ind->hdr)
            + sizeof(rx_ind->ppdu)
            + sizeof(rx_ind->prefix)
-           + roundup(rx_ind->prefix.fw_rx_desc_bytes, 4);
+           + ROUNDUP(rx_ind->prefix.fw_rx_desc_bytes, 4);
     return ptr;
 }
 
@@ -1226,7 +1229,7 @@ struct htt_stats_conf_item {
     } __PACKED;
     uint8_t pad;
     uint16_t length;
-    uint8_t payload[0]; /* roundup(length, 4) long */
+    uint8_t payload[0]; /* ROUNDUP(length, 4) long */
 } __PACKED;
 
 struct htt_stats_conf {
@@ -1240,7 +1243,7 @@ struct htt_stats_conf {
 
 static inline struct htt_stats_conf_item* htt_stats_conf_next_item(
     const struct htt_stats_conf_item* item) {
-    return (void*)item + sizeof(*item) + roundup(item->length, 4);
+    return (void*)item + sizeof(*item) + ROUNDUP(item->length, 4);
 }
 
 /*
@@ -1302,11 +1305,11 @@ struct htt_frag_desc_bank_id {
  */
 #define HTT_FRAG_DESC_BANK_MAX 4
 
-#define HTT_FRAG_DESC_BANK_CFG_INFO_PDEV_ID_MASK        0x03
-#define HTT_FRAG_DESC_BANK_CFG_INFO_PDEV_ID_LSB         0
-#define HTT_FRAG_DESC_BANK_CFG_INFO_SWAP            BIT(2)
-#define HTT_FRAG_DESC_BANK_CFG_INFO_Q_STATE_VALID       BIT(3)
-#define HTT_FRAG_DESC_BANK_CFG_INFO_Q_STATE_DEPTH_TYPE_MASK BIT(4)
+#define HTT_FRAG_DESC_BANK_CFG_INFO_PDEV_ID_MASK            0x03
+#define HTT_FRAG_DESC_BANK_CFG_INFO_PDEV_ID_LSB             0
+#define HTT_FRAG_DESC_BANK_CFG_INFO_SWAP                    (1 << 2)
+#define HTT_FRAG_DESC_BANK_CFG_INFO_Q_STATE_VALID           (1 << 3)
+#define HTT_FRAG_DESC_BANK_CFG_INFO_Q_STATE_DEPTH_TYPE_MASK (1 << 4)
 #define HTT_FRAG_DESC_BANK_CFG_INFO_Q_STATE_DEPTH_TYPE_LSB  4
 
 enum htt_q_depth_type {
@@ -1428,19 +1431,19 @@ enum htt_tx_mode_switch_mode {
     HTT_TX_MODE_SWITCH_PUSH_PULL = 1,
 };
 
-#define HTT_TX_MODE_SWITCH_IND_INFO0_ENABLE     BIT(0)
+#define HTT_TX_MODE_SWITCH_IND_INFO0_ENABLE             (1 << 0)
 #define HTT_TX_MODE_SWITCH_IND_INFO0_NUM_RECORDS_MASK   0xfffe
 #define HTT_TX_MODE_SWITCH_IND_INFO0_NUM_RECORDS_LSB    1
 
-#define HTT_TX_MODE_SWITCH_IND_INFO1_MODE_MASK      0x0003
-#define HTT_TX_MODE_SWITCH_IND_INFO1_MODE_LSB       0
-#define HTT_TX_MODE_SWITCH_IND_INFO1_THRESHOLD_MASK 0xfffc
-#define HTT_TX_MODE_SWITCH_IND_INFO1_THRESHOLD_LSB  2
+#define HTT_TX_MODE_SWITCH_IND_INFO1_MODE_MASK          0x0003
+#define HTT_TX_MODE_SWITCH_IND_INFO1_MODE_LSB           0
+#define HTT_TX_MODE_SWITCH_IND_INFO1_THRESHOLD_MASK     0xfffc
+#define HTT_TX_MODE_SWITCH_IND_INFO1_THRESHOLD_LSB      2
 
 #define HTT_TX_MODE_SWITCH_RECORD_INFO0_PEER_ID_MASK    0x0fff
-#define HTT_TX_MODE_SWITCH_RECORD_INFO0_PEER_ID_LSB 0
-#define HTT_TX_MODE_SWITCH_RECORD_INFO0_TID_MASK    0xf000
-#define HTT_TX_MODE_SWITCH_RECORD_INFO0_TID_LSB     12
+#define HTT_TX_MODE_SWITCH_RECORD_INFO0_PEER_ID_LSB     0
+#define HTT_TX_MODE_SWITCH_RECORD_INFO0_TID_MASK        0xf000
+#define HTT_TX_MODE_SWITCH_RECORD_INFO0_TID_LSB         12
 
 struct htt_tx_mode_switch_record {
     uint16_t info0; /* HTT_TX_MODE_SWITCH_RECORD_INFO0_ */
@@ -1571,6 +1574,8 @@ struct ath10k_htt_txbuf {
     struct htt_data_tx_desc cmd_tx;
 } __PACKED;
 
+#define HTT_RX_BUF_HTABLE_SZ 32
+
 struct ath10k_htt {
     struct ath10k* ar;
     enum ath10k_htc_ep_id eid;
@@ -1594,7 +1599,7 @@ struct ath10k_htt {
          * buffer objects whose data buffers the HW has
          * filled.
          */
-        struct sk_buff** netbufs_ring;
+        struct ath10k_msg_buf** netbufs_ring;
 
         /* This is used only with firmware supporting IN_ORD_IND.
          *
@@ -1602,26 +1607,15 @@ struct ath10k_htt {
          * buffer ring from which buffer addresses are copied by the
          * firmware to MAC Rx ring. Firmware then delivers IN_ORD_IND
          * pointing to specific (re-ordered) buffers.
-         *
-         * FIXME: With kernel generic hashing functions there's a lot
-         * of hash collisions for sk_buffs.
          */
-        bool in_ord_rx;
-        DECLARE_HASHTABLE(skb_table, 4);
+        enum { ATH10K_HTT_IN_ORD_RX_UNK = 0, ATH10K_HTT_IN_ORD_RX_YES, ATH10K_HTT_IN_ORD_RX_NO }
+            in_ord_rx;
+        list_node_t buf_hash[HTT_RX_BUF_HTABLE_SZ];
 
-        /*
-         * Ring of buffer addresses -
-         * This ring holds the "physical" device address of the
-         * rx buffers the host SW provides for the MAC HW to
-         * fill.
-         */
-        uint32_t* paddrs_ring;
-
-        /*
-         * Base address of ring, as a "physical" device address
-         * rather than a CPU address.
-         */
-        dma_addr_t base_paddr;
+        /* Ring of buffer addresses */
+        io_buffer_t io_buf;
+        uint32_t* paddrs_ring; // Ring of paddrs of rx buffers for MAC HW to fill
+        zx_paddr_t base_paddr; // Physical address of ring
 
         /* how many elems in the ring (power of 2) */
         int size;
@@ -1642,20 +1636,15 @@ struct ath10k_htt {
          * the value of this shadow register.
          */
         struct {
+            io_buffer_t io_buf;
             uint32_t* vaddr;
-            dma_addr_t paddr;
+            zx_paddr_t paddr;
         } alloc_idx;
 
         /* where HTT SW has processed bufs filled by rx MAC DMA */
         struct {
             unsigned int msdu_payld;
         } sw_rd_idx;
-
-        /*
-         * refill_retry_timer - timer triggered when the ring is
-         * not refilled to the level expected
-         */
-        struct timer_list refill_retry_timer;
 
         /* Protects access to all rx ring buffer state variables */
         mtx_t lock;
@@ -1668,42 +1657,31 @@ struct ath10k_htt {
     int max_num_pending_tx;
     int num_pending_tx;
     int num_pending_mgmt_tx;
-    struct idr pending_tx;
-    wait_queue_head_t empty_tx_wq;
-
-    /* FIFO for storing tx done status {ack, no-ack, discard} and msdu id */
-    DECLARE_KFIFO_PTR(txdone_fifo, struct htt_tx_done);
+    sparse_array_t pending_tx;
 
     /* set if host-fw communication goes haywire
      * used to avoid further failures
      */
     bool rx_confused;
-    atomic_t num_mpdus_ready;
-
-    /* This is used to group tx/rx completions separately and process them
-     * in batches to reduce cache stalls
-     */
-    struct sk_buff_head rx_compl_q;
-    struct sk_buff_head rx_in_ord_compl_q;
-    struct sk_buff_head tx_fetch_ind_q;
-
-    /* rx_status template */
-    struct ieee80211_rx_status rx_status;
+    atomic_int num_mpdus_ready;
 
     struct {
-        dma_addr_t paddr;
+        io_buffer_t handle;
+        zx_paddr_t paddr;
         struct htt_msdu_ext_desc* vaddr;
     } frag_desc;
 
     struct {
-        dma_addr_t paddr;
+        io_buffer_t handle;
+        zx_paddr_t paddr;
         struct ath10k_htt_txbuf* vaddr;
     } txbuf;
 
     struct {
         bool enabled;
+        io_buffer_t handle;
         struct htt_q_state* vaddr;
-        dma_addr_t paddr;
+        zx_paddr_t paddr;
         uint16_t num_push_allowed;
         uint16_t num_peers;
         uint16_t num_tids;
@@ -1779,68 +1757,77 @@ struct htt_rx_desc {
 
 #define HTT_CMD_MSGS \
     MSG(ATH10K_MSG_TYPE_HTT_CMD, ATH10K_MSG_TYPE_HTC, sizeof(struct htt_cmd_hdr)), \
-    HTT_CMD_MSG(VER_REQ, htt_ver_req)
+    HTT_CMD_MSG(VER_REQ,            htt_ver_req),            \
+    HTT_CMD_MSG(FRAG_DESC_BANK_CFG, htt_frag_desc_bank_cfg), \
+    HTT_CMD_MSG(RX_SETUP,           htt_rx_ring_setup),      \
+    HTT_CMD_MSG(AGGR_CONF,          htt_aggr_conf)
+
+#define HTT_RESP_PFX(x) ATH10K_MSG_TYPE_HTT_RESP_##x
+#define HTT_RESP_MSG(type, hdr) \
+    MSG(HTT_RESP_PFX(type), ATH10K_MSG_TYPE_HTT_RESP, sizeof(struct hdr))
 
 #define HTT_RESP_MSGS \
-    MSG(ATH10K_MSG_TYPE_HTT_RESP, ATH10K_MSG_TYPE_HTC, sizeof(struct htt_resp_hdr))
+    MSG(ATH10K_MSG_TYPE_HTT_RESP, ATH10K_MSG_TYPE_HTC, sizeof(struct htt_resp_hdr)), \
+    HTT_RESP_MSG(RX_IN_ORD_IND, htt_rx_in_ord_ind)
 
-#define HTT_MSGS \
-    HTT_CMD_MSGS, \
-    HTT_RESP_MSGS
+#define HTT_RX_MSGS \
+    MSG(ATH10K_MSG_TYPE_HTT_RX, ATH10K_MSG_TYPE_BASE, sizeof(struct htt_rx_desc))
+
+#define HTT_MSGS   \
+    HTT_CMD_MSGS,  \
+    HTT_RESP_MSGS, \
+    HTT_RX_MSGS
 
 struct msg_buf;
 
-int ath10k_htt_connect(struct ath10k_htt* htt);
-int ath10k_htt_init(struct ath10k* ar);
-int ath10k_htt_setup(struct ath10k_htt* htt);
+zx_status_t ath10k_htt_connect(struct ath10k_htt* htt);
+zx_status_t ath10k_htt_init(struct ath10k* ar);
+zx_status_t ath10k_htt_setup(struct ath10k_htt* htt);
 
-int ath10k_htt_tx_start(struct ath10k_htt* htt);
+zx_status_t ath10k_htt_tx_start(struct ath10k_htt* htt);
 void ath10k_htt_tx_stop(struct ath10k_htt* htt);
 void ath10k_htt_tx_destroy(struct ath10k_htt* htt);
 void ath10k_htt_tx_free(struct ath10k_htt* htt);
 
-int ath10k_htt_rx_alloc(struct ath10k_htt* htt);
-int ath10k_htt_rx_ring_refill(struct ath10k* ar);
+zx_status_t ath10k_htt_rx_alloc(struct ath10k_htt* htt);
+zx_status_t ath10k_htt_rx_ring_refill(struct ath10k* ar);
 void ath10k_htt_rx_free(struct ath10k_htt* htt);
 
 void ath10k_htt_htc_tx_complete(struct ath10k* ar, struct ath10k_msg_buf* msg_buf);
 void ath10k_htt_htc_t2h_msg_handler(struct ath10k* ar, struct ath10k_msg_buf* msg_buf);
 bool ath10k_htt_t2h_msg_handler(struct ath10k* ar, struct ath10k_msg_buf* msg_buf);
-int ath10k_htt_h2t_ver_req_msg(struct ath10k_htt* htt);
+zx_status_t ath10k_htt_h2t_ver_req_msg(struct ath10k_htt* htt);
 #if 0 // NEEDS PORTING
 int ath10k_htt_h2t_stats_req(struct ath10k_htt* htt, uint8_t mask, uint64_t cookie);
-int ath10k_htt_send_frag_desc_bank_cfg(struct ath10k_htt* htt);
-int ath10k_htt_send_rx_ring_cfg_ll(struct ath10k_htt* htt);
-int ath10k_htt_h2t_aggr_cfg_msg(struct ath10k_htt* htt,
-                                uint8_t max_subfrms_ampdu,
-                                uint8_t max_subfrms_amsdu);
-void ath10k_htt_hif_tx_complete(struct ath10k* ar, struct sk_buff* skb);
+#endif // NEEDS PORTING
+zx_status_t ath10k_htt_send_frag_desc_bank_cfg(struct ath10k_htt* htt);
+zx_status_t ath10k_htt_send_rx_ring_cfg_ll(struct ath10k_htt* htt);
+zx_status_t ath10k_htt_h2t_aggr_cfg_msg(struct ath10k_htt* htt,
+                                        uint8_t max_subfrms_ampdu,
+                                        uint8_t max_subfrms_amsdu);
+void ath10k_htt_hif_tx_complete(struct ath10k* ar, struct ath10k_msg_buf* msg_buf);
+#if 0 // NEEDS PORTING
 int ath10k_htt_tx_fetch_resp(struct ath10k* ar,
                              uint32_t token,
                              uint16_t fetch_seq_num,
                              struct htt_tx_fetch_record* records,
                              size_t num_records);
 
-void ath10k_htt_tx_txq_update(struct ieee80211_hw* hw,
-                              struct ieee80211_txq* txq);
-void ath10k_htt_tx_txq_recalc(struct ieee80211_hw* hw,
-                              struct ieee80211_txq* txq);
-void ath10k_htt_tx_txq_sync(struct ath10k* ar);
-void ath10k_htt_tx_dec_pending(struct ath10k_htt* htt);
-int ath10k_htt_tx_inc_pending(struct ath10k_htt* htt);
-void ath10k_htt_tx_mgmt_dec_pending(struct ath10k_htt* htt);
-int ath10k_htt_tx_mgmt_inc_pending(struct ath10k_htt* htt, bool is_mgmt,
-                                   bool is_presp);
-
-int ath10k_htt_tx_alloc_msdu_id(struct ath10k_htt* htt, struct sk_buff* skb);
-void ath10k_htt_tx_free_msdu_id(struct ath10k_htt* htt, uint16_t msdu_id);
-int ath10k_htt_mgmt_tx(struct ath10k_htt* htt, struct sk_buff* msdu);
-int ath10k_htt_tx(struct ath10k_htt* htt,
-                  enum ath10k_hw_txrx_mode txmode,
-                  struct sk_buff* msdu);
-void ath10k_htt_rx_pktlog_completion_handler(struct ath10k* ar,
-        struct sk_buff* skb);
-int ath10k_htt_txrx_compl_task(struct ath10k* ar, int budget);
 #endif // NEEDS PORTING
+void ath10k_htt_tx_dec_pending(struct ath10k_htt* htt);
+zx_status_t ath10k_htt_tx_inc_pending(struct ath10k_htt* htt);
+void ath10k_htt_tx_mgmt_dec_pending(struct ath10k_htt* htt);
+zx_status_t ath10k_htt_tx_mgmt_inc_pending(struct ath10k_htt* htt, bool is_mgmt, bool is_presp);
+
+zx_status_t ath10k_htt_tx_alloc_msdu_id(struct ath10k_htt* htt,
+                                        struct ath10k_msg_buf* buf,
+                                        ssize_t* id_ptr);
+void ath10k_htt_tx_free_msdu_id(struct ath10k_htt* htt, uint16_t msdu_id);
+zx_status_t ath10k_htt_mgmt_tx(struct ath10k_htt* htt, struct ath10k_msg_buf* tx_buf);
+zx_status_t ath10k_htt_tx(struct ath10k_htt* htt,
+                          enum ath10k_hw_txrx_mode txmode,
+                          struct ath10k_msg_buf* msdu);
+void ath10k_htt_rx_pktlog_completion_handler(struct ath10k* ar, struct ath10k_msg_buf* buf);
+bool ath10k_htt_txrx_compl_task(struct ath10k* ar);
 
 #endif

@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <fuchsia/cpp/media.h>
-
 #include "garnet/bin/media/media_player/player/demux_source_segment.h"
+
+#include <media/cpp/fidl.h>
+#include <lib/async/cpp/task.h>
 
 #include "garnet/bin/media/media_player/util/safe_clone.h"
 #include "lib/fxl/logging.h"
@@ -42,14 +43,17 @@ DemuxSourceSegment::~DemuxSourceSegment() {}
 
 void DemuxSourceSegment::DidProvision() {
   demux_initialized_.When([this]() {
-    if (provisioned()) {
-      BuildGraph();
-    }
+    async::PostTask(async(), [this]() {
+      if (provisioned()) {
+        BuildGraph();
+      }
+    });
   });
 }
 
 void DemuxSourceSegment::WillDeprovision() {
   if (demux_node_) {
+    graph().Unprepare();
     graph().RemoveNode(demux_node_);
     demux_node_ = nullptr;
   }
@@ -72,9 +76,9 @@ void DemuxSourceSegment::BuildGraph() {
   }
 }
 
-void DemuxSourceSegment::Flush(bool hold_frame) {
+void DemuxSourceSegment::Flush(bool hold_frame, fxl::Closure callback) {
   FXL_DCHECK(demux_initialized_.occurred());
-  graph().FlushAllOutputs(demux_node_, hold_frame);
+  graph().FlushAllOutputs(demux_node_, hold_frame, callback);
 }
 
 void DemuxSourceSegment::Seek(int64_t position, fxl::Closure callback) {

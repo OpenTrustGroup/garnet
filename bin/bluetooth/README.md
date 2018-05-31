@@ -6,7 +6,7 @@ Bluetooth Host Subsystem (5.0+) supporting a framework for developing Low Energy
 and Traditional profiles.
 
 - [Public API](../../public/lib/bluetooth/fidl)
-- [Tools](../bluetooth_tools)
+- [Tools](tools/)
 - [System Architecture](../../docs/bluetooth_architecture.md)
 - [Host Library](../../drivers/bluetooth/lib)
 - [Host Bus Driver](../../drivers/bluetooth/host)
@@ -20,7 +20,7 @@ Examples using Fuchsia's Bluetooth Low Energy APIs for all four LE roles can be
 found in Garnet and Topaz. All of these are currently compiled into Fuchsia by
 default.
 
-- __LE scanner__: see [`eddystone_agent`](https://fuchsia.googlesource.com/topaz/+/master/examples/bluetooth/eddystone_agent/).
+- __LE scanner__: see [`eddystone_agent`](https://fuchsia.googlesource.com/topaz/+/master/examples/eddystone_agent/).
 This is a suggestion agent that proposes URL links that are obtained from
 Eddystone beacons. This is built in topaz by default.
 - __LE broadcaster__: see [`eddystone_advertiser`](https://fuchsia.googlesource.com/topaz/+/master/examples/bluetooth/eddystone_advertiser/).
@@ -37,11 +37,11 @@ clients are performed using the [control.fidl](../../public/lib/bluetooth/fidl/c
 API. This API is intended for managing local adapters, device discovery & discoverability,
 pairing/bonding, and other settings.
 
-[`bluetoothcli`](../bluetooth_tools/bluetoothcli) is a command-line front-end
+[`bt-cli`](tools/bt-cli) is a command-line front-end
 for this API:
 
 ```
-$ bluetoothcli
+$ bt-cli
 bluetooth> list-adapters
   Adapter 0
     id: bf004a8b-d691-4298-8c79-130b83e047a1
@@ -55,7 +55,7 @@ that acts as a Bluetooth system menu based on this API at
 
 ### Tools
 
-See the [bluetooth_tools](../bluetooth_tools) package for more information on
+See the [bluetooth/tools](tools/) package for more information on
 available command line tools for testing/debugging.
 
 ### Testing
@@ -92,7 +92,7 @@ TODO(armansito): Describe integration tests
 
 ### Log Verbosity
 
-#### bin/bluetooth
+#### bin/bt-gap
 
 The Bluetooth system service is invoked by sysmgr to resolve service requests.
 The mapping between environment service names and their handlers is defined in

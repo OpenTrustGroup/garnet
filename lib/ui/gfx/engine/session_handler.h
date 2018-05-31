@@ -9,7 +9,7 @@
 #include "lib/fidl/cpp/interface_ptr_set.h"
 #include "lib/fxl/tasks/task_runner.h"
 
-#include <fuchsia/cpp/ui.h>
+#include <fuchsia/ui/scenic/cpp/fidl.h>
 #include "garnet/lib/ui/gfx/engine/engine.h"
 #include "garnet/lib/ui/gfx/engine/session.h"
 #include "garnet/lib/ui/scenic/command_dispatcher.h"
@@ -29,35 +29,33 @@ class SceneManagerImpl;
 // TODO(SCN-709): Unify SessionHandler and Session.
 class SessionHandler : public TempSessionDelegate {
  public:
-  SessionHandler(CommandDispatcherContext context,
-                 Engine* engine,
-                 SessionId session_id,
-                 EventReporter* event_reporter,
+  SessionHandler(CommandDispatcherContext context, Engine* engine,
+                 SessionId session_id, EventReporter* event_reporter,
                  ErrorReporter* error_reporter);
   virtual ~SessionHandler();
 
   scenic::gfx::Session* session() const { return session_.get(); }
 
  protected:
-  // |ui::Session / scenic::TempSessionDelegate|
+  // |fuchsia::ui::scenic::Session / scenic::TempSessionDelegate|
   void Present(uint64_t presentation_time,
                ::fidl::VectorPtr<zx::event> acquire_fences,
                ::fidl::VectorPtr<zx::event> release_fences,
-               ui::Session::PresentCallback callback) override;
+               fuchsia::ui::scenic::Session::PresentCallback callback) override;
 
-  // |ui::Session / scenic::TempSessionDelegate|
-  void HitTest(uint32_t node_id,
-               ::gfx::vec3 ray_origin,
-               ::gfx::vec3 ray_direction,
-               ui::Session::HitTestCallback callback) override;
+  // |fuchsia::ui::scenic::Session / scenic::TempSessionDelegate|
+  void HitTest(uint32_t node_id, ::fuchsia::ui::gfx::vec3 ray_origin,
+               ::fuchsia::ui::gfx::vec3 ray_direction,
+               fuchsia::ui::scenic::Session::HitTestCallback callback) override;
 
-  // |ui::Session / scenic::TempSessionDelegate|
-  void HitTestDeviceRay(::gfx::vec3 ray_origin,
-                        ::gfx::vec3 ray_direction,
-                        ui::Session::HitTestCallback callback) override;
+  // |fuchsia::ui::scenic::Session / scenic::TempSessionDelegate|
+  void HitTestDeviceRay(
+      ::fuchsia::ui::gfx::vec3 ray_origin,
+      ::fuchsia::ui::gfx::vec3 ray_direction,
+      fuchsia::ui::scenic::Session::HitTestCallback callback) override;
 
   // |scenic::CommandDispatcher|
-  void DispatchCommand(ui::Command command) override;
+  void DispatchCommand(fuchsia::ui::scenic::Command command) override;
 
  private:
   friend class SessionManager;
@@ -78,7 +76,7 @@ class SessionHandler : public TempSessionDelegate {
 
   // TODO(SCN-710): We reallocate this everytime we std::move it into
   // ScheduleUpdate().  The bug has some ideas about how to do better.
-  std::vector<::gfx::Command> buffered_commands_;
+  std::vector<::fuchsia::ui::gfx::Command> buffered_commands_;
 };
 
 }  // namespace gfx

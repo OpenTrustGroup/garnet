@@ -30,6 +30,7 @@ class Transport;
 
 namespace gap {
 
+class BrEdrConnectionManager;
 class BrEdrDiscoveryManager;
 
 class LowEnergyAdvertisingManager;
@@ -98,6 +99,12 @@ class Adapter final {
   // Returns this Adapter's remote device cache.
   const RemoteDeviceCache& device_cache() const { return device_cache_; }
 
+  // Returns this Adapter's BR/EDR connection manager.
+  BrEdrConnectionManager* bredr_connection_manager() const {
+    FXL_DCHECK(bredr_connection_manager_);
+    return bredr_connection_manager_.get();
+  }
+
   // Returns this Adapter's BR/EDR discovery manager.
   BrEdrDiscoveryManager* bredr_discovery_manager() const {
     FXL_DCHECK(bredr_discovery_manager_);
@@ -125,6 +132,10 @@ class Adapter final {
   // Returns true if any discovery process (LE or BR/EDR) is running on this
   // adapter.
   bool IsDiscovering() const;
+
+  // Sets the Local Name of this adapter, for both BR/EDR discoverability and
+  // public LE services.
+  void SetLocalName(std::string name, hci::StatusCallback callback);
 
  private:
   // Second step of the initialization sequence. Called by Initialize() when the
@@ -204,6 +215,7 @@ class Adapter final {
   std::unique_ptr<LowEnergyAdvertisingManager> le_advertising_manager_;
 
   // Objects that perform BR/EDR procedures.
+  std::unique_ptr<BrEdrConnectionManager> bredr_connection_manager_;
   std::unique_ptr<BrEdrDiscoveryManager> bredr_discovery_manager_;
   fxl::ThreadChecker thread_checker_;
 

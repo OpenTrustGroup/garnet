@@ -7,7 +7,6 @@
 
 #include <atomic>
 
-#include "garnet/bin/media/media_player/framework/models/demand.h"
 #include "garnet/bin/media/media_player/framework/packet.h"
 
 namespace media_player {
@@ -20,6 +19,8 @@ class Output;
 class Input {
  public:
   Input(StageImpl* stage, size_t index);
+
+  Input(Input&& input);
 
   ~Input();
 
@@ -50,33 +51,28 @@ class Input {
   // Changes the prepared state of the input.
   void set_prepared(bool prepared) { prepared_ = prepared; }
 
-  // Indicates current demand. Called only by the upstream |Output|.
-  Demand demand() const;
+  // Indicates current need for a packet. Called only by the upstream |Output|.
+  bool needs_packet() const;
 
   // Updates packet. Called only by the upstream |Output|.
   void PutPacket(PacketPtr packet);
 
   // A packet supplied from upstream.
-  const PacketPtr& packet() { return packet_; }
+  const PacketPtr& packet() const { return packet_; }
 
-  // Takes ownership of the packet supplied from upstream and sets the demand
-  // to the indicated value.
-  PacketPtr TakePacket(Demand demand);
+  // Takes ownership of the packet supplied from upstream and requests another
+  // if |request_another| is true.
+  PacketPtr TakePacket(bool request_another);
 
-  // Updates mate's demand if |packet()| is empty. Called only by the downstream
+  // Requests a packet if |packet()| is empty. Called only by the downstream
   // stage.
-  void SetDemand(Demand demand);
+  void RequestPacket();
 
   // Flushes retained media.
   void Flush();
 
  private:
-  enum class State {
-    kDemandsPacket,
-    kAllowsPacket,
-    kRefusesPacket,
-    kHasPacket
-  };
+  enum class State { kNeedsPacket, kRefusesPacket, kHasPacket };
 
   StageImpl* stage_;
   size_t index_;

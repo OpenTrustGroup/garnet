@@ -20,10 +20,9 @@ constexpr float kSecondsPerNanosecond = .000'000'001f;
 }  // namespace
 
 SpinningSquareView::SpinningSquareView(
-    views_v1::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request)
-    : BaseView(std::move(view_manager),
-               std::move(view_owner_request),
+    ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request)
+    : BaseView(std::move(view_manager), std::move(view_owner_request),
                "Spinning Square"),
       background_node_(session()),
       square_node_(session()) {
@@ -41,7 +40,7 @@ SpinningSquareView::SpinningSquareView(
 SpinningSquareView::~SpinningSquareView() {}
 
 void SpinningSquareView::OnSceneInvalidated(
-    images::PresentationInfo presentation_info) {
+    fuchsia::images::PresentationInfo presentation_info) {
   if (!has_logical_size())
     return;
 

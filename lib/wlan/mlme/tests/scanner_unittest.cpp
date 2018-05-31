@@ -13,13 +13,15 @@
 #include <wlan/mlme/packet.h>
 #include <wlan/mlme/service.h>
 #include <wlan/mlme/timer.h>
+#include <wlan/protocol/mac.h>
 
 #include <fbl/ref_ptr.h>
 #include <fbl/unique_ptr.h>
 #include <gtest/gtest.h>
+#include <wlan_mlme/c/fidl.h>
 #include <cstring>
 
-#include <fuchsia/cpp/wlan_mlme.h>
+#include <wlan_mlme/cpp/fidl.h>
 
 namespace wlan {
 namespace {
@@ -45,12 +47,10 @@ class ScannerTest : public ::testing::Test {
 
     void SetActive() { req_->scan_type = wlan_mlme::ScanTypes::ACTIVE; }
 
-    zx_status_t Start() {
-        return scanner_.Start(*req_);
-    }
+    zx_status_t Start() { return scanner_.Start(*req_); }
 
     zx_status_t DeserializeScanResponse() {
-        return mock_dev_.GetQueuedServiceMsg(wlan_mlme::Method::SCAN_confirm, &resp_);
+        return mock_dev_.GetQueuedServiceMsg(wlan_mlme_MLMEScanConfOrdinal, &resp_);
     }
 
     wlan_mlme::ScanRequestPtr req_;
@@ -207,12 +207,13 @@ TEST_F(ScannerTest, ScanResponse) {
     info.chan = {
         .primary = 1,
     };
-    info.rssi = 10;
-    info.snr = 60;
+    info.rssi_dbm = -75;
+    info.snr_dbh = 30;
 
-    auto hdr = reinterpret_cast<const MgmtFrameHeader*>(kBeacon);
-    auto bcn = reinterpret_cast<const Beacon*>(kBeacon + hdr->len());
-    auto beacon = ImmutableMgmtFrame<Beacon>(hdr, bcn, sizeof(kBeacon) - hdr->len());
+    auto buffer = GetBuffer(sizeof(kBeacon));
+    auto packet = fbl::make_unique<Packet>(fbl::move(buffer), sizeof(kBeacon));
+    memcpy(packet->mut_field<uint8_t*>(0), kBeacon, sizeof(kBeacon));
+    auto beacon = ImmutableMgmtFrame<Beacon>(fbl::move(packet));
 
     EXPECT_EQ(ZX_OK, scanner_.HandleBeacon(beacon, info));
     mock_dev_.SetTime(zx::time(1));
@@ -229,9 +230,9 @@ TEST_F(ScannerTest, ScanResponse) {
     EXPECT_EQ(100u, bss.beacon_period);
     EXPECT_EQ(1024u, bss.timestamp);
     // EXPECT_EQ(1u, bss->channel);  // IE missing. info.chan != bss->channel.
-    EXPECT_EQ(10u, bss.rssi_measurement);
-    EXPECT_EQ(0, bss.rcpi_measurement);  // Not reported. Default at 0.
-    EXPECT_EQ(60u, bss.rsni_measurement);
+    EXPECT_EQ(-75, bss.rssi_dbm);
+    EXPECT_EQ(WLAN_RCPI_DBMH_INVALID, bss.rcpi_dbmh);
+    EXPECT_EQ(30, bss.rsni_dbh);
 }
 
 // TODO(hahnr): add test for active scanning

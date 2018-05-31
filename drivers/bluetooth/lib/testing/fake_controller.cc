@@ -23,6 +23,16 @@ void SetBit(NUM_TYPE* num_type, ENUM_TYPE bit) {
   *num_type |= static_cast<NUM_TYPE>(bit);
 }
 
+template <typename NUM_TYPE, typename ENUM_TYPE>
+void UnsetBit(NUM_TYPE* num_type, ENUM_TYPE bit) {
+  *num_type &= ~static_cast<NUM_TYPE>(bit);
+}
+
+template <typename NUM_TYPE, typename ENUM_TYPE>
+bool CheckBit(NUM_TYPE num_type, ENUM_TYPE bit) {
+  return (num_type & static_cast<NUM_TYPE>(bit));
+}
+
 hci::LEPeerAddressType ToPeerAddrType(common::DeviceAddress::Type type) {
   hci::LEPeerAddressType result = hci::LEPeerAddressType::kAnonymous;
 
@@ -43,25 +53,56 @@ hci::LEPeerAddressType ToPeerAddrType(common::DeviceAddress::Type type) {
 }  // namespace
 
 FakeController::Settings::Settings() {
-  ApplyDefaults();
-}
-
-void FakeController::Settings::ApplyDefaults() {
   std::memset(this, 0, sizeof(*this));
   hci_version = hci::HCIVersion::k5_0;
   num_hci_command_packets = 250;
 }
 
-void FakeController::Settings::ApplyLEOnlyDefaults() {
-  ApplyDefaults();
+void FakeController::Settings::ApplyDualModeDefaults() {
+  std::memset(this, 0, sizeof(*this));
+  hci_version = hci::HCIVersion::k5_0;
+  num_hci_command_packets = 250;
 
+  acl_data_packet_length = 512;
+  total_num_acl_data_packets = 1;
   le_acl_data_packet_length = 512;
   le_total_num_acl_data_packets = 1;
 
-  SetBit(&lmp_features_page0, hci::LMPFeature::kBREDRNotSupported);
   SetBit(&lmp_features_page0, hci::LMPFeature::kLESupported);
+  SetBit(&lmp_features_page0, hci::LMPFeature::kSimultaneousLEAndBREDR);
   SetBit(&lmp_features_page0, hci::LMPFeature::kExtendedFeatures);
 
+  AddBREDRSupportedCommands();
+  AddLESupportedCommands();
+}
+
+void FakeController::Settings::ApplyLEOnlyDefaults() {
+  ApplyDualModeDefaults();
+
+  UnsetBit(&lmp_features_page0, hci::LMPFeature::kSimultaneousLEAndBREDR);
+  SetBit(&lmp_features_page0, hci::LMPFeature::kBREDRNotSupported);
+
+  std::memset(supported_commands, 0, sizeof(supported_commands));
+  AddLESupportedCommands();
+}
+
+void FakeController::Settings::AddBREDRSupportedCommands() {
+  SetBit(supported_commands + 7, hci::SupportedCommand::kWriteLocalName);
+  SetBit(supported_commands + 7, hci::SupportedCommand::kReadLocalName);
+  SetBit(supported_commands + 7, hci::SupportedCommand::kReadScanEnable);
+  SetBit(supported_commands + 7, hci::SupportedCommand::kWriteScanEnable);
+  SetBit(supported_commands + 8, hci::SupportedCommand::kReadPageScanActivity);
+  SetBit(supported_commands + 8, hci::SupportedCommand::kWritePageScanActivity);
+  SetBit(supported_commands + 13, hci::SupportedCommand::kReadPageScanType);
+  SetBit(supported_commands + 13, hci::SupportedCommand::kWritePageScanType);
+  SetBit(supported_commands + 14, hci::SupportedCommand::kReadBufferSize);
+  SetBit(supported_commands + 17,
+         hci::SupportedCommand::kReadSimplePairingMode);
+  SetBit(supported_commands + 17,
+         hci::SupportedCommand::kWriteSimplePairingMode);
+}
+
+void FakeController::Settings::AddLESupportedCommands() {
   SetBit(supported_commands, hci::SupportedCommand::kDisconnect);
   SetBit(supported_commands + 5, hci::SupportedCommand::kSetEventMask);
   SetBit(supported_commands + 5, hci::SupportedCommand::kReset);
@@ -120,14 +161,16 @@ FakeController::LEAdvertisingState::LEAdvertisingState()
 }
 
 FakeController::FakeController()
-    : next_conn_handle_(0u),
-    le_connect_pending_(false),
-    next_le_sig_id_(1u),
-    scan_state_cb_dispatcher_(nullptr),
-    advertising_state_cb_dispatcher_(nullptr),
-    conn_state_cb_dispatcher_(nullptr),
-    le_conn_params_cb_dispatcher_(nullptr) {
-}
+    : page_scan_type_(hci::PageScanType::kStandardScan),
+      page_scan_interval_(0x0800),
+      page_scan_window_(0x0012),
+      next_conn_handle_(0u),
+      le_connect_pending_(false),
+      next_le_sig_id_(1u),
+      scan_state_cb_dispatcher_(nullptr),
+      advertising_state_cb_dispatcher_(nullptr),
+      conn_state_cb_dispatcher_(nullptr),
+      le_conn_params_cb_dispatcher_(nullptr) {}
 
 FakeController::~FakeController() { Stop(); }
 
@@ -141,8 +184,8 @@ void FakeController::ClearDefaultResponseStatus(hci::OpCode opcode) {
   default_status_map_.erase(opcode);
 }
 
-void FakeController::AddLEDevice(std::unique_ptr<FakeDevice> le_device) {
-  le_devices_.push_back(std::move(le_device));
+void FakeController::AddDevice(std::unique_ptr<FakeDevice> device) {
+  devices_.push_back(std::move(device));
 }
 
 void FakeController::SetScanStateCallback(
@@ -187,7 +230,7 @@ void FakeController::SetLEConnectionParametersCallback(
 
 FakeDevice* FakeController::FindDeviceByAddress(
     const common::DeviceAddress& addr) {
-  for (auto& dev : le_devices_) {
+  for (auto& dev : devices_) {
     if (dev->address() == addr)
       return dev.get();
   }
@@ -196,7 +239,7 @@ FakeDevice* FakeController::FindDeviceByAddress(
 
 FakeDevice* FakeController::FindDeviceByConnHandle(
     hci::ConnectionHandle handle) {
-  for (auto& dev : le_devices_) {
+  for (auto& dev : devices_) {
     if (dev->HasLink(handle))
       return dev.get();
   }
@@ -442,11 +485,29 @@ bool FakeController::MaybeRespondWithDefaultStatus(hci::OpCode opcode) {
   return true;
 }
 
+void FakeController::SendInquiryResponses() {
+  // TODO(jamuraa): combine some of these into a single response event
+  for (const auto& device : devices_) {
+    if (!device->has_inquiry_response()) {
+      continue;
+    }
+
+    SendCommandChannelPacket(device->CreateInquiryResponseEvent());
+    inquiry_num_responses_left_--;
+    if (inquiry_num_responses_left_ == 0) {
+      break;
+    }
+  }
+}
+
 void FakeController::SendAdvertisingReports() {
-  if (!le_scan_state_.enabled || le_devices_.empty())
+  if (!le_scan_state_.enabled || devices_.empty())
     return;
 
-  for (const auto& device : le_devices_) {
+  for (const auto& device : devices_) {
+    if (!device->has_advertising_reports()) {
+      continue;
+    }
     // We want to send scan response packets only during an active scan and if
     // the device is scannable.
     bool need_scan_rsp =
@@ -470,8 +531,9 @@ void FakeController::SendAdvertisingReports() {
 }
 
 void FakeController::NotifyAdvertisingState() {
-  if (!advertising_state_cb_)
+  if (!advertising_state_cb_) {
     return;
+  }
 
   FXL_DCHECK(advertising_state_cb_dispatcher_);
   async::PostTask(advertising_state_cb_dispatcher_, advertising_state_cb_);
@@ -678,6 +740,7 @@ void FakeController::OnCommandPacketReceived(
   if (MaybeRespondWithDefaultStatus(opcode))
     return;
 
+  // TODO(NET-825): Validate size of payload to be the correct length below.
   switch (opcode) {
     case hci::kReadLocalVersionInfo: {
       hci::ReadLocalVersionInfoReturnParams params;
@@ -792,6 +855,109 @@ void FakeController::OnCommandPacketReceived(
     case hci::kDisconnect: {
       OnDisconnectCommandReceived(
           command_packet.payload<hci::DisconnectCommandParams>());
+      break;
+    }
+    case hci::kWriteLocalName: {
+      const auto& in_params =
+          command_packet.payload<hci::WriteLocalNameCommandParams>();
+      local_name_ =
+          std::string(in_params.local_name,
+                      in_params.local_name + hci::kMaxLocalNameLength);
+      RespondWithSuccess(opcode);
+      break;
+    }
+    case hci::kReadLocalName: {
+      hci::ReadLocalNameReturnParams params;
+      params.status = hci::StatusCode::kSuccess;
+      auto mut_view = common::MutableBufferView(params.local_name,
+                                                hci::kMaxLocalNameLength);
+      mut_view.Write((uint8_t*)(local_name_.c_str()), hci::kMaxLocalNameLength);
+      RespondWithCommandComplete(hci::kReadLocalName,
+                                 common::BufferView(&params, sizeof(params)));
+      break;
+    }
+    case hci::kReadScanEnable: {
+      hci::ReadScanEnableReturnParams params;
+      params.status = hci::StatusCode::kSuccess;
+      params.scan_enable = bredr_scan_state_;
+
+      RespondWithCommandComplete(hci::kReadScanEnable,
+                                 common::BufferView(&params, sizeof(params)));
+      break;
+    }
+    case hci::kWriteScanEnable: {
+      const auto& in_params =
+          command_packet.payload<hci::WriteScanEnableCommandParams>();
+      bredr_scan_state_ = in_params.scan_enable;
+
+      RespondWithSuccess(opcode);
+      break;
+    }
+    case hci::kReadPageScanActivity: {
+      hci::ReadPageScanActivityReturnParams params;
+      params.status = hci::StatusCode::kSuccess;
+      params.page_scan_interval = htole16(page_scan_interval_);
+      params.page_scan_window = htole16(page_scan_window_);
+
+      RespondWithCommandComplete(hci::kReadPageScanActivity,
+                                 common::BufferView(&params, sizeof(params)));
+      break;
+    }
+    case hci::kWritePageScanActivity: {
+      const auto& in_params =
+          command_packet.payload<hci::WritePageScanActivityCommandParams>();
+      page_scan_interval_ = letoh16(in_params.page_scan_interval);
+      page_scan_window_ = letoh16(in_params.page_scan_window);
+
+      RespondWithSuccess(opcode);
+      break;
+    }
+    case hci::kReadPageScanType: {
+      hci::ReadPageScanTypeReturnParams params;
+      params.status = hci::StatusCode::kSuccess;
+      params.page_scan_type = page_scan_type_;
+
+      RespondWithCommandComplete(hci::kReadPageScanType,
+                                 common::BufferView(&params, sizeof(params)));
+      break;
+    }
+    case hci::kWritePageScanType: {
+      const auto& in_params =
+          command_packet.payload<hci::WritePageScanTypeCommandParams>();
+      page_scan_type_ = in_params.page_scan_type;
+
+      RespondWithSuccess(opcode);
+      break;
+    }
+    case hci::kReadSimplePairingMode: {
+      hci::ReadSimplePairingModeReturnParams params;
+      params.status = hci::StatusCode::kSuccess;
+      if (CheckBit(settings_.lmp_features_page1,
+                   hci::LMPFeature::kSecureSimplePairingHostSupport)) {
+        params.simple_pairing_mode = hci::GenericEnableParam::kEnable;
+      }
+
+      RespondWithCommandComplete(hci::kReadSimplePairingMode,
+                                 common::BufferView(&params, sizeof(params)));
+      break;
+    }
+    case hci::kWriteSimplePairingMode: {
+      const auto& in_params =
+          command_packet.payload<hci::WriteSimplePairingModeCommandParams>();
+      // "A host shall not set the Simple Pairing Mode to 'disabled'"
+      // Spec 5.0 Vol 2 Part E Sec 7.3.59
+      if (in_params.simple_pairing_mode != hci::GenericEnableParam::kEnable) {
+        hci::SimpleReturnParams params;
+        params.status = hci::StatusCode::kInvalidHCICommandParameters;
+        RespondWithCommandComplete(hci::kWriteSimplePairingMode,
+                                   common::BufferView(&params, sizeof(params)));
+        break;
+      }
+
+      SetBit(&settings_.lmp_features_page1,
+             hci::LMPFeature::kSecureSimplePairingHostSupport);
+
+      RespondWithSuccess(opcode);
       break;
     }
     case hci::kLEConnectionUpdate: {
@@ -956,8 +1122,55 @@ void FakeController::OnCommandPacketReceived(
         SendAdvertisingReports();
       break;
     }
-    case hci::kReset:
+
+    case hci::kInquiry: {
+      const auto& in_params =
+          command_packet.payload<hci::InquiryCommandParams>();
+
+      if (in_params.lap != hci::kGIAC && in_params.lap != hci::kLIAC) {
+        RespondWithCommandStatus(opcode, hci::kInvalidHCICommandParameters);
+        break;
+      }
+
+      if (in_params.inquiry_length == 0x00 ||
+          in_params.inquiry_length > hci::kInquiryLengthMax) {
+        RespondWithCommandStatus(opcode, hci::kInvalidHCICommandParameters);
+        break;
+      }
+
+      inquiry_num_responses_left_ = in_params.num_responses;
+      if (in_params.num_responses == 0) {
+        inquiry_num_responses_left_ = -1;
+      }
+
+      RespondWithCommandStatus(opcode, hci::kSuccess);
+
+      FXL_LOG(INFO) << "FakeController: sending inquiry responses..";
+      SendInquiryResponses();
+
+      // TODO(jamuraa): do this after an appropriate amount of time?
+      hci::InquiryCompleteEventParams params;
+      params.status = hci::kSuccess;
+      SendEvent(hci::kInquiryCompleteEventCode,
+                common::BufferView(&params, sizeof(params)));
+      break;
+    }
+    case hci::kReset: {
+      // TODO(jamuraa): actually do some resetting of stuff here
+      RespondWithSuccess(opcode);
+      break;
+    }
     case hci::kWriteLEHostSupport: {
+      const auto& in_params =
+          command_packet.payload<hci::WriteLEHostSupportCommandParams>();
+
+      if (in_params.le_supported_host == hci::GenericEnableParam::kEnable) {
+        SetBit(&settings_.lmp_features_page1,
+               hci::LMPFeature::kLESupportedHost);
+      } else {
+        UnsetBit(&settings_.lmp_features_page1,
+                 hci::LMPFeature::kLESupportedHost);
+      }
       RespondWithSuccess(opcode);
       break;
     }

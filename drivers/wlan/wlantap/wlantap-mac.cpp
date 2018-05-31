@@ -5,7 +5,7 @@
 #include "wlantap-mac.h"
 #include <ddk/debug.h>
 #include <ddk/driver.h>
-#include <fuchsia/cpp/wlan_device.h>
+#include <wlan_device/cpp/fidl.h>
 #include <lib/fxl/arraysize.h>
 #include <wlan/common/channel.h>
 #include <wlan/wlanmac-ifc-proxy.h>
@@ -187,6 +187,7 @@ struct WlantapMacImpl : WlantapMac {
         if (config->remote != expected_remote) {
             return ZX_ERR_INVALID_ARGS;
         }
+        self.listener_->WlantapMacConfigureBss(self.id_, config);
         return ZX_OK;
     }
 
@@ -228,9 +229,9 @@ struct WlantapMacImpl : WlantapMac {
                     .secondary80 = rx_info.chan.secondary80
                 },
                 .mcs = rx_info.mcs,
-                .rssi = rx_info.rssi,
-                .rcpi = rx_info.rcpi,
-                .snr = rx_info.snr
+                .rssi_dbm = rx_info.rssi_dbm,
+                .rcpi_dbmh = rx_info.rcpi_dbmh,
+                .snr_dbh = rx_info.snr_dbh
             };
             ifc_.Recv(0, &data[0], data.size(), &converted_info);
         }

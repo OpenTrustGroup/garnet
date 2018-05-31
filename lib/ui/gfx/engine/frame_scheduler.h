@@ -5,16 +5,14 @@
 #ifndef GARNET_LIB_UI_GFX_ENGINE_FRAME_SCHEDULER_H_
 #define GARNET_LIB_UI_GFX_ENGINE_FRAME_SCHEDULER_H_
 
-#include <lib/zx/time.h>
 #include <queue>
+
+#include <lib/async/dispatcher.h>
+#include <lib/zx/time.h>
 
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/ref_ptr.h"
 #include "lib/fxl/memory/weak_ptr.h"
-
-namespace fxl {
-class TaskRunner;
-}  // namespace fxl
 
 namespace scenic {
 namespace gfx {
@@ -64,6 +62,16 @@ class FrameScheduler {
   // may be in the past.
   void RequestFrame(zx_time_t presentation_time);
 
+  // If |render_continuously|, we keep rendering frames regardless of whether
+  // they're requested using RequestFrame().
+  void SetRenderContinuously(bool render_continuously);
+
+  // Helper method for ScheduleFrame().  Returns the target presentation time
+  // for the requested presentation time, and a wake-up time that is early
+  // enough to start rendering in order to hit the target presentation time.
+  std::pair<zx_time_t, zx_time_t> ComputeTargetPresentationAndWakeupTimes(
+      zx_time_t requested_presentation_time) const;
+
  private:
   // Update the global scene and then draw it... maybe.  There are multiple
   // reasons why this might not happen.  For example, the swapchain might apply
@@ -85,7 +93,7 @@ class FrameScheduler {
   // Helper method for ScheduleFrame().  Returns the target presentation time
   // for the next frame, and a wake-up time that is early enough to start
   // rendering in order to hit the target presentation time.
-  std::pair<zx_time_t, zx_time_t> ComputePresentationAndWakeupTimes() const;
+  std::pair<zx_time_t, zx_time_t> ComputeNextPresentationAndWakeupTimes() const;
 
   // Return the predicted amount of time required to render a frame.
   zx_time_t PredictRequiredFrameRenderTime() const;
@@ -93,19 +101,21 @@ class FrameScheduler {
   // Called by the delegate when the frame drawn by RenderFrame() has been
   // presented to the display.
   friend class FrameTimings;
-  void ReceiveFrameTimings(FrameTimings* timings);
+  void OnFramePresented(FrameTimings* timings);
 
-  fxl::TaskRunner* const task_runner_;
+  async_t* const dispatcher_;
   FrameSchedulerDelegate* delegate_;
   Display* const display_;
 
-  std::priority_queue<zx_time_t, std::vector<zx_time_t>, std::greater<zx_time_t>>
+  std::priority_queue<zx_time_t, std::vector<zx_time_t>,
+                      std::greater<zx_time_t>>
       requested_presentation_times_;
 
   uint64_t frame_number_ = 0;
   constexpr static size_t kMaxOutstandingFrames = 2;
   std::vector<FrameTimingsPtr> outstanding_frames_;
   bool back_pressure_applied_ = false;
+  bool render_continuously_ = false;
 
   fxl::WeakPtrFactory<FrameScheduler> weak_factory_;  // must be last
 

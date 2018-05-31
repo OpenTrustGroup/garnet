@@ -14,20 +14,20 @@ enum CBW {
     // Channel Bandwidth. See IEEE 802.11-2016 21.2.4 Table 21-2
     // VHT notation
 
-    CBW20 = 0, // Default. Corresponds to SecondaryChannelOffset-None
+    CBW20 = 0,  // Default. Corresponds to SecondaryChannelOffset-None
     CBW40 = 1,
-    CBW40ABOVE = CBW40, // Corresponds to SecondaryChannelOffset-Above
-    CBW40BELOW = 2,     // Corresponds to SecondaryChannelOffset-Below
+    CBW40ABOVE = CBW40,  // Corresponds to SecondaryChannelOffset-Above
+    CBW40BELOW = 2,      // Corresponds to SecondaryChannelOffset-Below
     CBW80 = 3,
     CBW160 = 4,
-    CBW80P80 = 5, // Non-contiguous frequency segments
+    CBW80P80 = 5,  // Non-contiguous frequency segments
 
     CBW_COUNT,
 };
 
 typedef struct wlan_channel {
     uint8_t primary;
-    uint8_t cbw; // Channel Bandwidth
+    uint8_t cbw;  // Channel Bandwidth
     uint8_t secondary80;
 } wlan_channel_t;
 
@@ -165,6 +165,24 @@ enum {
     // Bits 2-31 reserved
 };
 
+// LINT.IfChange
+typedef int8_t wlan_dBm_t;
+typedef int16_t wlan_dBmh_t;
+typedef int8_t wlan_dB_t;
+typedef int16_t wlan_dBh_t;
+
+#define WLAN_RSSI_DBM_MIN (-97)
+#define WLAN_RSSI_DBM_MAX (-10)
+#define WLAN_RCPI_DBMH_MIN (-97 * 2)
+#define WLAN_RCPI_DBMH_MAX (-10 * 2)
+#define WLAN_RSNI_DBH_MIN (1)
+#define WLAN_RSNI_DBH_MAX (60 * 2)
+
+#define WLAN_RSSI_DBM_INVALID (0)
+#define WLAN_RCPI_DBMH_INVALID (0)
+#define WLAN_RSNI_DBH_INVALID (0)
+// LINT.ThenChange(//garnet/lib/wlan/common/include/wlan/common/energy.h)
+
 typedef struct wlan_rx_info {
     // Receive flags. These represent boolean flags as opposed to enums or value-based info which
     // are represented below. Values should be taken from the WLAN_RX_INFO_FLAGS_* enum.
@@ -182,12 +200,14 @@ typedef struct wlan_rx_info {
     // The modulation and coding scheme index of the device at the time of the operation. Depends
     // on the PHY format and channel width.
     uint8_t mcs;
-    // The RSSI measured by the device. No units.
-    uint8_t rssi;
-    // The RCPI (IEEE Std 802.11-2016, 17.3.10.7) measured by the device.
-    uint8_t rcpi;
-    // The SNR measured by the device, in 0.5 dBm
-    uint8_t snr;
+
+    // Received Signal Strength Indicator.
+    wlan_dBm_t rssi_dbm;
+    // Received Channel Power Indicator, in 0.5 dBm. IEEE Std 802.11-2016, 17.3.10.7.
+    // Do not use encoding in 15.4.6.6
+    wlan_dBmh_t rcpi_dbmh;
+    // Signal-to-Noise Ratio, in 0.5 dB.
+    wlan_dBh_t snr_dbh;
 } wlan_rx_info_t;
 
 enum {

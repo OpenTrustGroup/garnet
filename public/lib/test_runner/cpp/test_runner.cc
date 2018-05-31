@@ -18,7 +18,7 @@
 // device logs (and possibly if multiple tests are run at the same time).
 //
 // The shell command representing the running test is launched in a new
-// ApplicationEnvironment for easy teardown. This ApplicationEnvironment
+// Environment for easy teardown. This Environment
 // contains a TestRunner service (see test_runner.fidl). The applications
 // launched by the shell command (which may launch more than 1 process) may use
 // the |TestRunner| service to signal completion of the test, and also provides
@@ -39,31 +39,31 @@
 #include <string>
 #include <vector>
 
+#include <lib/async/default.h>
+
+#include "lib/fsl/types/type_converters.h"
 #include "lib/fxl/logging.h"
-#include "lib/fxl/type_converter.h"
 #include "lib/fxl/strings/split_string.h"
 #include "lib/fxl/strings/string_view.h"
-#include "lib/fsl/tasks/message_loop.h"
-#include "lib/fsl/types/type_converters.h"
+#include "lib/fxl/type_converter.h"
 #include "third_party/rapidjson/rapidjson/document.h"
-#include "third_party/rapidjson/rapidjson/writer.h"
 #include "third_party/rapidjson/rapidjson/stringbuffer.h"
+#include "third_party/rapidjson/rapidjson/writer.h"
 
 namespace test_runner {
 
 TestRunObserver::~TestRunObserver() = default;
 
-TestRunnerImpl::TestRunnerImpl(
-    fidl::InterfaceRequest<TestRunner> request,
-    TestRunContext* test_run_context)
+TestRunnerImpl::TestRunnerImpl(fidl::InterfaceRequest<TestRunner> request,
+                               TestRunContext* test_run_context)
     : binding_(this, std::move(request)), test_run_context_(test_run_context) {
   binding_.set_error_handler([this] {
-    if (waiting_for_termination_) {
+    if (termination_task_.is_pending()) {
       FXL_LOG(INFO) << "Test " << program_name_ << " terminated as expected.";
       // Client terminated but that was expected.
-      termination_timer_.Stop();
+      termination_task_.Cancel();
       if (teardown_after_termination_) {
-        Teardown([]{});
+        Teardown([] {});
       } else {
         test_run_context_->StopTrackingClient(this, false);
       }
@@ -78,7 +78,7 @@ const std::string& TestRunnerImpl::program_name() const {
 }
 
 bool TestRunnerImpl::waiting_for_termination() const {
-  return waiting_for_termination_;
+  return termination_task_.is_pending();
 }
 
 void TestRunnerImpl::TeardownAfterTermination() {
@@ -112,24 +112,23 @@ void TestRunnerImpl::Teardown(TeardownCallback callback) {
 }
 
 void TestRunnerImpl::WillTerminate(const double withinSeconds) {
-  if (waiting_for_termination_) {
+  if (termination_task_.is_pending()) {
     Fail(program_name_ + " called WillTerminate more than once.");
     return;
   }
-  waiting_for_termination_ = true;
-  termination_timer_.Start(fsl::MessageLoop::GetCurrent()->task_runner().get(),
-                           [this, withinSeconds] {
-                             FXL_LOG(ERROR) << program_name_
-                                            << " termination timed out after "
-                                            << withinSeconds << "s.";
-                             binding_.set_error_handler(nullptr);
-                             Fail("Termination timed out.");
-                             if (teardown_after_termination_) {
-                               Teardown([]{});
-                             }
-                             test_run_context_->StopTrackingClient(this, false);
-                           },
-                           fxl::TimeDelta::FromSecondsF(withinSeconds));
+  termination_task_.set_handler(
+    [this, withinSeconds](async_t*, async::Task*, zx_status_t status) {
+         FXL_LOG(ERROR) << program_name_
+                        << " termination timed out after "
+                        << withinSeconds << "s.";
+         binding_.set_error_handler(nullptr);
+         Fail("Termination timed out.");
+         if (teardown_after_termination_) {
+           Teardown([] {});
+         }
+         test_run_context_->StopTrackingClient(this, false);
+  });
+  termination_task_.PostDelayed(async_get_default(), zx::sec(withinSeconds));
 }
 
 void TestRunnerImpl::SetTestPointCount(int64_t count) {
@@ -179,14 +178,13 @@ TestRunContext::TestRunContext(
   child_env_scope_->environment()->GetApplicationLauncher(
       launcher.NewRequest());
 
-  component::ApplicationLaunchInfo info;
+  component::LaunchInfo info;
   info.url = url;
   info.arguments = fxl::To<fidl::VectorPtr<fidl::StringPtr>>(args);
-  launcher->CreateApplication(std::move(info),
-                              child_app_controller_.NewRequest());
+  launcher->CreateApplication(std::move(info), child_controller_.NewRequest());
 
   // If the child app closes, the test is reported as a failure.
-  child_app_controller_.set_error_handler([this] {
+  child_controller_.set_error_handler([this] {
     FXL_LOG(WARNING) << "Child app connection closed unexpectedly. Remaining "
                         "TestRunner clients = "
                      << test_runner_clients_.size();
@@ -271,7 +269,7 @@ void TestRunContext::Teardown(TestRunnerImpl* teardown_client) {
     // app controller connection closes. If this is not reset, a connection
     // close may call test_runner_connection_->Teardown() again and override the
     // success status set here.
-    child_app_controller_.set_error_handler(nullptr);
+    child_controller_.set_error_handler(nullptr);
     test_runner_connection_->Teardown(test_id_, success_);
   }
 }

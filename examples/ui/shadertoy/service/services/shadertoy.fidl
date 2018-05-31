@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library shadertoy;
+library fuchsia.ui.shadertoy;
+
+using fuchsia.images;
 
 // Shadertoy (www.shadertoy.com) is an online community and tool for creating
 // and sharing GLSL shaders.  The genius of Shadertoy is that it side-steps the
@@ -37,10 +39,10 @@ interface Shadertoy {
   // i_mouse.zw
   //   - (when mouse is down) the current position of the mouse
   //   - (when mouse is up) the position of the last mouse-up event
-  4: SetMouse(gfx.vec4 i_mouse);
+  4: SetMouse(fuchsia.ui.gfx.vec4 i_mouse);
 
   // Corresponds to Shadertoy's 'iChannel0..3' parameters.  Currently only 2D
   // samplers are supported (no cubemaps).  |channel| must be one of 0, 1, 2, 3.
   // TODO: implement cubemap support.
-  5: SetImage(uint32 channel, request<images.ImagePipe> image_pipe);
+  5: SetImage(uint32 channel, request<fuchsia.images.ImagePipe> image_pipe);
 };

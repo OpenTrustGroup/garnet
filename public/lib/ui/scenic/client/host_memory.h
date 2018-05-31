@@ -21,9 +21,7 @@ namespace scenic_lib {
 class HostData : public fxl::RefCountedThreadSafe<HostData> {
  public:
   // Maps a range of an existing VMO into memory.
-  HostData(const zx::vmo& vmo,
-           off_t offset,
-           size_t size,
+  HostData(const zx::vmo& vmo, off_t offset, size_t size,
            uint32_t flags = ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE |
                             ZX_VM_FLAG_MAP_RANGE);
 
@@ -80,14 +78,10 @@ class HostMemory final : public Memory {
 // constructor.
 class HostImage final : public Image {
  public:
-  HostImage(const HostMemory& memory,
-            off_t memory_offset,
-            images::ImageInfo info);
-  HostImage(Session* session,
-            uint32_t memory_id,
-            off_t memory_offset,
-            fxl::RefPtr<HostData> data,
-            images::ImageInfo info);
+  HostImage(const HostMemory& memory, off_t memory_offset,
+            fuchsia::images::ImageInfo info);
+  HostImage(Session* session, uint32_t memory_id, off_t memory_offset,
+            fxl::RefPtr<HostData> data, fuchsia::images::ImageInfo info);
   HostImage(HostImage&& moved);
   ~HostImage();
 
@@ -118,14 +112,14 @@ class HostImagePool {
 
   // Gets information about the images in the pool, or nullptr if the
   // pool is not configured.
-  const images::ImageInfo* image_info() const { return &image_info_; }
+  const fuchsia::images::ImageInfo* image_info() const { return &image_info_; }
 
   // Sets the image information for images in the pool.
   // Previously created images are released but their memory may be reused.
   // If |image_info| is nullptr, the pool reverts to an non-configured state;
   // all images are released but the memory is retained for recycling.
   // Returns true if the configuration changed.
-  bool Configure(const images::ImageInfo* image_info);
+  bool Configure(const fuchsia::images::ImageInfo* image_info);
 
   // Gets the image with the specified index.
   // The |index| must be between 0 and |num_images() - 1|.
@@ -141,7 +135,7 @@ class HostImagePool {
   Session* const session_;
 
   bool configured_ = false;
-  images::ImageInfo image_info_;
+  fuchsia::images::ImageInfo image_info_;
   std::vector<std::unique_ptr<HostImage>> image_ptrs_;
   std::vector<std::unique_ptr<HostMemory>> memory_ptrs_;
 

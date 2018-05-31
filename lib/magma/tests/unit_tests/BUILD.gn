@@ -4,7 +4,7 @@
 
 import("//garnet/lib/magma/gnbuild/magma.gni")
 
-executable("magma_sys_unit_tests") {
+executable("magma_unit_tests") {
   testonly = true
 
   sources = [
@@ -12,7 +12,7 @@ executable("magma_sys_unit_tests") {
   ]
 
   deps = [
-    ":magma_system_platform_tests",
+    ":magma_platform_tests",
     ":magma_system_tests",
     ":magma_util_tests",
     "//third_party/googletest:gtest",
@@ -59,7 +59,7 @@ source_set("magma_util_tests") {
   ]
 }
 
-source_set("magma_system_platform_tests") {
+source_set("magma_platform_tests") {
   testonly = true
   sources = [
     "test_platform_connection.cc",
@@ -78,21 +78,6 @@ source_set("magma_system_platform_tests") {
     "$magma_build_root/src/magma_util/platform:semaphore",
     "$magma_build_root/src/magma_util/platform:thread",
     "//third_party/googletest:gtest",
-  ]
-}
-
-executable("magma_sys_display_unit_tests") {
-  testonly = true
-
-  sources = [
-    "main.cc",
-    "test_ioctl.cc",
-  ]
-
-  deps = [
-    "$magma_build_root/src/magma_util",
-    "//third_party/googletest:gtest",
-    "//zircon/public/lib/fdio",
   ]
 }
 
@@ -120,23 +105,6 @@ source_set("magma_platform_hardware_tests") {
     "$magma_build_root/src/magma_util/platform:device",
     "$magma_build_root/tests/helper:platform_device_helper",
     "$magma_build_root/tests/mock:mmio",
-    "//third_party/googletest:gtest",
-  ]
-}
-
-executable("magma_abi_conformance_tests") {
-  testonly = true
-
-  sources = [
-    "main.cc",
-    "test_magma_abi.cc",
-    "test_magma_abi_c.c",
-  ]
-
-  deps = [
-    "$magma_build_root:libmagma",
-    "$magma_build_root/include:magma_abi",
-    "$magma_build_root/src/magma_util/platform:buffer",
     "//third_party/googletest:gtest",
   ]
 }

@@ -6,8 +6,7 @@
 
 #include <algorithm>
 
-#include <fuchsia/cpp/views_v1.h>
-#include "garnet/bin/ui/root_presenter/presentation.h"
+#include <fuchsia/ui/views_v1/cpp/fidl.h>
 #include "lib/app/cpp/connect.h"
 #include "lib/fidl/cpp/clone.h"
 #include "lib/fxl/logging.h"
@@ -29,8 +28,9 @@ App::App(const fxl::CommandLine& command_line)
       });
 
   application_context_->outgoing()
-      .AddPublicService<input::InputDeviceRegistry>(
-          [this](fidl::InterfaceRequest<input::InputDeviceRegistry> request) {
+      .AddPublicService<fuchsia::ui::input::InputDeviceRegistry>(
+          [this](fidl::InterfaceRequest<fuchsia::ui::input::InputDeviceRegistry>
+                     request) {
             input_receiver_bindings_.AddBinding(this, std::move(request));
           });
 }
@@ -38,13 +38,12 @@ App::App(const fxl::CommandLine& command_line)
 App::~App() {}
 
 void App::Present(
-    fidl::InterfaceHandle<views_v1_token::ViewOwner> view_owner_handle,
+    fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_handle,
     fidl::InterfaceRequest<presentation::Presentation> presentation_request) {
   InitializeServices();
 
-  auto presentation =
-      std::make_unique<Presentation>(view_manager_.get(),
-                                     scenic_.get(), session_.get());
+  auto presentation = std::make_unique<Presentation>(
+      view_manager_.get(), scenic_.get(), session_.get(), renderer_params_);
   Presentation::YieldCallback yield_callback = [this](bool yield_to_next) {
     if (yield_to_next) {
       SwitchToNextPresentation();
@@ -54,36 +53,37 @@ void App::Present(
   };
   Presentation::ShutdownCallback shutdown_callback =
       [this, presentation = presentation.get()] {
-    size_t idx;
-    for (idx = 0; idx < presentations_.size(); ++idx) {
-      if (presentations_[idx].get() == presentation) {
-        break;
-      }
-    }
-    FXL_DCHECK(idx != presentations_.size());
+        size_t idx;
+        for (idx = 0; idx < presentations_.size(); ++idx) {
+          if (presentations_[idx].get() == presentation) {
+            break;
+          }
+        }
+        FXL_DCHECK(idx != presentations_.size());
 
-    if (idx == active_presentation_idx_) {
-      // This works fine when idx == 0, because the previous idx chosen will
-      // also be 0, and it will be an no-op within SwitchToPreviousPresentation.
-      // Finally, at the end of the callback, everything will be cleaned up.
-      SwitchToPreviousPresentation();
-    }
+        if (idx == active_presentation_idx_) {
+          // This works fine when idx == 0, because the previous idx chosen will
+          // also be 0, and it will be an no-op within
+          // SwitchToPreviousPresentation. Finally, at the end of the callback,
+          // everything will be cleaned up.
+          SwitchToPreviousPresentation();
+        }
 
-    presentations_.erase(presentations_.begin() + idx);
-    if (idx < active_presentation_idx_) {
-      // Adjust index into presentations_.
-      active_presentation_idx_--;
-    }
+        presentations_.erase(presentations_.begin() + idx);
+        if (idx < active_presentation_idx_) {
+          // Adjust index into presentations_.
+          active_presentation_idx_--;
+        }
 
-    if (presentations_.empty()) {
-      layer_stack_->RemoveAllLayers();
-      active_presentation_idx_ = std::numeric_limits<size_t>::max();
-    }
-  };
+        if (presentations_.empty()) {
+          layer_stack_->RemoveAllLayers();
+          active_presentation_idx_ = std::numeric_limits<size_t>::max();
+        }
+      };
 
-  presentation->Present(
-      view_owner_handle.Bind(), std::move(presentation_request),
-      yield_callback, shutdown_callback);
+  presentation->Present(view_owner_handle.Bind(),
+                        std::move(presentation_request), yield_callback,
+                        shutdown_callback);
 
   for (auto& it : devices_by_id_) {
     presentation->OnDeviceAdded(it.second.get());
@@ -91,6 +91,33 @@ void App::Present(
 
   presentations_.push_back(std::move(presentation));
   SwitchToPresentation(presentations_.size() - 1);
+}
+
+void App::HACK_SetRendererParams(
+    bool enable_clipping,
+    ::fidl::VectorPtr<fuchsia::ui::gfx::RendererParam> params) {
+  renderer_params_.clipping_enabled.set_value(enable_clipping);
+  FXL_LOG(INFO)
+      << "Presenter::HACK_SetRendererParams: Setting clipping enabled to "
+      << (enable_clipping ? "true" : "false");
+  for (auto& param : *params) {
+    switch (param.Which()) {
+      case ::fuchsia::ui::gfx::RendererParam::Tag::kShadowTechnique:
+        renderer_params_.shadow_technique.set_value(param.shadow_technique());
+        FXL_LOG(INFO)
+            << "Presenter::HACK_SetRendererParams: Setting shadow technique to "
+            << param.shadow_technique();
+        continue;
+      case fuchsia::ui::gfx::RendererParam::Tag::kRenderFrequency:
+        renderer_params_.render_frequency.set_value(param.render_frequency());
+        FXL_LOG(INFO)
+            << "Presenter::HACK_SetRendererParams: Setting render frequency to "
+            << param.render_frequency();
+        continue;
+      case fuchsia::ui::gfx::RendererParam::Tag::Invalid:
+        continue;
+    }
+  }
 }
 
 void App::SwitchToPresentation(const size_t presentation_idx) {
@@ -101,23 +128,21 @@ void App::SwitchToPresentation(const size_t presentation_idx) {
   active_presentation_idx_ = presentation_idx;
   layer_stack_->RemoveAllLayers();
   layer_stack_->AddLayer(presentations_[presentation_idx]->layer());
-  session_->Present(0, [](images::PresentationInfo info) {});
+  session_->Present(0, [](fuchsia::images::PresentationInfo info) {});
 }
 
 void App::SwitchToNextPresentation() {
-  SwitchToPresentation(
-      (active_presentation_idx_ + 1) % presentations_.size());
+  SwitchToPresentation((active_presentation_idx_ + 1) % presentations_.size());
 }
 
 void App::SwitchToPreviousPresentation() {
-  SwitchToPresentation(
-      (active_presentation_idx_ + presentations_.size() - 1) %
-          presentations_.size());
+  SwitchToPresentation((active_presentation_idx_ + presentations_.size() - 1) %
+                       presentations_.size());
 }
 
-void App::RegisterDevice(
-    input::DeviceDescriptor descriptor,
-    fidl::InterfaceRequest<input::InputDevice> input_device_request) {
+void App::RegisterDevice(fuchsia::ui::input::DeviceDescriptor descriptor,
+                         fidl::InterfaceRequest<fuchsia::ui::input::InputDevice>
+                             input_device_request) {
   uint32_t device_id = ++next_device_token_;
 
   FXL_VLOG(1) << "RegisterDevice " << device_id << " " << descriptor;
@@ -146,7 +171,7 @@ void App::OnDeviceDisconnected(mozart::InputDeviceImpl* input_device) {
 }
 
 void App::OnReport(mozart::InputDeviceImpl* input_device,
-                   input::InputReport report) {
+                   fuchsia::ui::input::InputReport report) {
   FXL_VLOG(2) << "OnReport from " << input_device->id() << " " << report;
   if (devices_by_id_.count(input_device->id()) == 0 ||
       presentations_.size() == 0)
@@ -181,11 +206,11 @@ void App::InitializeServices() {
       Reset();
     });
 
-    compositor_ = std::make_unique<scenic_lib::DisplayCompositor>(
-        session_.get());
+    compositor_ =
+        std::make_unique<scenic_lib::DisplayCompositor>(session_.get());
     layer_stack_ = std::make_unique<scenic_lib::LayerStack>(session_.get());
     compositor_->SetLayerStack(*layer_stack_.get());
-    session_->Present(0, [](images::PresentationInfo info) {});
+    session_->Present(0, [](fuchsia::images::PresentationInfo info) {});
 
     scenic_->GetOwnershipEvent([this](zx::event event) {
       input_reader_.SetOwnershipEvent(std::move(event));

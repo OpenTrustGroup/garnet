@@ -16,11 +16,8 @@ const ResourceTypeInfo GpuImage::kTypeInfo = {
     ResourceType::kGpuImage | ResourceType::kImage | ResourceType::kImageBase,
     "GpuImage"};
 
-GpuImage::GpuImage(Session* session,
-                   scenic::ResourceId id,
-                   GpuMemoryPtr memory,
-                   uint64_t memory_offset,
-                   escher::ImageInfo image_info,
+GpuImage::GpuImage(Session* session, scenic::ResourceId id, GpuMemoryPtr memory,
+                   uint64_t memory_offset, escher::ImageInfo image_info,
                    vk::Image vk_image)
     : Image(session, id, GpuImage::kTypeInfo), memory_(std::move(memory)) {
   image_ = escher::Image::New(session->engine()->escher_resource_recycler(),
@@ -29,22 +26,21 @@ GpuImage::GpuImage(Session* session,
   FXL_CHECK(image_);
 }
 
-GpuImagePtr GpuImage::New(Session* session,
-                          scenic::ResourceId id,
+GpuImagePtr GpuImage::New(Session* session, scenic::ResourceId id,
                           GpuMemoryPtr memory,
-                          const images::ImageInfo& image_info,
+                          const fuchsia::images::ImageInfo& image_info,
                           uint64_t memory_offset,
                           ErrorReporter* error_reporter) {
   vk::Format pixel_format = vk::Format::eUndefined;
   size_t bytes_per_pixel;
   size_t pixel_alignment;
   switch (image_info.pixel_format) {
-    case images::PixelFormat::BGRA_8:
+    case fuchsia::images::PixelFormat::BGRA_8:
       pixel_format = vk::Format::eB8G8R8A8Unorm;
       bytes_per_pixel = 4u;
       pixel_alignment = 4u;
       break;
-    case images::PixelFormat::YUY2:
+    case fuchsia::images::PixelFormat::YUY2:
       error_reporter->ERROR()
           << "GpuImage::CreateFromMemory(): PixelFormat must be BGRA_8.";
       return nullptr;
@@ -111,9 +107,7 @@ GpuImagePtr GpuImage::New(Session* session,
                                     vk_image));
 }
 
-bool GpuImage::UpdatePixels() {
-  return false;
-}
+bool GpuImage::UpdatePixels() { return false; }
 
 }  // namespace gfx
 }  // namespace scenic

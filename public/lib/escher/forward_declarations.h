@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_ESCHER_FORWARD_DECLARATIONS_H_
+#define LIB_ESCHER_FORWARD_DECLARATIONS_H_
 
 namespace fxl {
 template <typename T>
@@ -22,6 +23,7 @@ class GpuAllocator;
 class GpuMem;
 class Image;
 class ImageFactory;
+class ImageView;
 class MeshBuilder;
 class MeshBuilderFactory;
 struct MeshSpec;
@@ -52,6 +54,7 @@ typedef fxl::RefPtr<Frame> FramePtr;
 typedef fxl::RefPtr<Framebuffer> FramebufferPtr;
 typedef fxl::RefPtr<GpuMem> GpuMemPtr;
 typedef fxl::RefPtr<Image> ImagePtr;
+typedef fxl::RefPtr<ImageView> ImageViewPtr;
 typedef fxl::RefPtr<Material> MaterialPtr;
 typedef fxl::RefPtr<Mesh> MeshPtr;
 typedef fxl::RefPtr<MeshBuilder> MeshBuilderPtr;
@@ -98,3 +101,5 @@ typedef fxl::RefPtr<Pipeline> PipelinePtr;
 namespace shaderc {
 class Compiler;
 }
+
+#endif  // LIB_ESCHER_FORWARD_DECLARATIONS_H_

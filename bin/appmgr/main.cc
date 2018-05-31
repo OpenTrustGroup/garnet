@@ -8,9 +8,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include <fs/managed-vfs.h>
 #include <fs/pseudo-dir.h>
 #include <fs/service.h>
+#include <fs/synchronous-vfs.h>
 #include <fs/vfs.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/task.h>
@@ -18,8 +18,8 @@
 #include <zircon/processargs.h>
 
 #include "garnet/bin/appmgr/dynamic_library_loader.h"
-#include "garnet/bin/appmgr/job_holder.h"
-#include "garnet/bin/appmgr/root_application_loader.h"
+#include "garnet/bin/appmgr/realm.h"
+#include "garnet/bin/appmgr/root_loader.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/files/file.h"
 #include "lib/fxl/log_settings.h"
@@ -28,7 +28,7 @@ namespace {
 
 constexpr char kRootLabel[] = "app";
 
-void PublishRootDir(component::JobHolder* root, fs::ManagedVfs* vfs) {
+void PublishRootDir(component::Realm* root, fs::SynchronousVfs* vfs) {
   static zx_handle_t request = zx_get_startup_handle(PA_DIRECTORY_REQUEST);
   if (request == ZX_HANDLE_INVALID)
     return;
@@ -36,7 +36,7 @@ void PublishRootDir(component::JobHolder* root, fs::ManagedVfs* vfs) {
   auto svc = fbl::AdoptRef(new fs::Service([root](zx::channel channel) {
     return root->BindSvc(std::move(channel));
   }));
-  dir->AddEntry("hub", root->info_dir());
+  dir->AddEntry("hub", root->hub_dir());
   dir->AddEntry("svc", svc);
 
   vfs->ServeDirectory(dir, zx::channel(request));
@@ -50,15 +50,14 @@ int main(int argc, char** argv) {
 
   async::Loop loop(&kAsyncLoopConfigMakeDefault);
 
-  fs::ManagedVfs vfs(loop.async());
-  component::RootApplicationLoader root_loader;
+  fs::SynchronousVfs vfs(loop.async());
+  component::RootLoader root_loader;
   fbl::RefPtr<fs::PseudoDir> directory(fbl::AdoptRef(new fs::PseudoDir()));
   directory->AddEntry(
-      component::ApplicationLoader::Name_,
+      component::Loader::Name_,
       fbl::AdoptRef(new fs::Service([&root_loader](zx::channel channel) {
         root_loader.AddBinding(
-            fidl::InterfaceRequest<component::ApplicationLoader>(
-                std::move(channel)));
+            fidl::InterfaceRequest<component::Loader>(std::move(channel)));
         return ZX_OK;
       })));
 
@@ -67,16 +66,15 @@ int main(int argc, char** argv) {
     return -1;
   if (vfs.ServeDirectory(directory, std::move(h2)) != ZX_OK)
     return -1;
-  component::JobHolder root_job_holder(nullptr, std::move(h1), kRootLabel);
-  fs::ManagedVfs publish_vfs(loop.async());
-  PublishRootDir(&root_job_holder, &vfs);
+  component::Realm root_realm(nullptr, std::move(h1), kRootLabel);
+  fs::SynchronousVfs publish_vfs(loop.async());
+  PublishRootDir(&root_realm, &publish_vfs);
 
-  component::ApplicationControllerPtr sysmgr;
-  auto run_sysmgr = [&root_job_holder, &sysmgr] {
-    component::ApplicationLaunchInfo launch_info;
+  component::ComponentControllerPtr sysmgr;
+  auto run_sysmgr = [&root_realm, &sysmgr] {
+    component::LaunchInfo launch_info;
     launch_info.url = "sysmgr";
-    root_job_holder.CreateApplication(std::move(launch_info),
-                                      sysmgr.NewRequest());
+    root_realm.CreateApplication(std::move(launch_info), sysmgr.NewRequest());
   };
 
   async::PostTask(loop.async(), [&run_sysmgr, &sysmgr] {

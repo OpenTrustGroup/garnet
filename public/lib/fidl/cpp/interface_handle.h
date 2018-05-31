@@ -129,8 +129,7 @@ class InterfaceHandle {
     encoder->EncodeHandle(&channel_, offset);
   }
 
-  static void Decode(Decoder* decoder,
-                     InterfaceHandle<Interface>* value,
+  static void Decode(Decoder* decoder, InterfaceHandle<Interface>* value,
                      size_t offset) {
     decoder->DecodeHandle(&value->channel_, offset);
   }

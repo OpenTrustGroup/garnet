@@ -5,14 +5,14 @@
 #ifndef GARNET_EXAMPLES_UI_SHADERTOY_SERVICE_SHADERTOY_IMPL_H_
 #define GARNET_EXAMPLES_UI_SHADERTOY_SERVICE_SHADERTOY_IMPL_H_
 
-#include <fuchsia/cpp/shadertoy.h>
+#include <fuchsia/ui/shadertoy/cpp/fidl.h>
 #include "garnet/examples/ui/shadertoy/service/shadertoy_state.h"
 
 namespace shadertoy {
 
 // Thin wrapper that delegates Shadertoy API calls to a (subclass of)
 // ShadertoyState.
-class ShadertoyImpl : public shadertoy::Shadertoy {
+class ShadertoyImpl : public ::fuchsia::ui::shadertoy::Shadertoy {
  public:
   explicit ShadertoyImpl(fxl::RefPtr<ShadertoyState> state);
   ~ShadertoyImpl() override;
@@ -25,17 +25,17 @@ class ShadertoyImpl : public shadertoy::Shadertoy {
 
   // |Shadertoy|
   void SetShaderCode(::fidl::StringPtr glsl,
-                     SetShaderCodeCallback callback) override;
+                     ::fuchsia::ui::shadertoy::Shadertoy::SetShaderCodeCallback callback) override;
 
   // |Shadertoy|
   void SetResolution(uint32_t width, uint32_t height) override;
 
   // |Shadertoy|
-  void SetMouse(gfx::vec4 i_mouse) override;
+  void SetMouse(fuchsia::ui::gfx::vec4 i_mouse) override;
 
   // |Shadertoy|
   void SetImage(uint32_t channel,
-                ::fidl::InterfaceRequest<images::ImagePipe> request) override;
+                ::fidl::InterfaceRequest<fuchsia::images::ImagePipe> request) override;
 
   fxl::RefPtr<ShadertoyState> state_;
 

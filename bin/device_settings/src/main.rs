@@ -55,11 +55,11 @@ impl DeviceSettingsManagerServer {
             .collect();
     }
 
-    fn run_watchers(&mut self, key: &str, mut t: ValueType) {
+    fn run_watchers(&mut self, key: &str, t: ValueType) {
         let mut map = self.watchers.lock();
         if let Some(m) = map.get_mut(key) {
             m.retain(|w| {
-                if let Err(e) = w.on_change_settings(&mut t) {
+                if let Err(e) = w.on_change_settings(t) {
                     match e {
                         fidl::Error::ClientRead(zx::Status::PEER_CLOSED)
                         | fidl::Error::ClientWrite(zx::Status::PEER_CLOSED) => {
@@ -116,34 +116,35 @@ fn device_settings_server(state: DeviceSettingsManagerServer, channel: async::Ch
 {
     DeviceSettingsManagerImpl {
         state,
+        on_open: |_,_| fok(()),
         get_integer: |state, key, res| catch_and_log_err("get_integer", || {
             let file = if let Some(f) = state.setting_file_map.get(&key) {
                 f
             } else {
-                res.send(&mut 0, &mut Status::ErrInvalidSetting)?;
+                res.send(0, Status::ErrInvalidSetting)?;
                 return Ok(());
             };
             match read_file(file) {
                 Err(e) => {
                     if e.kind() == io::ErrorKind::NotFound {
-                        res.send(&mut 0, &mut Status::ErrNotSet)
+                        res.send(0, Status::ErrNotSet)
                     } else {
                         fx_log_err!("reading integer: {:?}", e);
-                        res.send(&mut 0, &mut Status::ErrRead)
+                        res.send(0, Status::ErrRead)
                     }
                 }
                 Ok(str) => match str.parse::<i64>() {
-                    Err(_e) => res.send(&mut 0, &mut Status::ErrIncorrectType),
-                    Ok(mut i) => res.send(&mut i, &mut Status::Ok),
+                    Err(_e) => res.send(0, Status::ErrIncorrectType),
+                    Ok(i) => res.send(i, Status::Ok),
                 },
             }
         }),
         set_integer: |state, key, val, res| catch_and_log_err("set_integer", || {
             match state.set_key(&key, val.to_string().as_bytes(), ValueType::Number) {
-                Ok(mut r) => res.send(&mut r),
+                Ok(r) => res.send(r),
                 Err(e) => {
                     fx_log_err!("setting integer: {:?}", e);
-                    res.send(&mut false)
+                    res.send(false)
                 }
             }
         }),
@@ -151,45 +152,45 @@ fn device_settings_server(state: DeviceSettingsManagerServer, channel: async::Ch
             let file = if let Some(f) = state.setting_file_map.get(&key) {
                 f
             } else {
-                res.send(&mut "".to_string(), &mut Status::ErrInvalidSetting)?;
+                res.send("", Status::ErrInvalidSetting)?;
                 return Ok(());
             };
             match read_file(file) {
                 Err(e) => {
                     if e.kind() == io::ErrorKind::NotFound {
-                        res.send(&mut "".to_string(), &mut Status::ErrNotSet)
+                        res.send("", Status::ErrNotSet)
                     } else {
                         fx_log_err!("reading string: {:?}", e);
-                        res.send(&mut "".to_string(), &mut Status::ErrRead)
+                        res.send("", Status::ErrRead)
                     }
                 }
-                Ok(mut s) => res.send(&mut s, &mut Status::Ok),
+                Ok(s) => res.send(&*s, Status::Ok),
             }
         }),
         set_string: |state, key, val, res| catch_and_log_err("set_string", || {
             fx_log_info!("setting string key: {:?}, val: {:?}", key, val);
             match state.set_key(&key, val.as_bytes(), ValueType::Text) {
-                Ok(mut r) => res.send(&mut r),
+                Ok(mut r) => res.send(r),
                 Err(e) => {
                     fx_log_err!("setting string: {:?}", e);
-                    res.send(&mut false)
+                    res.send(false)
                 }
             }
         }),
         watch: |state, key, watcher, res| catch_and_log_err("watch", || {
             if !state.setting_file_map.contains_key(&key) {
-                return res.send(&mut Status::ErrInvalidSetting);
+                return res.send(Status::ErrInvalidSetting);
             }
             match watcher.into_proxy() {
                 Err(e) => {
                     fx_log_err!("getting watcher proxy: {:?}", e);
-                    res.send(&mut Status::ErrUnknown)
+                    res.send(Status::ErrUnknown)
                 }
                 Ok(w) => {
                     let mut map = state.watchers.lock();
                     let mv = map.entry(key).or_insert(Vec::new());
                     mv.push(w);
-                    res.send(&mut Status::Ok)
+                    res.send(Status::Ok)
                 }
             }
         }),
@@ -219,7 +220,7 @@ fn main_ds() -> Result<(), Error> {
                 watchers: watchers.clone(),
             };
 
-            d.initialize_keys(DATA_DIR, &["Timezone", "TestSetting"]);
+            d.initialize_keys(DATA_DIR, &["DeviceName", "TestSetting"]);
 
             async::spawn(device_settings_server(d, channel))
         }))
@@ -278,10 +279,10 @@ mod tests {
     fn test_int() {
         async_test(&["TestKey"], |device_settings| {
             device_settings
-                .set_integer(&mut "TestKey".to_string(), &mut 18)
+                .set_integer("TestKey", 18)
                 .and_then(move |response| {
                     assert!(response, "set_integer failed");
-                    device_settings.get_integer(&mut "TestKey".to_string())
+                    device_settings.get_integer("TestKey")
                 })
                 .and_then(move |response| {
                     assert_eq!(response, (18, Status::Ok));
@@ -294,10 +295,10 @@ mod tests {
     fn test_string() {
         async_test(&["TestKey"], |device_settings| {
             device_settings
-                .set_string(&mut "TestKey".to_string(), &mut "mystring".to_string())
+                .set_string("TestKey", "mystring")
                 .and_then(move |response| {
                     assert!(response, "set_string failed");
-                    device_settings.get_string(&mut "TestKey".to_string())
+                    device_settings.get_string("TestKey")
                 })
                 .and_then(move |response| {
                     assert_eq!(response, ("mystring".to_string(), Status::Ok));
@@ -310,10 +311,10 @@ mod tests {
     fn test_invalid_key() {
         async_test(&[], |device_settings| {
             device_settings
-                .get_string(&mut "TestKey".to_string())
+                .get_string("TestKey")
                 .and_then(move |response| {
                     assert_eq!(response, ("".to_string(), Status::ErrInvalidSetting));
-                    device_settings.get_integer(&mut "TestKey".to_string())
+                    device_settings.get_integer("TestKey")
                 })
                 .and_then(move |response| {
                     assert_eq!(response, (0, Status::ErrInvalidSetting));
@@ -326,10 +327,10 @@ mod tests {
     fn test_incorrect_type() {
         async_test(&["TestKey"], |device_settings| {
             device_settings
-                .set_string(&mut "TestKey".to_string(), &mut "mystring".to_string())
+                .set_string("TestKey", "mystring")
                 .and_then(move |response| {
                     assert!(response, "set_string failed");
-                    device_settings.get_integer(&mut "TestKey".to_string())
+                    device_settings.get_integer("TestKey")
                 })
                 .and_then(move |response| {
                     assert_eq!(response, (0, Status::ErrIncorrectType));
@@ -342,10 +343,10 @@ mod tests {
     fn test_not_set_err() {
         async_test(&["TestKey"], |device_settings| {
             device_settings
-                .get_integer(&mut "TestKey".to_string())
+                .get_integer("TestKey")
                 .and_then(move |response| {
                     assert_eq!(response, (0, Status::ErrNotSet));
-                    device_settings.get_string(&mut "TestKey".to_string())
+                    device_settings.get_string("TestKey")
                 })
                 .and_then(move |response| {
                     assert_eq!(response, ("".to_string(), Status::ErrNotSet));
@@ -358,22 +359,22 @@ mod tests {
     fn test_multiple_keys() {
         async_test(&["TestKey1", "TestKey2"], |device_settings| {
             device_settings
-                .set_integer(&mut "TestKey1".to_string(), &mut 18)
+                .set_integer("TestKey1", 18)
                 .and_then(move |response| {
                     assert!(response, "set_integer failed");
                     device_settings
-                        .set_string(&mut "TestKey2".to_string(), &mut "mystring".to_string())
+                        .set_string("TestKey2", "mystring")
                         .map(move |response| (response, device_settings))
                 })
                 .and_then(|(response, device_settings)| {
                     assert!(response, "set_string failed");
                     device_settings
-                        .get_integer(&mut "TestKey1".to_string())
+                        .get_integer("TestKey1")
                         .map(move |response| (response, device_settings))
                 })
                 .and_then(|(response, device_settings)| {
                     assert_eq!(response, (18, Status::Ok));
-                    device_settings.get_string(&mut "TestKey2".to_string())
+                    device_settings.get_string("TestKey2")
                 })
                 .and_then(|response| {
                     assert_eq!(response, ("mystring".to_string(), Status::Ok));

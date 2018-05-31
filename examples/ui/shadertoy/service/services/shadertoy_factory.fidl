@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library shadertoy;
+library fuchsia.ui.shadertoy;
+
+using fuchsia.images;
 
 // ShadertoyFactory provides a number of methods for creating |Shadertoy|
 // instances.
@@ -10,7 +12,7 @@ library shadertoy;
 interface ShadertoyFactory {
   // Create a new Shadertoy that will present its rendered content to
   // |image_pipe|.
-  1: NewImagePipeShadertoy(request<Shadertoy> toy, images.ImagePipe image_pipe);
+  1: NewImagePipeShadertoy(request<Shadertoy> toy, fuchsia.images.ImagePipe image_pipe);
 
   // Create a new Shadertoy and a new view for it to render into.
   // If |handle_input_events| is true, then mouse/touch events will be
@@ -18,6 +20,7 @@ interface ShadertoyFactory {
   // Shadertoy.SetMouse() will be ignored.  Otherwise, the view will ignore
   // input events, and SetMouse() will behave normally.
   // TODO(MZ-227): not implemented.
-  2: NewViewShadertoy(request<Shadertoy> toy, request<views_v1_token.ViewOwner> view_owner,
+  2: NewViewShadertoy(request<Shadertoy> toy,
+                      request<fuchsia.ui.views_v1_token.ViewOwner> view_owner,
                       bool handle_input_events);
 };

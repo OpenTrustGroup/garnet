@@ -10,8 +10,8 @@
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/sequence.h>
 
-#include <fuchsia/c/wlan_stats.h>
-#include <fuchsia/cpp/wlan_mlme.h>
+#include <wlan_mlme/cpp/fidl.h>
+#include <wlan_stats/c/fidl.h>
 
 #include <fbl/unique_ptr.h>
 #include <wlan/common/macaddr.h>
@@ -75,7 +75,7 @@ class Station : public FrameHandler {
 
     zx_status_t SendKeepAliveResponse();
 
-    zx_status_t HandleMlmeMessage(const wlan_mlme::Method& method) override;
+    zx_status_t HandleMlmeMessage(uint32_t ordinal) override;
     zx_status_t HandleMlmeJoinReq(const wlan_mlme::JoinRequest& req) override;
     zx_status_t HandleMlmeAuthReq(const wlan_mlme::AuthenticateRequest& req) override;
     zx_status_t HandleMlmeDeauthReq(const wlan_mlme::DeauthenticateRequest& req) override;
@@ -104,6 +104,10 @@ class Station : public FrameHandler {
                                     const wlan_rx_info_t& rxinfo) override;
     zx_status_t HandleDataFrame(const ImmutableDataFrame<LlcHeader>& frame,
                                 const wlan_rx_info_t& rxinfo) override;
+    zx_status_t HandleLlcFrame(const LlcHeader& llc_frame, size_t llc_frame_len,
+                               const common::MacAddr& dest, const common::MacAddr& src);
+    zx_status_t HandleAmsduFrame(const ImmutableDataFrame<LlcHeader>& frame,
+                                 const wlan_rx_info_t& rxinfo);
 
     zx_status_t HandleEthFrame(const ImmutableBaseFrame<EthernetII>& frame) override;
     zx_status_t HandleTimeout();
@@ -121,12 +125,13 @@ class Station : public FrameHandler {
     zx_status_t SetPowerManagementMode(bool ps_mode);
     zx_status_t SendPsPoll();
 
-    zx::time deadline_after_bcn_period(zx_duration_t tus);
+    zx::time deadline_after_bcn_period(size_t bcn_count);
 
     bool IsHTReady() const;
     bool IsCbw40RxReady() const;
     bool IsCbw40TxReady() const;
     bool IsQosReady() const;
+    bool IsAmsduRxReady() const;
     HtCapabilities BuildHtCapabilities() const;
     uint8_t GetTid();
     uint8_t GetTid(const ImmutableBaseFrame<EthernetII>& frame);
@@ -144,7 +149,7 @@ class Station : public FrameHandler {
     zx::time signal_report_timeout_;
     zx::time last_seen_;
     uint16_t aid_ = 0;
-    common::MovingAverage<uint8_t, uint16_t, 20> avg_rssi_;
+    common::MovingAverage<int8_t, int16_t, 20> avg_rssi_dbm_;
     AuthAlgorithm auth_alg_ = AuthAlgorithm::kOpenSystem;
     eapol::PortState controlled_port_ = eapol::PortState::kBlocked;
 

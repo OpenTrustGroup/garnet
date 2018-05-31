@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <unordered_map>
+#include <vector>
 
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
@@ -16,7 +17,7 @@
 #include "garnet/drivers/bluetooth/lib/hci/connection_parameters.h"
 #include "garnet/drivers/bluetooth/lib/hci/hci.h"
 #include "garnet/drivers/bluetooth/lib/hci/hci_constants.h"
-#include "garnet/drivers/bluetooth/lib/l2cap/l2cap.h"
+#include "garnet/drivers/bluetooth/lib/l2cap/l2cap_defs.h"
 #include "garnet/drivers/bluetooth/lib/testing/fake_controller_base.h"
 #include "lib/fxl/functional/cancelable_callback.h"
 #include "lib/fxl/functional/closure.h"
@@ -41,10 +42,13 @@ class FakeController : public FakeControllerBase,
     Settings();
     ~Settings() = default;
 
-    void ApplyDefaults();
+    void ApplyDualModeDefaults();
     void ApplyLEOnlyDefaults();
     void ApplyLegacyLEConfig();
     void ApplyLEConfig();
+
+    void AddBREDRSupportedCommands();
+    void AddLESupportedCommands();
 
     // HCI settings.
     hci::HCIVersion hci_version;      // Default: HCIVersion::k5_0.
@@ -70,7 +74,7 @@ class FakeController : public FakeControllerBase,
     uint8_t le_total_num_acl_data_packets;
   };
 
-  // Current device scan state.
+  // Current device low energy scan state.
   struct LEScanState final {
     LEScanState();
 
@@ -129,9 +133,11 @@ class FakeController : public FakeControllerBase,
     return le_random_address_;
   }
 
-  // Adds a fake remote device. This device will be used to during LE scan and
-  // connection procedures.
-  void AddLEDevice(std::unique_ptr<FakeDevice> le_device);
+  // Returns the current Local Name.set in the controller
+  const std::string& local_name() const { return local_name_; }
+
+  // Adds a fake remote device.
+  void AddDevice(std::unique_ptr<FakeDevice> device);
 
   // Sets a callback to be invoked when the scan state changes.
   using ScanStateCallback = std::function<void(bool enabled)>;
@@ -229,8 +235,11 @@ class FakeController : public FakeControllerBase,
   // error response and returns true. Returns false if no response was set.
   bool MaybeRespondWithDefaultStatus(hci::OpCode opcode);
 
-  // Sends LE advertising reports for known LE devices, if a scan is currently
-  // enabled.
+  // Sends Inquiry Response reports for known BR/EDR devices.
+  void SendInquiryResponses();
+
+  // Sends LE advertising reports for known devices with advertising data, if a
+  // scan is currently enabled.
   void SendAdvertisingReports();
 
   // Notifies |advertising_state_cb_|
@@ -270,6 +279,15 @@ class FakeController : public FakeControllerBase,
   // Set by HCI_LE_Set_Random_Address
   common::DeviceAddress le_random_address_;
 
+  // Used for BR/EDR Scans
+  uint8_t bredr_scan_state_;
+  hci::PageScanType page_scan_type_;
+  uint16_t page_scan_interval_;
+  uint16_t page_scan_window_;
+
+  // The GAP local name, as written/read by HCI_(Read/Write)_Local_Name
+  std::string local_name_;
+
   // Variables used for
   // HCI_LE_Create_Connection/HCI_LE_Create_Connection_Cancel.
   uint16_t next_conn_handle_;
@@ -280,8 +298,15 @@ class FakeController : public FakeControllerBase,
   // ID used for L2CAP LE signaling channel commands.
   uint8_t next_le_sig_id_;
 
+  // The number of results left in Inquiry Mode operation.
+  // If negative, no limit has been set.
+  int16_t inquiry_num_responses_left_;
+
+  // Used to setup default status responses (for simulating errors)
   std::unordered_map<hci::OpCode, hci::StatusCode> default_status_map_;
-  std::vector<std::unique_ptr<FakeDevice>> le_devices_;
+
+  // The set of fake devices that are visible.
+  std::vector<std::unique_ptr<FakeDevice>> devices_;
 
   ScanStateCallback scan_state_cb_;
   async_t* scan_state_cb_dispatcher_;

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library sketchy;
+library fuchsia.ui.sketchy;
 
 // Specifies the type of a resource created via CreateResourceCommand, along with
 // any other required data.
@@ -38,14 +38,14 @@ struct Stroke {
 };
 
 // A stroke-group is a container of strokes, which can be inserted into a Scenic
-// scene-graph by importing adding it as a child of an imported |gfx.Node|.
+// scene-graph by importing adding it as a child of an imported |fuchsia.ui.gfx.Node|.
 //
 // Commands:
 // - ClearGroup
 // - AddStroke
 // - RemoveStroke
-// - gfx.Detach
-// - gfx.AddChild (as arg)
+// - fuchsia.ui.gfx.Detach
+// - fuchsia.ui.gfx.AddChild (as arg)
 struct StrokeGroup {
   uint8 unused;
 };

@@ -60,12 +60,13 @@ class Resource {
 // TODO(MZ-268): Make this class final, and add public move constructor.
 class Memory : public Resource {
  public:
-  Memory(Session* session, zx::vmo vmo, images::MemoryType memory_type);
+  Memory(Session* session, zx::vmo vmo,
+         fuchsia::images::MemoryType memory_type);
   ~Memory();
 
   // Gets the underlying VMO's memory type, indicating whether it represents
   // host or GPU memory.
-  images::MemoryType memory_type() const { return memory_type_; }
+  fuchsia::images::MemoryType memory_type() const { return memory_type_; }
 
  protected:
   Memory(Memory&& moved);
@@ -73,7 +74,7 @@ class Memory : public Resource {
  private:
   FXL_DISALLOW_COPY_AND_ASSIGN(Memory);
 
-  images::MemoryType const memory_type_;
+  fuchsia::images::MemoryType const memory_type_;
 };
 
 // Represents an abstract shape resource in a session.
@@ -113,13 +114,9 @@ class Rectangle final : public Shape {
 // Represents a rounded rectangle shape resource in a session.
 class RoundedRectangle final : public Shape {
  public:
-  RoundedRectangle(Session* session,
-                   float width,
-                   float height,
-                   float top_left_radius,
-                   float top_right_radius,
-                   float bottom_right_radius,
-                   float bottom_left_radius);
+  RoundedRectangle(Session* session, float width, float height,
+                   float top_left_radius, float top_right_radius,
+                   float bottom_right_radius, float bottom_left_radius);
   RoundedRectangle(RoundedRectangle&& moved);
   ~RoundedRectangle();
 
@@ -132,28 +129,27 @@ class RoundedRectangle final : public Shape {
 class Image : public Resource {
  public:
   // Creates an image resource bound to a session.
-  Image(const Memory& memory, off_t memory_offset, images::ImageInfo info);
-  Image(Session* session,
-        uint32_t memory_id,
-        off_t memory_offset,
-        images::ImageInfo info);
+  Image(const Memory& memory, off_t memory_offset,
+        fuchsia::images::ImageInfo info);
+  Image(Session* session, uint32_t memory_id, off_t memory_offset,
+        fuchsia::images::ImageInfo info);
   ~Image();
 
   // Returns the number of bytes needed to represent an image.
-  static size_t ComputeSize(const images::ImageInfo& image_info);
+  static size_t ComputeSize(const fuchsia::images::ImageInfo& image_info);
 
   // Gets the byte offset of the image within its memory resource.
   off_t memory_offset() const { return memory_offset_; }
 
   // Gets information about the image's layout.
-  const images::ImageInfo& info() const { return info_; }
+  const fuchsia::images::ImageInfo& info() const { return info_; }
 
  protected:
   Image(Image&& moved);
 
  private:
   off_t const memory_offset_;
-  images::ImageInfo const info_;
+  fuchsia::images::ImageInfo const info_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Image);
 };
@@ -162,9 +158,7 @@ class Image : public Resource {
 class Buffer final : public Resource {
  public:
   Buffer(const Memory& memory, off_t memory_offset, size_t buffer_size);
-  Buffer(Session* session,
-         uint32_t memory_id,
-         off_t memory_offset,
+  Buffer(Session* session, uint32_t memory_id, off_t memory_offset,
          size_t buffer_size);
   Buffer(Buffer&& moved);
   ~Buffer();
@@ -184,13 +178,11 @@ class Mesh final : public Shape {
   // These arguments are documented in commands.fidl; see
   // BindMeshBuffersCommand.
   void BindBuffers(const Buffer& index_buffer,
-                   gfx::MeshIndexFormat index_format,
-                   uint64_t index_offset,
-                   uint32_t index_count,
+                   fuchsia::ui::gfx::MeshIndexFormat index_format,
+                   uint64_t index_offset, uint32_t index_count,
                    const Buffer& vertex_buffer,
-                   gfx::MeshVertexFormat vertex_format,
-                   uint64_t vertex_offset,
-                   uint32_t vertex_count,
+                   fuchsia::ui::gfx::MeshVertexFormat vertex_format,
+                   uint64_t vertex_offset, uint32_t vertex_count,
                    const float bounding_box_min[3],
                    const float bounding_box_max[3]);
 
@@ -249,7 +241,7 @@ class Node : public Resource {
   void SetTag(uint32_t tag_value);
 
   // Sets the node's hit test behavior.
-  void SetHitTestBehavior(gfx::HitTestBehavior hit_test_behavior);
+  void SetHitTestBehavior(fuchsia::ui::gfx::HitTestBehavior hit_test_behavior);
 
   // Detaches the node from its parent.
   void Detach();
@@ -294,9 +286,9 @@ class ContainerNode : public Node {
  public:
   // Adds a child to the node.
   void AddChild(const Node& child) {
-   FXL_DCHECK(session() == child.session());
-   AddChild(child.id());
- }
+    FXL_DCHECK(session() == child.session());
+    AddChild(child.id());
+  }
   void AddChild(uint32_t child_node_id);
 
   void AddPart(const Node& part) {
@@ -384,7 +376,7 @@ class OpacityNode final : public ContainerNode {
 // A value that can be used in place of a constant value.
 class Variable final : public Resource {
  public:
-  explicit Variable(Session* session, gfx::Value initial_value);
+  explicit Variable(Session* session, fuchsia::ui::gfx::Value initial_value);
   Variable(Variable&& moved);
   ~Variable();
 
@@ -464,8 +456,24 @@ class Scene final : public ContainerNode {
   FXL_DISALLOW_COPY_AND_ASSIGN(Scene);
 };
 
+class CameraBase : public Resource {
+ public:
+  CameraBase(Session* session) : Resource(session) {}
+  CameraBase(CameraBase&& moved) : Resource(std::move(moved)) {}
+  ~CameraBase() {}
+  // Sets the camera's view parameters.
+  void SetTransform(const float eye_position[3], const float eye_look_at[3],
+                    const float eye_up[3]);
+  // Sets the camera pose buffer
+  void SetPoseBuffer(const Buffer& buffer, uint32_t num_entries,
+                     uint64_t base_time, uint64_t time_interval);
+
+ private:
+  FXL_DISALLOW_COPY_AND_ASSIGN(CameraBase);
+};
+
 // Represents a camera resource in a session.
-class Camera final : public Resource {
+class Camera : public CameraBase {
  public:
   explicit Camera(const Scene& scene);
   Camera(Session* session, uint32_t scene_id);
@@ -473,21 +481,26 @@ class Camera final : public Resource {
   ~Camera();
 
   // Sets the camera's projection parameters.
-  void SetTransform(const float eye_position[3],
-                    const float eye_look_at[3],
-                    const float eye_up[3]);
-
-  // Sets the camera's projection parameters.
   void SetProjection(const float fovy);
-
-  // Sets the camera pose buffer
-  void SetPoseBuffer(const Buffer& buffer,
-                     uint32_t num_entries,
-                     uint64_t base_time,
-                     uint64_t time_interval);
 
  private:
   FXL_DISALLOW_COPY_AND_ASSIGN(Camera);
+};
+
+// Represents a StereoCamera resource in a session.
+class StereoCamera final : public CameraBase {
+ public:
+  explicit StereoCamera(const Scene& scene);
+  StereoCamera(Session* session, uint32_t scene_id);
+  StereoCamera(StereoCamera&& moved);
+  ~StereoCamera();
+
+  // Sets the camera's projection parameters.
+  void SetStereoProjection(const float left_projection[16],
+                           const float right_projection[16]);
+
+ private:
+  FXL_DISALLOW_COPY_AND_ASSIGN(StereoCamera);
 };
 
 // Represents a renderer resource in a session.
@@ -504,10 +517,10 @@ class Renderer final : public Resource {
   }
   void SetCamera(uint32_t camera_id);
 
-  void SetParam(gfx::RendererParam param);
+  void SetParam(fuchsia::ui::gfx::RendererParam param);
 
   // Convenient wrapper for SetParam().
-  void SetShadowTechnique(gfx::ShadowTechnique technique);
+  void SetShadowTechnique(fuchsia::ui::gfx::ShadowTechnique technique);
 
   // Set whether clipping is disabled for this renderer.
   // NOTE: disabling clipping only has a visual effect; hit-testing is not

@@ -7,14 +7,14 @@
 
 #include <limits>
 
-#include "garnet/bin/media/media_player/framework/models/sink.h"
+#include "garnet/bin/media/media_player/framework/models/async_node.h"
 #include "garnet/bin/media/media_player/framework/types/stream_type.h"
 #include "lib/media/timeline/timeline_function.h"
 
 namespace media_player {
 
 // Abstract base class for sinks that render packets.
-class Renderer : public Sink {
+class Renderer : public AsyncNode {
  public:
   Renderer();
 
@@ -29,6 +29,11 @@ class Renderer : public Sink {
   // Revokes the task runner and update callback provided in a previous call to
   // |Provision|.
   void Deprovision();
+
+  // AsyncNode implementation.
+  void Dump(std::ostream& os) const override;
+
+  void GetConfiguration(size_t* input_count, size_t* output_count) override;
 
   // Returns the types of the streams the renderer is able
   // to consume.
@@ -46,15 +51,14 @@ class Renderer : public Sink {
                                    fxl::Closure callback);
 
   // Sets a program range for this renderer.
-  virtual void SetProgramRange(uint64_t program,
-                               int64_t min_pts,
+  virtual void SetProgramRange(uint64_t program, int64_t min_pts,
                                int64_t max_pts);
 
   // Determines whether end-of-stream has been reached.
   bool end_of_stream() const;
 
  protected:
-  async_t* async() {
+  async_t* async() const {
     FXL_DCHECK(async_) << "async() called on unprovisioned renderer.";
     return async_;
   }
@@ -82,8 +86,12 @@ class Renderer : public Sink {
   // specified reference time.
   void UpdateTimelineAt(int64_t reference_time);
 
+  // Called when the timeline function changes. The default implementation
+  // does nothing.
+  virtual void OnTimelineTransition();
+
   // Gets the current timeline function.
-  const media::TimelineFunction& current_timeline_function() {
+  const media::TimelineFunction& current_timeline_function() const {
     return current_timeline_function_;
   }
 
@@ -91,6 +99,10 @@ class Renderer : public Sink {
   bool end_of_stream_pending() const {
     return end_of_stream_pts_ != media::kUnspecifiedTime;
   }
+
+  // PTS at which end-of-stream is to occur or |kUnspecifiedTime| if an end-
+  // of-stream packet has not yet been encountered.
+  int64_t end_of_stream_pts() const { return end_of_stream_pts_; }
 
   // Returns the minimum PTS for the specified program.
   int64_t min_pts(uint64_t program) {

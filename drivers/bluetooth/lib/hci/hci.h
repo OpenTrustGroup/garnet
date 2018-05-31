@@ -148,6 +148,42 @@ constexpr OpCode kInquiryCancel = LinkControlOpCode(0x0002);
 
 // Inquiry Cancel Command has no command parameters.
 
+// =================================
+// Create Connection (v1.1) (BR/EDR)
+constexpr OpCode kCreateConnection = LinkControlOpCode(0x0005);
+
+struct CreateConnectionCommandParams {
+  // BD_ADDR of the device to be connected
+  common::DeviceAddressBytes bd_addr;
+
+  // Mask of allowable packet types. See PacketTypeBits in hci_constants.h for
+  // values.
+  PacketTypeType packet_type;
+
+  // The Page Scan Repetition Mode of the reomte device as retrieved by Inquiry.
+  PageScanRepetitionMode page_scan_repetition_mode;
+
+  // Reserved, must be set to 0.
+  uint8_t reserved;
+
+  // Clock Offset.  The lower 15 bits are set to the clock offset as retrieved
+  // by an Inquiry. The highest bit is set to 1 if the rest of this parameter
+  // is valid.
+  uint16_t clock_offset;
+
+  // Allow Role Switch.
+  // Allowed values:
+  //  0x00 - No role switch allowed, this device will be the master
+  //  0x01 - Role switch allowed, this device may become slave durong at
+  //  connection setup
+  uint8_t allow_role_switch;
+} __PACKED;
+
+// NOTE on ReturnParams: No Command Complete event will be sent by the
+// Controller to indicate that this command has been completed. Instead, the
+// Connection Complete event will indicate that this command has been
+// completed.
+
 // =======================================
 // Disconnect Command (v1.1) (BR/EDR & LE)
 constexpr OpCode kDisconnect = LinkControlOpCode(0x0006);
@@ -166,6 +202,54 @@ struct DisconnectCommandParams {
 // Controller to indicate that this command has been completed. Instead, the
 // Disconnection Complete event will indicate that this command has been
 // completed.
+
+// ========================================
+// Create Connection Cancel (v1.1) (BR/EDR)
+constexpr OpCode kCreateConnectionCancel = LinkControlOpCode(0x0008);
+
+struct CreateConnectionCancelCommandParams {
+  // BD_ADDR of the Create Connection Command Request
+  common::DeviceAddressBytes bd_addr;
+} __PACKED;
+
+struct CreateConnectionCancelReturnParams {
+  // See enum StatusCode in hci_constants.h.
+  StatusCode status;
+
+  // BD_ADDR of the Create Connection Command Request
+  common::DeviceAddressBytes bd_addr;
+} __PACKED;
+
+// =========================================
+// Accept Connection Request (v1.1) (BR/EDR)
+constexpr OpCode kAcceptConnectionRequest = LinkControlOpCode(0x0009);
+
+struct AcceptConnectionRequestCommandParams {
+  // BD_ADDR of the device to be connected
+  common::DeviceAddressBytes bd_addr;
+
+  // Role.  Allowable values:
+  //  - 0x00 - Link Manager will perform a role switch.
+  //  - 0x01 - Link Manager will not perform a role switch.
+  uint8_t role;
+} __PACKED;
+
+// =========================================
+// Reject Connection Request (v1.1) (BR/EDR)
+constexpr OpCode kRejectConnectionRequest = LinkControlOpCode(0x000A);
+
+struct RejectConnectionRequestCommandParams {
+  // BD_ADDR of the device to reject the connection from
+  common::DeviceAddressBytes bd_addr;
+
+  // Reason.
+  // Must be one of kConnectionRejected* from Status in hci_constants.h
+  StatusCode reason;
+} __PACKED;
+
+// NOTE on ReturnParams: No Command Complete event will be sent by the
+// Controller to indicate that this command has been completed. Instead, the
+// Connection Complete event will indicate that this command has been completed.
 
 // ============================================================
 // Read Remote Version Information Command (v1.1) (BR/EDR & LE)
@@ -209,18 +293,12 @@ constexpr OpCode kReset = ControllerAndBasebandOpCode(0x0003);
 constexpr OpCode kWriteLocalName = ControllerAndBasebandOpCode(0x0013);
 
 struct WriteLocalNameCommandParams {
-  FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(WriteLocalNameCommandParams);
-
-  // A UTF-8 encoded User Friendly Descriptive Name for the device. This can
-  // contain up to 248 octets. If the name contained in the parameter is shorter
-  // than 248 octets, the end of the name is indicated by a NULL octet (0x00),
-  // and the following octets (to fill up 248 octets, which is the length of the
-  // parameter) do not have valid values.
-  //
-  // NOTE: Contains at least 1 octet because an empty struct would be illegal in
-  // C++ (i.e. depending on compiler version). This struct mostly serves as
-  // documentation and its utility is questionable.
-  uint8_t local_name[1];
+  // A UTF-8 encoded User Friendly Descriptive Name for the device.
+  // If the name contained in the parameter is shorter than 248 octets, the end
+  // of the name is indicated by a NULL octet (0x00), and the following octets
+  // (to fill up 248 octets, which is the length of the parameter) do not have
+  // valid values.
+  uint8_t local_name[kMaxLocalNameLength];
 } __PACKED;
 
 // =======================================
@@ -228,17 +306,69 @@ struct WriteLocalNameCommandParams {
 constexpr OpCode kReadLocalName = ControllerAndBasebandOpCode(0x0014);
 
 struct ReadLocalNameReturnParams {
-  FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(ReadLocalNameReturnParams);
-
   // See enum StatusCode in hci_constants.h.
   StatusCode status;
 
-  // A UTF-8 encoded User Friendly Descriptive Name for the device. This can
-  // contain up to 248 octets. If the name contained in the parameter is shorter
-  // than 248 octets, the end of the name is indicated by a NULL octet (0x00),
-  // and the following octets (to fill up 248 octets, which is the length of the
-  // parameter) do not have valid values.
-  uint8_t local_name[];
+  // A UTF-8 encoded User Friendly Descriptive Name for the device.
+  // If the name contained in the parameter is shorter than 248 octets, the end
+  // of the name is indicated by a NULL octet (0x00), and the following octets
+  // (to fill up 248 octets, which is the length of the parameter) do not have
+  // valid values.
+  uint8_t local_name[kMaxLocalNameLength];
+} __PACKED;
+
+// ========================================
+// Read Scan Enable Command (v1.1) (BR/EDR)
+constexpr OpCode kReadScanEnable = ControllerAndBasebandOpCode(0x0019);
+
+struct ReadScanEnableReturnParams {
+  // See enum StatusCode in hci_constants.h.
+  StatusCode status;
+
+  // Bit Mask of enabled scans. See enum class ScanEnableBit in hci_constants.h
+  // for how to interpret this bitfield.
+  hci::ScanEnableType scan_enable;
+} __PACKED;
+
+// =========================================
+// Write Scan Enable Command (v1.1) (BR/EDR)
+constexpr OpCode kWriteScanEnable = ControllerAndBasebandOpCode(0x001A);
+
+struct WriteScanEnableCommandParams {
+  // Bit Mask of enabled scans. See enum class ScanEnableBit in hci_constants.h
+  // for how to construct this bitfield.
+  hci::ScanEnableType scan_enable;
+} __PACKED;
+
+// ===============================================
+// Read Page Scan Activity Command (v1.1) (BR/EDR)
+constexpr OpCode kReadPageScanActivity = ControllerAndBasebandOpCode(0x001B);
+
+struct ReadPageScanActivityReturnParams {
+  // See enum StatusCode in hci_constants.h.
+  StatusCode status;
+
+  // Page_Scan_Interval, in time slices (0.625ms)
+  // Range: kPageScanIntervalMin - kPageScanIntervalMax in hci_constants.h
+  uint16_t page_scan_interval;
+
+  // Page_Scan_Window, in time slices
+  // Range: kPageScanWindowMin - kPageScanWindowMax in hci_constants.h
+  uint16_t page_scan_window;
+} __PACKED;
+
+// ================================================
+// Write Page Scan Activity Command (v1.1) (BR/EDR)
+constexpr OpCode kWritePageScanActivity = ControllerAndBasebandOpCode(0x001C);
+
+struct WritePageScanActivityCommandParams {
+  // Page_Scan_Interval, in time slices (0.625ms)
+  // Valid Range: kPageScanIntervalMin - kPageScanIntervalMax in hci_constants.h
+  uint16_t page_scan_interval;
+
+  // Page_Scan_Window, in time slices
+  // Valid Range: kPageScanWindowMin - kPageScanWindowMax in hci_constants.h
+  uint16_t page_scan_window;
 } __PACKED;
 
 // ============================================
@@ -290,6 +420,48 @@ struct ReadTransmitPowerLevelReturnParams {
   int8_t tx_power_level;
 } __PACKED;
 
+// ===================================
+// Read Page Scan Type (v1.2) (BR/EDR)
+constexpr OpCode kReadPageScanType = ControllerAndBasebandOpCode(0x0046);
+
+struct ReadPageScanTypeReturnParams {
+  // See enum StatusCode in hci_constants.h.
+  StatusCode status;
+
+  // See enum class PageScanType in hci_constants.h for possible values.
+  PageScanType page_scan_type;
+} __PACKED;
+
+// ====================================
+// Write Page Scan Type (v1.2) (BR/EDR)
+constexpr OpCode kWritePageScanType = ControllerAndBasebandOpCode(0x0047);
+
+struct WritePageScanTypeCommandParams {
+  // See enum class PageScanType in hci_constants.h for possible values.
+  PageScanType page_scan_type;
+} __PACKED;
+
+// ==============================================
+// Read Simple Pairing Mode (v2.1 + EDR) (BR/EDR)
+constexpr OpCode kReadSimplePairingMode = ControllerAndBasebandOpCode(0x0055);
+
+struct ReadSimplePairingModeReturnParams {
+  // See enum StatusCode in hci_constants.h
+  StatusCode status;
+
+  // Simple pairing Mode.
+  GenericEnableParam simple_pairing_mode;
+} __PACKED;
+
+// ===============================================
+// Write Simple Pairing Mode (v2.1 + EDR) (BR/EDR)
+constexpr OpCode kWriteSimplePairingMode = ControllerAndBasebandOpCode(0x0056);
+
+struct WriteSimplePairingModeCommandParams {
+  // Simple Pairing Mode.
+  GenericEnableParam simple_pairing_mode;
+} __PACKED;
+
 // =========================================
 // Set Event Mask Page 2 Command (v3.0 + HS)
 constexpr OpCode kSetEventMaskPage2 = ControllerAndBasebandOpCode(0x0063);
@@ -309,7 +481,7 @@ struct ReadFlowControlModeReturnParams {
   StatusCode status;
 
   // See enum class FlowControlMode in hci_constants.h for possible values.
-  uint8_t flow_control_mode;
+  FlowControlMode flow_control_mode;
 } __PACKED;
 
 // ==========================================================
@@ -318,7 +490,7 @@ constexpr OpCode kWriteFlowControlMode = ControllerAndBasebandOpCode(0x0067);
 
 struct WriteFlowControlModeCommandParams {
   // See enum class FlowControlMode in hci_constants.h for possible values.
-  uint8_t flow_control_mode;
+  FlowControlMode flow_control_mode;
 } __PACKED;
 
 // ============================================
@@ -558,6 +730,45 @@ struct InquiryResultEventParams {
   uint8_t num_responses;
 
   InquiryResult responses[];
+} __PACKED;
+
+// =========================================
+// Connection Complete Event (v1.1) (BR/EDR)
+constexpr EventCode kConnectionCompleteEventCode = 0x03;
+
+struct ConnectionCompleteEventParams {
+  // See enum StatusCode in hci_constants.h
+  StatusCode status;
+
+  // Connection_handle (12 bits meaningful)
+  // Range: 0x0000 to kConnectioHandleMax in hci_constants.h
+  ConnectionHandle connection_handle;
+
+  // The address of the connected device
+  common::DeviceAddressBytes bd_addr;
+
+  // See enum LinkType in hci_constants.h.
+  // ExtendedSCO is not valid as a link type.
+  LinkType link_type;
+
+  // Whether Link level encryption is enabled
+  // Valid values are 0x00 (not enabled) and 0x01 (enabled)
+  uint8_t encryption_enabled;
+} __PACKED;
+
+// ========================================
+// Connection Request Event (v1.1) (BR/EDR)
+constexpr EventCode kConnectionRequestEventCode = 0x04;
+
+struct ConnectionRequestEventParams {
+  // The address of the device that's requesting the connectio
+  common::DeviceAddressBytes bd_addr;
+
+  // The Class of Device of the device which requests the connection.
+  common::DeviceClass class_of_device;
+
+  // See enum LinkType in hci_constants.h
+  LinkType link_type;
 } __PACKED;
 
 // =================================================

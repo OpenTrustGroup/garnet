@@ -6,7 +6,6 @@
 
 #include "garnet/bin/media/media_player/framework/stages/input.h"
 
-#include "garnet/bin/media/media_player/framework/engine.h"
 #include "garnet/bin/media/media_player/framework/stages/stage_impl.h"
 
 namespace media_player {
@@ -16,6 +15,14 @@ Input::Input(StageImpl* stage, size_t index)
   FXL_DCHECK(stage_);
 }
 
+Input::Input(Input&& input)
+    : stage_(input.stage()),
+      index_(input.index()),
+      mate_(input.mate()),
+      prepared_(input.prepared()),
+      packet_(std::move(input.packet())),
+      state_(input.state_.load()) {}
+
 Input::~Input() {}
 
 void Input::Connect(Output* output) {
@@ -24,74 +31,44 @@ void Input::Connect(Output* output) {
   mate_ = output;
 }
 
-Demand Input::demand() const {
-  State state = state_.load();
-  switch (state) {
-    case State::kDemandsPacket:
-      return Demand::kPositive;
-    case State::kAllowsPacket:
-      return Demand::kNeutral;
-    case State::kRefusesPacket:
-    case State::kHasPacket:
-      return Demand::kNegative;
-  }
+bool Input::needs_packet() const {
+  return state_.load() == State::kNeedsPacket;
 }
 
 void Input::PutPacket(PacketPtr packet) {
   FXL_DCHECK(packet);
-  FXL_DCHECK(demand() != Demand::kNegative);
+  FXL_DCHECK(needs_packet());
+
   std::atomic_store(&packet_, packet);
   state_.store(State::kHasPacket);
   stage_->NeedsUpdate();
 }
 
-PacketPtr Input::TakePacket(Demand demand) {
+PacketPtr Input::TakePacket(bool request_another) {
   FXL_DCHECK(mate_);
 
   PacketPtr no_packet;
   PacketPtr packet = std::atomic_exchange(&packet_, no_packet);
 
-  if (demand == Demand::kNegative) {
-    state_.store(State::kRefusesPacket);
-  } else {
-    state_.store(demand == Demand::kPositive ? State::kDemandsPacket
-                                             : State::kAllowsPacket);
+  if (request_another) {
+    state_.store(State::kNeedsPacket);
     mate_->stage()->NeedsUpdate();
+  } else {
+    state_.store(State::kRefusesPacket);
   }
 
   return packet;
 }
 
-void Input::SetDemand(Demand demand) {
+void Input::RequestPacket() {
   FXL_DCHECK(mate_);
 
-  State state = state_.load();
-  if (state == State::kHasPacket) {
-    return;
-  }
-
-  State new_state;
-  switch (demand) {
-    case Demand::kPositive:
-      new_state = State::kDemandsPacket;
-      break;
-    case Demand::kNeutral:
-      new_state = State::kAllowsPacket;
-      break;
-    case Demand::kNegative:
-      new_state = State::kRefusesPacket;
-      break;
-  }
-
-  if (state != new_state) {
-    FXL_DCHECK(new_state != State::kRefusesPacket);
-    state_.store(new_state);
+  State expected = State::kRefusesPacket;
+  if (state_.compare_exchange_strong(expected, State::kNeedsPacket)) {
     mate_->stage()->NeedsUpdate();
   }
 }
 
-void Input::Flush() {
-  TakePacket(Demand::kNegative);
-}
+void Input::Flush() { TakePacket(false); }
 
 }  // namespace media_player

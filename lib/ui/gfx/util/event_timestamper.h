@@ -12,7 +12,7 @@
 #include <lib/async/cpp/wait.h>
 #include <lib/zx/event.h>
 
-#include "lib/fsl/tasks/message_loop.h"
+#include "lib/fxl/logging.h"
 #include "lib/fxl/macros.h"
 
 namespace scenic {
@@ -44,9 +44,7 @@ class EventTimestamper {
   class Watch {
    public:
     Watch();
-    Watch(EventTimestamper* ts,
-          zx::event event,
-          zx_status_t trigger,
+    Watch(EventTimestamper* ts, zx::event event, zx_status_t trigger,
           Callback callback);
     Watch(Watch&& rhs);
     Watch& operator=(Watch&& rhs);
@@ -76,9 +74,7 @@ class EventTimestamper {
    public:
     enum class State { STARTED, STOPPED, ABANDONED };
 
-    Waiter(const fxl::RefPtr<fxl::TaskRunner>& task_runner,
-           zx::event event,
-           zx_status_t trigger,
+    Waiter(async_t* dispatcher, zx::event event, zx_status_t trigger,
            Callback callback);
     ~Waiter();
 
@@ -89,12 +85,10 @@ class EventTimestamper {
     const zx::event& event() const { return event_; }
 
    private:
-    void Handle(async_t* async,
-                async::WaitBase* wait,
-                zx_status_t status,
+    void Handle(async_t* async, async::WaitBase* wait, zx_status_t status,
                 const zx_packet_signal_t* signal);
 
-    fxl::RefPtr<fxl::TaskRunner> task_runner_;
+    async_t* const dispatcher_;
     zx::event event_;
     Callback callback_;
     State state_ = State::STOPPED;
@@ -110,7 +104,7 @@ class EventTimestamper {
   // Also see MG-940 and MG-1032.
   void IncreaseBackgroundThreadPriority();
 
-  fsl::MessageLoop* const main_loop_;
+  async_t* const main_dispatcher_;
   async::Loop background_loop_;
   async::TaskClosure task_;
 #ifndef NDEBUG

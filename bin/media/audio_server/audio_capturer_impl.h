@@ -11,10 +11,10 @@
 #include <fbl/slab_allocator.h>
 #include <fbl/unique_ptr.h>
 
-#include <fuchsia/cpp/media.h>
+#include <media/cpp/fidl.h>
 #include "garnet/bin/media/audio_server/audio_object.h"
-#include "garnet/bin/media/audio_server/platform/generic/mixer.h"
-#include "garnet/bin/media/audio_server/platform/generic/output_formatter.h"
+#include "garnet/bin/media/audio_server/mixer/mixer.h"
+#include "garnet/bin/media/audio_server/mixer/output_formatter.h"
 #include "lib/fidl/cpp/binding.h"
 #include "lib/media/timeline/timeline_function.h"
 #include "lib/media/timeline/timeline_rate.h"
@@ -28,8 +28,7 @@ class AudioCapturerImpl : public AudioObject, public AudioCapturer {
  public:
   static fbl::RefPtr<AudioCapturerImpl> Create(
       fidl::InterfaceRequest<AudioCapturer> audio_capturer_request,
-      AudioServerImpl* owner,
-      bool loopback);
+      AudioServerImpl* owner, bool loopback);
 
   bool loopback() const { return loopback_; }
   void SetInitialFormat(AudioMediaTypeDetails format)
@@ -127,33 +126,35 @@ class AudioCapturerImpl : public AudioObject, public AudioCapturer {
 
   friend PcbAllocator;
 
+  // TODO(mpuryear): per MTWN-129, combine this with RendererBookkeeping, and
+  // integrate it into the Mixer class itself.
   struct CaptureLinkBookkeeping : public AudioLink::Bookkeeping {
     std::unique_ptr<Mixer> mixer;
     TimelineFunction dest_frames_to_frac_source_frames;
     TimelineFunction clock_mono_to_src_frames_fence;
     uint32_t step_size;
+    uint32_t modulo;
+    uint32_t denominator() const {
+      return dest_frames_to_frac_source_frames.rate().reference_delta();
+    }
     uint32_t dest_trans_gen_id = kInvalidGenerationId;
     uint32_t source_trans_gen_id = kInvalidGenerationId;
   };
 
   AudioCapturerImpl(
       fidl::InterfaceRequest<AudioCapturer> audio_capturer_request,
-      AudioServerImpl* owner,
-      bool loopback);
+      AudioServerImpl* owner, bool loopback);
 
   // AudioCapturer FIDL implementation
   void GetMediaType(GetMediaTypeCallback cbk) final;
   void SetMediaType(MediaType media_type) final;
   void SetGain(float gain) final;
   void SetPayloadBuffer(zx::vmo payload_buf_vmo) final;
-  void CaptureAt(uint32_t offset_frames,
-                 uint32_t num_frames,
+  void CaptureAt(uint32_t offset_frames, uint32_t num_frames,
                  CaptureAtCallback cbk) final;
   void Flush() final;
   void FlushWithCallback(FlushWithCallbackCallback cbk) final;
-  void StartAsyncCapture(
-      fidl::InterfaceHandle<AudioCapturerClient> callback_target,
-      uint32_t frames_per_packet) final;
+  void StartAsyncCapture(uint32_t frames_per_packet) final;
   void StopAsyncCapture() final;
   void StopAsyncCaptureWithCallback(
       StopAsyncCaptureWithCallbackCallback cbk) final;
@@ -178,14 +179,12 @@ class AudioCapturerImpl : public AudioObject, public AudioCapturer {
   void FinishAsyncStopThunk() FXL_LOCKS_EXCLUDED(mix_domain_->token());
   void FinishBuffersThunk() FXL_LOCKS_EXCLUDED(mix_domain_->token());
 
-  // Helper function used to set a set of pending capture buffers back to a
-  // user.
+  // Helper function used to return a set of pending capture buffers to a user.
   void FinishBuffers(const PcbList& finished_buffers)
       FXL_LOCKS_EXCLUDED(mix_domain_->token());
 
   // Bookkeeping helper.
-  void UpdateFormat(media::AudioSampleFormat sample_format,
-                    uint32_t channels,
+  void UpdateFormat(media::AudioSampleFormat sample_format, uint32_t channels,
                     uint32_t frames_per_second)
       FXL_LOCKS_EXCLUDED(mix_domain_->token());
 
@@ -238,7 +237,6 @@ class AudioCapturerImpl : public AudioObject, public AudioCapturer {
   GenerationId frames_to_clock_mono_gen_ FXL_GUARDED_BY(mix_domain_->token());
   int64_t frame_count_ FXL_GUARDED_BY(mix_domain_->token()) = 0;
 
-  AudioCapturerClientPtr async_callback_;
   uint32_t async_frames_per_packet_;
   uint32_t async_next_frame_offset_ FXL_GUARDED_BY(mix_domain_->token()) = 0;
   StopAsyncCaptureWithCallbackCallback pending_async_stop_cbk_;

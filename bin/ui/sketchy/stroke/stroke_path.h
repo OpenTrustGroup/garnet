@@ -7,7 +7,7 @@
 
 #include <vector>
 
-#include <fuchsia/cpp/sketchy.h>
+#include <fuchsia/ui/sketchy/cpp/fidl.h>
 
 #include "garnet/bin/ui/sketchy/stroke/cubic_bezier.h"
 #include "garnet/public/lib/escher/geometry/bounding_box.h"
@@ -18,22 +18,16 @@ namespace sketchy_service {
 class StrokePath final {
  public:
   StrokePath() = default;
-  explicit StrokePath(sketchy::StrokePath path);
+  explicit StrokePath(::fuchsia::ui::sketchy::StrokePath path);
 
-  void ExtendWithCurve(CubicBezier2f curve);
-  void ExtendWithPath(const StrokePath* path);
+  void ExtendWithCurve(const CubicBezier2f& curve);
+  void ExtendWithPath(const StrokePath& path);
   void Reset(size_t segment_count = 0);
 
   const std::vector<CubicBezier2f>& control_points() const {
     return control_points_;
   }
-  size_t control_points_size() const {
-    return control_points_.size() * sizeof(CubicBezier2f);
-  }
   const std::vector<CubicBezier1f>& re_params() const { return re_params_; }
-  size_t re_params_size() const {
-    return re_params_.size() * sizeof(CubicBezier1f);
-  }
   const std::vector<float>& segment_lengths() const { return segment_lengths_; }
   float length() const { return length_; }
   bool empty() const { return control_points_.empty(); }

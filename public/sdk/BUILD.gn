@@ -6,6 +6,8 @@ import("//build/fidl/toolchain.gni")
 import("//build/sdk/sdk.gni")
 
 sdk("zircon_sysroot") {
+  category = "partner"
+
   export = true
 
   old_school = true
@@ -14,17 +16,13 @@ sdk("zircon_sysroot") {
 
   deps = [
     "//zircon/public/sysroot:sysroot_sdk",
-
-    # TODO(abarth): Remove these once the SDK rolls into Chromium.
-    "//zircon/public/lib/backtrace:backtrace_sdk",
-    "//zircon/public/lib/fdio:fdio_sdk",
-    # TODO(SY): still don't know why we need this to get pkgsvr built
-    "//zircon/public/lib/launchpad:launchpad_sdk",
   ]
 }
 
 # TODO(DX-134): Remove these once the toolchain can consume SDKs with libraries outside the sysroot.
 sdk("zircon_sysroot_for_toolchain") {
+  category = "internal"
+
   export = true
 
   old_school = true
@@ -32,32 +30,68 @@ sdk("zircon_sysroot_for_toolchain") {
   domains = [ "c-pp" ]
 
   deps = [
-    "//zircon/public/sysroot:sysroot_sdk",
-
     "//zircon/public/lib/backtrace:backtrace_sdk",
     "//zircon/public/lib/fdio:fdio_sdk",
     "//zircon/public/lib/launchpad:launchpad_sdk",
+    "//zircon/public/sysroot:sysroot_sdk",
   ]
 }
 
 sdk("garnet") {
+  category = "partner"
+
+  testonly = true
+
   deps = [
+    "//build/images:bootdata-blob.bin_sdk",
+    "//build/images:fvm.blk_sdk",
+    "//build/images:zircon.bin_sdk",
     "//garnet/bin/far:bin_sdk($host_toolchain)",
     "//garnet/go/src/fidl:fidlgen_sdk($host_toolchain)",
     "//garnet/go/src/pm:pm_bin_sdk($host_toolchain)",
+    "//garnet/public/lib/app/fidl:fidl_sdk($fidl_toolchain)",
     "//garnet/public/lib/fidl/cpp:cpp_sdk",
+    "//garnet/public/lib/fidl/cpp:cpp_sdk",
+    "//garnet/public/lib/images/fidl:fidl_sdk($fidl_toolchain)",
     "//garnet/public/lib/media/c:c_sdk",
     "//garnet/public/lib/media/fidl:fidl_sdk($fidl_toolchain)",
+    "//garnet/public/lib/mem/fidl:fidl_sdk($fidl_toolchain)",
     "//garnet/public/lib/netstack/fidl:fidl_sdk($fidl_toolchain)",
     "//garnet/public/lib/svc:svc_sdk",
+    "//garnet/public/lib/ui/geometry/fidl:fidl_sdk($fidl_toolchain)",
+    "//garnet/public/lib/ui/gfx/fidl:fidl_sdk($fidl_toolchain)",
+    "//garnet/public/lib/ui/input/fidl:fidl_sdk($fidl_toolchain)",
+    "//garnet/public/lib/ui/presentation/fidl:fidl_sdk($fidl_toolchain)",
+    "//garnet/public/lib/ui/scenic/fidl:fidl_sdk($fidl_toolchain)",
+    "//garnet/public/lib/ui/views/fidl:v1_sdk($fidl_toolchain)",
+    "//garnet/public/lib/ui/views/fidl:v2_sdk($fidl_toolchain)",
+    "//garnet/public/lib/ui/views/fidl:view_token_sdk($fidl_toolchain)",
     "//third_party/boringssl:crypto_sdk",
     "//third_party/boringssl:ssl_sdk",
-    "//zircon/public/lib/async-default:async-default_sdk",
     "//zircon/public/lib/async:async_sdk",
+    "//zircon/public/lib/async-default:async-default_sdk",
     "//zircon/public/lib/backtrace:backtrace_sdk",
     "//zircon/public/lib/fdio:fdio_sdk",
     "//zircon/public/lib/launchpad:launchpad_sdk",
     "//zircon/public/sysroot:sysroot_sdk",
+    "//zircon/public/tool/bootserver:bootserver_sdk($host_toolchain)",
     "//zircon/public/tool/fidlc:fidlc_sdk($host_toolchain)",
+    "//zircon/public/tool/fvm:fvm_sdk($host_toolchain)",
+    "//zircon/public/tool/loglistener:loglistener_sdk($host_toolchain)",
+    "//zircon/public/tool/merkleroot:merkleroot_sdk($host_toolchain)",
+    "//zircon/public/tool/minfs:minfs_sdk($host_toolchain)",
+    "//zircon/public/tool/mkbootfs:mkbootfs_sdk($host_toolchain)",
+    "//zircon/public/tool/mkfs-msdosfs:mkfs-msdosfs_sdk($host_toolchain)",
+    "//zircon/public/tool/netaddr:netaddr_sdk($host_toolchain)",
+    "//zircon/public/tool/netcp:netcp_sdk($host_toolchain)",
+    "//zircon/public/tool/netls:netls_sdk($host_toolchain)",
+    "//zircon/public/tool/netruncmd:netruncmd_sdk($host_toolchain)",
   ]
+  if (target_cpu != "arm64") {
+    deps += [
+      "//build/images:fvm.sparse.blk_sdk",
+      "//build/images:local.esp.blk_sdk",
+      "//build/images:zircon.vboot_sdk",
+    ]
+  }
 }

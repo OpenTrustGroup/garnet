@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <lib/async-loop/cpp/loop.h>
 #include <trace-provider/provider.h>
 
 #include "garnet/bin/ui/sketchy/app.h"
@@ -26,19 +27,18 @@ int main(int argc, const char** argv) {
         escher::VulkanInstance::New(std::move(instance_params));
 
     auto vulkan_device = escher::VulkanDeviceQueues::New(
-        vulkan_instance,
-        {{VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
-          VK_KHR_EXTERNAL_MEMORY_FUCHSIA_EXTENSION_NAME,
-          VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
-          VK_KHR_EXTERNAL_SEMAPHORE_FUCHSIA_EXTENSION_NAME},
-         vk::SurfaceKHR()});
+        vulkan_instance, {{VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
+                           VK_KHR_EXTERNAL_MEMORY_FUCHSIA_EXTENSION_NAME,
+                           VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+                           VK_KHR_EXTERNAL_SEMAPHORE_FUCHSIA_EXTENSION_NAME},
+                          vk::SurfaceKHR()});
 
     escher::Escher escher(vulkan_device);
 
-    fsl::MessageLoop loop;
+    async::Loop loop(&kAsyncLoopConfigMakeDefault);
     trace::TraceProvider trace_provider(loop.async());
 
-    sketchy_service::App app(&escher);
+    sketchy_service::App app(&loop, &escher);
     loop.Run();
   }
   escher::GlslangFinalizeProcess();

@@ -12,7 +12,6 @@
 #include <zircon/types.h>
 
 #include "lib/fxl/macros.h"
-#include "lib/fsl/tasks/message_loop.h"
 
 #include "garnet/lib/debugger_utils/dso_list.h"
 #include "garnet/lib/debugger_utils/util.h"
@@ -27,7 +26,7 @@ namespace debugserver {
 class Server;
 class Thread;
 
-// Represents an inferior process that the stub is currently attached to.
+// Represents an inferior process that we're attached to.
 class Process final {
  public:
  public:
@@ -40,38 +39,30 @@ class Process final {
 
     // Called when a new thread that is part of this process has been started.
     // This is indicated by ZX_EXCP_THREAD_STARTING.
-    virtual void OnThreadStarting(Process* process,
-                                  Thread* thread,
+    virtual void OnThreadStarting(Process* process, Thread* thread,
                                   const zx_exception_context_t& context) = 0;
 
     // Called when |thread| has exited (ZX_EXCP_THREAD_EXITING).
-    virtual void OnThreadExiting(
-        Process* process,
-        Thread* thread,
-        const zx_exception_context_t& context) = 0;
+    virtual void OnThreadExiting(Process* process, Thread* thread,
+                                 const zx_exception_context_t& context) = 0;
 
     // Called when |process| has exited.
     virtual void OnProcessExit(Process* process) = 0;
 
     // Called when the kernel reports an architectural exception.
     virtual void OnArchitecturalException(
-        Process* process,
-        Thread* thread,
-        const zx_excp_type_t type,
+        Process* process, Thread* thread, const zx_excp_type_t type,
         const zx_exception_context_t& context) = 0;
 
     // Called when |thread| has gets a synthetic exception
     // (e.g., ZX_EXCP_POLICY_ERROR) that is akin to an architectural
     // exception: the program got an error and by default crashes.
     virtual void OnSyntheticException(
-        Process* process,
-        Thread* thread,
-        const zx_excp_type_t type,
+        Process* process, Thread* thread, const zx_excp_type_t type,
         const zx_exception_context_t& context) = 0;
   };
 
-  explicit Process(Server* server,
-                   Delegate* delegate_);
+  explicit Process(Server* server, Delegate* delegate_);
   ~Process();
 
   std::string GetName() const;
@@ -79,6 +70,8 @@ class Process final {
   // Note: This includes the program in |argv[0]|.
   const util::Argv& argv() { return argv_; }
   void set_argv(const util::Argv& argv) { argv_ = argv; }
+
+  launchpad_t* launchpad() const { return launchpad_; }
 
   // Returns the current state of this process.
   State state() const { return state_; }
@@ -88,33 +81,29 @@ class Process final {
 
   static const char* StateName(Process::State state);
 
-  // Creates and initializes the inferior process but does not start it.
+  // Creates and initializes the inferior process, via launchpad, but does
+  // not start it. set_argv() must have already been called.
+  // This also "attaches" to the inferior: A debug-capable process handle is
+  // obtained and the debugger exception port is bound to.
   // Returns false if there is an error.
-  // The process must still be attached to by calling Attach().
   // Do not call this if the process is currently live (state is kStarting or
   // kRunning).
   bool Initialize();
 
-  // Creates and initializes the inferior for debugging a running program.
+  // Attach to running program with pid |pid|.
+  // A debug-capable process handle is obtained and the debugger exception
+  // port is bound to.
   // Returns false if there is an error.
-  // The process must still be attached to by calling Attach().
   // Do not call this if the process is currently live (state is kStarting or
   // kRunning).
-  bool Initialize(zx_koid_t pid);
-
-  // Obtains a debug-capable handle and binds an exception port for receiving
-  // exceptions from the inferior process.
-  // Returns true on success, or false in the case of an error. One form of
-  // Initialize() MUST be called successfully before calling Attach().
-  // TODO(dje): While IWBN to have separate steps for "obtain debug-capable
-  // handle" and "bind exception port", it is important to the reader that
-  // "detach" means "release all connections with the inferior". After
-  // detaching we should have absolutely no effect on the inferior, including
-  // not preserving the lifetime of the kernel process instance because we
-  // still have a handle of the process.
-  bool Attach();
+  bool Attach(zx_koid_t pid);
 
   // Detach from an attached process, and return to pre-attached state.
+  // This includes unbinding from the exception port and closing the process
+  // handle. To keep things simple and clean "detach" means "release all
+  // connections with the inferior". After detaching we should have absolutely
+  // no effect on the inferior, including not preserving the lifetime of the
+  // kernel process instance because we still have a handle of the process.
   // Returns true on success, or false if already detached.
   bool Detach();
 
@@ -225,7 +214,8 @@ class Process final {
                            const zx_exception_context_t& context);
 
   // Debug handle mgmt.
-  bool AllocDebugHandle();
+  bool AllocDebugHandle(launchpad_t* lp);
+  bool AllocDebugHandle(zx_koid_t pid);
   void CloseDebugHandle();
 
   // Exception port mgmt.

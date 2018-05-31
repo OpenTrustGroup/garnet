@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include <fuchsia/cpp/component.h>
+#include <component/cpp/fidl.h>
 #include "lib/fxl/macros.h"
 
 namespace sysmgr {
@@ -20,8 +20,8 @@ namespace sysmgr {
 class Config {
  public:
   using ServiceMap =
-      std::unordered_map<std::string, component::ApplicationLaunchInfoPtr>;
-  using AppVector = std::vector<component::ApplicationLaunchInfoPtr>;
+      std::unordered_map<std::string, component::LaunchInfoPtr>;
+  using AppVector = std::vector<component::LaunchInfoPtr>;
 
   Config();
   ~Config();

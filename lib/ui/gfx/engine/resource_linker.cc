@@ -51,9 +51,8 @@ bool ResourceLinker::ExportResource(Resource* resource,
 
   // The resource must be removed from being considered for import if its
   // peer is closed.
-  auto wait = std::make_unique<async::Wait>(
-      export_token.get(),     // handle
-      kEventPairDeathSignals  // trigger
+  auto wait = std::make_unique<async::Wait>(export_token.get(),     // handle
+                                            kEventPairDeathSignals  // trigger
   );
   wait->set_handler(std::bind(&ResourceLinker::OnTokenPeerDeath, this,
                               import_koid, std::placeholders::_3,
@@ -93,8 +92,7 @@ void ResourceLinker::OnImportDestroyed(Import* import) {
 }
 
 void ResourceLinker::OnImportResolvedForResource(
-    Import* import,
-    Resource* exported_resource,
+    Import* import, Resource* exported_resource,
     ImportResolutionResult resolution_result) {
   switch (resolution_result) {
     case ImportResolutionResult::kSuccess:
@@ -139,7 +137,7 @@ void ResourceLinker::RemoveExportedResourceIfUnbound(
 }
 
 bool ResourceLinker::ImportResource(Import* import,
-                                    ::gfx::ImportSpec import_spec,
+                                    ::fuchsia::ui::gfx::ImportSpec import_spec,
                                     zx::eventpair import_token) {
   // Make sure the import handle is valid.
   zx_koid_t import_koid = fsl::GetKoid(import_token.get());
@@ -163,10 +161,8 @@ bool ResourceLinker::ImportResource(Import* import,
   return true;
 }
 
-void ResourceLinker::OnTokenPeerDeath(
-    zx_koid_t import_koid,
-    zx_status_t status,
-    const zx_packet_signal* signal) {
+void ResourceLinker::OnTokenPeerDeath(zx_koid_t import_koid, zx_status_t status,
+                                      const zx_packet_signal* signal) {
   // This is invoked when all the peers for the registered export
   // handle are closed, or if there is a loop death or other error.
   RemoveExportEntryForExpiredKoid(import_koid);
@@ -296,8 +292,7 @@ bool ResourceLinker::PerformLinkingNow(zx_koid_t import_koid) {
 }
 
 void ResourceLinker::RemoveFromExportedResourceToImportKoidsMap(
-    Resource* resource,
-    zx_koid_t import_koid) {
+    Resource* resource, zx_koid_t import_koid) {
   // Remove this specific export from |export_entries_by_resource_|. (The
   // same resource can be exported multiple times).
   auto range = exported_resources_to_import_koids_.equal_range(resource);

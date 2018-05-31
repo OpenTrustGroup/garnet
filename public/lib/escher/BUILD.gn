@@ -6,15 +6,24 @@ import("//build/package.gni")
 
 package("escher_tests") {
   testonly = true
-  deprecated_system_image = true
 
   deps = [
     "test:escher_unittests",
   ]
 
-  tests = [
+  binary = "escher_unittests"
+
+  meta = [
     {
-      name = "escher_unittests"
+      path = rebase_path("meta/escher_tests.cmx")
+      dest = "escher_tests.cmx"
+    },
+  ]
+
+  resources = [
+    {
+      path = rebase_path("shaders/model_renderer/main.vert")
+      dest = "shaders/model_renderer/main.vert"
     },
   ]
 }
@@ -88,7 +97,7 @@ source_set("escher") {
   ]
 
   if (is_fuchsia) {
-    public_deps += [ "//garnet/public/lib/fsl" ]
+    public_deps += [ "//zircon/public/lib/async-loop-cpp" ]
   }
 
   sources = [
@@ -252,6 +261,7 @@ source_set("escher") {
     "shape/rounded_rect_factory.h",
     "status.h",
     "util/align.h",
+    "util/bit_ops.h",
     "util/depth_to_color.cc",
     "util/depth_to_color.h",
     "util/enum_cast.h",
@@ -267,6 +277,7 @@ source_set("escher") {
     "util/image_utils.h",
     "util/intrusive_list.h",
     "util/object_pool.h",
+    "util/stack_allocator.h",
     "util/stopwatch.h",
     "util/trace_macros.h",
     "vk/buffer.cc",
@@ -285,6 +296,8 @@ source_set("escher") {
     "vk/gpu_mem.h",
     "vk/image.cc",
     "vk/image.h",
+    "vk/image_view.cc",
+    "vk/image_view.h",
     "vk/naive_gpu_allocator.cc",
     "vk/naive_gpu_allocator.h",
     "vk/render_pass.cc",
@@ -331,7 +344,10 @@ source_set("escher") {
   ]
 
   if (is_fuchsia) {
-    public_deps += [ "//garnet/public/lib/images/fidl" ]
+    public_deps += [
+      "//garnet/public/lib/images/fidl",
+      "//zircon/public/lib/fit",
+    ]
     deps += [ "//zircon/public/lib/trace" ]
     sources += [
       "util/fuchsia_utils.cc",

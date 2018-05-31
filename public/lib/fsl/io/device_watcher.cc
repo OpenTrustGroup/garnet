@@ -12,19 +12,16 @@
 #include <lib/async/default.h>
 #include <zircon/device/vfs.h>
 
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
 
 namespace fsl {
 
-DeviceWatcher::DeviceWatcher(fxl::UniqueFD dir_fd,
-                             zx::channel dir_watch,
+DeviceWatcher::DeviceWatcher(fxl::UniqueFD dir_fd, zx::channel dir_watch,
                              Callback callback)
     : dir_fd_(std::move(dir_fd)),
       dir_watch_(std::move(dir_watch)),
       callback_(std::move(callback)),
-      wait_(this,
-            dir_watch_.get(),
+      wait_(this, dir_watch_.get(),
             ZX_CHANNEL_READABLE | ZX_CHANNEL_PEER_CLOSED),
       weak_ptr_factory_(this) {
   auto status = wait_.Begin(async_get_default());
@@ -64,8 +61,7 @@ std::unique_ptr<DeviceWatcher> DeviceWatcher::Create(std::string directory_path,
       std::move(dir_fd), std::move(dir_watch), std::move(callback)));
 }
 
-void DeviceWatcher::Handler(async_t* async,
-                            async::WaitBase* wait,
+void DeviceWatcher::Handler(async_t* async, async::WaitBase* wait,
                             zx_status_t status,
                             const zx_packet_signal* signal) {
   if (status != ZX_OK)
@@ -97,7 +93,7 @@ void DeviceWatcher::Handler(async_t* async,
       msg += namelen;
       size -= namelen;
     }
-    wait->Begin(async); // ignore errors
+    wait->Begin(async);  // ignore errors
     return;
   }
 

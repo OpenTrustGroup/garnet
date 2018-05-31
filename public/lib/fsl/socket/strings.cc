@@ -6,8 +6,8 @@
 
 #include <utility>
 
-#include "lib/fxl/logging.h"
 #include "lib/fsl/socket/blocking_drain.h"
+#include "lib/fxl/logging.h"
 
 namespace fsl {
 

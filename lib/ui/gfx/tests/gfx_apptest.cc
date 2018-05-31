@@ -2,15 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "gtest/gtest.h"
-#include "lib/fxl/synchronization/waitable_event.h"
+#include "garnet/lib/ui/gfx/tests/gfx_test.h"
 
 #include "garnet/lib/ui/gfx/gfx_system.h"
-#include "garnet/lib/ui/gfx/tests/gfx_test.h"
 #include "garnet/lib/ui/gfx/tests/util.h"
+#include "gtest/gtest.h"
 #include "lib/escher/flib/release_fence_signaller.h"
 #include "lib/ui/scenic/fidl_helpers.h"
-#include "lib/ui/tests/test_with_message_loop.h"
 
 namespace scenic {
 namespace gfx {
@@ -19,34 +17,37 @@ namespace test {
 TEST_F(GfxSystemTest, DISABLED_CreateAndDestroySession) {
   EXPECT_EQ(0U, scenic()->num_sessions());
 
-  ui::SessionPtr session;
+  fuchsia::ui::scenic::SessionPtr session;
 
   EXPECT_EQ(0U, scenic()->num_sessions());
 
   scenic()->CreateSession(session.NewRequest(), nullptr);
 
-  RUN_MESSAGE_LOOP_UNTIL(scenic()->num_sessions() == 1);
+  RunLoopUntilIdle();
+  EXPECT_EQ(1U, scenic()->num_sessions());
   session = nullptr;
-  RUN_MESSAGE_LOOP_UNTIL(scenic()->num_sessions() == 0);
+  RunLoopUntilIdle();
+  EXPECT_EQ(0U, scenic()->num_sessions());
 }
 
 TEST_F(GfxSystemTest, DISABLED_ScheduleUpdateInOrder) {
   // Create a session.
-  ui::SessionPtr session;
+  fuchsia::ui::scenic::SessionPtr session;
   EXPECT_EQ(0U, scenic()->num_sessions());
   scenic()->CreateSession(session.NewRequest(), nullptr);
-  RUN_MESSAGE_LOOP_UNTIL(scenic()->num_sessions() == 1);
+  RunLoopUntilIdle();
+  EXPECT_EQ(1U, scenic()->num_sessions());
   // Present on the session with presentation_time = 1.
-  ui::Session::PresentCallback callback = [](auto) {};
+  fuchsia::ui::scenic::Session::PresentCallback callback = [](auto) {};
   session->Present(1, CreateEventArray(1), CreateEventArray(1), callback);
   // Briefly pump the message loop. Expect that the session is not destroyed.
-  ::scenic::test::RunLoopWithTimeout(kPumpMessageLoopDuration);
-  RUN_MESSAGE_LOOP_UNTIL(scenic()->num_sessions() == 1);
+  RunLoopUntilIdle();
+  EXPECT_EQ(1U, scenic()->num_sessions());
   // Present with the same presentation time.
   session->Present(1, CreateEventArray(1), CreateEventArray(1), callback);
   // Briefly pump the message loop. Expect that the session is not destroyed.
-  ::scenic::test::RunLoopWithTimeout(kPumpMessageLoopDuration);
-  RUN_MESSAGE_LOOP_UNTIL(scenic()->num_sessions() == 1);
+  RunLoopUntilIdle();
+  EXPECT_EQ(1U, scenic()->num_sessions());
 }
 
 bool IsFenceSignalled(const zx::event& fence) {
@@ -60,14 +61,15 @@ bool IsFenceSignalled(const zx::event& fence) {
 TEST_F(GfxSystemTest, DISABLED_ReleaseFences) {
   // Tests creating a session, and calling Present with two release fences.
   // The release fences should be signalled after a subsequent Present.
-  ui::SessionPtr session;
+  fuchsia::ui::scenic::SessionPtr session;
   EXPECT_EQ(0U, scenic()->num_sessions());
   scenic()->CreateSession(session.NewRequest(), nullptr);
-  RUN_MESSAGE_LOOP_UNTIL(scenic()->num_sessions() == 1);
+  RunLoopUntilIdle();
+  EXPECT_EQ(1U, scenic()->num_sessions());
   auto handler = static_cast<SessionHandlerForTest*>(
       gfx_system()->engine()->session_manager()->FindSession(1));
   {
-    ::fidl::VectorPtr<ui::Command> commands;
+    ::fidl::VectorPtr<fuchsia::ui::scenic::Command> commands;
     commands.push_back(
         scenic_lib::NewCommand(scenic_lib::NewCreateCircleCommand(1, 50.f)));
     commands.push_back(
@@ -75,7 +77,7 @@ TEST_F(GfxSystemTest, DISABLED_ReleaseFences) {
 
     session->Enqueue(std::move(commands));
   }
-  RUN_MESSAGE_LOOP_UNTIL(handler->command_count() == 2);
+  RunLoopUntilIdle();
   EXPECT_EQ(2u, handler->command_count());
   // Create release fences
   ::fidl::VectorPtr<zx::event> release_fences = CreateEventArray(2);
@@ -86,18 +88,17 @@ TEST_F(GfxSystemTest, DISABLED_ReleaseFences) {
   // Call Present with release fences.
   session->Present(0u, ::fidl::VectorPtr<zx::event>::New(0),
                    std::move(release_fences),
-                   [](images::PresentationInfo info) {});
-  RUN_MESSAGE_LOOP_UNTIL(handler->present_count() == 1);
+                   [](fuchsia::images::PresentationInfo info) {});
+  RunLoopUntilIdle();
   EXPECT_EQ(1u, handler->present_count());
   EXPECT_FALSE(IsFenceSignalled(release_fence1));
   EXPECT_FALSE(IsFenceSignalled(release_fence2));
   // Call Present again with no release fences.
   session->Present(0u, ::fidl::VectorPtr<zx::event>::New(0),
                    ::fidl::VectorPtr<zx::event>::New(0),
-                   [](images::PresentationInfo info) {});
-  RUN_MESSAGE_LOOP_UNTIL(handler->present_count() == 2);
+                   [](fuchsia::images::PresentationInfo info) {});
+  RunLoopUntilIdle();
   EXPECT_EQ(2u, handler->present_count());
-  RUN_MESSAGE_LOOP_UNTIL(IsFenceSignalled(release_fence1));
   EXPECT_TRUE(IsFenceSignalled(release_fence2));
 }
 
@@ -105,14 +106,15 @@ TEST_F(GfxSystemTest, DISABLED_AcquireAndReleaseFences) {
   // Tests creating a session, and calling Present with an acquire and a release
   // fence. The release fences should be signalled only after a subsequent
   // Present, and not until the acquire fence has been signalled.
-  ui::SessionPtr session;
+  fuchsia::ui::scenic::SessionPtr session;
   EXPECT_EQ(0U, scenic()->num_sessions());
   scenic()->CreateSession(session.NewRequest(), nullptr);
-  RUN_MESSAGE_LOOP_UNTIL(scenic()->num_sessions() == 1);
+  RunLoopUntilIdle();
+  EXPECT_EQ(1U, scenic()->num_sessions());
   auto handler = static_cast<SessionHandlerForTest*>(
       gfx_system()->engine()->session_manager()->FindSession(1));
   {
-    ::fidl::VectorPtr<ui::Command> commands;
+    ::fidl::VectorPtr<fuchsia::ui::scenic::Command> commands;
     commands.push_back(
         scenic_lib::NewCommand(scenic_lib::NewCreateCircleCommand(1, 50.f)));
     commands.push_back(
@@ -120,7 +122,7 @@ TEST_F(GfxSystemTest, DISABLED_AcquireAndReleaseFences) {
 
     session->Enqueue(std::move(commands));
   }
-  RUN_MESSAGE_LOOP_UNTIL(handler->command_count() == 2);
+  RunLoopUntilIdle();
   EXPECT_EQ(2u, handler->command_count());
   // Create acquire and release fences
   zx::event acquire_fence;
@@ -133,21 +135,23 @@ TEST_F(GfxSystemTest, DISABLED_AcquireAndReleaseFences) {
   release_fences.push_back(CopyEvent(release_fence));
   // Call Present with both the acquire and release fences.
   session->Present(0u, std::move(acquire_fences), std::move(release_fences),
-                   [](images::PresentationInfo info) {});
-  RUN_MESSAGE_LOOP_UNTIL(handler->present_count() == 1);
+                   [](fuchsia::images::PresentationInfo info) {});
+  RunLoopUntilIdle();
   EXPECT_EQ(1u, handler->present_count());
   EXPECT_FALSE(IsFenceSignalled(release_fence));
   // Call Present again with no fences.
   session->Present(0u, ::fidl::VectorPtr<zx::event>::New(0),
                    ::fidl::VectorPtr<zx::event>::New(0),
-                   [](images::PresentationInfo info) {});
-  RUN_MESSAGE_LOOP_UNTIL(handler->present_count() == 2);
+                   [](fuchsia::images::PresentationInfo info) {});
+  RunLoopUntilIdle();
+  EXPECT_EQ(2u, handler->present_count());
   EXPECT_FALSE(IsFenceSignalled(release_fence));
   // Now signal the acquire fence.
   acquire_fence.signal(0u, escher::kFenceSignalled);
   // Now expect that the first frame was presented, and its release fence was
   // signalled.
-  RUN_MESSAGE_LOOP_UNTIL(IsFenceSignalled(release_fence));
+  RunLoopUntilIdle();
+  EXPECT_TRUE(IsFenceSignalled(release_fence));
 }
 
 }  // namespace test

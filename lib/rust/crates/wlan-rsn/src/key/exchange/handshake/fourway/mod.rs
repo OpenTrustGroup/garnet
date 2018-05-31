@@ -8,13 +8,16 @@ mod supplicant;
 use self::authenticator::Authenticator;
 use self::supplicant::Supplicant;
 use Error;
+use akm::Akm;
+use cipher::{Cipher, GROUP_CIPHER_SUITE, TKIP};
 use eapol;
 use failure;
-use futures::future::Either;
-use futures::{task, Async, Poll, Stream};
 use key::exchange::Key;
-use rsna::Role;
+use key::gtk::Gtk;
+use key::ptk::Ptk;
+use rsna::{Role, SecAssocResult, SecAssocUpdate};
 use rsne::Rsne;
+use std::rc::Rc;
 
 enum RoleHandler {
     Authenticator(Authenticator),
@@ -22,81 +25,476 @@ enum RoleHandler {
 }
 
 #[derive(Debug)]
+pub enum MessageNumber {
+    Message1 = 1,
+    Message2 = 2,
+    Message3 = 3,
+    Message4 = 4,
+}
+
+#[derive(Debug)]
 pub struct Config {
-    role: Role,
-    pmk: Vec<u8>,
-    sta_addr: [u8; 6],
-    sta_rsne: Rsne,
-    peer_addr: [u8; 6],
-    peer_rsne: Rsne,
+    pub role: Role,
+    pub sta_addr: [u8; 6],
+    pub sta_rsne: Rsne,
+    pub peer_addr: [u8; 6],
+    pub peer_rsne: Rsne,
 }
 
 impl Config {
     pub fn new(
-        role: Role, pmk: Vec<u8>, sta_addr: [u8; 6], sta_rsne: Rsne, peer_addr: [u8; 6],
-        peer_rsne: Rsne,
+        role: Role, sta_addr: [u8; 6], sta_rsne: Rsne, peer_addr: [u8; 6], peer_rsne: Rsne
     ) -> Result<Config, failure::Error> {
         // TODO(hahnr): Validate configuration for:
         // (1) Correct RSNE subset
         // (2) Correct AKM and Cipher Suite configuration
-        // (3) Valid PMK for negotiated AKM
         Ok(Config {
             role,
-            pmk,
             sta_addr,
             sta_rsne,
             peer_addr,
             peer_rsne,
         })
     }
+
+    pub fn negotiated_rsne(&self) -> &Rsne {
+        match self.role {
+            Role::Authenticator => &self.peer_rsne,
+            Role::Supplicant => &self.sta_rsne,
+        }
+    }
 }
 
 pub struct Fourway {
-    cfg: Config,
+    cfg: Rc<Config>,
     handler: RoleHandler,
-    ptk: Vec<u8>,
-    completed: bool,
+    ptk: Option<Ptk>,
+    gtk: Option<Gtk>,
 }
 
 impl Fourway {
-    pub fn new(cfg: Config) -> Result<Fourway, failure::Error> {
-        let handler = match &cfg.role {
-            &Role::Supplicant => RoleHandler::Supplicant(Supplicant::new()?),
+    pub fn new(cfg: Config, pmk: Vec<u8>) -> Result<Fourway, failure::Error> {
+        let shared_cfg = Rc::new(cfg);
+        let handler = match &shared_cfg.role {
+            &Role::Supplicant => RoleHandler::Supplicant(Supplicant::new(shared_cfg.clone(), pmk)?),
             &Role::Authenticator => RoleHandler::Authenticator(Authenticator::new()?),
         };
         Ok(Fourway {
-            cfg,
-            handler,
-            ptk: vec![],
-            completed: false,
+            cfg: shared_cfg,
+            handler: handler,
+            ptk: None,
+            gtk: None,
         })
     }
 
-    pub fn initiate(&self) -> Result<(), failure::Error> {
-        match &self.handler {
-            &RoleHandler::Authenticator(ref a) => a.initiate(),
-            _ => Err(Error::UnexpectedInitiationRequest.into()),
+    fn on_key_confirmed(&mut self, key: Key) {
+        match key {
+            Key::Ptk(ptk) => self.ptk = Some(ptk),
+            Key::Gtk(gtk) => self.gtk = Some(gtk),
+            _ => (),
         }
     }
 
-    pub fn completed(&self) -> bool {
-        self.completed
+    pub fn on_eapol_key_frame(&mut self, frame: &eapol::KeyFrame) -> SecAssocResult {
+        // (1) Validate frame.
+        let () = self.validate_eapol_key_frame(frame)?;
+
+        // (2) Decrypt key data.
+        let mut plaintext = None;
+        if frame.key_info.encrypted_key_data() {
+            let rsne = self.cfg.negotiated_rsne();
+            let akm = &rsne.akm_suites[0];
+            plaintext = match self.ptk.as_ref() {
+                // Return error if key data is encrypted but the PTK was not yet derived.
+                None => Err(Error::UnexpectedEncryptedKeyData.into()),
+                // Else attempt to decrypt key data.
+                Some(ptk) => akm.keywrap_algorithm()
+                    .ok_or(Error::UnsupportedAkmSuite)?
+                    .unwrap(ptk.kek(), &frame.key_data[..])
+                    .map(|p| Some(p)),
+            }.map_err(|e| failure::Error::from(e))?;
+        }
+        let key_data = match plaintext.as_ref() {
+            Some(data) => &data[..],
+            // Key data was never encrypted.
+            None => &frame.key_data[..],
+        };
+
+        // (3) Process frame by handler.
+        let result = match &mut self.handler {
+            &mut RoleHandler::Authenticator(ref a) => a.on_eapol_key_frame(frame, key_data),
+            &mut RoleHandler::Supplicant(ref mut s) => s.on_eapol_key_frame(frame, key_data),
+        }?;
+
+        // (4) Process results from handler.
+        self.process_updates(result)
+    }
+
+    fn validate_eapol_key_frame(&self, frame: &eapol::KeyFrame) -> Result<(), failure::Error> {
+        // IEEE Std 802.1X-2010, 11.9
+        let key_descriptor = match eapol::KeyDescriptor::from_u8(frame.descriptor_type) {
+            Some(eapol::KeyDescriptor::Ieee802dot11) => Ok(eapol::KeyDescriptor::Ieee802dot11),
+            // Use of RC4 is deprecated.
+            Some(_) => Err(Error::InvalidKeyDescriptor(
+                frame.descriptor_type,
+                eapol::KeyDescriptor::Ieee802dot11,
+            )),
+            // Invalid value.
+            None => Err(Error::UnsupportedKeyDescriptor(frame.descriptor_type)),
+        }.map_err(|e| failure::Error::from(e))?;
+
+        // IEEE Std 802.11-2016, 12.7.2 b.1)
+        let rsne = self.cfg.negotiated_rsne();
+        let expected_version = derive_key_descriptor_version(rsne, key_descriptor);
+        if frame.key_info.key_descriptor_version() != expected_version {
+            return Err(Error::UnsupportedKeyDescriptorVersion(
+                frame.key_info.key_descriptor_version(),
+            ).into());
+        }
+
+        // IEEE Std 802.11-2016, 12.7.2 b.2)
+        // Only PTK derivation is supported as of now.
+        if frame.key_info.key_type() != eapol::KEY_TYPE_PAIRWISE {
+            return Err(Error::UnsupportedKeyDerivation.into());
+        }
+
+        // Drop messages which were not expected by the configured role.
+        let msg_no = message_number(frame);
+        match self.cfg.role {
+            // Authenticator should only receive message 2 and 4.
+            Role::Authenticator => match msg_no {
+                MessageNumber::Message2 | MessageNumber::Message4 => Ok(()),
+                _ => Err(Error::Unexpected4WayHandshakeMessage(msg_no)),
+            },
+            Role::Supplicant => match msg_no {
+                MessageNumber::Message1 | MessageNumber::Message3 => Ok(()),
+                _ => Err(Error::Unexpected4WayHandshakeMessage(msg_no)),
+            },
+        }.map_err(|e| failure::Error::from(e))?;
+
+        // Explicit validation based on the frame's message number.
+        let msg_no = message_number(frame);
+        match msg_no {
+            MessageNumber::Message1 => validate_message_1(frame),
+            MessageNumber::Message2 => validate_message_2(frame),
+            MessageNumber::Message3 => validate_message_3(frame),
+            MessageNumber::Message4 => validate_message_4(frame),
+        }?;
+
+        // IEEE Std 802.11-2016, 12.7.2 c)
+        match msg_no {
+            MessageNumber::Message1 | MessageNumber::Message3 => {
+                let rsne = self.cfg.negotiated_rsne();
+                let pairwise = &rsne.pairwise_cipher_suites[0];
+                let tk_bits = pairwise
+                    .tk_bits()
+                    .ok_or(Error::UnsupportedCipherSuite)
+                    .map_err(|e| failure::Error::from(e))?;
+                if frame.key_len != tk_bits / 8 {
+                    Err(Error::InvalidPairwiseKeyLength(frame.key_len, tk_bits / 8))
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Ok(()),
+        }.map_err(|e| failure::Error::from(e))?;
+
+        // IEEE Std 802.11-2016, 12.7.2, d)
+        let min_key_replay_counter = match &self.handler {
+            &RoleHandler::Authenticator(ref a) => a.key_replay_counter,
+            &RoleHandler::Supplicant(ref s) => s.key_replay_counter(),
+        };
+        if frame.key_replay_counter <= min_key_replay_counter {
+            return Err(Error::InvalidKeyReplayCounter.into());
+        }
+
+        // IEEE Std 802.11-2016, 12.7.2, e)
+        // Nonce is validated based on the frame's message number.
+        // Must not be zero in 1st, 2nd and 3rd message.
+        // Nonce in 3rd message must be same as the one from the 1st message.
+        if let MessageNumber::Message3 = msg_no {
+            let nonce_match = match &self.handler {
+                &RoleHandler::Supplicant(ref s) => &frame.key_nonce[..] == s.anonce(),
+                _ => false,
+            };
+            if !nonce_match {
+                return Err(Error::ErrorNonceDoesntMatch.into());
+            }
+        }
+
+        // IEEE Std 802.11-2016, 12.7.2, f)
+        // IV is not used.
+        if is_zero(&frame.key_iv[..]) {
+            return Err(Error::InvalidIv.into());
+        }
+
+        // IEEE Std 802.11-2016, 12.7.2, g)
+        // Key RSC validated based on the frame's message number.
+        // Optional in the 3rd message. Must be zero in others.
+
+        // IEEE Std 802.11-2016, 12.7.2 h)
+        let rsne = self.cfg.negotiated_rsne();
+        let akm = &rsne.akm_suites[0];
+        let mic_bytes = akm.mic_bytes()
+            .ok_or(Error::UnsupportedAkmSuite)
+            .map_err(|e| failure::Error::from(e))?;
+        if frame.key_mic.len() != mic_bytes as usize {
+            return Err(Error::InvalidMicSize.into());
+        }
+
+        // If a MIC is set but the PTK was not yet derived, the MIC cannot be verified.
+        if frame.key_info.key_mic() {
+            match self.ptk.as_ref() {
+                None => Err(Error::UnexpectedMic.into()),
+                Some(ptk) => {
+                    let frame_bytes = frame.to_bytes(true);
+                    let valid_mic = akm.integrity_algorithm()
+                        .ok_or(Error::UnsupportedAkmSuite)?
+                        .verify(ptk.kck(), &frame_bytes[..], &frame.key_mic[..]);
+                    if !valid_mic {
+                        Err(Error::InvalidMic)
+                    } else {
+                        Ok(())
+                    }
+                }
+            }.map_err(|e: Error| failure::Error::from(e))?;
+        }
+
+        // IEEE Std 802.11-2016, 12.7.2 i) & j)
+        if frame.key_data_len as usize != frame.key_data.len() {
+            return Err(Error::InvalidKeyDataLength.into());
+        }
+        Ok(())
+    }
+
+    fn process_updates(&mut self, mut updates: Vec<SecAssocUpdate>) -> SecAssocResult {
+        // Filter key updates and process ourselves to prevent reporting keys before the Handshake
+        // completed successfully. Report all other updates.
+        updates
+            .drain_filter(|update| match update {
+                SecAssocUpdate::Key(key) => true,
+                _ => false,
+            })
+            .for_each(|update| {
+                if let SecAssocUpdate::Key(key) = update {
+                    self.on_key_confirmed(key);
+                }
+            });
+
+        // If both PTK and GTK are known the Handshake completed successfully and keys can be
+        // reported.
+        if let (Some(ptk), Some(gtk)) = (self.ptk.as_ref(), self.gtk.as_ref()) {
+            updates.push(SecAssocUpdate::Key(Key::Ptk(ptk.clone())));
+            updates.push(SecAssocUpdate::Key(Key::Gtk(gtk.clone())));
+        }
+        Ok(updates)
     }
 }
 
-impl eapol::KeyFrameReceiver for Fourway {
-    fn on_eapol_key_frame(&self, _frame: &eapol::KeyFrame) -> Result<(), failure::Error> {
-        // TODO(hahnr): Forward to active handler.
+// Verbose and explicit validation of Message 1 to 4.
+
+fn validate_message_1(frame: &eapol::KeyFrame) -> Result<(), failure::Error> {
+    // IEEE Std 802.11-2016, 12.7.2 b.4)
+    if frame.key_info.install() {
+        Err(Error::InvalidInstallBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.5)
+    } else if !frame.key_info.key_ack() {
+        Err(Error::InvalidKeyAckBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.6)
+    } else if frame.key_info.key_mic() {
+        Err(Error::InvalidKeyAckBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.7)
+    } else if frame.key_info.secure() {
+        Err(Error::InvalidSecureBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.8)
+    } else if frame.key_info.error() {
+        Err(Error::InvalidErrorBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.9)
+    } else if frame.key_info.request() {
+        Err(Error::InvalidRequestBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.10)
+    } else if frame.key_info.encrypted_key_data() {
+        Err(Error::InvalidEncryptedKeyDataBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 e)
+    } else if is_zero(&frame.key_nonce[..]) {
+        Err(Error::InvalidNonce.into())
+    // IEEE Std 802.11-2016, 12.7.2 g)
+    } else if frame.key_rsc != 0 {
+        Err(Error::InvalidRsc.into())
+    } else {
         Ok(())
     }
 }
 
-impl Stream for Fourway {
-    type Item = Either<eapol::Frame, Key>;
-    type Error = failure::Error;
-
-    fn poll_next(&mut self, _cx: &mut task::Context) -> Poll<Option<Self::Item>, Self::Error> {
-        // TODO(hahnr): Forward to active handler.
-        Ok(Async::Pending)
+fn validate_message_2(frame: &eapol::KeyFrame) -> Result<(), failure::Error> {
+    // IEEE Std 802.11-2016, 12.7.2 b.4)
+    if frame.key_info.install() {
+        Err(Error::InvalidInstallBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.5)
+    } else if frame.key_info.key_ack() {
+        Err(Error::InvalidKeyAckBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.6)
+    } else if !frame.key_info.key_mic() {
+        Err(Error::InvalidKeyAckBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.7)
+    } else if frame.key_info.secure() {
+        Err(Error::InvalidSecureBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.8)
+    // Error bit only set by Supplicant in MIC failures in SMK derivation.
+    // SMK derivation not yet supported.
+    } else if frame.key_info.error() {
+        Err(Error::InvalidErrorBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.9)
+    } else if frame.key_info.request() {
+        Err(Error::InvalidRequestBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.10)
+    } else if frame.key_info.encrypted_key_data() {
+        Err(Error::InvalidEncryptedKeyDataBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 e)
+    } else if is_zero(&frame.key_nonce[..]) {
+        Err(Error::InvalidNonce.into())
+    // IEEE Std 802.11-2016, 12.7.2 g)
+    } else if frame.key_rsc != 0 {
+        Err(Error::InvalidRsc.into())
+    } else {
+        Ok(())
     }
 }
+
+fn validate_message_3(frame: &eapol::KeyFrame) -> Result<(), failure::Error> {
+    // IEEE Std 802.11-2016, 12.7.2 b.4)
+    // Install = 0 is only used in key mapping with TKIP and WEP, neither is supported by Fuchsia.
+    if !frame.key_info.install() {
+        Err(Error::InvalidInstallBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.5)
+    } else if !frame.key_info.key_ack() {
+        Err(Error::InvalidKeyAckBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.6)
+    } else if !frame.key_info.key_mic() {
+        Err(Error::InvalidKeyAckBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.7)
+    } else if !frame.key_info.secure() {
+        Err(Error::InvalidSecureBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.8)
+    } else if frame.key_info.error() {
+        Err(Error::InvalidErrorBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.9)
+    } else if frame.key_info.request() {
+        Err(Error::InvalidRequestBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.10)
+    } else if !frame.key_info.encrypted_key_data() {
+        Err(Error::InvalidEncryptedKeyDataBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 e)
+    } else if is_zero(&frame.key_nonce[..]) {
+        Err(Error::InvalidNonce.into())
+    // IEEE Std 802.11-2016, 12.7.2 i) & j)
+    // Key Data must not be empty.
+    } else if frame.key_data_len == 0 {
+        Err(Error::EmptyKeyData.into())
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_message_4(frame: &eapol::KeyFrame) -> Result<(), failure::Error> {
+    // IEEE Std 802.11-2016, 12.7.2 b.4)
+    if frame.key_info.install() {
+        Err(Error::InvalidInstallBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.5)
+    } else if frame.key_info.key_ack() {
+        Err(Error::InvalidKeyAckBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.6)
+    } else if !frame.key_info.key_mic() {
+        Err(Error::InvalidKeyAckBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.7)
+    } else if !frame.key_info.secure() {
+        Err(Error::InvalidSecureBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.8)
+    // Error bit only set by Supplicant in MIC failures in SMK derivation.
+    // SMK derivation not yet supported.
+    } else if frame.key_info.error() {
+        Err(Error::InvalidErrorBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.9)
+    } else if frame.key_info.request() {
+        Err(Error::InvalidRequestBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 b.10)
+    } else if frame.key_info.encrypted_key_data() {
+        Err(Error::InvalidEncryptedKeyDataBitValue.into())
+    // IEEE Std 802.11-2016, 12.7.2 g)
+    } else if frame.key_rsc != 0 {
+        Err(Error::InvalidRsc.into())
+    } else {
+        Ok(())
+    }
+}
+
+fn message_number(rx_frame: &eapol::KeyFrame) -> MessageNumber {
+    // IEEE does not specify how to determine a frame's message number in the 4-Way Handshake
+    // sequence. However, it's important to know a frame's message number to do further
+    // validations. To derive the message number the key info field is used.
+    // 4-Way Handshake specific EAPOL Key frame requirements:
+    // IEEE Std 802.11-2016, 12.7.6.1
+
+    // IEEE Std 802.11-2016, 12.7.6.2 & 12.7.6.4
+    // Authenticator requires acknowledgement of all its sent frames.
+    if rx_frame.key_info.key_ack() {
+        // Authenticator only sends 1st and 3rd message of the handshake.
+        // IEEE Std 802.11-2016, 12.7.2 b.4)
+        // The third requires key installation while the first one doesn't.
+        if rx_frame.key_info.install() {
+            MessageNumber::Message3
+        } else {
+            MessageNumber::Message1
+        }
+    } else {
+        // Supplicant only sends 2nd and 4th message of the handshake.
+        // IEEE Std 802.11-2016, 12.7.2 b.7)
+        // The fourth message is secured while the second one is not.
+        if rx_frame.key_info.secure() {
+            MessageNumber::Message4
+        } else {
+            MessageNumber::Message2
+        }
+    }
+}
+
+// IEEE Std 802.11-2016, 12.7.2 b.1)
+// Key Descriptor Version is based on the negotiated AKM, Pairwise- and Group Cipher suite.
+fn derive_key_descriptor_version(rsne: &Rsne, key_descriptor_type: eapol::KeyDescriptor) -> u16 {
+    let akm = &rsne.akm_suites[0];
+    let pairwise = &rsne.pairwise_cipher_suites[0];
+
+    if !akm.has_known_algorithm() || !pairwise.has_known_usage() {
+        return 0;
+    }
+
+    match akm.suite_type {
+        1 | 2 => match key_descriptor_type {
+            eapol::KeyDescriptor::Rc4 => match pairwise.suite_type {
+                TKIP | GROUP_CIPHER_SUITE => 1,
+                _ => 0,
+            },
+            eapol::KeyDescriptor::Ieee802dot11 => {
+                if pairwise.is_enhanced() {
+                    2
+                } else {
+                    match rsne.group_data_cipher_suite.as_ref() {
+                        Some(group) if group.is_enhanced() => 2,
+                        _ => 0,
+                    }
+                }
+            }
+            _ => 0,
+        },
+        // Interestingly, IEEE 802.11 does not specify any pairwise- or group cipher
+        // requirements for these AKMs.
+        3...6 => 3,
+        _ => 0,
+    }
+}
+
+fn is_zero(slice: &[u8]) -> bool {
+    slice.iter().all(|&x| x == 0)
+}
+
+// TODO(hahnr): Add tests.

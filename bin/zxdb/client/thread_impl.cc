@@ -13,15 +13,21 @@ namespace zxdb {
 
 ThreadImpl::ThreadImpl(ProcessImpl* process,
                        const debug_ipc::ThreadRecord& record)
-    : Thread(process->session()), process_(process), koid_(record.koid),
+    : Thread(process->session()),
+      process_(process),
+      koid_(record.koid),
       weak_factory_(this) {
   SetMetadata(record);
 }
+
 ThreadImpl::~ThreadImpl() = default;
 
 Process* ThreadImpl::GetProcess() const { return process_; }
+
 uint64_t ThreadImpl::GetKoid() const { return koid_; }
+
 const std::string& ThreadImpl::GetName() const { return name_; }
+
 debug_ipc::ThreadRecord::State ThreadImpl::GetState() const { return state_; }
 
 void ThreadImpl::Pause() {
@@ -29,8 +35,7 @@ void ThreadImpl::Pause() {
   request.process_koid = process_->GetKoid();
   request.thread_koid = koid_;
   session()->Send<debug_ipc::PauseRequest, debug_ipc::PauseReply>(
-      request,
-      [](const Err& err, debug_ipc::PauseReply) {});
+      request, [](const Err& err, debug_ipc::PauseReply) {});
 }
 
 void ThreadImpl::Continue() {
@@ -39,8 +44,7 @@ void ThreadImpl::Continue() {
   request.thread_koid = koid_;
   request.how = debug_ipc::ResumeRequest::How::kContinue;
   session()->Send<debug_ipc::ResumeRequest, debug_ipc::ResumeReply>(
-      request,
-      [](const Err& err, debug_ipc::ResumeReply) {});
+      request, [](const Err& err, debug_ipc::ResumeReply) {});
 }
 
 void ThreadImpl::StepInstruction() {
@@ -49,31 +53,41 @@ void ThreadImpl::StepInstruction() {
   request.thread_koid = koid_;
   request.how = debug_ipc::ResumeRequest::How::kStepInstruction;
   session()->Send<debug_ipc::ResumeRequest, debug_ipc::ResumeReply>(
-      request,
-      [](const Err& err, debug_ipc::ResumeReply) {});
+      request, [](const Err& err, debug_ipc::ResumeReply) {});
 }
 
-const std::vector<std::unique_ptr<Frame>>& ThreadImpl::GetFrames() const {
-  return frames_;
+std::vector<Frame*> ThreadImpl::GetFrames() const {
+  std::vector<Frame*> frames;
+  frames.reserve(frames_.size());
+  for (const auto& cur : frames_) {
+    cur->EnsureSymbolized();
+    frames.push_back(cur.get());
+  }
+  return frames;
 }
 
-bool ThreadImpl::HasAllFrames() const {
-  return has_all_frames_;
-}
+bool ThreadImpl::HasAllFrames() const { return has_all_frames_; }
 
 void ThreadImpl::SyncFrames(std::function<void()> callback) {
   debug_ipc::BacktraceRequest request;
   request.process_koid = process_->GetKoid();
   request.thread_koid = koid_;
 
+  ClearFrames();
+
   session()->Send<debug_ipc::BacktraceRequest, debug_ipc::BacktraceReply>(
-      request,
-      [callback, thread = weak_factory_.GetWeakPtr()](
-          const Err& err, debug_ipc::BacktraceReply reply) {
-        if (thread)
-          thread->HaveFrames(reply.frames);
-        if (callback)
-          callback();
+      request, [ callback, thread = weak_factory_.GetWeakPtr() ](
+                   const Err& err, debug_ipc::BacktraceReply reply) {
+        if (!thread)
+          return;
+
+        thread->HaveFrames(reply.frames, [thread, callback]() {
+          // HaveFrames will only issue the callback if the ThreadImpl is
+          // still in scope so we don't need a weak pointer here.
+          thread->has_all_frames_ = true;
+          if (callback)
+            callback();
+        });
       });
 }
 
@@ -95,29 +109,39 @@ void ThreadImpl::SetMetadata(const debug_ipc::ThreadRecord& record) {
 }
 
 void ThreadImpl::OnException(const debug_ipc::NotifyException& notify) {
-  SetMetadata(notify.thread);
+  // Symbolize the stack frame before broadcasting the state change.
+  std::vector<debug_ipc::StackFrame> frame;
+  frame.push_back(notify.frame);
+  // HaveFrames will only issue the callback if the ThreadImpl is still in
+  // scope so we don't need a weak pointer here.
+  HaveFrames(frame, [ notify, thread = this ]() {
+    thread->SetMetadata(notify.thread);
 
-  // After an exception the thread should be blocked.
-  FXL_DCHECK(state_ == debug_ipc::ThreadRecord::State::kBlocked);
+    // After an exception the thread should be blocked.
+    FXL_DCHECK(thread->state_ == debug_ipc::ThreadRecord::State::kBlocked);
 
-  // May have had some out-of-date backtrace information if the thread was
-  // resumed without this class noticing.
-  if (!frames_.empty())
-    ClearFrames();
-
-  // Save the current position as frame 0.
-  has_all_frames_ = false;
-  frames_.push_back(std::make_unique<FrameImpl>(this, notify.frame));
-
-  for (auto& observer : observers())
-    observer.OnThreadStopped(this, notify.type);
+    thread->has_all_frames_ = false;
+    ;
+    for (auto& observer : thread->observers())
+      observer.OnThreadStopped(thread, notify.type);
+  });
 }
 
-void ThreadImpl::HaveFrames(const std::vector<debug_ipc::StackFrame>& frames) {
+void ThreadImpl::HaveFrames(const std::vector<debug_ipc::StackFrame>& frames,
+                            std::function<void()> callback) {
   // TODO(brettw) need to preserve stack frames that haven't changed.
-  frames_.clear();
+  std::vector<uint64_t> addresses;
   for (const auto& frame : frames)
-    frames_.push_back(std::make_unique<FrameImpl>(this, frame));
+    addresses.push_back(frame.ip);
+
+  frames_.clear();
+  for (size_t i = 0; i < frames.size(); i++) {
+    frames_.push_back(std::make_unique<FrameImpl>(
+        this, frames[i], Location(Location::State::kAddress, frames[i].ip)));
+  }
+
+  if (callback)
+    callback();
 }
 
 void ThreadImpl::ClearFrames() {

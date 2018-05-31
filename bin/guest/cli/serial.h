@@ -5,8 +5,29 @@
 #ifndef GARNET_BIN_GUEST_CLI_SERIAL_H_
 #define GARNET_BIN_GUEST_CLI_SERIAL_H_
 
-#include "garnet/bin/guest/cli/service.h"
+#include <memory>
 
-void handle_serial(ConnectFunc func);
+#include <lib/async-loop/cpp/loop.h>
+#include <zx/socket.h>
+
+class InputReader;
+class OutputWriter;
+
+class SerialConsole {
+ public:
+  SerialConsole(async::Loop* loop);
+  SerialConsole(SerialConsole&& o);
+
+  ~SerialConsole();
+
+  void Start(zx::socket socket);
+
+ private:
+  async::Loop* loop_;
+  std::unique_ptr<InputReader> input_reader_;
+  std::unique_ptr<OutputWriter> output_writer_;
+};
+
+void handle_serial(uint32_t env_id, uint32_t cid);
 
 #endif  // GARNET_BIN_GUEST_CLI_SERIAL_H_

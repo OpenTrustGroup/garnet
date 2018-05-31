@@ -74,9 +74,9 @@ int ConsoleContext::IdForFrame(const Frame* frame) const {
   // whether the frames have been synced, since if there is a frame here,
   // we know it's present in the thread's list.
   Thread* thread = frame->GetThread();
-  const std::vector<std::unique_ptr<Frame>>& frames = thread->GetFrames();
+  auto frames = thread->GetFrames();
   for (size_t i = 0; i < frames.size(); i++) {
-    if (frames[i].get() == frame)
+    if (frames[i] == frame)
       return static_cast<int>(i);
   }
   FXL_NOTREACHED();  // Should have found the frame.
@@ -275,7 +275,12 @@ void ConsoleContext::WillDestroyBreakpoint(Breakpoint* breakpoint) {
 
   id_to_breakpoint_.erase(id);
   breakpoint_to_id_.erase(found_breakpoint);
+}
 
+void ConsoleContext::DidTryToLoadSymbolMapping(
+    bool ids_loaded, const std::string& msg) {
+  Console* console = Console::get();
+  console->Output(msg);
 }
 
 void ConsoleContext::DidCreateProcess(Target* target, Process* process) {
@@ -313,7 +318,7 @@ void ConsoleContext::DidDestroyProcess(Target* target, DestroyReason reason,
       msg += "Killed: ";
       break;
   }
-  msg += DescribeTarget(this, target, false);
+  msg += DescribeTarget(this, target);
 
   console->Output(msg);
 }
@@ -372,6 +377,29 @@ void ConsoleContext::WillDestroyThread(Process* process, Thread* thread) {
   }
 }
 
+void ConsoleContext::OnSymbolLoadFailure(Process* process, const Err& err) {
+  Console::get()->Output(err);
+}
+
+// For comparison, GDB's printout for a breakpoint hit is:
+//
+//   Breakpoint 1, main () at eraseme.c:4
+//   4         printf("Hello\n");
+//
+// And LLDB's is:
+//
+//   * thread #1: tid = 33767, 0x000055555555463e a.out`main + 4 at
+//   eraseme.c:4, name = 'a.out', stop reason = breakpoint 1.1
+//       frame #0: 0x000055555555463e a.out`main + 4 at eraseme.c:4
+//      1    #include <stdio.h>
+//      2
+//      3    int main() {
+//   -> 4    printf("Hello\n");
+//      5    return 1;
+//      6  }
+//
+// When stepping, GDB prints out only the 2nd line with source info, and LLDB
+// prints out the whole thing with "step over" for "stop reason".
 void ConsoleContext::OnThreadStopped(Thread* thread,
                                      debug_ipc::NotifyException::Type type) {
   // Set this process and thread as active.
@@ -384,14 +412,14 @@ void ConsoleContext::OnThreadStopped(Thread* thread,
 
   // Only print out the process when there's more than one.
   if (id_to_target_.size() > 1) {
-    out.Append(DescribeTarget(this, target, false));
+    out.Append(DescribeTarget(this, target));
     out.Append("\n");
   }
 
   // Only print out the thread when there's more than one.
   TargetRecord* target_record = GetTargetRecord(target);
   if (target_record->id_to_thread.size() > 1) {
-    out.Append(DescribeThread(this, thread, false));
+    out.Append(DescribeThread(this, thread));
     out.Append("\n");
   }
 
@@ -401,7 +429,7 @@ void ConsoleContext::OnThreadStopped(Thread* thread,
   // Frame (current position will always be frame 0).
   const auto& frames = thread->GetFrames();
   FXL_DCHECK(!frames.empty());
-  out.Append(DescribeFrame(frames[0].get(), 0));
+  out.Append(DescribeLocation(frames[0]->GetLocation()));
 
   console->Output(std::move(out));
 }
@@ -540,7 +568,7 @@ Err ConsoleContext::FillOutFrame(Command* cmd,
       const auto& frames = thread_record->thread->GetFrames();
       frame_id = thread_record->active_frame_id;
       if (frame_id < static_cast<int>(frames.size())) {
-        cmd->set_frame(frames[frame_id].get());
+        cmd->set_frame(frames[frame_id]);
       } else {
         // If the active frame doesn't point to a valid frame, it should
         // always be 0.
@@ -556,7 +584,7 @@ Err ConsoleContext::FillOutFrame(Command* cmd,
 
   const auto& frames = thread_record->thread->GetFrames();
   if (frame_id < static_cast<int>(frames.size())) {
-    cmd->set_frame(frames[frame_id].get());
+    cmd->set_frame(frames[frame_id]);
     return Err();
   }
 

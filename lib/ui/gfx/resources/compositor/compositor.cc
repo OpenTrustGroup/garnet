@@ -25,6 +25,7 @@
 #include "garnet/lib/ui/gfx/resources/lights/ambient_light.h"
 #include "garnet/lib/ui/gfx/resources/lights/directional_light.h"
 #include "garnet/lib/ui/gfx/resources/renderers/renderer.h"
+#include "garnet/lib/ui/gfx/resources/stereo_camera.h"
 #include "garnet/lib/ui/gfx/swapchain/swapchain.h"
 
 namespace scenic {
@@ -33,8 +34,7 @@ namespace gfx {
 const ResourceTypeInfo Compositor::kTypeInfo = {ResourceType::kCompositor,
                                                 "Compositor"};
 
-Compositor::Compositor(Session* session,
-                       scenic::ResourceId id,
+Compositor::Compositor(Session* session, scenic::ResourceId id,
                        const ResourceTypeInfo& type_info,
                        std::unique_ptr<Swapchain> swapchain)
     : Resource(session, id, type_info),
@@ -47,9 +47,7 @@ Compositor::Compositor(Session* session,
   session->engine()->AddCompositor(this);
 }
 
-Compositor::~Compositor() {
-  session()->engine()->RemoveCompositor(this);
-}
+Compositor::~Compositor() { session()->engine()->RemoveCompositor(this); }
 
 void Compositor::CollectScenes(std::set<Scene*>* scenes_out) {
   if (layer_stack_) {
@@ -66,8 +64,7 @@ bool Compositor::SetLayerStack(LayerStackPtr layer_stack) {
 
 // Helper function for DrawLayer().
 static void InitEscherStage(
-    escher::Stage* stage,
-    const escher::ViewingVolume& viewing_volume,
+    escher::Stage* stage, const escher::ViewingVolume& viewing_volume,
     const std::vector<AmbientLightPtr>& ambient_lights,
     const std::vector<DirectionalLightPtr>& directional_lights) {
   stage->set_viewing_volume(viewing_volume);
@@ -144,8 +141,7 @@ std::vector<Layer*> Compositor::GetDrawableLayers() const {
 }
 
 std::unique_ptr<escher::Model> Compositor::DrawOverlaysToModel(
-    const std::vector<Layer*>& drawable_layers,
-    const escher::FramePtr& frame,
+    const std::vector<Layer*>& drawable_layers, const escher::FramePtr& frame,
     const FrameTimingsPtr& frame_timings,
     escher::PaperRenderer* escher_renderer,
     escher::ShadowMapRenderer* shadow_renderer) {
@@ -188,8 +184,7 @@ void Compositor::DrawLayer(const escher::FramePtr& frame,
                            const FrameTimingsPtr& frame_timings,
                            escher::PaperRenderer* escher_renderer,
                            escher::ShadowMapRenderer* shadow_map_renderer,
-                           Layer* layer,
-                           const escher::ImagePtr& output_image,
+                           Layer* layer, const escher::ImagePtr& output_image,
                            const escher::Model* overlay_model) {
   TRACE_DURATION("gfx", "Compositor::DrawLayer");
   FXL_DCHECK(layer->IsDrawable());
@@ -217,28 +212,20 @@ void Compositor::DrawLayer(const escher::FramePtr& frame,
                   scene->directional_lights());
   escher::Model model(renderer->CreateDisplayList(renderer->camera()->scene(),
                                                   escher::vec2(layer->size())));
-  escher::Camera camera =
-      renderer->camera()->GetEscherCamera(stage.viewing_volume());
-
-  if (camera.pose_buffer()) {
-    camera.SetLatchedPoseBuffer(pose_buffer_latching_shader_->LatchPose(
-        frame, camera, camera.pose_buffer(),
-        frame_timings->target_presentation_time()));
-  }
 
   // Set the renderer's shadow mode, and generate a shadow map if necessary.
   escher::ShadowMapPtr shadow_map;
   switch (renderer->shadow_technique()) {
-    case ::gfx::ShadowTechnique::UNSHADOWED:
+    case ::fuchsia::ui::gfx::ShadowTechnique::UNSHADOWED:
       escher_renderer->set_shadow_type(escher::PaperRendererShadowType::kNone);
       break;
-    case ::gfx::ShadowTechnique::SCREEN_SPACE:
+    case ::fuchsia::ui::gfx::ShadowTechnique::SCREEN_SPACE:
       escher_renderer->set_shadow_type(escher::PaperRendererShadowType::kSsdo);
       break;
-    case ::gfx::ShadowTechnique::MOMENT_SHADOW_MAP:
+    case ::fuchsia::ui::gfx::ShadowTechnique::MOMENT_SHADOW_MAP:
       FXL_DLOG(WARNING) << "Moment shadow maps not implemented";
     // Fallthrough to regular shadow maps.
-    case ::gfx::ShadowTechnique::SHADOW_MAP:
+    case ::fuchsia::ui::gfx::ShadowTechnique::SHADOW_MAP:
       escher_renderer->set_shadow_type(
           escher::PaperRendererShadowType::kShadowMap);
 
@@ -248,8 +235,29 @@ void Compositor::DrawLayer(const escher::FramePtr& frame,
       break;
   }
 
-  escher_renderer->DrawFrame(frame, stage, model, camera, output_image,
-                             shadow_map, overlay_model);
+  auto draw_frame_lambda = [this, escher_renderer, frame, frame_timings, &stage,
+                            &model, &output_image, &shadow_map,
+                            &overlay_model](escher::Camera camera) {
+    if (camera.pose_buffer()) {
+      camera.SetLatchedPoseBuffer(pose_buffer_latching_shader_->LatchPose(
+          frame, camera, camera.pose_buffer(),
+          frame_timings->target_presentation_time()));
+    }
+    escher_renderer->DrawFrame(frame, stage, model, camera, output_image,
+                               shadow_map, overlay_model);
+  };
+
+  if (renderer->camera()->IsKindOf<StereoCamera>()) {
+    auto stereo_camera = renderer->camera()->As<StereoCamera>();
+    for (const auto eye : {StereoCamera::Eye::LEFT, StereoCamera::Eye::RIGHT}) {
+      escher::Camera camera = stereo_camera->GetEscherCamera(eye);
+      draw_frame_lambda(camera);
+    }
+  } else {
+    escher::Camera camera =
+        renderer->camera()->GetEscherCamera(stage.viewing_volume());
+    draw_frame_lambda(camera);
+  }
 }
 
 bool Compositor::DrawFrame(const FrameTimingsPtr& frame_timings,
@@ -258,13 +266,15 @@ bool Compositor::DrawFrame(const FrameTimingsPtr& frame_timings,
   TRACE_DURATION("gfx", "Compositor::DrawFrame");
 
   std::vector<Layer*> drawable_layers = GetDrawableLayers();
-  if (drawable_layers.empty()) return false;
+  if (drawable_layers.empty())
+    return false;
 
   escher::FramePtr frame = escher()->NewFrame("Scenic Compositor");
 
   auto overlay_model = DrawOverlaysToModel(
       drawable_layers, frame, frame_timings, escher_renderer, shadow_renderer);
-  if (overlay_model == nullptr) return false;
+  if (overlay_model == nullptr)
+    return false;
 
   bool success = swapchain_->DrawAndPresentFrame(
       frame_timings,
@@ -303,20 +313,14 @@ void Compositor::DrawToImage(escher::PaperRenderer* escher_renderer,
     return;
   }
   escher::FramePtr frame = escher()->NewFrame("Scenic Compositor");
-  auto overlay_model =
-      DrawOverlaysToModel(drawable_layers, frame, frame_timings,
-                          escher_renderer, shadow_renderer);
+  auto overlay_model = DrawOverlaysToModel(
+      drawable_layers, frame, frame_timings, escher_renderer, shadow_renderer);
   if (overlay_model == nullptr) {
     FXL_LOG(FATAL) << "Failed to generate overlay model";
   }
   const auto& bottom_layer = drawable_layers[0];
-  DrawLayer(frame,
-            frame_timings,
-            escher_renderer,
-            shadow_renderer,
-            bottom_layer,
-            output_image,
-            overlay_model.get());
+  DrawLayer(frame, frame_timings, escher_renderer, shadow_renderer,
+            bottom_layer, output_image, overlay_model.get());
   frame->EndFrame(frame_done_semaphore, nullptr);
 }
 

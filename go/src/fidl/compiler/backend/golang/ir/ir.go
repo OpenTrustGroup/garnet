@@ -9,6 +9,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sort"
 
 	"fidl/compiler/backend/common"
 	"fidl/compiler/backend/types"
@@ -24,6 +25,12 @@ const (
 	TagSuffix         = "Tag"
 
 	MessageHeaderSize = 16
+
+	SyscallZxPackage = "syscall/zx"
+	SyscallZxAlias   = "_zx"
+
+	BindingsPackage = "fidl/bindings"
+	BindingsAlias   = "_bindings"
 )
 
 // Type represents a golang type.
@@ -219,6 +226,10 @@ type Method struct {
 	// Ordinal is the ordinal for this method.
 	Ordinal types.Ordinal
 
+	// OrdinalName is the name of the ordinal for this method, including the interface
+	// name as a prefix.
+	OrdinalName string
+
 	// Name is the name of the Method, including the interface name as a prefix.
 	Name string
 
@@ -237,6 +248,15 @@ type Method struct {
 	IsEvent bool
 }
 
+// Library represents a FIDL library as a golang package.
+type Library struct {
+	// Alias is the alias of the golang package referring to a FIDL library.
+	Alias string
+
+	// Path is the path to the golang package referring to a FIDL library.
+	Path string
+}
+
 // Root is the root of the golang backend IR structure.
 //
 // The golang backend IR structure is loosely modeled after an abstract syntax
@@ -244,6 +264,10 @@ type Method struct {
 type Root struct {
 	// Name is the name of the library.
 	Name string
+
+	// PackageName is the name of the golang package as other Go programs would
+	// import it.
+	PackageName string
 
 	// Consts represents a list of FIDL constants represented as Go constants.
 	Consts []Const
@@ -261,27 +285,27 @@ type Root struct {
 	Interfaces []Interface
 
 	// Libraries represents the set of library dependencies for this FIDL library.
-	// These are only the names of the libraries, as those are sufficient.
-	Libraries []string
-
-	// NeedsBindings is whether or not the generated code depends on the bindings.
-	NeedsBindings bool
-
-	// NeedsSyscallZx is whether or not the generated code depends on syscall/zx.
-	NeedsSyscallZx bool
+	Libraries []Library
 }
 
 // compiler contains the state necessary for recursive compilation.
 type compiler struct {
-	// needsSyscallZx is whether or not we discovered that the generated code
-	// depends on syscall/zx.
-	needsSyscallZx bool
-
 	// decls contains all top-level declarations for the FIDL source.
 	decls types.DeclMap
 
-	// library is the name of the current library
+	// library is the identifier for the current library.
 	library types.LibraryIdentifier
+
+	// libraryDeps is a mapping of compiled library identifiers (go package paths)
+	// to aliases, which is used to resolve references to types outside of the current
+	// FIDL library.
+	libraryDeps map[string]string
+
+	// usedLibraryDeps is identical to libraryDeps except it is built up as references
+	// are made into libraryDeps. Thus, after Compile is run, it contains the subset of
+	// libraryDeps that's actually being used. The purpose is to figure out which
+	// dependencies need to be imported.
+	usedLibraryDeps map[string]string
 }
 
 // Contains the full set of reserved golang keywords, in addition to a set of
@@ -408,13 +432,15 @@ func (_ *compiler) compileIdentifier(id types.Identifier, export bool, ext strin
 
 func (c *compiler) compileCompoundIdentifier(eci types.EncodedCompoundIdentifier, ext string) string {
 	ci := exportIdentifier(eci)
+	pkg := compileLibraryIdentifier(ci.Library)
 	strs := []string{}
 	if c.inExternalLibrary(ci) {
-		// TODO(FIDL-159) handle more than one library name component
-		strs = append(strs, changeIfReserved(ci.Library[0], "")+".")
+		pkgAlias := c.libraryDeps[pkg]
+		strs = append(strs, pkgAlias)
+		c.usedLibraryDeps[pkg] = pkgAlias
 	}
 	strs = append(strs, changeIfReserved(ci.Name, ext))
-	return strings.Join(strs, "")
+	return strings.Join(strs, ".")
 }
 
 func (_ *compiler) compileLiteral(val types.Literal) string {
@@ -465,7 +491,8 @@ func (c *compiler) compileType(val types.Type) (r Type, t Tag) {
 			r = Type("string")
 		}
 	case types.HandleType:
-		c.needsSyscallZx = true
+		// Note here that we require the SyscallZx package.
+		c.usedLibraryDeps[SyscallZxPackage] = SyscallZxAlias
 		e, ok := handleTypes[val.HandleSubtype]
 		if !ok {
 			// Fall back onto a generic handle if we don't support that particular
@@ -610,9 +637,11 @@ func (c *compiler) compileParameter(p types.Parameter) StructMember {
 
 func (c *compiler) compileMethod(ifaceName types.EncodedCompoundIdentifier, val types.Method) Method {
 	methodName := c.compileIdentifier(val.Name, true, "")
+	ordinalName := c.compileCompoundIdentifier(ifaceName, methodName+"Ordinal")
 	r := Method{
 		Name:            methodName,
 		Ordinal:         val.Ordinal,
+		OrdinalName:     ordinalName,
 		EventExpectName: "Expect" + methodName,
 		IsEvent:         !val.HasRequest && val.HasResponse,
 	}
@@ -660,11 +689,54 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 	return r
 }
 
+func compileLibraryIdentifier(lib types.LibraryIdentifier) string {
+	return "fidl/" + joinLibraryIdentifier(lib, "/")
+}
+
+func joinLibraryIdentifier(lib types.LibraryIdentifier, sep string) string {
+	str := make([]string, len([]types.Identifier(lib)))
+	for i, id := range lib {
+		str[i] = string(id)
+	}
+	return strings.Join(str, sep)
+}
+
 // Compile translates parsed FIDL IR into golang backend IR for code generation.
 func Compile(fidlData types.Root) Root {
 	libraryName := types.ParseLibraryName(fidlData.Name)
-	c := compiler{decls: fidlData.Decls, library: libraryName}
-	r := Root{Name: string(fidlData.Name)}
+	libraryPath := compileLibraryIdentifier(libraryName)
+
+	// Collect all libraries.
+	godeps := make(map[string]string)
+	for _, v := range fidlData.Libraries {
+		// Don't try to import yourself.
+		if v.Name == fidlData.Name {
+			continue
+		}
+		libComponents := types.ParseLibraryName(v.Name)
+		path := compileLibraryIdentifier(libComponents)
+		alias := changeIfReserved(
+			types.Identifier(common.ToLowerCamelCase(
+				joinLibraryIdentifier(libComponents, ""),
+			)),
+			"",
+		)
+		godeps[path] = alias
+	}
+
+	// Instantiate a compiler context.
+	c := compiler{
+		decls:       fidlData.Decls,
+		library:     libraryName,
+		libraryDeps: godeps,
+		usedLibraryDeps: make(map[string]string),
+	}
+
+	// Compile fidlData into r.
+	r := Root{
+		Name:        string(libraryName[len(libraryName)-1]),
+		PackageName: libraryPath,
+	}
 	for _, v := range fidlData.Consts {
 		r.Consts = append(r.Consts, c.compileConst(v))
 	}
@@ -678,19 +750,21 @@ func Compile(fidlData types.Root) Root {
 		r.Unions = append(r.Unions, c.compileUnion(v))
 	}
 	if len(fidlData.Interfaces) != 0 {
-		r.NeedsBindings = true
-		r.NeedsSyscallZx = true
+		c.usedLibraryDeps[SyscallZxPackage] = SyscallZxAlias
+		c.usedLibraryDeps[BindingsPackage] = BindingsAlias
 	}
 	for _, v := range fidlData.Interfaces {
 		r.Interfaces = append(r.Interfaces, c.compileInterface(v))
 	}
-	for _, v := range fidlData.Libraries {
-		// Don't try to import yourself.
-		if v.Name == fidlData.Name {
-			continue
-		}
-		r.Libraries = append(r.Libraries, string(v.Name))
+	for path, alias := range c.usedLibraryDeps {
+		r.Libraries = append(r.Libraries, Library{
+			Path:  path,
+			Alias: alias,
+		})
 	}
-	r.NeedsSyscallZx = r.NeedsSyscallZx || c.needsSyscallZx
+	// Sort the libraries according to Path.
+	sort.Slice(r.Libraries, func(i, j int) bool {
+		return strings.Compare(r.Libraries[i].Path, r.Libraries[j].Path) == -1
+	})
 	return r
 }

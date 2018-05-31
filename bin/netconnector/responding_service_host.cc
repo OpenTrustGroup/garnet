@@ -12,7 +12,7 @@
 namespace netconnector {
 
 RespondingServiceHost::RespondingServiceHost(
-    const component::ApplicationEnvironmentPtr& environment) {
+    const component::EnvironmentPtr& environment) {
   FXL_DCHECK(environment);
   environment->GetApplicationLauncher(launcher_.NewRequest());
 }
@@ -20,12 +20,11 @@ RespondingServiceHost::RespondingServiceHost(
 RespondingServiceHost::~RespondingServiceHost() {}
 
 void RespondingServiceHost::RegisterSingleton(
-    const std::string& service_name,
-    component::ApplicationLaunchInfoPtr launch_info) {
+    const std::string& service_name, component::LaunchInfoPtr launch_info) {
   service_namespace_.AddServiceForName(
-      fxl::MakeCopyable([
-        this, service_name, launch_info = std::move(launch_info)
-      ](zx::channel client_handle) mutable {
+      fxl::MakeCopyable([this, service_name,
+                         launch_info = std::move(launch_info)](
+                            zx::channel client_handle) mutable {
         FXL_VLOG(2) << "Handling request for service " << service_name;
 
         auto iter = service_providers_by_name_.find(service_name);
@@ -39,22 +38,21 @@ void RespondingServiceHost::RegisterSingleton(
           // the constructor. Instead, we should be launching it in a new
           // environment that is restricted based on app permissions.
 
-          component::ApplicationLaunchInfo dup_launch_info;
+          component::LaunchInfo dup_launch_info;
           dup_launch_info.url = launch_info->url;
           fidl::Clone(launch_info->arguments, &dup_launch_info.arguments);
           component::Services services;
           dup_launch_info.directory_request = services.NewRequest();
 
-          component::ApplicationControllerPtr controller;
+          component::ComponentControllerPtr controller;
           launcher_->CreateApplication(std::move(dup_launch_info),
                                        controller.NewRequest());
 
-          controller.set_error_handler(
-              [this, service_name] {
-                FXL_LOG(INFO)
-                    << "Service " << service_name << " provider disconnected";
-                service_providers_by_name_.erase(service_name);
-              });
+          controller.set_error_handler([this, service_name] {
+            FXL_LOG(INFO) << "Service " << service_name
+                          << " provider disconnected";
+            service_providers_by_name_.erase(service_name);
+          });
 
           std::tie(iter, std::ignore) = service_providers_by_name_.emplace(
               std::make_pair<const std::string&, ServicesHolder>(

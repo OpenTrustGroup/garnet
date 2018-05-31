@@ -12,8 +12,8 @@ executable("bin") {
     "app.h",
     "config.cc",
     "config.h",
-    "delegating_application_loader.cc",
-    "delegating_application_loader.h",
+    "delegating_loader.cc",
+    "delegating_loader.h",
     "main.cc",
   ]
 
@@ -37,8 +37,8 @@ package("sysmgr") {
 
   meta = [
     {
-      path = rebase_path("meta/sandbox")
-      dest = "sandbox"
+      path = rebase_path("meta/sysmgr.cmx")
+      dest = "sysmgr.cmx"
     },
   ]
 }

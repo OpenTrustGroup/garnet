@@ -19,8 +19,7 @@ std::vector<Hit> HitTester::HitTest(Node* node, const escher::ray4& ray) {
   return HitTest(node, ray, node->session());
 }
 
-std::vector<Hit> HitTester::HitTest(Node* node,
-                                    const escher::ray4& ray,
+std::vector<Hit> HitTester::HitTest(Node* node, const escher::ray4& ray,
                                     Session* session) {
   FXL_DCHECK(node);
   FXL_DCHECK(session_ == nullptr);
@@ -64,7 +63,8 @@ void HitTester::AccumulateHitsOuter(Node* node) {
 
 void HitTester::AccumulateHitsLocal(Node* node) {
   // Bail if hit testing is suppressed.
-  if (node->hit_test_behavior() == ::gfx::HitTestBehavior::kSuppress)
+  if (node->hit_test_behavior() ==
+      ::fuchsia::ui::gfx::HitTestBehavior::kSuppress)
     return;
 
   // Take a fast path if the node does not contribute a tag to the hit test.

@@ -18,7 +18,7 @@
 // device logs (and possibly if multiple tests are run at the same time).
 //
 // The shell command representing the running test is launched in a new
-// ApplicationEnvironment for easy teardown. This ApplicationEnvironment
+// Environment for easy teardown. This Environment
 // contains a TestRunner service (see test_runner.fidl). The applications
 // launched by the shell command (which may launch more than 1 process) may use
 // the |TestRunner| service to signal completion of the test, and also provides
@@ -37,16 +37,15 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include <fuchsia/cpp/test_runner.h>
 #include <lib/async/cpp/task.h>
+#include <lib/async-loop/cpp/loop.h>
 #include <lib/zx/time.h>
+#include <test_runner/cpp/fidl.h>
 
 #include "lib/app/cpp/application_context.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/split_string.h"
 #include "lib/fxl/strings/string_view.h"
-#include "lib/fxl/tasks/one_shot_timer.h"
 #include "lib/test_runner/cpp/scope.h"
 #include "lib/test_runner/cpp/test_runner.h"
 #include "lib/test_runner/cpp/test_runner_store_impl.h"
@@ -62,17 +61,16 @@ namespace test_runner {
 class TestRunnerConnection : public TestRunObserver {
  public:
   TestRunnerConnection(
-      int socket_fd,
-      std::shared_ptr<component::ApplicationContext> app_context)
-      : app_context_(app_context), socket_(socket_fd) {}
+      async::Loop* loop,
+      int socket_fd, std::shared_ptr<component::ApplicationContext> app_context)
+      : loop_(loop), app_context_(app_context), socket_(socket_fd) {}
 
   void Start() {
     FXL_CHECK(!test_context_);
     ReadAndRunCommand();
   }
 
-  void SendMessage(const std::string& test_id,
-                   const std::string& operation,
+  void SendMessage(const std::string& test_id, const std::string& operation,
                    const std::string& msg) override {
     std::stringstream stream;
     stream << test_id << " " << operation << " " << msg << "\n";
@@ -96,7 +94,7 @@ class TestRunnerConnection : public TestRunObserver {
  private:
   ~TestRunnerConnection() override {
     close(socket_);
-    fsl::MessageLoop::GetCurrent()->PostQuitTask();
+    loop_->Quit();
   }
 
   // Read and entire command (which consists of one line) and return it.
@@ -157,6 +155,7 @@ class TestRunnerConnection : public TestRunObserver {
                                            command_parse[2], args));
   }
 
+  async::Loop* const loop_;
   std::shared_ptr<component::ApplicationContext> app_context_;
   std::unique_ptr<TestRunContext> test_context_;
 
@@ -171,8 +170,9 @@ class TestRunnerConnection : public TestRunObserver {
 // them as TestRunnerConnection.
 class TestRunnerTCPServer {
  public:
-  TestRunnerTCPServer(uint16_t port)
-      : app_context_(component::ApplicationContext::CreateFromStartupInfo()) {
+  TestRunnerTCPServer(async::Loop* loop, uint16_t port)
+      : loop_(loop),
+        app_context_(component::ApplicationContext::CreateFromStartupInfo()) {
     struct sockaddr_in6 addr;
     addr.sin6_family = AF_INET6;
     addr.sin6_port = htons(port);
@@ -210,10 +210,11 @@ class TestRunnerTCPServer {
     if (sockfd == -1) {
       FXL_LOG(INFO) << "accept() oops";
     }
-    return new TestRunnerConnection(sockfd, app_context_);
+    return new TestRunnerConnection(loop_, sockfd, app_context_);
   }
 
  private:
+  async::Loop* const loop_;
   int listener_;
   std::shared_ptr<component::ApplicationContext> app_context_;
 
@@ -223,8 +224,8 @@ class TestRunnerTCPServer {
 }  // namespace test_runner
 
 int main() {
-  fsl::MessageLoop loop;
-  test_runner::TestRunnerTCPServer server(kListenPort);
+  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  test_runner::TestRunnerTCPServer server(&loop, kListenPort);
   while (1) {
     // TODO(vardhan): Because our sockets are POSIX fds, they don't work with
     // our message loop, so we do some synchronous operations and have to do

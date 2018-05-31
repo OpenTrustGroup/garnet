@@ -21,6 +21,7 @@ ProcessImpl::ProcessImpl(TargetImpl* target,
       target_(target),
       koid_(koid),
       name_(name),
+      symbols_(this),
       weak_factory_(this) {}
 
 ProcessImpl::~ProcessImpl() {
@@ -50,15 +51,35 @@ const std::string& ProcessImpl::GetName() const {
   return name_;
 }
 
+ProcessSymbols* ProcessImpl::GetSymbols() {
+  return &symbols_;
+}
+
 void ProcessImpl::GetModules(
-    std::function<void(const Err&, std::vector<debug_ipc::Module>)> callback)
-    const {
+    std::function<void(const Err&, std::vector<debug_ipc::Module>)> callback) {
   debug_ipc::ModulesRequest request;
   request.process_koid = koid_;
   session()->Send<debug_ipc::ModulesRequest, debug_ipc::ModulesReply>(
-      request, [callback](const Err& err, debug_ipc::ModulesReply reply) {
+      request, [process = weak_factory_.GetWeakPtr(), callback](
+                   const Err& err, debug_ipc::ModulesReply reply) {
+        if (process)
+          process->symbols_.SetModules(reply.modules);
         if (callback)
           callback(err, std::move(reply.modules));
+      });
+}
+
+void ProcessImpl::GetAspace(
+    uint64_t address,
+    std::function<void(const Err&, std::vector<debug_ipc::AddressRegion>)>
+        callback) const {
+  debug_ipc::AddressSpaceRequest request;
+  request.process_koid = koid_;
+  request.address = address;
+  session()->Send<debug_ipc::AddressSpaceRequest, debug_ipc::AddressSpaceReply>(
+      request, [callback](const Err& err, debug_ipc::AddressSpaceReply reply) {
+        if (callback)
+          callback(err, std::move(reply.map));
       });
 }
 
@@ -78,7 +99,7 @@ void ProcessImpl::SyncThreads(std::function<void()> callback) {
   debug_ipc::ThreadsRequest request;
   request.process_koid = koid_;
   session()->Send<debug_ipc::ThreadsRequest, debug_ipc::ThreadsReply>(
-      request, [ callback, process = weak_factory_.GetWeakPtr() ](
+      request, [callback, process = weak_factory_.GetWeakPtr()](
                    const Err& err, debug_ipc::ThreadsReply reply) {
         if (process) {
           process->UpdateThreads(reply.threads);
@@ -147,6 +168,11 @@ void ProcessImpl::OnThreadExiting(const debug_ipc::ThreadRecord& record) {
     observer.WillDestroyThread(this, found->second.get());
 
   threads_.erase(found);
+}
+
+void ProcessImpl::NotifyOnSymbolLoadFailure(const Err& err) {
+  for (auto& observer : observers())
+    observer.OnSymbolLoadFailure(this, err);
 }
 
 void ProcessImpl::UpdateThreads(

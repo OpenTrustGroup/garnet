@@ -12,8 +12,10 @@
 
 extern crate failure;
 extern crate fidl;
+extern crate fidl_wlan_mlme as fidl_mlme;
 extern crate fidl_wlan_device as wlan;
 extern crate fidl_wlan_device_service as wlan_service;
+extern crate fidl_wlan_service;
 extern crate fuchsia_app as component;
 extern crate fuchsia_async as async;
 extern crate fuchsia_vfs_watcher as vfs_watcher;
@@ -23,10 +25,12 @@ extern crate futures;
 #[macro_use]
 extern crate log;
 extern crate parking_lot;
+extern crate wlan_sme;
 
 mod device;
 mod logger;
 mod service;
+mod station;
 
 use component::server::ServicesServer;
 use failure::{Error, ResultExt};
@@ -36,16 +40,17 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use wlan_service::DeviceServiceMarker;
 
-const MAX_LOG_LEVEL: log::LogLevelFilter = log::LogLevelFilter::Info;
+const MAX_LOG_LEVEL: log::LevelFilter = log::LevelFilter::Info;
 
 const PHY_PATH: &str = "/dev/class/wlanphy";
 const IFACE_PATH: &str = "/dev/class/wlanif";
 
+static LOGGER: logger::Logger = logger::Logger;
+
 fn main() -> Result<(), Error> {
-    log::set_logger(|max_level| {
-        max_level.set(MAX_LOG_LEVEL);
-        Box::new(logger::Logger)
-    })?;
+    log::set_logger(&LOGGER)?;
+    log::set_max_level(MAX_LOG_LEVEL);
+
     info!("Starting");
 
     let mut exec = async::Executor::new().context("error creating event loop")?;

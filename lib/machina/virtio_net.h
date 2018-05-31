@@ -29,8 +29,7 @@ static_assert(kVirtioNetRxQueueIndex != kVirtioNetTxQueueIndex,
               "RX and TX queues must be distinct");
 
 // Implements a Virtio Ethernet device.
-class VirtioNet : public VirtioDeviceBase<VIRTIO_ID_NET,
-                                          kVirtioNetNumQueues,
+class VirtioNet : public VirtioDeviceBase<VIRTIO_ID_NET, kVirtioNetNumQueues,
                                           virtio_net_config_t> {
  public:
   VirtioNet(const PhysMem& phys_mem, async_t* async);
@@ -69,17 +68,13 @@ class VirtioNet : public VirtioDeviceBase<VIRTIO_ID_NET,
     zx_status_t WaitOnQueue();
     void OnQueueReady(zx_status_t status, uint16_t index);
     zx_status_t WaitOnFifoWritable();
-    void OnFifoWritable(async_t* async,
-                        async::WaitBase* wait,
-                        zx_status_t status,
-                        const zx_packet_signal_t* signal);
+    void OnFifoWritable(async_t* async, async::WaitBase* wait,
+                        zx_status_t status, const zx_packet_signal_t* signal);
 
     // Return buffers from FIFO to VirtioQueue.
     zx_status_t WaitOnFifoReadable();
-    void OnFifoReadable(async_t* async,
-                        async::WaitBase* wait,
-                        zx_status_t status,
-                        const zx_packet_signal_t* signal);
+    void OnFifoReadable(async_t* async, async::WaitBase* wait,
+                        zx_status_t status, const zx_packet_signal_t* signal);
 
     VirtioNet* device_;
     async_t* async_;
@@ -99,10 +94,10 @@ class VirtioNet : public VirtioDeviceBase<VIRTIO_ID_NET,
     size_t fifo_entries_write_index_ = 0;
 
     VirtioQueueWaiter queue_wait_;
-    async::WaitMethod<Stream, &Stream::OnFifoWritable>
-        fifo_writable_wait_{this};
-    async::WaitMethod<Stream, &Stream::OnFifoReadable>
-        fifo_readable_wait_{this};
+    async::WaitMethod<Stream, &Stream::OnFifoWritable> fifo_writable_wait_{
+        this};
+    async::WaitMethod<Stream, &Stream::OnFifoReadable> fifo_readable_wait_{
+        this};
   };
 
   Stream rx_stream_;

@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library views_v1;
+library fuchsia.ui.views_v1;
+
+using fuchsia.math;
 
 // Parameters and contextual information for a view provided by its container.
 //
@@ -29,9 +31,9 @@ struct DisplayMetrics {
 struct ViewLayout {
   // The size of the view in logical pixels.
   // Must be non-negative.
-  geometry.SizeF size;
+  fuchsia.math.SizeF size;
 
   // The inset of the view in logical pixels.
   // Must be non-negative.
-  geometry.InsetF inset;
+  fuchsia.math.InsetF inset;
 };

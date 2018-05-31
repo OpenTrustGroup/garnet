@@ -31,6 +31,7 @@ FfmpegAudioDecoder::FfmpegAudioDecoder(AvCodecContextPtr av_codec_context)
     // Prepare for interleaving.
     stream_type_ = std::move(stream_type);
     lpcm_util_ = LpcmUtil::Create(*stream_type_->audio());
+    default_allocator_ = PayloadAllocator::CreateDefault();
   }
 }
 
@@ -59,8 +60,8 @@ int FfmpegAudioDecoder::BuildAVFrame(const AVCodecContext& av_codec_context,
   // case use the default allocator. We'll interleave into a buffer from the
   // provided allocator in CreateOutputPacket.
   PayloadAllocator* allocator_to_use =
-      (lpcm_util_ == nullptr) ? allocator
-                              : PayloadAllocator::GetDefault().get();
+      (lpcm_util_ == nullptr) ? allocator : default_allocator_.get();
+  FXL_DCHECK(allocator_to_use);
 
   AVSampleFormat av_sample_format =
       static_cast<AVSampleFormat>(av_frame->format);
@@ -75,6 +76,10 @@ int FfmpegAudioDecoder::BuildAVFrame(const AVCodecContext& av_codec_context,
 
   uint8_t* buffer = static_cast<uint8_t*>(
       allocator_to_use->AllocatePayloadBuffer(buffer_size));
+  if (!buffer) {
+    // TODO(dalesat): Renderer VMO is full. What can we do about this?
+    FXL_LOG(FATAL) << "Ran out of memory for decoded audio.";
+  }
 
   if (!av_sample_fmt_is_planar(av_sample_format)) {
     // Samples are interleaved. There's just one buffer.
@@ -145,6 +150,10 @@ PacketPtr FfmpegAudioDecoder::CreateOutputPacket(
     uint64_t payload_size =
         stream_type_->audio()->min_buffer_size(av_frame.nb_samples);
     void* payload_buffer = allocator->AllocatePayloadBuffer(payload_size);
+    if (!payload_buffer) {
+      // TODO(dalesat): Renderer VMO is full. What can we do about this?
+      FXL_LOG(FATAL) << "Ran out of memory for decoded, interleaved audio.";
+    }
 
     lpcm_util_->Interleave(av_frame.buf[0]->data, av_frame.buf[0]->size,
                            payload_buffer, av_frame.nb_samples);
@@ -161,5 +170,7 @@ PacketPtr FfmpegAudioDecoder::CreateOutputPacket(
                                  av_buffer_ref(av_frame.buf[0]), this);
   }
 }
+
+const char* FfmpegAudioDecoder::label() const { return "audio_decoder"; }
 
 }  // namespace media_player

@@ -10,8 +10,7 @@
 
 namespace fsl {
 
-zx_status_t CreateRedirectedSocket(int startup_fd,
-                                   zx::socket* out_socket,
+zx_status_t CreateRedirectedSocket(int startup_fd, zx::socket* out_socket,
                                    StartupHandle* out_startup_handle) {
   zx::socket local_socket;
   zx::socket remote_socket;

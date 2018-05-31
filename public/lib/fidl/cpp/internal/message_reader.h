@@ -8,9 +8,9 @@
 #include <lib/async/wait.h>
 #include <lib/fidl/cpp/message.h>
 #include <lib/fidl/cpp/message_buffer.h>
+#include <lib/fit/function.h>
 #include <lib/zx/channel.h>
 
-#include <functional>
 #include <memory>
 #include <utility>
 
@@ -101,17 +101,14 @@ class MessageReader {
   // |zx::channel|.
   //
   // The handler can destroy the |MessageReader|.
-  void set_error_handler(std::function<void()> error_handler) {
+  void set_error_handler(fit::closure error_handler) {
     error_handler_ = std::move(error_handler);
   }
 
  private:
-  static void CallHandler(async_t* async,
-                          async_wait_t* wait,
-                          zx_status_t status,
-                          const zx_packet_signal_t* signal);
-  void OnHandleReady(async_t* async,
-                     zx_status_t status,
+  static void CallHandler(async_t* async, async_wait_t* wait,
+                          zx_status_t status, const zx_packet_signal_t* signal);
+  void OnHandleReady(async_t* async, zx_status_t status,
                      const zx_packet_signal_t* signal);
   zx_status_t ReadAndDispatchMessage(MessageBuffer* buffer);
   void NotifyError();
@@ -122,7 +119,7 @@ class MessageReader {
   async_t* async_;
   bool* should_stop_;  // See |Canary| in message_reader.cc.
   MessageHandler* message_handler_;
-  std::function<void()> error_handler_;
+  fit::closure error_handler_;
 };
 
 }  // namespace internal

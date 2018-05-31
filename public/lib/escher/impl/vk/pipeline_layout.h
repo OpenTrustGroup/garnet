@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_ESCHER_IMPL_VK_PIPELINE_LAYOUT_H_
+#define LIB_ESCHER_IMPL_VK_PIPELINE_LAYOUT_H_
 
 #include <vulkan/vulkan.hpp>
 
@@ -21,8 +22,6 @@ class PipelineLayout : public fxl::RefCountedThreadSafe<PipelineLayout> {
   ~PipelineLayout();
 
   vk::PipelineLayout vk() const { return layout_; }
-  // TODO(ES-44): Deprecated.  Use vk() instead.
-  vk::PipelineLayout get() const { return layout_; }
 
  private:
   vk::Device device_;
@@ -33,3 +32,5 @@ typedef fxl::RefPtr<PipelineLayout> PipelineLayoutPtr;
 
 }  // namespace impl
 }  // namespace escher
+
+#endif  // LIB_ESCHER_IMPL_VK_PIPELINE_LAYOUT_H_

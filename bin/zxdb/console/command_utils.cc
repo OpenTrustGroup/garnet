@@ -5,12 +5,14 @@
 #include "garnet/bin/zxdb/console/command_utils.h"
 
 #include <inttypes.h>
-#include <limits>
 #include <stdio.h>
+#include <limits>
 
+#include "garnet/bin/zxdb/client/breakpoint.h"
 #include "garnet/bin/zxdb/client/err.h"
 #include "garnet/bin/zxdb/client/frame.h"
 #include "garnet/bin/zxdb/client/process.h"
+#include "garnet/bin/zxdb/client/symbols/location.h"
 #include "garnet/bin/zxdb/client/target.h"
 #include "garnet/bin/zxdb/client/thread.h"
 #include "garnet/bin/zxdb/console/command.h"
@@ -25,12 +27,8 @@ namespace {
 
 // Appends the given string to the output, padding with spaces to the width
 // as necessary.
-void AppendPadded(const std::string& str,
-                  int width,
-                  Align align,
-                  Syntax syntax,
-                  bool is_last_col,
-                  OutputBuffer* out) {
+void AppendPadded(const std::string& str, int width, Align align, Syntax syntax,
+                  bool is_last_col, OutputBuffer* out) {
   std::string text;
 
   int pad = std::max(0, width - static_cast<int>(str.size()));
@@ -52,8 +50,7 @@ void AppendPadded(const std::string& str,
 
 }  // namespace
 
-Err AssertRunningTarget(ConsoleContext* context,
-                        const char* command_name,
+Err AssertRunningTarget(ConsoleContext* context, const char* command_name,
                         Target* target) {
   Target::State state = target->GetState();
   if (state == Target::State::kRunning)
@@ -87,9 +84,7 @@ Err StringToUint64(const std::string& s, uint64_t* out) {
   return Err();
 }
 
-Err ReadUint64Arg(const Command& cmd,
-                  size_t arg_index,
-                  const char* param_desc,
+Err ReadUint64Arg(const Command& cmd, size_t arg_index, const char* param_desc,
                   uint64_t* out) {
   if (cmd.args().size() <= arg_index) {
     return Err(ErrType::kInput,
@@ -105,10 +100,8 @@ Err ReadUint64Arg(const Command& cmd,
   return Err();
 }
 
-Err ParseHostPort(const std::string& in_host,
-                  const std::string& in_port,
-                  std::string* out_host,
-                  uint16_t* out_port) {
+Err ParseHostPort(const std::string& in_host, const std::string& in_port,
+                  std::string* out_host, uint16_t* out_port) {
   if (in_host.empty())
     return Err(ErrType::kInput, "No host component specified.");
   if (in_port.empty())
@@ -132,8 +125,7 @@ Err ParseHostPort(const std::string& in_host,
   return Err();
 }
 
-Err ParseHostPort(const std::string& input,
-                  std::string* out_host,
+Err ParseHostPort(const std::string& input, std::string* out_host,
                   uint16_t* out_port) {
   // Separate based on the last colon.
   size_t colon = input.rfind(':');
@@ -198,41 +190,40 @@ std::string ThreadStateToString(debug_ipc::ThreadRecord::State state) {
 }
 
 std::string BreakpointScopeToString(const ConsoleContext* context,
-                                    const Breakpoint* breakpoint) {
-  Target* target_scope = nullptr;
-  Thread* thread_scope = nullptr;
-  Breakpoint::Scope scope = breakpoint->GetScope(&target_scope, &thread_scope);
-  switch (scope) {
-    case Breakpoint::Scope::kSystem:
+                                    const BreakpointSettings& settings) {
+  switch (settings.scope) {
+    case BreakpointSettings::Scope::kSystem:
       return "Global";
-    case Breakpoint::Scope::kTarget:
-      return fxl::StringPrintf("pr %d", context->IdForTarget(target_scope));
-    case Breakpoint::Scope::kThread:
+    case BreakpointSettings::Scope::kTarget:
+      return fxl::StringPrintf("pr %d",
+          context->IdForTarget(settings.scope_target));
+    case BreakpointSettings::Scope::kThread:
       return fxl::StringPrintf(
           "pr %d t %d",
-          context->IdForTarget(thread_scope->GetProcess()->GetTarget()),
-          context->IdForThread(thread_scope));
-    default:
-      FXL_NOTREACHED();
-      return std::string();
-  }
-}
-
-std::string BreakpointStopToString(debug_ipc::Stop stop) {
-  struct Mapping {
-    debug_ipc::Stop stop;
-    const char* string;
-  };
-  static const Mapping mappings[] = {{debug_ipc::Stop::kAll, "All"},
-                                     {debug_ipc::Stop::kProcess, "Process"},
-                                     {debug_ipc::Stop::kThread, "Thread"}};
-
-  for (const Mapping& mapping : mappings) {
-    if (mapping.stop == stop)
-      return mapping.string;
+          context->IdForTarget(settings.scope_thread->GetProcess()->GetTarget()),
+          context->IdForThread(settings.scope_thread));
   }
   FXL_NOTREACHED();
   return std::string();
+}
+
+std::string BreakpointStopToString(BreakpointSettings::StopMode mode) {
+  switch (mode) {
+    case BreakpointSettings::StopMode::kNone:
+      return "None";
+    case BreakpointSettings::StopMode::kThread:
+      return "Thread";
+    case BreakpointSettings::StopMode::kProcess:
+      return "Process";
+    case BreakpointSettings::StopMode::kAll:
+      return "All";
+  }
+  FXL_NOTREACHED();
+  return std::string();
+}
+
+const char* BreakpointEnabledToString(bool enabled) {
+  return enabled ? "Enabled" : "Disabled";
 }
 
 std::string ExceptionTypeToString(debug_ipc::NotifyException::Type type) {
@@ -253,8 +244,7 @@ std::string ExceptionTypeToString(debug_ipc::NotifyException::Type type) {
 }
 
 std::string DescribeTarget(const ConsoleContext* context,
-                           const Target* target,
-                           bool columns) {
+                           const Target* target) {
   int id = context->IdForTarget(target);
   std::string state = TargetStateToString(target->GetState());
 
@@ -262,18 +252,17 @@ std::string DescribeTarget(const ConsoleContext* context,
   // concat'd even when not present and things look nice.
   std::string koid_str;
   if (target->GetState() == Target::State::kRunning) {
-    koid_str = fxl::StringPrintf(columns ? "%" PRIu64 " " : "koid=%" PRIu64 " ",
-                                 target->GetProcess()->GetKoid());
+    koid_str =
+        fxl::StringPrintf("koid=%" PRIu64 " ", target->GetProcess()->GetKoid());
   }
 
-  const char* format_string;
-  if (columns)
-    format_string = "%3d %11s %8s";
-  else
-    format_string = "Process %d %s %s";
-  std::string result =
-      fxl::StringPrintf(format_string, id, state.c_str(), koid_str.c_str());
+  std::string result = fxl::StringPrintf("Process %d %s %s", id, state.c_str(),
+                                         koid_str.c_str());
+  result += DescribeTargetName(target);
+  return result;
+}
 
+std::string DescribeTargetName(const Target* target) {
   // When running, use the object name if any.
   std::string name;
   if (target->GetState() == Target::State::kRunning)
@@ -282,57 +271,52 @@ std::string DescribeTarget(const ConsoleContext* context,
   // Otherwise fall back to the program name which is the first arg.
   if (name.empty()) {
     const std::vector<std::string>& args = target->GetArgs();
-    if (args.empty())
-      name += "<no name>";
-    else
+    if (!args.empty())
       name += args[0];
   }
-  result += name;
-
-  return result;
+  return name;
 }
 
 std::string DescribeThread(const ConsoleContext* context,
-                           const Thread* thread,
-                           bool columns) {
-  std::string state = ThreadStateToString(thread->GetState());
-
-  const char* format_string;
-  if (columns)
-    format_string = "%3d %9s %8" PRIu64 " %s";
-  else
-    format_string = "Thread %d %s koid=%" PRIu64 " %s";
-  return fxl::StringPrintf(format_string, context->IdForThread(thread),
-                           state.c_str(), thread->GetKoid(),
-                           thread->GetName().c_str());
+                           const Thread* thread) {
+  return fxl::StringPrintf("Thread %d %s koid=%" PRIu64 " %s",
+                           context->IdForThread(thread),
+                           ThreadStateToString(thread->GetState()).c_str(),
+                           thread->GetKoid(), thread->GetName().c_str());
 }
 
 // Unlike the other describe command, this takes an ID because normally
 // you know the index when calling into here, and it's inefficient to look up.
 std::string DescribeFrame(const Frame* frame, int id) {
   // This will need symbols hooked up.
-  return fxl::StringPrintf("Frame %d @ 0x%" PRIx64, id, frame->GetIP());
+  return fxl::StringPrintf("Frame %d ", id) +
+         DescribeLocation(frame->GetLocation());
 }
 
 std::string DescribeBreakpoint(const ConsoleContext* context,
-                               const Breakpoint* breakpoint,
-                               bool columns) {
-  const char* format_string;
-  if (columns)
-    format_string = "%3d %10s %8s %7s %5d %s";
-  else
-    format_string = "Breakpoint %d on %s, %s, stop=%s, hit=%d, @ %s";
+                               const Breakpoint* breakpoint) {
+  BreakpointSettings settings = breakpoint->GetSettings();
 
-  std::string scope = BreakpointScopeToString(context, breakpoint);
-  std::string stop = BreakpointStopToString(breakpoint->GetStopMode());
-  const char* enabled = breakpoint->IsEnabled() ? "Enabled" : "Disabled";
-
+  std::string scope = BreakpointScopeToString(context, settings);
+  std::string stop = BreakpointStopToString(settings.stop_mode);
+  const char* enabled = BreakpointEnabledToString(settings.enabled);
   std::string location =
-      fxl::StringPrintf("0x%" PRIx64, breakpoint->GetAddressLocation());
+      fxl::StringPrintf("0x%" PRIx64, settings.location_address);
 
-  return fxl::StringPrintf(format_string, context->IdForBreakpoint(breakpoint),
-                           scope.c_str(), enabled, stop.c_str(),
-                           breakpoint->GetHitCount(), location.c_str());
+  return fxl::StringPrintf("Breakpoint %d on %s, %s, stop=%s, hit=%d, @ %s",
+                           context->IdForBreakpoint(breakpoint), scope.c_str(),
+                           enabled, stop.c_str(), breakpoint->GetHitCount(),
+                           location.c_str());
+}
+
+std::string DescribeLocation(const Location& loc) {
+  if (!loc.is_valid())
+    return "<invalid address>";
+  if (!loc.has_symbols())
+    return fxl::StringPrintf("0x%" PRIx64, loc.address());
+  return fxl::StringPrintf("0x%" PRIx64 " @ %s:%d", loc.address(),
+                           loc.file_line().GetFileNamePart().c_str(),
+                           loc.file_line().line());
 }
 
 void FormatColumns(const std::vector<ColSpec>& spec,
@@ -350,15 +334,12 @@ void FormatColumns(const std::vector<ColSpec>& spec,
   // Max widths of contents.
   for (const auto& row : rows) {
     FXL_DCHECK(row.size() == max.size()) << "Column spec size doesn't match.";
-    for (size_t i = 0; i < row.size(); i++)
-      max[i] = std::max(max[i], static_cast<int>(row[i].size()));
-  }
-
-  // Apply the max widths.
-  for (size_t i = 0; i < spec.size(); i++) {
-    int max_width = spec[i].max_width;
-    if (max_width > 0 && max_width < max[i])
-      max[i] = max_width;
+    for (size_t i = 0; i < row.size(); i++) {
+      // Only count the ones that don't overflow.
+      int cell_size = static_cast<int>(row[i].size());
+      if (spec[i].max_width == 0 || cell_size <= spec[i].max_width)
+        max[i] = std::max(max[i], cell_size);
+    }
   }
 
   // Print heading.

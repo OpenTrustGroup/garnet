@@ -29,12 +29,15 @@ namespace debugserver {
 // NOTE: This class is generally not thread safe. Care must be taken when
 // calling methods such as set_current_process(), SetCurrentThread(), and
 // QueueNotification() which modify its internal state.
-class RspServer final : public Server {
+class RspServer final : public ServerWithIO {
  public:
   // The default timeout interval used when sending notifications.
   constexpr static int64_t kDefaultTimeoutSeconds = 30;
 
-  explicit RspServer(uint16_t port);
+  // |port| is the tcp port to listen on.
+  // |initial_attach_pid|, if not ZX_KOID_INVALID, is the koid of a process to
+  // attach to in Run() before entering the main loop.
+  explicit RspServer(uint16_t port, zx_koid_t initial_attach_pid);
 
   // Starts the main loop. This will first block and wait for an incoming
   // connection. Once there is a connection, this will start an event loop for
@@ -146,6 +149,10 @@ class RspServer final : public Server {
 
   // TCP port number that we will listen on.
   uint16_t port_;
+
+  // If this is non-ZX_KOID_INVALID, attach to this process before
+  // entering the main loop.
+  zx_koid_t initial_attach_pid_;
 
   // File descriptor for the socket used for listening for incoming
   // connections (e.g. from gdb or lldb).

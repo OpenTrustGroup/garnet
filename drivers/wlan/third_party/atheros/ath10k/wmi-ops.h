@@ -24,7 +24,7 @@ struct wmi_ops {
     void (*rx)(struct ath10k* ar,
                struct ath10k_msg_buf* buf);
     void (*map_svc)(const uint32_t* in,
-                    BITMAP_TYPE* out,
+                    BITARR_TYPE* out,
                     size_t len);
 
     int (*pull_scan)(struct ath10k* ar,
@@ -202,7 +202,7 @@ struct wmi_ops {
                                      uint32_t delay_ms);
     zx_status_t (*gen_mgmt_tx)(struct ath10k* ar,
                                struct ath10k_msg_buf** msg_buf_ptr,
-                               struct ath10k_msg_buf* buf);
+                               struct ath10k_msg_buf* msdu);
     zx_status_t (*gen_dbglog_cfg)(struct ath10k* ar,
                                   struct ath10k_msg_buf** msg_buf_ptr,
                                   uint64_t module_enable,
@@ -331,7 +331,7 @@ zx_status_t ath10k_wmi_cmd_send(struct ath10k* ar, struct ath10k_msg_buf* buf, u
 
 static inline zx_status_t
 ath10k_wmi_rx(struct ath10k* ar, struct ath10k_msg_buf* buf) {
-    if (WARN_ON_ONCE(!ar->wmi.ops->rx)) {
+    if (COND_WARN_ONCE(!ar->wmi.ops->rx)) {
         return ZX_ERR_NOT_SUPPORTED;
     }
 
@@ -340,7 +340,7 @@ ath10k_wmi_rx(struct ath10k* ar, struct ath10k_msg_buf* buf) {
 }
 
 static inline zx_status_t
-ath10k_wmi_map_svc(struct ath10k* ar, const uint32_t* in, unsigned long* out, size_t len) {
+ath10k_wmi_map_svc(struct ath10k* ar, const uint32_t* in, BITARR_TYPE* out, size_t len) {
     if (!ar->wmi.ops->map_svc) {
         return ZX_ERR_NOT_SUPPORTED;
     }
@@ -497,10 +497,9 @@ ath10k_wmi_get_txbf_conf_scheme(struct ath10k* ar) {
     return ar->wmi.ops->get_txbf_conf_scheme(ar);
 }
 
-#if 0 // NEEDS PORTING
 static inline zx_status_t
-ath10k_wmi_mgmt_tx(struct ath10k* ar, struct sk_buff* msdu) {
-    struct ieee80211_tx_info* info = IEEE80211_SKB_CB(msdu);
+ath10k_wmi_mgmt_tx(struct ath10k* ar, struct ath10k_msg_buf* msdu) {
+
     struct ath10k_msg_buf* buf;
     zx_status_t ret;
 
@@ -508,25 +507,18 @@ ath10k_wmi_mgmt_tx(struct ath10k* ar, struct sk_buff* msdu) {
         return ZX_ERR_NOT_SUPPORTED;
     }
 
-    skb = ar->wmi.ops->gen_mgmt_tx(ar, msdu);
-    if (IS_ERR(skb)) {
-        return PTR_ERR(skb);
-    }
-
-    ret = ath10k_wmi_cmd_send(ar, skb, ar->wmi.cmd->mgmt_tx_cmdid);
+    ret = ar->wmi.ops->gen_mgmt_tx(ar, &buf, msdu);
     if (ret != ZX_OK) {
         return ret;
     }
 
-    /* FIXME There's no ACK event for Management Tx. This probably
-     * shouldn't be called here either.
-     */
-    info->flags |= IEEE80211_TX_STAT_ACK;
-    ieee80211_tx_status_irqsafe(ar->hw, msdu);
+    ret = ath10k_wmi_cmd_send(ar, buf, ar->wmi.cmd->mgmt_tx_cmdid);
+    if (ret != ZX_OK) {
+        return ret;
+    }
 
     return ZX_OK;
 }
-#endif // NEEDS PORTING
 
 static inline zx_status_t
 ath10k_wmi_pdev_set_regdomain(struct ath10k* ar, uint16_t rd, uint16_t rd2g, uint16_t rd5g,

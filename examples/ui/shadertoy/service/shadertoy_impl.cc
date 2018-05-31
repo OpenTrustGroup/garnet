@@ -11,12 +11,10 @@ ShadertoyImpl::ShadertoyImpl(fxl::RefPtr<ShadertoyState> state)
 
 ShadertoyImpl::~ShadertoyImpl() = default;
 
-void ShadertoyImpl::SetPaused(bool paused) {
-  state_->SetPaused(paused);
-}
+void ShadertoyImpl::SetPaused(bool paused) { state_->SetPaused(paused); }
 
 void ShadertoyImpl::SetShaderCode(::fidl::StringPtr glsl,
-                                  Shadertoy::SetShaderCodeCallback callback) {
+                                  ::fuchsia::ui::shadertoy::Shadertoy::SetShaderCodeCallback callback) {
   state_->SetShaderCode(std::string(glsl), callback);
 }
 
@@ -24,13 +22,12 @@ void ShadertoyImpl::SetResolution(uint32_t width, uint32_t height) {
   state_->SetResolution(width, height);
 }
 
-void ShadertoyImpl::SetMouse(gfx::vec4 i_mouse) {
+void ShadertoyImpl::SetMouse(fuchsia::ui::gfx::vec4 i_mouse) {
   state_->SetMouse(glm::vec4(i_mouse.x, i_mouse.y, i_mouse.z, i_mouse.w));
 }
 
 void ShadertoyImpl::SetImage(
-    uint32_t channel,
-    ::fidl::InterfaceRequest<images::ImagePipe> request) {
+    uint32_t channel, ::fidl::InterfaceRequest<fuchsia::images::ImagePipe> request) {
   state_->SetImage(channel, std::move(request));
 }
 

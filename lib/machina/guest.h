@@ -5,10 +5,10 @@
 #ifndef GARNET_LIB_MACHINA_GUEST_H_
 #define GARNET_LIB_MACHINA_GUEST_H_
 
-#include <fbl/function.h>
 #include <fbl/intrusive_single_list.h>
 #include <fbl/unique_ptr.h>
 #include <lib/async-loop/cpp/loop.h>
+#include <lib/fit/function.h>
 #include <zircon/types.h>
 
 #include "garnet/lib/machina/phys_mem.h"
@@ -27,8 +27,8 @@ class IoMapping;
 
 class Guest {
  public:
-  using VcpuFactory = fbl::Function<
-      zx_status_t(Guest* guest, uintptr_t entry, uint64_t id, Vcpu* vcpu)>;
+  using VcpuFactory = fit::function<zx_status_t(Guest* guest, uintptr_t entry,
+                                                uint64_t id, Vcpu* vcpu)>;
 
   ~Guest();
 
@@ -39,11 +39,8 @@ class Guest {
   async_t* device_async() const { return device_loop_.async(); }
 
   // Setup a trap to delegate accesses to an IO region to |handler|.
-  zx_status_t CreateMapping(TrapType type,
-                            uint64_t addr,
-                            size_t size,
-                            uint64_t offset,
-                            IoHandler* handler);
+  zx_status_t CreateMapping(TrapType type, uint64_t addr, size_t size,
+                            uint64_t offset, IoHandler* handler);
 
   // Setup a handler function to run when an additional VCPU is brought up. The
   // factory should call Start on the new VCPU to begin executing the guest on a
@@ -71,10 +68,8 @@ class Guest {
 
   fbl::SinglyLinkedList<fbl::unique_ptr<IoMapping>> mappings_;
 
-  VcpuFactory vcpu_factory_ =
-      [](Guest* guest, uintptr_t entry, uint64_t id, Vcpu* vcpu) {
-        return ZX_ERR_BAD_STATE;
-      };
+  VcpuFactory vcpu_factory_ = [](Guest* guest, uintptr_t entry, uint64_t id,
+                                 Vcpu* vcpu) { return ZX_ERR_BAD_STATE; };
   fbl::unique_ptr<Vcpu> vcpus_[kMaxVcpus] = {};
 
   async::Loop device_loop_;

@@ -12,29 +12,24 @@ namespace scenic {
 namespace gfx {
 
 SessionHandler::SessionHandler(CommandDispatcherContext dispatcher_context,
-                               Engine* engine,
-                               SessionId session_id,
+                               Engine* engine, SessionId session_id,
                                EventReporter* event_reporter,
                                ErrorReporter* error_reporter)
     : TempSessionDelegate(std::move(dispatcher_context)),
       session_manager_(engine->session_manager()),
       event_reporter_(event_reporter),
       error_reporter_(error_reporter),
-      session_(::fxl::MakeRefCounted<scenic::gfx::Session>(session_id,
-                                                           engine,
-                                                           event_reporter,
-                                                           error_reporter)) {
+      session_(::fxl::MakeRefCounted<scenic::gfx::Session>(
+          session_id, engine, event_reporter, error_reporter)) {
   FXL_DCHECK(engine);
 }
 
-SessionHandler::~SessionHandler() {
-  TearDown();
-}
+SessionHandler::~SessionHandler() { TearDown(); }
 
-void SessionHandler::Present(uint64_t presentation_time,
-                             ::fidl::VectorPtr<zx::event> acquire_fences,
-                             ::fidl::VectorPtr<zx::event> release_fences,
-                             ui::Session::PresentCallback callback) {
+void SessionHandler::Present(
+    uint64_t presentation_time, ::fidl::VectorPtr<zx::event> acquire_fences,
+    ::fidl::VectorPtr<zx::event> release_fences,
+    fuchsia::ui::scenic::Session::PresentCallback callback) {
   if (!session_->ScheduleUpdate(
           presentation_time, std::move(buffered_commands_),
           std::move(acquire_fences), std::move(release_fences), callback)) {
@@ -43,24 +38,23 @@ void SessionHandler::Present(uint64_t presentation_time,
   buffered_commands_.clear();
 }
 
-void SessionHandler::HitTest(uint32_t node_id,
-                             ::gfx::vec3 ray_origin,
-                             ::gfx::vec3 ray_direction,
-                             ui::Session::HitTestCallback callback) {
+void SessionHandler::HitTest(
+    uint32_t node_id, ::fuchsia::ui::gfx::vec3 ray_origin,
+    ::fuchsia::ui::gfx::vec3 ray_direction,
+    fuchsia::ui::scenic::Session::HitTestCallback callback) {
   session_->HitTest(node_id, std::move(ray_origin), std::move(ray_direction),
                     callback);
 }
 
 void SessionHandler::HitTestDeviceRay(
-    ::gfx::vec3 ray_origin,
-    ::gfx::vec3 ray_direction,
-    ui::Session::HitTestDeviceRayCallback callback) {
+    ::fuchsia::ui::gfx::vec3 ray_origin, ::fuchsia::ui::gfx::vec3 ray_direction,
+    fuchsia::ui::scenic::Session::HitTestDeviceRayCallback callback) {
   session_->HitTestDeviceRay(std::move(ray_origin), std::move(ray_direction),
                              callback);
 }
 
-void SessionHandler::DispatchCommand(ui::Command command) {
-  FXL_DCHECK(command.Which() == ui::Command::Tag::kGfx);
+void SessionHandler::DispatchCommand(fuchsia::ui::scenic::Command command) {
+  FXL_DCHECK(command.Which() == fuchsia::ui::scenic::Command::Tag::kGfx);
   buffered_commands_.emplace_back(std::move(command.gfx()));
 }
 

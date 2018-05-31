@@ -7,47 +7,12 @@
 
 #include <list>
 
-#include "garnet/bin/media/media_player/framework/engine.h"
 #include "garnet/bin/media/media_player/framework/refs.h"
-#include "garnet/bin/media/media_player/framework/stages/multistream_source_stage.h"
-#include "garnet/bin/media/media_player/framework/stages/sink_stage.h"
-#include "garnet/bin/media/media_player/framework/stages/source_stage.h"
+#include "garnet/bin/media/media_player/framework/stages/async_node_stage.h"
 #include "garnet/bin/media/media_player/framework/stages/stage_impl.h"
-#include "garnet/bin/media/media_player/framework/stages/transform_stage.h"
 #include "lib/fxl/functional/closure.h"
 
 namespace media_player {
-
-namespace internal {
-
-// StageCreator::Create creates a stage for a node. DEFINE_STAGE_CREATOR defines
-// a specialization for a particular model/stage type pair. Every new
-// model/stage type pair that's defined will need an entry here.
-template <typename T, typename Enable = void>
-class StageCreator;
-
-#define DEFINE_STAGE_CREATOR(TModel, TStage)                                 \
-  template <typename T>                                                      \
-  class StageCreator<                                                        \
-      T, typename std::enable_if<std::is_base_of<TModel, T>::value>::type> { \
-   public:                                                                   \
-    static inline std::shared_ptr<StageImpl> Create(                         \
-        std::shared_ptr<T> t_ptr) {                                          \
-      std::shared_ptr<TStage> stage =                                        \
-          std::make_shared<TStage>(std::shared_ptr<TModel>(t_ptr));          \
-      t_ptr->SetStage(stage.get());                                          \
-      return stage;                                                          \
-    }                                                                        \
-  };
-
-DEFINE_STAGE_CREATOR(Transform, TransformStageImpl);
-DEFINE_STAGE_CREATOR(Source, SourceStageImpl);
-DEFINE_STAGE_CREATOR(Sink, SinkStageImpl);
-DEFINE_STAGE_CREATOR(MultistreamSource, MultistreamSourceStageImpl);
-
-#undef DEFINE_STAGE_CREATOR
-
-}  // namespace internal
 
 //
 // USAGE
@@ -65,9 +30,9 @@ DEFINE_STAGE_CREATOR(MultistreamSource, MultistreamSourceStageImpl);
 //
 // The graph prevents the disconnection of prepared inputs and outputs. Once
 // a connected input/output pair is prepared, it must be unprepared before
-// disconnection. This allows the engine to operate freely over prepared
+// disconnection. This allows the graph to operate freely over prepared
 // portions of the graph (prepare and unprepare are synchronized with the
-// engine).
+// graph).
 //
 // Nodes added to the graph are referenced using shared pointers. The graph
 // holds pointers to the nodes it contains, and the application, in many cases,
@@ -115,10 +80,13 @@ class Graph {
   ~Graph();
 
   // Adds a node to the graph.
-  template <typename T>
-  NodeRef Add(std::shared_ptr<T> t_ptr) {
-    FXL_DCHECK(t_ptr);
-    return Add(internal::StageCreator<T>::Create(t_ptr));
+  template <typename TNode,
+            typename TStageImpl = typename NodeTraits<TNode>::stage_impl_type>
+  NodeRef Add(std::shared_ptr<TNode> node_ptr) {
+    FXL_DCHECK(node_ptr);
+    auto stage = std::make_shared<TStageImpl>(node_ptr);
+    node_ptr->SetStage(stage.get());
+    return AddStage(stage);
   }
 
   // Removes a node from the graph after disconnecting it from other nodes.
@@ -157,20 +125,6 @@ class Graph {
   // Disconnects and removes everything connected to input.
   void RemoveNodesConnectedToInput(const InputRef& input);
 
-  // Adds all the nodes in t (which must all have one input and one output) and
-  // connects them in sequence to the output connector. Returns the output
-  // connector of the last node or the output parameter if it is empty.
-  template <typename T>
-  OutputRef AddAndConnectAll(OutputRef output, const T& t) {
-    for (const auto& element : t) {
-      NodeRef node = Add(internal::StageCreator<T>::Create(element));
-      Connect(output, node.input());
-      output = node.output();
-    }
-
-    return output;
-  }
-
   // Removes all nodes from the graph.
   void Reset();
 
@@ -190,29 +144,51 @@ class Graph {
 
   // Flushes the output and the subgraph downstream of it. |hold_frame|
   // indicates whether a video renderer should hold and display the newest
-  // frame.
-  void FlushOutput(const OutputRef& output, bool hold_frame);
+  // frame. |callback| is called when all flushes are complete.
+  void FlushOutput(const OutputRef& output, bool hold_frame,
+                   fxl::Closure callback);
 
   // Flushes the node and the subgraph downstream of it. |hold_frame|
   // indicates whether a video renderer should hold and display the newest
-  // frame.
-  void FlushAllOutputs(NodeRef node, bool hold_frame);
+  // frame. |callback| is called when all flushes are complete.
+  void FlushAllOutputs(NodeRef node, bool hold_frame, fxl::Closure callback);
 
   // Executes |task| after having acquired |nodes|. No update or other
   // task will touch any of the nodes while |task| is executing.
   void PostTask(const fxl::Closure& task, std::initializer_list<NodeRef> nodes);
 
  private:
+  using Visitor = std::function<void(Input* input, Output* output)>;
+
   // Adds a stage to the graph.
-  NodeRef Add(std::shared_ptr<StageImpl> stage);
+  NodeRef AddStage(std::shared_ptr<StageImpl> stage);
+
+  // Flushes all the outputs in |backlog| and all inputs/outputs downstream
+  // and calls |callback| when all flush operations are complete. |backlog| is
+  // empty when this method returns.
+  void FlushOutputs(std::queue<Output*>* backlog, bool hold_frame,
+                    fxl::Closure callback);
+
+  // Prepares the input and the subgraph upstream of it.
+  void PrepareInput(Input* input);
+
+  // Unprepares the input and the subgraph upstream of it.
+  void UnprepareInput(Input* input);
+
+  // Flushes the output and the subgraph downstream of it. |hold_frame|
+  // indicates whether a video renderer should hold and display the newest
+  // frame. |callback| is used to signal completion.
+  void FlushOutput(Output* output, bool hold_frame, fxl::Closure callback);
+
+  // Visits |input| and all inputs upstream of it (breadth first), calling
+  // |visitor| for each connected input.
+  void VisitUpstream(Input* input, const Visitor& visitor);
 
   async_t* async_;
 
   std::list<std::shared_ptr<StageImpl>> stages_;
   std::list<StageImpl*> sources_;
   std::list<StageImpl*> sinks_;
-
-  Engine engine_;
 };
 
 }  // namespace media_player

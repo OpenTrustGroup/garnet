@@ -7,13 +7,13 @@
 
 #include <unordered_map>
 
-#include <fuchsia/cpp/media.h>
+#include <lib/async/default.h>
+#include <media/cpp/fidl.h>
 
 #include "garnet/bin/media/media_player/demux/reader.h"
 #include "garnet/bin/media/media_player/player/player.h"
 #include "garnet/bin/media/media_player/render/fidl_audio_renderer.h"
 #include "garnet/bin/media/media_player/render/fidl_video_renderer.h"
-#include "garnet/bin/media/util/fidl_publisher.h"
 #include "lib/app/cpp/application_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/functional/closure.h"
@@ -50,18 +50,14 @@ class MediaPlayerImpl : public MediaPlayer {
 
   void Seek(int64_t position) override;
 
-  void GetStatus(uint64_t version_last_seen,
-                 GetStatusCallback callback) override;
-
   void SetGain(float gain) override;
 
-  void CreateView(fidl::InterfaceHandle<views_v1::ViewManager> view_manager,
-                  fidl::InterfaceRequest<views_v1_token::ViewOwner>
+  void CreateView(fidl::InterfaceHandle<::fuchsia::ui::views_v1::ViewManager> view_manager,
+                  fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
                       view_owner_request) override;
 
   void SetAudioRenderer(
-      fidl::InterfaceHandle<media::AudioRenderer> audio_renderer,
-      fidl::InterfaceHandle<media::MediaRenderer> media_renderer) override;
+      fidl::InterfaceHandle<media::AudioRenderer2> audio_renderer) override;
 
   void AddBinding(fidl::InterfaceRequest<MediaPlayer> request) override;
 
@@ -77,8 +73,14 @@ class MediaPlayerImpl : public MediaPlayer {
     kPlaying,   // Time is progressing.
   };
 
-  // Sets the current reader.
-  void SetReader(std::shared_ptr<Reader> reader);
+  static const char* ToString(State value);
+
+  // Begins the process of setting the reader.
+  void BeginSetReader(std::shared_ptr<Reader> reader);
+
+  // Finishes the process of setting the reader, assuming we're in |kIdle|
+  // state and have no source segment.
+  void FinishSetReader();
 
   // Creates the renderer for |medium| if it doesn't exist already.
   void MaybeCreateRenderer(StreamType::Medium medium);
@@ -87,18 +89,34 @@ class MediaPlayerImpl : public MediaPlayer {
   void ConnectSinks();
 
   // Prepares a stream.
-  void PrepareStream(size_t index,
-                     const media::MediaType& input_media_type,
+  void PrepareStream(size_t index, const media::MediaType& input_media_type,
                      const std::function<void()>& callback);
 
   // Takes action based on current state.
   void Update();
 
+  // Determines whether we need to flush.
+  bool NeedToFlush() const {
+    return setting_reader_ || target_position_ != media::kUnspecifiedTime ||
+           target_state_ == State::kFlushed;
+  }
+
+  // Determines whether we should hold a frame when flushing.
+  bool ShouldHoldFrame() const {
+    return !setting_reader_ && target_state_ != State::kFlushed;
+  }
+
   // Sets the timeline function.
-  void SetTimelineFunction(float rate,
-                           int64_t reference_time,
+  void SetTimelineFunction(float rate, int64_t reference_time,
                            fxl::Closure callback);
 
+  // Sends status updates to clients.
+  void SendStatusUpdates();
+
+  // Updates |status_|.
+  void UpdateStatus();
+
+  async_t* async_;
   component::ApplicationContext* application_context_;
   fxl::Closure quit_callback_;
   fidl::BindingSet<MediaPlayer> bindings_;
@@ -110,6 +128,7 @@ class MediaPlayerImpl : public MediaPlayer {
 
   // The state we're currently in.
   State state_ = State::kWaiting;
+  const char* waiting_reason_ = "to initialize";
 
   // The state we're trying to transition to, either because the client has
   // called |Play| or |Pause| or because we've hit end-of-stream.
@@ -127,7 +146,18 @@ class MediaPlayerImpl : public MediaPlayer {
   // The minimum program range PTS to be used for SetProgramRange.
   int64_t program_range_min_pts_ = media::kMinTime;
 
-  media::FidlPublisher<GetStatusCallback> status_publisher_;
+  // Whether we need to set the reader, possibly with nothing. When this is
+  // true, the state machine will transition to |kIdle|, removing an existing
+  // reader if there is one, then call |FinishSetReader| to set up the new
+  // reader |new_reader_|.
+  bool setting_reader_ = false;
+
+  // Reader that needs to be used once we're ready to use it. If this field is
+  // null when |setting_reader_| is true, we're waiting to remove the existing
+  // reader and transition to kInactive.
+  std::shared_ptr<Reader> new_reader_;
+
+  MediaPlayerStatus status_;
 };
 
 }  // namespace media_player

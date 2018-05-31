@@ -5,7 +5,7 @@
 #ifndef GARNET_BIN_AUTH_TOKEN_MANAGER_TOKEN_MANAGER_FACTORY_IMPL_H_
 #define GARNET_BIN_AUTH_TOKEN_MANAGER_TOKEN_MANAGER_FACTORY_IMPL_H_
 
-#include <fuchsia/cpp/auth.h>
+#include <auth/cpp/fidl.h>
 
 #include "lib/app/cpp/application_context.h"
 #include "lib/fidl/cpp/binding_set.h"
@@ -32,8 +32,10 @@ class TokenManagerFactoryImpl : public TokenManagerFactory {
  private:
   // |TokenManagerFactory|
   void GetTokenManager(
-      fidl::StringPtr user_id,
+      fidl::StringPtr user_id, fidl::StringPtr application_url,
       fidl::VectorPtr<AuthProviderConfig> auth_provider_configs,
+      fidl::InterfaceHandle<auth::AuthenticationContextProvider>
+          auth_context_provider,
       fidl::InterfaceRequest<TokenManager> request) override;
 
   component::ApplicationContext* const app_context_;

@@ -14,15 +14,15 @@
 namespace shadertoy {
 
 fxl::RefPtr<ShadertoyState> ShadertoyState::NewForImagePipe(
-    App* app,
-    ::fidl::InterfaceHandle<images::ImagePipe> image_pipe) {
+    App* app, ::fidl::InterfaceHandle<fuchsia::images::ImagePipe> image_pipe) {
   return fxl::AdoptRef(
       new ShadertoyStateForImagePipe(app, std::move(image_pipe)));
 }
 
 fxl::RefPtr<ShadertoyState> ShadertoyState::NewForView(
     App* app,
-    ::fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
+    ::fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+        view_owner_request,
     bool handle_input_events) {
   FXL_CHECK(false) << "unimplemented.";
   return fxl::RefPtr<ShadertoyState>();
@@ -53,8 +53,9 @@ void ShadertoyState::SetPaused(bool paused) {
   RequestFrame(0);
 }
 
-void ShadertoyState::SetShaderCode(fidl::StringPtr glsl,
-                                   shadertoy::Shadertoy::SetShaderCodeCallback callback) {
+void ShadertoyState::SetShaderCode(
+    fidl::StringPtr glsl,
+    ::fuchsia::ui::shadertoy::Shadertoy::SetShaderCodeCallback callback) {
   compiler_->Compile(std::string(glsl),
                      [weak = weak_ptr_factory_.GetWeakPtr(),
                       callback = callback](Compiler::Result result) {
@@ -105,7 +106,7 @@ void ShadertoyState::SetMouse(glm::vec4 i_mouse) {
 
 void ShadertoyState::SetImage(
     uint32_t channel,
-    ::fidl::InterfaceRequest<images::ImagePipe> request) {
+    ::fidl::InterfaceRequest<fuchsia::images::ImagePipe> request) {
   FXL_CHECK(false) << "unimplemented";
 }
 
@@ -123,7 +124,7 @@ void ShadertoyState::RequestFrame(uint64_t presentation_time) {
   KeepAlive(escher()->command_buffer_sequencer()->latest_sequence_number());
 }
 
-void ShadertoyState::OnFramePresented(images::PresentationInfo info) {
+void ShadertoyState::OnFramePresented(fuchsia::images::PresentationInfo info) {
   FXL_DCHECK(is_drawing_);
   is_drawing_ = false;
   RequestFrame(info.presentation_time + info.presentation_interval);

@@ -22,7 +22,7 @@ import (
 	"amber/pkg"
 	"amber/source"
 
-	amber_fidl "fuchsia/go/amber"
+	amber_fidl "fidl/amber"
 
 	"app/context"
 	"syscall/zx"
@@ -35,11 +35,12 @@ const port = 8083
 
 var (
 	// TODO(jmatt) replace hard-coded values with something better/more flexible
-	usage = "usage: amber [-k=<path>] [-s=<path>] [-u=<url>]"
-	store = flag.String("s", "/data/amber/tuf", "The path to the local file store")
-	addr  = flag.String("u", fmt.Sprintf("%s:%d", lhIP, port), "The URL (including port if not using port 80)  of the update server.")
-	keys  = flag.String("k", "/pkg/data/keys", "Path to use to initialize the client's keys. This is only needed the first time the command is run.")
-	delay = flag.Duration("d", 0*time.Second, "Set a delay before Amber does its work")
+	usage      = "usage: amber [-k=<path>] [-s=<path>] [-u=<url>]"
+	store      = flag.String("s", "/data/amber/tuf", "The path to the local file store")
+	addr       = flag.String("u", fmt.Sprintf("%s:%d", lhIP, port), "The URL (including port if not using port 80)  of the update server.")
+	keys       = flag.String("k", "/pkg/data/keys", "Path to use to initialize the client's keys. This is only needed the first time the command is run.")
+	delay      = flag.Duration("d", 0*time.Second, "Set a delay before Amber does its work")
+	autoUpdate = flag.Bool("a", false, "Automatically update and restart the system as updates become available")
 
 	needsPath = "/pkgfs/needs"
 )
@@ -55,27 +56,37 @@ func main() {
 	log.SetFlags(log.Ltime)
 	time.Sleep(*delay)
 
-	keys, err := source.LoadKeys(*keys)
-
+	srvUrl, err := url.Parse(*addr)
 	if err != nil {
-		log.Printf("loading root keys failed %s\n", err)
-		return
+		log.Fatalf("bad address for update server %s", err)
+	}
+
+	keys, err := source.LoadKeys(*keys)
+	if err != nil {
+		log.Fatalf("loading root keys failed %s", err)
 	}
 
 	ticker := source.NewTickGenerator(source.InitBackoff)
-	dp := daemon.NewDaemonProvider()
 	go ticker.Run()
 
-	go startFIDLSvr(dp, ticker)
+	d := startupDaemon(srvUrl, *store, keys, ticker)
+	if *autoUpdate {
+		go func() {
+			supMon := daemon.NewSystemUpdateMonitor(d)
+			supMon.Start()
+			log.Println("system update monitor exited")
+		}()
+	}
 
-	go startupDaemon(*addr, *store, keys, ticker, dp)
-	defer dp.Daemon().CancelAll()
+	startFIDLSvr(d, ticker)
+
+	defer d.CancelAll()
 
 	//block forever
 	select {}
 }
 
-func startFIDLSvr(d *daemon.DaemonProvider, t *source.TickGenerator) {
+func startFIDLSvr(d *daemon.Daemon, t *source.TickGenerator) {
 	cxt := context.CreateFromStartupInfo()
 	apiSrvr := ipcserver.NewControlSrvr(d, t)
 	cxt.OutgoingService.AddService(amber_fidl.ControlName, func(c zx.Channel) error {
@@ -84,19 +95,39 @@ func startFIDLSvr(d *daemon.DaemonProvider, t *source.TickGenerator) {
 	cxt.Serve()
 }
 
-func startupDaemon(srvAddr, store string, keys []*tuf_data.Key,
-	ticker *source.TickGenerator, dp *daemon.DaemonProvider) *daemon.Daemon {
-	client, _, err := source.InitNewTUFClient(srvAddr, store, keys, ticker)
-	if err != nil {
-		log.Printf("client initialization failed: %s\n", err)
-	}
+func startupDaemon(srvURL *url.URL, store string, keys []*tuf_data.Key,
+	ticker *source.TickGenerator) *daemon.Daemon {
 
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(2)
-	}
+	reqSet := newPackageSet([]string{"/pkg/bin/app"})
 
-	files := []string{"/pkg/bin/app"}
+	checker := daemon.NewDaemon(reqSet, daemon.ProcessPackage, []source.Source{})
+
+	blobURL := *srvURL
+	blobURL.Path = filepath.Join(blobURL.Path, "blobs")
+	checker.AddBlobRepo(daemon.BlobRepo{Address: blobURL.String(), Interval: time.Second * 5})
+
+	log.Println("monitoring for updates")
+
+	go func() {
+		client, _, err := source.InitNewTUFClient(srvURL.String(), store, keys, ticker)
+		if err != nil {
+			log.Printf("client initialization failed: %s", err)
+			return
+		}
+
+		// create source with an average 10qps over 5 seconds and a possible burst
+		// of up to 50 queries
+		fetcher := &source.TUFSource{
+			Client:   client,
+			Interval: 0,
+			Limit:    0,
+		}
+		checker.AddSource(fetcher)
+	}()
+	return checker
+}
+
+func newPackageSet(files []string) *pkg.PackageSet {
 	reqSet := pkg.NewPackageSet()
 
 	d := sha512.New()
@@ -113,36 +144,19 @@ func startupDaemon(srvAddr, store string, keys []*tuf_data.Key,
 		reqSet.Add(&pkg)
 	}
 
-	// create source with an average 10qps over 5 seconds and a possible burst
-	// of up to 50 queries
-	fetcher := &source.TUFSource{
-		Client:   client,
-		Interval: time.Second * 5,
-		Limit:    50,
-	}
-	checker := daemon.NewDaemon(reqSet, daemon.ProcessPackage, []source.Source{fetcher})
-	u, err := url.Parse(srvAddr)
-	if err == nil {
-		u.Path = filepath.Join(u.Path, "blobs")
-		checker.AddBlobRepo(daemon.BlobRepo{Address: u.String(), Interval: time.Second * 5})
-	} else {
-		log.Printf("amber: bad blob repo address %s\n", err)
-	}
-	dp.SetDaemon(checker)
-	log.Println("amber: monitoring for updates")
-	return checker
+	return reqSet
 }
 
 func digest(name string, hash hash.Hash) ([]byte, error) {
 	f, e := os.Open(name)
 	if e != nil {
-		fmt.Printf("amber: couldn't open file to fingerprint %s\n", e)
+		fmt.Printf("couldn't open file to fingerprint %s\n", e)
 		return nil, e
 	}
 	defer f.Close()
 
 	if _, err := io.Copy(hash, f); err != nil {
-		fmt.Printf("amber: file digest failed %s\n", err)
+		fmt.Printf("file digest failed %s\n", err)
 		return nil, e
 	}
 	return hash.Sum(nil), nil

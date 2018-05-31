@@ -8,7 +8,7 @@
 
 #include <fbl/intrusive_double_list.h>
 #include <fbl/ref_ptr.h>
-#include <fuchsia/cpp/media.h>
+#include <media/cpp/fidl.h>
 
 #include "garnet/bin/media/audio_server/audio_device.h"
 #include "garnet/bin/media/audio_server/audio_input.h"
@@ -84,8 +84,7 @@ class AudioDeviceManager {
 
   // Handles a plugged/unplugged state change for the supplied audio device.
   void HandlePlugStateChange(const fbl::RefPtr<AudioDevice>& device,
-                             bool plugged,
-                             zx_time_t plug_time);
+                             bool plugged, zx_time_t plug_time);
 
   // Master gain control.  Only safe to access via the main message loop thread.
   void SetMasterGain(float db_gain);

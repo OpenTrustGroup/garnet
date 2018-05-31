@@ -5,9 +5,9 @@
 namespace mozart {
 
 InputDeviceImpl::InputDeviceImpl(
-    uint32_t id,
-    input::DeviceDescriptor descriptor,
-    fidl::InterfaceRequest<input::InputDevice> input_device_request,
+    uint32_t id, fuchsia::ui::input::DeviceDescriptor descriptor,
+    fidl::InterfaceRequest<fuchsia::ui::input::InputDevice>
+        input_device_request,
     Listener* listener)
     : id_(id),
       descriptor_(std::move(descriptor)),
@@ -21,7 +21,7 @@ InputDeviceImpl::InputDeviceImpl(
 
 InputDeviceImpl::~InputDeviceImpl() {}
 
-void InputDeviceImpl::DispatchReport(input::InputReport report) {
+void InputDeviceImpl::DispatchReport(fuchsia::ui::input::InputReport report) {
   listener_->OnReport(this, std::move(report));
 }
 

@@ -6,9 +6,10 @@ use async;
 use device::{self, DevMgrRef};
 use failure::Error;
 use fidl;
+use fidl::encoding2::OutOfLine;
 use futures::future::{self, FutureResult};
 use futures::{Future, FutureExt, Never, StreamExt};
-use wlan_service::{self, DeviceListenerProxy, DeviceService, DeviceServiceImpl};
+use wlan_service::{self, DeviceService, DeviceServiceControlHandle, DeviceServiceImpl};
 use zx;
 
 fn catch_and_log_err<F>(ctx: &'static str, f: F) -> FutureResult<(), Never>
@@ -23,11 +24,15 @@ where
 }
 
 pub fn device_service(
-    devmgr: DevMgrRef,
-    channel: async::Channel,
+    devmgr: DevMgrRef, channel: async::Channel,
 ) -> impl Future<Item = (), Error = Never> {
     DeviceServiceImpl {
         state: devmgr,
+        on_open: |state, control_handle| {
+            debug!("on_open");
+            state.lock().add_listener(Box::new(control_handle));
+            future::ok(())
+        },
 
         list_phys: |state, c| {
             debug!("list_phys");
@@ -51,10 +56,10 @@ pub fn device_service(
             state.lock().query_phy(req.phy_id).then(move |res| {
                 catch_and_log_err("query_phy", || match res {
                     Ok(info) => c.send(
-                        &mut zx::Status::OK.into_raw(),
-                        &mut Some(Box::new(wlan_service::QueryPhyResponse { info })),
+                        zx::Status::OK.into_raw(),
+                        Some(OutOfLine(&mut wlan_service::QueryPhyResponse { info })),
                     ),
-                    Err(e) => c.send(&mut e.into_raw(), &mut None),
+                    Err(e) => c.send(e.into_raw(), None),
                 })
             })
         },
@@ -74,12 +79,12 @@ pub fn device_service(
                 .then(move |res| {
                     catch_and_log_err("create_iface", || match res {
                         Ok(id) => c.send(
-                            &mut zx::Status::OK.into_raw(),
-                            &mut Some(Box::new(wlan_service::CreateIfaceResponse { iface_id: id })),
+                            zx::Status::OK.into_raw(),
+                            Some(OutOfLine(&mut wlan_service::CreateIfaceResponse { iface_id: id })),
                         ),
                         Err(e) => {
                             error!("could not create iface: {:?}", e);
-                            c.send(&mut e.into_raw(), &mut None)
+                            c.send(e.into_raw(), None)
                         }
                     })
                 })
@@ -92,31 +97,29 @@ pub fn device_service(
                 .destroy_iface(req.phy_id, req.iface_id)
                 .then(move |res| {
                     catch_and_log_err("destroy_iface", || match res {
-                        Ok(()) => c.send(&mut zx::Status::OK.into_raw()),
-                        Err(e) => c.send(&mut e.into_raw()),
+                        Ok(()) => c.send(zx::Status::OK.into_raw()),
+                        Err(e) => c.send(e.into_raw()),
                     })
                 })
-        },
-
-        register_listener: |state, listener, c| {
-            catch_and_log_err("register_listener", || {
-                debug!("register listener");
-                if let Ok(proxy) = listener.into_proxy() {
-                    state.lock().add_listener(Box::new(proxy));
-                }
-                c.send(&mut zx::Status::OK.into_raw())
-            })
         },
     }.serve(channel)
         .recover(|e| eprintln!("error running wlan device service: {:?}", e))
 }
 
-impl device::EventListener for DeviceListenerProxy {
-    fn on_phy_added(&self, mut id: u16) -> Result<(), Error> {
-        DeviceListenerProxy::on_phy_added(self, &mut id).map_err(|e| e.into())
+impl device::EventListener for DeviceServiceControlHandle {
+    fn on_phy_added(&self, id: u16) -> Result<(), Error> {
+        self.send_on_phy_added(id).map_err(Into::into)
     }
 
-    fn on_phy_removed(&self, mut id: u16) -> Result<(), Error> {
-        DeviceListenerProxy::on_phy_removed(self, &mut id).map_err(|e| e.into())
+    fn on_phy_removed(&self, id: u16) -> Result<(), Error> {
+        self.send_on_phy_removed(id).map_err(Into::into)
+    }
+
+    fn on_iface_added(&self, id: u16) -> Result<(), Error> {
+        self.send_on_iface_added(id).map_err(Into::into)
+    }
+
+    fn on_iface_removed(&self, id: u16) -> Result<(), Error> {
+        self.send_on_iface_removed(id).map_err(Into::into)
     }
 }

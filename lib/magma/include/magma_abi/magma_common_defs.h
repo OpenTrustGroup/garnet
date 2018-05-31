@@ -12,13 +12,9 @@ extern "C" {
 #endif
 
 #define MAGMA_CAPABILITY_RENDERING 1
-#define MAGMA_CAPABILITY_DISPLAY 2
 
 #define MAGMA_QUERY_DEVICE_ID 1
 #define MAGMA_QUERY_VENDOR_PARAM_0 10000
-
-#define MAGMA_DOMAIN_CPU 0x00000001
-#define MAGMA_DOMAIN_GTT 0x00000040
 
 // possible values for magma_status_t
 #define MAGMA_STATUS_OK (0)
@@ -31,10 +27,6 @@ extern "C" {
 #define MAGMA_STATUS_TIMED_OUT (-7)
 #define MAGMA_STATUS_UNIMPLEMENTED (-8)
 
-// possible values for magma_image_tiling_t
-#define MAGMA_IMAGE_TILING_OPTIMAL 0
-#define MAGMA_IMAGE_TILING_LINEAR 1
-
 // possible values for magma_cache_operation_t
 #define MAGMA_CACHE_OPERATION_CLEAN 0
 #define MAGMA_CACHE_OPERATION_CLEAN_INVALIDATE 1
@@ -42,10 +34,9 @@ extern "C" {
 // possible values for magma_cache_policy_t
 #define MAGMA_CACHE_POLICY_CACHED 0
 #define MAGMA_CACHE_POLICY_WRITE_COMBINING 1
+#define MAGMA_CACHE_POLICY_UNCACHED 2
 
 typedef int32_t magma_status_t;
-
-typedef uint32_t magma_image_tiling_t;
 
 typedef uint32_t magma_cache_operation_t;
 
@@ -66,8 +57,6 @@ struct magma_system_relocation_entry {
     uint32_t offset;                 // offset in the batch buffer
     uint32_t target_resource_index;  // resource index of the buffer to be relocated
     uint32_t target_offset;          // offset in the target buffer
-    uint32_t read_domains_bitfield;  // memory domains in which the target is readable
-    uint32_t write_domains_bitfield; // memory domains in which the target is writable
 };
 
 // a buffer plus its associated relocations referenced by a command buffer
@@ -91,15 +80,6 @@ struct magma_system_connection_request {
     uint64_t client_id;
     uint32_t capabilities;
 } __attribute__((packed));
-
-struct magma_system_image_descriptor {
-    magma_image_tiling_t tiling;
-} __attribute__((packed));
-
-struct magma_display_size {
-    uint32_t width;
-    uint32_t height;
-};
 
 struct magma_system_inline_command_buffer {
     void* data;

@@ -7,8 +7,8 @@
 #include <fbl/ref_counted.h>
 #include <stdint.h>
 
+#include <media/cpp/fidl.h>
 #include "garnet/bin/media/audio_server/fwd_decls.h"
-#include <fuchsia/cpp/media.h>
 #include "lib/media/timeline/timeline_rate.h"
 
 namespace media {

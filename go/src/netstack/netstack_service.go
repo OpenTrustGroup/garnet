@@ -15,7 +15,7 @@ import (
 	"netstack/link/eth"
 	"syscall/zx"
 
-	nsfidl "fuchsia/go/netstack"
+	nsfidl "fidl/netstack"
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/network/ipv4"
@@ -147,13 +147,6 @@ func (ni *netstackImpl) GetAddress(name string, port uint16) (out []nsfidl.Socke
 
 func (ni *netstackImpl) GetInterfaces() (out []nsfidl.NetInterface, err error) {
 	return getInterfaces(), nil
-}
-
-func (ni *netstackImpl) GetNodeName() (out string, err error) {
-	ns.mu.Lock()
-	nodename := ns.nodename
-	ns.mu.Unlock()
-	return nodename, nil
 }
 
 func (ni *netstackImpl) GetRouteTable() (out []nsfidl.RouteTableEntry, err error) {
@@ -338,7 +331,7 @@ func (ni *netstackImpl) onInterfacesChanged(interfaces []nsfidl.NetInterface) {
 	}
 }
 
-var netstackService *bindings.BindingSet
+var netstackService *nsfidl.NetstackService
 
 // AddNetstackService registers the NetstackService with the application context,
 // allowing it to respond to FIDL queries.
@@ -346,20 +339,23 @@ func AddNetstackService(ctx *context.Context) error {
 	if netstackService != nil {
 		return fmt.Errorf("AddNetworkService must be called only once")
 	}
-	netstackService = &bindings.BindingSet{}
+	netstackService = &nsfidl.NetstackService{}
 	ctx.OutgoingService.AddService(nsfidl.NetstackName, func(c zx.Channel) error {
-		_, err := netstackService.Add(&nsfidl.NetstackStub{
-			Impl: &netstackImpl{},
-		}, c, nil)
+		_, err := netstackService.Add(&netstackImpl{}, c, nil)
 		return err
 	})
+
 	return nil
 }
 
 func OnInterfacesChanged() {
 	if netstackService != nil {
 		interfaces := getInterfaces()
-		for _, client := range netstackService.Bindings {
+		for key, client := range netstackService.Bindings {
+			if p, ok := netstackService.EventProxyFor(key); ok {
+				p.InterfacesChanged(interfaces)
+			}
+			// TODO(stijlist): port mDNS to use FIDL2 events instead of NotificationListener
 			client.Stub.(*nsfidl.NetstackStub).Impl.(*netstackImpl).onInterfacesChanged(interfaces)
 		}
 	}

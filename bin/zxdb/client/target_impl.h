@@ -5,6 +5,7 @@
 #pragma once
 
 #include "garnet/bin/zxdb/client/target.h"
+#include "garnet/bin/zxdb/client/target_symbols_impl.h"
 #include "garnet/public/lib/fxl/macros.h"
 #include "garnet/public/lib/fxl/memory/weak_ptr.h"
 
@@ -19,7 +20,9 @@ class TargetImpl : public Target {
   explicit TargetImpl(SystemImpl* system);
   ~TargetImpl() override;
 
+  SystemImpl* system() { return system_; }
   ProcessImpl* process() { return process_.get(); }
+  TargetSymbolsImpl* symbols() { return &symbols_; }
 
   // Allocates a new target with the same settings as this one. This isn't
   // a real copy, because any process information is not cloned.
@@ -28,6 +31,7 @@ class TargetImpl : public Target {
   // Target implementation:
   State GetState() const override;
   Process* GetProcess() const override;
+  const TargetSymbols* GetSymbols() const override;
   const std::vector<std::string>& GetArgs() const override;
   void SetArgs(std::vector<std::string> args) override;
   void Launch(Callback callback) override;
@@ -51,12 +55,16 @@ class TargetImpl : public Target {
 
   void OnKillOrDetachReply(const Err& err, uint32_t status, Callback callback);
 
+  SystemImpl* system_;  // Owns |this|.
+
   State state_ = kNone;
 
   std::vector<std::string> args_;
 
   // Associated process if there is one.
   std::unique_ptr<ProcessImpl> process_;
+
+  TargetSymbolsImpl symbols_;
 
   fxl::WeakPtrFactory<TargetImpl> impl_weak_factory_;
 

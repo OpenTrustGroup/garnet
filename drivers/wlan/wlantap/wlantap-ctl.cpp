@@ -4,7 +4,7 @@
 
 #include <ddk/debug.h>
 #include <ddk/device.h>
-#include <fuchsia/cpp/wlan_device.h>
+#include <wlan_device/cpp/fidl.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/dispatcher.h>
 #include <wlan/protocol/ioctl.h>
@@ -79,7 +79,7 @@ struct WlantapCtl {
         }
         auto& in = *static_cast<const wlantap_ioctl_create_wlanphy_t*>(in_buf);
         // Immediately wrap the handle to make sure we don't leak it
-        zx::channel user_channel(in.handle);
+        zx::channel user_channel(in.channel);
 
         auto phy_config = ::wlantap::WlantapPhyConfig::New();
         const uint8_t* in_end = static_cast<const uint8_t*>(in_buf) + in_len;
@@ -94,8 +94,8 @@ struct WlantapCtl {
             zxlogf(ERROR, "could not start wlantap event loop: %d", status);
             return status;
         }
-        status = wlan::wlantap::CreatePhy(device_, std::move(user_channel),
-                                          std::move(phy_config), loop);
+        status = wlan::wlantap::CreatePhy(device_, std::move(user_channel), std::move(phy_config),
+                                          loop);
         if (status != ZX_OK) {
             zxlogf(ERROR, "could not create wlantap phy: %d\n", status);
             return status;

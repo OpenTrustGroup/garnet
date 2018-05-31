@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	mlme "fuchsia/go/wlan_mlme"
+	mlme "fidl/wlan_mlme"
 	"log"
 	"math/big"
 	"wlan/eapol"
@@ -103,6 +103,15 @@ func (hs *FourWay) HandleEAPOLKeyFrame(s *Supplicant, f *eapol.KeyFrame) error {
 	// However, their data was not checked against any constraints or requirements, mostly because the
 	// data is often context specific and cannot be validated at such an early process.
 	return hs.state.handleEAPOLKeyFrame(hs, f)
+}
+
+func (hs *FourWay) IsComplete() bool {
+	switch hs.state.(type) {
+	case *fourWayStateCompleted:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *fourWayStateIdle) isMessageAllowed(f *eapol.KeyFrame) bool {

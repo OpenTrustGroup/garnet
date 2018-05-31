@@ -7,13 +7,12 @@
 #include <cinttypes>
 #include <string>
 
-#include <lib/async/default.h>
 #include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/port.h>
 
 #include "lib/fsl/handles/object_info.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/string_printf.h"
 
@@ -51,14 +50,13 @@ std::string IOPortPacketTypeToString(const zx_port_packet_t& pkt) {
 // static
 ExceptionPort::Key ExceptionPort::g_key_counter = 0;
 
-ExceptionPort::ExceptionPort()
-  : keep_running_(false), origin_dispatcher_(async_get_default()) {
+ExceptionPort::ExceptionPort(async_t* async)
+  : keep_running_(false), origin_dispatcher_(async) {
   FXL_DCHECK(origin_dispatcher_);
 }
 
 ExceptionPort::~ExceptionPort() {
-  if (eport_handle_)
-    Quit();
+  if (eport_handle_) Quit();
 }
 
 bool ExceptionPort::Run() {
@@ -98,7 +96,7 @@ void ExceptionPort::Quit() {
     zx_port_packet_t packet;
     memset(&packet, 0, sizeof(packet));
     packet.type = ZX_PKT_TYPE_USER;
-    eport_handle_.queue(&packet, 1);
+    eport_handle_.queue(&packet);
   }
 
   io_thread_.join();
@@ -133,9 +131,8 @@ ExceptionPort::Key ExceptionPort::Bind(zx_handle_t process_handle,
     return 0;
   }
 
-  status =
-      zx_task_bind_exception_port(process_handle, eport_handle_.get(),
-                                  next_key, ZX_EXCEPTION_PORT_DEBUGGER);
+  status = zx_task_bind_exception_port(process_handle, eport_handle_.get(),
+                                       next_key, ZX_EXCEPTION_PORT_DEBUGGER);
   if (status < 0) {
     FXL_LOG(ERROR) << "Failed to bind exception port: "
                    << util::ZxErrorString(status);
@@ -143,9 +140,8 @@ ExceptionPort::Key ExceptionPort::Bind(zx_handle_t process_handle,
   }
 
   // Also watch for process terminated signals.
-  status = zx_object_wait_async(process_handle, eport_handle_.get(),
-                                next_key, ZX_TASK_TERMINATED,
-                                ZX_WAIT_ASYNC_ONCE);
+  status = zx_object_wait_async(process_handle, eport_handle_.get(), next_key,
+                                ZX_TASK_TERMINATED, ZX_WAIT_ASYNC_ONCE);
   if (status < 0) {
     FXL_LOG(ERROR) << "Failed to async wait for process: "
                    << util::ZxErrorString(status);
@@ -174,7 +170,7 @@ bool ExceptionPort::Unbind(const Key key) {
   // Unbind the exception port. This is a best effort operation so if it fails,
   // there isn't really anything we can do to recover.
   zx_task_bind_exception_port(iter->second.process_handle, ZX_HANDLE_INVALID,
-                                key, ZX_EXCEPTION_PORT_DEBUGGER);
+                              key, ZX_EXCEPTION_PORT_DEBUGGER);
   callbacks_.erase(iter);
 
   return true;
@@ -195,8 +191,7 @@ void ExceptionPort::Worker() {
   }
   while (keep_running_) {
     zx_port_packet_t packet;
-    zx_status_t status =
-        zx_port_wait(eport, ZX_TIME_INFINITE, &packet, 1);
+    zx_status_t status = zx_port_wait(eport, ZX_TIME_INFINITE, &packet);
     if (status < 0) {
       FXL_LOG(ERROR) << "zx_port_wait returned error: "
                      << util::ZxErrorString(status);
@@ -207,10 +202,9 @@ void ExceptionPort::Worker() {
 
     if (ZX_PKT_IS_EXCEPTION(packet.type)) {
       FXL_VLOG(1) << "Exception received: "
-                  << util::ExceptionName(static_cast<const zx_excp_type_t>(
-                                           packet.type))
-                  << " (" << packet.type
-                  << "), pid: " << packet.exception.pid
+                  << util::ExceptionName(
+                         static_cast<const zx_excp_type_t>(packet.type))
+                  << " (" << packet.type << "), pid: " << packet.exception.pid
                   << ", tid: " << packet.exception.tid;
     } else if (packet.type == ZX_PKT_TYPE_SIGNAL_ONE) {
       FXL_VLOG(1) << "Signal received:"
@@ -245,8 +239,7 @@ void ExceptionPort::Worker() {
         zx_handle_t thread;
         zx_status_t status = zx_object_get_child(iter->second.process_handle,
                                                  packet.exception.tid,
-                                                 ZX_RIGHT_SAME_RIGHTS,
-                                                 &thread);
+                                                 ZX_RIGHT_SAME_RIGHTS, &thread);
         if (status < 0) {
           FXL_VLOG(1) << "Failed to get a handle to [" << packet.exception.pid
                       << "." << packet.exception.tid << "]";
@@ -256,8 +249,9 @@ void ExceptionPort::Worker() {
                                     &report, sizeof(report), NULL, NULL);
         zx_handle_close(thread);
         if (status < 0) {
-          FXL_VLOG(1) << "Failed to get exception report for [" << packet.exception.pid
-                      << "." << packet.exception.tid << "]";
+          FXL_VLOG(1) << "Failed to get exception report for ["
+                      << packet.exception.pid << "." << packet.exception.tid
+                      << "]";
           return;
         }
       } else {
@@ -289,37 +283,32 @@ void PrintException(FILE* out, const Thread* thread, zx_excp_type_t type,
   } else {
     const char* thread_name = thread->GetDebugName().c_str();
     switch (type) {
-    case ZX_EXCP_THREAD_STARTING:
-      fprintf(out, "Thread %s is starting\n", thread_name);
-      break;
-    case ZX_EXCP_THREAD_EXITING:
-      fprintf(out, "Thread %s is exiting\n", thread_name);
-      break;
-    case ZX_EXCP_POLICY_ERROR:
-      fprintf(out, "Thread %s got policy error\n", thread_name);
-      break;
-    default:
-      fprintf(out, "Unknown exception %u\n", type);
-      break;
+      case ZX_EXCP_THREAD_STARTING:
+        fprintf(out, "Thread %s is starting\n", thread_name);
+        break;
+      case ZX_EXCP_THREAD_EXITING:
+        fprintf(out, "Thread %s is exiting\n", thread_name);
+        break;
+      case ZX_EXCP_POLICY_ERROR:
+        fprintf(out, "Thread %s got policy error\n", thread_name);
+        break;
+      default:
+        fprintf(out, "Unknown exception %u\n", type);
+        break;
     }
   }
 }
 
 void PrintSignals(FILE* out, const Thread* thread, zx_signals_t signals) {
   std::string description;
-  if (signals & ZX_THREAD_RUNNING)
-    description += ", running";
-  if (signals & ZX_THREAD_SUSPENDED)
-    description += ", suspended";
-  if (signals & ZX_THREAD_TERMINATED)
-    description += ", terminated";
-  zx_signals_t mask = (ZX_THREAD_RUNNING |
-                       ZX_THREAD_SUSPENDED |
-                       ZX_THREAD_TERMINATED);
+  if (signals & ZX_THREAD_RUNNING) description += ", running";
+  if (signals & ZX_THREAD_SUSPENDED) description += ", suspended";
+  if (signals & ZX_THREAD_TERMINATED) description += ", terminated";
+  zx_signals_t mask =
+      (ZX_THREAD_RUNNING | ZX_THREAD_SUSPENDED | ZX_THREAD_TERMINATED);
   if (signals & ~mask)
     description += fxl::StringPrintf(", unknown (0x%x)", signals & ~mask);
-  if (description.length() == 0)
-    description = ", none";
+  if (description.length() == 0) description = ", none";
   fprintf(out, "Thread %s got signals: %s\n", thread->GetDebugName().c_str(),
           description.c_str() + 2);
 }

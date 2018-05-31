@@ -9,6 +9,7 @@ group("ui") {
     "hello_pose_buffer",
     "hello_scenic",
     "hello_spaces",
+    "hello_stereo",
     "shadertoy/client",
     "shadertoy/service",
     "shapes",
@@ -59,6 +60,19 @@ package("hello_pose_buffer") {
   ]
 }
 
+package("hello_stereo") {
+  deprecated_system_image = true
+  deps = [
+    "hello_stereo",
+  ]
+
+  binaries = [
+    {
+      name = "hello_stereo"
+    },
+  ]
+}
+
 package("shadertoy_client") {
   deps = [
     "shadertoy/client",
@@ -76,8 +90,8 @@ package("shadertoy_service") {
 
   meta = [
     {
-      path = rebase_path("shadertoy/service/meta/sandbox")
-      dest = "sandbox"
+      path = rebase_path("shadertoy/service/meta/shadertoy_service.cmx")
+      dest = "shadertoy_service.cmx"
     },
   ]
 }
@@ -121,15 +135,16 @@ package("tile_view") {
 }
 
 package("video_display") {
-
   deps = [
     "video_display",
   ]
 
   binary = "video_display"
 
-  meta = [ {
-        path = rebase_path("video_display/meta/sandbox")
-        dest = "sandbox"
-      } ]
+  meta = [
+    {
+      path = rebase_path("video_display/meta/video_display.cmx")
+      dest = "video_display.cmx"
+    },
+  ]
 }

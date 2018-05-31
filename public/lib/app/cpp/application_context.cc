@@ -36,7 +36,7 @@ std::unique_ptr<ApplicationContext>
 ApplicationContext::CreateFromStartupInfo() {
   auto startup_info = CreateFromStartupInfoNotChecked();
   FXL_CHECK(startup_info->environment().get() != nullptr)
-      << "The ApplicationEnvironment is null. If this is expected, use "
+      << "The Environment is null. If this is expected, use "
          "CreateFromStartupInfoNotChecked() to allow |environment| to be null.";
   return startup_info;
 }
@@ -49,7 +49,7 @@ ApplicationContext::CreateFromStartupInfoNotChecked() {
 }
 
 std::unique_ptr<ApplicationContext> ApplicationContext::CreateFrom(
-    ApplicationStartupInfo startup_info) {
+    StartupInfo startup_info) {
   FlatNamespace& flat = startup_info.flat_namespace;
   if (flat.paths->size() != flat.directories->size())
     return nullptr;
@@ -68,8 +68,7 @@ std::unique_ptr<ApplicationContext> ApplicationContext::CreateFrom(
 }
 
 void ApplicationContext::ConnectToEnvironmentService(
-    const std::string& interface_name,
-    zx::channel channel) {
+    const std::string& interface_name, zx::channel channel) {
   return incoming_services().ConnectToService(std::move(channel),
                                               interface_name);
 }

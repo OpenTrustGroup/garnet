@@ -6,23 +6,21 @@
 
 #include "lib/escher/impl/vulkan_utils.h"
 #include "lib/escher/resources/resource_manager.h"
+#include "lib/escher/util/image_utils.h"
+#include "lib/escher/vk/gpu_allocator.h"
 #include "lib/escher/vk/gpu_mem.h"
 
 namespace escher {
 
-const ResourceTypeInfo Image::kTypeInfo("Image",
-                                        ResourceType::kResource,
+const ResourceTypeInfo Image::kTypeInfo("Image", ResourceType::kResource,
                                         ResourceType::kWaitableResource,
                                         ResourceType::kImage);
 
-ImagePtr Image::New(ResourceManager* image_owner,
-                    ImageInfo info,
-                    vk::Image vk_image,
-                    GpuMemPtr mem,
-                    vk::DeviceSize mem_offset,
-                    bool bind_image_memory) {
+ImagePtr Image::New(ResourceManager* image_owner, ImageInfo info,
+                    vk::Image vk_image, GpuMemPtr mem,
+                    vk::DeviceSize mem_offset, bool bind_image_memory) {
   if (mem && bind_image_memory) {
-    auto bind_result = image_owner->device().bindImageMemory(
+    auto bind_result = image_owner->vk_device().bindImageMemory(
         vk_image, mem->base(), mem->offset() + mem_offset);
     if (bind_result != vk::Result::eSuccess) {
       FXL_DLOG(ERROR) << "vkBindImageMemory failed: "
@@ -33,40 +31,25 @@ ImagePtr Image::New(ResourceManager* image_owner,
   return fxl::AdoptRef(new Image(image_owner, info, vk_image, mem, mem_offset));
 }
 
-Image::Image(ResourceManager* image_owner,
-             ImageInfo info,
-             vk::Image vk_image,
-             GpuMemPtr mem,
-             vk::DeviceSize mem_offset)
+ImagePtr Image::New(ResourceManager* image_owner, const ImageInfo& info,
+                    GpuAllocator* allocator) {
+  auto vk_device = image_owner->vk_device();
+  vk::Image image = image_utils::CreateVkImage(vk_device, info);
+  vk::MemoryRequirements reqs = vk_device.getImageMemoryRequirements(image);
+  return Image::New(image_owner, info, image,
+                    allocator->Allocate(reqs, info.memory_flags));
+}
+
+Image::Image(ResourceManager* image_owner, ImageInfo info, vk::Image vk_image,
+             GpuMemPtr mem, vk::DeviceSize mem_offset)
     : WaitableResource(image_owner),
       info_(info),
       image_(vk_image),
       mem_(std::move(mem)),
       mem_offset_(mem_offset) {
-  // TODO: How do we future-proof this in case more formats are added?
-  switch (info.format) {
-    case vk::Format::eD16Unorm:
-    case vk::Format::eX8D24UnormPack32:
-    case vk::Format::eD32Sfloat:
-      has_depth_ = true;
-      has_stencil_ = false;
-      break;
-    case vk::Format::eS8Uint:
-      has_depth_ = false;
-      has_stencil_ = true;
-      break;
-    case vk::Format::eD16UnormS8Uint:
-    case vk::Format::eD24UnormS8Uint:
-    case vk::Format::eD32SfloatS8Uint:
-      has_depth_ = true;
-      has_stencil_ = true;
-      break;
-    default:
-      // No depth or stencil component.
-      has_depth_ = false;
-      has_stencil_ = false;
-      break;
-  }
+  auto is_depth_stencil = image_utils::IsDepthStencilFormat(info.format);
+  has_depth_ = is_depth_stencil.first;
+  has_stencil_ = is_depth_stencil.second;
 }
 
 Image::~Image() {

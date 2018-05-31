@@ -18,16 +18,14 @@ namespace {
 
 class CallbackMessageHandler : public MessageHandler {
  public:
-  std::function<zx_status_t(Message)> callback;
+  fit::function<zx_status_t(Message)> callback;
 
   zx_status_t OnMessage(Message message) override {
     return callback(std::move(message));
   }
 };
 
-TEST(ProxyController, Trivial) {
-  ProxyController controller;
-}
+TEST(ProxyController, Trivial) { ProxyController controller; }
 
 TEST(ProxyController, Send) {
   zx::channel h1, h2;

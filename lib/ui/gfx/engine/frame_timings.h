@@ -21,12 +21,11 @@ using FrameTimingsPtr = fxl::RefPtr<FrameTimings>;
 // Each frame, an instance of FrameTimings is used by the FrameScheduler to
 // collect timing information about all swapchains that were rendered to during
 // the frame.  Once all swapchains have finished rendering/presenting, the
-// FrameScheduler is notified via ReceiveFrameTimings().
+// FrameScheduler is notified via OnFramePresented().
 class FrameTimings : public escher::Reffable {
  public:
   FrameTimings();
-  FrameTimings(FrameScheduler* frame_scheduler,
-               uint64_t frame_number,
+  FrameTimings(FrameScheduler* frame_scheduler, uint64_t frame_number,
                zx_time_t target_presentation_time);
 
   // Add a swapchain that is used as a render target this frame.  Return an
@@ -38,11 +37,11 @@ class FrameTimings : public escher::Reffable {
   void OnFramePresented(size_t swapchain_index, zx_time_t time);
 
   uint64_t frame_number() const { return frame_number_; }
-  uint64_t target_presentation_time() const {
+  zx_time_t target_presentation_time() const {
     return target_presentation_time_;
   }
 
-  uint64_t actual_presentation_time() const {
+  zx_time_t actual_presentation_time() const {
     return actual_presentation_time_;
   }
 

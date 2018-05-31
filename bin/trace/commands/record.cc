@@ -2,21 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <launchpad/launchpad.h>
+#include <fdio/spawn.h>
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
+#include <zx/time.h>
 
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <unordered_set>
 
-#include <lib/async/cpp/task.h>
-#include <lib/async/default.h>
-#include <zx/time.h>
-
 #include "garnet/bin/trace/commands/record.h"
 #include "garnet/bin/trace/results_export.h"
 #include "garnet/bin/trace/results_output.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fsl/types/type_converters.h"
 #include "lib/fxl/files/file.h"
 #include "lib/fxl/files/path.h"
@@ -49,17 +47,13 @@ zx_handle_t Launch(const std::vector<std::string>& args) {
   for (const auto& item : args) {
     raw_args.push_back(item.c_str());
   }
+  raw_args.push_back(nullptr);
 
-  launchpad_t* launchpad;
-  launchpad_create(ZX_HANDLE_INVALID, raw_args[0], &launchpad);
-  launchpad_load_from_file(launchpad, args[0].c_str());
-  launchpad_set_args(launchpad, args.size(), raw_args.data());
+  zx_status_t status = fdio_spawn(ZX_HANDLE_INVALID, FDIO_SPAWN_CLONE_ALL,
+                                  raw_args[0], raw_args.data(), &subprocess);
 
-  launchpad_clone(launchpad, LP_CLONE_ALL);
-
-  const char* error;
-  if (launchpad_go(launchpad, &subprocess, &error) != ZX_OK) {
-    FXL_LOG(ERROR) << "Subprocess launch failed: \"" << error
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Subprocess launch failed: \"" << status
                    << "\" Did you provide the full path to the tool?";
   }
 
@@ -267,6 +261,11 @@ void Record::Start(const fxl::CommandLine& command_line) {
     measure_time_between_.reset(
         new measure::MeasureTimeBetween(options_.measurements.time_between));
   }
+  if (!options_.measurements.argument_value.empty()) {
+    aggregate_events_ = true;
+    measure_argument_value_.reset(new measure::MeasureArgumentValue(
+        options_.measurements.argument_value));
+  }
 
   tracing_ = true;
 
@@ -318,6 +317,9 @@ void Record::ProcessMeasurements() {
     if (measure_time_between_) {
       measure_time_between_->Process(event.GetEvent());
     }
+    if (measure_argument_value_) {
+      measure_argument_value_->Process(event.GetEvent());
+    }
   }
 
   std::unordered_map<uint64_t, std::vector<trace_ticks_t>> ticks;
@@ -328,6 +330,10 @@ void Record::ProcessMeasurements() {
   if (measure_time_between_) {
     ticks.insert(measure_time_between_->results().begin(),
                  measure_time_between_->results().end());
+  }
+  if (measure_argument_value_) {
+    ticks.insert(measure_argument_value_->results().begin(),
+                 measure_argument_value_->results().end());
   }
 
   uint64_t ticks_per_second = zx_ticks_per_second();
@@ -359,8 +365,8 @@ void Record::ProcessMeasurements() {
       Done(1);
       return;
     }
-    out() << "Benchmark results written to "
-          << options_.benchmark_results_file << std::endl;
+    out() << "Benchmark results written to " << options_.benchmark_results_file
+          << std::endl;
   }
 
   Done(return_code_);
@@ -372,7 +378,7 @@ void Record::DoneTrace() {
 
   out() << "Trace file written to " << options_.output_file_name << std::endl;
 
-  if (measure_duration_ || measure_time_between_) {
+  if (measure_duration_ || measure_time_between_ || measure_argument_value_) {
     ProcessMeasurements();
   } else {
     Done(return_code_);
@@ -380,28 +386,28 @@ void Record::DoneTrace() {
 }
 
 void Record::LaunchApp() {
-  component::ApplicationLaunchInfo launch_info;
+  component::LaunchInfo launch_info;
   launch_info.url = fidl::StringPtr(options_.app);
   launch_info.arguments =
       fxl::To<fidl::VectorPtr<fidl::StringPtr>>(options_.args);
 
   out() << "Launching " << launch_info.url << std::endl;
-  context()->launcher()->CreateApplication(
-      std::move(launch_info), application_controller_.NewRequest());
-  application_controller_.set_error_handler([this] {
+  context()->launcher()->CreateApplication(std::move(launch_info),
+                                           component_controller_.NewRequest());
+  component_controller_.set_error_handler([this] {
     out() << "Application terminated" << std::endl;
     if (!options_.decouple)
       // The trace might have been already stopped by the |Wait()| callback. In
       // that case, |StopTrace| below does nothing.
       StopTrace(-1);
   });
-  application_controller_->Wait([this](int32_t return_code) {
+  component_controller_->Wait([this](int32_t return_code) {
     out() << "Application exited with return code " << return_code << std::endl;
     if (!options_.decouple)
       StopTrace(return_code);
   });
   if (options_.detach) {
-    application_controller_->Detach();
+    component_controller_->Detach();
   }
 }
 

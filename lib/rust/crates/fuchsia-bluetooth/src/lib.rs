@@ -15,8 +15,16 @@ extern crate failure;
 extern crate rand;
 
 extern crate fuchsia_zircon as zircon;
+extern crate fidl_bluetooth;
+extern crate fidl_bluetooth_control;
 
+/// Bluetooth Error type
+pub mod error;
 /// Bluetooth hci API
 pub mod hci;
 /// Bluetooth host API
 pub mod host;
+/// Common Bluetooth type extensions
+pub mod types;
+/// Frequent Used Functions
+pub mod util;

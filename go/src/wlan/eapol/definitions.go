@@ -5,15 +5,15 @@
 package eapol
 
 import (
+	mlme "fidl/wlan_mlme"
 	"wlan/wlan/sme"
-	mlme "fuchsia/go/wlan_mlme"
 
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
 	"io"
-	"crypto/hmac"
-	"crypto/sha1"
 )
 
 // IEEE Std 802.1X-2010, 11.3.2, Table 11-3
@@ -195,6 +195,7 @@ func computeMIC(kck []byte, f *KeyFrame) []byte {
 // authentication, and key derivation.
 type KeyExchange interface {
 	HandleEAPOLKeyFrame(f *KeyFrame) error
+	IsComplete() bool
 }
 
 // Transports EAPOL frames to their destination.
@@ -214,12 +215,12 @@ func (s *SMETransport) SendEAPOLRequest(srcAddr [6]uint8, dstAddr [6]uint8, f *K
 		DstAddr: dstAddr,
 		Data:    f.Bytes(),
 	}
-	s.SME.SendMessage(req, uint32(mlme.MethodEapolRequest))
+	s.SME.SendMessage(req, mlme.MlmeEapolReqOrdinal)
 	return nil
 }
 
 func (s *SMETransport) SendSetKeysRequest(keyList []mlme.SetKeyDescriptor) error {
 	req := &mlme.SetKeysRequest{Keylist: keyList}
-	s.SME.SendMessage(req, uint32(mlme.MethodSetkeysRequest))
+	s.SME.SendMessage(req, mlme.MlmeSetKeysReqOrdinal)
 	return nil
 }

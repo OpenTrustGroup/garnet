@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_ESCHER_VK_BUFFER_H_
+#define LIB_ESCHER_VK_BUFFER_H_
 
 #include "lib/escher/forward_declarations.h"
 #include "lib/escher/resources/waitable_resource.h"
@@ -12,43 +13,32 @@ namespace escher {
 class Buffer;
 typedef fxl::RefPtr<Buffer> BufferPtr;
 
+// Range within the buffer.
+struct BufferRange {
+  vk::DeviceSize offset;
+  vk::DeviceSize size;
+};
+
 // Escher's standard interface to Vulkan buffer objects.
 class Buffer : public WaitableResource {
  public:
   static const ResourceTypeInfo kTypeInfo;
   const ResourceTypeInfo& type_info() const override { return kTypeInfo; }
 
-  // Construct an ownerless Buffer.  When the Buffer is destroyed, all resources
-  // are immediately freed/destroyed.
-  Buffer(ResourceManager* manager,
-         GpuAllocator* allocator,
-         vk::DeviceSize size,
-         vk::BufferUsageFlags usage_flags,
-         vk::MemoryPropertyFlags memory_property_flags);
-
-  static BufferPtr New(ResourceManager* manager,
-                       GpuAllocator* allocator,
-                       vk::DeviceSize size,
-                       vk::BufferUsageFlags usage_flags,
+  static BufferPtr New(ResourceManager* manager, GpuAllocator* allocator,
+                       vk::DeviceSize size, vk::BufferUsageFlags usage_flags,
                        vk::MemoryPropertyFlags memory_property_flags);
 
-  static BufferPtr New(ResourceManager* manager,
-                       GpuMemPtr mem,
-                       vk::BufferUsageFlags usage_flags,
-                       vk::DeviceSize size,
+  static BufferPtr New(ResourceManager* manager, GpuMemPtr mem,
+                       vk::BufferUsageFlags usage_flags, vk::DeviceSize size,
                        vk::DeviceSize offset = 0);
 
-  Buffer(ResourceManager* manager,
-         GpuMemPtr mem,
-         vk::Buffer buffer,
-         vk::DeviceSize size,
-         vk::DeviceSize offset = 0);
+  Buffer(ResourceManager* manager, GpuMemPtr mem, vk::Buffer buffer,
+         vk::DeviceSize size, vk::DeviceSize offset = 0);
 
   ~Buffer() override;
 
   // Return the underlying Vulkan buffer object.
-  // TODO(ES-44): Deprecated.  Use vk() instead.
-  vk::Buffer get() { return buffer_; }
   vk::Buffer vk() { return buffer_; }
 
   // Return the size of the buffer.
@@ -71,3 +61,5 @@ class Buffer : public WaitableResource {
 };
 
 }  // namespace escher
+
+#endif  // LIB_ESCHER_VK_BUFFER_H_

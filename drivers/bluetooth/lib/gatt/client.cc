@@ -34,7 +34,7 @@ template <att::UUIDType Format,
 bool ProcessDescriptorDiscoveryResponse(
     att::Handle range_start,
     att::Handle range_end,
-    common::BufferView entries,
+    BufferView entries,
     const Client::DescriptorCallback& desc_callback,
     att::Handle* out_last_handle) {
   FXL_DCHECK(out_last_handle);
@@ -87,9 +87,52 @@ class Impl final : public Client {
   explicit Impl(fxl::RefPtr<att::Bearer> bearer)
       : att_(bearer), weak_ptr_factory_(this) {
     FXL_DCHECK(att_);
+
+    auto handler = [this](auto txn_id, const att::PacketReader& pdu) {
+      FXL_DCHECK(pdu.opcode() == att::kNotification ||
+                 pdu.opcode() == att::kIndication);
+
+      if (pdu.payload_size() < sizeof(att::NotificationParams)) {
+        // Received a malformed notification. Disconnect the link.
+        FXL_VLOG(1) << "gatt: malformed notification/indication PDU";
+        att_->ShutDown();
+        return;
+      }
+
+      bool is_ind = pdu.opcode() == att::kIndication;
+      const auto& params = pdu.payload<att::NotificationParams>();
+      att::Handle handle = le16toh(params.handle);
+
+      // Auto-confirm indications.
+      if (is_ind) {
+        auto pdu = NewPDU(0u);
+        if (pdu) {
+          att::PacketWriter(att::kConfirmation, pdu.get());
+          att_->Reply(txn_id, std::move(pdu));
+        } else {
+          att_->ReplyWithError(txn_id, handle,
+                               att::ErrorCode::kInsufficientResources);
+        }
+      }
+
+      // Run the handler
+      if (notification_handler_) {
+        notification_handler_(
+            is_ind, handle,
+            BufferView(params.value, pdu.payload_size() - sizeof(att::Handle)));
+      } else {
+        FXL_VLOG(2) << "gatt: notification/indication dropped without handler";
+      }
+    };
+
+    not_handler_id_ = att_->RegisterHandler(att::kNotification, handler);
+    ind_handler_id_ = att_->RegisterHandler(att::kIndication, handler);
   }
 
-  ~Impl() override = default;
+  ~Impl() override {
+    att_->UnregisterHandler(not_handler_id_);
+    att_->UnregisterHandler(ind_handler_id_);
+  }
 
  private:
   fxl::WeakPtr<Client> AsWeakPtr() override {
@@ -335,8 +378,8 @@ class Impl final : public Client {
             return;
           }
 
-          common::BufferView attr_data_list(rsp_params.attribute_data_list,
-                                            rsp.payload_size() - 1);
+          BufferView attr_data_list(rsp_params.attribute_data_list,
+                                    rsp.payload_size() - 1);
           if (attr_data_list.size() % entry_length) {
             FXL_VLOG(1) << "gatt: Malformed attribute data list!";
             att_->ShutDown();
@@ -347,8 +390,7 @@ class Impl final : public Client {
           att::Handle last_handle = range_end;
           while (attr_data_list.size()) {
             const auto& entry = attr_data_list.As<att::AttributeData>();
-            common::BufferView value(entry.value,
-                                     entry_length - sizeof(att::Handle));
+            BufferView value(entry.value, entry_length - sizeof(att::Handle));
 
             CharacteristicData chrc;
             chrc.handle = le16toh(entry.handle);
@@ -459,8 +501,7 @@ class Impl final : public Client {
 
       const auto& rsp_params =
           rsp.payload<att::FindInformationResponseParams>();
-      common::BufferView entries =
-          rsp.payload_data().view(sizeof(rsp_params.format));
+      BufferView entries = rsp.payload_data().view(sizeof(rsp_params.format));
 
       att::Handle last_handle;
       bool result;
@@ -513,6 +554,34 @@ class Impl final : public Client {
     att_->StartTransaction(std::move(pdu), rsp_cb, error_cb);
   }
 
+  void ReadRequest(att::Handle handle, ReadCallback callback) override {
+    auto pdu = NewPDU(sizeof(att::ReadRequestParams));
+    if (!pdu) {
+      callback(att::Status(HostError::kOutOfMemory), BufferView());
+      return;
+    }
+
+    att::PacketWriter writer(att::kReadRequest, pdu.get());
+    auto params = writer.mutable_payload<att::ReadRequestParams>();
+    params->handle = htole16(handle);
+
+    auto rsp_cb = BindCallback([this, callback](const att::PacketReader& rsp) {
+      FXL_DCHECK(rsp.opcode() == att::kReadResponse);
+      callback(att::Status(), rsp.payload_data());
+    });
+
+    auto error_cb = BindErrorCallback(
+        [this, callback](att::Status status, att::Handle handle) {
+          FXL_VLOG(1) << "gatt: Read request failed: " << status.ToString()
+                      << ", handle: " << handle;
+          callback(status, BufferView());
+        });
+
+    if (!att_->StartTransaction(std::move(pdu), rsp_cb, error_cb)) {
+      callback(att::Status(HostError::kPacketMalformed), BufferView());
+    }
+  }
+
   void WriteRequest(att::Handle handle,
                     const common::ByteBuffer& value,
                     StatusCallback callback) override {
@@ -561,6 +630,10 @@ class Impl final : public Client {
     }
   }
 
+  void SetNotificationHandler(NotificationCallback handler) override {
+    notification_handler_ = std::move(handler);
+  }
+
   // Wraps |callback| in a TransactionCallback that only runs if this Client is
   // still alive.
   att::Bearer::TransactionCallback BindCallback(
@@ -583,8 +656,11 @@ class Impl final : public Client {
       }
     };
   }
-  fxl::RefPtr<att::Bearer> att_;
 
+  fxl::RefPtr<att::Bearer> att_;
+  att::Bearer::HandlerId not_handler_id_;
+  att::Bearer::HandlerId ind_handler_id_;
+  NotificationCallback notification_handler_;
   fxl::WeakPtrFactory<Client> weak_ptr_factory_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Impl);

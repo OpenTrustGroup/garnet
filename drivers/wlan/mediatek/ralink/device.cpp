@@ -51,9 +51,9 @@ zx_status_t sleep_for(zx::duration t) {
 }
 
 constexpr size_t kReadReqCount = 128;
-constexpr size_t kReadBufSize = 2048;
+constexpr size_t kReadBufSize = 4096;  // Reflecting max A-MSDU length for Ralink: 3839 bytes
 constexpr size_t kWriteReqCount = 128;
-constexpr size_t kWriteBufSize = 2048;  // todo: use endpt max size
+constexpr size_t kWriteBufSize = 4096;
 
 constexpr char kFirmwareFile[] = "rt2870.bin";
 
@@ -1193,7 +1193,7 @@ zx_status_t Device::InitRegisters() {
     IntTimerCfg itc;
     status = ReadRegister(&itc);
     CHECK_READ(INT_TIMER_CFG, status);
-    itc.set_pre_tbtt_timer(6 << 4); // 6.144 msec
+    itc.set_pre_tbtt_timer(6 << 4);  // 6.144 msec
     status = WriteRegister(itc);
     CHECK_WRITE(INT_TIMER_CFG, status);
 
@@ -3174,17 +3174,27 @@ static void fill_rx_info(wlan_rx_info_t* info, RxDesc rx_desc, Rxwi1 rxwi1, Rxwi
     }
 
     // TODO(tkilbourn): check rssi1 and rssi2 and figure out what to do with them
+    info->rssi_dbm = WLAN_RSSI_DBM_INVALID;
+    info->rcpi_dbmh = WLAN_RCPI_DBMH_INVALID;
+    info->snr_dbh = WLAN_RSNI_DBH_INVALID;
+
     if (rxwi2.rssi0() > 0) {
-        info->valid_fields |= WLAN_RX_INFO_VALID_RSSI;
         // Use rssi offsets from the EEPROM to convert to RSSI
-        info->rssi = static_cast<uint8_t>(-12 - rssi_offsets[0] - lna_gain - rxwi2.rssi0());
+        auto rssi_dbm = static_cast<int8_t>(-12 - rssi_offsets[0] - lna_gain - rxwi2.rssi0());
+        if (WLAN_RSSI_DBM_MIN <= rssi_dbm && rssi_dbm <= WLAN_RSSI_DBM_MAX) {
+            info->valid_fields |= WLAN_RX_INFO_VALID_RSSI;
+            info->rssi_dbm = rssi_dbm;
+        }
     }
 
     // TODO(tkilbourn): check snr1 and figure out what to do with it
     if (rxwi1.phy_mode() != PhyMode::kLegacyCck && rxwi3.snr0() > 0) {
-        info->valid_fields |= WLAN_RX_INFO_VALID_SNR;
         // Convert to SNR
-        info->snr = ((rxwi3.snr0() * 3 / 16) + 10) * 2;
+        auto snr_dbh = ((rxwi3.snr0() * 3 / 16) + 10) * 2;
+        if (WLAN_RSNI_DBH_MIN <= snr_dbh && snr_dbh <= WLAN_RSNI_DBH_MAX) {
+            info->valid_fields |= WLAN_RX_INFO_VALID_SNR;
+            info->snr_dbh = snr_dbh;
+        }
     }
 }
 
@@ -3505,9 +3515,7 @@ void Device::DestroyIface(wlan_device::DestroyIfaceRequest req, DestroyIfaceCall
 
 zx_status_t Device::WlanmacQuery(uint32_t options, wlanmac_info_t* info) {
     ZX_DEBUG_ASSERT(iface_role_ != 0);
-    if (iface_role_ == 0) {
-        return ZX_ERR_BAD_STATE;
-    }
+    if (iface_role_ == 0) { return ZX_ERR_BAD_STATE; }
 
     memset(info, 0, sizeof(*info));
     info->eth_info.mtu = 1500;
@@ -3795,7 +3803,7 @@ void Device::StopInterruptPolling() {
             .key = kIntPortPktShutdown,
             .type = ZX_PKT_TYPE_USER,
         };
-        interrupt_port_.queue(&pkt, 1);
+        interrupt_port_.queue(&pkt);
         interrupt_thrd_.join();
     }
 }
@@ -3807,7 +3815,7 @@ zx_status_t Device::InterruptWorker() {
     zx_port_packet_t pkt;
     for (;;) {
         zx::time timeout = zx::deadline_after(zx::sec(5));
-        auto status = interrupt_port_.wait(timeout, &pkt, 1);
+        auto status = interrupt_port_.wait(timeout, &pkt);
         if (status == ZX_ERR_TIMED_OUT) {
             continue;
         } else if (status != ZX_OK) {
@@ -3883,9 +3891,7 @@ zx_status_t Device::InterruptWorker() {
 zx::duration Device::RemainingTbttTime() {
     TbttTimer tbttTimer;
     auto status = ReadRegister(&tbttTimer);
-    if (status != ZX_OK) {
-        return zx::usec(0);
-    }
+    if (status != ZX_OK) { return zx::usec(0); }
     return zx::usec(tbttTimer.tbtt_timer() * 64);
 }
 

@@ -33,7 +33,7 @@ class Channel;
 // from any thread.
 class L2CAP : public fbl::RefCounted<L2CAP> {
  public:
-  using ChannelCallback = fbl::Function<void(fbl::RefPtr<Channel>)>;
+  using ChannelCallback = fit::function<void(fbl::RefPtr<Channel>)>;
   using LEConnectionParameterUpdateCallback =
       internal::LESignalingChannel::ConnectionParameterUpdateCallback;
   using LinkErrorCallback = std::function<void()>;  // copyable
@@ -51,13 +51,29 @@ class L2CAP : public fbl::RefCounted<L2CAP> {
   virtual void Initialize() = 0;
   virtual void ShutDown() = 0;
 
-  // Registers a LE connection with the L2CAP layer. L2CAP channels can be
+  // Registers an ACL connection with the L2CAP layer. L2CAP channels can be
   // opened on the logical link represented by |handle| after a call to this
   // method.
   //
-  // |callback| will be used to notify the caller if new connection parameters
-  // were accepted from the remote end of the link. |callback| will be posted on
-  // the given |dispatcher|.
+  // |link_error_callback| will be used to notify when a channel signals a link
+  // error. It will be posted onto |dispatcher|.
+  //
+  // Has no effect if L2CAP is uninitialized or shut down.
+  virtual void RegisterACL(
+      hci::ConnectionHandle handle,
+      hci::Connection::Role role,
+      LinkErrorCallback link_error_callback,
+      async_t* dispatcher) = 0;
+
+  // Registers an LE connection with the L2CAP layer. L2CAP channels can be
+  // opened on the logical link represented by |handle| after a call to this
+  // method.
+  //
+  // |conn_param_callback| will be used to notify the caller if new connection
+  // parameters were accepted from the remote end of the link.
+  //
+  // |link_error_callback| will be used to notify when a channel signals a link
+  // error.
   //
   // Has no effect if L2CAP is uninitialized or shut down.
   virtual void RegisterLE(

@@ -6,11 +6,13 @@
 #define LIB_TEST_RUNNER_CPP_TEST_RUNNER_H_
 
 #include <memory>
+
+#include <lib/async/cpp/task.h>
+#include <test_runner/cpp/fidl.h>
+
 #include "lib/app/cpp/application_context.h"
 #include "lib/test_runner/cpp/scope.h"
 #include "lib/test_runner/cpp/test_runner_store_impl.h"
-#include <fuchsia/cpp/test_runner.h>
-#include "lib/fxl/tasks/one_shot_timer.h"
 
 namespace test_runner {
 
@@ -26,7 +28,7 @@ class TestRunObserver {
 class TestRunContext;
 
 // Implements the TestRunner service which is available in the
-// ApplicationEnvironment of the test processes. Calls made to this service are
+// Environment of the test processes. Calls made to this service are
 // forwarded to and handled by TestRunContext.
 class TestRunnerImpl : public TestRunner {
  public:
@@ -67,8 +69,7 @@ class TestRunnerImpl : public TestRunner {
   fidl::Binding<TestRunner> binding_;
   TestRunContext* const test_run_context_;
   std::string program_name_ = "UNKNOWN";
-  bool waiting_for_termination_ = false;
-  fxl::OneShotTimer termination_timer_;
+  async::Task termination_task_;
   bool teardown_after_termination_ = false;
   int64_t remaining_test_points_ = -1;
 
@@ -76,7 +77,7 @@ class TestRunnerImpl : public TestRunner {
 };
 
 // TestRunContext represents a single run of a test program. Given a test
-// program to run, it runs it in a new ApplicationEnvironment and provides the
+// program to run, it runs it in a new Environment and provides the
 // environment a TestRunner service to report completion. When tests are done,
 // their completion is reported back to TestRunObserver (which is responsible
 // for deleting TestRunContext). If the child application stops without
@@ -94,7 +95,7 @@ class TestRunContext {
   void Teardown(TestRunnerImpl* teardown_client);
 
  private:
-  component::ApplicationControllerPtr child_app_controller_;
+  component::ComponentControllerPtr child_controller_;
   std::unique_ptr<Scope> child_env_scope_;
 
   TestRunObserver* const test_runner_connection_;

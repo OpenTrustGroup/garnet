@@ -17,9 +17,7 @@ namespace test {
 
 class SessionForTest : public Session {
  public:
-  SessionForTest(SessionId id,
-                 Engine* engine,
-                 EventReporter* event_reporter,
+  SessionForTest(SessionId id, Engine* engine, EventReporter* event_reporter,
                  ErrorReporter* error_reporter);
 
   virtual void TearDown() override;
@@ -27,20 +25,18 @@ class SessionForTest : public Session {
 
 class SessionHandlerForTest : public SessionHandler {
  public:
-  SessionHandlerForTest(CommandDispatcherContext context,
-                        Engine* engine,
-                        SessionId session_id,
-                        EventReporter* event_reporter,
+  SessionHandlerForTest(CommandDispatcherContext context, Engine* engine,
+                        SessionId session_id, EventReporter* event_reporter,
                         ErrorReporter* error_reporter);
 
   // |scenic::CommandDispatcher|
-  void DispatchCommand(ui::Command command) override;
+  void DispatchCommand(fuchsia::ui::scenic::Command command) override;
 
-  // |ui::Session / scenic::TempSessionDelegate|
+  // |fuchsia::ui::scenic::Session / scenic::TempSessionDelegate|
   void Present(uint64_t presentation_time,
                ::fidl::VectorPtr<zx::event> acquire_fences,
                ::fidl::VectorPtr<zx::event> release_fences,
-               ui::Session::PresentCallback callback) override;
+               fuchsia::ui::scenic::Session::PresentCallback callback) override;
 
   // Return the number of commands that have been enqueued.
   uint32_t command_count() const { return command_count_; }
@@ -74,9 +70,7 @@ class SessionManagerForTest : public SessionManager {
 
  private:
   std::unique_ptr<SessionHandler> CreateSessionHandler(
-      CommandDispatcherContext context,
-      Engine* engine,
-      SessionId session_id,
+      CommandDispatcherContext context, Engine* engine, SessionId session_id,
       EventReporter* event_reporter,
       ErrorReporter* error_reporter) const override;
 };

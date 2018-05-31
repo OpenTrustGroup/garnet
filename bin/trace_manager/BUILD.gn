@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 import("//build/package.gni")
-import("//build/fidl/fidl.gni")
 
 executable("bin") {
   output_name = "trace_manager"
@@ -24,28 +23,20 @@ executable("bin") {
     "tracee.h",
   ]
   deps = [
-    ":trace_link_fidl",
     "//garnet/public/lib/app/cpp",
-    "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/tracing/fidl",
     "//third_party/rapidjson",
+    "//zircon/public/fidl/tracelink",
+    "//zircon/public/lib/async-loop-cpp",
     "//zircon/public/lib/trace-provider",
-  ]
-}
-
-# This eventually should be replaced by the real target under //zircon/public.
-fidl("trace_link_fidl") {
-  name = "trace_link"
-  sources = [
-    "//zircon/system/fidl/tracing/trace_link.fidl",
   ]
 }
 
 package("trace_manager") {
   deps = [
     ":bin",
-    ":trace_link_fidl",
+    "//zircon/public/fidl/tracelink",
   ]
 
   binary = "trace_manager"

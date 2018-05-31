@@ -14,8 +14,8 @@
 namespace btlib {
 namespace gatt {
 
-// 0 is reserved as an invalid ID.
-constexpr IdType kInvalidId = 0u;
+// TODO(armansito): Rename this file to "local_types.h" and add the Local*
+// prefix to the types here.
 
 class Characteristic;
 using CharacteristicPtr = std::unique_ptr<Characteristic>;

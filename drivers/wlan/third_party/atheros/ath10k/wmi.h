@@ -395,6 +395,7 @@ static inline char* wmi_service_name(int service_id) {
 #undef SVCSTR
 }
 
+#if 0 // NEEDS PORTING
 #define WMI_SERVICE_IS_ENABLED(wmi_svc_bmap, svc_id, len) \
     ((svc_id) < (len) && \
      (wmi_svc_bmap)[(svc_id) / (sizeof(uint32_t))] & \
@@ -403,7 +404,7 @@ static inline char* wmi_service_name(int service_id) {
 #define SVCMAP(x, y, len) \
     do { \
         if (WMI_SERVICE_IS_ENABLED((in), (x), (len))) \
-            __set_bit(y, out); \
+            BITARR_SET(out, y); \
     } while (0)
 
 static inline void wmi_10x_svc_map(const uint32_t* in, unsigned long* out,
@@ -643,6 +644,7 @@ static inline void wmi_10_4_svc_map(const uint32_t* in, unsigned long* out,
 }
 
 #undef SVCMAP
+#endif // NEEDS PORTING
 
 /* 2 word representation of MAC addr */
 struct wmi_mac_addr {
@@ -2452,11 +2454,11 @@ struct wmi_resource_config_10x {
 } __PACKED;
 
 enum wmi_10_2_feature_mask {
-    WMI_10_2_RX_BATCH_MODE = BIT(0),
-    WMI_10_2_ATF_CONFIG    = BIT(1),
-    WMI_10_2_COEX_GPIO     = BIT(3),
-    WMI_10_2_BSS_CHAN_INFO = BIT(6),
-    WMI_10_2_PEER_STATS    = BIT(7),
+    WMI_10_2_RX_BATCH_MODE = (1 << 0),
+    WMI_10_2_ATF_CONFIG    = (1 << 1),
+    WMI_10_2_COEX_GPIO     = (1 << 3),
+    WMI_10_2_BSS_CHAN_INFO = (1 << 6),
+    WMI_10_2_PEER_STATS    = (1 << 7),
 };
 
 struct wmi_resource_config_10_2 {
@@ -2470,9 +2472,9 @@ struct wmi_resource_config_10_2 {
     uint32_t feature_mask;
 } __PACKED;
 
-#define NUM_UNITS_IS_NUM_VDEVS         BIT(0)
-#define NUM_UNITS_IS_NUM_PEERS         BIT(1)
-#define NUM_UNITS_IS_NUM_ACTIVE_PEERS  BIT(2)
+#define NUM_UNITS_IS_NUM_VDEVS         (1 << 0)
+#define NUM_UNITS_IS_NUM_PEERS         (1 << 1)
+#define NUM_UNITS_IS_NUM_ACTIVE_PEERS  (1 << 2)
 
 struct wmi_resource_config_10_4 {
     /* Number of virtual devices (VAPs) to support */
@@ -2704,12 +2706,12 @@ struct wmi_resource_config_10_4 {
  * @WMI_10_4_PEER_STATS: Per station stats
  */
 enum wmi_10_4_feature_mask {
-    WMI_10_4_LTEU_SUPPORT           = BIT(0),
-    WMI_10_4_COEX_GPIO_SUPPORT      = BIT(1),
-    WMI_10_4_AUX_RADIO_SPECTRAL_INTF    = BIT(2),
-    WMI_10_4_AUX_RADIO_CHAN_LOAD_INTF   = BIT(3),
-    WMI_10_4_BSS_CHANNEL_INFO_64        = BIT(4),
-    WMI_10_4_PEER_STATS         = BIT(5),
+    WMI_10_4_LTEU_SUPPORT               = (1 << 0),
+    WMI_10_4_COEX_GPIO_SUPPORT          = (1 << 1),
+    WMI_10_4_AUX_RADIO_SPECTRAL_INTF    = (1 << 2),
+    WMI_10_4_AUX_RADIO_CHAN_LOAD_INTF   = (1 << 3),
+    WMI_10_4_BSS_CHANNEL_INFO_64        = (1 << 4),
+    WMI_10_4_PEER_STATS                 = (1 << 5),
 };
 
 struct wmi_ext_resource_config_10_4_cmd {
@@ -3003,17 +3005,17 @@ enum wmi_bss_filter {
 };
 
 enum wmi_scan_event_type {
-    WMI_SCAN_EVENT_STARTED              = BIT(0),
-    WMI_SCAN_EVENT_COMPLETED            = BIT(1),
-    WMI_SCAN_EVENT_BSS_CHANNEL          = BIT(2),
-    WMI_SCAN_EVENT_FOREIGN_CHANNEL      = BIT(3),
-    WMI_SCAN_EVENT_DEQUEUED             = BIT(4),
+    WMI_SCAN_EVENT_STARTED              = (1 << 0),
+    WMI_SCAN_EVENT_COMPLETED            = (1 << 1),
+    WMI_SCAN_EVENT_BSS_CHANNEL          = (1 << 2),
+    WMI_SCAN_EVENT_FOREIGN_CHANNEL      = (1 << 3),
+    WMI_SCAN_EVENT_DEQUEUED             = (1 << 4),
     /* possibly by high-prio scan */
-    WMI_SCAN_EVENT_PREEMPTED            = BIT(5),
-    WMI_SCAN_EVENT_START_FAILED         = BIT(6),
-    WMI_SCAN_EVENT_RESTARTED            = BIT(7),
-    WMI_SCAN_EVENT_FOREIGN_CHANNEL_EXIT = BIT(8),
-    WMI_SCAN_EVENT_MAX                  = BIT(15),
+    WMI_SCAN_EVENT_PREEMPTED            = (1 << 5),
+    WMI_SCAN_EVENT_START_FAILED         = (1 << 6),
+    WMI_SCAN_EVENT_RESTARTED            = (1 << 7),
+    WMI_SCAN_EVENT_FOREIGN_CHANNEL_EXIT = (1 << 8),
+    WMI_SCAN_EVENT_MAX                  = (1 << 15),
 };
 
 enum wmi_scan_completion_reason {
@@ -3094,17 +3096,17 @@ struct wmi_mgmt_rx_ext_info {
     uint64_t rx_mac_timestamp;
 } __PACKED __ALIGNED(4);
 
-#define WMI_RX_STATUS_OK            0x00
-#define WMI_RX_STATUS_ERR_CRC           0x01
-#define WMI_RX_STATUS_ERR_DECRYPT       0x08
-#define WMI_RX_STATUS_ERR_MIC           0x10
-#define WMI_RX_STATUS_ERR_KEY_CACHE_MISS    0x20
+#define WMI_RX_STATUS_OK                        0x00
+#define WMI_RX_STATUS_ERR_CRC                   0x01
+#define WMI_RX_STATUS_ERR_DECRYPT               0x08
+#define WMI_RX_STATUS_ERR_MIC                   0x10
+#define WMI_RX_STATUS_ERR_KEY_CACHE_MISS        0x20
 /* Extension data at the end of mgmt frame */
-#define WMI_RX_STATUS_EXT_INFO      0x40
+#define WMI_RX_STATUS_EXT_INFO                  0x40
 
-#define PHY_ERROR_GEN_SPECTRAL_SCAN     0x26
-#define PHY_ERROR_GEN_FALSE_RADAR_EXT       0x24
-#define PHY_ERROR_GEN_RADAR         0x05
+#define PHY_ERROR_GEN_SPECTRAL_SCAN             0x26
+#define PHY_ERROR_GEN_FALSE_RADAR_EXT           0x24
+#define PHY_ERROR_GEN_RADAR                     0x05
 
 #define PHY_ERROR_10_4_RADAR_MASK               0x4
 #define PHY_ERROR_10_4_SPECTRAL_SCAN_MASK       0x4000000
@@ -4127,19 +4129,19 @@ struct wmi_pdev_stats_peer {
 } __PACKED;
 
 enum wmi_stats_id {
-    WMI_STAT_PEER      = BIT(0),
-    WMI_STAT_AP        = BIT(1),
-    WMI_STAT_PDEV      = BIT(2),
-    WMI_STAT_VDEV      = BIT(3),
-    WMI_STAT_BCNFLT    = BIT(4),
-    WMI_STAT_VDEV_RATE = BIT(5),
+    WMI_STAT_PEER      = (1 << 0),
+    WMI_STAT_AP        = (1 << 1),
+    WMI_STAT_PDEV      = (1 << 2),
+    WMI_STAT_VDEV      = (1 << 3),
+    WMI_STAT_BCNFLT    = (1 << 4),
+    WMI_STAT_VDEV_RATE = (1 << 5),
 };
 
 enum wmi_10_4_stats_id {
-    WMI_10_4_STAT_PEER      = BIT(0),
-    WMI_10_4_STAT_AP        = BIT(1),
-    WMI_10_4_STAT_INST      = BIT(2),
-    WMI_10_4_STAT_PEER_EXTD = BIT(3),
+    WMI_10_4_STAT_PEER      = (1 << 0),
+    WMI_10_4_STAT_AP        = (1 << 1),
+    WMI_10_4_STAT_INST      = (1 << 2),
+    WMI_10_4_STAT_PEER_EXTD = (1 << 3),
 };
 
 struct wlan_inst_rssi_args {
@@ -5026,10 +5028,10 @@ enum wmi_10_4_vdev_param {
     WMI_10_4_VDEV_PARAM_TSF_DECREMENT,
 };
 
-#define WMI_VDEV_PARAM_TXBF_SU_TX_BFEE BIT(0)
-#define WMI_VDEV_PARAM_TXBF_MU_TX_BFEE BIT(1)
-#define WMI_VDEV_PARAM_TXBF_SU_TX_BFER BIT(2)
-#define WMI_VDEV_PARAM_TXBF_MU_TX_BFER BIT(3)
+#define WMI_VDEV_PARAM_TXBF_SU_TX_BFEE (1 << 0)
+#define WMI_VDEV_PARAM_TXBF_MU_TX_BFEE (1 << 1)
+#define WMI_VDEV_PARAM_TXBF_SU_TX_BFER (1 << 2)
+#define WMI_VDEV_PARAM_TXBF_MU_TX_BFER (1 << 3)
 
 #define WMI_TXBF_STS_CAP_OFFSET_LSB 4
 #define WMI_TXBF_STS_CAP_OFFSET_MASK    0xf0
@@ -5582,9 +5584,9 @@ struct wmi_tim_info_arg {
 
 /* Maximum number of NOA Descriptors supported */
 #define WMI_P2P_MAX_NOA_DESCRIPTORS 4
-#define WMI_P2P_OPPPS_ENABLE_BIT    BIT(0)
+#define WMI_P2P_OPPPS_ENABLE_BIT    (1 << 0)
 #define WMI_P2P_OPPPS_CTWINDOW_OFFSET   1
-#define WMI_P2P_NOA_CHANGED_BIT BIT(0)
+#define WMI_P2P_NOA_CHANGED_BIT (1 << 0)
 
 struct wmi_p2p_noa_info {
     /* Bit 0 - Flag to indicate an update in NOA schedule
@@ -6077,8 +6079,8 @@ struct wmi_peer_sta_kickout_event {
     struct wmi_mac_addr peer_macaddr;
 } __PACKED;
 
-#define WMI_CHAN_INFO_FLAG_COMPLETE BIT(0)
-#define WMI_CHAN_INFO_FLAG_PRE_COMPLETE BIT(1)
+#define WMI_CHAN_INFO_FLAG_COMPLETE (1 << 0)
+#define WMI_CHAN_INFO_FLAG_PRE_COMPLETE (1 << 1)
 
 /* Beacon filter wmi command info */
 #define BCN_FLT_MAX_SUPPORTED_IES   256
@@ -6114,8 +6116,8 @@ enum wmi_sta_keepalive_method {
 
 /* note: ip4 addresses are in network byte order, i.e. big endian */
 struct wmi_sta_keepalive_arp_resp {
-    __be32 src_ip4_addr;
-    __be32 dest_ip4_addr;
+    uint8_t src_ip4_addr[4];  // network byte order
+    uint8_t dest_ip4_addr[4]; // network byte order
     struct wmi_mac_addr dest_mac_addr;
 } __PACKED;
 
@@ -6132,8 +6134,8 @@ struct wmi_sta_keepalive_arg {
     uint32_t enabled;
     uint32_t method;
     uint32_t interval;
-    __be32 src_ip4_addr;
-    __be32 dest_ip4_addr;
+    uint8_t src_ip4_addr[4];  // network byte order
+    uint8_t dest_ip4_addr[4]; // network byte order
     const uint8_t dest_mac_addr[ETH_ALEN];
 };
 
@@ -6596,9 +6598,9 @@ int ath10k_wmi_connect(struct ath10k* ar);
 
 zx_status_t ath10k_wmi_cmd_send(struct ath10k* ar, struct ath10k_msg_buf* buf, uint32_t cmd_id);
 int ath10k_wmi_cmd_send_nowait(struct ath10k* ar, struct ath10k_msg_buf* skb, uint32_t cmd_id);
-#if 0 // NEEDS PORTING
 void ath10k_wmi_start_scan_init(struct ath10k* ar, struct wmi_start_scan_arg* arg);
 
+#if 0 // NEEDS PORTING
 void ath10k_wmi_pull_pdev_stats_base(const struct wmi_pdev_stats_base* src,
                                      struct ath10k_fw_stats_pdev* dst);
 void ath10k_wmi_pull_pdev_stats_tx(const struct wmi_pdev_stats_tx* src,
@@ -6612,7 +6614,6 @@ void ath10k_wmi_pull_peer_stats(const struct wmi_peer_stats* src,
 #endif // NEEDS PORTING
 void ath10k_wmi_put_host_mem_chunks(struct ath10k* ar,
                                     struct wmi_host_mem_chunks* chunks);
-#if 0 // NEEDS PORTING
 void ath10k_wmi_put_start_scan_common(struct wmi_start_scan_common* cmn,
                                       const struct wmi_start_scan_arg* arg);
 void ath10k_wmi_set_wmm_param(struct wmi_wmm_params* params,
@@ -6621,15 +6622,18 @@ void ath10k_wmi_put_wmi_channel(struct wmi_channel* ch,
                                 const struct wmi_channel_arg* arg);
 int ath10k_wmi_start_scan_verify(const struct wmi_start_scan_arg* arg);
 
-int ath10k_wmi_event_scan(struct ath10k* ar, struct sk_buff* skb);
-int ath10k_wmi_event_mgmt_rx(struct ath10k* ar, struct sk_buff* skb);
+int ath10k_wmi_event_scan(struct ath10k* ar, struct ath10k_msg_buf* buf);
+int ath10k_wmi_event_mgmt_rx(struct ath10k* ar, struct ath10k_msg_buf* buf);
+#if 0 // NEEDS PORTING
 void ath10k_wmi_event_chan_info(struct ath10k* ar, struct sk_buff* skb);
 #endif // NEEDS PORTING
 void ath10k_wmi_event_echo(struct ath10k* ar, struct ath10k_msg_buf* buf);
 #if 0 // NEEDS PORTING
 int ath10k_wmi_event_debug_mesg(struct ath10k* ar, struct sk_buff* skb);
 void ath10k_wmi_event_update_stats(struct ath10k* ar, struct sk_buff* skb);
-void ath10k_wmi_event_vdev_start_resp(struct ath10k* ar, struct sk_buff* skb);
+#endif // NEEDS PORTING
+void ath10k_wmi_event_vdev_start_resp(struct ath10k* ar, struct ath10k_msg_buf* buf);
+#if 0 // NEEDS PORTING
 void ath10k_wmi_event_vdev_stopped(struct ath10k* ar, struct sk_buff* skb);
 void ath10k_wmi_event_peer_sta_kickout(struct ath10k* ar, struct sk_buff* skb);
 void ath10k_wmi_event_host_swba(struct ath10k* ar, struct sk_buff* skb);
@@ -6659,8 +6663,9 @@ void ath10k_wmi_event_gtk_offload_status(struct ath10k* ar,
 void ath10k_wmi_event_gtk_rekey_fail(struct ath10k* ar, struct sk_buff* skb);
 void ath10k_wmi_event_delba_complete(struct ath10k* ar, struct sk_buff* skb);
 void ath10k_wmi_event_addba_complete(struct ath10k* ar, struct sk_buff* skb);
-void ath10k_wmi_event_vdev_install_key_complete(struct ath10k* ar,
-        struct sk_buff* skb);
+#endif // NEEDS PORTING
+void ath10k_wmi_event_vdev_install_key_complete(struct ath10k* ar, struct ath10k_msg_buf* msg_buf);
+#if 0 // NEEDS PORTING
 void ath10k_wmi_event_inst_rssi_stats(struct ath10k* ar, struct sk_buff* skb);
 void ath10k_wmi_event_vdev_standby_req(struct ath10k* ar, struct sk_buff* skb);
 void ath10k_wmi_event_vdev_resume_req(struct ath10k* ar, struct sk_buff* skb);

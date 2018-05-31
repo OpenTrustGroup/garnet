@@ -42,11 +42,9 @@ bool IsEventTypeSupported(trace::EventType type) {
 }
 
 const trace::ArgumentValue* GetArgumentValue(
-    const fbl::Vector<trace::Argument>& arguments,
-    const char* name) {
+    const fbl::Vector<trace::Argument>& arguments, const char* name) {
   for (const auto& arg : arguments) {
-    if (arg.name() == name)
-      return &arg.value();
+    if (arg.name() == name) return &arg.value();
   }
   return nullptr;
 }
@@ -63,9 +61,7 @@ ChromiumExporter::ChromiumExporter(std::ostream& out)
   Start();
 }
 
-ChromiumExporter::~ChromiumExporter() {
-  Stop();
-}
+ChromiumExporter::~ChromiumExporter() { Stop(); }
 
 void ChromiumExporter::Start() {
   writer_.StartObject();
@@ -163,8 +159,7 @@ void ChromiumExporter::ExportRecord(const trace::Record& record) {
 }
 
 void ChromiumExporter::ExportEvent(const trace::Record::Event& event) {
-  if (!IsEventTypeSupported(event.type()))
-    return;
+  if (!IsEventTypeSupported(event.type())) return;
 
   writer_.StartObject();
 
@@ -290,7 +285,8 @@ void ChromiumExporter::ExportEvent(const trace::Record::Event& event) {
         case trace::ArgumentType::kPointer:
           writer_.Key(arg.name().data(), arg.name().size());
           writer_.String(
-              fxl::StringPrintf("0x%" PRIx64, arg.value().GetPointer()).c_str());
+              fxl::StringPrintf("0x%" PRIx64, arg.value().GetPointer())
+                  .c_str());
           break;
         case trace::ArgumentType::kKoid:
           writer_.Key(arg.name().data(), arg.name().size());
@@ -402,6 +398,8 @@ void ChromiumExporter::ExportContextSwitch(
   writer_.Uint64(context_switch.outgoing_thread.thread_koid());
   writer_.Key("state");
   writer_.Uint(static_cast<uint32_t>(context_switch.outgoing_thread_state));
+  writer_.Key("prio");
+  writer_.Uint(static_cast<uint32_t>(context_switch.outgoing_thread_priority));
   writer_.EndObject();
   writer_.Key("in");
   writer_.StartObject();
@@ -409,6 +407,8 @@ void ChromiumExporter::ExportContextSwitch(
   writer_.Uint64(context_switch.incoming_thread.process_koid());
   writer_.Key("tid");
   writer_.Uint64(context_switch.incoming_thread.thread_koid());
+  writer_.Key("prio");
+  writer_.Uint(static_cast<uint32_t>(context_switch.incoming_thread_priority));
   writer_.EndObject();
   writer_.EndObject();
 }

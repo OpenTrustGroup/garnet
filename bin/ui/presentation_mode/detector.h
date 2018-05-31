@@ -10,8 +10,8 @@
 #include <utility>
 #include <vector>
 
-#include <fuchsia/cpp/input.h>
-#include <fuchsia/cpp/presentation.h>
+#include <fuchsia/ui/input/cpp/fidl.h>
+#include <presentation/cpp/fidl.h>
 
 namespace presentation_mode {
 
@@ -42,8 +42,8 @@ class Detector final {
   // Return <true,mode> if a mode was recognized and stable.
   // Otherwise return <false,_>, where the second value is undefined.
   std::pair<bool, presentation::PresentationMode> Update(
-      const input::SensorDescriptor& sensor,
-      input::InputReport event);
+      const fuchsia::ui::input::SensorDescriptor& sensor,
+      fuchsia::ui::input::InputReport event);
 
  private:
   // Interpretation of X, Y, Z, based on reading words on the base (keyboard) or

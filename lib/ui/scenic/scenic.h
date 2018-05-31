@@ -7,7 +7,9 @@
 
 #include <set>
 
-#include <fuchsia/cpp/ui.h>
+#include <fuchsia/ui/scenic/cpp/fidl.h>
+#include <lib/fit/function.h>
+
 #include "garnet/lib/ui/scenic/session.h"
 #include "garnet/lib/ui/scenic/system.h"
 #include "lib/fidl/cpp/binding_set.h"
@@ -21,11 +23,10 @@ class Clock;
 // A Scenic instance has two main areas of responsibility:
 //   - manage Session lifecycles
 //   - provide a host environment for Services
-class Scenic : public ui::Scenic {
+class Scenic : public fuchsia::ui::scenic::Scenic {
  public:
-  Scenic(component::ApplicationContext* app_context,
-         fxl::TaskRunner* task_runner,
-         Clock* clock);
+  explicit Scenic(component::ApplicationContext* app_context,
+                  fit::closure quit_callback);
   ~Scenic();
 
   // Create and register a new system of the specified type.  At most one System
@@ -36,24 +37,23 @@ class Scenic : public ui::Scenic {
   // Called by Session when it needs to close itself.
   void CloseSession(Session* session);
 
-  // |ui::Scenic|
+  // |fuchsia::ui::scenic::Scenic|
   void CreateSession(
-      ::fidl::InterfaceRequest<ui::Session> session,
-      ::fidl::InterfaceHandle<ui::SessionListener> listener) override;
+      ::fidl::InterfaceRequest<fuchsia::ui::scenic::Session> session,
+      ::fidl::InterfaceHandle<fuchsia::ui::scenic::SessionListener> listener)
+      override;
 
   component::ApplicationContext* app_context() const { return app_context_; }
-  fxl::TaskRunner* task_runner() const { return task_runner_; }
-  Clock* clock() const { return clock_; }
 
   size_t num_sessions() { return session_bindings_.size(); }
 
  private:
   component::ApplicationContext* const app_context_;
-  fxl::TaskRunner* const task_runner_;
-  Clock* clock_;
+  fit::closure quit_callback_;
 
-  fidl::BindingSet<ui::Session, std::unique_ptr<Session>> session_bindings_;
-  fidl::BindingSet<ui::Scenic> scenic_bindings_;
+  fidl::BindingSet<fuchsia::ui::scenic::Session, std::unique_ptr<Session>>
+      session_bindings_;
+  fidl::BindingSet<fuchsia::ui::scenic::Scenic> scenic_bindings_;
 
   // Registered systems, indexed by their TypeId. These slots could be null,
   // indicating the System is not available or supported.
@@ -67,19 +67,20 @@ class Scenic : public ui::Scenic {
   std::vector<fxl::Closure> run_after_all_systems_initialized_;
 
   void CreateSessionImmediately(
-      ::fidl::InterfaceRequest<ui::Session> session_request,
-      ::fidl::InterfaceHandle<ui::SessionListener> listener);
+      ::fidl::InterfaceRequest<fuchsia::ui::scenic::Session> session_request,
+      ::fidl::InterfaceHandle<fuchsia::ui::scenic::SessionListener> listener);
 
   // If a System is not initially initialized, this method will be called when
   // it is ready.
   void OnSystemInitialized(System* system);
 
-  void GetDisplayInfo(ui::Scenic::GetDisplayInfoCallback callback) override;
-  void TakeScreenshot(fidl::StringPtr filename,
-                      ui::Scenic::TakeScreenshotCallback callback) override;
+  void GetDisplayInfo(
+      fuchsia::ui::scenic::Scenic::GetDisplayInfoCallback callback) override;
+  void TakeScreenshot(
+      fuchsia::ui::scenic::Scenic::TakeScreenshotCallback callback) override;
 
   void GetOwnershipEvent(
-      ui::Scenic::GetOwnershipEventCallback callback) override;
+      fuchsia::ui::scenic::Scenic::GetOwnershipEventCallback callback) override;
 
   size_t next_session_id_ = 1;
 
@@ -92,7 +93,7 @@ SystemT* Scenic::RegisterSystem(Args... args) {
       << "System of type: " << SystemT::kTypeId << "was already registered.";
 
   SystemT* system =
-      new SystemT(SystemContext(app_context_, task_runner_, clock_), args...);
+      new SystemT(SystemContext(app_context_, quit_callback_.share()), args...);
   systems_[SystemT::kTypeId] = std::unique_ptr<System>(system);
 
   // Listen for System to be initialized if it isn't already.

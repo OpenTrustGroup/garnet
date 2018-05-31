@@ -5,11 +5,11 @@
 #include "garnet/examples/ui/shadertoy/service/compiler.h"
 
 #include <lib/async/cpp/task.h>
+#include <lib/async-loop/cpp/loop.h>
 
 #include "garnet/examples/ui/shadertoy/service/renderer.h"
 #include "lib/escher/impl/glsl_compiler.h"
 #include "lib/escher/impl/mesh_shader_binding.h"
-#include "lib/fsl/tasks/message_loop.h"
 
 namespace {
 
@@ -103,10 +103,10 @@ void main() {
 
 namespace shadertoy {
 
-Compiler::Compiler(escher::Escher* escher,
+Compiler::Compiler(async::Loop* loop, escher::Escher* escher,
                    vk::RenderPass render_pass,
                    vk::DescriptorSetLayout descriptor_set_layout)
-    : loop_(fsl::MessageLoop::GetCurrent()),
+    : loop_(loop),
       escher_(escher),
       model_data_(fxl::MakeRefCounted<escher::impl::ModelData>(escher)),
       render_pass_(render_pass),

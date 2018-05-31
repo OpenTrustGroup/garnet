@@ -7,6 +7,7 @@ package source
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"amber/pkg"
 
 	"github.com/flynn/go-tuf/client"
+	"github.com/flynn/go-tuf/verify"
 )
 
 // ErrTufSrcNoHash is returned if the TUF entry doesn't have a SHA512 hash
@@ -36,6 +38,13 @@ type merkle struct {
 func (f *TUFSource) AvailableUpdates(pkgs []*pkg.Package) (map[pkg.Package]pkg.Package, error) {
 	_, err := f.Client.Update()
 	if err != nil && !client.IsLatestSnapshot(err) {
+		if _, ok := err.(client.ErrDecodeFailed); ok {
+			e := err.(client.ErrDecodeFailed)
+			if _, ok := e.Err.(verify.ErrLowVersion); ok {
+				err = fmt.Errorf("tuf_source: verify update repository is current or reset "+
+					"device storage %s", err)
+			}
+		}
 		return nil, err
 	}
 
@@ -58,14 +67,15 @@ func (f *TUFSource) AvailableUpdates(pkgs []*pkg.Package) (map[pkg.Package]pkg.P
 		if !ok {
 			continue
 		}
+		hashStr := hash.String()
 
 		m := merkle{}
 		if meta.Custom != nil {
 			json.Unmarshal(*meta.Custom, &m)
 		}
 
-		hashStr := hash.String()
-		if hashStr != p.Version {
+		if (len(p.Version) == 0 || p.Version == hashStr) &&
+			(len(p.Merkle) == 0 || p.Merkle == m.Root) {
 			lg.Log.Printf("tufsource: available update %s version %s\n",
 				p.Name, hashStr[:8])
 			updates[*p] = pkg.Package{

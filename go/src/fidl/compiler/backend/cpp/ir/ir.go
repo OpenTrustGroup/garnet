@@ -115,7 +115,7 @@ type Parameter struct {
 type Root struct {
 	PrimaryHeader string
 	Headers       []string
-	Namespace     string
+	Library       types.LibraryIdentifier
 	Decls         []Decl
 }
 
@@ -325,16 +325,36 @@ func changeIfReserved(i types.Identifier, ext string) string {
 	return str
 }
 
+func formatLibrary(library types.LibraryIdentifier, sep string) string {
+	parts := []string{}
+	for _, part := range library {
+		parts = append(parts, string(part))
+	}
+	return changeIfReserved(types.Identifier(strings.Join(parts, sep)), "")
+}
+
+func formatNamespace(library types.LibraryIdentifier) string {
+	return formatLibrary(library, "::")
+}
+
+func formatLibraryPrefix(library types.LibraryIdentifier) string {
+	return formatLibrary(library, "_")
+}
+
+func formatLibraryPath(library types.LibraryIdentifier) string {
+	return formatLibrary(library, "/")
+}
+
 func formatDestructor(eci types.EncodedCompoundIdentifier) string {
 	val := types.ParseCompoundIdentifier(eci)
 	return fmt.Sprintf("~%s", changeIfReserved(val.Name, ""))
 }
 
 type compiler struct {
-	namespace       string
-	decls           *types.DeclMap
-	library         types.LibraryIdentifier
-	compiledLibrary string
+	namespace    string
+	symbolPrefix string
+	decls        *types.DeclMap
+	library      types.LibraryIdentifier
 }
 
 func (c *compiler) isInExternalLibrary(ci types.CompoundIdentifier) bool {
@@ -353,8 +373,7 @@ func (c *compiler) compileCompoundIdentifier(eci types.EncodedCompoundIdentifier
 	val := types.ParseCompoundIdentifier(eci)
 	strs := []string{}
 	if c.isInExternalLibrary(val) {
-		// TODO(FIDL-160) handle more than one library name component
-		strs = append(strs, changeIfReserved(val.Library[0], ""))
+		strs = append(strs, formatNamespace(val.Library))
 	}
 	strs = append(strs, changeIfReserved(val.Name, ext))
 	return strings.Join(strs, "::")
@@ -543,11 +562,11 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 			v.HasRequest,
 			c.compileParameterArray(v.Request),
 			v.RequestSize,
-			fmt.Sprintf("%s_%s%sRequestTable", c.compiledLibrary, r.Name, v.Name),
+			fmt.Sprintf("%s_%s%sRequestTable", c.symbolPrefix, r.Name, v.Name),
 			v.HasResponse,
 			c.compileParameterArray(v.Response),
 			v.ResponseSize,
-			fmt.Sprintf("%s_%s%s%s", c.compiledLibrary, r.Name, v.Name, responseTypeNameSuffix),
+			fmt.Sprintf("%s_%s%s%s", c.symbolPrefix, r.Name, v.Name, responseTypeNameSuffix),
 			callbackType,
 			fmt.Sprintf("%s_%s_ResponseHandler", r.Name, v.Name),
 			fmt.Sprintf("%s_%s_Responder", r.Name, v.Name),
@@ -579,7 +598,7 @@ func (c *compiler) compileStruct(val types.Struct) Struct {
 	r := Struct{
 		c.namespace,
 		name,
-		fmt.Sprintf("%s_%sTable", c.compiledLibrary, name),
+		fmt.Sprintf("%s_%sTable", c.symbolPrefix, name),
 		[]StructMember{},
 		val.Size,
 	}
@@ -621,14 +640,13 @@ func Compile(r types.Root) Root {
 	root := Root{}
 	library := types.ParseLibraryName(r.Name)
 	c := compiler{
-		// TODO(FIDL-160) handle more than one library name component
-		changeIfReserved(library[0], ""),
+		formatNamespace(library),
+		formatLibraryPrefix(library),
 		&r.Decls,
 		types.ParseLibraryName(r.Name),
-		string(r.Name),
 	}
 
-	root.Namespace = c.namespace
+	root.Library = library
 
 	decls := map[types.EncodedCompoundIdentifier]Decl{}
 
@@ -670,8 +688,8 @@ func Compile(r types.Root) Root {
 			// We don't need to include our own header.
 			continue
 		}
-		// TODO(abarth): Support dependencies on headers outside the SDK.
-		h := fmt.Sprintf("fuchsia/cpp/%s.h", l.Name)
+		libraryIdent := types.ParseLibraryName(l.Name)
+		h := fmt.Sprintf("%s/cpp/fidl.h", formatLibraryPath(libraryIdent))
 		root.Headers = append(root.Headers, h)
 	}
 

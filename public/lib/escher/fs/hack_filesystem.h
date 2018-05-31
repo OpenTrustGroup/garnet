@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_ESCHER_FS_HACK_FILESYSTEM_H_
+#define LIB_ESCHER_FS_HACK_FILESYSTEM_H_
 
 #include <functional>
 #include <unordered_map>
@@ -32,7 +33,7 @@ class HackFilesystem : public fxl::RefCountedThreadSafe<HackFilesystem> {
   // Return the contents of the file, which can be empty if the path doesn't
   // exist (HackFilesystem doesn't distinguish between empty and non-existent
   // files).
-  HackFileContents ReadFile(const HackFilePath& path);
+  HackFileContents ReadFile(const HackFilePath& path) const;
 
   // Set the file contents and notify watchers of the change.
   void WriteFile(const HackFilePath& path, HackFileContents new_contents);
@@ -41,6 +42,13 @@ class HackFilesystem : public fxl::RefCountedThreadSafe<HackFilesystem> {
   // about change.  To stop watching, simply release the unique_ptr.
   std::unique_ptr<HackFilesystemWatcher> RegisterWatcher(
       HackFilesystemWatcherFunc func);
+
+  // Load the specified files from the real filesystem.  When running on Fuchsia
+  // these files are read from the package filesystem; a prefix of "/pkg/data/"
+  // is prepended to each path.  On Linux, the files are assumed to be in a
+  // subdirectory of $FUCHSIA_DIR/garnet/public/lib/escher/, and we furthermore
+  // assume that $PWD == $FUCHSIA_DIR.
+  bool InitializeWithRealFiles(std::vector<HackFilePath> paths);
 
  private:
   friend class HackFilesystemWatcher;
@@ -87,3 +95,5 @@ class HackFilesystemWatcher final {
 };
 
 }  // namespace escher
+
+#endif  // LIB_ESCHER_FS_HACK_FILESYSTEM_H_

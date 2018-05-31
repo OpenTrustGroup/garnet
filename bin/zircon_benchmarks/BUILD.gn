@@ -39,19 +39,15 @@ source_set("lib") {
   sources = [
     "channels.cc",
     "events.cc",
-    "fifos.cc",
     "filesystem.cc",
     "mmu.cc",
     "null.cc",
     "ports.cc",
-    "processes.cc",
     "pthreads.cc",
     "round_trips.cc",
     "sockets.cc",
-    "syscalls.cc",
     "test_runner.cc",
     "threads.cc",
-    "time_get.cc",
     "vmo.cc",
   ]
   deps = [

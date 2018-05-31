@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <fbl/algorithm.h>
 #include <fbl/type_support.h>
 #include <lib/zx/time.h>
 #include <wlan/common/action_frame.h>
@@ -13,11 +14,25 @@
 #include <zircon/compiler.h>
 #include <zircon/types.h>
 
+#include <wlan_mlme/cpp/fidl.h>
+
 #include <cstdint>
 
 namespace wlan {
 
+// wlan_tu_t is an 802.11 Time Unit.
+typedef uint64_t wlan_tu_t;
+
+// One Time Unit is equal to 1024 microseconds.
 static constexpr zx::duration TimeUnit = zx::usec(1024);
+
+// Converts a WLAN TU to zx::duration.
+//
+// This is a template because it allows us to guard against some implicit conversion.  For example,
+// if this were a regular function accepting a wlan_tu_t, the following code would compile:
+//
+//     foo(WLAN_TU(-1));
+//
 template <typename T> static inline constexpr zx::duration WLAN_TU(T n) {
     static_assert(fbl::is_unsigned_integer<T>::value, "Time unit must be an unsigned integer");
     return TimeUnit * n;
@@ -157,6 +172,7 @@ class CapabilityInfo : public common::BitField<uint16_t> {
     WLAN_BIT_FIELD(immediate_block_ack, 15, 1);
 };
 
+// TODO: Replace native ReasonCode with FIDL ReasonCode
 // IEEE Std 802.11-2016, 9.4.1.7, Table 9-45
 namespace reason_code {
 enum ReasonCode : uint16_t {
@@ -374,6 +390,8 @@ class FrameControl : public common::BitField<uint16_t> {
     bool IsData() const { return type() == FrameType::kData; }
 
     bool HasHtCtrl() const { return htc_order() != 0; }
+
+    constexpr uint16_t len() const { return sizeof(FrameControl); }
 };
 
 // IEEE Std 802.11-2016, 9.3.3.2
@@ -601,12 +619,19 @@ struct DataFrameHeader {
     const DataFrameHeader* const_this() { return const_cast<const DataFrameHeader*>(this); }
 } __PACKED;
 
+// IEEE Std 802.11-2016, 9.3.1.1
+// Officially control frames share no common header .
+class CtrlFrameIdentifier {
+} __PACKED;
+
 // IEEE Std 802.11-2016, 9.3.1.5
-struct PsPollFrame {
+struct PsPollFrame : CtrlFrameIdentifier {
     FrameControl fc;
     uint16_t aid;
     common::MacAddr bssid;
     common::MacAddr ta;
+
+    constexpr uint16_t len() const { return sizeof(FrameControl); }
 } __PACKED;
 
 // IEEE Std 802.2, 1998 Edition, 3.2
@@ -617,6 +642,33 @@ struct LlcHeader {
     uint8_t oui[3];
     uint16_t protocol_id;
     uint8_t payload[];
+} __PACKED;
+
+// IEEE Std 802.11-2016, 9.3.2.2.2
+struct AmsduSubframeHeader {
+    // Note this is the same as the IEEE 802.3 frame format.
+    common::MacAddr da;
+    common::MacAddr sa;
+    uint16_t msdu_len;
+} __PACKED;
+
+// IEEE Std 802.11-2016, 9.3.2.2.3
+// Non-DMG stations do not transmit in this form.
+struct AmsduSubframeHeaderShort {
+    uint16_t msdu_len;
+} __PACKED;
+
+struct AmsduSubframe {
+    AmsduSubframeHeader hdr;
+    uint8_t msdu[];
+    // uint8_t padding[];
+
+    const LlcHeader* get_msdu() const { return reinterpret_cast<const LlcHeader*>(msdu); }
+
+    size_t PaddingLen(bool is_last_subframe) const {
+        return (is_last_subframe) ? 0 : (fbl::round_up(hdr.msdu_len, 4u) - hdr.msdu_len);
+    }
+
 } __PACKED;
 
 // RFC 1042
@@ -674,6 +726,8 @@ struct EthernetII {
     common::MacAddr src;
     uint16_t ether_type;
     uint8_t payload[];
+
+    constexpr uint16_t len() const { return sizeof(EthernetII); }
 } __PACKED;
 
 // IEEE Std 802.1X-2010, 11.3, Figure 11-1
@@ -683,38 +737,5 @@ struct EapolFrame {
     uint16_t packet_body_length;
     uint8_t packet_body[];
 } __PACKED;
-
-template <typename Header, typename Body> struct ImmutableFrame {
-    ImmutableFrame(const Header* hdr, const Body* body, size_t body_len)
-        : hdr(hdr), body(body), body_len(body_len) {}
-
-    const Header* hdr;
-    const Body* body;
-    const size_t body_len;
-};
-
-template <typename Header, typename Body> struct Frame {
-    Frame(Header* hdr, Body* body, size_t body_len) : hdr(hdr), body(body), body_len(body_len) {}
-
-    Header* hdr;
-    Body* body;
-    size_t body_len;
-};
-
-using Payload = uint8_t;
-struct NilHeader {};
-
-// Frame which contains a known header but unknown payload.
-template <typename Header> using BaseFrame = Frame<Header, Payload>;
-template <typename Header> using ImmutableBaseFrame = ImmutableFrame<Header, Payload>;
-
-template <typename T> using MgmtFrame = Frame<MgmtFrameHeader, T>;
-template <typename T> using ImmutableMgmtFrame = ImmutableFrame<MgmtFrameHeader, T>;
-
-template <typename T> using CtrlFrame = BaseFrame<T>;
-template <typename T> using ImmutableCtrlFrame = ImmutableBaseFrame<T>;
-
-template <typename T> using DataFrame = Frame<DataFrameHeader, T>;
-template <typename T> using ImmutableDataFrame = ImmutableFrame<DataFrameHeader, T>;
 
 }  // namespace wlan

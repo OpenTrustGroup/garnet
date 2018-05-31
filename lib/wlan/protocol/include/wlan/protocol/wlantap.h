@@ -9,13 +9,11 @@
 #include <zircon/device/ioctl.h>
 #include <zircon/types.h>
 
-#define WLANTAP_MAX_NAME_LEN 31
-
 
 typedef struct wlantap_ioctl_create_wlanphy {
     // A user-supplied channel handle for interacting with the wlantap PHY device.
     // The device is automatically released if the channel is closed by the user.
-    zx_handle_t handle;
+    zx_handle_t channel;
     // Serialized WlantapPhyConfig FIDL struct
     uint8_t config[];
 } wlantap_ioctl_create_wlanphy_t;

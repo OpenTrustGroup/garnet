@@ -17,8 +17,7 @@ namespace escher {
 namespace impl {
 
 CommandBuffer::CommandBuffer(vk::Device device,
-                             vk::CommandBuffer command_buffer,
-                             vk::Fence fence,
+                             vk::CommandBuffer command_buffer, vk::Fence fence,
                              vk::PipelineStageFlags pipeline_stage_mask)
     : device_(device),
       command_buffer_(command_buffer),
@@ -140,36 +139,33 @@ void CommandBuffer::CopyImage(const ImagePtr& src_image,
                               vk::ImageLayout src_layout,
                               vk::ImageLayout dst_layout,
                               vk::ImageCopy* region) {
-  command_buffer_.copyImage(src_image->get(), src_layout, dst_image->get(),
+  command_buffer_.copyImage(src_image->vk(), src_layout, dst_image->vk(),
                             dst_layout, 1, region);
   KeepAlive(src_image);
   KeepAlive(dst_image);
 }
 
-void CommandBuffer::CopyBuffer(const BufferPtr& src,
-                               const BufferPtr& dst,
+void CommandBuffer::CopyBuffer(const BufferPtr& src, const BufferPtr& dst,
                                vk::BufferCopy region) {
-  command_buffer_.copyBuffer(src->get(), dst->get(), 1 /* region_count */,
+  command_buffer_.copyBuffer(src->vk(), dst->vk(), 1 /* region_count */,
                              &region);
   KeepAlive(src);
   KeepAlive(dst);
 }
 
-void CommandBuffer::CopyBufferAfterBarrier(const BufferPtr& src,
-                                           const BufferPtr& dst,
-                                           vk::BufferCopy region,
-                                           vk::AccessFlags src_access_mask) {
+void CommandBuffer::CopyBufferAfterBarrier(
+    const BufferPtr& src, const BufferPtr& dst, vk::BufferCopy region,
+    vk::AccessFlags src_access_mask, vk::PipelineStageFlags src_stage_mask) {
   vk::BufferMemoryBarrier barrier;
   barrier.srcAccessMask = src_access_mask;
   barrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
   barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
   barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.buffer = dst->get();
+  barrier.buffer = dst->vk();
   barrier.offset = 0;
   barrier.size = dst->size();
   command_buffer_.pipelineBarrier(
-      vk::PipelineStageFlagBits::eTransfer,
-      vk::PipelineStageFlagBits::eTransfer,
+      src_stage_mask, vk::PipelineStageFlagBits::eTransfer,
       vk::DependencyFlags(), 0, nullptr, 1, &barrier, 0, nullptr);
   CopyBuffer(src, dst, region);
 }
@@ -187,7 +183,7 @@ void CommandBuffer::TransitionImageLayout(const ImagePtr& image,
   barrier.newLayout = new_layout;
   barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
   barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image = image->get();
+  barrier.image = image->vk();
 
   if (image->has_depth() || image->has_stencil()) {
     if (image->has_depth()) {
@@ -305,63 +301,58 @@ void CommandBuffer::TransitionImageLayout(const ImagePtr& image,
 }
 
 void CommandBuffer::BeginRenderPass(
-    const RenderPassPtr& render_pass,
-    const FramebufferPtr& framebuffer,
-    const std::vector<vk::ClearValue>& clear_values) {
+    const RenderPassPtr& render_pass, const FramebufferPtr& framebuffer,
+    const std::vector<vk::ClearValue>& clear_values,
+    const vk::Rect2D viewport) {
   KeepAlive(render_pass);
   BeginRenderPass(render_pass->vk(), framebuffer, clear_values.data(),
-                  clear_values.size());
+                  clear_values.size(), viewport);
 }
 
 void CommandBuffer::BeginRenderPass(
-    vk::RenderPass render_pass,
-    const FramebufferPtr& framebuffer,
-    const std::vector<vk::ClearValue>& clear_values) {
+    vk::RenderPass render_pass, const FramebufferPtr& framebuffer,
+    const std::vector<vk::ClearValue>& clear_values,
+    const vk::Rect2D viewport) {
   BeginRenderPass(render_pass, framebuffer, clear_values.data(),
-                  clear_values.size());
+                  clear_values.size(), viewport);
 }
 
 void CommandBuffer::BeginRenderPass(vk::RenderPass render_pass,
                                     const FramebufferPtr& framebuffer,
                                     const vk::ClearValue* clear_values,
-                                    size_t clear_value_count) {
+                                    size_t clear_value_count,
+                                    vk::Rect2D viewport) {
   FXL_DCHECK(is_active_);
   KeepAlive(framebuffer);
 
-  uint32_t width = framebuffer->width();
-  uint32_t height = framebuffer->height();
-
   vk::RenderPassBeginInfo info;
   info.renderPass = render_pass;
-  info.renderArea.offset.x = 0;
-  info.renderArea.offset.y = 0;
-  info.renderArea.extent.width = width;
-  info.renderArea.extent.height = height;
+  info.renderArea = viewport;
   info.clearValueCount = static_cast<uint32_t>(clear_value_count);
   info.pClearValues = clear_values;
-  info.framebuffer = framebuffer->get();
+  info.framebuffer = framebuffer->vk();
 
   command_buffer_.beginRenderPass(&info, vk::SubpassContents::eInline);
 
-  vk::Viewport viewport;
-  viewport.width = static_cast<float>(width);
-  viewport.height = static_cast<float>(height);
-  viewport.minDepth = static_cast<float>(0.0f);
-  viewport.maxDepth = static_cast<float>(1.0f);
-  command_buffer_.setViewport(0, 1, &viewport);
+  vk::Viewport vk_viewport;
+  vk_viewport.x = static_cast<float>(viewport.offset.x);
+  vk_viewport.y = static_cast<float>(viewport.offset.y);
+  vk_viewport.width = static_cast<float>(viewport.extent.width);
+  vk_viewport.height = static_cast<float>(viewport.extent.height);
+  vk_viewport.minDepth = static_cast<float>(0.0f);
+  vk_viewport.maxDepth = static_cast<float>(1.0f);
+  command_buffer_.setViewport(0, 1, &vk_viewport);
 
   // TODO: probably unnecessary?
   vk::Rect2D scissor;
-  scissor.extent.width = width;
-  scissor.extent.height = height;
-  scissor.offset.x = 0;
-  scissor.offset.y = 0;
+  scissor.extent.width = viewport.extent.width;
+  scissor.extent.height = viewport.extent.height;
+  scissor.offset.x = viewport.offset.x;
+  scissor.offset.y = viewport.offset.y;
   command_buffer_.setScissor(0, 1, &scissor);
 }
 
-void CommandBuffer::EndRenderPass() {
-  command_buffer_.endRenderPass();
-}
+void CommandBuffer::EndRenderPass() { command_buffer_.endRenderPass(); }
 
 bool CommandBuffer::Retire() {
   if (!is_active_) {

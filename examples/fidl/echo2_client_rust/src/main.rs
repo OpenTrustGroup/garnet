@@ -18,13 +18,7 @@ use futures::prelude::*;
 use fidl_echo2::EchoMarker;
 use structopt::StructOpt;
 
-fn main() {
-    if let Err(e) = main_res() {
-        println!("Error: {:?}", e);
-    }
-}
-
-fn main_res() -> Result<(), Error> {
+fn main() -> Result<(), Error> {
     let mut executor = async::Executor::new().context("Error creating executor")?;
 
     #[derive(StructOpt, Debug)]
@@ -45,7 +39,7 @@ fn main_res() -> Result<(), Error> {
     let echo = app.connect_to_service(EchoMarker)
        .context("Failed to connect to echo service")?;
 
-    let fut = echo.echo_string(&mut Some("hello world!".to_string()))
+    let fut = echo.echo_string(Some("hello world!"))
         .map(|res| println!("response: {:?}", res));
 
     executor.run_singlethreaded(fut).context("failed to execute echo future")?;

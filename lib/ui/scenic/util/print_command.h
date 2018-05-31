@@ -2,15 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_LIB_UI_SCENIC_UTIL_PRINT_COMMAND_H_
+#define GARNET_LIB_UI_SCENIC_UTIL_PRINT_COMMAND_H_
 
-#include <fuchsia/cpp/gfx.h>
+#include <fuchsia/ui/gfx/cpp/fidl.h>
 
 #include <ostream>
 
-std::ostream& operator<<(std::ostream& stream, const gfx::Command& command);
 std::ostream& operator<<(std::ostream& stream,
-                         const gfx::CreateResourceCommand& command);
+                         const fuchsia::ui::gfx::Command& command);
+std::ostream& operator<<(
+    std::ostream& stream,
+    const fuchsia::ui::gfx::CreateResourceCommand& command);
+std::ostream& operator<<(
+    std::ostream& stream,
+    const fuchsia::ui::gfx::SetRendererParamCommand& command);
 std::ostream& operator<<(std::ostream& stream,
-                         const gfx::SetRendererParamCommand& command);
-std::ostream& operator<<(std::ostream& stream, const gfx::Value::Tag& tag);
+                         const fuchsia::ui::gfx::Value::Tag& tag);
+
+#endif  // GARNET_LIB_UI_SCENIC_UTIL_PRINT_COMMAND_H_

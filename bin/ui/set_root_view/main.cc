@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <lib/async-loop/cpp/loop.h>
 #include <lib/zx/channel.h>
 
-#include <fuchsia/cpp/presentation.h>
-#include <fuchsia/cpp/views_v1.h>
+#include <presentation/cpp/fidl.h>
+#include <fuchsia/ui/views_v1/cpp/fidl.h>
 #include "lib/app/cpp/application_context.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/log_settings_command_line.h"
 #include "lib/fxl/logging.h"
@@ -37,29 +37,29 @@ int main(int argc, const char** argv) {
     return 1;
   }
 
-  fsl::MessageLoop loop;
+  async::Loop loop(&kAsyncLoopConfigMakeDefault);
   auto application_context_ =
       component::ApplicationContext::CreateFromStartupInfo();
 
   // Launch application.
   component::Services services;
-  component::ApplicationLaunchInfo launch_info;
+  component::LaunchInfo launch_info;
   launch_info.url = positional_args[0];
   for (size_t i = 1; i < positional_args.size(); ++i)
     launch_info.arguments.push_back(positional_args[i]);
   launch_info.directory_request = services.NewRequest();
-  component::ApplicationControllerPtr controller;
+  component::ComponentControllerPtr controller;
   application_context_->launcher()->CreateApplication(std::move(launch_info),
                                                       controller.NewRequest());
   controller.set_error_handler([&loop] {
     FXL_LOG(INFO) << "Launched application terminated.";
-    loop.PostQuitTask();
+    loop.Quit();
   });
 
   // Create the view.
-  fidl::InterfacePtr<views_v1::ViewProvider> view_provider;
+  fidl::InterfacePtr<::fuchsia::ui::views_v1::ViewProvider> view_provider;
   services.ConnectToService(view_provider.NewRequest());
-  fidl::InterfaceHandle<views_v1_token::ViewOwner> view_owner;
+  fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner> view_owner;
   view_provider->CreateView(view_owner.NewRequest(), nullptr);
 
   // Ask the presenter to display it.

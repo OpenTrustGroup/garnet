@@ -4,8 +4,8 @@
 
 #include "lib/fidl/cpp/internal/message_reader.h"
 
-#include <lib/fidl/cpp/message_buffer.h>
 #include <lib/async/default.h>
+#include <lib/fidl/cpp/message_buffer.h>
 #include <zircon/assert.h>
 
 namespace fidl {
@@ -95,6 +95,9 @@ zx_status_t MessageReader::Bind(zx::channel channel, async_t* async) {
   } else {
     async_ = async_get_default();
   }
+  ZX_ASSERT_MSG(async_ != nullptr,
+                "either |async| must be non-null, or |async_get_default| must "
+                "be configured to return a non-null vaule");
   wait_.object = channel_.get();
   zx_status_t status = async_begin_wait(async_, &wait_);
   if (status != ZX_OK)
@@ -117,7 +120,7 @@ zx::channel MessageReader::Unbind() {
 
 void MessageReader::Reset() {
   Unbind();
-  error_handler_ = std::function<void()>();
+  error_handler_ = nullptr;
 }
 
 zx_status_t MessageReader::TakeChannelAndErrorHandlerFrom(
@@ -151,20 +154,16 @@ zx_status_t MessageReader::WaitAndDispatchOneMessageUntil(zx::time deadline) {
   return ZX_ERR_PEER_CLOSED;
 }
 
-void MessageReader::CallHandler(
-    async_t* async,
-    async_wait_t* wait,
-    zx_status_t status,
-    const zx_packet_signal_t* signal) {
+void MessageReader::CallHandler(async_t* async, async_wait_t* wait,
+                                zx_status_t status,
+                                const zx_packet_signal_t* signal) {
   static_assert(offsetof(MessageReader, wait_) == 0,
                 "The wait must be the first member for this cast to be valid.");
   reinterpret_cast<MessageReader*>(wait)->OnHandleReady(async, status, signal);
 }
 
-void MessageReader::OnHandleReady(
-    async_t* async,
-    zx_status_t status,
-    const zx_packet_signal_t* signal) {
+void MessageReader::OnHandleReady(async_t* async, zx_status_t status,
+                                  const zx_packet_signal_t* signal) {
   if (status != ZX_OK) {
     NotifyError();
     return;

@@ -10,8 +10,8 @@ use std::fmt;
 /// While this type can contain `Status::OK` (`ZX_OK` in C land), elements of this type are
 /// generally constructed using the `ok` method, which checks for `ZX_OK` and returns a
 /// `Result<(), Status>` appropriately.
-#[repr(C)]
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
+#[repr(transparent)]
 pub struct Status(sys::zx_status_t);
 impl Status {
     /// Returns `Ok(())` if the status was `OK`,
@@ -19,6 +19,17 @@ impl Status {
     pub fn ok(raw: sys::zx_status_t) -> Result<(), Status> {
         if raw == Status::OK.0 {
             Ok(())
+        } else {
+            Err(Status(raw))
+        }
+    }
+
+    /// Returns `Ok(status)` if the status was non-negative,
+    /// otherwise returns `Err(status)`.
+    /// This is useful primarily for ioctls.
+    pub fn ioctl_ok(raw: sys::zx_status_t) -> Result<u32, Status> {
+        if raw >= Status::OK.0 {
+            Ok(raw as u32)
         } else {
             Err(Status(raw))
         }

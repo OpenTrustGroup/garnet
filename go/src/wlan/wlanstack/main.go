@@ -8,7 +8,7 @@ import (
 	"app/context"
 	"fidl/bindings"
 
-	"fuchsia/go/wlan_service"
+	"fidl/wlan_service"
 	"netstack/watcher"
 	"wlan/wlan"
 
@@ -165,6 +165,8 @@ func main() {
 		_, err := service.Add(&wlan_service.WlanStub{Impl: ws}, c, nil)
 		return err
 	})
+	// Create 2 goroutines to handle up to 2 blocking commands simultaneously
+	go bindings.Serve()
 	go bindings.Serve()
 	ctx.Serve()
 

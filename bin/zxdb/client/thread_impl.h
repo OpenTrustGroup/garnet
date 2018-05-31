@@ -9,12 +9,15 @@
 
 namespace zxdb {
 
+class FrameImpl;
 class ProcessImpl;
 
 class ThreadImpl : public Thread {
  public:
   ThreadImpl(ProcessImpl* process, const debug_ipc::ThreadRecord& record);
   ~ThreadImpl() override;
+
+  ProcessImpl* process() const { return process_; }
 
   // Thread implementation:
   Process* GetProcess() const override;
@@ -24,7 +27,7 @@ class ThreadImpl : public Thread {
   void Pause() override;
   void Continue() override;
   void StepInstruction() override;
-  const std::vector<std::unique_ptr<Frame>>& GetFrames() const override;
+  std::vector<Frame*> GetFrames() const override;
   bool HasAllFrames() const override;
   void SyncFrames(std::function<void()> callback) override;
 
@@ -35,7 +38,10 @@ class ThreadImpl : public Thread {
   void OnException(const debug_ipc::NotifyException& notify);
 
  private:
-  void HaveFrames(const std::vector<debug_ipc::StackFrame>& frames);
+  // Symbolizes the given stack frames, saves them, and issues the callback.
+  // The callback will only be issued if the Thread object is still valid.
+  void HaveFrames(const std::vector<debug_ipc::StackFrame>& frames,
+                  std::function<void()> callback);
 
   // Invlidates the cached frames.
   void ClearFrames();
@@ -45,7 +51,7 @@ class ThreadImpl : public Thread {
   std::string name_;
   debug_ipc::ThreadRecord::State state_;
 
-  std::vector<std::unique_ptr<Frame>> frames_;
+  std::vector<std::unique_ptr<FrameImpl>> frames_;
   bool has_all_frames_ = false;
 
   fxl::WeakPtrFactory<ThreadImpl> weak_factory_;

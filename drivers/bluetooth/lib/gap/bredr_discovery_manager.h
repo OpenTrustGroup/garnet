@@ -7,8 +7,8 @@
 #include <queue>
 #include <unordered_set>
 
-#include <fbl/function.h>
 #include <lib/async/dispatcher.h>
+#include <lib/fit/function.h>
 
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
@@ -53,14 +53,14 @@ class BrEdrDiscoverySession final {
   // from the controller.  You will get duplicate results when using this
   // method.
   // Prefer RemoteDeviceCache.OnleviceUpdateCallback() instead.
-  using DeviceFoundCallback = fbl::Function<void(const RemoteDevice& device)>;
+  using DeviceFoundCallback = fit::function<void(const RemoteDevice& device)>;
   void set_result_callback(DeviceFoundCallback callback) {
     device_found_callback_ = std::move(callback);
   }
 
   // Set a callback to be notified if the session becomes inactive because
   // of internal errors.
-  void set_error_callback(fbl::Closure callback) {
+  void set_error_callback(fit::closure callback) {
     error_callback_ = std::move(callback);
   }
 
@@ -77,11 +77,30 @@ class BrEdrDiscoverySession final {
   void NotifyError() const;
 
   fxl::WeakPtr<BrEdrDiscoveryManager> manager_;
-  fbl::Closure error_callback_;
+  fit::closure error_callback_;
   DeviceFoundCallback device_found_callback_;
   fxl::ThreadChecker thread_checker_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(BrEdrDiscoverySession);
+};
+
+class BrEdrDiscoverableSession final {
+ public:
+  // Destroying a session instance relinquishes the request.
+  // The device may still be discoverable if others are requesting so.
+  ~BrEdrDiscoverableSession();
+
+ private:
+  friend class BrEdrDiscoveryManager;
+
+  // Used by the BrEdrDiscoveryManager to create a session.
+  explicit BrEdrDiscoverableSession(
+      fxl::WeakPtr<BrEdrDiscoveryManager> manager);
+
+  fxl::WeakPtr<BrEdrDiscoveryManager> manager_;
+  fxl::ThreadChecker thread_checker_;
+
+  FXL_DISALLOW_COPY_AND_ASSIGN(BrEdrDiscoverableSession);
 };
 
 class BrEdrDiscoveryManager final {
@@ -95,16 +114,26 @@ class BrEdrDiscoveryManager final {
   // Starts discovery and reports the status via |callback|. If discovery has
   // been successfully started, the callback will receive a session object that
   // it owns. If no sessions are owned, device discovery is stopped.
-  using SessionCallback =
-      std::function<void(hci::Status status,
+  using DiscoveryCallback =
+      std::function<void(const hci::Status& status,
                          std::unique_ptr<BrEdrDiscoverySession> session)>;
-  void RequestDiscovery(const SessionCallback& callback);
+  void RequestDiscovery(DiscoveryCallback callback);
 
   // Returns whether a discovery session is active.
-  bool discovering() const { return !sessions_.empty(); }
+  bool discovering() const { return !discovering_.empty(); }
+
+  // Requests this device be discoverable. Devices are discoverable as long as
+  // anyone holds a discoverable session.
+  using DiscoverableCallback =
+      std::function<void(const hci::Status& status,
+                         std::unique_ptr<BrEdrDiscoverableSession> session)>;
+  void RequestDiscoverable(DiscoverableCallback callback);
+
+  bool discoverable() const { return !discoverable_.empty(); }
 
  private:
   friend class BrEdrDiscoverySession;
+  friend class BrEdrDiscoverableSession;
 
   // Starts the inquiry procedure if any sessions exist.
   void MaybeStartInquiry();
@@ -116,13 +145,23 @@ class BrEdrDiscoveryManager final {
   void InquiryResult(const hci::EventPacket& event);
 
   // Creates and stores a new session object and returns it.
-  std::unique_ptr<BrEdrDiscoverySession> AddSession();
+  std::unique_ptr<BrEdrDiscoverySession> AddDiscoverySession();
 
   // Removes |session_| from the active sessions.
-  void RemoveSession(BrEdrDiscoverySession* session);
+  void RemoveDiscoverySession(BrEdrDiscoverySession* session);
 
-  // Invalidates all current sessions, invoking their error callbacks.
-  void InvalidateSessions();
+  // Invalidates all discovery sessions, invoking their error callbacks.
+  void InvalidateDiscoverySessions();
+
+  // Sets the Inquiry Scan to the correct state given discoverable sessions,
+  // pending requests and the current scan state.
+  void SetInquiryScan();
+
+  // Creates and stores a new session object and returns it.
+  std::unique_ptr<BrEdrDiscoverableSession> AddDiscoverableSession();
+
+  // Removes |session_| from the active sessions.
+  void RemoveDiscoverableSession(BrEdrDiscoverableSession* session);
 
   // The HCI Transport
   fxl::RefPtr<hci::Transport> hci_;
@@ -134,18 +173,28 @@ class BrEdrDiscoveryManager final {
   // We hold a raw pointer is because it must out-live us.
   RemoteDeviceCache* cache_;
 
-  // The list of currently active sessions. We store raw pointers here as we
-  // don't own the sessions.  Sessions notify us when they are destroyed so we
-  // can maintain this list.
+  // The list of discovering sessions. We store raw pointers here as we
+  // don't own the sessions.  Sessions notify us when they are destroyed to
+  // maintain this list.
   //
-  // When |sessions_| becomes empty then scanning is stopped.
-  std::unordered_set<BrEdrDiscoverySession*> sessions_;
+  // When |discovering_| becomes empty then scanning is stopped.
+  std::unordered_set<BrEdrDiscoverySession*> discovering_;
+
+  // The set of callbacks that are waiting on inquiry to start.
+  std::queue<DiscoveryCallback> pending_discovery_;
+
+  // The list of discoverable sessions. We store raw pointers here as we
+  // don't own the sessions.  Sessions notify us when they are destroyed to
+  // maintain this list.
+  //
+  // When |discoverable_| becomes empty then scanning is stopped.
+  std::unordered_set<BrEdrDiscoverableSession*> discoverable_;
+
+  // The set of callbacks that are waiting on inquiry to start.
+  std::queue<hci::StatusCallback> pending_discoverable_;
 
   // The Handler ID of the event handler if we are scanning.
   hci::CommandChannel::EventHandlerId result_handler_id_;
-
-  // The set of callbacks that are waiting on inquiry to start.
-  std::queue<SessionCallback> pending_;
 
   fxl::ThreadChecker thread_checker_;
 

@@ -27,32 +27,34 @@ constexpr uint32_t kShapeWidth = 384;
 constexpr uint32_t kShapeHeight = 288;
 }  // namespace
 
-View::View(component::ApplicationContext* application_context,
-           views_v1::ViewManagerPtr view_manager,
-           fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request)
+View::View(async::Loop* loop,
+           component::ApplicationContext* application_context,
+           ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
+           fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+               view_owner_request)
     : BaseView(std::move(view_manager), std::move(view_owner_request),
                "Shadertoy Example"),
       application_context_(application_context),
-      loop_(fsl::MessageLoop::GetCurrent()),
+      loop_(loop),
       // TODO: we don't need to keep this around once we have used it to
       // create a Shadertoy.  What is the best way to achieve this?
       shadertoy_factory_(application_context_->ConnectToEnvironmentService<
-                         shadertoy::ShadertoyFactory>()),
+                         ::fuchsia::ui::shadertoy::ShadertoyFactory>()),
       start_time_(zx_clock_get(ZX_CLOCK_MONOTONIC)) {
   shadertoy_factory_.set_error_handler([this] {
     FXL_LOG(INFO) << "Lost connection to ShadertoyFactory.";
-    loop_->QuitNow();
+    loop_->Quit();
   });
 
   // Create an ImagePipe and pass one end of it to the ShadertoyFactory in
   // order to obtain a Shadertoy.
-  fidl::InterfaceHandle<images::ImagePipe> image_pipe_handle;
+  fidl::InterfaceHandle<fuchsia::images::ImagePipe> image_pipe_handle;
   auto image_pipe_request = image_pipe_handle.NewRequest();
   shadertoy_factory_->NewImagePipeShadertoy(shadertoy_.NewRequest(),
                                             std::move(image_pipe_handle));
   shadertoy_.set_error_handler([this] {
     FXL_LOG(INFO) << "Lost connection to Shadertoy.";
-    loop_->QuitNow();
+    loop_->Quit();
   });
 
   // Set the GLSL source code for the Shadertoy.
@@ -64,7 +66,7 @@ View::View(component::ApplicationContext* application_context,
       shadertoy_->SetPaused(false);
     } else {
       FXL_LOG(ERROR) << "GLSL code compilation failed";
-      loop_->QuitNow();
+      loop_->Quit();
     }
   });
 
@@ -119,7 +121,8 @@ float View::UpdateTransition(zx_time_t presentation_time) {
   return glm::smoothstep(0.f, 1.f, transition_param);
 }
 
-void View::OnSceneInvalidated(images::PresentationInfo presentation_info) {
+void View::OnSceneInvalidated(
+    fuchsia::images::PresentationInfo presentation_info) {
   if (!has_logical_size())
     return;
 
@@ -173,7 +176,7 @@ void View::OnSceneInvalidated(images::PresentationInfo presentation_info) {
   InvalidateScene();
 }
 
-bool View::OnInputEvent(input::InputEvent event) {
+bool View::OnInputEvent(fuchsia::ui::input::InputEvent event) {
   if (animation_state_ == kChangingToFourCorners ||
       animation_state_ == kChangingToSwirling) {
     // Ignore input until transition is complete.
@@ -181,8 +184,8 @@ bool View::OnInputEvent(input::InputEvent event) {
   }
 
   if (event.is_pointer()) {
-    const input::PointerEvent& pointer = event.pointer();
-    if (pointer.phase == input::PointerEventPhase::DOWN) {
+    const fuchsia::ui::input::PointerEvent& pointer = event.pointer();
+    if (pointer.phase == fuchsia::ui::input::PointerEventPhase::DOWN) {
       switch (animation_state_) {
         case kFourCorners:
           animation_state_ = kChangingToSwirling;

@@ -1,0 +1,38 @@
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/rust/rustc_binary.gni")
+import("//build/package.gni")
+
+rustc_binary("bin") {
+  name = "dhcpd"
+  with_unit_tests = true
+  deps = [
+    "//third_party/rust-crates/rustc_deps:byteorder",
+  ]
+}
+
+package("dhcpd") {
+  deps = [
+    ":bin",
+  ]
+
+  binary = "rust_crates/dhcpd"
+}
+
+package("dhcpd-tests") {
+  deprecated_system_image = true
+  testonly = true
+
+  deps = [
+    ":bin"
+  ]
+
+  tests = [
+    {
+      name = "dhcpd_bin_test_rustc"
+      dest = "dhcpd_bin_test_rustc"
+    }
+  ]
+}

@@ -7,17 +7,18 @@
 
 #include <memory>
 
-#include "garnet/lib/ui/scenic/clock.h"
+#include <lib/fit/function.h>
+
 #include "garnet/lib/ui/scenic/scenic.h"
 
 namespace scenic {
 
 class App {
  public:
-  explicit App(component::ApplicationContext* app_context);
+  explicit App(component::ApplicationContext* app_context,
+               fit::closure quit_callback);
 
  private:
-  Clock clock_;
   std::unique_ptr<Scenic> scenic_;
   fidl::BindingSet<Scenic> bindings_;
 };

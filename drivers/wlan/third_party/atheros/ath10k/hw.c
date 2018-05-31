@@ -20,7 +20,7 @@
 #include "hw.h"
 #include "hif.h"
 #include "wmi-ops.h"
-#include "linuxisms.h"
+#include "macros.h"
 #include "bmi.h"
 
 const struct ath10k_hw_regs qca988x_regs = {
@@ -196,19 +196,19 @@ const struct ath10k_hw_values qca4019_values = {
 static struct ath10k_hw_ce_regs_addr_map qcax_src_ring = {
     .msb    = 0x00000010,
     .lsb    = 0x00000010,
-    .mask   = GENMASK(16, 16),
+    .mask   = BITMASK(16, 16),
 };
 
 static struct ath10k_hw_ce_regs_addr_map qcax_dst_ring = {
     .msb    = 0x00000011,
     .lsb    = 0x00000011,
-    .mask   = GENMASK(17, 17),
+    .mask   = BITMASK(17, 17),
 };
 
 static struct ath10k_hw_ce_regs_addr_map qcax_dmax = {
     .msb    = 0x0000000f,
     .lsb    = 0x00000000,
-    .mask   = GENMASK(15, 0),
+    .mask   = BITMASK(0, 15),
 };
 
 static struct ath10k_hw_ce_ctrl1 qcax_ctrl1 = {
@@ -227,12 +227,12 @@ static struct ath10k_hw_ce_ctrl1 qcax_ctrl1 = {
 static struct ath10k_hw_ce_regs_addr_map qcax_cmd_halt_status = {
     .msb    = 0x00000003,
     .lsb    = 0x00000003,
-    .mask   = GENMASK(3, 3),
+    .mask   = BITMASK(3, 3),
 };
 
 static struct ath10k_hw_ce_cmd_halt qcax_cmd_halt = {
     .msb            = 0x00000000,
-    .mask           = GENMASK(0, 0),
+    .mask           = BITMASK(0, 0),
     .status_reset   = 0x00000000,
     .status         = &qcax_cmd_halt_status,
 };
@@ -240,7 +240,7 @@ static struct ath10k_hw_ce_cmd_halt qcax_cmd_halt = {
 static struct ath10k_hw_ce_regs_addr_map qcax_host_ie_cc = {
     .msb    = 0x00000000,
     .lsb    = 0x00000000,
-    .mask   = GENMASK(0, 0),
+    .mask   = BITMASK(0, 0),
 };
 
 static struct ath10k_hw_ce_host_ie qcax_host_ie = {
@@ -272,13 +272,13 @@ static struct ath10k_hw_ce_misc_regs qcax_misc_reg = {
 static struct ath10k_hw_ce_regs_addr_map qcax_src_wm_low = {
     .msb    = 0x0000001f,
     .lsb    = 0x00000010,
-    .mask   = GENMASK(31, 16),
+    .mask   = BITMASK(16, 31),
 };
 
 static struct ath10k_hw_ce_regs_addr_map qcax_src_wm_high = {
     .msb    = 0x0000000f,
     .lsb    = 0x00000000,
-    .mask   = GENMASK(15, 0),
+    .mask   = BITMASK(0, 15),
 };
 
 static struct ath10k_hw_ce_dst_src_wm_regs qcax_wm_src_ring = {
@@ -291,13 +291,13 @@ static struct ath10k_hw_ce_dst_src_wm_regs qcax_wm_src_ring = {
 
 static struct ath10k_hw_ce_regs_addr_map qcax_dst_wm_low = {
     .lsb    = 0x00000010,
-    .mask   = GENMASK(31, 16),
+    .mask   = BITMASK(16, 31),
 };
 
 static struct ath10k_hw_ce_regs_addr_map qcax_dst_wm_high = {
     .msb    = 0x0000000f,
     .lsb    = 0x00000000,
-    .mask   = GENMASK(15, 0),
+    .mask   = BITMASK(0, 15),
 };
 
 static struct ath10k_hw_ce_dst_src_wm_regs qcax_wm_dst_ring = {
@@ -396,6 +396,7 @@ const struct ath10k_hw_clk_params qca6174_clk[ATH10K_HW_REFCLK_COUNT] = {
     },
 };
 
+#if 0 // NEEDS PORTING
 void ath10k_hw_fill_survey_time(struct ath10k* ar, struct survey_info* survey,
                                 uint32_t cc, uint32_t rcc, uint32_t cc_prev, uint32_t rcc_prev) {
     uint32_t cc_fix = 0;
@@ -435,6 +436,7 @@ void ath10k_hw_fill_survey_time(struct ath10k* ar, struct survey_info* survey,
     survey->time = CCNT_TO_MSEC(ar, cc);
     survey->time_busy = CCNT_TO_MSEC(ar, rcc);
 }
+#endif // NEEDS PORTING
 
 /* The firmware does not support setting the coverage class. Instead this
  * function monitors and modifies the corresponding MAC registers.
@@ -521,20 +523,20 @@ static void ath10k_hw_qca988x_set_coverage_class(struct ath10k* ar,
 
     slottime = MS(slottime_reg, WAVE1_PCU_GBL_IFS_SLOT);
     slottime += value * 3 * phyclk;
-    slottime = min_t(uint32_t, slottime, WAVE1_PCU_GBL_IFS_SLOT_MAX);
+    slottime = MIN_T(uint32_t, slottime, WAVE1_PCU_GBL_IFS_SLOT_MAX);
     slottime = SM(slottime, WAVE1_PCU_GBL_IFS_SLOT);
     slottime_reg = (slottime_reg & ~WAVE1_PCU_GBL_IFS_SLOT_MASK) | slottime;
 
     /* Update ack timeout (lower halfword). */
     ack_timeout = MS(timeout_reg, WAVE1_PCU_ACK_CTS_TIMEOUT_ACK);
     ack_timeout += 3 * value * phyclk;
-    ack_timeout = min_t(uint32_t, ack_timeout, WAVE1_PCU_ACK_CTS_TIMEOUT_MAX);
+    ack_timeout = MIN_T(uint32_t, ack_timeout, WAVE1_PCU_ACK_CTS_TIMEOUT_MAX);
     ack_timeout = SM(ack_timeout, WAVE1_PCU_ACK_CTS_TIMEOUT_ACK);
 
     /* Update cts timeout (upper halfword). */
     cts_timeout = MS(timeout_reg, WAVE1_PCU_ACK_CTS_TIMEOUT_CTS);
     cts_timeout += 3 * value * phyclk;
-    cts_timeout = min_t(uint32_t, cts_timeout, WAVE1_PCU_ACK_CTS_TIMEOUT_MAX);
+    cts_timeout = MIN_T(uint32_t, cts_timeout, WAVE1_PCU_ACK_CTS_TIMEOUT_MAX);
     cts_timeout = SM(cts_timeout, WAVE1_PCU_ACK_CTS_TIMEOUT_CTS);
 
     timeout_reg = ack_timeout | cts_timeout;

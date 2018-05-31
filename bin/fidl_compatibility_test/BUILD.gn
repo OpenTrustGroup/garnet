@@ -1,0 +1,32 @@
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/package.gni")
+
+executable("compatibility_test_server_cpp_bin") {
+  output_name = "compatibility_test_server_cpp"
+
+  sources = [
+    "compatibility_test_server_cpp.cc",
+  ]
+
+  deps = [
+    "//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/fidl/compatibility_test:compatibility_test_service",
+    "//garnet/public/lib/fidl/compatibility_test:echo_client_app",
+    "//garnet/public/lib/fidl/cpp",
+    "//zircon/public/lib/async-default",
+    "//zircon/public/lib/async-loop-cpp",
+  ]
+}
+
+package("fidl_compatibility_test_server_cpp") {
+  deps = [
+    ":compatibility_test_server_cpp_bin",
+  ]
+
+  testonly = true
+
+  binary = "compatibility_test_server_cpp"
+}

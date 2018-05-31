@@ -36,9 +36,7 @@ std::pair<zx::vmo, fxl::RefPtr<HostData>> AllocateMemory(size_t size) {
 
 }  // namespace
 
-HostData::HostData(const zx::vmo& vmo,
-                   off_t offset,
-                   size_t size,
+HostData::HostData(const zx::vmo& vmo, off_t offset, size_t size,
                    uint32_t flags)
     : size_(size) {
   uintptr_t ptr;
@@ -59,7 +57,8 @@ HostMemory::HostMemory(Session* session, size_t size)
 
 HostMemory::HostMemory(Session* session,
                        std::pair<zx::vmo, fxl::RefPtr<HostData>> init)
-    : Memory(session, std::move(init.first), images::MemoryType::HOST_MEMORY),
+    : Memory(session, std::move(init.first),
+             fuchsia::images::MemoryType::HOST_MEMORY),
       data_(std::move(init.second)) {}
 
 HostMemory::HostMemory(HostMemory&& moved)
@@ -67,20 +66,14 @@ HostMemory::HostMemory(HostMemory&& moved)
 
 HostMemory::~HostMemory() = default;
 
-HostImage::HostImage(const HostMemory& memory,
-                     off_t memory_offset,
-                     images::ImageInfo info)
-    : HostImage(memory.session(),
-                memory.id(),
-                memory_offset,
-                memory.data(),
+HostImage::HostImage(const HostMemory& memory, off_t memory_offset,
+                     fuchsia::images::ImageInfo info)
+    : HostImage(memory.session(), memory.id(), memory_offset, memory.data(),
                 std::move(info)) {}
 
-HostImage::HostImage(Session* session,
-                     uint32_t memory_id,
-                     off_t memory_offset,
+HostImage::HostImage(Session* session, uint32_t memory_id, off_t memory_offset,
                      fxl::RefPtr<HostData> data,
-                     images::ImageInfo info)
+                     fuchsia::images::ImageInfo info)
     : Image(session, memory_id, memory_offset, std::move(info)),
       data_(std::move(data)) {}
 
@@ -95,7 +88,7 @@ HostImagePool::HostImagePool(Session* session, uint32_t num_images)
 HostImagePool::~HostImagePool() = default;
 
 // TODO(mikejurka): Double-check these changes
-bool HostImagePool::Configure(const images::ImageInfo* image_info) {
+bool HostImagePool::Configure(const fuchsia::images::ImageInfo* image_info) {
   if (image_info) {
     if (configured_ && ImageInfoEquals(*image_info, image_info_)) {
       return false;  // no change

@@ -4,26 +4,51 @@
 
 library amber;
 
+struct KeyConfig {
+  // Supported TUF key types. The only supported algorithm is ed25519.
+  string type;
+
+  // The value of the key encoded in hex.
+  string value;
+};
+
+struct SourceConfig {
+  // The canonical URL for the TUF repository.
+  string repoUrl;
+
+  // Download packages from this TUF repository mirror.
+  string requestUrl;
+
+  // The rate limit indicates the number of requests per rateReriod, expressed
+  // in milliseconds. A limit or period of zero means there is no limit.
+  int32 rateLimit;
+
+  // How frequently to poll the TUF server.
+  int32 ratePeriod;
+
+  // A vector of public keys. These keys must match one of the trusted keys
+  // known to the system.
+  vector<KeyConfig> rootKeys;
+};
+
+
 [Discoverable]
 interface Control {
   // simple no-op that can be used to test the connection
   1: DoTest(int32 input) -> (string output);
 
-  // Add a source at the provided URL. The rate limit indicates the minimum
-  // interval between requests to the source expressed in seconds. A limit of
-  // zero means there is no limit. The pub key is a hex-encoded ED25519 public key.
-  // This key must match one of the trusted keys known to the system.
-  2: AddSrc(string url, int32 rateLimit, string pubKey) -> (bool res);
+  // Add a TUF source repository.
+  2: AddSrc(SourceConfig source) -> (bool res);
 
-  // Remove a source previously provided to AddSrc. Sources that were bundled
-  // when the system was built can not be removed.
+  // Remove a source previously provided to AddSrc. SourceConfigs that were
+  // bundled when the system was built can not be removed.
   3: RemoveSrc(string url) -> (bool res);
 
   // Check for updates to any persistently registered packages
   4: Check() -> (bool res);
 
   // Get the list of URLs of the current set of sources
-  5: ListSrcs() -> (vector<string> srcs);
+  5: ListSrcs() -> (vector<SourceConfig> srcs);
 
   // Get an update for the package identified by 'name' which has the provided
   // version. If no version is supplied, the latest available version of that
@@ -31,10 +56,13 @@ interface Control {
   // stores the package in BlobFS. This method returns the merkle root of the
   // package and therefore a way to access the package once it arrives in
   // BlobFS. If null is returned, no update was found.
-  6: GetUpdate(string name, string? version) -> (string? merkle);
-  // TODO(jmatt) add a GetUpdate that takes a handle to write to
+  6: GetUpdate(string name, string? version, string? mrkl) -> (string? merkle);
 
   // Get a content blob identified by the given hashed Merkle root. This returns
   // an error if the string is empty or the fetch fails for some reason.
   7: GetBlob(string merkle);
+
+  8: PackagesActivated(vector<string> merkle);
+
+  9: GetUpdateComplete(string name, string? version, string? merkle) -> (handle<channel> rplyChan);
 };

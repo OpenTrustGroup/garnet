@@ -4,17 +4,18 @@
 
 #include "process.h"
 
-#include <cinttypes>
 #include <link.h>
+#include <cinttypes>
 
+#include <fdio/io.h>
 #include <launchpad/vmo.h>
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/object.h>
-#include <fdio/io.h>
 
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/string_printf.h"
 
+#include "garnet/lib/debugger_utils/jobs.h"
 #include "garnet/lib/debugger_utils/util.h"
 
 #include "server.h"
@@ -24,39 +25,52 @@ namespace {
 
 constexpr zx_time_t kill_timeout = ZX_MSEC(10 * 1000);
 
-bool SetupLaunchpad(launchpad_t** out_lp, const util::Argv& argv) {
+bool SetupLaunchpad(zx_handle_t job, launchpad_t** out_lp,
+                    const util::Argv& argv) {
   FXL_DCHECK(out_lp);
   FXL_DCHECK(argv.size() > 0);
 
   // Construct the argument array.
   const char* c_args[argv.size()];
-  for (size_t i = 0; i < argv.size(); ++i)
-    c_args[i] = argv[i].c_str();
+  for (size_t i = 0; i < argv.size(); ++i) c_args[i] = argv[i].c_str();
   const char* name = util::basename(c_args[0]);
+  const char* failed_func = "";
 
   launchpad_t* lp = nullptr;
-  zx_status_t status = launchpad_create(0u, name, &lp);
-  if (status != ZX_OK)
+  zx_status_t status = launchpad_create(job, name, &lp);
+  if (status != ZX_OK) {
+    failed_func = "launchpad_create";
     goto fail;
+  }
 
   status = launchpad_set_args(lp, argv.size(), c_args);
-  if (status != ZX_OK)
+  if (status != ZX_OK) {
+    failed_func = "launchpad_set_args";
     goto fail;
+  }
 
   status = launchpad_add_vdso_vmo(lp);
-  if (status != ZX_OK)
+  if (status != ZX_OK) {
+    failed_func = "launchpad_add_vdso_vmo";
     goto fail;
+  }
 
   // Clone root, cwd, stdio, and environ.
-  launchpad_clone(lp, LP_CLONE_FDIO_ALL | LP_CLONE_ENVIRON);
+  status = launchpad_clone(lp, LP_CLONE_FDIO_ALL | LP_CLONE_ENVIRON);
+  if (status != ZX_OK) {
+    failed_func = "launchpad_clone";
+    goto fail;
+  }
 
   *out_lp = lp;
   return true;
 
 fail:
-  FXL_LOG(ERROR) << "Process setup failed: " << util::ZxErrorString(status);
-  if (lp)
+  FXL_LOG(ERROR) << "Process setup failed: "
+                 << failed_func << ", " << util::ZxErrorString(status);
+  if (lp) {
     launchpad_destroy(lp);
+  }
   return false;
 }
 
@@ -85,18 +99,10 @@ bool LoadBinary(launchpad_t* lp, const std::string& binary_path) {
   return true;
 }
 
-zx_koid_t GetProcessId(launchpad_t* lp) {
-  FXL_DCHECK(lp);
-
-  // We use the zx_object_get_child syscall to obtain a debug-capable handle
-  // to the process. For processes, the syscall expect the ID of the underlying
-  // kernel object (koid, also passing for process id in Zircon).
-  zx_handle_t process_handle = launchpad_get_process_handle(lp);
-  FXL_DCHECK(process_handle);
-
+zx_koid_t GetProcessId(zx_handle_t process) {
   zx_info_handle_basic_t info;
   zx_status_t status =
-      zx_object_get_info(process_handle, ZX_INFO_HANDLE_BASIC, &info,
+      zx_object_get_info(process, ZX_INFO_HANDLE_BASIC, &info,
                          sizeof(info), nullptr, nullptr);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "zx_object_get_info_failed: "
@@ -105,37 +111,17 @@ zx_koid_t GetProcessId(launchpad_t* lp) {
   }
 
   FXL_DCHECK(info.type == ZX_OBJ_TYPE_PROCESS);
+  FXL_DCHECK(info.koid != ZX_KOID_INVALID);
 
   return info.koid;
-}
-
-zx_handle_t GetProcessDebugHandle(zx_koid_t pid) {
-  zx_handle_t handle = ZX_HANDLE_INVALID;
-  zx_status_t status = zx_object_get_child(ZX_HANDLE_INVALID, pid,
-                                           ZX_RIGHT_SAME_RIGHTS, &handle);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "zx_object_get_child failed: "
-                   << util::ZxErrorString(status);
-    return ZX_HANDLE_INVALID;
-  }
-
-  // TODO(armansito): Check that |handle| has ZX_RIGHT_DEBUG (this seems
-  // not to be set by anything at the moment but eventully we should check)?
-
-  // Syscalls shouldn't return ZX_HANDLE_INVALID in the case of ZX_OK.
-  FXL_DCHECK(handle != ZX_HANDLE_INVALID);
-
-  FXL_VLOG(1) << "Handle " << handle << " obtained for process " << pid;
-
-  return handle;
 }
 
 }  // namespace
 
 // static
 const char* Process::StateName(Process::State state) {
-#define CASE_TO_STR(x)     \
-  case Process::State::x:  \
+#define CASE_TO_STR(x)    \
+  case Process::State::x: \
     return #x
   switch (state) {
     CASE_TO_STR(kNew);
@@ -177,6 +163,22 @@ std::string Process::GetName() const {
 }
 
 bool Process::Initialize() {
+  if (IsAttached()) {
+    FXL_LOG(ERROR) << "Cannot initialize, already attached to a process";
+    return false;
+  }
+
+  if (argv_.size() == 0 || argv_[0].size() == 0) {
+    FXL_LOG(ERROR) << "No program specified";
+    return false;
+  }
+
+  zx_handle_t job = server_->job_for_launch();
+  if (job == ZX_HANDLE_INVALID) {
+    FXL_LOG(ERROR) << "No job in which to launch process";
+    return false;
+  }
+
   FXL_DCHECK(!launchpad_);
   FXL_DCHECK(!handle_);
   FXL_DCHECK(!eport_key_);
@@ -198,27 +200,28 @@ bool Process::Initialize() {
   FXL_LOG(INFO) << "Initializing process";
 
   attached_running_ = false;
-
-  if (argv_.size() == 0 || argv_[0].size() == 0) {
-    FXL_LOG(ERROR) << "No program specified";
-    return false;
-  }
+  // There is no thread map yet.
+  thread_map_stale_ = false;
 
   FXL_LOG(INFO) << "argv: " << util::ArgvToString(argv_);
 
-  if (!SetupLaunchpad(&launchpad_, argv_))
+  if (!SetupLaunchpad(job, &launchpad_, argv_)) {
     return false;
+  }
 
-  FXL_LOG(INFO) << "Process setup complete";
-
-  if (!LoadBinary(launchpad_, argv_[0]))
+  if (!AllocDebugHandle(launchpad_)) {
     goto fail;
+  }
+
+  if (!BindExceptionPort()) {
+    goto fail;
+  }
+
+  FXL_LOG(INFO) << fxl::StringPrintf("Process created: pid %" PRIu64, id_);
+
+  if (!LoadBinary(launchpad_, argv_[0])) goto fail;
 
   FXL_VLOG(1) << "Binary loaded";
-
-  // Initialize the PID.
-  id_ = GetProcessId(launchpad_);
-  FXL_DCHECK(id_ != ZX_KOID_INVALID);
 
   status = launchpad_get_base_address(launchpad_, &base_address_);
   if (status != ZX_OK) {
@@ -236,14 +239,22 @@ bool Process::Initialize() {
     goto fail;
   }
 
-  FXL_LOG(INFO) << "Obtained base load address: "
-                << fxl::StringPrintf("0x%" PRIxPTR, base_address_)
-                << ", entry address: "
-                << fxl::StringPrintf("0x%" PRIxPTR, entry_address_);
+  FXL_DCHECK(IsAttached());
+
+  FXL_LOG(INFO) << fxl::StringPrintf("Process %" PRIu64
+                                     ": base load address 0x%" PRIxPTR
+                                     ", entry address 0x%" PRIxPTR,
+                                     id_, base_address_, entry_address_);
 
   return true;
 
 fail:
+  if (handle_ != ZX_HANDLE_INVALID) {
+    CloseDebugHandle();
+  }
+  if (eport_key_) {
+    UnbindExceptionPort();
+  }
   id_ = ZX_KOID_INVALID;
   launchpad_destroy(launchpad_);
   launchpad_ = nullptr;
@@ -252,7 +263,16 @@ fail:
 
 // TODO(dje): Merge common parts with Initialize() after things settle down.
 
-bool Process::Initialize(zx_koid_t pid) {
+bool Process::Attach(zx_koid_t pid) {
+  if (IsAttached()) {
+    FXL_LOG(ERROR) << "Cannot attach, already attached to a process";
+    return false;
+  }
+  if (server_->job_for_search() == ZX_HANDLE_INVALID) {
+    FXL_LOG(ERROR) << "Cannot attach, no job for searching processes";
+    return false;
+  }
+
   FXL_DCHECK(!launchpad_);
   FXL_DCHECK(!handle_);
   FXL_DCHECK(!eport_key_);
@@ -269,57 +289,9 @@ bool Process::Initialize(zx_koid_t pid) {
       FXL_DCHECK(false);
   }
 
-  FXL_LOG(INFO) << "Initializing process";
+  FXL_LOG(INFO) << "Attaching to process " << pid;
 
-  attached_running_ = true;
-  id_ = pid;
-
-  FXL_LOG(INFO) << "Process setup complete";
-
-  return true;
-}
-
-bool Process::AllocDebugHandle() {
-  FXL_DCHECK(handle_ == ZX_HANDLE_INVALID);
-  auto handle = GetProcessDebugHandle(id_);
-  if (handle == ZX_HANDLE_INVALID)
-    return false;
-  handle_ = handle;
-  return true;
-}
-
-void Process::CloseDebugHandle() {
-  zx_handle_close(handle_);
-  handle_ = ZX_HANDLE_INVALID;
-}
-
-bool Process::BindExceptionPort() {
-  ExceptionPort::Key key = server_->exception_port()->Bind(
-    handle_,
-    std::bind(&Process::OnExceptionOrSignal, this, std::placeholders::_1,
-              std::placeholders::_2));
-  if (!key)
-    return false;
-  eport_key_ = key;
-  return true;
-}
-
-void Process::UnbindExceptionPort() {
-  FXL_DCHECK(eport_key_);
-  if (!server_->exception_port()->Unbind(eport_key_))
-    FXL_LOG(WARNING) << "Failed to unbind exception port; ignoring";
-  eport_key_ = 0;
-}
-
-bool Process::Attach() {
-  if (IsAttached()) {
-    FXL_LOG(ERROR) << "Cannot attach an already attached process";
-    return false;
-  }
-
-  FXL_LOG(INFO) << "Attaching to process " << id();
-
-  if (!AllocDebugHandle())
+  if (!AllocDebugHandle(pid))
     return false;
 
   if (!BindExceptionPort()) {
@@ -327,12 +299,86 @@ bool Process::Attach() {
     return false;
   }
 
-  if (attached_running_) {
-    set_state(State::kRunning);
-    thread_map_stale_ = true;
-  }
+  attached_running_ = true;
+  set_state(State::kRunning);
+  thread_map_stale_ = true;
+
+  FXL_DCHECK(IsAttached());
+
+  FXL_LOG(INFO) << fxl::StringPrintf("Attach complete, pid %" PRIu64, id_);
 
   return true;
+}
+
+bool Process::AllocDebugHandle(launchpad_t* lp) {
+  FXL_DCHECK(lp);
+
+  zx_handle_t process = launchpad_get_process_handle(lp);
+  FXL_DCHECK(process);
+
+  // |process| is owned by |lp|.
+  // We need our own copy, and launchpad_go will give us one, but we need
+  // it before we call launchpad_go in order to attach to the debugging
+  // exception port.
+  zx_handle_t debug_process;
+  auto status = zx_handle_duplicate(process, ZX_RIGHT_SAME_RIGHTS,
+                                    &debug_process);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "zx_handle_duplicate failed: "
+                   << util::ZxErrorString(status);
+    return false;
+  }
+
+  id_ = GetProcessId(debug_process);
+  handle_ = debug_process;
+  return true;
+}
+
+bool Process::AllocDebugHandle(zx_koid_t pid) {
+  FXL_DCHECK(pid != ZX_KOID_INVALID);
+  zx_handle_t job = server_->job_for_search();
+  FXL_DCHECK(job != ZX_HANDLE_INVALID);
+  auto process = util::FindProcess(job, pid);
+  if (!process.is_valid()) {
+    FXL_LOG(ERROR) << "Cannot find process " << pid;
+    return false;
+  }
+  // TODO(dje): It might be useful to use zx::foo throughout. Baby steps.
+  auto handle = process.release();
+
+  // TODO(armansito): Check that |handle| has ZX_RIGHT_DEBUG (this seems
+  // not to be set by anything at the moment but eventully we should check)?
+
+  // Syscalls shouldn't return ZX_HANDLE_INVALID in the case of ZX_OK.
+  FXL_DCHECK(handle != ZX_HANDLE_INVALID);
+
+  FXL_VLOG(1) << "Handle " << handle << " obtained for process " << pid;
+
+  handle_ = handle;
+  id_ = pid;
+  return true;
+}
+
+void Process::CloseDebugHandle() {
+  FXL_DCHECK(handle_ != ZX_HANDLE_INVALID);
+  zx_handle_close(handle_);
+  handle_ = ZX_HANDLE_INVALID;
+}
+
+bool Process::BindExceptionPort() {
+  ExceptionPort::Key key = server_->exception_port().Bind(
+      handle_, std::bind(&Process::OnExceptionOrSignal, this,
+                         std::placeholders::_1, std::placeholders::_2));
+  if (!key) return false;
+  eport_key_ = key;
+  return true;
+}
+
+void Process::UnbindExceptionPort() {
+  FXL_DCHECK(eport_key_);
+  if (!server_->exception_port().Unbind(eport_key_))
+    FXL_LOG(WARNING) << "Failed to unbind exception port; ignoring";
+  eport_key_ = 0;
 }
 
 void Process::RawDetach() {
@@ -470,8 +516,7 @@ void Process::Clear() {
   dsos_ = nullptr;
   dsos_build_failed_ = false;
 
-  if (launchpad_)
-    launchpad_destroy(launchpad_);
+  if (launchpad_) launchpad_destroy(launchpad_);
   launchpad_ = nullptr;
 
   // The process may just exited or whatever. Force the state to kGone.
@@ -524,8 +569,10 @@ Thread* Process::FindThreadById(zx_koid_t thread_id) {
   zx_status_t status = zx_object_get_child(
       handle_, thread_id, ZX_RIGHT_SAME_RIGHTS, &thread_handle);
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Could not obtain a debug handle to thread: "
-                   << util::ZxErrorString(status);
+    // If the process just exited then the thread will be gone. So this is
+    // just a debug message, not a warning or error.
+    FXL_VLOG(1) << "Could not obtain a debug handle to thread "
+                << thread_id << ": " << util::ZxErrorString(status);
     return nullptr;
   }
 
@@ -537,8 +584,7 @@ Thread* Process::FindThreadById(zx_koid_t thread_id) {
 Thread* Process::PickOneThread() {
   EnsureThreadMapFresh();
 
-  if (threads_.empty())
-    return nullptr;
+  if (threads_.empty()) return nullptr;
 
   return threads_.begin()->second.get();
 }
@@ -550,9 +596,8 @@ bool Process::RefreshAllThreads() {
   // buffer. This is racy but unless the caller stops all threads that's just
   // the way things are.
   size_t num_threads;
-  zx_status_t status =
-      zx_object_get_info(handle_, ZX_INFO_PROCESS_THREADS, nullptr, 0,
-                         nullptr, &num_threads);
+  zx_status_t status = zx_object_get_info(handle_, ZX_INFO_PROCESS_THREADS,
+                                          nullptr, 0, nullptr, &num_threads);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to get process thread info (#threads): "
                    << util::ZxErrorString(status);
@@ -562,8 +607,8 @@ bool Process::RefreshAllThreads() {
   auto buffer_size = num_threads * sizeof(zx_koid_t);
   auto koids = std::make_unique<zx_koid_t[]>(num_threads);
   size_t records_read;
-  status = zx_object_get_info(handle_, ZX_INFO_PROCESS_THREADS,
-                              koids.get(), buffer_size, &records_read, nullptr);
+  status = zx_object_get_info(handle_, ZX_INFO_PROCESS_THREADS, koids.get(),
+                              buffer_size, &records_read, nullptr);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to get process thread info: "
                    << util::ZxErrorString(status);
@@ -597,8 +642,7 @@ bool Process::RefreshAllThreads() {
 void Process::ForEachThread(const ThreadCallback& callback) {
   EnsureThreadMapFresh();
 
-  for (const auto& iter : threads_)
-    callback(iter.second.get());
+  for (const auto& iter : threads_) callback(iter.second.get());
 }
 
 void Process::ForEachLiveThread(const ThreadCallback& callback) {
@@ -606,8 +650,7 @@ void Process::ForEachLiveThread(const ThreadCallback& callback) {
 
   for (const auto& iter : threads_) {
     Thread* thread = iter.second.get();
-    if (thread->state() != Thread::State::kGone)
-      callback(thread);
+    if (thread->state() != Thread::State::kGone) callback(thread);
   }
 }
 
@@ -626,12 +669,13 @@ void Process::TryBuildLoadedDsosList(Thread* thread, bool check_ldso_bkpt) {
 
   uintptr_t debug_addr;
   zx_handle_t process_handle = thread->process()->handle();
-  zx_status_t status = zx_object_get_property(process_handle,
-                                              ZX_PROP_PROCESS_DEBUG_ADDR,
-                                              &debug_addr, sizeof(debug_addr));
+  zx_status_t status =
+      zx_object_get_property(process_handle, ZX_PROP_PROCESS_DEBUG_ADDR,
+                             &debug_addr, sizeof(debug_addr));
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "zx_object_get_property failed, unable to fetch dso list: "
-		   << util::ZxErrorString(status);
+    FXL_LOG(ERROR)
+        << "zx_object_get_property failed, unable to fetch dso list: "
+        << util::ZxErrorString(status);
     return;
   }
 
@@ -684,8 +728,8 @@ void Process::OnExceptionOrSignal(const zx_port_packet_t& packet,
                                   const zx_exception_context_t& context) {
   // Process exit is sent as a regular signal.
   if (packet.type == ZX_PKT_TYPE_SIGNAL_ONE) {
-    FXL_VLOG(1) << "Received ZX_PKT_TYPE_SIGNAL_ONE, trigger 0x"
-                << std::hex << packet.signal.trigger;
+    FXL_VLOG(1) << "Received ZX_PKT_TYPE_SIGNAL_ONE, trigger 0x" << std::hex
+                << packet.signal.trigger;
     if (packet.signal.trigger & ZX_TASK_TERMINATED) {
       set_state(Process::State::kGone);
       delegate_->OnProcessExit(this);
@@ -699,9 +743,12 @@ void Process::OnExceptionOrSignal(const zx_port_packet_t& packet,
   }
 
   zx_excp_type_t type = static_cast<zx_excp_type_t>(packet.type);
+  zx_koid_t tid = packet.exception.tid;
   Thread* thread = nullptr;
-  if (packet.exception.tid != ZX_KOID_INVALID)
-    thread = FindThreadById(packet.exception.tid);
+  if (tid != ZX_KOID_INVALID) {
+    thread = FindThreadById(tid);
+    // TODO(dje): handle process exit
+  }
 
   // Finding the load address of the main executable requires a few steps.
   // It's not loaded until the first time we hit the _dl_debug_state
@@ -724,18 +771,24 @@ void Process::OnExceptionOrSignal(const zx_port_packet_t& packet,
 
   switch (type) {
     case ZX_EXCP_THREAD_STARTING:
-      FXL_VLOG(1) << "Received ZX_EXCP_THREAD_STARTING exception";
       FXL_DCHECK(thread);
       FXL_DCHECK(thread->state() == Thread::State::kNew);
+      FXL_VLOG(1) << "Received ZX_EXCP_THREAD_STARTING exception for thread "
+                  << thread->GetName();
       thread->OnException(type, context);
       delegate_->OnThreadStarting(this, thread, context);
       break;
     case ZX_EXCP_THREAD_EXITING:
-      FXL_DCHECK(thread);
-      FXL_VLOG(1) << "Received ZX_EXCP_THREAD_EXITING exception for thread "
-                  << thread->GetName();
-      thread->OnException(type, context);
-      delegate_->OnThreadExiting(this, thread, context);
+      // If the process also exited, then the thread may be gone.
+      if (thread) {
+        FXL_VLOG(1) << "Received ZX_EXCP_THREAD_EXITING exception for thread "
+                    << tid << ", " << thread->GetName();
+        thread->OnException(type, context);
+        delegate_->OnThreadExiting(this, thread, context);
+      } else {
+        FXL_VLOG(1) << "Received ZX_EXCP_THREAD_EXITING exception for thread "
+                    << tid;
+      }
       break;
     case ZX_EXCP_POLICY_ERROR:
       FXL_DCHECK(thread);
@@ -745,7 +798,8 @@ void Process::OnExceptionOrSignal(const zx_port_packet_t& packet,
       delegate_->OnSyntheticException(this, thread, type, context);
       break;
     default:
-      FXL_LOG(ERROR) << "Ignoring unrecognized synthetic exception: " << type;
+      FXL_LOG(ERROR) << "Ignoring unrecognized synthetic exception for thread "
+                     << tid << ": " << type;
       break;
   }
 }

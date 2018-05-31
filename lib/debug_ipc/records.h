@@ -62,36 +62,62 @@ struct MemoryBlock {
 
 // What threads to stop when the breakpoint is hit.
 enum class Stop : uint32_t {
-  kAll,  // Stop all threads of all processes attached to the debugger.
+  kAll,      // Stop all threads of all processes attached to the debugger.
   kProcess,  // Stop all threads of the process that hit the breakpoint.
-  kThread  // Stop only the thread that hit the breakpoint.
+  kThread,   // Stop only the thread that hit the breakpoint.
+  kNone      // Don't stop anything but accumulate hit counts.
+};
+
+struct ProcessBreakpointSettings {
+  // Required to be nonzero.
+  uint64_t process_koid = 0;
+
+  // Zero indicates this is a process-wide breakpoint. Otherwise, this
+  // indicates the thread to break.
+  uint64_t thread_koid = 0;
+
+  // Address to break at.
+  uint64_t address = 0;
 };
 
 struct BreakpointSettings {
-  // The ID if this breakpoint. This is assigned by the client and identifies a
-  // single breakpoint at a single address in a single process. This is
+  // The ID if this breakpoint. This is assigned by the client. This is
   // different than the ID in the console frontend which can be across mutliple
   // processes or may match several addresses in a single process.
   uint32_t breakpoint_id = 0;
 
-  // Thread that this breakpoint applies to. If 0 it will apply to all threads
-  // in the process.
-  uint64_t thread_koid = 0;
+  // When set, the breakpoint will automatically be removed as soon as it is
+  // hit.
+  bool one_shot = false;
 
-  uint64_t address = 0;
+  // What should stop when the breakpoint is hit.
   Stop stop = Stop::kAll;
+
+  // Processes to which this breakpoint applies.
+  //
+  // If any process specifies a nonzero thread_koid, it must be the only
+  // process (a breakpoint can apply either to all threads in a set of
+  // processes, or exactly one thread globally).
+  std::vector<ProcessBreakpointSettings> locations;
 };
 
 // Information on one loaded module.
 struct Module {
   std::string name;
   uint64_t base = 0;  // Load address of this file.
-  // Will need more things here like build_id.
+  std::string build_id;
 };
 
 struct StackFrame {
   uint64_t ip = 0;  // Instruction pointer.
   uint64_t sp = 0;  // Stack pointer.
+};
+
+struct AddressRegion {
+  std::string name;
+  uint64_t base;
+  uint64_t size;
+  uint64_t depth;
 };
 
 #pragma pack(pop)

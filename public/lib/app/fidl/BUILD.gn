@@ -7,16 +7,16 @@ import("//build/fidl/fidl.gni")
 fidl("fidl") {
   name = "component"
 
-  sdk_candidate = true
+  sdk_category = "partner"
 
   sources = [
-    "application_controller.fidl",
-    "application_environment.fidl",
-    "application_environment_controller.fidl",
     "application_launcher.fidl",
-    "application_loader.fidl",
-    "application_runner.fidl",
+    "component_controller.fidl",
+    "environment.fidl",
+    "environment_controller.fidl",
     "flat_namespace.fidl",
+    "loader.fidl",
+    "runner.fidl",
     "service_provider.fidl",
   ]
 

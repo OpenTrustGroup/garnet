@@ -45,7 +45,6 @@ void AudioRenderer2Impl::Shutdown() {
   // to destroy us.  Run some FXL_DCHECK sanity checks and get out.
   if (is_shutdown_) {
     FXL_DCHECK(!audio_renderer_binding_.is_bound());
-    FXL_DCHECK(!min_clock_lead_time_cbk_.is_bound());
     return;
   }
 
@@ -59,7 +58,6 @@ void AudioRenderer2Impl::Shutdown() {
   }
 
   gain_control_bindings_.CloseAll();
-  min_clock_lead_time_cbk_.Unbind();
   payload_buffer_.reset();
 }
 
@@ -191,13 +189,14 @@ void AudioRenderer2Impl::SetPcmFormat(AudioPcmFormat format) {
     return;
   }
 
-  // Everything checks out.  Discard any existing links we are holding
-  // onto.  New links need to be created with our new format.
+  // Everything checks out.  Discard any existing links we hold (including
+  // throttle output).  New links need to be created with our new format.
   Unlink();
+  throttle_output_link_ = nullptr;
 
   // Create a new format info object so we can create links to outputs.
   // TODO(johngro): Look into eliminating most of the format_info class when we
-  // finish removing the old audio renererer interface.  At the very least,
+  // finish removing the old audio renderer interface.  At the very least,
   // switch to using the AudioPcmFormat struct instead of AudioMediaTypeDetails
   AudioMediaTypeDetails cfg;
   cfg.sample_format = format.sample_format;
@@ -207,7 +206,7 @@ void AudioRenderer2Impl::SetPcmFormat(AudioPcmFormat format) {
 
   // Have the audio output manager initialize our set of outputs.  Note; there
   // is currently no need for a lock here.  Methods called from our user-facing
-  // interfaces are seriailzed by nature of the fidl framework, and none of the
+  // interfaces are serialized by nature of the fidl framework, and none of the
   // output manager's threads should ever need to manipulate the set.  Cleanup
   // of outputs which have gone away is currently handled in a lazy fashion when
   // the renderer fails to promote its weak reference during an operation
@@ -453,12 +452,9 @@ void AudioRenderer2Impl::Flush(FlushCallback callback) {
   pause_time_frac_frames_valid_ = false;
 }
 
-void AudioRenderer2Impl::FlushNoReply() {
-  Flush(nullptr);
-}
+void AudioRenderer2Impl::FlushNoReply() { Flush(nullptr); }
 
-void AudioRenderer2Impl::Play(int64_t reference_time,
-                              int64_t media_time,
+void AudioRenderer2Impl::Play(int64_t reference_time, int64_t media_time,
                               PlayCallback callback) {
   auto cleanup = fbl::MakeAutoCall([this]() { Shutdown(); });
 
@@ -595,13 +591,9 @@ void AudioRenderer2Impl::Pause(PauseCallback callback) {
   cleanup.cancel();
 }
 
-void AudioRenderer2Impl::PauseNoReply() {
-  Pause(nullptr);
-}
+void AudioRenderer2Impl::PauseNoReply() { Pause(nullptr); }
 
-void AudioRenderer2Impl::SetGainMute(float gain,
-                                     bool mute,
-                                     uint32_t flags,
+void AudioRenderer2Impl::SetGainMute(float gain, bool mute, uint32_t flags,
                                      SetGainMuteCallback callback) {
   auto cleanup = fbl::MakeAutoCall([this]() { Shutdown(); });
   bool dirty = false;
@@ -640,8 +632,7 @@ void AudioRenderer2Impl::SetGainMute(float gain,
   cleanup.cancel();
 }
 
-void AudioRenderer2Impl::SetGainMuteNoReply(float gain,
-                                            bool mute,
+void AudioRenderer2Impl::SetGainMuteNoReply(float gain, bool mute,
                                             uint32_t flags) {
   SetGainMute(gain, mute, flags, nullptr);
 }
@@ -652,9 +643,8 @@ void AudioRenderer2Impl::DuplicateGainControlInterface(
                                     std::move(request));
 }
 
-void AudioRenderer2Impl::EnableMinLeadTimeEvents(
-    fidl::InterfaceHandle<AudioRendererMinLeadTimeChangedEvent> evt) {
-  min_clock_lead_time_cbk_.Bind(std::move(evt));
+void AudioRenderer2Impl::EnableMinLeadTimeEvents(bool enabled) {
+  min_clock_lead_time_events_enabled_ = enabled;
   ReportNewMinClockLeadTime();
 }
 
@@ -663,18 +653,16 @@ void AudioRenderer2Impl::GetMinLeadTime(GetMinLeadTimeCallback callback) {
 }
 
 void AudioRenderer2Impl::ReportNewMinClockLeadTime() {
-  if (min_clock_lead_time_cbk_.is_bound()) {
-    min_clock_lead_time_cbk_->OnMinLeadTimeChanged(min_clock_lead_nsec_);
+  if (min_clock_lead_time_events_enabled_) {
+    auto& evt = audio_renderer_binding_.events();
+    evt.OnMinLeadTimeChanged(min_clock_lead_nsec_);
   }
 }
 
 AudioRenderer2Impl::AudioPacketRefV2::AudioPacketRefV2(
     fbl::RefPtr<fbl::RefCountedVmoMapper> vmo_ref,
-    AudioRenderer2::SendPacketCallback callback,
-    AudioPacket packet,
-    AudioServerImpl* server,
-    uint32_t frac_frame_len,
-    int64_t start_pts)
+    AudioRenderer2::SendPacketCallback callback, AudioPacket packet,
+    AudioServerImpl* server, uint32_t frac_frame_len, int64_t start_pts)
     : AudioPacketRef(server, frac_frame_len, start_pts),
       vmo_ref_(std::move(vmo_ref)),
       callback_(callback),
@@ -684,17 +672,12 @@ AudioRenderer2Impl::AudioPacketRefV2::AudioPacketRefV2(
 
 // Shorthand to save horizontal space for the thunks which follow.
 void AudioRenderer2Impl::GainControlBinding::SetGainMute(
-    float gain,
-    bool mute,
-    uint32_t flags,
-    SetGainMuteCallback callback) {
+    float gain, bool mute, uint32_t flags, SetGainMuteCallback callback) {
   owner_->SetGainMute(gain, mute, flags, callback);
 }
 
 void AudioRenderer2Impl::GainControlBinding::SetGainMuteNoReply(
-    float gain,
-    bool mute,
-    uint32_t flags) {
+    float gain, bool mute, uint32_t flags) {
   owner_->SetGainMuteNoReply(gain, mute, flags);
 }
 

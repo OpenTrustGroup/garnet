@@ -34,8 +34,7 @@ void Yuy2ToBgra(uint8_t* yuy2, uint8_t* bgra1, uint8_t* bgra2) {
   bgra2[3] = 0xff;                                          // alpha
 }
 
-void ConvertYuy2ToBgra(uint8_t* out_ptr,
-                       uint8_t* in_ptr,
+void ConvertYuy2ToBgra(uint8_t* out_ptr, uint8_t* in_ptr,
                        uint64_t buffer_size) {
   // converts to BGRA
   // uint8_t addresses:
@@ -51,10 +50,8 @@ void ConvertYuy2ToBgra(uint8_t* out_ptr,
   }
 }
 
-void ConvertYuy2ToBgraAndMirror(uint8_t* out_ptr,
-                                uint8_t* in_ptr,
-                                uint32_t out_width,
-                                uint32_t out_height) {
+void ConvertYuy2ToBgraAndMirror(uint8_t* out_ptr, uint8_t* in_ptr,
+                                uint32_t out_width, uint32_t out_height) {
   uint32_t double_pixels_per_row = out_width / 2;
   uint32_t in_stride = out_width * 2;
   uint32_t out_stride = out_width * 4;
@@ -68,9 +65,7 @@ void ConvertYuy2ToBgraAndMirror(uint8_t* out_ptr,
   }
 }
 
-void MirrorBgra(uint32_t* out_ptr,
-                uint32_t* in_ptr,
-                uint32_t width,
+void MirrorBgra(uint32_t* out_ptr, uint32_t* in_ptr, uint32_t width,
                 uint32_t height) {
   // converts to BGRA and mirrors left-right
   for (uint32_t y = 0; y < height; ++y) {
@@ -83,22 +78,22 @@ void MirrorBgra(uint32_t* out_ptr,
 
 }  // anonymous namespace
 
-size_t BytesPerPixel(const images::PixelFormat& pixel_format) {
+size_t BytesPerPixel(const fuchsia::images::PixelFormat& pixel_format) {
   switch (pixel_format) {
-    case images::PixelFormat::BGRA_8:
+    case fuchsia::images::PixelFormat::BGRA_8:
       return 4u;
-    case images::PixelFormat::YUY2:
+    case fuchsia::images::PixelFormat::YUY2:
       return 2u;
   }
   FXL_CHECK(false) << "Unknown Pixel Format";
   return 0;
 }
 
-size_t PixelAlignment(const images::PixelFormat& pixel_format) {
+size_t PixelAlignment(const fuchsia::images::PixelFormat& pixel_format) {
   switch (pixel_format) {
-    case images::PixelFormat::BGRA_8:
+    case fuchsia::images::PixelFormat::BGRA_8:
       return 4u;
-    case images::PixelFormat::YUY2:
+    case fuchsia::images::PixelFormat::YUY2:
       return 2u;
   }
   FXL_CHECK(false) << "Unknown Pixel Format";
@@ -106,12 +101,11 @@ size_t PixelAlignment(const images::PixelFormat& pixel_format) {
 }
 
 escher::image_utils::ImageConversionFunction GetFunctionToConvertToBgra8(
-    const images::ImageInfo& image_info) {
+    const fuchsia::images::ImageInfo& image_info) {
   size_t bpp = BytesPerPixel(image_info.pixel_format);
   switch (image_info.pixel_format) {
-    case images::PixelFormat::BGRA_8:
-      if (image_info.transform ==
-          images::Transform::FLIP_HORIZONTAL) {
+    case fuchsia::images::PixelFormat::BGRA_8:
+      if (image_info.transform == fuchsia::images::Transform::FLIP_HORIZONTAL) {
         return [](void* out, void* in, uint32_t width, uint32_t height) {
           MirrorBgra(reinterpret_cast<uint32_t*>(out),
                      reinterpret_cast<uint32_t*>(in), width, height);
@@ -124,9 +118,8 @@ escher::image_utils::ImageConversionFunction GetFunctionToConvertToBgra8(
       }
       break;
     // TODO(MZ-551): support vertical flipping
-    case images::PixelFormat::YUY2:
-      if (image_info.transform ==
-          images::Transform::FLIP_HORIZONTAL) {
+    case fuchsia::images::PixelFormat::YUY2:
+      if (image_info.transform == fuchsia::images::Transform::FLIP_HORIZONTAL) {
         return [](void* out, void* in, uint32_t width, uint32_t height) {
           ConvertYuy2ToBgraAndMirror(reinterpret_cast<uint8_t*>(out),
                                      reinterpret_cast<uint8_t*>(in), width,
@@ -146,4 +139,4 @@ escher::image_utils::ImageConversionFunction GetFunctionToConvertToBgra8(
 
 }  // namespace image_formats
 }  // namespace gfx
-}  // namespace scenic 
+}  // namespace scenic

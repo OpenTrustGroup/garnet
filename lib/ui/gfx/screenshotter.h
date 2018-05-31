@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef GARNET_LIB_UI_GFX_TAKE_SCREENSHOT_H_
-#define GARNET_LIB_UI_GFX_TAKE_SCREENSHOT_H_
+#ifndef GARNET_LIB_UI_GFX_SCREENSHOTTER_H_
+#define GARNET_LIB_UI_GFX_SCREENSHOTTER_H_
 
-#include <fuchsia/cpp/ui.h>
+#include <fuchsia/ui/scenic/cpp/fidl.h>
 #include <string>
 
 #include "garnet/lib/ui/gfx/engine/engine.h"
@@ -17,20 +17,16 @@ namespace gfx {
 
 class Screenshotter {
  public:
-  explicit Screenshotter(Engine* engine)
-      : engine_(engine) {}
+  explicit Screenshotter(Engine* engine) : engine_(engine) {}
 
-  void TakeScreenshot(const std::string& filename,
-                      ui::Scenic::TakeScreenshotCallback callback);
+  void TakeScreenshot(
+      fuchsia::ui::scenic::Scenic::TakeScreenshotCallback callback);
 
  private:
   static void OnCommandBufferDone(
-      const std::string& filename,
-      const escher::ImagePtr& image,
-      uint32_t width,
-      uint32_t height,
+      const escher::ImagePtr& image, uint32_t width, uint32_t height,
       vk::Device device,
-      ui::Scenic::TakeScreenshotCallback done_callback);
+      fuchsia::ui::scenic::Scenic::TakeScreenshotCallback done_callback);
 
   Engine* const engine_;  // Not owned.
 };
@@ -38,4 +34,4 @@ class Screenshotter {
 }  // namespace gfx
 }  // namespace scenic
 
-#endif  // GARNET_LIB_UI_GFX_TAKE_SCREENSHOT_H_
+#endif  // GARNET_LIB_UI_GFX_SCREENSHOTTER_H_

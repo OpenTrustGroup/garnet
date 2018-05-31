@@ -4,12 +4,13 @@
 
 #pragma once
 
+#include <wlan/common/energy.h>
 #include <wlan/common/logging.h>
 #include <wlan/common/macaddr.h>
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/macaddr_map.h>
 
-#include <fuchsia/cpp/wlan_mlme.h>
+#include <wlan_mlme/cpp/fidl.h>
 
 #include <fbl/macros.h>
 #include <fbl/ref_counted.h>
@@ -30,7 +31,7 @@ class Bss : public fbl::RefCounted<Bss> {
         supported_rates_.reserve(SupportedRatesElement::kMaxLen);
     }
 
-    zx_status_t ProcessBeacon(const Beacon* beacon, size_t len, const wlan_rx_info_t* rx_info);
+    zx_status_t ProcessBeacon(const Beacon& beacon, size_t len, const wlan_rx_info_t* rx_info);
 
     std::string ToString() const;
 
@@ -59,27 +60,26 @@ class Bss : public fbl::RefCounted<Bss> {
     zx::time ts_refreshed() { return ts_refreshed_; }
 
    private:
-    bool IsBeaconValid(const Beacon* beacon, size_t len) const;
+    bool IsBeaconValid(const Beacon& beacon) const;
 
     // Refreshes timestamp and signal strength.
-    void Renew(const Beacon* beacon, const wlan_rx_info_t* rx_info);
-    bool HasBeaconChanged(const Beacon* beacon, size_t len) const;
+    void Renew(const Beacon& beacon, const wlan_rx_info_t* rx_info);
+    bool HasBeaconChanged(const Beacon& beacon, size_t len) const;
 
     // Update content such as IEs.
-    zx_status_t Update(const Beacon* beacon, size_t len);
-    zx_status_t Update(const ProbeResponse* proberesp, size_t len);
+    zx_status_t Update(const Beacon& beacon, size_t len);
     zx_status_t ParseIE(const uint8_t* ie_chains, size_t ie_chains_len);
 
     // TODO(porce): Move Beacon method into Beacon class.
-    uint32_t GetBeaconSignature(const Beacon* beacon, size_t len) const;
+    uint32_t GetBeaconSignature(const Beacon& beacon, size_t len) const;
 
     common::MacAddr bssid_;  // From Addr3 of Mgmt Header.
     zx::time ts_refreshed_;  // Last time of Bss object update.
 
     // TODO(porce): Don't trust instantaneous values. Keep history.
-    uint8_t rssi_{0};
-    uint8_t rcpi_{0};
-    uint8_t rsni_{0};
+    common::dBm rssi_dbm_{WLAN_RSSI_DBM_INVALID};
+    common::dBmh rcpi_dbmh_{WLAN_RCPI_DBMH_INVALID};
+    common::dBh rsni_dbh_{WLAN_RSNI_DBH_INVALID};
 
     // TODO(porce): Separate into class BeaconTracker.
     BeaconHash bcn_hash_{0};

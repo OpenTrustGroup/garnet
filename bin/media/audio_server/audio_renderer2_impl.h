@@ -7,12 +7,12 @@
 #include <fbl/unique_ptr.h>
 #include <fbl/vmo_mapper.h>
 
+#include <media/cpp/fidl.h>
 #include "garnet/bin/media/audio_server/audio_object.h"
 #include "garnet/bin/media/audio_server/audio_renderer_impl.h"
 #include "garnet/bin/media/audio_server/utils.h"
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fidl/cpp/binding_set.h"
-#include <fuchsia/cpp/media.h>
 
 namespace media {
 namespace audio {
@@ -41,26 +41,21 @@ class AudioRenderer2Impl : public AudioRendererImpl, public AudioRenderer2 {
                    uint32_t tick_per_second_denominator) final;
   void SetPtsContinuityThreshold(float threshold_seconds) final;
   void SetReferenceClock(zx::handle ref_clock) final;
-  void SendPacket(AudioPacket packet,
-                  SendPacketCallback callback) final;
+  void SendPacket(AudioPacket packet, SendPacketCallback callback) final;
   void SendPacketNoReply(AudioPacket packet) final;
   void Flush(FlushCallback callback) final;
   void FlushNoReply() final;
-  void Play(int64_t reference_time,
-            int64_t media_time,
+  void Play(int64_t reference_time, int64_t media_time,
             PlayCallback callback) final;
   void PlayNoReply(int64_t reference_time, int64_t media_time) final;
   void Pause(PauseCallback callback) final;
   void PauseNoReply() final;
-  void SetGainMute(float gain,
-                   bool mute,
-                   uint32_t flags,
+  void SetGainMute(float gain, bool mute, uint32_t flags,
                    SetGainMuteCallback callback) final;
   void SetGainMuteNoReply(float gain, bool mute, uint32_t flags) final;
   void DuplicateGainControlInterface(
       fidl::InterfaceRequest<AudioRendererGainControl> request) final;
-  void EnableMinLeadTimeEvents(
-      fidl::InterfaceHandle<AudioRendererMinLeadTimeChangedEvent> evt) final;
+  void EnableMinLeadTimeEvents(bool enabled) final;
   void GetMinLeadTime(GetMinLeadTimeCallback callback) final;
 
  protected:
@@ -88,10 +83,8 @@ class AudioRenderer2Impl : public AudioRendererImpl, public AudioRenderer2 {
 
     AudioPacketRefV2(fbl::RefPtr<fbl::RefCountedVmoMapper> vmo_ref,
                      AudioRenderer2::SendPacketCallback callback,
-                     AudioPacket packet,
-                     AudioServerImpl* server,
-                     uint32_t frac_frame_len,
-                     int64_t start_pts);
+                     AudioPacket packet, AudioServerImpl* server,
+                     uint32_t frac_frame_len, int64_t start_pts);
 
    protected:
     bool NeedsCleanup() final { return callback_ != nullptr; }
@@ -111,9 +104,7 @@ class AudioRenderer2Impl : public AudioRendererImpl, public AudioRenderer2 {
     bool gain_events_enabled() const { return gain_events_enabled_; }
 
     // AudioRendererGainControl
-    void SetGainMute(float gain,
-                     bool mute,
-                     uint32_t flags,
+    void SetGainMute(float gain, bool mute, uint32_t flags,
                      SetGainMuteCallback callback) override;
     void SetGainMuteNoReply(float gain, bool mute, uint32_t flags) override;
 
@@ -166,7 +157,7 @@ class AudioRenderer2Impl : public AudioRendererImpl, public AudioRenderer2 {
   TimelineRate frac_frames_per_ref_tick_;
 
   // Minimum Clock Lead Time state
-  AudioRendererMinLeadTimeChangedEventPtr min_clock_lead_time_cbk_;
+  bool min_clock_lead_time_events_enabled_ = false;
 
   fbl::Mutex ref_to_ff_lock_;
   TimelineFunction ref_clock_to_frac_frames_ FXL_GUARDED_BY(ref_to_ff_lock_);

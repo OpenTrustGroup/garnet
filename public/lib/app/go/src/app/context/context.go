@@ -13,7 +13,7 @@ import (
 	"syscall/zx/fdio"
 	"syscall/zx/mxruntime"
 
-	"fuchsia/go/component"
+	"fidl/component"
 )
 
 type Connector struct {
@@ -23,7 +23,7 @@ type Connector struct {
 type Context struct {
 	connector *Connector
 
-	Environment     *component.ApplicationEnvironmentInterface
+	Environment     *component.EnvironmentInterface
 	OutgoingService *svcns.Namespace
 	Launcher        *component.ApplicationLauncherInterface
 	appServices     zx.Handle
@@ -39,13 +39,13 @@ const (
 func getServiceRoot() zx.Handle {
 	c0, c1, err := zx.NewChannel(0)
 	if err != nil {
-		return zx.HANDLE_INVALID
+		return zx.HandleInvalid
 	}
 
 	// TODO: Use "/svc" once that actually works.
 	err = fdio.ServiceConnect("/svc/.", zx.Handle(c0))
 	if err != nil {
-		return zx.HANDLE_INVALID
+		return zx.HandleInvalid
 	}
 	return zx.Handle(c1)
 }
@@ -60,7 +60,7 @@ func New(serviceRoot, directoryRequest, appServices zx.Handle) *Context {
 
 	c.OutgoingService = svcns.New()
 
-	r, p, err := component.NewApplicationEnvironmentInterfaceRequest()
+	r, p, err := component.NewEnvironmentInterfaceRequest()
 	if err != nil {
 		panic(err.Error())
 	}

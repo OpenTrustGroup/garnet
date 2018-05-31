@@ -8,7 +8,7 @@
 #include <cmath>
 #include <utility>
 
-#include <fuchsia/cpp/input.h>
+#include <fuchsia/ui/input/cpp/fidl.h>
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
 
@@ -16,7 +16,6 @@
 #include "garnet/bin/ui/view_manager/view_tree_impl.h"
 #include "garnet/public/lib/escher/util/type_utils.h"
 #include "lib/app/cpp/connect.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/memory/weak_ptr.h"
@@ -28,16 +27,16 @@
 namespace view_manager {
 namespace {
 
-bool Validate(const views_v1::DisplayMetrics& value) {
+bool Validate(const ::fuchsia::ui::views_v1::DisplayMetrics& value) {
   return std::isnormal(value.device_pixel_ratio) &&
          value.device_pixel_ratio > 0.f;
 }
 
-bool Validate(const views_v1::ViewLayout& value) {
+bool Validate(const ::fuchsia::ui::views_v1::ViewLayout& value) {
   return value.size.width >= 0 && value.size.height >= 0;
 }
 
-bool Validate(const views_v1::ViewProperties& value) {
+bool Validate(const ::fuchsia::ui::views_v1::ViewProperties& value) {
   if (value.display_metrics && !Validate(*value.display_metrics))
     return false;
   if (value.view_layout && !Validate(*value.view_layout))
@@ -47,12 +46,12 @@ bool Validate(const views_v1::ViewProperties& value) {
 
 // Returns true if the properties are valid and are sufficient for
 // operating the view tree.
-bool IsComplete(const views_v1::ViewProperties& value) {
+bool IsComplete(const ::fuchsia::ui::views_v1::ViewProperties& value) {
   return Validate(value) && value.view_layout && value.display_metrics;
 }
 
-void ApplyOverrides(views_v1::ViewProperties* value,
-                    const views_v1::ViewProperties* overrides) {
+void ApplyOverrides(::fuchsia::ui::views_v1::ViewProperties* value,
+                    const ::fuchsia::ui::views_v1::ViewProperties* overrides) {
   if (!overrides)
     return;
   if (overrides->display_metrics)
@@ -62,7 +61,7 @@ void ApplyOverrides(views_v1::ViewProperties* value,
 }
 
 std::string SanitizeLabel(fidl::StringPtr label) {
-  return label.get().substr(0, views_v1::kLabelMaxLength);
+  return label.get().substr(0, ::fuchsia::ui::views_v1::kLabelMaxLength);
 }
 
 std::unique_ptr<FocusChain> CopyFocusChain(const FocusChain* chain) {
@@ -78,9 +77,9 @@ std::unique_ptr<FocusChain> CopyFocusChain(const FocusChain* chain) {
   return new_chain;
 }
 
-geometry::Transform ToTransform(const gfx::mat4& matrix) {
+fuchsia::math::Transform ToTransform(const fuchsia::ui::gfx::mat4& matrix) {
   // Note: mat4 is column-major but transform is row-major
-  geometry::Transform transform;
+  fuchsia::math::Transform transform;
   const auto& in = matrix.matrix;
   auto& out = transform.matrix;
   out[0] = in[0];
@@ -102,8 +101,8 @@ geometry::Transform ToTransform(const gfx::mat4& matrix) {
   return transform;
 }
 
-bool Equals(const views_v1::ViewPropertiesPtr& a,
-            const views_v1::ViewPropertiesPtr& b) {
+bool Equals(const ::fuchsia::ui::views_v1::ViewPropertiesPtr& a,
+            const ::fuchsia::ui::views_v1::ViewPropertiesPtr& b) {
   if (!a || !b)
     return !a && !b;
   return *a == *b;
@@ -113,7 +112,8 @@ bool Equals(const views_v1::ViewPropertiesPtr& a,
 
 ViewRegistry::ViewRegistry(component::ApplicationContext* application_context)
     : application_context_(application_context),
-      scenic_(application_context_->ConnectToEnvironmentService<ui::Scenic>()),
+      scenic_(application_context_
+                  ->ConnectToEnvironmentService<fuchsia::ui::scenic::Scenic>()),
       session_(scenic_.get()),
       weak_factory_(this) {
   // TODO(MZ-128): Register session listener and destroy views if their
@@ -133,7 +133,7 @@ ViewRegistry::ViewRegistry(component::ApplicationContext* application_context)
 ViewRegistry::~ViewRegistry() {}
 
 void ViewRegistry::GetScenic(
-    fidl::InterfaceRequest<ui::Scenic> scenic_request) {
+    fidl::InterfaceRequest<fuchsia::ui::scenic::Scenic> scenic_request) {
   // TODO(jeffbrown): We should have a better way to duplicate the
   // SceneManager connection without going back out through the environment.
   application_context_->ConnectToEnvironmentService(std::move(scenic_request));
@@ -142,17 +142,17 @@ void ViewRegistry::GetScenic(
 // CREATE / DESTROY VIEWS
 
 void ViewRegistry::CreateView(
-    fidl::InterfaceRequest<views_v1::View> view_request,
-    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
-    views_v1::ViewListenerPtr view_listener,
-    zx::eventpair parent_export_token,
-    fidl::StringPtr label) {
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1::View> view_request,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+        view_owner_request,
+    ::fuchsia::ui::views_v1::ViewListenerPtr view_listener,
+    zx::eventpair parent_export_token, fidl::StringPtr label) {
   FXL_DCHECK(view_request.is_valid());
   FXL_DCHECK(view_owner_request.is_valid());
   FXL_DCHECK(view_listener);
   FXL_DCHECK(parent_export_token);
 
-  views_v1_token::ViewToken view_token;
+  ::fuchsia::ui::views_v1_token::ViewToken view_token;
   view_token.value = next_view_token_value_++;
   FXL_CHECK(view_token.value);
   FXL_CHECK(!FindView(view_token.value));
@@ -205,13 +205,13 @@ void ViewRegistry::UnregisterView(ViewState* view_state) {
 // CREATE / DESTROY VIEW TREES
 
 void ViewRegistry::CreateViewTree(
-    fidl::InterfaceRequest<views_v1::ViewTree> view_tree_request,
-    views_v1::ViewTreeListenerPtr view_tree_listener,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1::ViewTree> view_tree_request,
+    ::fuchsia::ui::views_v1::ViewTreeListenerPtr view_tree_listener,
     fidl::StringPtr label) {
   FXL_DCHECK(view_tree_request.is_valid());
   FXL_DCHECK(view_tree_listener);
 
-  views_v1::ViewTreeToken view_tree_token;
+  ::fuchsia::ui::views_v1::ViewTreeToken view_tree_token;
   view_tree_token.value = next_view_tree_token_value_++;
   FXL_CHECK(view_tree_token.value);
   FXL_CHECK(!FindViewTree(view_tree_token.value));
@@ -285,9 +285,9 @@ void ViewRegistry::ReleaseViewStubChildHost(ViewStub* view_stub) {
 // TREE MANIPULATION
 
 void ViewRegistry::AddChild(
-    ViewContainerState* container_state,
-    uint32_t child_key,
-    fidl::InterfaceHandle<views_v1_token::ViewOwner> child_view_owner,
+    ViewContainerState* container_state, uint32_t child_key,
+    fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner>
+        child_view_owner,
     zx::eventpair host_import_token) {
   FXL_DCHECK(IsViewContainerStateRegisteredDebug(container_state));
   FXL_DCHECK(child_view_owner);
@@ -323,10 +323,10 @@ void ViewRegistry::AddChild(
                                             std::move(host_import_token))));
 }
 
-void ViewRegistry::RemoveChild(ViewContainerState* container_state,
-                               uint32_t child_key,
-                               fidl::InterfaceRequest<views_v1_token::ViewOwner>
-                                   transferred_view_owner_request) {
+void ViewRegistry::RemoveChild(
+    ViewContainerState* container_state, uint32_t child_key,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+        transferred_view_owner_request) {
   FXL_DCHECK(IsViewContainerStateRegisteredDebug(container_state));
   FXL_VLOG(1) << "RemoveChild: container=" << container_state
               << ", child_key=" << child_key;
@@ -347,9 +347,8 @@ void ViewRegistry::RemoveChild(ViewContainerState* container_state,
 }
 
 void ViewRegistry::SetChildProperties(
-    ViewContainerState* container_state,
-    uint32_t child_key,
-    views_v1::ViewPropertiesPtr child_properties) {
+    ViewContainerState* container_state, uint32_t child_key,
+    ::fuchsia::ui::views_v1::ViewPropertiesPtr child_properties) {
   FXL_DCHECK(IsViewContainerStateRegisteredDebug(container_state));
   FXL_VLOG(1) << "SetChildProperties: container=" << container_state
               << ", child_key=" << child_key
@@ -422,9 +421,9 @@ void ViewRegistry::RequestFocus(ViewContainerState* container_state,
   tree_state->RequestFocus(child_stub);
 }
 
-void ViewRegistry::OnViewResolved(ViewStub* view_stub,
-                                  views_v1_token::ViewToken view_token,
-                                  bool success) {
+void ViewRegistry::OnViewResolved(
+    ViewStub* view_stub, ::fuchsia::ui::views_v1_token::ViewToken view_token,
+    bool success) {
   FXL_DCHECK(view_stub);
 
   ViewState* view_state = success ? FindView(view_token.value) : nullptr;
@@ -435,8 +434,8 @@ void ViewRegistry::OnViewResolved(ViewStub* view_stub,
 }
 
 void ViewRegistry::TransferViewOwner(
-    views_v1_token::ViewToken view_token,
-    fidl::InterfaceRequest<views_v1_token::ViewOwner>
+    ::fuchsia::ui::views_v1_token::ViewToken view_token,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
         transferred_view_owner_request) {
   FXL_DCHECK(transferred_view_owner_request.is_valid());
 
@@ -463,7 +462,7 @@ void ViewRegistry::AttachResolvedViewAndNotify(ViewStub* view_stub,
     SchedulePresentSession();
 
     SendChildAttached(view_stub->container(), view_stub->key(),
-                      views_v1::ViewInfo());
+                      ::fuchsia::ui::views_v1::ViewInfo());
   }
 
   // Attach the view.
@@ -496,7 +495,7 @@ void ViewRegistry::HijackView(ViewState* view_state) {
 
 void ViewRegistry::TransferOrUnregisterViewStub(
     std::unique_ptr<ViewStub> view_stub,
-    fidl::InterfaceRequest<views_v1_token::ViewOwner>
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
         transferred_view_owner_request) {
   FXL_DCHECK(view_stub);
 
@@ -594,7 +593,8 @@ void ViewRegistry::TraverseView(ViewState* view_state,
   if (parent_properties_changed ||
       (flags & (ViewState::INVALIDATION_PROPERTIES_CHANGED |
                 ViewState::INVALIDATION_PARENT_CHANGED))) {
-    views_v1::ViewPropertiesPtr properties = ResolveViewProperties(view_state);
+    ::fuchsia::ui::views_v1::ViewPropertiesPtr properties =
+        ResolveViewProperties(view_state);
     if (properties) {
       if (!view_state->issued_properties() ||
           !Equals(properties, view_state->issued_properties())) {
@@ -619,7 +619,7 @@ void ViewRegistry::TraverseView(ViewState* view_state,
                          (flags & ViewState::INVALIDATION_RESEND_PROPERTIES);
   if (send_properties) {
     if (!(flags & ViewState::INVALIDATION_IN_PROGRESS)) {
-      views_v1::ViewProperties cloned_properties;
+      ::fuchsia::ui::views_v1::ViewProperties cloned_properties;
       view_state->issued_properties()->Clone(&cloned_properties);
       SendPropertiesChanged(view_state, std::move(cloned_properties));
       flags = ViewState::INVALIDATION_IN_PROGRESS;
@@ -649,7 +649,7 @@ void ViewRegistry::TraverseView(ViewState* view_state,
   }
 }
 
-views_v1::ViewPropertiesPtr ViewRegistry::ResolveViewProperties(
+::fuchsia::ui::views_v1::ViewPropertiesPtr ViewRegistry::ResolveViewProperties(
     ViewState* view_state) {
   FXL_DCHECK(IsViewStateRegisteredDebug(view_state));
 
@@ -660,7 +660,7 @@ views_v1::ViewPropertiesPtr ViewRegistry::ResolveViewProperties(
   if (view_stub->parent()) {
     if (!view_stub->parent()->issued_properties())
       return nullptr;
-    auto properties = views_v1::ViewProperties::New();
+    auto properties = ::fuchsia::ui::views_v1::ViewProperties::New();
     view_stub->parent()->issued_properties()->Clone(properties.get());
     ApplyOverrides(properties.get(), view_stub->properties().get());
     return properties;
@@ -670,7 +670,7 @@ views_v1::ViewPropertiesPtr ViewRegistry::ResolveViewProperties(
                   << ", properties=" << view_stub->properties();
       return nullptr;
     }
-    auto cloned_properties = views_v1::ViewProperties::New();
+    auto cloned_properties = ::fuchsia::ui::views_v1::ViewProperties::New();
     view_stub->properties()->Clone(cloned_properties.get());
     return cloned_properties;
   } else {
@@ -692,7 +692,7 @@ void ViewRegistry::PresentSession() {
   FXL_DCHECK(present_session_scheduled_);
 
   present_session_scheduled_ = false;
-  session_.Present(0, [this](images::PresentationInfo info) {});
+  session_.Present(0, [this](fuchsia::images::PresentationInfo info) {});
 }
 
 // VIEW AND VIEW TREE SERVICE PROVIDERS
@@ -701,10 +701,11 @@ void ViewRegistry::ConnectToViewService(ViewState* view_state,
                                         const fidl::StringPtr& service_name,
                                         zx::channel client_handle) {
   FXL_DCHECK(IsViewStateRegisteredDebug(view_state));
-  if (service_name == input::InputConnection::Name_) {
-    CreateInputConnection(view_state->view_token(),
-                          fidl::InterfaceRequest<input::InputConnection>(
-                              std::move(client_handle)));
+  if (service_name == fuchsia::ui::input::InputConnection::Name_) {
+    CreateInputConnection(
+        view_state->view_token(),
+        fidl::InterfaceRequest<fuchsia::ui::input::InputConnection>(
+            std::move(client_handle)));
   }
 }
 
@@ -712,19 +713,20 @@ void ViewRegistry::ConnectToViewTreeService(ViewTreeState* tree_state,
                                             const fidl::StringPtr& service_name,
                                             zx::channel client_handle) {
   FXL_DCHECK(IsViewTreeStateRegisteredDebug(tree_state));
-  if (service_name == input::InputDispatcher::Name_) {
-    CreateInputDispatcher(tree_state->view_tree_token(),
-                          fidl::InterfaceRequest<input::InputDispatcher>(
-                              std::move(client_handle)));
+  if (service_name == fuchsia::ui::input::InputDispatcher::Name_) {
+    CreateInputDispatcher(
+        tree_state->view_tree_token(),
+        fidl::InterfaceRequest<fuchsia::ui::input::InputDispatcher>(
+            std::move(client_handle)));
   }
 }
 
 // VIEW INSPECTOR
 
-void ViewRegistry::HitTest(views_v1::ViewTreeToken view_tree_token,
-                           const geometry::Point3F& ray_origin,
-                           const geometry::Point3F& ray_direction,
-                           HitTestCallback callback) {
+void ViewRegistry::HitTest(
+    ::fuchsia::ui::views_v1::ViewTreeToken view_tree_token,
+    const fuchsia::math::Point3F& ray_origin,
+    const fuchsia::math::Point3F& ray_direction, HitTestCallback callback) {
   FXL_VLOG(1) << "HitTest: tree=" << view_tree_token;
 
   ViewTreeState* view_tree = FindViewTree(view_tree_token.value);
@@ -737,8 +739,8 @@ void ViewRegistry::HitTest(views_v1::ViewTreeToken view_tree_token,
   session_.HitTestDeviceRay(
       (float[3]){ray_origin.x, ray_origin.y, ray_origin.z},
       (float[3]){ray_direction.x, ray_direction.y, ray_direction.z},
-      [ this, callback = std::move(callback), ray_origin,
-        ray_direction ](fidl::VectorPtr<gfx::Hit> hits) {
+      [this, callback = std::move(callback), ray_origin,
+       ray_direction](fidl::VectorPtr<fuchsia::ui::gfx::Hit> hits) {
         auto view_hits = fidl::VectorPtr<ViewHit>::New(0);
         for (auto& hit : *hits) {
           auto it = views_by_token_.find(hit.tag_value);
@@ -755,7 +757,7 @@ void ViewRegistry::HitTest(views_v1::ViewTreeToken view_tree_token,
 }
 
 void ViewRegistry::ResolveFocusChain(
-    views_v1::ViewTreeToken view_tree_token,
+    ::fuchsia::ui::views_v1::ViewTreeToken view_tree_token,
     const ResolveFocusChainCallback& callback) {
   FXL_VLOG(1) << "ResolveFocusChain: view_tree_token=" << view_tree_token;
 
@@ -768,7 +770,7 @@ void ViewRegistry::ResolveFocusChain(
 }
 
 void ViewRegistry::ActivateFocusChain(
-    views_v1_token::ViewToken view_token,
+    ::fuchsia::ui::views_v1_token::ViewToken view_token,
     const ActivateFocusChainCallback& callback) {
   FXL_VLOG(1) << "ActivateFocusChain: view_token=" << view_token;
 
@@ -785,7 +787,7 @@ void ViewRegistry::ActivateFocusChain(
   callback(std::move(new_chain));
 }
 
-void ViewRegistry::HasFocus(views_v1_token::ViewToken view_token,
+void ViewRegistry::HasFocus(::fuchsia::ui::views_v1_token::ViewToken view_token,
                             const HasFocusCallback& callback) {
   FXL_VLOG(1) << "HasFocus: view_token=" << view_token;
   ViewState* view = FindView(view_token.value);
@@ -807,8 +809,7 @@ void ViewRegistry::HasFocus(views_v1_token::ViewToken view_token,
 }
 
 component::ServiceProvider* ViewRegistry::FindViewServiceProvider(
-    uint32_t view_token,
-    std::string service_name) {
+    uint32_t view_token, std::string service_name) {
   ViewState* view_state = FindView(view_token);
   if (!view_state) {
     return nullptr;
@@ -825,26 +826,27 @@ component::ServiceProvider* ViewRegistry::FindViewServiceProvider(
 }
 
 void ViewRegistry::GetSoftKeyboardContainer(
-    views_v1_token::ViewToken view_token,
-    fidl::InterfaceRequest<input::SoftKeyboardContainer> container) {
+    ::fuchsia::ui::views_v1_token::ViewToken view_token,
+    fidl::InterfaceRequest<fuchsia::ui::input::SoftKeyboardContainer>
+        container) {
   FXL_DCHECK(container.is_valid());
   FXL_VLOG(1) << "GetSoftKeyboardContainer: view_token=" << view_token;
 
-  auto provider = FindViewServiceProvider(view_token.value,
-                                          input::SoftKeyboardContainer::Name_);
+  auto provider = FindViewServiceProvider(
+      view_token.value, fuchsia::ui::input::SoftKeyboardContainer::Name_);
   if (provider) {
     component::ConnectToService(provider, std::move(container));
   }
 }
 
 void ViewRegistry::GetImeService(
-    views_v1_token::ViewToken view_token,
-    fidl::InterfaceRequest<input::ImeService> ime_service) {
+    ::fuchsia::ui::views_v1_token::ViewToken view_token,
+    fidl::InterfaceRequest<fuchsia::ui::input::ImeService> ime_service) {
   FXL_DCHECK(ime_service.is_valid());
   FXL_VLOG(1) << "GetImeService: view_token=" << view_token;
 
-  auto provider =
-      FindViewServiceProvider(view_token.value, input::ImeService::Name_);
+  auto provider = FindViewServiceProvider(
+      view_token.value, fuchsia::ui::input::ImeService::Name_);
   if (provider) {
     component::ConnectToService(provider, std::move(ime_service));
   } else {
@@ -854,8 +856,8 @@ void ViewRegistry::GetImeService(
 
 // EXTERNAL SIGNALING
 
-void ViewRegistry::SendPropertiesChanged(ViewState* view_state,
-                                         views_v1::ViewProperties properties) {
+void ViewRegistry::SendPropertiesChanged(
+    ViewState* view_state, ::fuchsia::ui::views_v1::ViewProperties properties) {
   FXL_DCHECK(view_state);
   FXL_DCHECK(view_state->view_listener());
 
@@ -882,9 +884,9 @@ void ViewRegistry::SendPropertiesChanged(ViewState* view_state,
       });
 }
 
-void ViewRegistry::SendChildAttached(ViewContainerState* container_state,
-                                     uint32_t child_key,
-                                     views_v1::ViewInfo child_view_info) {
+void ViewRegistry::SendChildAttached(
+    ViewContainerState* container_state, uint32_t child_key,
+    ::fuchsia::ui::views_v1::ViewInfo child_view_info) {
   FXL_DCHECK(container_state);
 
   if (!container_state->view_container_listener())
@@ -912,9 +914,10 @@ void ViewRegistry::SendChildUnavailable(ViewContainerState* container_state,
                                                                  [] {});
 }
 
-void ViewRegistry::DeliverEvent(views_v1_token::ViewToken view_token,
-                                input::InputEvent event,
-                                ViewInspector::OnEventDelivered callback) {
+void ViewRegistry::DeliverEvent(
+    ::fuchsia::ui::views_v1_token::ViewToken view_token,
+    fuchsia::ui::input::InputEvent event,
+    ViewInspector::OnEventDelivered callback) {
   FXL_VLOG(1) << "DeliverEvent: view_token=" << view_token
               << ", event=" << event;
 
@@ -934,8 +937,8 @@ void ViewRegistry::DeliverEvent(views_v1_token::ViewToken view_token,
 }
 
 void ViewRegistry::CreateInputConnection(
-    views_v1_token::ViewToken view_token,
-    fidl::InterfaceRequest<input::InputConnection> request) {
+    ::fuchsia::ui::views_v1_token::ViewToken view_token,
+    fidl::InterfaceRequest<fuchsia::ui::input::InputConnection> request) {
   FXL_DCHECK(request.is_valid());
   FXL_VLOG(1) << "CreateInputConnection: view_token=" << view_token;
 
@@ -958,8 +961,8 @@ void ViewRegistry::OnInputConnectionDied(InputConnectionImpl* connection) {
 }
 
 void ViewRegistry::CreateInputDispatcher(
-    views_v1::ViewTreeToken view_tree_token,
-    fidl::InterfaceRequest<input::InputDispatcher> request) {
+    ::fuchsia::ui::views_v1::ViewTreeToken view_tree_token,
+    fidl::InterfaceRequest<fuchsia::ui::input::InputDispatcher> request) {
   FXL_DCHECK(request.is_valid());
   FXL_VLOG(1) << "CreateInputDispatcher: view_tree_token=" << view_tree_token;
 

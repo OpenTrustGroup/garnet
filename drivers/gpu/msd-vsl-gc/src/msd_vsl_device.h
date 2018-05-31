@@ -9,6 +9,7 @@
 #include "magma_util/macros.h"
 #include "magma_util/register_io.h"
 #include "msd.h"
+#include "platform_bus_mapper.h"
 #include "platform_device.h"
 
 class MsdVslDevice : public msd_device_t {
@@ -18,12 +19,21 @@ public:
 
     MsdVslDevice() { magic_ = kMagic; }
 
-    virtual ~MsdVslDevice() {}
+    virtual ~MsdVslDevice() = default;
 
     uint32_t device_id() { return device_id_; }
 
+    bool IsIdle();
+
 private:
     bool Init(void* device_handle);
+    void HardwareInit();
+
+    bool SubmitCommandBufferNoMmu(uint64_t bus_addr, uint32_t length, uint16_t* prefetch_out);
+
+    magma::RegisterIo* register_io() { return register_io_.get(); }
+
+    magma::PlatformBusMapper* bus_mapper() { return bus_mapper_.get(); }
 
     static const uint32_t kMagic = 0x64657669; //"devi"
 
@@ -31,6 +41,9 @@ private:
     std::unique_ptr<magma::RegisterIo> register_io_;
     std::unique_ptr<GpuFeatures> gpu_features_;
     uint32_t device_id_ = 0;
+    std::unique_ptr<magma::PlatformBusMapper> bus_mapper_;
+
+    friend class TestMsdVslDevice;
 };
 
 #endif // MSD_VSL_DEVICE_H

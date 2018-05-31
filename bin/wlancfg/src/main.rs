@@ -21,9 +21,9 @@ mod config;
 mod device;
 
 use config::Config;
-use failure::{Error, Fail, ResultExt};
+use failure::{Error, ResultExt};
 use futures::prelude::*;
-use wlan_service::{DeviceListener, DeviceListenerMarker, DeviceServiceMarker};
+use wlan_service::DeviceServiceMarker;
 
 fn main() -> Result<(), Error> {
     let cfg = Config::load_from_file()?;
@@ -32,23 +32,13 @@ fn main() -> Result<(), Error> {
     let wlan_svc = app::client::connect_to_service::<DeviceServiceMarker>()
         .context("failed to connect to device service")?;
 
-    let (remote, local) = zx::Channel::create().context("failed to create zx channel")?;
-    let local = async::Channel::from_channel(local).context("failed to make async channel")?;
+    let event_stream = wlan_svc.take_event_stream();
+    let listener = device::Listener::new(wlan_svc, cfg);
+    let fut = event_stream
+        .for_each(move |evt| device::handle_event(&listener, evt))
+        .err_into();
 
-    let mut remote_ptr = fidl::endpoints2::ClientEnd::<DeviceListenerMarker>::new(remote);
-    let fut = wlan_svc
-        .register_listener(&mut remote_ptr)
-        .map_err(|e| Error::from(e).context("failed to register listener"))
-        .and_then(|status| {
-            zx::Status::ok(status)
-                .map_err(|e| Error::from(e).context("failed to register listener"))
-                .into_future()
-        })
-        .and_then(|_| {
-            device::device_listener(device::Listener::new(wlan_svc, cfg))
-                .serve(local)
-                .map_err(|e| e.context("Device listener failed"))
-        });
-
-    executor.run_singlethreaded(fut).map_err(|e| e.into())
+    executor
+        .run_singlethreaded(fut)
+        .map(|_| ())
 }

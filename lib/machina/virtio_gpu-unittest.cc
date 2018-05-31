@@ -5,12 +5,12 @@
 #include "garnet/lib/machina/virtio_gpu.h"
 
 #include <fbl/unique_ptr.h>
+#include <lib/async-loop/cpp/loop.h>
 
 #include "garnet/lib/machina/gpu_scanout.h"
 #include "garnet/lib/machina/phys_mem_fake.h"
 #include "garnet/lib/machina/virtio_queue_fake.h"
 #include "gtest/gtest.h"
-#include "lib/fsl/tasks/message_loop.h"
 
 namespace machina {
 namespace {
@@ -37,15 +37,18 @@ struct BackingPages
 class VirtioGpuTest {
  public:
   VirtioGpuTest()
-      : gpu_(phys_mem_, loop_.async()), control_queue_(gpu_.control_queue()) {}
+      : loop_(&kAsyncLoopConfigMakeDefault), gpu_(phys_mem_, loop_.async()),
+        control_queue_(gpu_.control_queue()) {}
 
   zx_status_t Init() {
     zx_status_t status = control_queue_.Init(kQueueSize);
-    if (status != ZX_OK)
+    if (status != ZX_OK) {
       return status;
+    }
     status = gpu_.Init();
-    if (status != ZX_OK)
+    if (status != ZX_OK) {
       return status;
+    }
     return CreateScanout(kDisplayWidth, kDisplayHeight);
   }
 
@@ -77,8 +80,7 @@ class VirtioGpuTest {
     return ZX_OK;
   }
 
-  zx_status_t CreateResource(uint32_t resource_id,
-                             uint32_t width,
+  zx_status_t CreateResource(uint32_t resource_id, uint32_t width,
                              uint32_t height) {
     virtio_gpu_resource_create_2d_t request = {};
     request.hdr.type = VIRTIO_GPU_CMD_RESOURCE_CREATE_2D;
@@ -123,9 +125,7 @@ class VirtioGpuTest {
 
   // Attaches a single, contiguous memory region to the resource.
   zx_status_t AttachBacking(
-      uint32_t resource_id,
-      uint32_t width,
-      uint32_t height,
+      uint32_t resource_id, uint32_t width, uint32_t height,
       fbl::SinglyLinkedList<fbl::unique_ptr<BackingPages>>* backing_pages) {
     virtio_gpu_resource_attach_backing_t request = {};
     request.hdr.type = VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING;
@@ -173,8 +173,9 @@ class VirtioGpuTest {
                              .AppendReadable(&request, sizeof(request))
                              .AppendWritable(&response, sizeof(response))
                              .Build(&desc);
-    if (status != ZX_OK)
+    if (status != ZX_OK) {
       return status;
+    }
 
     loop_.RunUntilIdle();
     EXPECT_TRUE(control_queue_.HasUsed());
@@ -198,8 +199,9 @@ class VirtioGpuTest {
                              .AppendReadable(&request, sizeof(request))
                              .AppendWritable(&response, sizeof(response))
                              .Build(&desc);
-    if (status != ZX_OK)
+    if (status != ZX_OK) {
       return status;
+    }
 
     loop_.RunUntilIdle();
     EXPECT_TRUE(control_queue_.HasUsed());
@@ -208,7 +210,7 @@ class VirtioGpuTest {
   }
 
  private:
-  fsl::MessageLoop loop_;
+  async::Loop loop_;
   PhysMemFake phys_mem_;
   VirtioGpu gpu_;
   GpuScanout scanout_;

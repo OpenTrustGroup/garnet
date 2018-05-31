@@ -5,7 +5,7 @@
 #include "garnet/bin/media/net_media_service/media_player_net_publisher.h"
 
 #include <fcntl.h>
-#include <fuchsia/cpp/media.h>
+#include <media/cpp/fidl.h>
 
 #include "lib/fxl/logging.h"
 #include "lib/url/gurl.h"
@@ -27,9 +27,7 @@ MediaPlayerNetPublisher::MediaPlayerNetPublisher(
     NetMediaServiceImpl* owner)
     : NetMediaServiceImpl::ProductBase(owner),
       media_player_(media_player.Bind()),
-      responder_(media_player_.get(),
-                 service_name,
-                 owner->application_context()) {
+      responder_(media_player_, service_name, owner->application_context()) {
   FXL_DCHECK(owner);
 
   media_player_.set_error_handler([this]() {

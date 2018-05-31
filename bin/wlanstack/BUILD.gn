@@ -2,28 +2,47 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/rust/rust_binary.gni")
+import("//build/rust/rustc_binary.gni")
 import("//build/package.gni")
 
-rust_binary("bin") {
+rustc_binary("bin") {
+  name = "wlanstack2"
   with_unit_tests = true
 
-  name = "wlanstack2"
+  deps = [
+    "//garnet/lib/rust/crates/fuchsia-wlan-dev",
+    "//garnet/lib/rust/crates/wlan-sme",
+    "//garnet/lib/wlan/fidl:fidl-rustc",
+    "//garnet/lib/wlan/fidl:service-rustc",
+    "//garnet/public/lib/fidl/rust/fidl",
+    "//garnet/public/lib/wlan/fidl:mlme-rustc",
+    "//garnet/public/lib/wlan/fidl:service-rustc",
+    "//garnet/public/rust/crates/fuchsia-app",
+    "//garnet/public/rust/crates/fuchsia-async",
+    "//garnet/public/rust/crates/fuchsia-vfs/fuchsia-vfs-watcher",
+    "//garnet/public/rust/crates/fuchsia-zircon",
+    "//third_party/rust-crates/rustc_deps:failure",
+    "//third_party/rust-crates/rustc_deps:futures",
+    "//third_party/rust-crates/rustc_deps:log",
+    "//third_party/rust-crates/rustc_deps:parking_lot",
+  ]
 }
 
 package("wlanstack2") {
-
   deps = [
     ":bin",
   ]
 
-  binary = "wlanstack2"
+  binary = "rust_crates/wlanstack2"
 
-  meta = [{
-    path = rebase_path("meta/sandbox")
-    dest = "sandbox"
-  }, {
-    path = rebase_path("//garnet/bin/appmgr/legacy_flat_exported_dir")
-    dest = "legacy_flat_exported_dir"
-  }]
+  meta = [
+    {
+      path = rebase_path("meta/wlanstack2.cmx")
+      dest = "wlanstack2.cmx"
+    },
+    {
+      path = rebase_path("//garnet/bin/appmgr/legacy_flat_exported_dir")
+      dest = "legacy_flat_exported_dir"
+    },
+  ]
 }

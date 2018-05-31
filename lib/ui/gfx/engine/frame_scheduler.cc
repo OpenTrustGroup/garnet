@@ -4,21 +4,20 @@
 
 #include "garnet/lib/ui/gfx/engine/frame_scheduler.h"
 
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
 #include <trace/event.h>
 #include <zircon/syscalls.h>
 
 #include "garnet/lib/ui/gfx/displays/display.h"
 #include "garnet/lib/ui/gfx/engine/frame_timings.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/logging.h"
 
 namespace scenic {
 namespace gfx {
 
 FrameScheduler::FrameScheduler(Display* display)
-    : task_runner_(fsl::MessageLoop::GetCurrent()->task_runner().get()),
-      display_(display),
-      weak_factory_(this) {
+    : dispatcher_(async_get_default()), display_(display), weak_factory_(this) {
   outstanding_frames_.reserve(kMaxOutstandingFrames);
 }
 
@@ -34,6 +33,13 @@ void FrameScheduler::RequestFrame(zx_time_t presentation_time) {
   }
 }
 
+void FrameScheduler::SetRenderContinuously(bool render_continuously) {
+  render_continuously_ = render_continuously;
+  if (render_continuously_) {
+    RequestFrame(0);
+  }
+}
+
 zx_time_t FrameScheduler::PredictRequiredFrameRenderTime() const {
   // TODO(MZ-400): more sophisticated prediction.  This might require more info,
   // e.g. about how many compositors will be rendering scenes, at what
@@ -43,15 +49,19 @@ zx_time_t FrameScheduler::PredictRequiredFrameRenderTime() const {
 }
 
 std::pair<zx_time_t, zx_time_t>
-FrameScheduler::ComputePresentationAndWakeupTimes() const {
+FrameScheduler::ComputeNextPresentationAndWakeupTimes() const {
   FXL_DCHECK(!requested_presentation_times_.empty());
+  return ComputeTargetPresentationAndWakeupTimes(
+      requested_presentation_times_.top());
+}
 
+std::pair<zx_time_t, zx_time_t>
+FrameScheduler::ComputeTargetPresentationAndWakeupTimes(
+    const zx_time_t requested_presentation_time) const {
   const zx_time_t last_vsync_time = display_->GetLastVsyncTime();
   const zx_time_t vsync_interval = display_->GetVsyncInterval();
   const zx_time_t now = zx_clock_get(ZX_CLOCK_MONOTONIC);
   const zx_time_t required_render_time = PredictRequiredFrameRenderTime();
-  const zx_time_t requested_presentation_time =
-      requested_presentation_times_.top();
 
   // Compute the number of full vsync intervals between the last vsync and the
   // requested presentation time.  Notes:
@@ -126,17 +136,17 @@ FrameScheduler::ComputePresentationAndWakeupTimes() const {
 void FrameScheduler::ScheduleFrame() {
   FXL_DCHECK(!requested_presentation_times_.empty());
 
-  auto times = ComputePresentationAndWakeupTimes();
+  auto times = ComputeNextPresentationAndWakeupTimes();
   zx_time_t presentation_time = times.first;
   zx_time_t wakeup_time = times.second;
 
-  task_runner_->PostTaskForTime(
+  async::PostTaskForTime(
+      dispatcher_,
       [weak = weak_factory_.GetWeakPtr(), presentation_time, wakeup_time] {
         if (weak)
           weak->MaybeRenderFrame(presentation_time, wakeup_time);
       },
-      fxl::TimePoint::FromEpochDelta(
-          fxl::TimeDelta::FromNanoseconds(wakeup_time)));
+      zx::time(0) + zx::nsec(wakeup_time));
 }
 
 void FrameScheduler::MaybeRenderFrame(zx_time_t presentation_time,
@@ -193,7 +203,7 @@ void FrameScheduler::MaybeRenderFrame(zx_time_t presentation_time,
   }
 }
 
-void FrameScheduler::ReceiveFrameTimings(FrameTimings* timings) {
+void FrameScheduler::OnFramePresented(FrameTimings* timings) {
   FXL_DCHECK(!outstanding_frames_.empty());
   // TODO(MZ-400): how should we handle this case?  It is theoretically
   // possible, but if if it happens then it means that the EventTimestamper is
@@ -203,15 +213,28 @@ void FrameScheduler::ReceiveFrameTimings(FrameTimings* timings) {
   // TODO(MZ-400): This needs to be generalized for multi-display support.
   display_->set_last_vsync_time(timings->actual_presentation_time());
 
+  if (render_continuously_) {
+    RequestFrame(0);
+  }
+
   // Log trace data.
   // TODO(MZ-400): just pass the whole Frame to a listener.
-  int64_t error_usecs =
+  int64_t target_vs_actual_usecs =
       static_cast<int64_t>(timings->actual_presentation_time() -
                            timings->target_presentation_time()) /
       1000;
+
+  zx_time_t now = zx_clock_get(ZX_CLOCK_MONOTONIC);
+  FXL_DCHECK(now >= timings->actual_presentation_time());
+  uint64_t elapsed_since_presentation_usecs =
+      static_cast<int64_t>(now - timings->actual_presentation_time()) / 1000;
+
   TRACE_INSTANT("gfx", "FramePresented", TRACE_SCOPE_PROCESS, "frame_number",
-                timings->frame_number(), "time",
-                timings->actual_presentation_time(), "error", error_usecs);
+                timings->frame_number(), "presentation time (usecs)",
+                timings->actual_presentation_time() / 1000,
+                "target time missed by (usecs)", target_vs_actual_usecs,
+                "elapsed time since presentation (usecs)",
+                elapsed_since_presentation_usecs);
 
   // Pop the front Frame off the queue.
   for (size_t i = 1; i < outstanding_frames_.size(); ++i) {

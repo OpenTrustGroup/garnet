@@ -4,7 +4,7 @@
 
 import("//build/package.gni")
 
-shared_library("machina") {
+source_set("machina") {
   sources = [
     "bits.h",
     "block_dispatcher.cc",
@@ -19,12 +19,12 @@ shared_library("machina") {
     "gpu_scanout.h",
     "guest.cc",
     "guest.h",
+    "guest_controller_impl.cc",
+    "guest_controller_impl.h",
     "hid_event_source.cc",
     "hid_event_source.h",
     "input_dispatcher.cc",
     "input_dispatcher.h",
-    "inspect_service_impl.cc",
-    "inspect_service_impl.h",
     "io.cc",
     "io.h",
     "pci.cc",
@@ -96,14 +96,15 @@ shared_library("machina") {
   }
 
   public_deps = [
-    "//garnet/lib/machina/fidl",
     "//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/guest/fidl",
     "//zircon/public/lib/bitmap",
     "//zircon/public/lib/ddk",
+    "//zircon/public/lib/fit",
     "//zircon/public/lib/hid",
-    "//zircon/public/lib/virtio",
     "//zircon/public/lib/trace",
     "//zircon/public/lib/trace-engine",
+    "//zircon/public/lib/virtio",
     "//zircon/public/lib/zx",
   ]
 
@@ -114,15 +115,14 @@ shared_library("machina") {
     "//garnet/public/lib/fxl",
     "//zircon/public/lib/async-cpp",
     "//zircon/public/lib/async-loop-cpp",
+    "//zircon/public/lib/async-testutils",
     "//zircon/public/lib/block-client",
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/fdio",
+    "//zircon/public/lib/framebuffer",
     "//zircon/public/lib/sync",
     "//zircon/public/lib/zxcpp",
   ]
-
-  # TODO(ZX-1411): Add visibility annotations to code and remove this.
-  configs -= [ "//build/config:symbol_visibility_hidden" ]
 }
 
 executable("machina_unittests") {
@@ -133,7 +133,6 @@ executable("machina_unittests") {
     "input_dispatcher-unittest.cc",
     "pci-unittest.cc",
     "qcow-unittest.cc",
-    "run_all_unittests.cc",
     "virtio_block-unittest.cc",
     "virtio_device_fake.h",
     "virtio_gpu-unittest.cc",
@@ -156,9 +155,10 @@ executable("machina_unittests") {
   deps = [
     ":machina",
     "//garnet/public/lib/fsl",
-    "//third_party/googletest:gtest",
+    "//third_party/googletest:gtest_main",
     "//zircon/public/lib/ddk",
     "//zircon/public/lib/fbl",
+    "//zircon/public/lib/fit",
   ]
 }
 

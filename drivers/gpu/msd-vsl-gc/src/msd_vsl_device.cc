@@ -57,6 +57,56 @@ bool MsdVslDevice::Init(void* device_handle)
         return DRETF(false, "Gpu has no 3d pipe: features 0x%x\n",
                      gpu_features_->features().reg_value());
 
+    bus_mapper_ = magma::PlatformBusMapper::Create(platform_device_->GetBusTransactionInitiator());
+    if (!bus_mapper_)
+        return DRETF(false, "failed to create bus mapper");
+
+    HardwareInit();
+
+    return true;
+}
+
+void MsdVslDevice::HardwareInit()
+{
+    auto reg = registers::SecureAhbControl::Get().ReadFrom(register_io_.get());
+    reg.non_secure_access().set(1);
+    reg.WriteTo(register_io_.get());
+}
+
+bool MsdVslDevice::IsIdle()
+{
+    return registers::IdleState::Get().ReadFrom(register_io_.get()).IsIdle();
+}
+
+bool MsdVslDevice::SubmitCommandBufferNoMmu(uint64_t bus_addr, uint32_t length,
+                                            uint16_t* prefetch_out)
+{
+    if (bus_addr & 0xFFFFFFFF00000000ul)
+        return DRETF(false, "Can't submit address > 32 bits without mmu: 0x%08lx", bus_addr);
+
+    uint32_t prefetch = magma::round_up(length, sizeof(uint64_t)) / sizeof(uint64_t);
+    if (prefetch & 0xFFFF0000)
+        return DRETF(false, "Can't submit length %u (prefetch 0x%x)", length, prefetch);
+
+    *prefetch_out = prefetch & 0xFFFF;
+
+    DLOG("Submitting buffer at bus addr 0x%lx", bus_addr);
+
+    auto reg_cmd_addr = registers::FetchEngineCommandAddress::Get().FromValue(0);
+    reg_cmd_addr.addr().set(bus_addr & 0xFFFFFFFF);
+
+    auto reg_cmd_ctrl = registers::FetchEngineCommandControl::Get().FromValue(0);
+    reg_cmd_ctrl.enable().set(1);
+    reg_cmd_ctrl.prefetch().set(*prefetch_out);
+
+    auto reg_sec_cmd_ctrl = registers::SecureCommandControl::Get().FromValue(0);
+    reg_sec_cmd_ctrl.enable().set(1);
+    reg_sec_cmd_ctrl.prefetch().set(*prefetch_out);
+
+    reg_cmd_addr.WriteTo(register_io_.get());
+    reg_cmd_ctrl.WriteTo(register_io_.get());
+    reg_sec_cmd_ctrl.WriteTo(register_io_.get());
+
     return true;
 }
 
@@ -75,8 +125,3 @@ magma_status_t msd_device_query(msd_device_t* device, uint64_t id, uint64_t* val
 }
 
 void msd_device_dump_status(msd_device_t* device) {}
-
-magma_status_t msd_device_display_get_size(msd_device_t* dev, magma_display_size* size_out)
-{
-    return MAGMA_STATUS_UNIMPLEMENTED;
-}

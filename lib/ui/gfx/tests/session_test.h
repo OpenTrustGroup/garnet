@@ -8,15 +8,13 @@
 #include "garnet/lib/ui/gfx/engine/engine.h"
 #include "garnet/lib/ui/gfx/engine/session.h"
 #include "garnet/lib/ui/gfx/tests/mocks.h"
-#include "gtest/gtest.h"
-#include "lib/fsl/threading/thread.h"
-#include "lib/fxl/synchronization/waitable_event.h"
+#include "lib/gtest/test_with_loop.h"
 
 namespace scenic {
 namespace gfx {
 namespace test {
 
-class SessionTest : public ::testing::Test,
+class SessionTest : public ::gtest::TestWithLoop,
                     public ErrorReporter,
                     public EventReporter {
  public:
@@ -35,10 +33,10 @@ class SessionTest : public ::testing::Test,
                    std::string error_string) override;
 
   // |EventReporter|
-  void EnqueueEvent(ui::Event event) override;
+  void EnqueueEvent(fuchsia::ui::scenic::Event event) override;
 
   // Apply the specified Command, and verify that it succeeds.
-  bool Apply(::gfx::Command command) {
+  bool Apply(::fuchsia::ui::gfx::Command command) {
     return session_->ApplyCommand(std::move(command));
   }
 
@@ -61,26 +59,7 @@ class SessionTest : public ::testing::Test,
   std::unique_ptr<Engine> engine_;
   fxl::RefPtr<SessionForTest> session_;
   std::vector<std::string> reported_errors_;
-  std::vector<ui::Event> events_;
-};
-
-class SessionThreadedTest : public SessionTest {
- public:
-  // ::testing::Test virtual method.
-  void SetUp() override;
-
-  // ::testing::Test virtual method.
-  void TearDown() override;
-
- protected:
-  fxl::RefPtr<fxl::TaskRunner> TaskRunner() const;
-
-  void PostTaskSync(fxl::Closure callback);
-
-  void PostTask(fxl::AutoResetWaitableEvent& latch, fxl::Closure callback);
-
- private:
-  fsl::Thread thread_;
+  std::vector<fuchsia::ui::scenic::Event> events_;
 };
 
 }  // namespace test

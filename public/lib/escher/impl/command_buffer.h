@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_ESCHER_IMPL_COMMAND_BUFFER_H_
+#define LIB_ESCHER_IMPL_COMMAND_BUFFER_H_
 
 #include <functional>
 #include <vector>
 
 #include "lib/escher/forward_declarations.h"
 #include "lib/escher/renderer/semaphore.h"
+#include "lib/escher/scene/camera.h"
 #include "lib/escher/vk/vulkan_context.h"
 
 #include "lib/fxl/macros.h"
@@ -32,8 +34,6 @@ class CommandBuffer {
   ~CommandBuffer();
 
   vk::CommandBuffer vk() const { return command_buffer_; }
-  // TODO(ES-44): Deprecated.  Use vk() instead.
-  vk::CommandBuffer get() const { return command_buffer_; }
 
   // Return true if successful.  The callback will be invoked after all commands
   // have finished executing on the GPU (there is no guarantee about how long
@@ -71,43 +71,41 @@ class CommandBuffer {
 
   // Copy pixels from one image to another.  No image barriers or other
   // synchronization is used.  Retain both images in used_resources.
-  void CopyImage(const ImagePtr& src_image,
-                 const ImagePtr& dst_image,
-                 vk::ImageLayout src_layout,
-                 vk::ImageLayout dst_layout,
+  void CopyImage(const ImagePtr& src_image, const ImagePtr& dst_image,
+                 vk::ImageLayout src_layout, vk::ImageLayout dst_layout,
                  vk::ImageCopy* region);
 
   // Copy memory from one buffer to another.
-  void CopyBuffer(const BufferPtr& src,
-                  const BufferPtr& dst,
+  void CopyBuffer(const BufferPtr& src, const BufferPtr& dst,
                   vk::BufferCopy region);
 
   // Copy the specified region of |src| into |dst| after inserting a
   // memory-barrier to use the memory on the same queue (i.e. the barrier's
   // queue family indices are VK_QUEUE_FAMILY_IGNORED).
-  void CopyBufferAfterBarrier(const BufferPtr& src,
-                              const BufferPtr& dst,
+  void CopyBufferAfterBarrier(const BufferPtr& src, const BufferPtr& dst,
                               vk::BufferCopy region,
-                              vk::AccessFlags src_access_mask);
+                              vk::AccessFlags src_access_mask,
+                              vk::PipelineStageFlags src_stage_mask);
 
   // Transition the image between the two layouts; see section 11.4 of the
   // Vulkan spec.  Retain image in used_resources.
-  void TransitionImageLayout(const ImagePtr& image,
-                             vk::ImageLayout old_layout,
+  void TransitionImageLayout(const ImagePtr& image, vk::ImageLayout old_layout,
                              vk::ImageLayout new_layout);
 
   // Convenient way to begin a render-pass that renders to the whole framebuffer
   // (i.e. width/height of viewport and scissors are obtained from framebuffer).
   void BeginRenderPass(const RenderPassPtr& render_pass,
                        const FramebufferPtr& framebuffer,
-                       const std::vector<vk::ClearValue>& clear_values);
+                       const std::vector<vk::ClearValue>& clear_values,
+                       const vk::Rect2D viewport);
   void BeginRenderPass(vk::RenderPass render_pass,
                        const FramebufferPtr& framebuffer,
-                       const std::vector<vk::ClearValue>& clear_values);
+                       const std::vector<vk::ClearValue>& clear_values,
+                       const vk::Rect2D viewport);
   void BeginRenderPass(vk::RenderPass render_pass,
                        const FramebufferPtr& framebuffer,
                        const vk::ClearValue* clear_values,
-                       size_t clear_value_count);
+                       size_t clear_value_count, const vk::Rect2D viewport);
 
   // Simple wrapper around endRenderPass().
   void EndRenderPass();
@@ -128,10 +126,8 @@ class CommandBuffer {
   // Called by CommandBufferPool, which is responsible for eventually destroying
   // the Vulkan command buffer and fence.  Submit() and Retire() use the fence
   // to determine when the command buffer has finished executing on the GPU.
-  CommandBuffer(vk::Device device,
-                vk::CommandBuffer command_buffer,
-                vk::Fence fence,
-                vk::PipelineStageFlags pipeline_stage_mask);
+  CommandBuffer(vk::Device device, vk::CommandBuffer command_buffer,
+                vk::Fence fence, vk::PipelineStageFlags pipeline_stage_mask);
   vk::Fence fence() const { return fence_; }
 
   // Called by CommandBufferPool when this buffer is obtained from it.
@@ -167,3 +163,5 @@ class CommandBuffer {
 
 }  // namespace impl
 }  // namespace escher
+
+#endif  // LIB_ESCHER_IMPL_COMMAND_BUFFER_H_

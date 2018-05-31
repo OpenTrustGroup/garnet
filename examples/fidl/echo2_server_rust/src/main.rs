@@ -12,6 +12,7 @@ extern crate fidl_echo2;
 
 use component::server::ServicesServer;
 use failure::{Error, ResultExt};
+use futures::future;
 use futures::prelude::*;
 use fidl::endpoints2::ServiceMarker;
 use fidl_echo2::{Echo, EchoMarker, EchoImpl};
@@ -19,9 +20,10 @@ use fidl_echo2::{Echo, EchoMarker, EchoImpl};
 fn spawn_echo_server(chan: async::Channel) {
     async::spawn(EchoImpl {
         state: (),
-        echo_string: |_, mut s, res| {
+        on_open: |_,_| future::ok(()),
+        echo_string: |_, s, res| {
             println!("Received echo request for string {:?}", s);
-            res.send(&mut s)
+            res.send(s.as_ref().map(|s| &**s))
                .into_future()
                .map(|_| println!("echo response sent successfully"))
                .recover(|e| eprintln!("error sending response: {:?}", e))
@@ -31,13 +33,7 @@ fn spawn_echo_server(chan: async::Channel) {
     .recover(|e| eprintln!("error running echo server: {:?}", e)))
 }
 
-fn main() {
-    if let Err(e) = main_res() {
-        println!("Error: {:?}", e);
-    }
-}
-
-fn main_res() -> Result<(), Error> {
+fn main() -> Result<(), Error> {
     let mut executor = async::Executor::new().context("Error creating executor")?;
 
     let fut = ServicesServer::new()

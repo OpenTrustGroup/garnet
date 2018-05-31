@@ -19,8 +19,9 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
 
-#include <fuchsia/cpp/gfx.h>
+#include <fuchsia/ui/gfx/cpp/fidl.h>
 #include <lib/async/cpp/task.h>
+#include <lib/async-loop/cpp/loop.h>
 
 #include "lib/app/cpp/connect.h"
 #include "lib/escher/util/image_utils.h"
@@ -43,18 +44,19 @@ static constexpr float kEdgeLength = 900;
 
 static constexpr uint64_t kBillion = 1000000000;
 
-App::App()
+App::App(async::Loop* loop)
     : application_context_(
           component::ApplicationContext::CreateFromStartupInfo()),
-      loop_(fsl::MessageLoop::GetCurrent()) {
+      loop_(loop) {
   // Connect to the Mozart service.
-  scenic_ = application_context_->ConnectToEnvironmentService<ui::Scenic>();
+  scenic_ =
+      application_context_->ConnectToEnvironmentService<fuchsia::ui::scenic::Scenic>();
   scenic_.set_error_handler([this] {
     FXL_LOG(INFO) << "Lost connection to Mozart service.";
-    loop_->QuitNow();
+    loop_->Quit();
   });
   scenic_->GetDisplayInfo(
-      [this](gfx::DisplayInfo display_info) { Init(std::move(display_info)); });
+      [this](fuchsia::ui::gfx::DisplayInfo display_info) { Init(std::move(display_info)); });
 }
 
 void App::CreateExampleScene(float display_width, float display_height) {
@@ -143,26 +145,25 @@ void App::CreateExampleScene(float display_width, float display_height) {
   uint64_t time_interval = 1024 * 1024 * 60 / 3.0;  // 16.67 ms
   uint32_t num_entries = 1;
 
-  Memory mem(session, std::move(vmo), images::MemoryType::VK_DEVICE_MEMORY);
+  Memory mem(session, std::move(vmo), fuchsia::images::MemoryType::VK_DEVICE_MEMORY);
   Buffer pose_buffer(mem, 0, vmo_size);
 
   camera_->SetPoseBuffer(pose_buffer, num_entries, base_time, time_interval);
 }
 
-void App::Init(gfx::DisplayInfo display_info) {
+void App::Init(fuchsia::ui::gfx::DisplayInfo display_info) {
   FXL_LOG(INFO) << "Creating new Session";
 
   // TODO: set up SessionListener.
   session_ = std::make_unique<scenic_lib::Session>(scenic_.get());
   session_->set_error_handler([this] {
     FXL_LOG(INFO) << "Session terminated.";
-    loop_->QuitNow();
+    loop_->Quit();
   });
 
   // Wait kSessionDuration seconds, and close the session.
   constexpr zx::duration kSessionDuration = zx::sec(40);
-  async::PostDelayedTask(loop_->async(),
-                         [this] { ReleaseSessionResources(); },
+  async::PostDelayedTask(loop_->async(), [this] { ReleaseSessionResources(); },
                          kSessionDuration);
 
   // Set up initial scene.
@@ -191,7 +192,7 @@ void App::Update(uint64_t next_presentation_time) {
 
   // Present
   session_->Present(
-      next_presentation_time, [this](images::PresentationInfo info) {
+      next_presentation_time, [this](fuchsia::images::PresentationInfo info) {
         Update(info.presentation_time + info.presentation_interval);
       });
 }

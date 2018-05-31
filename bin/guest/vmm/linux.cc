@@ -4,21 +4,26 @@
 
 #include "garnet/bin/guest/vmm/linux.h"
 
+#include <endian.h>
+#include <fbl/unique_fd.h>
 #include <fcntl.h>
 #include <inttypes.h>
-#include <libfdt.h>
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-
-#include <fbl/unique_fd.h>
+#include <array>
 
 #include "garnet/bin/guest/vmm/kernel.h"
+#include "garnet/lib/machina/address.h"
 #include "garnet/lib/machina/bits.h"
 #include "garnet/lib/machina/guest.h"
 #include "lib/fxl/strings/string_printf.h"
+
+__BEGIN_CDECLS;
+#include <libfdt.h>
+__END_CDECLS;
 
 #if __aarch64__
 static constexpr uintptr_t kKernelOffset = 0x80000;
@@ -40,8 +45,32 @@ __UNUSED static constexpr size_t kSectorSize = 512;
 static constexpr uint16_t kMzSignature = 0x5a4d;  // MZ
 static constexpr uint32_t kMzMagic = 0x644d5241;  // ARM\x64
 
+struct SetupData {
+  enum Type : uint32_t {
+    Dtb = 2,
+  };
+
+  uint64_t next;
+  Type type;
+  uint32_t len;
+  uint8_t data[0];
+} __PACKED;
+
 static constexpr char kDtbPath[] = "/pkg/data/board.dtb";
 static constexpr uintptr_t kDtbOffset = kRamdiskOffset - PAGE_SIZE;
+static constexpr uintptr_t kDtbOverlayOffset = kDtbOffset - PAGE_SIZE;
+static constexpr uintptr_t kDtbBootParamsOffset =
+    kDtbOffset + sizeof(SetupData);
+
+struct MemRange {
+  uint32_t addr;
+  uint32_t size;
+};
+static constexpr std::array<MemRange, 3> kMemoryHoles = {
+    MemRange{machina::kPl031PhysBase, 0x10000},         // 4kb hole for RTC.
+    MemRange{machina::kPciMmioBarPhysBase, 0x1000000},  // 16mb hole for MMIO.
+    MemRange{machina::kPciEcamPhysBase, 0x1000000},     // 16mb hole for ECAM.
+};
 
 // clang-format off
 
@@ -57,22 +86,26 @@ enum Bp8 : uintptr_t {
   SETUP_SECTS               = 0x01f1,   // Size of real mode kernel in sectors
   LOADER_TYPE               = 0x0210,   // Type of bootloader
   LOADFLAGS                 = 0x0211,   // Boot protocol flags
-  RELOCATABLE               = 0x0234,   // Is the kernel relocatable?
+  RELOCATABLE               = 0x0234,   // Whether the kernel relocatable
 };
 
 enum Bp16 : uintptr_t {
   BOOTFLAG                  = 0x01fe,   // Bootflag, should match BOOT_FLAG_MAGIC
   VERSION                   = 0x0206,   // Boot protocol version
-  XLOADFLAGS                = 0x0236,   // 64-bit and EFI load flags
+  XLOADFLAGS                = 0x0236,   // Extended boot protocol flags
 };
 
 enum Bp32 : uintptr_t {
-  SYSSIZE                   = 0x01f4,   // Size of protected-mode code + payload in 16-bytes
+  SYSSIZE                   = 0x01f4,   // Size of protected-mode code in units of 16 bytes
   HEADER                    = 0x0202,   // Header, should match HEADER_MAGIC
-  RAMDISK_IMAGE             = 0x0218,   // Ramdisk image address
-  RAMDISK_SIZE              = 0x021c,   // Ramdisk image size
+  RAMDISK_IMAGE             = 0x0218,   // RAM disk image address
+  RAMDISK_SIZE              = 0x021c,   // RAM disk image size
   COMMAND_LINE              = 0x0228,   // Pointer to command line args string
   KERNEL_ALIGN              = 0x0230,   // Kernel alignment
+};
+
+enum Bp64 : uintptr_t {
+  SETUP_DATA                = 0x0250,   // Physical address to linked list of SetupData
 };
 
 enum Lf : uint8_t {
@@ -96,6 +129,10 @@ static uint16_t& bp(const machina::PhysMem& phys_mem, Bp16 off) {
 
 static uint32_t& bp(const machina::PhysMem& phys_mem, Bp32 off) {
   return *phys_mem.as<uint32_t>(kKernelOffset + off);
+}
+
+static uint64_t& bp(const machina::PhysMem& phys_mem, Bp64 off) {
+  return *phys_mem.as<uint64_t>(kKernelOffset + off);
 }
 
 static bool is_boot_params(const machina::PhysMem& phys_mem) {
@@ -126,10 +163,8 @@ static bool is_mz(const MzHeader* header) {
          header->pe_off >= sizeof(MzHeader);
 }
 
-static zx_status_t read_fd(const int fd,
-                           const machina::PhysMem& phys_mem,
-                           const uintptr_t off,
-                           size_t* file_size) {
+static zx_status_t read_fd(const int fd, const machina::PhysMem& phys_mem,
+                           const uintptr_t off, size_t* file_size) {
   struct stat stat;
   ssize_t ret = fstat(fd, &stat);
   if (ret < 0) {
@@ -142,6 +177,28 @@ static zx_status_t read_fd(const int fd,
     return ZX_ERR_IO;
   }
   *file_size = stat.st_size;
+  return ZX_OK;
+}
+
+static zx_status_t read_device_tree(const int fd,
+                                    const machina::PhysMem& phys_mem,
+                                    const uintptr_t off, const uintptr_t limit,
+                                    void** dtb, size_t* dtb_size) {
+  zx_status_t status = read_fd(fd, phys_mem, off, dtb_size);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to read device tree";
+    return status;
+  }
+  if (off + *dtb_size > limit) {
+    FXL_LOG(ERROR) << "Device tree is too large";
+    return ZX_ERR_OUT_OF_RANGE;
+  }
+  *dtb = phys_mem.as<void>(off, *dtb_size);
+  int ret = fdt_check_header(*dtb);
+  if (ret != 0) {
+    FXL_LOG(ERROR) << "Invalid device tree " << ret;
+    return ZX_ERR_IO_DATA_INTEGRITY;
+  }
   return ZX_OK;
 }
 
@@ -182,6 +239,7 @@ static zx_status_t read_boot_params(const machina::PhysMem& phys_mem,
 
 static zx_status_t write_boot_params(const machina::PhysMem& phys_mem,
                                      const std::string& cmdline,
+                                     const int dtb_overlay_fd,
                                      const size_t initrd_size) {
   // Set type of bootloader.
   bp(phys_mem, LOADER_TYPE) = kLoaderTypeUnspecified;
@@ -192,8 +250,10 @@ static zx_status_t write_boot_params(const machina::PhysMem& phys_mem,
   bp(phys_mem, VIDEO_LINES) = 0;
 
   // Set the address and size of the initial RAM disk.
-  bp(phys_mem, RAMDISK_IMAGE) = kRamdiskOffset;
-  bp(phys_mem, RAMDISK_SIZE) = static_cast<uint32_t>(initrd_size);
+  if (initrd_size > 0) {
+    bp(phys_mem, RAMDISK_IMAGE) = kRamdiskOffset;
+    bp(phys_mem, RAMDISK_SIZE) = static_cast<uint32_t>(initrd_size);
+  }
 
   // Copy the command line string.
   size_t cmdline_len = cmdline.size() + 1;
@@ -205,6 +265,23 @@ static zx_status_t write_boot_params(const machina::PhysMem& phys_mem,
   memcpy(phys_mem.as<void>(cmdline_off, cmdline_len), cmdline.c_str(),
          cmdline_len);
   bp(phys_mem, COMMAND_LINE) = cmdline_off;
+
+  // If specified, load a device tree overlay.
+  if (dtb_overlay_fd >= 0) {
+    void* dtb;
+    size_t dtb_size;
+    zx_status_t status =
+        read_device_tree(dtb_overlay_fd, phys_mem, kDtbBootParamsOffset,
+                         kRamdiskOffset, &dtb, &dtb_size);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to read device tree";
+      return status;
+    }
+    auto setup_data = phys_mem.as<SetupData>(kDtbOffset);
+    setup_data->type = SetupData::Dtb;
+    setup_data->len = dtb_size;
+    bp(phys_mem, SETUP_DATA) = kDtbOffset;
+  }
 
 #if __aarch64__
   return ZX_OK;
@@ -237,28 +314,48 @@ static void device_tree_error_msg(const char* property_name) {
                  << "tree, space must be reserved in the device tree";
 }
 
-static zx_status_t load_device_tree(const int fd,
+static zx_status_t add_memory_entry(void* dtb, int memory_off, MemRange range) {
+  // TODO(PD-125): Use 64bit values here.
+  uint32_t entry[2];
+  entry[0] = htobe32(range.addr);
+  entry[1] = htobe32(range.size);
+  int ret = fdt_appendprop(dtb, memory_off, "reg", entry, sizeof(entry));
+  if (ret < 0) {
+    device_tree_error_msg("reg");
+    return ZX_ERR_BAD_STATE;
+  }
+  return ZX_OK;
+}
+
+static zx_status_t load_device_tree(const int dtb_fd,
                                     const machina::PhysMem& phys_mem,
                                     const std::string& cmdline,
+                                    const int dtb_overlay_fd,
                                     const size_t initrd_size,
                                     uint8_t num_cpus) {
+  void* dtb;
   size_t dtb_size;
-  zx_status_t status = read_fd(fd, phys_mem, kDtbOffset, &dtb_size);
+  zx_status_t status = read_device_tree(dtb_fd, phys_mem, kDtbOffset,
+                                        kRamdiskOffset, &dtb, &dtb_size);
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to load device tree";
+    FXL_LOG(ERROR) << "Failed to read device tree";
     return status;
   }
-  if (kDtbOffset + dtb_size > kRamdiskOffset) {
-    FXL_LOG(ERROR) << "DTB is too large";
-    return ZX_ERR_OUT_OF_RANGE;
-  }
 
-  // Validate device tree.
-  void* dtb = phys_mem.as<void>(kDtbOffset, dtb_size);
-  int ret = fdt_check_header(dtb);
-  if (ret < 0) {
-    FXL_LOG(ERROR) << "Invalid device tree";
-    return ZX_ERR_IO_DATA_INTEGRITY;
+  // If specified, load a device tree overlay.
+  if (dtb_overlay_fd >= 0) {
+    void* dtb_overlay;
+    status = read_device_tree(dtb_overlay_fd, phys_mem, kDtbOverlayOffset,
+                              kDtbOffset, &dtb_overlay, &dtb_size);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to read device tree overlay";
+      return status;
+    }
+    int ret = fdt_overlay_apply(dtb, dtb_overlay);
+    if (ret != 0) {
+      FXL_LOG(ERROR) << "Failed to apply device tree overlay " << ret;
+      return ZX_ERR_BAD_STATE;
+    }
   }
 
   int off = fdt_path_offset(dtb, "/chosen");
@@ -266,24 +363,30 @@ static zx_status_t load_device_tree(const int fd,
     FXL_LOG(ERROR) << "Failed to find \"/chosen\" in device tree";
     return ZX_ERR_BAD_STATE;
   }
+
   // Add command line to device tree.
-  ret = fdt_setprop_string(dtb, off, "bootargs", cmdline.c_str());
-  if (ret < 0) {
-    return ZX_ERR_BAD_STATE;
-  }
-  // Add the memory range of the initial RAM disk.
-  ret = fdt_setprop_u64(dtb, off, "linux,initrd-start", kRamdiskOffset);
-  if (ret < 0) {
-    device_tree_error_msg("linux,initrd-start");
-    return ZX_ERR_BAD_STATE;
-  }
-  ret = fdt_setprop_u64(dtb, off, "linux,initrd-end",
-                        kRamdiskOffset + initrd_size);
-  if (ret < 0) {
-    device_tree_error_msg("linux,initrd-end");
+  int ret = fdt_setprop_string(dtb, off, "bootargs", cmdline.c_str());
+  if (ret != 0) {
+    device_tree_error_msg("bootargs");
     return ZX_ERR_BAD_STATE;
   }
 
+  if (initrd_size > 0) {
+    // Add the memory range of the initial RAM disk.
+    ret = fdt_setprop_u64(dtb, off, "linux,initrd-start", kRamdiskOffset);
+    if (ret != 0) {
+      device_tree_error_msg("linux,initrd-start");
+      return ZX_ERR_BAD_STATE;
+    }
+    ret = fdt_setprop_u64(dtb, off, "linux,initrd-end",
+                          kRamdiskOffset + initrd_size);
+    if (ret != 0) {
+      device_tree_error_msg("linux,initrd-end");
+      return ZX_ERR_BAD_STATE;
+    }
+  }
+
+  // Add CPUs to device tree.
   int cpus_off = fdt_path_offset(dtb, "/cpus");
   if (cpus_off < 0) {
     FXL_LOG(ERROR) << "Failed to find \"/cpus\" in device tree";
@@ -298,25 +401,65 @@ static zx_status_t load_device_tree(const int fd,
       return ZX_ERR_BAD_STATE;
     }
     ret = fdt_setprop_string(dtb, cpu_off, "device_type", "cpu");
-    if (ret < 0) {
+    if (ret != 0) {
       device_tree_error_msg("device_type");
       return ZX_ERR_BAD_STATE;
     }
     ret = fdt_setprop_string(dtb, cpu_off, "compatible", "arm,armv8");
-    if (ret < 0) {
+    if (ret != 0) {
       device_tree_error_msg("compatible");
       return ZX_ERR_BAD_STATE;
     }
     ret = fdt_setprop_u32(dtb, cpu_off, "reg", cpu);
-    if (ret < 0) {
+    if (ret != 0) {
       device_tree_error_msg("reg");
       return ZX_ERR_BAD_STATE;
     }
     ret = fdt_setprop_string(dtb, cpu_off, "enable-method", "psci");
-    if (ret < 0) {
+    if (ret != 0) {
       device_tree_error_msg("enable-method");
       return ZX_ERR_BAD_STATE;
     }
+  }
+
+  int memory_off = fdt_path_offset(dtb, "/memory@0");
+  if (memory_off < 0) {
+    FXL_LOG(ERROR) << "Failed to find \"/memory\" in device tree";
+    return ZX_ERR_BAD_STATE;
+  }
+  // NOTE: The following assumes that kMemoryHoles is non-overlapping.
+  std::vector<MemRange> memory_map = {
+      {0, static_cast<uint32_t>(phys_mem.size())},
+  };
+  for (auto hole : kMemoryHoles) {
+    auto entry =
+        std::find_if(memory_map.begin(), memory_map.end(), [hole](auto range) {
+          return range.addr < hole.addr + hole.size &&
+                 range.addr + range.size > hole.addr;
+        });
+    if (entry == memory_map.end()) {
+      continue;
+    }
+    uint32_t entry_end = entry->addr + entry->size;
+    uint32_t hole_end = hole.addr + hole.size;
+    if (hole.addr == entry->addr) {
+      // The current entry is now degenerate (has size of 0), so we construct
+      // our new entry by modifying the current entry.
+      entry->addr = hole_end;
+      entry->size = entry_end - hole_end;
+      continue;
+    }
+    entry->size = hole.addr - entry->addr;
+    if (hole_end < entry_end) {
+      // Insert the new entry directly after the current entry to preserve the
+      // order of the memory map. This way it will be written to the device
+      // tree in the correct order.
+      memory_map.emplace(
+          entry + 1, MemRange{.addr = hole_end, .size = entry_end - hole_end});
+    }
+  }
+  for (auto entry : memory_map) {
+    add_memory_entry(dtb, memory_off, entry);
   }
 
   return ZX_OK;
@@ -331,10 +474,8 @@ static std::string linux_cmdline(std::string cmdline) {
 #endif
 }
 
-zx_status_t setup_linux(const GuestConfig cfg,
-                        const machina::PhysMem& phys_mem,
-                        uintptr_t* guest_ip,
-                        uintptr_t* boot_ptr) {
+zx_status_t setup_linux(const GuestConfig cfg, const machina::PhysMem& phys_mem,
+                        uintptr_t* guest_ip, uintptr_t* boot_ptr) {
   // Read the kernel image.
   zx_status_t status = load_kernel(cfg.kernel_path(), phys_mem, kKernelOffset);
   if (status != ZX_OK) {
@@ -358,13 +499,24 @@ zx_status_t setup_linux(const GuestConfig cfg,
     }
   }
 
+  fbl::unique_fd dtb_overlay_fd;
+  if (!cfg.dtb_overlay_path().empty()) {
+    dtb_overlay_fd.reset(open(cfg.dtb_overlay_path().c_str(), O_RDONLY));
+    if (!dtb_overlay_fd) {
+      FXL_LOG(ERROR) << "Failed to open device tree overlay "
+                     << cfg.dtb_overlay_path();
+      return ZX_ERR_IO;
+    }
+  }
+
   const std::string cmdline = linux_cmdline(cfg.cmdline());
   if (is_boot_params(phys_mem)) {
     status = read_boot_params(phys_mem, guest_ip);
     if (status != ZX_OK) {
       return status;
     }
-    status = write_boot_params(phys_mem, cmdline, initrd_size);
+    status =
+        write_boot_params(phys_mem, cmdline, dtb_overlay_fd.get(), initrd_size);
     if (status != ZX_OK) {
       return status;
     }
@@ -379,8 +531,9 @@ zx_status_t setup_linux(const GuestConfig cfg,
       FXL_LOG(ERROR) << "Failed to open device tree " << kDtbPath;
       return ZX_ERR_IO;
     }
-    status = load_device_tree(dtb_fd.get(), phys_mem, cmdline, initrd_size,
-                              cfg.num_cpus());
+    status =
+        load_device_tree(dtb_fd.get(), phys_mem, cmdline, dtb_overlay_fd.get(),
+                         initrd_size, cfg.num_cpus());
     if (status != ZX_OK) {
       return status;
     }

@@ -11,7 +11,7 @@
 #include <wlan/protocol/mac.h>
 #include <zircon/types.h>
 
-#include <fuchsia/c/wlan_stats.h>
+#include <wlan_stats/c/fidl.h>
 
 namespace wlan {
 
@@ -23,7 +23,7 @@ class Dispatcher {
     explicit Dispatcher(DeviceInterface* device, fbl::unique_ptr<Mlme> mlme);
     ~Dispatcher();
 
-    zx_status_t HandlePacket(const Packet* packet);
+    zx_status_t HandlePacket(fbl::unique_ptr<Packet>);
     zx_status_t HandlePortPacket(uint64_t key);
 
     // Called before a channel change happens.
@@ -37,15 +37,15 @@ class Dispatcher {
 
    private:
     // MAC frame handlers
-    zx_status_t HandleCtrlPacket(const Packet* packet);
-    zx_status_t HandleDataPacket(const Packet* packet);
-    zx_status_t HandleMgmtPacket(const Packet* packet);
-    zx_status_t HandleEthPacket(const Packet* packet);
-    zx_status_t HandleSvcPacket(const Packet* packet);
+    zx_status_t HandleCtrlPacket(fbl::unique_ptr<Packet> packet);
+    zx_status_t HandleDataPacket(fbl::unique_ptr<Packet> packet);
+    zx_status_t HandleMgmtPacket(fbl::unique_ptr<Packet> packet);
+    zx_status_t HandleEthPacket(fbl::unique_ptr<Packet> packet);
+    zx_status_t HandleSvcPacket(fbl::unique_ptr<Packet> packet);
     template <typename Message>
-    zx_status_t HandleMlmeMethod(const Packet* packet, wlan_mlme::Method method);
-    zx_status_t HandleActionPacket(const Packet* packet, const MgmtFrameHeader* hdr,
-                                   const ActionFrame* action, const wlan_rx_info_t* rxinfo);
+    zx_status_t HandleMlmeMethod(fbl::unique_ptr<Packet> packet, uint32_t ordinal);
+    zx_status_t HandleActionPacket(ImmutableMgmtFrame<ActionFrame> action,
+                                   const wlan_rx_info_t* rxinfo);
 
     DeviceInterface* device_;
     // The MLME that will handle requests for this dispatcher. This field will be set upon querying

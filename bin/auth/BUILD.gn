@@ -13,8 +13,8 @@ package("token_manager") {
 
   meta = [
     {
-      path = rebase_path("meta/sandbox")
-      dest = "sandbox"
+      path = rebase_path("meta/token_manager.cmx")
+      dest = "token_manager.cmx"
     },
   ]
 }
@@ -31,6 +31,19 @@ package("oauth_examples") {
     {
       name = "google_oauth_demo"
     },
+  ]
+}
+
+package("rust_tests") {
+  testonly = true
+  deprecated_system_image = true
+
+  deps = [
+    "rust/cache:cache"
+  ]
+
+  tests = [
+    { name = "auth_cache_lib_test_rustc" },
   ]
 }
 

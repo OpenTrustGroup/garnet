@@ -2,7 +2,15 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/rust/rust_library.gni")
+import("//build/rust/rustc_library.gni")
 
-rust_library("wlan-sme") {
+rustc_library("wlan-sme") {
+  name = "wlan_sme"
+  version = "0.1.0"
+
+  deps = [
+    "//garnet/public/lib/wlan/fidl:mlme-rustc",
+    "//garnet/public/rust/crates/fuchsia-zircon",
+    "//third_party/rust-crates/rustc_deps:futures",
+  ]
 }

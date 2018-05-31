@@ -17,10 +17,9 @@ constexpr float kCircleRadius = 40.f;
 }  // namespace
 
 ShapesView::ShapesView(
-    views_v1::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request)
-    : BaseView(std::move(view_manager),
-               std::move(view_owner_request),
+    ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request)
+    : BaseView(std::move(view_manager), std::move(view_owner_request),
                "Shapes"),
       background_node_(session()),
       card_node_(session()),
@@ -43,7 +42,8 @@ ShapesView::ShapesView(
 
 ShapesView::~ShapesView() {}
 
-void ShapesView::OnSceneInvalidated(images::PresentationInfo presentation_info) {
+void ShapesView::OnSceneInvalidated(
+    fuchsia::images::PresentationInfo presentation_info) {
   if (!has_logical_size())
     return;
 

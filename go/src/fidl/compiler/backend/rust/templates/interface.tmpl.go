@@ -8,6 +8,8 @@ const Interface = `
 {{- define "GenerateImplGenerics" -}}
 {{- $interface := . -}}
 State,
+OnOpen: FnMut(&mut State, {{ $interface.Name }}ControlHandle) -> OnOpenFut,
+OnOpenFut: Future<Item = (), Error = Never> + Send,
 {{- range $method := $interface.Methods }}
 	{{- if $method.HasRequest }}
 	{{ $method.CamelName }}: FnMut(&mut State,
@@ -47,7 +49,7 @@ pub trait {{ $interface.Name }}ProxyInterface: Send + Sync {
 	{{- if $method.HasRequest }}
 	fn {{ $method.Name }}(&self,
 		{{- range $request := $method.Request }}
-		{{ $request.Name }}: &mut {{ $request.Type }},
+		{{ $request.Name }}: {{ $request.BorrowedType }},
 		{{- end }}
 	)
 	{{- if $method.HasResponse -}}
@@ -85,7 +87,7 @@ impl {{ $interface.Name }}Proxy {
 	{{- if $method.HasRequest }}
 	pub fn {{ $method.Name }}(&self,
 		{{- range $request := $method.Request }}
-		mut {{ $request.Name }}: &mut {{ $request.Type }},
+		mut {{ $request.Name }}: {{ $request.BorrowedType }},
 		{{- end }}
 	)
 	{{- if $method.HasResponse -}}
@@ -122,7 +124,7 @@ impl {{ $interface.Name}}ProxyInterface for {{ $interface.Name}}Proxy {
 	{{- if $method.HasRequest }}
 	fn {{ $method.Name }}(&self,
 		{{- range $request := $method.Request }}
-		mut {{ $request.Name }}: &mut {{ $request.Type }},
+		mut {{ $request.Name }}: {{ $request.BorrowedType }},
 		{{- end }}
 	)
 	{{- if $method.HasResponse -}}
@@ -133,8 +135,8 @@ impl {{ $interface.Name}}ProxyInterface for {{ $interface.Name}}Proxy {
 		self.client.send(&mut (
 	{{- end -}}
 		{{- range $index, $request := $method.Request -}}
-		{{- if (eq $index 0) -}} &mut *{{ $request.Name }}
-		{{- else -}}, &mut *{{ $request.Name }} {{- end -}}
+		{{- if (eq $index 0) -}} {{ $request.Name }}
+		{{- else -}}, {{ $request.Name }} {{- end -}}
 		{{- end -}}
 	), {{ $method.Ordinal }})
 	}
@@ -207,6 +209,9 @@ pub enum {{ $interface.Name }}Event {
 }
 
 pub trait {{ $interface.Name }} {
+	type OnOpenFut: Future<Item = (), Error = Never> + Send;
+	fn on_open(&mut self, control_handle: {{ $interface.Name }}ControlHandle) -> Self::OnOpenFut;
+
 	{{- range $method := $interface.Methods }}
 	{{- if $method.HasRequest }}
 	type {{ $method.CamelName }}Fut: Future<Item = (), Error = Never> + Send;
@@ -217,20 +222,27 @@ pub trait {{ $interface.Name }} {
 		{{- if $method.HasResponse }}
 		response_chan: {{ $interface.Name }}{{ $method.CamelName }}Responder,
 		{{- else }}
-		controller: {{ $interface.Name }}ControlHandle
+		control_handle: {{ $interface.Name }}ControlHandle
 		{{- end }}
 	) -> Self::{{ $method.CamelName }}Fut;
 	{{ end -}}
 	{{- end }}
 
-	fn serve(self, channel: async::Channel)
+	fn serve(mut self, channel: async::Channel)
 		-> {{ $interface.Name }}Server<Self>
 	where Self: Sized
 	{
+		let inner = ::std::sync::Arc::new(fidl::ServeInner::new(channel));
+		let on_open_fut = self.on_open(
+			{{ $interface.Name }}ControlHandle {
+				inner: inner.clone(),
+			}
+		);
 		{{ $interface.Name }}Server {
 			server: self,
-			channel: ::std::sync::Arc::new(channel),
+			inner: inner.clone(),
 			msg_buf: zx::MessageBuf::new(),
+			on_open_fut: Some(on_open_fut),
 			{{- range $method := $interface.Methods }}
 			{{- if $method.HasRequest -}}
 			{{ $method.Name }}_futures: futures::stream::FuturesUnordered::new(),
@@ -242,13 +254,22 @@ pub trait {{ $interface.Name }} {
 
 pub struct {{ $interface.Name }}Server<T: {{ $interface.Name }}> {
 	server: T,
-	channel: ::std::sync::Arc<async::Channel>,
+	inner: ::std::sync::Arc<fidl::ServeInner>,
 	msg_buf: zx::MessageBuf,
+	on_open_fut: Option<T::OnOpenFut>,
 	{{- range $method := $interface.Methods }}
 	{{- if $method.HasRequest -}}
 	{{ $method.Name }}_futures: futures::stream::FuturesUnordered<T::{{ $method.CamelName }}Fut>,
 	{{- end -}}
 	{{- end }}
+}
+
+impl<T: {{ $interface.Name }}> {{ $interface.Name }}Server<T> {
+	pub fn control_handle(&self) -> {{ $interface.Name }}ControlHandle {
+		{{ $interface.Name }}ControlHandle {
+			inner: self.inner.clone(),
+		}
+	}
 }
 
 impl<T: {{ $interface.Name }}> futures::Future for {{ $interface.Name }}Server<T> {
@@ -257,6 +278,25 @@ impl<T: {{ $interface.Name }}> futures::Future for {{ $interface.Name }}Server<T
 
 	fn poll(&mut self, cx: &mut futures::task::Context) -> futures::Poll<Self::Item, Self::Error> { loop {
 		let mut made_progress_this_loop_iter = false;
+
+		if self.inner.poll_shutdown(cx) {
+			return Ok(futures::Async::Ready(()));
+		}
+
+		let completed_on_open = if let Some(on_open_fut) = &mut self.on_open_fut {
+			match on_open_fut.poll(cx) {
+				Ok(futures::Async::Ready(())) => true,
+				Ok(futures::Async::Pending) => false,
+				Err(never) => match never {},
+			}
+		} else {
+			false
+		};
+
+		if completed_on_open {
+			made_progress_this_loop_iter = true;
+			self.on_open_fut.take();
+		}
 
 		{{- range $method := $interface.Methods }}
 		{{- if $method.HasRequest -}}
@@ -267,7 +307,7 @@ impl<T: {{ $interface.Name }}> futures::Future for {{ $interface.Name }}Server<T
 		{{- end -}}
 		{{- end }}
 
-		match self.channel.recv_from(&mut self.msg_buf, cx) {
+		match self.inner.channel().recv_from(&mut self.msg_buf, cx) {
 			Ok(futures::Async::Ready(())) => {},
 			Ok(futures::Async::Pending) => {
 				if !made_progress_this_loop_iter {
@@ -299,8 +339,8 @@ impl<T: {{ $interface.Name }}> futures::Future for {{ $interface.Name }}Server<T
 						{{- end -}}
 					) = fidl::encoding2::Decodable::new_empty();
 					fidl::encoding2::Decoder::decode_into(body_bytes, handles, &mut req)?;
-					let controller = {{ $interface.Name }}ControlHandle {
-						channel: self.channel.clone(),
+					let control_handle = {{ $interface.Name }}ControlHandle {
+						inner: self.inner.clone(),
 					};
 					self.{{ $method.Name }}_futures.push(
 						self.server.{{ $method.Name }}(
@@ -313,11 +353,11 @@ impl<T: {{ $interface.Name }}> futures::Future for {{ $interface.Name }}Server<T
 							{{- end -}}
 							{{- if $method.HasResponse -}}
 							{{- $interface.Name -}}{{- $method.CamelName -}}Responder {
-								controller,
+								control_handle,
 								tx_id: header.tx_id,
 							}
 							{{- else -}}
-							controller
+							control_handle
 							{{- end -}}
 						)
 					);
@@ -339,6 +379,7 @@ pub struct {{ $interface.Name }}Impl<
 	{{ template "GenerateImplGenerics" $interface }}
 > {
 	pub state: State,
+	pub on_open: OnOpen,
 	{{- range $method := $interface.Methods -}}
 	{{ if $method.HasRequest }}
 	pub {{ $method.Name }}: {{ $method.CamelName }},
@@ -348,7 +389,7 @@ pub struct {{ $interface.Name }}Impl<
 
 impl<
 	{{ template "GenerateImplGenerics" $interface }}
-> {{ $interface.Name }} for {{ $interface.Name }}Impl<State,
+> {{ $interface.Name }} for {{ $interface.Name }}Impl<State, OnOpen, OnOpenFut,
 	{{- range $method := $interface.Methods -}}
 	{{ if $method.HasRequest }}
 	{{ $method.CamelName }},
@@ -357,6 +398,11 @@ impl<
 	{{- end }}
 >
 {
+	type OnOpenFut = OnOpenFut;
+	fn on_open(&mut self, response_chan: {{ $interface.Name}}ControlHandle) -> Self::OnOpenFut {
+		(self.on_open)(&mut self.state, response_chan)
+	}
+
 	{{- range $method := $interface.Methods }}
 	{{- if $method.HasRequest }}
 	type {{ $method.CamelName }}Fut = {{ $method.CamelName }}Fut;
@@ -385,16 +431,19 @@ impl<
 
 #[derive(Clone)]
 pub struct {{ $interface.Name }}ControlHandle {
-	// TODO(cramertj): add Arc<fidl::server2::ServerPool> for reusable message buffers
-	channel: ::std::sync::Arc<async::Channel>,
+	inner: ::std::sync::Arc<fidl::ServeInner>,
 }
 
 impl {{ $interface.Name }}ControlHandle {
+	pub fn shutdown(&self) {
+		self.inner.shutdown()
+	}
+
 	{{- range $method := $interface.Methods }}
 	{{- if not $method.HasRequest }}
 	pub fn send_{{ $method.Name }}(&self
 		{{- range $param := $method.Response -}},
-		{{- $param.Name -}}: &mut {{ $param.Type -}}
+		mut {{ $param.Name -}}: {{ $param.BorrowedType -}}
 		{{- end -}}
 	) -> Result<(), fidl::Error> {
 		let header = fidl::encoding2::TransactionHeader {
@@ -405,8 +454,8 @@ impl {{ $interface.Name }}ControlHandle {
 
 		let mut response = (
 			{{- range $index, $param := $method.Response -}}
-				{{- if ne 0 $index -}}, {{- $param.Name -}}
-				{{- else -}} {{- $param.Name -}}
+				{{- if ne 0 $index -}}, {{ $param.Name -}}
+				{{- else -}} {{ $param.Name -}}
 				{{- end -}}
 			{{- end -}}
 		);
@@ -418,7 +467,7 @@ impl {{ $interface.Name }}ControlHandle {
 
 		let (bytes, handles) = (&mut vec![], &mut vec![]);
 		fidl::encoding2::Encoder::encode(bytes, handles, &mut msg)?;
-		self.channel.write(&*bytes, &mut *handles).map_err(fidl::Error::ServerResponseWrite)?;
+		self.inner.channel().write(&*bytes, &mut *handles).map_err(fidl::Error::ServerResponseWrite)?;
 		Ok(())
 	}
 	{{ end -}}
@@ -429,18 +478,34 @@ impl {{ $interface.Name }}ControlHandle {
 {{- range $method := $interface.Methods }}
 {{- if and $method.HasRequest $method.HasResponse }}
 pub struct {{ $interface.Name }}{{ $method.CamelName }}Responder {
-	controller: {{ $interface.Name }}ControlHandle,
+	control_handle: {{ $interface.Name }}ControlHandle,
 	tx_id: u32,
 }
 
 impl {{ $interface.Name }}{{ $method.CamelName }}Responder {
-	pub fn controller(&self) -> &{{ $interface.Name }}ControlHandle {
-		&self.controller
+	pub fn control_handle(&self) -> &{{ $interface.Name }}ControlHandle {
+		&self.control_handle
+	}
+
+	pub fn send_or_shutdown(&self,
+		{{- range $param := $method.Response -}}
+		mut {{ $param.Name -}}: {{ $param.BorrowedType -}},
+		{{- end -}}
+	) -> Result<(), fidl::Error> {
+		let r = self.send(
+			{{- range $index, $param := $method.Response -}}
+			{{ $param.Name -}},
+			{{- end -}}
+		);
+		if r.is_err() {
+			self.control_handle().shutdown();
+		}
+		r
 	}
 
 	pub fn send(&self,
 		{{- range $param := $method.Response -}}
-		{{- $param.Name -}}: &mut {{ $param.Type -}},
+		mut {{ $param.Name -}}: {{ $param.BorrowedType -}},
 		{{- end -}}
 	) -> Result<(), fidl::Error> {
 		let header = fidl::encoding2::TransactionHeader {
@@ -451,8 +516,8 @@ impl {{ $interface.Name }}{{ $method.CamelName }}Responder {
 
 		let mut response = (
 			{{- range $index, $param := $method.Response -}}
-			{{- if ne 0 $index -}}, {{- $param.Name -}}
-			{{- else -}} {{- $param.Name -}}
+			{{- if ne 0 $index -}}, {{ $param.Name -}}
+			{{- else -}} {{ $param.Name -}}
 			{{- end -}}
 			{{- end -}}
 		);
@@ -464,7 +529,7 @@ impl {{ $interface.Name }}{{ $method.CamelName }}Responder {
 
 		let (bytes, handles) = (&mut vec![], &mut vec![]);
 		fidl::encoding2::Encoder::encode(bytes, handles, &mut msg)?;
-		self.controller.channel.write(&*bytes, &mut *handles).map_err(fidl::Error::ServerResponseWrite)?;
+		self.control_handle.inner.channel().write(&*bytes, &mut *handles).map_err(fidl::Error::ServerResponseWrite)?;
 		Ok(())
 	}
 }

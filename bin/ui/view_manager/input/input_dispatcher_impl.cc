@@ -12,8 +12,8 @@
 #include "garnet/bin/ui/view_manager/internal/input_owner.h"
 #include "garnet/bin/ui/view_manager/internal/view_inspector.h"
 #include "lib/escher/util/type_utils.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/functional/make_copyable.h"
+#include "lib/fxl/time/time_point.h"
 #include "lib/ui/geometry/cpp/geometry_util.h"
 #include "lib/ui/input/cpp/formatting.h"
 #include "lib/ui/views/cpp/formatting.h"
@@ -24,20 +24,20 @@ namespace {
 // Returns a pair of points representing a ray's origin and direction, in that
 // order. The ray is constructed to point directly into the scene at the
 // provided device coordinate.
-std::pair<geometry::Point3F, geometry::Point3F>
-DefaultRayForHitTestingScreenPoint(const geometry::PointF& point) {
-  geometry::Point3F origin;
+std::pair<fuchsia::math::Point3F, fuchsia::math::Point3F>
+DefaultRayForHitTestingScreenPoint(const fuchsia::math::PointF& point) {
+  fuchsia::math::Point3F origin;
   origin.x = point.x;
   origin.y = point.y;
   origin.z = -1.f;
-  geometry::Point3F direction;
+  fuchsia::math::Point3F direction;
   direction.z = 1.f;
   return {origin, direction};
 }
 
-// Converts a geometry::Transform into a escher::mat4 suitable for use in
+// Converts a fuchsia::math::Transform into a escher::mat4 suitable for use in
 // mathematical operations.
-escher::mat4 Unwrap(const geometry::Transform& matrix) {
+escher::mat4 Unwrap(const fuchsia::math::Transform& matrix) {
   const auto& in = matrix.matrix;
   return {in[0], in[4], in[8],  in[12], in[1], in[5], in[9],  in[13],
           in[2], in[6], in[10], in[14], in[3], in[7], in[11], in[15]};
@@ -59,11 +59,11 @@ escher::mat4 Unwrap(const geometry::Transform& matrix) {
 // the coordinate space of the ray.
 // |distance| is the distance along the ray that the original hit occured.
 // |event| is the event to transform.
-void TransformPointerEvent(const geometry::Point3F& ray_origin,
-                           const geometry::Point3F& ray_direction,
-                           const geometry::Transform& transform,
+void TransformPointerEvent(const fuchsia::math::Point3F& ray_origin,
+                           const fuchsia::math::Point3F& ray_direction,
+                           const fuchsia::math::Transform& transform,
                            float distance,
-                           input::InputEvent* event) {
+                           fuchsia::ui::input::InputEvent* event) {
   if (!event->is_pointer())
     return;
 
@@ -88,10 +88,9 @@ int64_t InputEventTimestampNow() {
 }  // namespace
 
 InputDispatcherImpl::InputDispatcherImpl(
-    ViewInspector* inspector,
-    InputOwner* owner,
-    views_v1::ViewTreeToken view_tree_token,
-    fidl::InterfaceRequest<input::InputDispatcher> request)
+    ViewInspector* inspector, InputOwner* owner,
+    ::fuchsia::ui::views_v1::ViewTreeToken view_tree_token,
+    fidl::InterfaceRequest<fuchsia::ui::input::InputDispatcher> request)
     : inspector_(inspector),
       owner_(owner),
       view_tree_token_(view_tree_token),
@@ -104,7 +103,7 @@ InputDispatcherImpl::InputDispatcherImpl(
 
 InputDispatcherImpl::~InputDispatcherImpl() {}
 
-void InputDispatcherImpl::DispatchEvent(input::InputEvent event) {
+void InputDispatcherImpl::DispatchEvent(fuchsia::ui::input::InputEvent event) {
   FXL_VLOG(1) << "DispatchEvent: " << event;
 
   pending_events_.push(std::move(event));
@@ -116,14 +115,14 @@ void InputDispatcherImpl::ProcessNextEvent() {
   FXL_DCHECK(!pending_events_.empty());
 
   do {
-    const input::InputEvent* event = &pending_events_.front();
+    const fuchsia::ui::input::InputEvent* event = &pending_events_.front();
     FXL_VLOG(1) << "ProcessNextEvent: " << event;
 
     if (event->is_pointer()) {
       // TODO(MZ-164): We may also need to perform hit tests on ADD and
       // keep track of which views have seen the ADD or REMOVE so that
       // they can be balanced correctly.
-      const input::PointerEvent& pointer = event->pointer();
+      const fuchsia::ui::input::PointerEvent& pointer = event->pointer();
 
       // When we can't deliver a gesture, we need to adapt how we move through
       // the pointer state machine. We could find a new receiver (by having MOVE
@@ -135,11 +134,11 @@ void InputDispatcherImpl::ProcessNextEvent() {
         if (iter != uncaptured_pointers.end()) {
           uncaptured_pointers.erase(iter);
           switch (pointer.phase) {
-            case input::PointerEventPhase::MOVE:
+            case fuchsia::ui::input::PointerEventPhase::MOVE:
               pending_events_.front().pointer().phase =
-                  input::PointerEventPhase::DOWN;
+                  fuchsia::ui::input::PointerEventPhase::DOWN;
               break;
-            case input::PointerEventPhase::UP:
+            case fuchsia::ui::input::PointerEventPhase::UP:
               PopAndScheduleNextEvent();
               return;
             default:
@@ -148,12 +147,12 @@ void InputDispatcherImpl::ProcessNextEvent() {
         }
       }
 
-      if (pointer.phase == input::PointerEventPhase::DOWN) {
-        geometry::PointF point;
+      if (pointer.phase == fuchsia::ui::input::PointerEventPhase::DOWN) {
+        fuchsia::math::PointF point;
         point.x = pointer.x;
         point.y = pointer.y;
         FXL_VLOG(1) << "HitTest: point=" << point;
-        std::pair<geometry::Point3F, geometry::Point3F> ray =
+        std::pair<fuchsia::math::Point3F, fuchsia::math::Point3F> ray =
             DefaultRayForHitTestingScreenPoint(point);
 
         ViewInspector::HitTestCallback callback =
@@ -187,7 +186,7 @@ void InputDispatcherImpl::ProcessNextEvent() {
 
 void InputDispatcherImpl::DeliverEvent(uint64_t event_path_propagation_id,
                                        size_t index,
-                                       input::InputEvent event) {
+                                       fuchsia::ui::input::InputEvent event) {
   // TODO(MZ-164) when the chain is changed, we might need to cancel events
   // that have not progagated fully through the chain.
   if (index >= event_path_.size() ||
@@ -197,17 +196,17 @@ void InputDispatcherImpl::DeliverEvent(uint64_t event_path_propagation_id,
   // TODO(MZ-33) once input arena is in place, we won't need the "handled"
   // boolean on the callback anymore.
   const ViewHit& view_hit = event_path_[index];
-  const input::PointerEvent& pointer = event.pointer();
-  geometry::PointF point;
+  const fuchsia::ui::input::PointerEvent& pointer = event.pointer();
+  fuchsia::math::PointF point;
   point.x = pointer.x;
   point.y = pointer.y;
-  std::pair<geometry::Point3F, geometry::Point3F> ray =
+  std::pair<fuchsia::math::Point3F, fuchsia::math::Point3F> ray =
       DefaultRayForHitTestingScreenPoint(point);
   TransformPointerEvent(ray.first, ray.second, view_hit.inverse_transform,
                         view_hit.distance, &event);
   FXL_VLOG(1) << "DeliverEvent " << event_path_propagation_id << " to "
               << event_path_[index].view_token << ": " << event;
-  input::InputEvent cloned_event;
+  fuchsia::ui::input::InputEvent cloned_event;
   fidl::Clone(event, &cloned_event);
   owner_->DeliverEvent(
       event_path_[index].view_token, std::move(cloned_event),
@@ -219,14 +218,13 @@ void InputDispatcherImpl::DeliverEvent(uint64_t event_path_propagation_id,
       }));
 }
 
-void InputDispatcherImpl::DeliverEvent(input::InputEvent event) {
+void InputDispatcherImpl::DeliverEvent(fuchsia::ui::input::InputEvent event) {
   DeliverEvent(event_path_propagation_id_, 0u, std::move(event));
 }
 
 void InputDispatcherImpl::DeliverKeyEvent(
-    std::unique_ptr<FocusChain> focus_chain,
-    uint64_t propagation_index,
-    input::InputEvent event) {
+    std::unique_ptr<FocusChain> focus_chain, uint64_t propagation_index,
+    fuchsia::ui::input::InputEvent event) {
   FXL_DCHECK(propagation_index < focus_chain->chain.size());
   FXL_VLOG(1) << "DeliverKeyEvent " << focus_chain->version << " "
               << (1 + propagation_index) << "/" << focus_chain->chain.size()
@@ -242,7 +240,8 @@ void InputDispatcherImpl::DeliverKeyEvent(
 
         if (!handled && propagation_index + 1 < focus_chain->chain.size()) {
           // Avoid re-entrance on DeliverKeyEvent
-          async::PostTask(async_get_default(),
+          async::PostTask(
+              async_get_default(),
               fxl::MakeCopyable([weak = weak_factory_.GetWeakPtr(),
                                  focus_chain = std::move(focus_chain),
                                  propagation_index,
@@ -284,14 +283,14 @@ void InputDispatcherImpl::OnFocusResult(
   PopAndScheduleNextEvent();
 }
 
-void InputDispatcherImpl::OnHitTestResult(const geometry::PointF& point,
+void InputDispatcherImpl::OnHitTestResult(const fuchsia::math::PointF& point,
                                           std::vector<ViewHit> view_hits) {
   FXL_DCHECK(!pending_events_.empty());
 
   if (view_hits.empty()) {
     const auto& event = pending_events_.front();
     if (event.is_pointer()) {
-      const input::PointerEvent& pointer = event.pointer();
+      const fuchsia::ui::input::PointerEvent& pointer = event.pointer();
       uncaptured_pointers.insert(
           std::make_pair(pointer.device_id, pointer.pointer_id));
     }
@@ -308,8 +307,8 @@ void InputDispatcherImpl::OnHitTestResult(const geometry::PointF& point,
           if (active_focus_chain_) {
             FXL_VLOG(1) << "Input focus lost by "
                         << active_focus_chain_->chain.front();
-            input::InputEvent event;
-            input::FocusEvent focus;
+            fuchsia::ui::input::InputEvent event;
+            fuchsia::ui::input::FocusEvent focus;
             focus.event_time = InputEventTimestampNow();
             focus.focused = false;
             event.set_focus(std::move(focus));
@@ -319,14 +318,15 @@ void InputDispatcherImpl::OnHitTestResult(const geometry::PointF& point,
 
           if (new_chain) {
             FXL_VLOG(1) << "Input focus gained by " << new_chain->chain.front();
-            input::InputEvent event = input::InputEvent();
-            input::FocusEvent focus = input::FocusEvent();
+            fuchsia::ui::input::InputEvent event =
+                fuchsia::ui::input::InputEvent();
+            fuchsia::ui::input::FocusEvent focus =
+                fuchsia::ui::input::FocusEvent();
             focus.event_time = InputEventTimestampNow();
             focus.focused = true;
             event.set_focus(std::move(focus));
             owner_->DeliverEvent(new_chain->chain.front(), std::move(event),
-                                nullptr);
-
+                                 nullptr);
           }
 
           active_focus_chain_ = std::move(new_chain);

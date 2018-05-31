@@ -17,16 +17,21 @@ namespace machina {
 // A scanout that renders to a zircon framebuffer device.
 class FramebufferScanout : public GpuScanout {
  public:
+  ~FramebufferScanout();
+
   // Create a scanout that owns a zircon framebuffer device.
-  static zx_status_t Create(const char* path, fbl::unique_ptr<GpuScanout>* out);
+  static zx_status_t Create(fbl::unique_ptr<GpuScanout>* out);
 
   // | GpuScanout|
   void InvalidateRegion(const GpuRect& rect) override;
 
- private:
-  FramebufferScanout(GpuBitmap surface, fbl::unique_fd fd);
+  void SetResource(GpuResource* res,
+                   const virtio_gpu_set_scanout_t* request) override;
 
-  fbl::unique_fd fd_;
+ private:
+  FramebufferScanout(GpuBitmap surface, uint8_t* buf);
+
+  uint8_t* buf_;
 };
 
 }  // namespace machina

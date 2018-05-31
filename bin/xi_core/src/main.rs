@@ -12,7 +12,7 @@ extern crate xi_rpc;
 extern crate fuchsia_zircon as zx;
 extern crate mxruntime;
 extern crate fidl;
-extern crate fidl_xi;
+extern crate fidl_fuchsia_xi;
 extern crate byteorder;
 extern crate failure;
 extern crate futures;
@@ -27,14 +27,14 @@ use std::thread;
 use failure::{Error, ResultExt};
 use futures::{FutureExt, future};
 
-use fidl_xi::{Json, JsonImpl, JsonMarker};
+use fidl_fuchsia_xi::{Json, JsonImpl, JsonMarker};
 
 use component::server::ServicesServer;
 
 use zx::{AsHandleRef, Signals, Socket, Status, Time};
 
 use xi_rpc::RpcLoop;
-use xi_core_lib::MainState;
+use xi_core_lib::XiCore;
 
 // TODO: this should be moved into fuchsia_zircon.
 pub struct BlockingSocket(Arc<Socket>);
@@ -69,7 +69,7 @@ impl io::Write for BlockingSocket {
 
 fn editor_main(sock: Socket) {
     eprintln!("editor_main");
-    let mut state = MainState::new();
+    let mut state = XiCore::new();
     let arc_sock = Arc::new(sock);
     let my_in = io::BufReader::new(BlockingSocket(arc_sock.clone()));
     let my_out = BlockingSocket(arc_sock);
@@ -82,6 +82,7 @@ fn spawn_json_server(chan: async::Channel) {
     async::spawn(
     JsonImpl {
         state: (),
+        on_open: |_, _| future::ok(()),
         connect_socket: |_state, socket, _controller| {
             eprintln!("connect_socket");
             let _ = thread::spawn(move || editor_main(socket));

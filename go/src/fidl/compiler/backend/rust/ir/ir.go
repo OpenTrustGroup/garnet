@@ -83,6 +83,7 @@ type Method struct {
 
 type Parameter struct {
 	Type   string
+	BorrowedType string
 	Name   string
 	Offset int
 }
@@ -169,10 +170,13 @@ var reservedWords = map[string]bool{
 	"Future":  true,
 	"Stream":  true,
 	"Never":   true,
+	"Send":    true,
 	"fidl":    true,
 	"futures": true,
 	"zx":      true,
 	"async":   true,
+	"on_open": true,
+	"OnOpen":  true,
 }
 
 var reservedSuffixes = []string{
@@ -245,6 +249,7 @@ var handleSubtypes = map[types.HandleSubtype]string{
 type compiler struct {
 	decls   *types.DeclMap
 	library types.LibraryIdentifier
+	externCrates map[string]bool
 }
 
 func (c *compiler) inExternalLibrary(ci types.CompoundIdentifier) bool {
@@ -263,9 +268,12 @@ func compileCamelIdentifier(val types.Identifier) string {
 	return common.ToUpperCamelCase(changeIfReserved(val))
 }
 
-func compileLibraryName(val types.LibraryIdentifier) string {
-	// TODO(FIDL-158) handle more than one library name component
-	return changeIfReserved("fidl_" + val[0])
+func compileLibraryName(library types.LibraryIdentifier) string {
+	parts := []string{"fidl"}
+	for _, part := range library {
+		parts = append(parts, string(part))
+	}
+	return changeIfReserved(types.Identifier(strings.Join(parts, "_")))
 }
 
 func compileSnakeIdentifier(val types.Identifier) string {
@@ -279,7 +287,9 @@ func compileScreamingSnakeIdentifier(val types.Identifier) string {
 func (c *compiler) compileCompoundIdentifier(val types.CompoundIdentifier) string {
 	strs := []string{}
 	if c.inExternalLibrary(val) {
-		strs = append(strs, compileLibraryName(val.Library))
+		externName := compileLibraryName(val.Library)
+		c.externCrates[externName] = true
+		strs = append(strs, externName)
 	}
 	str := changeIfReserved(val.Name)
 	strs = append(strs, str)
@@ -345,7 +355,7 @@ func (c *compiler) compileConst(val types.Const) Const {
 		}
 	} else {
 		r = Const{
-			Type:  c.compileType(val.Type).Decl,
+			Type:  c.compileType(val.Type, false).Decl,
 			Name:  name,
 			Value: c.compileConstant(val.Value),
 		}
@@ -369,25 +379,42 @@ func compileHandleSubtype(val types.HandleSubtype) string {
 	return ""
 }
 
-func (c *compiler) compileType(val types.Type) Type {
+func (c *compiler) compileType(val types.Type, borrowed bool) Type {
 	var r string
 	var declType types.DeclType
 	switch val.Kind {
 	case types.ArrayType:
-		t := c.compileType(*val.ElementType)
+		t := c.compileType(*val.ElementType, borrowed)
 		r = fmt.Sprintf("[%s; %v]", t.Decl, *val.ElementCount)
+		if borrowed {
+			r = fmt.Sprintf("&mut %s", r)
+		}
 	case types.VectorType:
-		t := c.compileType(*val.ElementType)
-		if val.Nullable {
-			r = fmt.Sprintf("Option<Vec<%s>>", t.Decl)
+		t := c.compileType(*val.ElementType, borrowed)
+		var inner string
+		if borrowed {
+			inner = fmt.Sprintf("&mut ExactSizeIterator<Item = %s>", t.Decl)
 		} else {
-			r = fmt.Sprintf("Vec<%s>", t.Decl)
+			inner = fmt.Sprintf("Vec<%s>", t.Decl)
+		}
+		if val.Nullable {
+			r = fmt.Sprintf("Option<%s>", inner)
+		} else {
+			r = inner
 		}
 	case types.StringType:
-		if val.Nullable {
-			r = "Option<String>"
+		if borrowed {
+			if val.Nullable {
+				r = "Option<&str>"
+			} else {
+				r = "&str"
+			}
 		} else {
-			r = "String"
+			if val.Nullable {
+				r = "Option<String>"
+			} else {
+				r = "String"
+			}
 		}
 	case types.HandleType:
 		r = fmt.Sprintf("zx::%s", compileHandleSubtype(val.HandleSubtype))
@@ -401,6 +428,8 @@ func (c *compiler) compileType(val types.Type) Type {
 			r = fmt.Sprintf("Option<%s>", r)
 		}
 	case types.PrimitiveType:
+		// Primitive types are small, simple, and never contain handles,
+		// so there's no need to borrow them
 		r = compilePrimitiveSubtype(val.PrimitiveSubtype)
 	case types.IdentifierType:
 		t := c.compileCamelCompoundIdentifier(val.Identifier)
@@ -409,17 +438,28 @@ func (c *compiler) compileType(val types.Type) Type {
 			log.Fatal("unknown identifier: ", val.Identifier)
 		}
 		switch declType {
-		case types.ConstDeclType:
-			fallthrough
 		case types.EnumDeclType:
+			// Enums are small, simple, and never contain handles,
+			// so no need to borrow
+			borrowed = false
+			fallthrough
+		case types.ConstDeclType:
 			fallthrough
 		case types.StructDeclType:
 			fallthrough
 		case types.UnionDeclType:
 			if val.Nullable {
-				r = fmt.Sprintf("Option<Box<%s>>", t)
+				if borrowed {
+					r = fmt.Sprintf("Option<fidl::encoding2::OutOfLine<%s>>", t)
+				} else {
+					r = fmt.Sprintf("Option<Box<%s>>", t)
+				}
 			} else {
-				r = t
+				if borrowed {
+					r = fmt.Sprintf("&mut %s", t)
+				} else {
+					r = t
+				}
 			}
 		case types.InterfaceDeclType:
 			r = fmt.Sprintf("fidl::endpoints2::ClientEnd<%sMarker>", t)
@@ -460,7 +500,8 @@ func (c *compiler) compileParameterArray(val []types.Parameter) []Parameter {
 
 	for _, v := range val {
 		p := Parameter{
-			c.compileType(v.Type).Decl,
+			c.compileType(v.Type, false).Decl,
+			c.compileType(v.Type, true).Decl,
 			changeIfReserved(v.Name),
 			v.Offset,
 		}
@@ -500,7 +541,7 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 
 func (c *compiler) compileStructMember(val types.StructMember) StructMember {
 	return StructMember{
-		Type:         c.compileType(val.Type).Decl,
+		Type:         c.compileType(val.Type, false).Decl,
 		Name:         compileSnakeIdentifier(val.Name),
 		Offset:       val.Offset,
 		HasDefault:   false,
@@ -526,7 +567,7 @@ func (c *compiler) compileStruct(val types.Struct) Struct {
 
 func (c *compiler) compileUnionMember(val types.UnionMember) UnionMember {
 	return UnionMember{
-		Type:   c.compileType(val.Type).Decl,
+		Type:   c.compileType(val.Type, false).Decl,
 		Name:   compileCamelIdentifier(val.Name),
 		Offset: val.Offset,
 	}
@@ -549,14 +590,8 @@ func (c *compiler) compileUnion(val types.Union) Union {
 
 func Compile(r types.Root) Root {
 	root := Root{}
-	c := compiler{&r.Decls, types.ParseLibraryName(r.Name)}
-
-	for _, l := range r.Libraries {
-		if l.Name != r.Name {
-			library := types.ParseLibraryName(l.Name)
-			root.ExternCrates = append(root.ExternCrates, compileLibraryName(library))
-		}
-	}
+	thisLibParsed := types.ParseLibraryName(r.Name)
+	c := compiler{&r.Decls, thisLibParsed, map[string]bool{}}
 
 	for _, v := range r.Consts {
 		root.Consts = append(root.Consts, c.compileConst(v))
@@ -576,6 +611,13 @@ func Compile(r types.Root) Root {
 
 	for _, v := range r.Unions {
 		root.Unions = append(root.Unions, c.compileUnion(v))
+	}
+
+	thisLibCompiled := compileLibraryName(thisLibParsed)
+	for k, _ := range c.externCrates {
+		if k != thisLibCompiled {
+			root.ExternCrates = append(root.ExternCrates, k)
+		}
 	}
 
 	return root

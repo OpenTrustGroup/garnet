@@ -60,20 +60,17 @@ Engine::Engine(DisplayManager* display_manager, escher::Escher* escher)
       escher_(escher),
       paper_renderer_(escher::PaperRenderer::New(escher)),
       shadow_renderer_(
-          escher::ShadowMapRenderer::New(escher,
-                                         paper_renderer_->model_data(),
+          escher::ShadowMapRenderer::New(escher, paper_renderer_->model_data(),
                                          paper_renderer_->model_renderer())),
       image_factory_(std::make_unique<escher::SimpleImageFactory>(
-          escher->resource_recycler(),
-          escher->gpu_allocator())),
+          escher->resource_recycler(), escher->gpu_allocator())),
       rounded_rect_factory_(
           std::make_unique<escher::RoundedRectFactory>(escher)),
       release_fence_signaller_(std::make_unique<escher::ReleaseFenceSignaller>(
           escher->command_buffer_sequencer())),
       session_manager_(std::make_unique<SessionManager>()),
-      imported_memory_type_index_(
-          GetImportedMemoryTypeIndex(escher->vk_physical_device(),
-                                     escher->vk_device())),
+      imported_memory_type_index_(GetImportedMemoryTypeIndex(
+          escher->vk_physical_device(), escher->vk_device())),
       weak_factory_(this) {
   FXL_DCHECK(display_manager_);
   FXL_DCHECK(escher_);
@@ -128,8 +125,8 @@ std::unique_ptr<Swapchain> Engine::CreateDisplaySwapchain(Display* display) {
   return std::make_unique<VulkanDisplaySwapchain>(display, event_timestamper(),
                                                   escher());
 #else
-  return std::make_unique<DisplaySwapchain>(display, event_timestamper(),
-                                            escher());
+  return std::make_unique<DisplaySwapchain>(display_manager_, display,
+                                            event_timestamper(), escher());
 #endif
 }
 
@@ -192,7 +189,7 @@ void Engine::UpdateAndDeliverMetrics(uint64_t presentation_time) {
 
   // TODO(MZ-216): Traversing the whole graph just to compute this is pretty
   // inefficient.  We should optimize this.
-  ::gfx::Metrics metrics;
+  ::fuchsia::ui::gfx::Metrics metrics;
   metrics.scale_x = 1.f;
   metrics.scale_y = 1.f;
   metrics.scale_z = 1.f;
@@ -207,8 +204,8 @@ void Engine::UpdateAndDeliverMetrics(uint64_t presentation_time) {
   // have some kind of backpointer from a session to its handler.
   for (auto node : updated_nodes) {
     if (node->session()) {
-      auto event = ::gfx::Event();
-      event.set_metrics(::gfx::MetricsEvent());
+      auto event = ::fuchsia::ui::gfx::Event();
+      event.set_metrics(::fuchsia::ui::gfx::MetricsEvent());
       event.metrics().node_id = node->id();
       event.metrics().metrics = node->reported_metrics();
       node->session()->EnqueueEvent(std::move(event));
@@ -217,20 +214,21 @@ void Engine::UpdateAndDeliverMetrics(uint64_t presentation_time) {
 }
 
 // TODO(mikejurka): move this to appropriate util file
-bool MetricsEquals(const ::gfx::Metrics& a, const ::gfx::Metrics& b) {
+bool MetricsEquals(const ::fuchsia::ui::gfx::Metrics& a,
+                   const ::fuchsia::ui::gfx::Metrics& b) {
   return a.scale_x == b.scale_x && a.scale_y == b.scale_y &&
          a.scale_z == b.scale_z;
 }
 
 void Engine::UpdateMetrics(Node* node,
-                           const ::gfx::Metrics& parent_metrics,
+                           const ::fuchsia::ui::gfx::Metrics& parent_metrics,
                            std::vector<Node*>* updated_nodes) {
-  ::gfx::Metrics local_metrics;
+  ::fuchsia::ui::gfx::Metrics local_metrics;
   local_metrics.scale_x = parent_metrics.scale_x * node->scale().x;
   local_metrics.scale_y = parent_metrics.scale_y * node->scale().y;
   local_metrics.scale_z = parent_metrics.scale_z * node->scale().z;
 
-  if ((node->event_mask() & ::gfx::kMetricsEventMask) &&
+  if ((node->event_mask() & ::fuchsia::ui::gfx::kMetricsEventMask) &&
       !MetricsEquals(node->reported_metrics(), local_metrics)) {
     node->set_reported_metrics(local_metrics);
     updated_nodes->push_back(node);

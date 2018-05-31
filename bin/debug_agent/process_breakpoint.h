@@ -7,27 +7,44 @@
 #include <map>
 
 #include "garnet/bin/debug_agent/arch.h"
+#include "garnet/bin/debug_agent/process_memory_accessor.h"
 #include "garnet/lib/debug_ipc/records.h"
 #include "garnet/public/lib/fxl/macros.h"
 
 namespace debug_agent {
 
-class DebuggedProcess;
-class DebuggedThread;
+class Breakpoint;
 
-// Represents a breakpoint in the debug agent. These breakpoints are
-// per-process (client breakpoints in the zxdb debugger can span multiple
-// processes, and in that case will reference multiple ProcessBreakpoints).
+// Represents one breakpoint address in a single process. One Breakpoint object
+// can expand to many ProcessBreakpoints across multiple processes and within a
+// single one (when a symbolic breakpoint expands to multiple addresses). Also,
+// multiple Breakpoint objects can refer to the same ProcessBreakpoint when
+// they refer to the same address.
 class ProcessBreakpoint {
  public:
-  // Call SetSettings immediately after construction.
-  explicit ProcessBreakpoint(DebuggedProcess* process);
+  // Given the initial Breakpoint object this corresponds to. Breakpoints
+  // can be added or removed later.
+  //
+  // Call Init() immediately after construction to initalize the parts that
+  // can report errors.
+  explicit ProcessBreakpoint(Breakpoint* breakpoint,
+                             ProcessMemoryAccessor* memory_accessor,
+                             zx_koid_t process_koid,
+                             uint64_t address);
   ~ProcessBreakpoint();
 
-  uint64_t address() const { return settings_.address; }
+  // Call immediately after construction. If it returns failure, the breakpoint
+  // will not work.
+  zx_status_t Init();
 
-  // If SetSettings fails, this breakpoint is invalid and should be deleted.
-  bool SetSettings(const debug_ipc::BreakpointSettings& settings);
+  zx_koid_t process_koid() const { return process_koid_; }
+  uint64_t address() const { return address_; }
+
+  // Adds or removes breakpoints associated with this process/address.
+  // Unregister returns whether there are still any breakpoints referring to
+  // this address (false means this is unused and should be deleted).
+  void RegisterBreakpoint(Breakpoint* breakpoint);
+  bool UnregisterBreakpoint(Breakpoint* breakpoint);
 
   // Writing debug breakpoints changes memory contents. If an unmodified
   // virtual picture of memory is needed, this function will replace the
@@ -41,7 +58,7 @@ class ProcessBreakpoint {
   //
   // The thread must be put into single-step mode by the caller when this
   // function is called.
-  void BeginStepOver(DebuggedThread* thread);
+  void BeginStepOver(zx_koid_t thread_koid);
 
   // When a thread has a "current breakpoint" its handling, exceptions will be
   // routed here first. A thread has a current breakpoint when it's either
@@ -53,7 +70,7 @@ class ProcessBreakpoint {
   // (the one with the breakpoint) caused an exception itself (say, an access
   // violation). In either case, the breakpoint will clean up after itself from
   // a single-step.
-  bool BreakpointStepHasException(DebuggedThread* thread,
+  bool BreakpointStepHasException(zx_koid_t thread_koid,
                                   uint32_t exception_type);
 
  private:
@@ -70,12 +87,13 @@ class ProcessBreakpoint {
   bool CurrentlySteppingOver() const;
 
   // Install or uninstall this breakpoint.
-  bool Install();
+  zx_status_t Install();
   void Uninstall();
 
-  DebuggedProcess* process_;  // Backpointer to owner of this class.
+  ProcessMemoryAccessor* memory_accessor_;  // Non-owning.
 
-  debug_ipc::BreakpointSettings settings_;
+  zx_koid_t process_koid_;
+  uint64_t address_;
 
   // Set to true when the instruction has been replaced.
   bool installed_ = false;
@@ -83,9 +101,13 @@ class ProcessBreakpoint {
   // Previous memory contents before being replaced with the break instruction.
   arch::BreakInstructionType previous_data_ = 0;
 
+  // Breakpoints that refer to this ProcessBreakpoint. More than one Breakpoint
+  // can refer to the same memory address.
+  std::vector<Breakpoint*> breakpoints_;
+
   // Tracks the threads currently single-stepping over this breakpoint.
   // Normally this will be empty (nobody) or have one thread, but could be more
-  // than one in rare cases.
+  // than one in rare cases. Maps thread koid to status.
   //
   // A step is executed by putting back the original instruction, stepping the
   // thread, and then re-inserting the breakpoint instruction. The breakpoint
@@ -100,7 +122,7 @@ class ProcessBreakpoint {
   // can execute and miss the breakpoint. To avoid this, we need to implement
   // something similar to GDB's "displaced step" to execute the instruction
   // without ever removing the breakpoint instruction.
-  std::map<DebuggedThread*, StepStatus> thread_step_over_;
+  std::map<zx_koid_t, StepStatus> thread_step_over_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(ProcessBreakpoint);
 };

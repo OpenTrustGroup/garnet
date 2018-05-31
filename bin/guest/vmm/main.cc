@@ -13,6 +13,7 @@
 #include <ios>
 #include <vector>
 
+#include <lib/async-loop/cpp/loop.h>
 #include <fbl/string_buffer.h>
 #include <fbl/unique_fd.h>
 #include <fbl/unique_ptr.h>
@@ -29,9 +30,9 @@
 #include "garnet/lib/machina/address.h"
 #include "garnet/lib/machina/framebuffer_scanout.h"
 #include "garnet/lib/machina/guest.h"
+#include "garnet/lib/machina/guest_controller_impl.h"
 #include "garnet/lib/machina/hid_event_source.h"
 #include "garnet/lib/machina/input_dispatcher.h"
-#include "garnet/lib/machina/inspect_service_impl.h"
 #include "garnet/lib/machina/interrupt_controller.h"
 #include "garnet/lib/machina/pci.h"
 #include "garnet/lib/machina/uart.h"
@@ -45,7 +46,6 @@
 #include "garnet/lib/machina/virtio_vsock.h"
 #include "garnet/public/lib/fxl/files/file.h"
 #include "lib/app/cpp/application_context.h"
-#include "lib/fsl/tasks/message_loop.h"
 
 #if __aarch64__
 #include "garnet/lib/machina/arch/arm64/pl031.h"
@@ -72,7 +72,6 @@ static constexpr uint64_t kUartBases[kNumUarts] = {
 };
 #endif
 
-static constexpr uint32_t kVirtioVsockGuestCid = 3;
 static constexpr size_t kInputQueueDepth = 64;
 
 static void balloon_stats_handler(machina::VirtioBalloon* balloon,
@@ -146,45 +145,39 @@ static zx_status_t poll_balloon_stats(machina::VirtioBalloon* balloon,
 }
 
 static zx_status_t setup_zircon_framebuffer(
-    machina::VirtioGpu* gpu,
-    fbl::unique_ptr<machina::GpuScanout>* scanout) {
+    machina::VirtioGpu* gpu, fbl::unique_ptr<machina::GpuScanout>* scanout) {
   // Try software framebuffer.
-  zx_status_t status = machina::FramebufferScanout::Create(
-      "/dev/class/framebuffer/000", scanout);
-  if (status != ZX_OK) {
-    // Try hardware framebuffer.
-    status =
-        machina::FramebufferScanout::Create("/dev/class/display/000", scanout);
-    if (status != ZX_OK) {
-      return status;
-    }
-  }
-  return gpu->AddScanout(scanout->get());
-}
-
-static zx_status_t setup_scenic_framebuffer(
-    component::ApplicationContext* application_context,
-    machina::VirtioGpu* gpu,
-    machina::InputDispatcher* input_dispatcher,
-    fbl::unique_ptr<machina::GpuScanout>* scanout) {
-  // Check if we have a display. Since this is a device file, many file
-  // detection APIs may not properly detect it. Just verify we can stat
-  // the path to ensure _something_ is there.
-  struct stat buf;
-  if (stat("/dev/class/display/000", &buf)) {
-    return ZX_ERR_NO_RESOURCES;
-  }
-  zx_status_t status =
-      ScenicScanout::Create(application_context, input_dispatcher, scanout);
+  zx_status_t status = machina::FramebufferScanout::Create(scanout);
   if (status != ZX_OK) {
     return status;
   }
   return gpu->AddScanout(scanout->get());
 }
 
-static zx_status_t read_guest_cfg(const char* cfg_path,
-                                  int argc,
-                                  char** argv,
+static zx_status_t setup_scenic_framebuffer(
+    component::ApplicationContext* application_context, machina::VirtioGpu* gpu,
+    machina::InputDispatcher* input_dispatcher,
+    machina::GuestControllerImpl* guest_controller,
+    fbl::unique_ptr<machina::GpuScanout>* scanout) {
+  // Check if we have a display. Since this is a device file, many file
+  // detection APIs may not properly detect it. Just verify we can stat
+  // the path to ensure _something_ is there.
+  struct stat buf;
+  if (stat("/dev/class/display-controller/000", &buf)) {
+    return ZX_ERR_NO_RESOURCES;
+  }
+  fbl::unique_ptr<ScenicScanout> scenic_scanout;
+  zx_status_t status = ScenicScanout::Create(application_context,
+                                             input_dispatcher, &scenic_scanout);
+  if (status != ZX_OK) {
+    return status;
+  }
+  guest_controller->set_view_provider(scenic_scanout.get());
+  *scanout = std::move(scenic_scanout);
+  return gpu->AddScanout(scanout->get());
+}
+
+static zx_status_t read_guest_cfg(const char* cfg_path, int argc, char** argv,
                                   GuestConfig* cfg) {
   GuestConfigParser parser(cfg);
   std::string cfg_str;
@@ -198,13 +191,14 @@ static zx_status_t read_guest_cfg(const char* cfg_path,
 }
 
 int main(int argc, char** argv) {
-  fsl::MessageLoop loop;
+  async::Loop loop(&kAsyncLoopConfigMakeDefault);
   trace::TraceProvider trace_provider(loop.async());
   std::unique_ptr<component::ApplicationContext> application_context =
       component::ApplicationContext::CreateFromStartupInfo();
 
   GuestConfig cfg;
-  zx_status_t status = read_guest_cfg("/guest/data/guest.cfg", argc, argv, &cfg);
+  zx_status_t status =
+      read_guest_cfg("/guest/data/guest.cfg", argc, argv, &cfg);
   if (status != ZX_OK) {
     return status;
   }
@@ -215,9 +209,9 @@ int main(int argc, char** argv) {
     return status;
   }
 
-  // Instantiate the inspect service.
-  machina::InspectServiceImpl inspect_svc(application_context.get(),
-                                          guest.phys_mem());
+  // Instantiate the controller service.
+  machina::GuestControllerImpl guest_controller(application_context.get(),
+                                                guest.phys_mem());
 
 #if __x86_64__
   status = machina::create_page_table(guest.phys_mem());
@@ -400,7 +394,7 @@ int main(int argc, char** argv) {
 
   // Setup console
   machina::VirtioConsole console(guest.phys_mem(), guest.device_async(),
-                                 inspect_svc.TakeSocket());
+                                 guest_controller.TakeSocket());
   status = console.Start();
   if (status != ZX_OK) {
     return status;
@@ -471,7 +465,8 @@ int main(int argc, char** argv) {
       // Expose a view that can be composited by mozart. Input events will be
       // injected by the view events.
       status = setup_scenic_framebuffer(application_context.get(), &gpu,
-                                        &input_dispatcher, &gpu_scanout);
+                                        &input_dispatcher, &guest_controller,
+                                        &gpu_scanout);
       if (status != ZX_OK) {
         FXL_LOG(ERROR) << "Failed to create scenic view " << status;
         return status;
@@ -503,8 +498,8 @@ int main(int argc, char** argv) {
   }
 
   // Setup vsock device.
-  machina::VirtioVsock vsock(guest.phys_mem(), guest.device_async(),
-                             kVirtioVsockGuestCid);
+  machina::VirtioVsock vsock(application_context.get(), guest.phys_mem(),
+                             guest.device_async());
   status = bus.Connect(vsock.pci_device());
   if (status != ZX_OK) {
     return status;
@@ -517,7 +512,7 @@ int main(int argc, char** argv) {
     zx_status_t status = guest.StartVcpu(guest_ip, 0 /* id */);
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "Failed to start VCPU-0 " << status;
-      loop.PostQuitTask();
+      loop.Quit();
     }
   };
   if (gpu_scanout) {

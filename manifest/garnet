@@ -3,9 +3,17 @@
   <imports>
     <localimport file="minimal"/>
     <localimport file="third_party"/>
+    <import remote="ssh://review.gerrithub.io:29418/OpenTrustGroup/build"
+            manifest="manifest/build"
+            name="build"
+            remotebranch="gzos"/>
+    <import remote="ssh://review.gerrithub.io:29418/OpenTrustGroup/scripts"
+            manifest="manifest/scripts"
+            name="scripts"
+            remotebranch="gzos"/>
     <import remote="ssh://review.gerrithub.io:29418/OpenTrustGroup/zircon"
             manifest="manifest/zircon"
             name="zircon"
             remotebranch="gzos"/>
-  </imports>
+    </imports>
 </manifest>

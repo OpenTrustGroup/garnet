@@ -10,38 +10,33 @@ namespace scenic {
 namespace gfx {
 namespace test {
 
-SessionForTest::SessionForTest(SessionId id,
-                               Engine* engine,
+SessionForTest::SessionForTest(SessionId id, Engine* engine,
                                EventReporter* event_reporter,
                                ErrorReporter* error_reporter)
     : Session(id, engine, event_reporter, error_reporter) {}
 
-void SessionForTest::TearDown() {
-  Session::TearDown();
-}
+void SessionForTest::TearDown() { Session::TearDown(); }
 
 SessionHandlerForTest::SessionHandlerForTest(CommandDispatcherContext context,
                                              Engine* engine,
                                              SessionId session_id,
                                              EventReporter* event_reporter,
                                              ErrorReporter* error_reporter)
-    : SessionHandler(std::move(context),
-                     engine,
-                     session_id,
-                     event_reporter,
+    : SessionHandler(std::move(context), engine, session_id, event_reporter,
                      error_reporter),
       command_count_(0),
       present_count_(0) {}
 
-void SessionHandlerForTest::DispatchCommand(ui::Command command) {
+void SessionHandlerForTest::DispatchCommand(
+    fuchsia::ui::scenic::Command command) {
   SessionHandler::DispatchCommand(std::move(command));
   ++command_count_;
 }
 
-void SessionHandlerForTest::Present(uint64_t presentation_time,
-                                    ::fidl::VectorPtr<zx::event> acquire_fences,
-                                    ::fidl::VectorPtr<zx::event> release_fences,
-                                    ui::Session::PresentCallback callback) {
+void SessionHandlerForTest::Present(
+    uint64_t presentation_time, ::fidl::VectorPtr<zx::event> acquire_fences,
+    ::fidl::VectorPtr<zx::event> release_fences,
+    fuchsia::ui::scenic::Session::PresentCallback callback) {
   SessionHandler::Present(presentation_time, std::move(acquire_fences),
                           std::move(release_fences), callback);
   ++present_count_;
@@ -60,11 +55,8 @@ void ReleaseFenceSignallerForTest::AddCPUReleaseFence(zx::event fence) {
 SessionManagerForTest::SessionManagerForTest() : SessionManager() {}
 
 std::unique_ptr<SessionHandler> SessionManagerForTest::CreateSessionHandler(
-    CommandDispatcherContext context,
-    Engine* engine,
-    SessionId session_id,
-    EventReporter* event_reporter,
-    ErrorReporter* error_reporter) const {
+    CommandDispatcherContext context, Engine* engine, SessionId session_id,
+    EventReporter* event_reporter, ErrorReporter* error_reporter) const {
   return std::make_unique<SessionHandlerForTest>(
       std::move(context), engine, session_id, event_reporter, error_reporter);
 }
@@ -72,10 +64,8 @@ std::unique_ptr<SessionHandler> SessionManagerForTest::CreateSessionHandler(
 EngineForTest::EngineForTest(DisplayManager* display_manager,
                              std::unique_ptr<escher::ReleaseFenceSignaller> r,
                              escher::Escher* escher)
-    : Engine(display_manager,
-             std::move(r),
-             std::make_unique<SessionManagerForTest>(),
-             escher) {}
+    : Engine(display_manager, std::move(r),
+             std::make_unique<SessionManagerForTest>(), escher) {}
 
 }  // namespace test
 }  // namespace gfx

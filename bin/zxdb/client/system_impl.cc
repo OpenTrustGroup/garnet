@@ -12,11 +12,32 @@
 
 namespace zxdb {
 
-SystemImpl::SystemImpl(Session* session) : System(session) {
+SystemImpl::SystemImpl(Session* session)
+    : System(session), weak_factory_(this) {
   AddNewTarget(std::make_unique<TargetImpl>(this));
+
+  // Load the build ID file but asynchronously notify. This allows the system
+  // to be loaded enough so that the observers are initialized.
+  std::string symbol_msg;
+  bool ids_loaded = symbols_.LoadBuildIDFile(&symbol_msg);
+  debug_ipc::MessageLoop::Current()->PostTask(
+      [ weak_system = weak_factory_.GetWeakPtr(), ids_loaded, symbol_msg ]() {
+        if (weak_system) {
+          for (auto& observer : weak_system->observers())
+            observer.DidTryToLoadSymbolMapping(ids_loaded, symbol_msg);
+        }
+      });
 }
 
-SystemImpl::~SystemImpl() = default;
+SystemImpl::~SystemImpl() {
+  // Target destruction may depend on the symbol system. Ensure the targets
+  // get cleaned up first.
+  for (auto& target : targets_) {
+    for (auto& observer : observers())
+      observer.WillDestroyTarget(target.get());
+  }
+  targets_.clear();
+}
 
 ProcessImpl* SystemImpl::ProcessImplFromKoid(uint64_t koid) const {
   for (const auto& target : targets_) {
@@ -90,8 +111,7 @@ void SystemImpl::Pause() {
   request.process_koid = 0;  // 0 means all processes.
   request.thread_koid = 0;   // 0 means all threads.
   session()->Send<debug_ipc::PauseRequest, debug_ipc::PauseReply>(
-      request,
-      std::function<void(const Err&, debug_ipc::PauseReply)>());
+      request, std::function<void(const Err&, debug_ipc::PauseReply)>());
 }
 
 void SystemImpl::Continue() {
@@ -100,8 +120,7 @@ void SystemImpl::Continue() {
   request.thread_koid = 0;   // 0 means all threads.
   request.how = debug_ipc::ResumeRequest::How::kContinue;
   session()->Send<debug_ipc::ResumeRequest, debug_ipc::ResumeReply>(
-      request,
-      std::function<void(const Err&, debug_ipc::ResumeReply)>());
+      request, std::function<void(const Err&, debug_ipc::ResumeReply)>());
 }
 
 void SystemImpl::AddNewTarget(std::unique_ptr<TargetImpl> target) {

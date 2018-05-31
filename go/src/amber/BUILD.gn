@@ -63,7 +63,7 @@ common_extra_dependencies = [
   "//garnet/public/lib/amber/fidl($go_toolchain)",
   "//garnet/public/lib/app/fidl($go_toolchain)",
   "//garnet/public/lib/app/go/src/app",
-  "//garnet/public/lib/fidl/go/src/fidl",
+  "//garnet/public/lib/fidl/go/src/fidl/bindings",
 ]
 
 foreach(tgt, amber_target_binaries) {
@@ -98,8 +98,8 @@ package("amber") {
 
   meta = [
     {
-      path = rebase_path("cmd/amber/meta/sandbox")
-      dest = "sandbox"
+      path = rebase_path("cmd/amber/meta/amber.cmx")
+      dest = "amber.cmx"
     },
     {
       path = rebase_path("//garnet/bin/appmgr/legacy_flat_exported_dir")
@@ -170,6 +170,10 @@ test_targets = [
     name = "amber_cmd_publish_test"
     gopkg = "amber/cmd/publish"
   },
+  {
+    name = "amber_fidl_test"
+    gopkg = "amber/ipcserver"
+  }
 ]
 foreach(test, test_targets) {
   go_test(test.name) {

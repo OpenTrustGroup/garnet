@@ -5,6 +5,7 @@
 #include <wlan/mlme/service.h>
 
 #include <wlan/mlme/device_interface.h>
+#include <wlan_mlme/c/fidl.h>
 
 namespace wlan {
 
@@ -24,7 +25,7 @@ zx_status_t SendJoinConfirm(DeviceInterface* device, wlan_mlme::JoinResultCodes 
 
     auto packet = fbl::make_unique<Packet>(fbl::move(buffer), buf_len);
     packet->set_peer(Packet::Peer::kService);
-    auto status = SerializeServiceMsg(packet.get(), wlan_mlme::Method::JOIN_confirm, resp.get());
+    auto status = SerializeServiceMsg(packet.get(), wlan_mlme_MLMEJoinConfOrdinal, resp.get());
     if (status != ZX_OK) {
         errorf("could not serialize JoinConfirm: %d\n", status);
     } else {
@@ -52,7 +53,8 @@ zx_status_t SendAuthConfirm(DeviceInterface* device, const common::MacAddr& peer
 
     auto packet = fbl::make_unique<Packet>(fbl::move(buffer), buf_len);
     packet->set_peer(Packet::Peer::kService);
-    auto status = SerializeServiceMsg(packet.get(), wlan_mlme::Method::AUTHENTICATE_confirm, resp.get());
+    auto status =
+        SerializeServiceMsg(packet.get(), wlan_mlme_MLMEAuthenticateConfOrdinal, resp.get());
     if (status != ZX_OK) {
         errorf("could not serialize AuthenticateConfirm: %d\n", status);
     } else {
@@ -76,7 +78,8 @@ zx_status_t SendDeauthConfirm(DeviceInterface* device, const common::MacAddr& pe
 
     auto packet = fbl::make_unique<Packet>(fbl::move(buffer), buf_len);
     packet->set_peer(Packet::Peer::kService);
-    auto status = SerializeServiceMsg(packet.get(), wlan_mlme::Method::DEAUTHENTICATE_confirm, resp.get());
+    auto status =
+        SerializeServiceMsg(packet.get(), wlan_mlme_MLMEDeauthenticateConfOrdinal, resp.get());
     if (status != ZX_OK) {
         errorf("could not serialize DeauthenticateConfirm: %d\n", status);
     } else {
@@ -87,7 +90,7 @@ zx_status_t SendDeauthConfirm(DeviceInterface* device, const common::MacAddr& pe
 }
 
 zx_status_t SendDeauthIndication(DeviceInterface* device, const common::MacAddr& peer_sta,
-                                 uint16_t code) {
+                                 wlan_mlme::ReasonCode code) {
     debugfn();
 
     auto ind = wlan_mlme::DeauthenticateIndication::New();
@@ -102,7 +105,8 @@ zx_status_t SendDeauthIndication(DeviceInterface* device, const common::MacAddr&
 
     auto packet = fbl::make_unique<Packet>(fbl::move(buffer), buf_len);
     packet->set_peer(Packet::Peer::kService);
-    auto status = SerializeServiceMsg(packet.get(), wlan_mlme::Method::DEAUTHENTICATE_indication, ind.get());
+    auto status =
+        SerializeServiceMsg(packet.get(), wlan_mlme_MLMEDeauthenticateIndOrdinal, ind.get());
     if (status != ZX_OK) {
         errorf("could not serialize DeauthenticateIndication: %d\n", status);
     } else {
@@ -129,7 +133,7 @@ zx_status_t SendAssocConfirm(DeviceInterface* device, wlan_mlme::AssociateResult
 
     auto packet = fbl::make_unique<Packet>(fbl::move(buffer), buf_len);
     packet->set_peer(Packet::Peer::kService);
-    auto status = SerializeServiceMsg(packet.get(), wlan_mlme::Method::ASSOCIATE_confirm, resp.get());
+    auto status = SerializeServiceMsg(packet.get(), wlan_mlme_MLMEAssociateConfOrdinal, resp.get());
     if (status != ZX_OK) {
         errorf("could not serialize AssociateConfirm: %d\n", status);
     } else {
@@ -155,7 +159,8 @@ zx_status_t SendDisassociateIndication(DeviceInterface* device, const common::Ma
 
     auto packet = fbl::make_unique<Packet>(fbl::move(buffer), buf_len);
     packet->set_peer(Packet::Peer::kService);
-    auto status = SerializeServiceMsg(packet.get(), wlan_mlme::Method::DISASSOCIATE_indication, ind.get());
+    auto status =
+        SerializeServiceMsg(packet.get(), wlan_mlme_MLMEDisassociateIndOrdinal, ind.get());
     if (status != ZX_OK) {
         errorf("could not serialize DisassociateIndication: %d\n", status);
     } else {
@@ -165,11 +170,11 @@ zx_status_t SendDisassociateIndication(DeviceInterface* device, const common::Ma
     return status;
 }
 
-zx_status_t SendSignalReportIndication(DeviceInterface* device, uint8_t rssi) {
+zx_status_t SendSignalReportIndication(DeviceInterface* device, common::dBm rssi_dbm) {
     debugfn();
 
     auto ind = wlan_mlme::SignalReportIndication::New();
-    ind->rssi = rssi;
+    ind->rssi_dbm = rssi_dbm.val;
 
     // fidl2 doesn't have a way to get the serialized size yet. 4096 bytes should be enough for
     // everyone.
@@ -179,7 +184,7 @@ zx_status_t SendSignalReportIndication(DeviceInterface* device, uint8_t rssi) {
 
     auto packet = fbl::make_unique<Packet>(fbl::move(buffer), buf_len);
     packet->set_peer(Packet::Peer::kService);
-    auto status = SerializeServiceMsg(packet.get(), wlan_mlme::Method::SIGNAL_REPORT_indication, ind.get());
+    auto status = SerializeServiceMsg(packet.get(), wlan_mlme_MLMESignalReportOrdinal, ind.get());
     if (status != ZX_OK) {
         errorf("could not serialize SignalReportIndication: %d\n", status);
     } else {
@@ -203,7 +208,7 @@ zx_status_t SendEapolConfirm(DeviceInterface* device, wlan_mlme::EapolResultCode
 
     auto packet = fbl::make_unique<Packet>(fbl::move(buffer), buf_len);
     packet->set_peer(Packet::Peer::kService);
-    auto status = SerializeServiceMsg(packet.get(), wlan_mlme::Method::EAPOL_confirm, resp.get());
+    auto status = SerializeServiceMsg(packet.get(), wlan_mlme_MLMEEapolConfOrdinal, resp.get());
     if (status != ZX_OK) {
         errorf("could not serialize EapolConfirm: %d\n", status);
     } else {
@@ -237,7 +242,7 @@ zx_status_t SendEapolIndication(DeviceInterface* device, const EapolFrame& eapol
 
     auto packet = fbl::make_unique<Packet>(fbl::move(buffer), buf_len);
     packet->set_peer(Packet::Peer::kService);
-    auto status = SerializeServiceMsg(packet.get(), wlan_mlme::Method::EAPOL_indication, ind.get());
+    auto status = SerializeServiceMsg(packet.get(), wlan_mlme_MLMEEapolIndOrdinal, ind.get());
     if (status != ZX_OK) {
         errorf("could not serialize MLME-Eapol.indication: %d\n", status);
     } else {

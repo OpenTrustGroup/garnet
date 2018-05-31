@@ -360,15 +360,13 @@ extern {
 
     pub fn zx_port_queue(
         handle: zx_handle_t,
-        packet: *const zx_port_packet_t,
-        size: usize
+        packet: *const zx_port_packet_t
         ) -> zx_status_t;
 
     pub fn zx_port_wait(
         handle: zx_handle_t,
         deadline: zx_time_t,
-        packet: *mut zx_port_packet_t,
-        size: usize
+        packet: *mut zx_port_packet_t
         ) -> zx_status_t;
 
     pub fn zx_port_cancel(
@@ -502,34 +500,20 @@ extern {
         out1: *mut zx_handle_t
         ) -> zx_status_t;
 
-    #[deprecated]
     pub fn zx_fifo_read(
         handle: zx_handle_t,
+        elem_size: usize,
         data: *mut u8,
-        len: usize,
-        num_written: *mut u32
+        count: usize,
+        actual_count: *mut usize
         ) -> zx_status_t;
 
-    pub fn zx_fifo_read_old(
-        handle: zx_handle_t,
-        data: *mut u8,
-        len: usize,
-        num_written: *mut u32
-        ) -> zx_status_t;
-
-    #[deprecated]
     pub fn zx_fifo_write(
         handle: zx_handle_t,
+        elem_size: usize,
         data: *const u8,
-        len: usize,
-        num_written: *mut u32
-        ) -> zx_status_t;
-
-    pub fn zx_fifo_write_old(
-        handle: zx_handle_t,
-        data: *const u8,
-        len: usize,
-        num_written: *mut u32
+        count: usize,
+        actual_count: *mut usize
         ) -> zx_status_t;
 
     pub fn zx_vmar_unmap_handle_close_thread_exit(

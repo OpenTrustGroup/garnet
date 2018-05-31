@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_ESCHER_MATERIAL_MATERIAL_H_
+#define LIB_ESCHER_MATERIAL_MATERIAL_H_
 
 #include <vulkan/vulkan.hpp>
 
@@ -24,8 +25,8 @@ class Material : public fxl::RefCountedThreadSafe<Material> {
   static MaterialPtr New(vec4 color, TexturePtr texture = TexturePtr());
 
   const TexturePtr& texture() const { return texture_; }
-  vk::ImageView image_view() const { return image_view_; }
-  vk::Sampler sampler() const { return sampler_; }
+  vk::ImageView vk_image_view() const { return image_view_; }
+  vk::Sampler vk_sampler() const { return sampler_; }
   vec4 color() const { return color_; }
 
   void set_color(vec4 color) { color_ = color; }
@@ -47,3 +48,5 @@ class Material : public fxl::RefCountedThreadSafe<Material> {
 };
 
 }  // namespace escher
+
+#endif  // LIB_ESCHER_MATERIAL_MATERIAL_H_

@@ -14,7 +14,6 @@
 #include "lib/escher/escher.h"
 #include "lib/escher/util/fuchsia_utils.h"
 #include "lib/escher/vk/gpu_mem.h"
-#include "lib/fsl/tasks/message_loop.h"
 
 namespace scenic {
 namespace gfx {
@@ -67,14 +66,20 @@ VulkanDisplaySwapchain::~VulkanDisplaySwapchain() {
 }
 
 void VulkanDisplaySwapchain::InitializeVulkanSwapchain(
-    Display* display,
-    escher::VulkanDeviceQueues* device_queues,
+    Display* display, escher::VulkanDeviceQueues* device_queues,
     escher::ResourceRecycler* recycler) {
   vk::PhysicalDevice physical_device = device_queues->vk_physical_device();
   vk::SurfaceKHR surface = device_queues->vk_surface();
   FXL_CHECK(!swapchain_.swapchain);
   FXL_CHECK(swapchain_.images.empty());
   FXL_CHECK(recycler);
+
+  {
+    auto result = physical_device.getSurfaceSupportKHR(
+        device_queues->vk_main_queue_family(), surface);
+    VK_CHECK_RESULT(result);
+    FXL_CHECK(result.value);
+  }
 
   vk::SurfaceCapabilitiesKHR surface_caps;
   {
@@ -225,8 +230,7 @@ void VulkanDisplaySwapchain::InitializeVulkanSwapchain(
 }
 
 bool VulkanDisplaySwapchain::DrawAndPresentFrame(
-    const FrameTimingsPtr& frame_timings,
-    DrawCallback draw_callback) {
+    const FrameTimingsPtr& frame_timings, DrawCallback draw_callback) {
   // TODO(MZ-260): replace Vulkan swapchain with Magma C ABI calls, and use
   // EventTimestamper::Wait to notify |frame| when the frame is finished
   // rendering, and when it is presented.

@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "garnet/bin/ui/sketchy/stroke/stroke_tessellator.h"
+
+#include "lib/escher/impl/command_buffer.h"
 #include "lib/escher/profiling/timestamp_profiler.h"
 #include "lib/escher/vk/buffer.h"
 #include "lib/escher/vk/texture.h"
@@ -142,6 +144,19 @@ void main() {
 
 )GLSL";
 
+void SetUpMemoryBarrier(const escher::BufferPtr& buffer,
+                        const vk::AccessFlagBits& src_access_mask,
+                        const vk::AccessFlagBits& dst_access_mask,
+                        vk::BufferMemoryBarrier* barrier) {
+  barrier->srcAccessMask = src_access_mask;
+  barrier->dstAccessMask = dst_access_mask;
+  barrier->srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier->dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier->buffer = buffer->vk();
+  barrier->offset = 0;
+  barrier->size = buffer->size();
+}
+
 }  // namespace
 
 namespace sketchy_service {
@@ -168,42 +183,72 @@ StrokeTessellator::StrokeTessellator(escher::Escher* escher)
               /* push_constants_size= */ 0, kShaderCode) {}
 
 void StrokeTessellator::Dispatch(
-    escher::BufferPtr stroke_info_buffer,
-    escher::BufferPtr control_points_buffer,
-    escher::BufferPtr re_params_buffer,
-    escher::BufferPtr division_counts_buffer,
-    escher::BufferPtr cumulative_division_counts_buffer,
-    escher::BufferPtr division_segment_index_buffer,
-    escher::BufferPtr vertex_buffer,
-    escher::BufferPtr index_buffer,
-    escher::impl::CommandBuffer* command,
-    escher::TimestampProfiler* profiler,
-    uint32_t division_count) {
+    const escher::BufferPtr& stroke_info_buffer,
+    const escher::BufferPtr& control_points_buffer,
+    const escher::BufferPtr& re_params_buffer,
+    const escher::BufferPtr& division_counts_buffer,
+    const escher::BufferPtr& cumulative_division_counts_buffer,
+    const escher::BufferPtr& division_segment_index_buffer,
+    escher::BufferPtr vertex_buffer, const escher::BufferRange& vertex_range,
+    escher::BufferPtr index_buffer, const escher::BufferRange& index_range,
+    escher::impl::CommandBuffer* command, escher::TimestampProfiler* profiler,
+    uint32_t division_count, bool apply_barrier) {
   if (profiler) {
-    profiler->AddTimestamp(
-        command, vk::PipelineStageFlagBits::eBottomOfPipe,
-        "Before Tessellation");
+    profiler->AddTimestamp(command, vk::PipelineStageFlagBits::eBottomOfPipe,
+                           "Before Tessellation");
   }
 
+  if (apply_barrier) {
+    // Apply barriers if the compute shader depends on memory operations.
+    // stroke_info_buffer is a uniform buffer that is visible to both host and
+    // device, and the rest of them use device memory. Therefore, the access
+    // flag for stroke_info_buffer is eHostWrite, and the rest of them are
+    // eTransferWrite.
+    constexpr int kInputBufferCnt = 6;
+    vk::BufferMemoryBarrier barriers[kInputBufferCnt];
+    SetUpMemoryBarrier(stroke_info_buffer, vk::AccessFlagBits::eHostWrite,
+                       vk::AccessFlagBits::eShaderRead, barriers);
+    SetUpMemoryBarrier(control_points_buffer,
+                       vk::AccessFlagBits::eTransferWrite,
+                       vk::AccessFlagBits::eShaderRead, barriers + 1);
+    SetUpMemoryBarrier(re_params_buffer, vk::AccessFlagBits::eTransferWrite,
+                       vk::AccessFlagBits::eShaderRead, barriers + 2);
+    SetUpMemoryBarrier(division_counts_buffer,
+                       vk::AccessFlagBits::eTransferWrite,
+                       vk::AccessFlagBits::eShaderRead, barriers + 3);
+    SetUpMemoryBarrier(cumulative_division_counts_buffer,
+                       vk::AccessFlagBits::eTransferWrite,
+                       vk::AccessFlagBits::eShaderRead, barriers + 4);
+    SetUpMemoryBarrier(division_segment_index_buffer,
+                       vk::AccessFlagBits::eTransferWrite,
+                       vk::AccessFlagBits::eShaderRead, barriers + 5);
+    command->vk().pipelineBarrier(
+        vk::PipelineStageFlagBits::eHost | vk::PipelineStageFlagBits::eTransfer,
+        vk::PipelineStageFlagBits::eComputeShader, vk::DependencyFlags(), 0,
+        nullptr, kInputBufferCnt, barriers, 0, nullptr);
+  }
   uint32_t group_count = (division_count + kLocalSize - 1) / kLocalSize;
-  kernel_.Dispatch(
+  kernel_.DispatchWithRanges(
       std::vector<escher::TexturePtr>{},
-      {std::move(stroke_info_buffer),
-       std::move(control_points_buffer),
-       std::move(re_params_buffer),
-       std::move(division_counts_buffer),
-       std::move(cumulative_division_counts_buffer),
-       std::move(division_segment_index_buffer),
-       std::move(vertex_buffer),
+      {stroke_info_buffer, control_points_buffer, re_params_buffer,
+       division_counts_buffer, cumulative_division_counts_buffer,
+       division_segment_index_buffer, std::move(vertex_buffer),
        std::move(index_buffer)},
+      {{0, stroke_info_buffer->size()},
+       {0, control_points_buffer->size()},
+       {0, re_params_buffer->size()},
+       {0, division_counts_buffer->size()},
+       {0, cumulative_division_counts_buffer->size()},
+       {0, division_segment_index_buffer->size()},
+       {vertex_range.offset, vertex_range.size},
+       {index_range.offset, index_range.size}},
       command, group_count,
       /* group_count_y= */ 1, /* group_count_z= */ 1,
       /* push_constants= */ nullptr);
 
   if (profiler) {
-    profiler->AddTimestamp(
-        command, vk::PipelineStageFlagBits::eBottomOfPipe,
-        "After Tessellation");
+    profiler->AddTimestamp(command, vk::PipelineStageFlagBits::eBottomOfPipe,
+                           "After Tessellation");
   }
 }
 

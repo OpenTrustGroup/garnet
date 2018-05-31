@@ -9,9 +9,10 @@
 #include <fstream>
 #include <memory>
 
-#include <fuchsia/cpp/icu_data.h>
+#include <icu_data/cpp/fidl.h>
+#include <lib/async-loop/cpp/loop.h>
+
 #include "lib/app/cpp/environment_services.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fsl/vmo/sized_vmo.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/string_number_conversions.h"

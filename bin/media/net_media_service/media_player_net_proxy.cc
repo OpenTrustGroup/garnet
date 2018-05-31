@@ -6,7 +6,7 @@
 
 #include <vector>
 
-#include <fuchsia/cpp/netconnector.h>
+#include <netconnector/cpp/fidl.h>
 #include <lib/zx/channel.h>
 
 #include "lib/fidl/cpp/clone.h"
@@ -19,31 +19,22 @@ namespace media_player {
 
 // static
 std::shared_ptr<MediaPlayerNetProxy> MediaPlayerNetProxy::Create(
-    fidl::StringPtr device_name,
-    fidl::StringPtr service_name,
-    fidl::InterfaceRequest<MediaPlayer> request,
-    NetMediaServiceImpl* owner) {
+    fidl::StringPtr device_name, fidl::StringPtr service_name,
+    fidl::InterfaceRequest<MediaPlayer> request, NetMediaServiceImpl* owner) {
   return std::shared_ptr<MediaPlayerNetProxy>(new MediaPlayerNetProxy(
       device_name, service_name, std::move(request), owner));
 }
 
 MediaPlayerNetProxy::MediaPlayerNetProxy(
-    fidl::StringPtr device_name,
-    fidl::StringPtr service_name,
-    fidl::InterfaceRequest<MediaPlayer> request,
-    NetMediaServiceImpl* owner)
-    : NetMediaServiceImpl::MultiClientProduct<MediaPlayer>(this,
-                                                           std::move(request),
-                                                           owner),
+    fidl::StringPtr device_name, fidl::StringPtr service_name,
+    fidl::InterfaceRequest<MediaPlayer> request, NetMediaServiceImpl* owner)
+    : NetMediaServiceImpl::MultiClientProduct<MediaPlayer>(
+          this, std::move(request), owner),
       status_(MediaPlayerStatus::New()) {
   FXL_DCHECK(owner);
 
-  status_publisher_.SetCallbackRunner(
-      [this](GetStatusCallback callback, uint64_t version) {
-        MediaPlayerStatus status_clone;
-        fidl::Clone(*status_, &status_clone);
-        callback(version, std::move(status_clone));
-      });
+  // Fire |StatusChanged| event for the new client.
+  SendStatusUpdates();
 
   message_relay_.SetMessageReceivedCallback(
       [this](std::vector<uint8_t> message) { HandleReceivedMessage(message); });
@@ -109,26 +100,20 @@ void MediaPlayerNetProxy::Seek(int64_t position) {
       Serializer::Serialize(MediaPlayerInMessage::SeekRequest(position)));
 }
 
-void MediaPlayerNetProxy::GetStatus(uint64_t version_last_seen,
-                                    GetStatusCallback callback) {
-  status_publisher_.Get(version_last_seen, callback);
-}
-
 void MediaPlayerNetProxy::SetGain(float gain) {
   message_relay_.SendMessage(
       Serializer::Serialize(MediaPlayerInMessage::SetGainRequest(gain)));
 }
 
 void MediaPlayerNetProxy::CreateView(
-    fidl::InterfaceHandle<views_v1::ViewManager> view_manager,
-    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request) {
+    fidl::InterfaceHandle<::fuchsia::ui::views_v1::ViewManager> view_manager,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request) {
   FXL_LOG(ERROR) << "CreateView called on MediaPlayer proxy - not supported.";
   UnbindAndReleaseFromOwner();
 }
 
 void MediaPlayerNetProxy::SetAudioRenderer(
-    fidl::InterfaceHandle<media::AudioRenderer> audio_renderer,
-    fidl::InterfaceHandle<media::MediaRenderer> media_renderer) {
+    fidl::InterfaceHandle<media::AudioRenderer2> audio_renderer) {
   FXL_LOG(ERROR)
       << "SetAudioRenderer called on MediaPlayer proxy - not supported.";
   UnbindAndReleaseFromOwner();
@@ -137,6 +122,9 @@ void MediaPlayerNetProxy::SetAudioRenderer(
 void MediaPlayerNetProxy::AddBinding(
     fidl::InterfaceRequest<MediaPlayer> request) {
   MultiClientProduct::AddBinding(std::move(request));
+
+  // Fire |StatusChanged| event for the new client.
+  bindings().bindings().back()->events().StatusChanged(fidl::Clone(*status_));
 }
 
 void MediaPlayerNetProxy::SendTimeCheckMessage() {
@@ -188,8 +176,14 @@ void MediaPlayerNetProxy::HandleReceivedMessage(
         status_->timeline_transform->reference_time =
             remote_to_local_(status_->timeline_transform->reference_time);
       }
-      status_publisher_.SendUpdates();
+      SendStatusUpdates();
       break;
+  }
+}
+
+void MediaPlayerNetProxy::SendStatusUpdates() {
+  for (auto& binding : bindings().bindings()) {
+    binding->events().StatusChanged(fidl::Clone(*status_));
   }
 }
 

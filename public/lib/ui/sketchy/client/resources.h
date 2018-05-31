@@ -5,7 +5,7 @@
 #ifndef LIB_UI_SKETCHY_CLIENT_RESOURCES_H_
 #define LIB_UI_SKETCHY_CLIENT_RESOURCES_H_
 
-#include <fuchsia/cpp/sketchy.h>
+#include <fuchsia/ui/sketchy/cpp/fidl.h>
 #include <garnet/public/lib/fxl/memory/ref_counted.h>
 
 #include "lib/ui/scenic/client/session.h"
@@ -22,8 +22,8 @@ class Canvas;
 // corresponds to a separate canvas resource.
 //
 // Resource is the base class for these other classes.
-// provides lifecycle management; the constructor enqueues a CreateResourceCommand
-// and the destructor enqueues a ReleaseResourceCommand.
+// provides lifecycle management; the constructor enqueues a
+// CreateResourceCommand and the destructor enqueues a ReleaseResourceCommand.
 class Resource {
  public:
   Canvas* canvas() const { return canvas_; }
@@ -39,8 +39,8 @@ class Resource {
 
   // Enqueue an op in canvas to create a resource. Called in the constructor of
   // concrete resources to be created.
-  void EnqueueCreateResourceCommand(ResourceId resource_id,
-                                    sketchy::ResourceArgs args) const;
+  void EnqueueCreateResourceCommand(
+      ResourceId resource_id, ::fuchsia::ui::sketchy::ResourceArgs args) const;
 
   // Enqueue an op in canvas to import the resource. Called in the constructor
   // of concrete resources to be imported.
@@ -48,12 +48,11 @@ class Resource {
   // |token| Token that is exported by the local resource, with which the remote
   //     canvas can import.
   // |spec| Type of the resource.
-  void EnqueueImportResourceCommand(ResourceId resource_id,
-                               zx::eventpair token,
-                               gfx::ImportSpec spec) const;
+  void EnqueueImportResourceCommand(ResourceId resource_id, zx::eventpair token,
+                                    fuchsia::ui::gfx::ImportSpec spec) const;
 
   // Enqueue an op in canvas.
-  void EnqueueCommand(sketchy::Command command) const;
+  void EnqueueCommand(::fuchsia::ui::sketchy::Command command) const;
 
  private:
   Canvas* const canvas_;

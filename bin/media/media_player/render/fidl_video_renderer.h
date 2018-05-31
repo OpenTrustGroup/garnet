@@ -5,11 +5,14 @@
 #ifndef GARNET_BIN_MEDIA_MEDIA_PLAYER_RENDER_FIDL_VIDEO_RENDERER_H_
 #define GARNET_BIN_MEDIA_MEDIA_PLAYER_RENDER_FIDL_VIDEO_RENDERER_H_
 
-#include <queue>
+#include <deque>
 #include <unordered_map>
 
-#include <fuchsia/cpp/media.h>
+#include <media/cpp/fidl.h>
 
+#include "garnet/bin/media/media_player/metrics/packet_timing_tracker.h"
+#include "garnet/bin/media/media_player/metrics/rate_tracker.h"
+#include "garnet/bin/media/media_player/metrics/value_tracker.h"
 #include "garnet/bin/media/media_player/render/video_converter.h"
 #include "garnet/bin/media/media_player/render/video_renderer.h"
 #include "lib/ui/scenic/client/host_image_cycler.h"
@@ -29,11 +32,14 @@ class FidlVideoRenderer
   ~FidlVideoRenderer() override;
 
   // VideoRendererInProc implementation.
-  void Flush(bool hold_frame) override;
+  const char* label() const override;
 
-  std::shared_ptr<PayloadAllocator> allocator() override;
+  void Dump(std::ostream& os) const override;
 
-  Demand SupplyPacket(PacketPtr packet) override;
+  void FlushInput(bool hold_frame, size_t input_index,
+                  fxl::Closure callback) override;
+
+  void PutInputPacket(PacketPtr packet, size_t input_index) override;
 
   const std::vector<std::unique_ptr<StreamTypeSet>>& GetSupportedStreamTypes()
       override {
@@ -44,9 +50,9 @@ class FidlVideoRenderer
 
   void Prime(fxl::Closure callback) override;
 
-  geometry::Size video_size() const override;
+  fuchsia::math::Size video_size() const override;
 
-  geometry::Size pixel_aspect_ratio() const override;
+  fuchsia::math::Size pixel_aspect_ratio() const override;
 
   // Registers a callback that's called when the values returned by |video_size|
   // or |pixel_aspect_ratio| change.
@@ -54,8 +60,8 @@ class FidlVideoRenderer
 
   // Creates a view.
   void CreateView(
-      fidl::InterfacePtr<views_v1::ViewManager> view_manager,
-      fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request);
+      fidl::InterfacePtr<::fuchsia::ui::views_v1::ViewManager> view_manager,
+      fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request);
 
  protected:
   void OnProgressStarted() override;
@@ -65,8 +71,8 @@ class FidlVideoRenderer
 
   class View : public mozart::BaseView {
    public:
-    View(views_v1::ViewManagerPtr view_manager,
-         fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
+    View(::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
+         fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request,
          std::shared_ptr<FidlVideoRenderer> renderer);
 
     ~View() override;
@@ -74,7 +80,7 @@ class FidlVideoRenderer
    private:
     // |BaseView|:
     void OnSceneInvalidated(
-        images::PresentationInfo presentation_info) override;
+        fuchsia::images::PresentationInfo presentation_info) override;
 
     std::shared_ptr<FidlVideoRenderer> renderer_;
     scenic_lib::HostImageCycler image_cycler_;
@@ -88,7 +94,7 @@ class FidlVideoRenderer
   void AdvanceReferenceTime(int64_t reference_time);
 
   void GetRgbaFrame(uint8_t* rgba_buffer,
-                    const geometry::Size& rgba_buffer_size);
+                    const fuchsia::math::Size& rgba_buffer_size);
 
   // Discards packets that are older than pts_ns_.
   void DiscardOldPackets();
@@ -109,7 +115,7 @@ class FidlVideoRenderer
   }
 
   std::vector<std::unique_ptr<StreamTypeSet>> supported_stream_types_;
-  std::queue<PacketPtr> packet_queue_;
+  std::deque<PacketPtr> packet_queue_;
   bool flushed_ = true;
   PacketPtr held_packet_;
   int64_t pts_ns_ = Packet::kUnknownPts;
@@ -117,6 +123,11 @@ class FidlVideoRenderer
   std::unordered_map<View*, std::unique_ptr<View>> views_;
   fxl::Closure prime_callback_;
   fxl::Closure geometry_update_callback_;
+
+  PacketTimingTracker arrivals_;
+  PacketTimingTracker draws_;
+  RateTracker frame_rate_;
+  ValueTracker<int64_t> scenic_lead_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(FidlVideoRenderer);
 };

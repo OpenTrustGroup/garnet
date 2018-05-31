@@ -4,23 +4,30 @@
 
 use eapol;
 use failure;
+use rsna::SecAssocResult;
 
-pub struct Authenticator {}
+pub struct Authenticator {
+    pub key_replay_counter: u64,
+    pub s_nonce: [u8; 32],
+}
 
 impl Authenticator {
     pub fn new() -> Result<Authenticator, failure::Error> {
-        Ok(Authenticator {})
+        Ok(Authenticator {
+            key_replay_counter: 0,
+            s_nonce: [0u8; 32],
+        })
     }
 
     pub fn initiate(&self) -> Result<(), failure::Error> {
         // TODO(hahnr): Send first message of handshake.
         Ok(())
     }
-}
 
-impl eapol::KeyFrameReceiver for Authenticator {
-    fn on_eapol_key_frame(&self, _frame: &eapol::KeyFrame) -> Result<(), failure::Error> {
+    pub fn on_eapol_key_frame(
+        &self, _frame: &eapol::KeyFrame, _plain_data: &[u8]
+    ) -> SecAssocResult {
         // TODO(hahnr): Implement.
-        Ok(())
+        Ok(vec![])
     }
 }

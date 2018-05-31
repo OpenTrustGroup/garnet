@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_ESCHER_VK_SHADER_MODULE_TEMPLATE_H_
+#define LIB_ESCHER_VK_SHADER_MODULE_TEMPLATE_H_
 
 #include <string>
 #include <utility>
@@ -52,11 +53,11 @@ class ShaderModuleVariantArgs : public Hashable {
 class ShaderModuleTemplate
     : public fxl::RefCountedThreadSafe<ShaderModuleTemplate> {
  public:
-  ShaderModuleTemplate(vk::Device device,
-                       shaderc::Compiler* compiler,
-                       ShaderStage shader_stage,
-                       HackFilePath path,
+  ShaderModuleTemplate(vk::Device device, shaderc::Compiler* compiler,
+                       ShaderStage shader_stage, HackFilePath path,
                        HackFilesystemPtr filesystem);
+
+  ~ShaderModuleTemplate();
 
   // Obtain a ShaderModule variant from the template, either a cached one, or a
   // newly-created module if none matches the provided args.  If any of the
@@ -93,7 +94,7 @@ class ShaderModuleTemplate
     void ScheduleCompilation();
 
    private:
-    ShaderModuleTemplate* const template_;
+    const fxl::RefPtr<ShaderModuleTemplate> template_;
     ShaderModuleVariantArgs args_;
 
     // TODO(SCN-664): this means that every Variant has a copy of every path
@@ -139,3 +140,5 @@ ShaderModuleVariantArgs::definitions() const {
 }
 
 }  // namespace escher
+
+#endif  // LIB_ESCHER_VK_SHADER_MODULE_TEMPLATE_H_

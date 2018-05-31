@@ -8,6 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "third_party/rapidjson/rapidjson/document.h"
+
 namespace component {
 
 class SandboxMetadata {
@@ -16,7 +18,9 @@ class SandboxMetadata {
   ~SandboxMetadata();
 
   bool Parse(const std::string& data);
+  bool Parse(const rapidjson::Value& sandbox_value);
   bool HasFeature(const std::string& feature);
+  void AddFeature(std::string feature);
 
   const std::vector<std::string>& dev() const { return dev_; }
   const std::vector<std::string>& system() const { return system_; }

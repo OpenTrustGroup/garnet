@@ -10,7 +10,6 @@
 #include "lib/escher/impl/vk/pipeline.h"
 #include "lib/escher/impl/vk/pipeline_spec.h"
 #include "lib/escher/impl/vulkan_utils.h"
-#include "lib/escher/vk/buffer.h"
 #include "lib/escher/vk/texture.h"
 #include "lib/escher/vk/vulkan_context.h"
 
@@ -101,7 +100,7 @@ PipelinePtr CreatePipeline(vk::Device device,
 
   vk::ComputePipelineCreateInfo pipeline_info;
   pipeline_info.stage = shader_stage_info;
-  pipeline_info.layout = pipeline_layout->get();
+  pipeline_info.layout = pipeline_layout->vk();
 
   vk::Pipeline vk_pipeline = ESCHER_CHECKED_VK_RESULT(
       device.createComputePipeline(nullptr, pipeline_info));
@@ -126,11 +125,10 @@ inline void InitWriteDescriptorSet(
 
 }  // namespace
 
-ComputeShader::ComputeShader(Escher* escher,
-                             std::vector<vk::ImageLayout> layouts,
-                             std::vector<vk::DescriptorType> buffer_types,
-                             size_t push_constants_size,
-                             const char* source_code)
+ComputeShader::ComputeShader(
+    Escher* escher, const std::vector<vk::ImageLayout>& layouts,
+    const std::vector<vk::DescriptorType>& buffer_types,
+    size_t push_constants_size, const char* source_code)
     : device_(escher->vulkan_context().device),
       descriptor_set_layout_bindings_(
           CreateLayoutBindings(layouts, buffer_types)),
@@ -138,11 +136,8 @@ ComputeShader::ComputeShader(Escher* escher,
           CreateDescriptorSetLayoutCreateInfo(descriptor_set_layout_bindings_)),
       push_constants_size_(static_cast<uint32_t>(push_constants_size)),
       pool_(escher, descriptor_set_layout_create_info_),
-      pipeline_(CreatePipeline(device_,
-                               pool_.layout(),
-                               push_constants_size_,
-                               source_code,
-                               escher->glsl_compiler())) {
+      pipeline_(CreatePipeline(device_, pool_.layout(), push_constants_size_,
+                               source_code, escher->glsl_compiler())) {
   FXL_DCHECK(push_constants_size == push_constants_size_);  // detect overflow
   descriptor_image_info_.reserve(layouts.size());
   descriptor_buffer_info_.reserve(buffer_types.size());
@@ -161,7 +156,6 @@ ComputeShader::ComputeShader(Escher* escher,
   for (uint32_t i = 0; i < buffer_types.size(); ++i) {
     // The other fields will be filled out during each call to Dispatch().
     vk::DescriptorBufferInfo buffer_info;
-    buffer_info.offset = 0;
     descriptor_buffer_info_.push_back(buffer_info);
 
     uint32_t binding = i + static_cast<uint32_t>(layouts.size());
@@ -174,37 +168,52 @@ ComputeShader::ComputeShader(Escher* escher,
 
 ComputeShader::~ComputeShader() {}
 
-void ComputeShader::Dispatch(std::vector<TexturePtr> textures,
-                             std::vector<BufferPtr> buffers,
-                             CommandBuffer* command_buffer,
-                             uint32_t x,
-                             uint32_t y,
-                             uint32_t z,
+void ComputeShader::Dispatch(const std::vector<TexturePtr>& textures,
+                             const std::vector<BufferPtr>& buffers,
+                             CommandBuffer* command_buffer, uint32_t x,
+                             uint32_t y, uint32_t z,
                              const void* push_constants) {
+  std::vector<BufferRange> buffer_ranges;
+  buffer_ranges.reserve(buffers.size());
+  for (const auto& buffer : buffers) {
+    buffer_ranges.push_back({0, buffer->size()});
+  }
+  DispatchWithRanges(textures, buffers, buffer_ranges, command_buffer, x, y, z,
+                     push_constants);
+}
+
+void ComputeShader::DispatchWithRanges(
+    const std::vector<TexturePtr>& textures,
+    const std::vector<BufferPtr>& buffers,
+    const std::vector<BufferRange>& buffer_ranges,
+    CommandBuffer* command_buffer, uint32_t x, uint32_t y, uint32_t z,
+    const void* push_constants) {
   // Push constants must be provided if and only if the pipeline is configured
   // to use them.
   FXL_DCHECK((push_constants_size_ == 0) == (push_constants == nullptr));
+  FXL_DCHECK(buffers.size() == buffer_ranges.size());
 
   auto descriptor_set = pool_.Allocate(1, command_buffer)->get(0);
   for (uint32_t i = 0; i < textures.size(); ++i) {
     descriptor_set_writes_[i].dstSet = descriptor_set;
-    descriptor_image_info_[i].imageView = textures[i]->image_view();
-    descriptor_image_info_[i].sampler = textures[i]->sampler();
+    descriptor_image_info_[i].imageView = textures[i]->vk_image_view();
+    descriptor_image_info_[i].sampler = textures[i]->vk_sampler();
     command_buffer->KeepAlive(textures[i]);
   }
   for (uint32_t i = 0; i < buffers.size(); ++i) {
     uint32_t binding = i + static_cast<uint32_t>(textures.size());
     descriptor_set_writes_[binding].dstSet = descriptor_set;
-    descriptor_buffer_info_[i].buffer = buffers[i]->get();
-    descriptor_buffer_info_[i].range = buffers[i]->size();
+    descriptor_buffer_info_[i].buffer = buffers[i]->vk();
+    descriptor_buffer_info_[i].offset = buffer_ranges[i].offset;
+    descriptor_buffer_info_[i].range = buffer_ranges[i].size;
     command_buffer->KeepAlive(buffers[i]);
   }
   device_.updateDescriptorSets(
       static_cast<uint32_t>(descriptor_set_writes_.size()),
       descriptor_set_writes_.data(), 0, nullptr);
 
-  auto vk_command_buffer = command_buffer->get();
-  auto vk_pipeline_layout = pipeline_->layout();
+  auto vk_command_buffer = command_buffer->vk();
+  auto vk_pipeline_layout = pipeline_->vk_layout();
 
   if (push_constants) {
     vk_command_buffer.pushConstants(vk_pipeline_layout,
@@ -212,7 +221,7 @@ void ComputeShader::Dispatch(std::vector<TexturePtr> textures,
                                     push_constants_size_, push_constants);
   }
   vk_command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute,
-                                 pipeline_->get());
+                                 pipeline_->vk());
   vk_command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
                                        vk_pipeline_layout, 0, 1,
                                        &descriptor_set, 0, nullptr);

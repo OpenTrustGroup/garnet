@@ -10,14 +10,13 @@
 
 #include <queue>
 
-#include <fuchsia/cpp/images.h>
+#include <fuchsia/images/cpp/fidl.h>
 #include "garnet/lib/ui/gfx/engine/resource_map.h"
 #include "garnet/lib/ui/gfx/resources/image.h"
 #include "garnet/lib/ui/gfx/resources/image_base.h"
 #include "garnet/lib/ui/gfx/resources/image_pipe_handler.h"
 #include "garnet/lib/ui/gfx/resources/resource.h"
 #include "lib/escher/flib/fence_set_listener.h"
-#include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/memory/weak_ptr.h"
 
 namespace scenic {
@@ -31,23 +30,19 @@ class ImagePipe : public ImageBase {
   static const ResourceTypeInfo kTypeInfo;
 
   ImagePipe(Session* session, scenic::ResourceId id);
-  ImagePipe(Session* session,
-            scenic::ResourceId id,
-            ::fidl::InterfaceRequest<images::ImagePipe> request);
+  ImagePipe(Session* session, scenic::ResourceId id,
+            ::fidl::InterfaceRequest<fuchsia::images::ImagePipe> request);
 
   // Called by |ImagePipeHandler|, part of |ImagePipe| interface.
-  void AddImage(uint32_t image_id,
-                images::ImageInfo image_info,
-                zx::vmo memory,
-                images::MemoryType memory_type,
+  void AddImage(uint32_t image_id, fuchsia::images::ImageInfo image_info,
+                zx::vmo memory, fuchsia::images::MemoryType memory_type,
                 uint64_t memory_offset);
   void RemoveImage(uint32_t image_id);
 
-  void PresentImage(uint32_t image_id,
-                    uint64_t presentation_time,
+  void PresentImage(uint32_t image_id, uint64_t presentation_time,
                     ::fidl::VectorPtr<zx::event> acquire_fences,
                     ::fidl::VectorPtr<zx::event> release_fences,
-                    images::ImagePipe::PresentImageCallback callback);
+                    fuchsia::images::ImagePipe::PresentImageCallback callback);
 
   void Accept(class ResourceVisitor* visitor) override;
 
@@ -75,9 +70,8 @@ class ImagePipe : public ImageBase {
   void CloseConnectionAndCleanUp();
 
   // Virtual so that test subclasses can override.
-  virtual ImagePtr CreateImage(Session* session,
-                               MemoryPtr memory,
-                               const images::ImageInfo& image_info,
+  virtual ImagePtr CreateImage(Session* session, MemoryPtr memory,
+                               const fuchsia::images::ImageInfo& image_info,
                                uint64_t memory_offset,
                                ErrorReporter* error_reporter);
 
@@ -93,7 +87,7 @@ class ImagePipe : public ImageBase {
 
     // Callback to report when the update has been applied in response to
     // an invocation of |ImagePipe.PresentImage()|.
-    images::ImagePipe::PresentImageCallback present_image_callback;
+    fuchsia::images::ImagePipe::PresentImageCallback present_image_callback;
   };
   std::queue<Frame> frames_;
   std::unique_ptr<ImagePipeHandler> handler_;

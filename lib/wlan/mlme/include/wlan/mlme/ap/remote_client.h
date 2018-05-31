@@ -4,11 +4,11 @@
 
 #pragma once
 
-#include <fuchsia/cpp/wlan_mlme.h>
-#include <wlan/mlme/eapol.h>
+#include <wlan_mlme/cpp/fidl.h>
 #include <wlan/mlme/ap/bss_interface.h>
 #include <wlan/mlme/ap/remote_client_interface.h>
 #include <wlan/mlme/device_interface.h>
+#include <wlan/mlme/eapol.h>
 #include <wlan/mlme/frame_handler.h>
 #include <wlan/mlme/packet.h>
 #include <wlan/mlme/timer.h>
@@ -38,10 +38,19 @@ class RemoteClient : public RemoteClientInterface {
     zx_status_t HandleMgmtFrame(const MgmtFrameHeader& hdr) override;
     zx_status_t HandlePsPollFrame(const ImmutableCtrlFrame<PsPollFrame>& frame,
                                   const wlan_rx_info_t& rxinfo) override;
+    zx_status_t HandleAddBaRequestFrame(const ImmutableMgmtFrame<AddBaRequestFrame>& rx_frame,
+                                        const wlan_rx_info_t& rxinfo) override;
+    zx_status_t HandleAddBaResponseFrame(const ImmutableMgmtFrame<AddBaResponseFrame>& rx_frame,
+                                         const wlan_rx_info& rxinfo) override;
 
     zx_status_t SendAuthentication(status_code::StatusCode result);
     zx_status_t SendAssociationResponse(aid_t aid, status_code::StatusCode result);
     zx_status_t SendDeauthentication(reason_code::ReasonCode reason_code);
+    zx_status_t SendAddBaRequest();
+    zx_status_t SendAddBaResponse(const ImmutableMgmtFrame<AddBaRequestFrame>& rx_frame);
+
+    uint8_t GetTid();
+    uint8_t GetTid(const ImmutableBaseFrame<EthernetII>& frame);
 
     // Enqueues an ethernet frame which can be sent at a later point in time.
     zx_status_t EnqueueEthernetFrame(const ImmutableBaseFrame<EthernetII>& frame);
@@ -58,7 +67,7 @@ class RemoteClient : public RemoteClientInterface {
     // TODO(hahnr): Evolve this to support multiple timeouts at the same time.
     zx_status_t StartTimer(zx::time deadline);
     zx_status_t CancelTimer();
-    zx::time CreateTimerDeadline(zx_duration_t tus);
+    zx::time CreateTimerDeadline(wlan_tu_t tus);
     bool IsDeadlineExceeded(zx::time deadline);
 
     DeviceInterface* device() { return device_; }
@@ -69,7 +78,8 @@ class RemoteClient : public RemoteClientInterface {
     zx_status_t WriteHtCapabilities(ElementWriter* w);
     zx_status_t WriteHtOperation(ElementWriter* w);
 
-    // Maximum number of packets buffered while the client is in power saving mode.
+    // Maximum number of packets buffered while the client is in power saving
+    // mode.
     // TODO(NET-687): Find good BU limit.
     static constexpr size_t kMaxPowerSavingQueueSize = 30;
 
@@ -78,7 +88,8 @@ class RemoteClient : public RemoteClientInterface {
     BssInterface* const bss_;
     const common::MacAddr addr_;
     const fbl::unique_ptr<Timer> timer_;
-    // Queue which holds buffered `EthernetII` packets while the client is in power saving mode.
+    // Queue which holds buffered `EthernetII` packets while the client is in
+    // power saving mode.
     PacketQueue bu_queue_;
     fbl::unique_ptr<BaseState> state_;
 };
@@ -140,45 +151,45 @@ class AuthenticatingState : public BaseState {
 };
 
 class AuthenticatedState : public BaseState {
- public:
-  AuthenticatedState(RemoteClient* client);
+   public:
+    AuthenticatedState(RemoteClient* client);
 
-  void OnEnter() override;
-  void OnExit() override;
+    void OnEnter() override;
+    void OnExit() override;
 
-  void HandleTimeout() override;
+    void HandleTimeout() override;
 
-  zx_status_t HandleAuthentication(const ImmutableMgmtFrame<Authentication>& frame,
-                                   const wlan_rx_info_t& rxinfo) override;
-  zx_status_t HandleAssociationRequest(const ImmutableMgmtFrame<AssociationRequest>& frame,
-                                       const wlan_rx_info_t& rxinfo) override;
-  zx_status_t HandleDeauthentication(const ImmutableMgmtFrame<Deauthentication>& frame,
+    zx_status_t HandleAuthentication(const ImmutableMgmtFrame<Authentication>& frame,
                                      const wlan_rx_info_t& rxinfo) override;
+    zx_status_t HandleAssociationRequest(const ImmutableMgmtFrame<AssociationRequest>& frame,
+                                         const wlan_rx_info_t& rxinfo) override;
+    zx_status_t HandleDeauthentication(const ImmutableMgmtFrame<Deauthentication>& frame,
+                                       const wlan_rx_info_t& rxinfo) override;
 
-  inline const char* name() const override { return kName; }
+    inline const char* name() const override { return kName; }
 
- private:
-  static constexpr const char* kName = "Authenticated";
+   private:
+    static constexpr const char* kName = "Authenticated";
 
-  // TODO(hahnr): Use WLAN_MIN_TU once defined.
-  static constexpr zx_duration_t kAuthenticationTimeoutTu = ZX_MIN(30);
+    // TODO(hahnr): Use WLAN_MIN_TU once defined.
+    static constexpr wlan_tu_t kAuthenticationTimeoutTu = 1800000;  // ~30min
 
-  zx::time auth_timeout_;
+    zx::time auth_timeout_;
 };
 
 class AssociatingState : public BaseState {
- public:
-  AssociatingState(RemoteClient* client, const ImmutableMgmtFrame<AssociationRequest>& frame);
+   public:
+    AssociatingState(RemoteClient* client, const ImmutableMgmtFrame<AssociationRequest>& frame);
 
-  void OnEnter() override;
+    void OnEnter() override;
 
-  inline const char* name() const override { return kName; }
+    inline const char* name() const override { return kName; }
 
- private:
-  static constexpr const char* kName = "Associating";
+   private:
+    static constexpr const char* kName = "Associating";
 
-  status_code::StatusCode status_code_;
-  uint16_t aid_;
+    status_code::StatusCode status_code_;
+    uint16_t aid_;
 };
 
 class AssociatedState : public BaseState {
@@ -208,6 +219,10 @@ class AssociatedState : public BaseState {
                                   const wlan_rx_info_t& rxinfo) override;
     zx_status_t HandleMlmeEapolReq(const wlan_mlme::EapolRequest& req) override;
     zx_status_t HandleMlmeSetKeysReq(const wlan_mlme::SetKeysRequest& req) override;
+    zx_status_t HandleAddBaRequestFrame(const ImmutableMgmtFrame<AddBaRequestFrame>& frame,
+                                        const wlan_rx_info_t& rxinfo) override;
+    zx_status_t HandleAddBaResponseFrame(const ImmutableMgmtFrame<AddBaResponseFrame>& frame,
+                                         const wlan_rx_info& rxinfo) override;
 
     inline const char* name() const override { return kName; }
 
@@ -215,7 +230,7 @@ class AssociatedState : public BaseState {
     static constexpr const char* kName = "Associated";
 
     // TODO(hahnr): Use WLAN_MIN_TU once defined.
-    static constexpr zx_duration_t kInactivityTimeoutTu = ZX_MIN(5);
+    static constexpr wlan_tu_t kInactivityTimeoutTu = 300000;  // ~5min
     zx_status_t SendNextBu();
     void UpdatePowerSaveMode(const FrameControl& fc);
 
@@ -225,7 +240,8 @@ class AssociatedState : public BaseState {
     bool active_;
     // `true` if the client entered Power Saving mode's doze state.
     bool dozing_;
-    // `true` if a Deauthentication notification should be sent when leaving the state.
+    // `true` if a Deauthentication notification should be sent when leaving the
+    // state.
     bool req_deauth_ = true;
     eapol::PortState eapol_controlled_port_ = eapol::PortState::kBlocked;
 };

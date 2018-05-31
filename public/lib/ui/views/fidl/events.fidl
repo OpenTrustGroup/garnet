@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library views;
+library fuchsia.ui.views;
+
+using fuchsia.ui.gfx;
 
 union Event {
   ViewPropertiesChangedEvent view_properties_changed;
@@ -25,11 +27,11 @@ struct ViewPropertiesChangedEvent {
 
   // The size of the view in logical pixels.
   // Must be non-negative.
-  gfx.BoundingBox size;
+  fuchsia.ui.gfx.BoundingBox size;
 
   // The inset of the view in logical pixels.
   // Must be non-negative.
-  gfx.vec3 inset;
+  fuchsia.ui.gfx.vec3 inset;
 };
 
 // Called when a child view is attached.

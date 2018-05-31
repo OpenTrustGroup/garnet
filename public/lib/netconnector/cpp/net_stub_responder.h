@@ -7,7 +7,7 @@
 #include <memory>
 #include <unordered_set>
 
-#include <fuchsia/cpp/netconnector.h>
+#include <netconnector/cpp/fidl.h>
 
 #include "lib/app/cpp/application_context.h"
 #include "lib/fxl/logging.h"
@@ -22,7 +22,7 @@ template <typename TInterface, typename TStub>
 class NetStubResponder {
  public:
   // Constructor. |actual| must outlive this.
-  NetStubResponder(TInterface* actual,
+  NetStubResponder(const fidl::InterfacePtr<TInterface>& actual,
                    const std::string& service_name,
                    component::ApplicationContext* application_context)
       : actual_(actual) {
@@ -53,7 +53,7 @@ class NetStubResponder {
   void ReleaseStub(std::shared_ptr<TStub> stub) { stubs_.erase(stub); }
 
  private:
-  TInterface* actual_;
+  const fidl::InterfacePtr<TInterface>& actual_;
   component::ServiceNamespace service_namespace_;
   std::unordered_set<std::shared_ptr<TStub>> stubs_;
 

@@ -19,7 +19,6 @@ use app::client::connect_to_service;
 use failure::{Error, ResultExt};
 use fdio::fdio_sys::*;
 use fidl_media_player::*;
-use futures::future::{loop_fn, Loop};
 use futures::prelude::*;
 use mxruntime_sys::*;
 use std::fs::File;
@@ -82,30 +81,26 @@ impl App {
         if url.scheme() == "file" {
             let file = File::open(url.path())?;
             let mut channel = channel_from_file(file)?;
-            player.set_file_source(&mut channel)?;
+            player.set_file_source(channel)?;
         } else {
-            player.set_http_source(&mut url.into_string())?;
+            player.set_http_source(url.as_str())?;
         }
         player.play()?;
 
-        let til_done = loop_fn(self, |app| {
-            player
-                .get_status(&mut app.status_version)
-                .map(|(version, status)| {
-                    app.status_version = version;
-                    app.display_status(&status);
+        let event_listener = player.take_event_stream().filter(move |event| {
+            match event {
+                MediaPlayerEvent::StatusChanged { status } => {
+                    self.display_status(&status);
 
-                    if status.end_of_stream {
-                        Loop::Break(app)
-                    } else {
-                        Loop::Continue(app)
-                    }
-                })
-        });
+                    Ok(status.end_of_stream)
+                }
+            }
+        })
+        .next();
 
-        executor.run_singlethreaded(til_done)?;
-
-        Ok(())
+        executor.run_singlethreaded(event_listener)
+            .map_err(|(e, _rest_of_stream)| e.into())
+            .map(|_| ())
     }
 
     fn display_status(&mut self, status: &MediaPlayerStatus) {

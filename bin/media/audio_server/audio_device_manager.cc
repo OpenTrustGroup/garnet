@@ -12,7 +12,7 @@
 #include "garnet/bin/media/audio_server/audio_output.h"
 #include "garnet/bin/media/audio_server/audio_plug_detector.h"
 #include "garnet/bin/media/audio_server/audio_server_impl.h"
-#include "garnet/bin/media/audio_server/platform/generic/throttle_output.h"
+#include "garnet/bin/media/audio_server/throttle_output.h"
 
 namespace media {
 namespace audio {
@@ -135,9 +135,7 @@ void AudioDeviceManager::RemoveDevice(const fbl::RefPtr<AudioDevice>& device) {
 }
 
 void AudioDeviceManager::HandlePlugStateChange(
-    const fbl::RefPtr<AudioDevice>& device,
-    bool plugged,
-    zx_time_t plug_time) {
+    const fbl::RefPtr<AudioDevice>& device, bool plugged, zx_time_t plug_time) {
   FXL_DCHECK(device != nullptr);
   if (plugged) {
     OnDevicePlugged(device, plug_time);
@@ -249,8 +247,7 @@ void AudioDeviceManager::ScheduleMainThreadTask(const fxl::Closure& task) {
 }
 
 fbl::RefPtr<AudioDevice> AudioDeviceManager::FindLastPlugged(
-    AudioObject::Type type,
-    bool allow_unplugged) {
+    AudioObject::Type type, bool allow_unplugged) {
   FXL_DCHECK((type == AudioObject::Type::Output) ||
              (type == AudioObject::Type::Input));
   AudioDevice* best = nullptr;
@@ -346,8 +343,8 @@ void AudioDeviceManager::OnDeviceUnplugged(
   }
 }
 
-void AudioDeviceManager::OnDevicePlugged(
-    const fbl::RefPtr<AudioDevice>& device, zx_time_t plug_time) {
+void AudioDeviceManager::OnDevicePlugged(const fbl::RefPtr<AudioDevice>& device,
+                                         zx_time_t plug_time) {
   FXL_DCHECK(device);
 
   // Update the plug state of the device.  If this was not an actual change in
@@ -429,7 +426,8 @@ void AudioDeviceManager::OnDevicePlugged(
 // listen to this output going forward (default output).
 // *If device is an input, then all NON-'loopback' capturers
 // should listen to this input going forward (default input).
-void AudioDeviceManager::LinkToCapturers(const fbl::RefPtr<AudioDevice>& device) {
+void AudioDeviceManager::LinkToCapturers(
+    const fbl::RefPtr<AudioDevice>& device) {
   bool link_to_loopbacks = device->is_output();
 
   for (auto& obj : capturers_) {

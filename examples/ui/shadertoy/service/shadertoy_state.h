@@ -5,15 +5,15 @@
 #ifndef GARNET_EXAMPLES_UI_SHADERTOY_SERVICE_SHADERTOY_STATE_H_
 #define GARNET_EXAMPLES_UI_SHADERTOY_SERVICE_SHADERTOY_STATE_H_
 
+#include <fuchsia/images/cpp/fidl.h>
+#include <fuchsia/ui/shadertoy/cpp/fidl.h>
+#include <fuchsia/ui/views_v1_token/cpp/fidl.h>
 #include "garnet/examples/ui/shadertoy/service/glm_hack.h"
-#include <fuchsia/cpp/shadertoy.h>
 #include "lib/escher/escher.h"
 #include "lib/escher/resources/resource.h"
 #include "lib/escher/util/stopwatch.h"
 #include "lib/fxl/memory/ref_counted.h"
 #include "lib/fxl/memory/weak_ptr.h"
-#include <fuchsia/cpp/images.h>
-#include <fuchsia/cpp/views_v1_token.h>
 
 namespace shadertoy {
 
@@ -29,28 +29,29 @@ class ShadertoyState : public escher::Resource {
  public:
   // Factory constructor.
   static fxl::RefPtr<ShadertoyState> NewForImagePipe(
-      App* app,
-      ::fidl::InterfaceHandle<images::ImagePipe> image_pipe);
+      App* app, ::fidl::InterfaceHandle<fuchsia::images::ImagePipe> image_pipe);
 
   // Factory constructor.
   static fxl::RefPtr<ShadertoyState> NewForView(
       App* app,
-      ::fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
+      ::fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+          view_owner_request,
       bool handle_input_events);
 
   virtual ~ShadertoyState();
 
   void SetPaused(bool paused);
 
-  void SetShaderCode(fidl::StringPtr glsl,
-                     shadertoy::Shadertoy::SetShaderCodeCallback callback);
+  void SetShaderCode(
+      fidl::StringPtr glsl,
+      ::fuchsia::ui::shadertoy::Shadertoy::SetShaderCodeCallback callback);
 
   void SetResolution(uint32_t width, uint32_t height);
 
   void SetMouse(glm::vec4 i_mouse);
 
   void SetImage(uint32_t channel,
-                ::fidl::InterfaceRequest<images::ImagePipe> request);
+                ::fidl::InterfaceRequest<fuchsia::images::ImagePipe> request);
 
  protected:
   explicit ShadertoyState(App* app);
@@ -59,7 +60,7 @@ class ShadertoyState : public escher::Resource {
   void Close();
 
   // Subclasses must call this from DrawFrame().
-  void OnFramePresented(images::PresentationInfo info);
+  void OnFramePresented(fuchsia::images::PresentationInfo info);
 
   uint32_t width() const { return width_; }
   uint32_t height() const { return height_; }

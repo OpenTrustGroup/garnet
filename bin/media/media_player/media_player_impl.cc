@@ -7,16 +7,17 @@
 #include <sstream>
 
 #include <fs/pseudo-file.h>
-#include <fuchsia/cpp/media.h>
-#include <fuchsia/cpp/media_player.h>
+#include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
+#include <media/cpp/fidl.h>
+#include <media_player/cpp/fidl.h>
 
 #include "garnet/bin/media/media_player/demux/fidl_reader.h"
 #include "garnet/bin/media/media_player/demux/file_reader.h"
 #include "garnet/bin/media/media_player/demux/http_reader.h"
 #include "garnet/bin/media/media_player/demux/reader_cache.h"
-#include "garnet/bin/media/media_player/fidl/fidl_formatting.h"
 #include "garnet/bin/media/media_player/fidl/fidl_type_conversions.h"
+#include "garnet/bin/media/media_player/framework/formatting.h"
 #include "garnet/bin/media/media_player/player/demux_source_segment.h"
 #include "garnet/bin/media/media_player/player/renderer_sink_segment.h"
 #include "garnet/bin/media/media_player/render/fidl_audio_renderer.h"
@@ -47,9 +48,10 @@ MediaPlayerImpl::MediaPlayerImpl(
     fidl::InterfaceRequest<MediaPlayer> request,
     component::ApplicationContext* application_context,
     fxl::Closure quit_callback)
-    : application_context_(application_context),
+    : async_(async_get_default()),
+      application_context_(application_context),
       quit_callback_(quit_callback),
-      player_(async_get_default()) {
+      player_(async_) {
   FXL_DCHECK(request);
   FXL_DCHECK(application_context_);
   FXL_DCHECK(quit_callback_);
@@ -58,49 +60,63 @@ MediaPlayerImpl::MediaPlayerImpl(
       kDumpEntry,
       fbl::AdoptRef(new fs::BufferedPseudoFile([this](fbl::String* out) {
         std::ostringstream os;
+
+        if (status_.metadata) {
+          os << newl
+             << "duration:           " << AsNs(status_.metadata->duration);
+
+          if (status_.metadata->title) {
+            os << newl << "title:              " << status_.metadata->title;
+          }
+
+          if (status_.metadata->artist) {
+            os << newl << "artist:             " << status_.metadata->artist;
+          }
+
+          if (status_.metadata->album) {
+            os << newl << "album:              " << status_.metadata->album;
+          }
+
+          if (status_.metadata->publisher) {
+            os << newl << "publisher:          " << status_.metadata->publisher;
+          }
+
+          if (status_.metadata->genre) {
+            os << newl << "genre:              " << status_.metadata->genre;
+          }
+
+          if (status_.metadata->composer) {
+            os << newl << "composer:           " << status_.metadata->composer;
+          }
+        }
+
+        os << newl << "state:              " << ToString(state_);
+        if (state_ == State::kWaiting) {
+          os << " " << waiting_reason_;
+        }
+
+        if (target_state_ != state_) {
+          os << newl << "transitioning to:   " << ToString(target_state_);
+        }
+
+        if (target_position_ != media::kUnspecifiedTime) {
+          os << newl << "pending seek to:    " << AsNs(target_position_);
+        }
+
         player_.Dump(os << std::boolalpha);
         os << "\n";
         *out = os.str();
         return ZX_OK;
       })));
 
+  UpdateStatus();
   AddBinding(std::move(request));
 
   bindings_.set_empty_set_handler([this]() { quit_callback_(); });
 
   player_.SetUpdateCallback([this]() {
-    status_publisher_.SendUpdates();
+    SendStatusUpdates();
     Update();
-  });
-
-  MaybeCreateRenderer(StreamType::Medium::kAudio);
-
-  status_publisher_.SetCallbackRunner([this](GetStatusCallback callback,
-                                             uint64_t version) {
-    MediaPlayerStatus status;
-    status.timeline_transform =
-        fidl::MakeOptional(player_.timeline_function().ToTimelineTransform());
-    status.end_of_stream = player_.end_of_stream();
-    status.content_has_audio =
-        player_.content_has_medium(StreamType::Medium::kAudio);
-    status.content_has_video =
-        player_.content_has_medium(StreamType::Medium::kVideo);
-    status.audio_connected =
-        player_.medium_connected(StreamType::Medium::kAudio);
-    status.video_connected =
-        player_.medium_connected(StreamType::Medium::kVideo);
-
-    status.metadata = fxl::To<MediaMetadataPtr>(player_.metadata());
-
-    if (video_renderer_) {
-      status.video_size = SafeClone(video_renderer_->video_size());
-      status.pixel_aspect_ratio =
-          SafeClone(video_renderer_->pixel_aspect_ratio());
-    }
-
-    status.problem = SafeClone(player_.problem());
-
-    callback(version, std::move(status));
   });
 
   state_ = State::kInactive;
@@ -141,7 +157,7 @@ void MediaPlayerImpl::MaybeCreateRenderer(StreamType::Medium medium) {
       if (!video_renderer_) {
         video_renderer_ = FidlVideoRenderer::Create();
         video_renderer_->SetGeometryUpdateCallback(
-            [this]() { status_publisher_.SendUpdates(); });
+            [this]() { SendStatusUpdates(); });
 
         player_.SetSinkSegment(RendererSinkSegment::Create(video_renderer_),
                                medium);
@@ -189,26 +205,41 @@ void MediaPlayerImpl::Update() {
   while (true) {
     switch (state_) {
       case State::kInactive:
+        if (setting_reader_) {
+          // Need to set the reader. |FinishSetReader| will set the reader and
+          // post another call to |Update|.
+          FinishSetReader();
+        }
         return;
 
       case State::kFlushed:
+        if (setting_reader_) {
+          // We have a new reader. Get rid of the current reader and transition
+          // to inactive state. From there, we'll set up the new reader.
+          player_.SetSourceSegment(nullptr, nullptr);
+          state_ = State::kInactive;
+          break;
+        }
+
         // Presentation time is not progressing, and the pipeline is clear of
         // packets.
         if (target_position_ != media::kUnspecifiedTime) {
           // We want to seek. Enter |kWaiting| state until the operation is
           // complete.
           state_ = State::kWaiting;
+          waiting_reason_ = "for renderers to stop progressing prior to seek";
 
-          // Capture the target position and clear it. If we get another seek
-          // request while setting the timeline transform and and seeking the
-          // source, we'll notice that and do those things again.
+          // Capture the target position and clear it. If we get another
+          // seek request while setting the timeline transform and and
+          // seeking the source, we'll notice that and do those things
+          // again.
           int64_t target_position = target_position_;
           target_position_ = media::kUnspecifiedTime;
 
-          // |program_range_min_pts_| will be delivered in the |SetProgramRange|
-          // call, ensuring that the renderers discard packets with PTS values
-          // less than the target position. |transform_subject_time_| is used
-          // when setting the timeline.
+          // |program_range_min_pts_| will be delivered in the
+          // |SetProgramRange| call, ensuring that the renderers discard
+          // packets with PTS values less than the target position.
+          // |transform_subject_time_| is used when setting the timeline.
           transform_subject_time_ = target_position;
           program_range_min_pts_ = target_position;
 
@@ -228,14 +259,12 @@ void MediaPlayerImpl::Update() {
                 // Seek to the new position.
                 player_.Seek(target_position, [this]() {
                   state_ = State::kFlushed;
-                  // Back in |kFlushed|. Call |Update| to see
-                  // if there's further action to be taken.
                   Update();
                 });
               });
 
-          // Done for now. We're in kWaiting, and the callback will call Update
-          // when the Seek call is complete.
+          // Done for now. We're in kWaiting, and the callback will call
+          // Update when the Seek call is complete.
           return;
         }
 
@@ -246,6 +275,7 @@ void MediaPlayerImpl::Update() {
           // |SetProgramRange| and |Prime| requests and transition to |kPrimed|
           // when the operation is complete.
           state_ = State::kWaiting;
+          waiting_reason_ = "for priming to complete";
           player_.SetProgramRange(0, program_range_min_pts_, media::kMaxTime);
 
           player_.Prime([this]() {
@@ -264,11 +294,17 @@ void MediaPlayerImpl::Update() {
       case State::kPrimed:
         // Presentation time is not progressing, and the pipeline is primed with
         // packets.
-        if (target_position_ != media::kUnspecifiedTime ||
-            target_state_ == State::kFlushed) {
-          // Either we want to seek, or we otherwise want to flush.
-          player_.Flush(target_state_ != State::kFlushed);
-          state_ = State::kFlushed;
+        if (NeedToFlush()) {
+          // Either we have a new reader, want to seek, or we otherwise want to
+          // flush.
+          state_ = State::kWaiting;
+          waiting_reason_ = "for flushing to complete";
+
+          player_.Flush(ShouldHoldFrame(), [this]() {
+            state_ = State::kFlushed;
+            Update();
+          });
+
           break;
         }
 
@@ -277,11 +313,10 @@ void MediaPlayerImpl::Update() {
           // presentation timeline and transition to |kPlaying| when the
           // operation completes.
           state_ = State::kWaiting;
+          waiting_reason_ = "for renderers to start progressing";
           SetTimelineFunction(
               1.0f, media::Timeline::local_now() + kMinimumLeadTime, [this]() {
                 state_ = State::kPlaying;
-                // Now we're in |kPlaying|. Call |Update| to
-                // see if there's further action to be taken.
                 Update();
               });
 
@@ -296,24 +331,21 @@ void MediaPlayerImpl::Update() {
       case State::kPlaying:
         // Presentation time is progressing, and packets are moving through
         // the pipeline.
-        if (target_position_ != media::kUnspecifiedTime ||
-            target_state_ == State::kFlushed ||
-            target_state_ == State::kPrimed) {
-          // Either we want to seek or we want to stop playback, possibly
-          // because a reader transition is pending. In either case, we need
-          // to enter |kWaiting|, stop the presentation timeline and transition
-          // to |kPrimed| when the operation completes.
+        if (NeedToFlush() || target_state_ == State::kPrimed) {
+          // Either we have a new reader, we want to seek or we want to stop
+          // playback. In any case, we need to enter |kWaiting|, stop the
+          // presentation timeline and transition to |kPrimed| when the
+          // operation completes.
           state_ = State::kWaiting;
+          waiting_reason_ = "for renderers to stop progressing";
           SetTimelineFunction(
               0.0f, media::Timeline::local_now() + kMinimumLeadTime, [this]() {
                 state_ = State::kPrimed;
-                // Now we're in |kPrimed|. Call |Update| to see
-                // if there's further action to be taken.
                 Update();
               });
 
           // Done for now. We're in |kWaiting|, and the callback will call
-          // |Update| when the flush is complete.
+          // |Update| when the timeline is set.
           return;
         }
 
@@ -336,47 +368,73 @@ void MediaPlayerImpl::Update() {
   }
 }
 
-void MediaPlayerImpl::SetTimelineFunction(float rate,
-                                          int64_t reference_time,
+void MediaPlayerImpl::SetTimelineFunction(float rate, int64_t reference_time,
                                           fxl::Closure callback) {
   player_.SetTimelineFunction(
       media::TimelineFunction(transform_subject_time_, reference_time,
                               media::TimelineRate(rate)),
       callback);
   transform_subject_time_ = media::kUnspecifiedTime;
-  status_publisher_.SendUpdates();
+  SendStatusUpdates();
 }
 
 void MediaPlayerImpl::SetHttpSource(fidl::StringPtr http_url) {
-  SetReader(HttpReader::Create(application_context_, http_url));
+  BeginSetReader(HttpReader::Create(application_context_, http_url));
 }
 
 void MediaPlayerImpl::SetFileSource(zx::channel file_channel) {
-  SetReader(FileReader::Create(std::move(file_channel)));
+  BeginSetReader(FileReader::Create(std::move(file_channel)));
 }
 
 void MediaPlayerImpl::SetReaderSource(
     fidl::InterfaceHandle<SeekingReader> reader_handle) {
   if (!reader_handle) {
-    player_.SetSourceSegment(nullptr, nullptr);
+    BeginSetReader(nullptr);
     return;
   }
 
-  SetReader(FidlReader::Create(reader_handle.Bind()));
+  BeginSetReader(FidlReader::Create(reader_handle.Bind()));
 }
 
-void MediaPlayerImpl::SetReader(std::shared_ptr<Reader> reader) {
+void MediaPlayerImpl::BeginSetReader(std::shared_ptr<Reader> reader) {
+  // Note the pending reader change and advance the state machine. When the
+  // old reader (if any) is shut down, the state machine will call
+  // |FinishSetReader|.
+  setting_reader_ = true;
+  new_reader_ = reader;
+  target_position_ = 0;
+  async::PostTask(async_, [this]() { Update(); });
+}
+
+void MediaPlayerImpl::FinishSetReader() {
+  FXL_DCHECK(setting_reader_);
+  FXL_DCHECK(state_ == State::kInactive);
+  FXL_DCHECK(!player_.has_source_segment());
+
+  setting_reader_ = false;
+
+  if (!new_reader_) {
+    // We were asked to clear the reader, which was already done by the state
+    // machine. We're done.
+    return;
+  }
+
   state_ = State::kWaiting;
-  target_position_ = media::kUnspecifiedTime;
+  waiting_reason_ = "for the source to initialize";
   program_range_min_pts_ = 0;
   transform_subject_time_ = 0;
 
-  std::shared_ptr<Demux> demux = Demux::Create(ReaderCache::Create(reader));
+  MaybeCreateRenderer(StreamType::Medium::kAudio);
+
+  std::shared_ptr<Demux> demux =
+      Demux::Create(ReaderCache::Create(new_reader_));
   FXL_DCHECK(demux);
+
+  new_reader_ = nullptr;
 
   player_.SetSourceSegment(DemuxSourceSegment::Create(demux), [this]() {
     state_ = State::kFlushed;
-    status_publisher_.SendUpdates();
+    SendStatusUpdates();
     Update();
   });
 }
@@ -396,11 +454,6 @@ void MediaPlayerImpl::Seek(int64_t position) {
   Update();
 }
 
-void MediaPlayerImpl::GetStatus(uint64_t version_last_seen,
-                                GetStatusCallback callback) {
-  status_publisher_.Get(version_last_seen, callback);
-}
-
 void MediaPlayerImpl::SetGain(float gain) {
   if (audio_renderer_) {
     audio_renderer_->SetGain(gain);
@@ -410,8 +463,8 @@ void MediaPlayerImpl::SetGain(float gain) {
 }
 
 void MediaPlayerImpl::CreateView(
-    fidl::InterfaceHandle<views_v1::ViewManager> view_manager,
-    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request) {
+    fidl::InterfaceHandle<::fuchsia::ui::views_v1::ViewManager> view_manager,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request) {
   MaybeCreateRenderer(StreamType::Medium::kVideo);
   if (!video_renderer_) {
     return;
@@ -422,16 +475,76 @@ void MediaPlayerImpl::CreateView(
 }
 
 void MediaPlayerImpl::SetAudioRenderer(
-    fidl::InterfaceHandle<media::AudioRenderer> audio_renderer,
-    fidl::InterfaceHandle<media::MediaRenderer> media_renderer) {
-  // We're using AudioRenderer2, so we can't support this.
-  // TODO(dalesat): Change SetAudioRenderer so it takes an AudioRenderer2.
-  FXL_NOTIMPLEMENTED();
+    fidl::InterfaceHandle<media::AudioRenderer2> audio_renderer) {
+  if (audio_renderer_) {
+    return;
+  }
+
+  audio_renderer_ = FidlAudioRenderer::Create(audio_renderer.Bind());
+  if (gain_ != 1.0f) {
+    audio_renderer_->SetGain(gain_);
+  }
+
+  player_.SetSinkSegment(RendererSinkSegment::Create(audio_renderer_),
+                         StreamType::Medium::kAudio);
 }
 
 void MediaPlayerImpl::AddBinding(fidl::InterfaceRequest<MediaPlayer> request) {
   FXL_DCHECK(request);
   bindings_.AddBinding(this, std::move(request));
+
+  // Fire |StatusChanged| event for the new client.
+  bindings_.bindings().back()->events().StatusChanged(fidl::Clone(status_));
+}
+
+void MediaPlayerImpl::SendStatusUpdates() {
+  UpdateStatus();
+
+  for (auto& binding : bindings_.bindings()) {
+    binding->events().StatusChanged(fidl::Clone(status_));
+  }
+}
+
+void MediaPlayerImpl::UpdateStatus() {
+  status_.timeline_transform =
+      fidl::MakeOptional(player_.timeline_function().ToTimelineTransform());
+  status_.end_of_stream = player_.end_of_stream();
+  status_.content_has_audio =
+      player_.content_has_medium(StreamType::Medium::kAudio);
+  status_.content_has_video =
+      player_.content_has_medium(StreamType::Medium::kVideo);
+  status_.audio_connected =
+      player_.medium_connected(StreamType::Medium::kAudio);
+  status_.video_connected =
+      player_.medium_connected(StreamType::Medium::kVideo);
+
+  status_.metadata = fxl::To<MediaMetadataPtr>(player_.metadata());
+
+  if (video_renderer_) {
+    status_.video_size = SafeClone(video_renderer_->video_size());
+    status_.pixel_aspect_ratio =
+        SafeClone(video_renderer_->pixel_aspect_ratio());
+  }
+
+  status_.problem = SafeClone(player_.problem());
+}
+
+// static
+const char* MediaPlayerImpl::ToString(State value) {
+  switch (value) {
+    case State::kInactive:
+      return "inactive";
+    case State::kWaiting:
+      return "waiting";
+    case State::kFlushed:
+      return "flushed";
+    case State::kPrimed:
+      return "primed";
+    case State::kPlaying:
+      return "playing";
+  }
+
+  return "ILLEGAL STATE VALUE";
 }
 
 }  // namespace media_player

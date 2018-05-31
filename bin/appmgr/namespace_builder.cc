@@ -88,7 +88,7 @@ void NamespaceBuilder::AddSandbox(
     } else if (feature == "system-temp") {
       PushDirectoryFromPath("/tmp");
     } else if (feature == "vulkan") {
-      PushDirectoryFromPath("/dev/class/display");
+      PushDirectoryFromPath("/dev/class/display-controller");
       PushDirectoryFromPath("/dev/class/gpu");
       PushDirectoryFromPath("/system/data/vulkan");
       // TODO(abarth): Teach the gpu devices to provide a protocol for fetching
@@ -104,6 +104,7 @@ void NamespaceBuilder::AddDeprecatedDefaultDirectories() {
   PushDirectoryFromPathIfNotPresent("/data");
   PushDirectoryFromPathIfNotPresent("/system");
   PushDirectoryFromPathIfNotPresent("/tmp");
+  PushDirectoryFromPathAs("/pkgfs/packages/root_ssl_certificates/0/data", "/config/ssl");
 }
 
 void NamespaceBuilder::PushDirectoryFromPath(std::string path) {

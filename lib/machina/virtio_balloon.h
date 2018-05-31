@@ -5,8 +5,8 @@
 #ifndef GARNET_LIB_MACHINA_VIRTIO_BALLOON_H_
 #define GARNET_LIB_MACHINA_VIRTIO_BALLOON_H_
 
-#include <fbl/function.h>
 #include <fbl/mutex.h>
+#include <lib/fit/function.h>
 #include <virtio/balloon.h>
 #include <virtio/virtio_ids.h>
 #include <zircon/compiler.h>
@@ -22,9 +22,9 @@
 namespace machina {
 
 // Virtio memory balloon device.
-class VirtioBalloon : public VirtioDeviceBase<VIRTIO_ID_BALLOON,
-                                              VIRTIO_BALLOON_Q_COUNT,
-                                              virtio_balloon_config_t> {
+class VirtioBalloon
+    : public VirtioDeviceBase<VIRTIO_ID_BALLOON, VIRTIO_BALLOON_Q_COUNT,
+                              virtio_balloon_config_t> {
  public:
   // Per Virtio 1.0 Section 5.5.6, This value is historical, and independent
   // of the guest page size.
@@ -40,7 +40,7 @@ class VirtioBalloon : public VirtioDeviceBase<VIRTIO_ID_BALLOON,
   // The pointers backing |stats| are only guaranteed to live for the
   // duration of this callback.
   using StatsHandler =
-      fbl::Function<void(const virtio_balloon_stat_t* stats, size_t len)>;
+      fit::function<void(const virtio_balloon_stat_t* stats, size_t len)>;
 
   // Request balloon memory statistics from the guest.
   //

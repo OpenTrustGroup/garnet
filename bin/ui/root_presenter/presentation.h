@@ -8,10 +8,10 @@
 #include <map>
 #include <memory>
 
-#include <fuchsia/cpp/geometry.h>
-#include <fuchsia/cpp/input.h>
-#include <fuchsia/cpp/presentation.h>
-#include <fuchsia/cpp/views_v1.h>
+#include <fuchsia/math/cpp/fidl.h>
+#include <fuchsia/ui/input/cpp/fidl.h>
+#include <presentation/cpp/fidl.h>
+#include <fuchsia/ui/views_v1/cpp/fidl.h>
 
 #include "garnet/bin/ui/presentation_mode/detector.h"
 #include "garnet/bin/ui/root_presenter/display_rotater.h"
@@ -21,6 +21,7 @@
 #include "garnet/bin/ui/root_presenter/displays/display_model.h"
 #include "garnet/bin/ui/root_presenter/perspective_demo_mode.h"
 #include "garnet/bin/ui/root_presenter/presentation_switcher.h"
+#include "garnet/bin/ui/root_presenter/renderer_params.h"
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
@@ -60,9 +61,9 @@ namespace root_presenter {
 //           + link: Content view's actual content
 //   + child: cursor 1
 //   + child: cursor N
-class Presentation : private views_v1::ViewTreeListener,
-                     private views_v1::ViewListener,
-                     private views_v1::ViewContainerListener,
+class Presentation : private ::fuchsia::ui::views_v1::ViewTreeListener,
+                     private ::fuchsia::ui::views_v1::ViewListener,
+                     private ::fuchsia::ui::views_v1::ViewContainerListener,
                      private presentation::Presentation {
  public:
   // Callback when the presentation yields to the next/previous one.
@@ -70,9 +71,9 @@ class Presentation : private views_v1::ViewTreeListener,
   // Callback when the presentation is shut down.
   using ShutdownCallback = std::function<void()>;
 
-  Presentation(views_v1::ViewManager* view_manager,
-               ui::Scenic* scenic,
-               scenic_lib::Session* session);
+  Presentation(::fuchsia::ui::views_v1::ViewManager* view_manager,
+               fuchsia::ui::scenic::Scenic* scenic,
+               scenic_lib::Session* session, RendererParams renderer_params);
 
   ~Presentation() override;
 
@@ -81,18 +82,22 @@ class Presentation : private views_v1::ViewTreeListener,
   // This method must be called at most once for the lifetime of the
   // presentation.
   void Present(
-      views_v1_token::ViewOwnerPtr view_owner,
+      ::fuchsia::ui::views_v1_token::ViewOwnerPtr view_owner,
       fidl::InterfaceRequest<presentation::Presentation> presentation_request,
-      YieldCallback yield_callback,
-      ShutdownCallback shutdown_callback);
+      YieldCallback yield_callback, ShutdownCallback shutdown_callback);
 
-  void OnReport(uint32_t device_id, input::InputReport report);
+  void OnReport(uint32_t device_id, fuchsia::ui::input::InputReport report);
   void OnDeviceAdded(mozart::InputDeviceImpl* input_device);
   void OnDeviceRemoved(uint32_t device_id);
 
   const scenic_lib::Layer& layer() const { return layer_; }
 
  private:
+  enum SessionPresentState {
+    kNoPresentPending,
+    kPresentPending,
+    kPresentPendingAndSceneDirty
+  };
   friend class DisplayRotater;
   friend class DisplayUsageSwitcher;
   friend class PerspectiveDemoMode;
@@ -105,14 +110,13 @@ class Presentation : private views_v1::ViewTreeListener,
   bool ApplyDisplayModelChanges(bool print_log);
 
   // |ViewContainerListener|:
-  void OnChildAttached(uint32_t child_key,
-                       views_v1::ViewInfo child_view_info,
+  void OnChildAttached(uint32_t child_key, ::fuchsia::ui::views_v1::ViewInfo child_view_info,
                        OnChildAttachedCallback callback) override;
   void OnChildUnavailable(uint32_t child_key,
                           OnChildUnavailableCallback callback) override;
 
   // |ViewListener|:
-  void OnPropertiesChanged(views_v1::ViewProperties properties,
+  void OnPropertiesChanged(::fuchsia::ui::views_v1::ViewProperties properties,
                            OnPropertiesChangedCallback callback) override;
 
   // |Presentation|
@@ -125,9 +129,10 @@ class Presentation : private views_v1::ViewTreeListener,
   void UsePerspectiveView() override;
 
   // |Presentation|
-  void SetRendererParams(::fidl::VectorPtr<gfx::RendererParam> params) override;
+  void SetRendererParams(
+      ::fidl::VectorPtr<fuchsia::ui::gfx::RendererParam> params) override;
 
-  void InitializeDisplayModel(gfx::DisplayInfo display_info);
+  void InitializeDisplayModel(fuchsia::ui::gfx::DisplayInfo display_info);
 
   // |Presentation|
   void SetDisplayUsage(presentation::DisplayUsage usage) override;
@@ -137,6 +142,10 @@ class Presentation : private views_v1::ViewTreeListener,
   // |Presentation|
   void SetDisplaySizeInMm(float width_in_mm, float height_in_mm) override;
 
+  // |Presentation|
+  void SetDisplayRotation(float display_rotation_degrees,
+                          bool animate) override;
+
   // Returns false if the operation failed (e.g. the requested size is bigger
   // than the actual display size).
   bool SetDisplaySizeInMmWithoutApplyingChanges(float width_in_mm,
@@ -144,9 +153,14 @@ class Presentation : private views_v1::ViewTreeListener,
                                                 bool print_errors);
 
   // |Presentation|
-  void CaptureKeyboardEvent(
-      input::KeyboardEvent event_to_capture,
-      fidl::InterfaceHandle<presentation::KeyboardCaptureListener> listener)
+  void CaptureKeyboardEventHACK(
+      fuchsia::ui::input::KeyboardEvent event_to_capture,
+      fidl::InterfaceHandle<presentation::KeyboardCaptureListenerHACK> listener)
+      override;
+
+  // |Presentation|
+  void CapturePointerEventsHACK(
+      fidl::InterfaceHandle<presentation::PointerCaptureListenerHACK> listener)
       override;
 
   // |Presentation|
@@ -158,21 +172,21 @@ class Presentation : private views_v1::ViewTreeListener,
       override;
 
   void CreateViewTree(
-      views_v1_token::ViewOwnerPtr view_owner,
+      ::fuchsia::ui::views_v1_token::ViewOwnerPtr view_owner,
       fidl::InterfaceRequest<presentation::Presentation> presentation_request,
-      gfx::DisplayInfo display_info);
+      fuchsia::ui::gfx::DisplayInfo display_info);
 
   // Returns true if the event was consumed and the scene is to be invalidated.
-  bool GlobalHooksHandleEvent(const input::InputEvent& event);
+  bool GlobalHooksHandleEvent(const fuchsia::ui::input::InputEvent& event);
 
-  void OnEvent(input::InputEvent event);
-  void OnSensorEvent(uint32_t device_id, input::InputReport event);
+  void OnEvent(fuchsia::ui::input::InputEvent event);
+  void OnSensorEvent(uint32_t device_id, fuchsia::ui::input::InputReport event);
 
   void PresentScene();
   void Shutdown();
 
-  views_v1::ViewManager* const view_manager_;
-  ui::Scenic* const scenic_;
+  ::fuchsia::ui::views_v1::ViewManager* const view_manager_;
+  fuchsia::ui::scenic::Scenic* const scenic_;
   scenic_lib::Session* const session_;
 
   scenic_lib::Layer layer_;
@@ -192,36 +206,45 @@ class Presentation : private views_v1::ViewTreeListener,
   scenic_lib::RoundedRectangle cursor_shape_;
   scenic_lib::Material cursor_material_;
 
-  DisplayModel display_model_actual_;
-  DisplayModel display_model_simulated_;
+  SessionPresentState session_present_state_ = kNoPresentPending;
 
   bool presentation_clipping_enabled_ = true;
 
   bool display_model_initialized_ = false;
 
-  // |display_metrics_| must be recalculated anytime
-  // |display_model_simulated_| changes using ApplyDisplayModelChanges().
+  DisplayModel display_model_actual_;
+  DisplayModel display_model_simulated_;
+
+  // When |display_model_simulated_| or |display_rotation_desired_| changes:
+  //   * |display_metrics_| must be recalculated.
+  //   * |display_rotation_current_| must be updated.
+  //   * Transforms on the scene must be updated.
+  // This is done by calling ApplyDisplayModelChanges().
   DisplayMetrics display_metrics_;
 
-  views_v1::ViewPtr root_view_;
+  // Expressed in degrees.
+  float display_rotation_desired_ = 0.f;
+  float display_rotation_current_ = 0.f;
+
+  ::fuchsia::ui::views_v1::ViewPtr root_view_;
 
   YieldCallback yield_callback_;
   ShutdownCallback shutdown_callback_;
 
-  geometry::PointF mouse_coordinates_;
+  fuchsia::math::PointF mouse_coordinates_;
 
   fidl::Binding<presentation::Presentation> presentation_binding_;
-  fidl::Binding<views_v1::ViewTreeListener> tree_listener_binding_;
-  fidl::Binding<views_v1::ViewContainerListener>
+  fidl::Binding<::fuchsia::ui::views_v1::ViewTreeListener> tree_listener_binding_;
+  fidl::Binding<::fuchsia::ui::views_v1::ViewContainerListener>
       tree_container_listener_binding_;
-  fidl::Binding<views_v1::ViewContainerListener>
+  fidl::Binding<::fuchsia::ui::views_v1::ViewContainerListener>
       view_container_listener_binding_;
-  fidl::Binding<views_v1::ViewListener> view_listener_binding_;
+  fidl::Binding<::fuchsia::ui::views_v1::ViewListener> view_listener_binding_;
 
-  views_v1::ViewTreePtr tree_;
-  views_v1::ViewContainerPtr tree_container_;
-  views_v1::ViewContainerPtr root_container_;
-  input::InputDispatcherPtr input_dispatcher_;
+  ::fuchsia::ui::views_v1::ViewTreePtr tree_;
+  ::fuchsia::ui::views_v1::ViewContainerPtr tree_container_;
+  ::fuchsia::ui::views_v1::ViewContainerPtr root_container_;
+  fuchsia::ui::input::InputDispatcherPtr input_dispatcher_;
 
   // Rotates the display 180 degrees in response to events.
   DisplayRotater display_rotater_;
@@ -237,26 +260,34 @@ class Presentation : private views_v1::ViewTreeListener,
   // Toggles through different presentations.
   PresentationSwitcher presentation_switcher_;
 
+  // Stores values that, if set, override any renderer params.
+  RendererParams renderer_params_override_;
+
   struct CursorState {
     bool created;
     bool visible;
-    geometry::PointF position;
+    fuchsia::math::PointF position;
     std::unique_ptr<scenic_lib::ShapeNode> node;
   };
 
   std::map<uint32_t, CursorState> cursors_;
-  std::map<
-      uint32_t,
-      std::pair<mozart::InputDeviceImpl*, std::unique_ptr<mozart::DeviceState>>>
+  std::map<uint32_t, std::pair<mozart::InputDeviceImpl*,
+                               std::unique_ptr<mozart::DeviceState>>>
       device_states_by_id_;
 
   // A registry of listeners who want to be notified when their keyboard
   // event happens.
   struct KeyboardCaptureItem {
-    input::KeyboardEvent event;
-    presentation::KeyboardCaptureListenerPtr listener;
+    fuchsia::ui::input::KeyboardEvent event;
+    presentation::KeyboardCaptureListenerHACKPtr listener;
   };
   std::vector<KeyboardCaptureItem> captured_keybindings_;
+
+  // A registry of listeners who want to be notified when pointer event happens.
+  struct PointerCaptureItem {
+    presentation::PointerCaptureListenerHACKPtr listener;
+  };
+  std::vector<PointerCaptureItem> captured_pointerbindings_;
 
   // Listener for changes in presentation mode.
   presentation::PresentationModeListenerPtr presentation_mode_listener_;

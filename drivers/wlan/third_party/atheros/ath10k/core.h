@@ -25,8 +25,10 @@
 
 #include <sync/completion.h>
 #include <ddk/device.h>
+#include <wlan/protocol/mac.h>
 
-#include "linuxisms.h"
+#include "ieee80211.h"
+#include "macros.h"
 #include "htt.h"
 #include "htc.h"
 #include "hw.h"
@@ -47,6 +49,7 @@
 #define ATH10K_FLUSH_TIMEOUT_HZ (5 * HZ)
 #define ATH10K_CONNECTION_LOSS_HZ (3 * HZ)
 #define ATH10K_NUM_CHANS 40
+#define ATH10K_FW_VER_LEN 32
 
 /* Antenna noise floor */
 #define ATH10K_DEFAULT_NOISE_FLOOR -95
@@ -129,7 +132,7 @@ struct ath10k_wmi {
     completion_t unified_ready;
     completion_t barrier;
     zx_handle_t tx_credits_event;
-    DECLARE_BITMAP(svc_map, WMI_SERVICE_MAX);
+    BITARR(svc_map, WMI_SERVICE_MAX);
     struct wmi_cmd_map* cmd;
     struct wmi_vdev_param_map* vdev_param;
     struct wmi_pdev_param_map* pdev_param;
@@ -299,16 +302,10 @@ struct ath10k_peer {
     bool removed;
     int vdev_id;
     uint8_t addr[ETH_ALEN];
-    DECLARE_BITMAP(peer_ids, ATH10K_MAX_NUM_PEER_IDS);
+    BITARR(peer_ids, ATH10K_MAX_NUM_PEER_IDS);
 
     /* protected by ar->data_lock */
     struct ieee80211_key_conf* keys[WMI_MAX_KEY_INDEX + 1];
-};
-
-struct ath10k_txq {
-    struct list_head list;
-    unsigned long num_fw_queued;
-    unsigned long num_push_allowed;
 };
 
 struct ath10k_sta {
@@ -330,6 +327,7 @@ struct ath10k_sta {
     uint64_t rx_duration;
 #endif
 };
+#endif // NEEDS PORTING
 
 #define ATH10K_VDEV_SETUP_TIMEOUT (ZX_SEC(5))
 
@@ -339,69 +337,10 @@ enum ath10k_beacon_state {
     ATH10K_BEACON_SENT,
 };
 
-struct ath10k_vif {
-    struct list_head list;
-
-    uint32_t vdev_id;
-    uint16_t peer_id;
-    enum wmi_vdev_type vdev_type;
-    enum wmi_vdev_subtype vdev_subtype;
-    uint32_t beacon_interval;
-    uint32_t dtim_period;
-    struct sk_buff* beacon;
-    /* protected by data_lock */
-    enum ath10k_beacon_state beacon_state;
-    void* beacon_buf;
-    dma_addr_t beacon_paddr;
-    unsigned long tx_paused; /* arbitrary values defined by target */
-
-    struct ath10k* ar;
-    struct ieee80211_vif* vif;
-
-    bool is_started;
-    bool is_up;
-    bool spectral_enabled;
-    bool ps;
-    uint32_t aid;
-    uint8_t bssid[ETH_ALEN];
-
-    struct ieee80211_key_conf* wep_keys[WMI_MAX_KEY_INDEX + 1];
-    int8_t def_wep_key_idx;
-
-    uint16_t tx_seq_no;
-
-    union {
-        struct {
-            uint32_t uapsd;
-        } sta;
-        struct {
-            /* 512 stations */
-            uint8_t tim_bitmap[64];
-            uint8_t tim_len;
-            uint32_t ssid_len;
-            uint8_t ssid[IEEE80211_MAX_SSID_LEN];
-            bool hidden_ssid;
-            /* P2P_IE with NoA attribute for P2P_GO case */
-            uint32_t noa_len;
-            uint8_t* noa_data;
-        } ap;
-    } u;
-
-    bool use_cts_prot;
-    bool nohwcrypt;
-    int num_legacy_stations;
-    int txpower;
-    struct wmi_wmm_params_all_arg wmm_params;
-    struct work_struct ap_csa_work;
-    struct delayed_work connection_loss_work;
-    struct cfg80211_bitrate_mask bitrate_mask;
-};
-
 struct ath10k_vif_iter {
     uint32_t vdev_id;
     struct ath10k_vif* arvif;
 };
-#endif // NEEDS PORTING
 
 /* Copy Engine register dump, protected by ce-lock */
 struct ath10k_ce_crash_data {
@@ -678,9 +617,9 @@ enum ath10k_tx_pause_reason {
 struct ath10k_fw_file {
     struct ath10k_firmware firmware;
 
-    char fw_version[ETHTOOL_FWVERS_LEN];
+    char fw_version[ATH10K_FW_VER_LEN];
 
-    DECLARE_BITMAP(fw_features, ATH10K_FW_FEATURE_COUNT);
+    BITARR(fw_features, ATH10K_FW_FEATURE_COUNT);
 
     enum ath10k_fw_wmi_op_version wmi_op_version;
     enum ath10k_fw_htt_op_version htt_op_version;
@@ -729,6 +668,51 @@ struct ath10k_per_peer_tx_stats {
 };
 #endif // NEEDS PORTING
 
+struct ath10k_vif {
+    uint32_t vdev_id;
+    uint16_t peer_id;
+    enum wmi_vdev_type vdev_type;
+    enum wmi_vdev_subtype vdev_subtype;
+    uint32_t beacon_interval;
+    uint32_t dtim_period;
+    void* beacon_buf;
+    unsigned long tx_paused; /* arbitrary values defined by target */
+
+    struct ath10k* ar;
+
+    bool is_started;
+    bool is_up;
+    bool spectral_enabled;
+    bool ps;
+    uint32_t aid;
+    uint8_t bssid[ETH_ALEN];
+
+    uint16_t tx_seq_no;
+
+    union {
+        struct {
+            uint32_t uapsd;
+        } sta;
+        struct {
+            /* 512 stations */
+            uint8_t tim_bitmap[64];
+            uint8_t tim_len;
+            uint32_t ssid_len;
+            uint8_t ssid[IEEE80211_SSID_LEN_MAX];
+            bool hidden_ssid;
+            /* P2P_IE with NoA attribute for P2P_GO case */
+            uint32_t noa_len;
+            uint8_t* noa_data;
+        } ap;
+    } u;
+
+    bool use_cts_prot;
+    bool nohwcrypt;
+    int num_legacy_stations;
+    int txpower;
+    struct wmi_wmm_params_all_arg wmm_params;
+};
+
 struct ath10k {
     struct ath_common ath_common;
     zx_device_t* zxdev;
@@ -762,6 +746,11 @@ struct ath10k {
         enum ath10k_bus bus;
         const struct ath10k_hif_ops* ops;
     } hif;
+
+    struct {
+       wlanmac_ifc_t* ifc;
+       void* cookie;
+    } wlanmac;
 
     completion_t target_suspend;
 
@@ -821,13 +810,15 @@ struct ath10k {
     struct {
         struct ieee80211_supported_band sbands[NUM_NL80211_BANDS];
     } mac;
+#endif // NEEDS PORTING
 
     /* should never be NULL; needed for regular htt rx */
-    struct ieee80211_channel* rx_channel;
+    wlan_channel_t rx_channel;
 
     /* valid during scan; needed for mgmt rx during scan */
-    struct ieee80211_channel* scan_channel;
+    wlan_channel_t scan_channel;
 
+#if 0 // NEEDS PORTING
     /* current operating channel definition */
     struct cfg80211_chan_def chandef;
 
@@ -836,13 +827,14 @@ struct ath10k {
 #endif // NEEDS PORTING
 
     unsigned long long free_vdev_map;
+    struct ath10k_vif arvif;
     struct ath10k_vif* monitor_arvif;
     bool monitor;
     int monitor_vdev_id;
     bool monitor_started;
     unsigned int filter_flags;
 
-    DECLARE_BITMAP(dev_flags, ATH10K_FLAG_MAX);
+    BITARR(dev_flags, ATH10K_FLAG_MAX);
     bool dfs_block_radar_events;
 
     /* protected by conf_mutex */
@@ -909,6 +901,10 @@ struct ath10k {
     thrd_t isr_thread;
     thrd_t register_work;
     thrd_t restart_work;
+    thrd_t assoc_work;
+#if DEBUG_MSG_BUF
+    thrd_t monitor_thread;
+#endif
 
 #if 0 // NEEDS PORTING
     /* cycle count is reported twice for each visited channel during scan.
@@ -989,8 +985,8 @@ struct ath10k {
 };
 
 static inline bool ath10k_peer_stats_enabled(struct ath10k* ar) {
-    if (test_bit(ATH10K_FLAG_PEER_STATS, ar->dev_flags)
-        && test_bit(WMI_SERVICE_PEER_STATS, ar->wmi.svc_map)) {
+    if (BITARR_TEST(ar->dev_flags, ATH10K_FLAG_PEER_STATS)
+        && BITARR_TEST(ar->wmi.svc_map, WMI_SERVICE_PEER_STATS)) {
         return true;
     }
 

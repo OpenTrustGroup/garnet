@@ -11,7 +11,7 @@
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/packet.h>
 
-#include <fuchsia/cpp/wlan_mlme.h>
+#include <wlan_mlme/cpp/fidl.h>
 
 #include <zircon/assert.h>
 
@@ -61,8 +61,8 @@ bool BeaconSender::IsStarted() {
 
 zx_status_t BeaconSender::HandleProbeRequest(const ImmutableMgmtFrame<ProbeRequest>& frame,
                                              const wlan_rx_info_t& rxinfo) {
-    auto probereq = frame.body;
-    size_t elt_len = frame.body_len - sizeof(ProbeRequest);
+    auto probereq = frame.body();
+    size_t elt_len = frame.body_len() - sizeof(ProbeRequest);
     ElementReader reader(probereq->elements, elt_len);
     while (reader.is_valid()) {
         const ElementHeader* hdr = reader.peek();
@@ -100,21 +100,21 @@ zx_status_t BeaconSender::UpdateBeacon(const PsCfg& ps_cfg) {
     ZX_DEBUG_ASSERT(IsStarted());
     if (!IsStarted()) { return ZX_ERR_BAD_STATE; }
 
-    // TODO(hahnr): Length of elements is not known at this time. Allocate enough bytes.
-    // This should be updated once there is a better size management.
+    // TODO(hahnr): Length of elements is not known at this time. Allocate enough
+    // bytes. This should be updated once there is a better size management.
     size_t body_payload_len = 256;
     fbl::unique_ptr<Packet> packet = nullptr;
     auto frame = BuildMgmtFrame<Beacon>(&packet, body_payload_len);
     if (packet == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
-    auto hdr = frame.hdr;
+    auto hdr = frame.hdr();
     const auto& bssid = bss_->bssid();
     hdr->addr1 = common::kBcastMac;
     hdr->addr2 = bssid;
     hdr->addr3 = bssid;
     FillTxInfo(&packet, *hdr);
 
-    auto bcn = frame.body;
+    auto bcn = frame.body();
     bcn->beacon_interval = req_.beacon_period;
     bcn->timestamp = bss_->timestamp();
     bcn->cap.set_ess(1);
@@ -175,21 +175,21 @@ zx_status_t BeaconSender::SendProbeResponse(const ImmutableMgmtFrame<ProbeReques
     ZX_DEBUG_ASSERT(IsStarted());
     if (!IsStarted()) { return ZX_ERR_BAD_STATE; }
 
-    // TODO(hahnr): Length of elements is not known at this time. Allocate enough bytes.
-    // This should be updated once there is a better size management.
+    // TODO(hahnr): Length of elements is not known at this time. Allocate enough
+    // bytes. This should be updated once there is a better size management.
     size_t body_payload_len = 256;
     fbl::unique_ptr<Packet> packet = nullptr;
     auto frame = BuildMgmtFrame<ProbeResponse>(&packet, body_payload_len);
     if (packet == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
-    auto hdr = frame.hdr;
+    auto hdr = frame.hdr();
     const auto& bssid = bss_->bssid();
-    hdr->addr1 = probereq.hdr->addr2;
+    hdr->addr1 = probereq.hdr()->addr2;
     hdr->addr2 = bssid;
     hdr->addr3 = bssid;
     FillTxInfo(&packet, *hdr);
 
-    auto resp = frame.body;
+    auto resp = frame.body();
     resp->beacon_interval = req_.beacon_period;
     resp->timestamp = bss_->timestamp();
     resp->cap.set_ess(1);

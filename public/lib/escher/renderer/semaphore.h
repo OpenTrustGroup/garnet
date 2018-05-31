@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_ESCHER_RENDERER_SEMAPHORE_H_
+#define LIB_ESCHER_RENDERER_SEMAPHORE_H_
 
 #include <vulkan/vulkan.hpp>
 
@@ -19,10 +20,12 @@ typedef fxl::RefPtr<Semaphore> SemaphorePtr;
 class Semaphore : public fxl::RefCountedThreadSafe<Semaphore> {
  public:
   explicit Semaphore(vk::Device device);
+  Semaphore(vk::Device device, bool exportable);
   ~Semaphore();
 
   // Convenient.
   static SemaphorePtr New(vk::Device device);
+  static SemaphorePtr NewExportableSem(vk::Device device);
 
   vk::Semaphore vk_semaphore() const { return value_; }
 
@@ -34,3 +37,5 @@ class Semaphore : public fxl::RefCountedThreadSafe<Semaphore> {
 };
 
 }  // namespace escher
+
+#endif  // LIB_ESCHER_RENDERER_SEMAPHORE_H_

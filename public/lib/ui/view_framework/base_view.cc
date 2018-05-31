@@ -14,8 +14,8 @@
 namespace mozart {
 namespace {
 
-ui::ScenicPtr GetScenic(views_v1::ViewManager* view_manager) {
-  ui::ScenicPtr scenic;
+fuchsia::ui::scenic::ScenicPtr GetScenic(::fuchsia::ui::views_v1::ViewManager* view_manager) {
+  fuchsia::ui::scenic::ScenicPtr scenic;
   view_manager->GetScenic(scenic.NewRequest());
   return scenic;
 }
@@ -23,8 +23,8 @@ ui::ScenicPtr GetScenic(views_v1::ViewManager* view_manager) {
 }  // namespace
 
 BaseView::BaseView(
-    views_v1::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
+    ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request,
     const std::string& label)
     : view_manager_(std::move(view_manager)),
       view_listener_binding_(this),
@@ -47,7 +47,7 @@ BaseView::BaseView(
 
   session_.set_event_handler(
       std::bind(&BaseView::HandleSessionEvents, this, std::placeholders::_1));
-  parent_node_.SetEventMask(gfx::kMetricsEventMask);
+  parent_node_.SetEventMask(fuchsia::ui::gfx::kMetricsEventMask);
 }
 
 BaseView::~BaseView() = default;
@@ -58,7 +58,7 @@ component::ServiceProvider* BaseView::GetViewServiceProvider() {
   return view_service_provider_.get();
 }
 
-views_v1::ViewContainer* BaseView::GetViewContainer() {
+::fuchsia::ui::views_v1::ViewContainer* BaseView::GetViewContainer() {
   if (!view_container_) {
     view_->GetContainer(view_container_.NewRequest());
     view_container_->SetListener(view_container_listener_binding_.NewBinding());
@@ -96,30 +96,32 @@ void BaseView::PresentScene(zx_time_t presentation_time) {
   // Session.Present(), for use in InvalidateScene().
   last_presentation_time_ = presentation_time;
 
-  session()->Present(presentation_time, [this](images::PresentationInfo info) {
-    FXL_DCHECK(present_pending_);
+  session()->Present(presentation_time,
+                     [this](fuchsia::images::PresentationInfo info) {
+                       FXL_DCHECK(present_pending_);
 
-    zx_time_t next_presentation_time =
-        info.presentation_time + info.presentation_interval;
+                       zx_time_t next_presentation_time =
+                           info.presentation_time + info.presentation_interval;
 
-    bool present_needed = false;
-    if (invalidate_pending_) {
-      invalidate_pending_ = false;
-      OnSceneInvalidated(std::move(info));
-      present_needed = true;
-    }
+                       bool present_needed = false;
+                       if (invalidate_pending_) {
+                         invalidate_pending_ = false;
+                         OnSceneInvalidated(std::move(info));
+                         present_needed = true;
+                       }
 
-    present_pending_ = false;
-    if (present_needed)
-      PresentScene(next_presentation_time);
-  });
+                       present_pending_ = false;
+                       if (present_needed)
+                         PresentScene(next_presentation_time);
+                     });
 }
 
-void BaseView::HandleSessionEvents(fidl::VectorPtr<ui::Event> events) {
-  const gfx::Metrics* new_metrics = nullptr;
+void BaseView::HandleSessionEvents(
+    fidl::VectorPtr<fuchsia::ui::scenic::Event> events) {
+  const fuchsia::ui::gfx::Metrics* new_metrics = nullptr;
   for (const auto& event : *events) {
     if (event.is_gfx()) {
-      const gfx::Event& scenic_event = event.gfx();
+      const fuchsia::ui::gfx::Event& scenic_event = event.gfx();
       if (scenic_event.is_metrics() &&
           scenic_event.metrics().node_id == parent_node_.id()) {
         new_metrics = &scenic_event.metrics().metrics;
@@ -155,26 +157,28 @@ void BaseView::AdjustMetricsAndPhysicalSize() {
   InvalidateScene();
 }
 
-void BaseView::OnPropertiesChanged(views_v1::ViewProperties old_properties) {}
+void BaseView::OnPropertiesChanged(::fuchsia::ui::views_v1::ViewProperties old_properties) {}
 
-void BaseView::OnSceneInvalidated(images::PresentationInfo presentation_info) {}
+void BaseView::OnSceneInvalidated(
+    fuchsia::images::PresentationInfo presentation_info) {}
 
-void BaseView::OnSessionEvent(fidl::VectorPtr<ui::Event> events) {}
+void BaseView::OnSessionEvent(
+    fidl::VectorPtr<fuchsia::ui::scenic::Event> events) {}
 
-bool BaseView::OnInputEvent(input::InputEvent event) {
+bool BaseView::OnInputEvent(fuchsia::ui::input::InputEvent event) {
   return false;
 }
 
 void BaseView::OnChildAttached(uint32_t child_key,
-                               views_v1::ViewInfo child_view_info) {}
+                               ::fuchsia::ui::views_v1::ViewInfo child_view_info) {}
 
 void BaseView::OnChildUnavailable(uint32_t child_key) {}
 
-void BaseView::OnPropertiesChanged(views_v1::ViewProperties properties,
+void BaseView::OnPropertiesChanged(::fuchsia::ui::views_v1::ViewProperties properties,
                                    OnPropertiesChangedCallback callback) {
   TRACE_DURATION("view", "OnPropertiesChanged");
 
-  views_v1::ViewProperties old_properties = std::move(properties_);
+  ::fuchsia::ui::views_v1::ViewProperties old_properties = std::move(properties_);
   properties_ = std::move(properties);
 
   if (logical_size_ != properties_.view_layout->size) {
@@ -188,7 +192,7 @@ void BaseView::OnPropertiesChanged(views_v1::ViewProperties properties,
 }
 
 void BaseView::OnChildAttached(uint32_t child_key,
-                               views_v1::ViewInfo child_view_info,
+                               ::fuchsia::ui::views_v1::ViewInfo child_view_info,
                                OnChildUnavailableCallback callback) {
   TRACE_DURATION("view", "OnChildAttached", "child_key", child_key);
   OnChildAttached(child_key, std::move(child_view_info));
@@ -202,7 +206,8 @@ void BaseView::OnChildUnavailable(uint32_t child_key,
   callback();
 }
 
-void BaseView::OnEvent(input::InputEvent event, OnEventCallback callback) {
+void BaseView::OnEvent(fuchsia::ui::input::InputEvent event,
+                       OnEventCallback callback) {
   TRACE_DURATION("view", "OnEvent");
   bool handled = OnInputEvent(std::move(event));
   callback(handled);

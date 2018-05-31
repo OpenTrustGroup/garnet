@@ -19,12 +19,14 @@ namespace debug_ipc {
 struct MemoryBlock;
 struct Module;
 struct ThreadRecord;
+struct AddressRegion;
 }
 
 namespace zxdb {
 
 class Err;
 class MemoryDump;
+class ProcessSymbols;
 class Target;
 class Thread;
 
@@ -48,10 +50,20 @@ class Process : public ClientObject {
   // is normally based on the file name, but isn't the same as the file name.
   virtual const std::string& GetName() const = 0;
 
+  // Returns the interface for querying symbols for this process.
+  virtual ProcessSymbols* GetSymbols() = 0;
+
   // Queries the process for the currently-loaded modules (this always
   // recomputes the list).
   virtual void GetModules(
-      std::function<void(const Err&, std::vector<debug_ipc::Module>)>)
+      std::function<void(const Err&, std::vector<debug_ipc::Module>)>) = 0;
+
+  // Queries the process for its address map if |address| is zero the entire
+  // map is requested. If |address| is non-zero only the containing region
+  // if exists will be retrieved.
+  virtual void GetAspace(
+      uint64_t address,
+      std::function<void(const Err&, std::vector<debug_ipc::AddressRegion>)>)
       const = 0;
 
   // Returns all threads in the process. This is as of the last update from

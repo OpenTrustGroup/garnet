@@ -9,7 +9,7 @@
 
 #include "garnet/lib/media/client/audio_output_device.h"
 
-#include <fuchsia/cpp/media.h>
+#include <media/cpp/fidl.h>
 #include "lib/media/c/audio.h"
 
 namespace media_client {
@@ -36,8 +36,7 @@ class AudioOutputStream {
   bool GetDelays();
 
   void PullFromClientBuffer(float* client_buffer, int num_samples);
-  media::MediaPacket CreateMediaPacket(zx_time_t pts,
-                                       size_t payload_offset,
+  media::MediaPacket CreateMediaPacket(zx_time_t pts, size_t payload_offset,
                                        size_t payload_size);
   bool SendMediaPacket(media::MediaPacket packet);
 

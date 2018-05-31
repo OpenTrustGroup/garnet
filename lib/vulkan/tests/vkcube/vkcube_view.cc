@@ -7,25 +7,23 @@
 #include "lib/ui/geometry/cpp/geometry_util.h"
 
 VkCubeView::VkCubeView(
-    views_v1::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
-    std::function<void(float width,
-                       float height,
-                       fidl::InterfaceHandle<images::ImagePipe>
-                           interface_request)> resize_callback)
-    : BaseView(std::move(view_manager),
-               std::move(view_owner_request),
+    ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request,
+    std::function<
+        void(float width, float height,
+             fidl::InterfaceHandle<fuchsia::images::ImagePipe> interface_request)>
+        resize_callback)
+    : BaseView(std::move(view_manager), std::move(view_owner_request),
                "vkcube"),
       pane_node_(session()),
       resize_callback_(resize_callback) {}
 
 VkCubeView::~VkCubeView() {}
 
-void VkCubeView::OnSceneInvalidated(images::PresentationInfo presentation_info) {
-  if (!has_metrics())
-    return;
-  if (size_ == logical_size() && physical_size_ == physical_size())
-    return;
+void VkCubeView::OnSceneInvalidated(
+    fuchsia::images::PresentationInfo presentation_info) {
+  if (!has_metrics()) return;
+  if (size_ == logical_size() && physical_size_ == physical_size()) return;
 
   size_ = logical_size();
   physical_size_ = physical_size();
@@ -47,7 +45,7 @@ void VkCubeView::OnSceneInvalidated(images::PresentationInfo presentation_info) 
   uint32_t image_pipe_id = session()->AllocResourceId();
   session()->Enqueue(scenic_lib::NewCreateImagePipeCommand(
       image_pipe_id,
-      fidl::InterfaceRequest<images::ImagePipe>(std::move(endpoint1))));
+      fidl::InterfaceRequest<fuchsia::images::ImagePipe>(std::move(endpoint1))));
   pane_material.SetTexture(image_pipe_id);
   session()->ReleaseResource(image_pipe_id);
 
@@ -56,5 +54,5 @@ void VkCubeView::OnSceneInvalidated(images::PresentationInfo presentation_info) 
 
   resize_callback_(
       physical_size().width, physical_size().height,
-      fidl::InterfaceHandle<images::ImagePipe>(std::move(endpoint0)));
+      fidl::InterfaceHandle<fuchsia::images::ImagePipe>(std::move(endpoint0)));
 }

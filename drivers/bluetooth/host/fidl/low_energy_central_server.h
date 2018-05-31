@@ -7,7 +7,7 @@
 #include <memory>
 #include <unordered_map>
 
-#include <fuchsia/cpp/bluetooth_low_energy.h>
+#include <bluetooth_low_energy/cpp/fidl.h>
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/macros.h"
 
@@ -26,7 +26,7 @@ class LowEnergyCentralServer
       fxl::WeakPtr<::btlib::gap::Adapter> adapter,
       ::fidl::InterfaceRequest<::bluetooth_low_energy::Central> request,
       fbl::RefPtr<GattHost> gatt_host);
-  ~LowEnergyCentralServer() override = default;
+  ~LowEnergyCentralServer() override;
 
  private:
   // ::bluetooth_low_energy::Central overrides:

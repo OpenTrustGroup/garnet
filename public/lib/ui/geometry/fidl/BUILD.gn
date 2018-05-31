@@ -5,9 +5,9 @@
 import("//build/fidl/fidl.gni")
 
 fidl("fidl") {
-  name = "geometry"
+  name = "fuchsia.math"
 
-  sdk_candidate = true
+  sdk_category = "partner"
 
   sources = [
     "geometry.fidl",

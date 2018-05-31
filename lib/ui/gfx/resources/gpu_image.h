@@ -22,7 +22,8 @@ class GpuImage : public Image {
  public:
   static const ResourceTypeInfo kTypeInfo;
 
-  // Create Image given a MemoryPtr, images::ImageInfoPtr, and memory_offset.
+  // Create Image given a MemoryPtr, fuchsia::images::ImageInfoPtr, and
+  // memory_offset.
   //
   // |session| is the Session that this image can be referenced from.
   // |id| is the ID of the resource.
@@ -34,12 +35,10 @@ class GpuImage : public Image {
   // the caller.
   //
   // Returns the created Image, or nullptr if there was an error.
-  static GpuImagePtr New(Session* session,
-                         scenic::ResourceId id,
+  static GpuImagePtr New(Session* session, scenic::ResourceId id,
                          GpuMemoryPtr memory,
-                         const images::ImageInfo& image_info,
-                         uint64_t memory_offset,
-                         ErrorReporter* error_reporter);
+                         const fuchsia::images::ImageInfo& image_info,
+                         uint64_t memory_offset, ErrorReporter* error_reporter);
 
   void Accept(class ResourceVisitor* visitor) override;
 
@@ -55,11 +54,8 @@ class GpuImage : public Image {
   // |memory| is the GPU memory that is associated with this image.
   // |memory_offset| is the offset in bytes into the memory where the image is
   // stored.
-  GpuImage(Session* session,
-           scenic::ResourceId id,
-           GpuMemoryPtr memory,
-           uint64_t memory_offset,
-           escher::ImageInfo image_info,
+  GpuImage(Session* session, scenic::ResourceId id, GpuMemoryPtr memory,
+           uint64_t memory_offset, escher::ImageInfo image_info,
            vk::Image vk_image_);
 
   GpuMemoryPtr memory_;

@@ -6,17 +6,16 @@
 
 #include <semaphore.h>
 
-#include <fuchsia/cpp/views_v1.h>
+#include <fuchsia/ui/views_v1/cpp/fidl.h>
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
-
-#include "lib/fsl/tasks/message_loop.h"
+#include <lib/async-loop/cpp/loop.h>
 
 // static
 zx_status_t ScenicScanout::Create(
     component::ApplicationContext* application_context,
     machina::InputDispatcher* input_dispatcher,
-    fbl::unique_ptr<GpuScanout>* out) {
+    fbl::unique_ptr<ScenicScanout>* out) {
   *out = fbl::make_unique<ScenicScanout>(application_context, input_dispatcher);
   return ZX_OK;
 }
@@ -29,14 +28,14 @@ ScenicScanout::ScenicScanout(component::ApplicationContext* application_context,
   // mozart service.
   SetReady(false);
 
-  application_context_->outgoing().AddPublicService<views_v1::ViewProvider>(
-      [this](fidl::InterfaceRequest<views_v1::ViewProvider> request) {
+  application_context_->outgoing().AddPublicService<::fuchsia::ui::views_v1::ViewProvider>(
+      [this](fidl::InterfaceRequest<::fuchsia::ui::views_v1::ViewProvider> request) {
         bindings_.AddBinding(this, std::move(request));
       });
 }
 
 void ScenicScanout::CreateView(
-    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request,
     fidl::InterfaceRequest<component::ServiceProvider> view_services) {
   if (view_) {
     FXL_LOG(ERROR) << "CreateView called when a view already exists";
@@ -44,7 +43,7 @@ void ScenicScanout::CreateView(
   }
   auto view_manager =
       application_context_
-          ->ConnectToEnvironmentService<views_v1::ViewManager>();
+          ->ConnectToEnvironmentService<::fuchsia::ui::views_v1::ViewManager>();
   view_ = fbl::make_unique<GuestView>(this, input_dispatcher_,
                                       fbl::move(view_manager),
                                       fbl::move(view_owner_request));
@@ -59,10 +58,9 @@ void ScenicScanout::InvalidateRegion(const machina::GpuRect& rect) {
 }
 
 GuestView::GuestView(
-    machina::GpuScanout* scanout,
-    machina::InputDispatcher* input_dispatcher,
-    views_v1::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request)
+    machina::GpuScanout* scanout, machina::InputDispatcher* input_dispatcher,
+    ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request)
     : BaseView(std::move(view_manager), std::move(view_owner_request), "Guest"),
       background_node_(session()),
       material_(session()),
@@ -73,7 +71,7 @@ GuestView::GuestView(
   image_info_.width = kGuestViewDisplayWidth;
   image_info_.height = kGuestViewDisplayHeight;
   image_info_.stride = kGuestViewDisplayWidth * 4;
-  image_info_.pixel_format = images::PixelFormat::BGRA_8;
+  image_info_.pixel_format = fuchsia::images::PixelFormat::BGRA_8;
 
   // Allocate a framebuffer and attach it as a GPU scanout.
   memory_ = fbl::make_unique<scenic_lib::HostMemory>(
@@ -86,7 +84,7 @@ GuestView::GuestView(
 
 GuestView::~GuestView() = default;
 
-void GuestView::OnSceneInvalidated(images::PresentationInfo presentation_info) {
+void GuestView::OnSceneInvalidated(fuchsia::images::PresentationInfo presentation_info) {
   if (!has_logical_size()) {
     return;
   }
@@ -111,13 +109,13 @@ void GuestView::OnSceneInvalidated(images::PresentationInfo presentation_info) {
 
 zx_status_t FromMozartButton(uint32_t event, machina::Button* button) {
   switch (event) {
-    case input::kMousePrimaryButton:
+    case fuchsia::ui::input::kMousePrimaryButton:
       *button = machina::Button::BTN_MOUSE_PRIMARY;
       return ZX_OK;
-    case input::kMouseSecondaryButton:
+    case fuchsia::ui::input::kMouseSecondaryButton:
       *button = machina::Button::BTN_MOUSE_SECONDARY;
       return ZX_OK;
-    case input::kMouseTertiaryButton:
+    case fuchsia::ui::input::kMouseTertiaryButton:
       *button = machina::Button::BTN_MOUSE_TERTIARY;
       return ZX_OK;
     default:
@@ -125,19 +123,19 @@ zx_status_t FromMozartButton(uint32_t event, machina::Button* button) {
   }
 }
 
-bool GuestView::OnInputEvent(input::InputEvent event) {
+bool GuestView::OnInputEvent(fuchsia::ui::input::InputEvent event) {
   if (event.is_keyboard()) {
-    const input::KeyboardEvent& key_event = event.keyboard();
+    const fuchsia::ui::input::KeyboardEvent& key_event = event.keyboard();
 
     machina::InputEvent event;
     event.type = machina::InputEventType::KEYBOARD;
     event.key.hid_usage = key_event.hid_usage;
     switch (key_event.phase) {
-      case input::KeyboardEventPhase::PRESSED:
+      case fuchsia::ui::input::KeyboardEventPhase::PRESSED:
         event.key.state = machina::KeyState::PRESSED;
         break;
-      case input::KeyboardEventPhase::RELEASED:
-      case input::KeyboardEventPhase::CANCELLED:
+      case fuchsia::ui::input::KeyboardEventPhase::RELEASED:
+      case fuchsia::ui::input::KeyboardEventPhase::CANCELLED:
         event.key.state = machina::KeyState::RELEASED;
         break;
       default:
@@ -147,20 +145,20 @@ bool GuestView::OnInputEvent(input::InputEvent event) {
     input_dispatcher_->Keyboard()->PostEvent(event, true);
     return true;
   } else if (event.is_pointer()) {
-    const input::PointerEvent& pointer_event = event.pointer();
+    const fuchsia::ui::input::PointerEvent& pointer_event = event.pointer();
     if (!view_ready_) {
       // Ignore pointer events that come in before the view is ready.
       return true;
     }
     machina::InputEvent event;
     switch (pointer_event.phase) {
-      case input::PointerEventPhase::MOVE:
+      case fuchsia::ui::input::PointerEventPhase::MOVE:
         event.type = machina::InputEventType::POINTER;
         event.pointer.x = pointer_event.x * pointer_scale_x_;
         event.pointer.y = pointer_event.y * pointer_scale_y_;
         event.pointer.type = machina::PointerType::ABSOLUTE;
         break;
-      case input::PointerEventPhase::DOWN:
+      case fuchsia::ui::input::PointerEventPhase::DOWN:
         event.type = machina::InputEventType::BUTTON;
         event.button.state = machina::KeyState::PRESSED;
         if (FromMozartButton(pointer_event.buttons, &event.button.button) !=
@@ -169,7 +167,7 @@ bool GuestView::OnInputEvent(input::InputEvent event) {
           return true;
         }
         break;
-      case input::PointerEventPhase::UP:
+      case fuchsia::ui::input::PointerEventPhase::UP:
         event.type = machina::InputEventType::BUTTON;
         event.button.state = machina::KeyState::RELEASED;
         if (FromMozartButton(pointer_event.buttons, &event.button.button) !=

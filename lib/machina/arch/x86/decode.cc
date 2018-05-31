@@ -17,13 +17,9 @@ static constexpr uint8_t kWMask = 1u;
 static constexpr uint8_t kSibBaseMask = 0b00000111;
 static constexpr uint8_t kSibBaseNone = 0b101;
 
-static bool is_h66_prefix(uint8_t prefix) {
-  return prefix == 0x66;
-}
+static bool is_h66_prefix(uint8_t prefix) { return prefix == 0x66; }
 
-static bool is_rex_prefix(uint8_t prefix) {
-  return (prefix >> 4) == 0b0100;
-}
+static bool is_rex_prefix(uint8_t prefix) { return (prefix >> 4) == 0b0100; }
 
 static bool has_sib_byte(uint8_t mod_rm) {
   return (mod_rm >> 6) != 0b11 && (mod_rm & 0b111) == 0b100;
@@ -46,25 +42,27 @@ static uint8_t displacement_size(uint8_t mod_rm, uint8_t sib) {
   }
 }
 
-static uint8_t operand_size(bool h66, bool rex_w, bool w) {
+static uint8_t operand_size(bool h66, bool rex_w, bool w,
+                            uint8_t default_operand_size) {
   if (!w) {
     return 1;
   } else if (rex_w) {
     return 8;
-  } else if (!h66) {
-    return 4;
+  }
+  if (!h66) {
+    return default_operand_size;
   } else {
-    return 2;
+    return default_operand_size == 2 ? 4 : 2;
   }
 }
 
-static uint8_t immediate_size(bool h66, bool w) {
+static uint8_t immediate_size(bool h66, bool w, uint8_t default_operand_size) {
   if (!w) {
     return 1;
   } else if (!h66) {
-    return 4;
+    return default_operand_size;
   } else {
-    return 2;
+    return default_operand_size == 2 ? 4 : 2;
   }
 }
 
@@ -82,9 +80,7 @@ static inline bool is_high_byte(uint8_t size, bool rex) {
 }
 
 static uint64_t* select_register(zx_vcpu_state_t* vcpu_state,
-                                 uint8_t register_id,
-                                 uint8_t size,
-                                 bool rex) {
+                                 uint8_t register_id, uint8_t size, bool rex) {
   // From Intel Volume 2, Section 2.1.
   switch (register_id) {
     // From Intel Volume 2, Section 2.1.5.
@@ -97,20 +93,24 @@ static uint64_t* select_register(zx_vcpu_state_t* vcpu_state,
     case 3:
       return &vcpu_state->rbx;
     case 4:
-      if (is_high_byte(size, rex))
+      if (is_high_byte(size, rex)) {
         return nullptr;
+      }
       return &vcpu_state->rsp;
     case 5:
-      if (is_high_byte(size, rex))
+      if (is_high_byte(size, rex)) {
         return nullptr;
+      }
       return &vcpu_state->rbp;
     case 6:
-      if (is_high_byte(size, rex))
+      if (is_high_byte(size, rex)) {
         return nullptr;
+      }
       return &vcpu_state->rsi;
     case 7:
-      if (is_high_byte(size, rex))
+      if (is_high_byte(size, rex)) {
         return nullptr;
+      }
       return &vcpu_state->rdi;
     case 8:
       return &vcpu_state->r8;
@@ -134,16 +134,16 @@ static uint64_t* select_register(zx_vcpu_state_t* vcpu_state,
 }
 
 static zx_status_t deconstruct_instruction(const uint8_t* inst_buf,
-                                           uint32_t inst_len,
-                                           uint16_t* opcode,
-                                           uint8_t* mod_rm,
-                                           uint8_t* sib) {
-  if (inst_len == 0)
+                                           uint32_t inst_len, uint16_t* opcode,
+                                           uint8_t* mod_rm, uint8_t* sib) {
+  if (inst_len == 0) {
     return ZX_ERR_NOT_SUPPORTED;
+  }
   switch (inst_buf[0]) {
     case 0x0f:
-      if (inst_len < 3)
+      if (inst_len < 3) {
         return ZX_ERR_NOT_SUPPORTED;
+      }
       *opcode = *(uint16_t*)inst_buf;
       *mod_rm = inst_buf[2];
       if (!has_sib_byte(*mod_rm)) {
@@ -155,8 +155,9 @@ static zx_status_t deconstruct_instruction(const uint8_t* inst_buf,
       }
       break;
     default:
-      if (inst_len < 2)
+      if (inst_len < 2) {
         return ZX_ERR_OUT_OF_RANGE;
+      }
       *opcode = inst_buf[0];
       *mod_rm = inst_buf[1];
       if (!has_sib_byte(*mod_rm)) {
@@ -176,20 +177,28 @@ namespace machina {
 // Decode an instruction used in a memory access to determine the register used
 // as a source or destination. There's no need to decode memory operands because
 // the faulting address is already known.
-zx_status_t inst_decode(const uint8_t* inst_buf,
-                        uint32_t inst_len,
-                        zx_vcpu_state_t* vcpu_state,
-                        Instruction* inst) {
-  if (inst_len == 0)
+zx_status_t inst_decode(const uint8_t* inst_buf, uint32_t inst_len,
+                        uint8_t default_operand_size,
+                        zx_vcpu_state_t* vcpu_state, Instruction* inst) {
+  if (inst_len == 0) {
     return ZX_ERR_BAD_STATE;
-  if (inst_len > X86_MAX_INST_LEN)
+  }
+  if (inst_len > X86_MAX_INST_LEN) {
     return ZX_ERR_OUT_OF_RANGE;
+  }
+  if (default_operand_size != 2 && default_operand_size != 4) {
+    return ZX_ERR_NOT_SUPPORTED;
+  }
+  if (vcpu_state == nullptr) {
+    return ZX_ERR_INVALID_ARGS;
+  }
 
   // Parse 66H prefix.
   bool h66 = is_h66_prefix(inst_buf[0]);
   if (h66) {
-    if (inst_len == 1)
+    if (inst_len == 1) {
       return ZX_ERR_BAD_STATE;
+    }
     inst_buf++;
     inst_len--;
   }
@@ -209,16 +218,18 @@ zx_status_t inst_decode(const uint8_t* inst_buf,
     inst_len--;
   }
   // Technically this is valid, but no sane compiler should emit it.
-  if (h66 && rex_w)
+  if (h66 && rex_w) {
     return ZX_ERR_NOT_SUPPORTED;
+  }
 
   uint16_t opcode;
   uint8_t mod_rm;
   uint8_t sib;
   zx_status_t status =
       deconstruct_instruction(inst_buf, inst_len, &opcode, &mod_rm, &sib);
-  if (status != ZX_OK)
+  if (status != ZX_OK) {
     return status;
+  }
 
   const uint8_t sib_size = has_sib_byte(mod_rm) ? 1 : 0;
   const uint8_t disp_size = displacement_size(mod_rm, sib);
@@ -227,11 +238,12 @@ zx_status_t inst_decode(const uint8_t* inst_buf,
     // 1000 100w : mod reg r/m
     case 0x88:
     case 0x89: {
-      if (inst_len != sib_size + disp_size + 2u)
+      if (inst_len != sib_size + disp_size + 2u) {
         return ZX_ERR_OUT_OF_RANGE;
+      }
       const bool w = opcode & kWMask;
       inst->type = INST_MOV_WRITE;
-      inst->access_size = operand_size(h66, rex_w, w);
+      inst->access_size = operand_size(h66, rex_w, w, default_operand_size);
       inst->imm = 0;
       inst->reg = select_register(vcpu_state, register_id(mod_rm, rex_r),
                                   inst->access_size, rex);
@@ -242,11 +254,12 @@ zx_status_t inst_decode(const uint8_t* inst_buf,
     // 1000 101w : mod reg r/m
     case 0x8a:
     case 0x8b: {
-      if (inst_len != sib_size + disp_size + 2u)
+      if (inst_len != sib_size + disp_size + 2u) {
         return ZX_ERR_OUT_OF_RANGE;
+      }
       const bool w = opcode & kWMask;
       inst->type = INST_MOV_READ;
-      inst->access_size = operand_size(h66, rex_w, w);
+      inst->access_size = operand_size(h66, rex_w, w, default_operand_size);
       inst->imm = 0;
       inst->reg = select_register(vcpu_state, register_id(mod_rm, rex_r),
                                   inst->access_size, rex);
@@ -258,13 +271,15 @@ zx_status_t inst_decode(const uint8_t* inst_buf,
     case 0xc6:
     case 0xc7: {
       const bool w = opcode & kWMask;
-      const uint8_t imm_size = immediate_size(h66, w);
-      if (inst_len != sib_size + disp_size + imm_size + 2u)
+      const uint8_t imm_size = immediate_size(h66, w, default_operand_size);
+      if (inst_len != sib_size + disp_size + imm_size + 2u) {
         return ZX_ERR_OUT_OF_RANGE;
-      if ((mod_rm & kModRMRegMask) != 0)
+      }
+      if ((mod_rm & kModRMRegMask) != 0) {
         return ZX_ERR_INVALID_ARGS;
+      }
       inst->type = INST_MOV_WRITE;
-      inst->access_size = operand_size(h66, rex_w, w);
+      inst->access_size = operand_size(h66, rex_w, w, default_operand_size);
       inst->imm = 0;
       inst->reg = NULL;
       inst->flags = NULL;
@@ -273,20 +288,23 @@ zx_status_t inst_decode(const uint8_t* inst_buf,
     }
     // Move (16-bit) with zero-extend r/m to r.
     case 0xb70f:
-      if (h66)
+      if (h66) {
         return ZX_ERR_BAD_STATE;
+      }
     // Move (8-bit) with zero-extend r/m to r.
     case 0xb60f: {
-      if (inst_len != sib_size + disp_size + 3u)
+      if (inst_len != sib_size + disp_size + 3u) {
         return ZX_ERR_OUT_OF_RANGE;
+      }
       const bool w = opcode & (kWMask << 8);
 
       // We'll be operating with different sized operands due to the zero-
       // extend. The 'w' bit determines if we're reading 8 or 16 bits out of
-      // memory while the h66/rex_w bits are used to select the destination
-      // register size.
+      // memory while the h66/rex_w bits and default operand size are used to
+      // select the destination register size.
       const uint8_t access_size = w ? 2 : 1;
-      const uint8_t reg_size = operand_size(h66, rex_w, true);
+      const uint8_t reg_size =
+          operand_size(h66, rex_w, true, default_operand_size);
       inst->type = INST_MOV_READ;
       inst->access_size = access_size;
       inst->imm = 0;
@@ -297,12 +315,15 @@ zx_status_t inst_decode(const uint8_t* inst_buf,
     }
     // Logical compare (8-bit) imm with r/m.
     case 0xf6:
-      if (h66)
+      if (h66) {
         return ZX_ERR_BAD_STATE;
-      if (inst_len != sib_size + disp_size + 3u)
+      }
+      if (inst_len != sib_size + disp_size + 3u) {
         return ZX_ERR_OUT_OF_RANGE;
-      if ((mod_rm & kModRMRegMask) != 0)
+      }
+      if ((mod_rm & kModRMRegMask) != 0) {
         return ZX_ERR_INVALID_ARGS;
+      }
       inst->type = INST_TEST;
       inst->access_size = 1;
       inst->imm = 0;

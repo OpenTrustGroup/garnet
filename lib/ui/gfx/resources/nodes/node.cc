@@ -6,7 +6,7 @@
 
 #include "garnet/lib/ui/gfx/resources/nodes/node.h"
 
-#include <fuchsia/cpp/gfx.h>
+#include <fuchsia/ui/gfx/cpp/fidl.h>
 #include "garnet/lib/ui/gfx/resources/import.h"
 #include "garnet/lib/ui/gfx/resources/nodes/traversal.h"
 
@@ -30,8 +30,7 @@ constexpr ResourceTypeFlags kHasClip = ResourceType::kEntityNode;
 
 const ResourceTypeInfo Node::kTypeInfo = {ResourceType::kNode, "Node"};
 
-Node::Node(Session* session,
-           scenic::ResourceId node_id,
+Node::Node(Session* session, scenic::ResourceId node_id,
            const ResourceTypeInfo& type_info)
     : Resource(session, node_id, type_info) {
   FXL_DCHECK(type_info.IsKindOf(Node::kTypeInfo));
@@ -51,8 +50,8 @@ bool Node::SetEventMask(uint32_t event_mask) {
 
   // If the client unsubscribed from the event, ensure that we will deliver
   // fresh metrics next time they subscribe.
-  if (!(event_mask & ::gfx::kMetricsEventMask)) {
-    reported_metrics_ = ::gfx::Metrics();
+  if (!(event_mask & ::fuchsia::ui::gfx::kMetricsEventMask)) {
+    reported_metrics_ = ::fuchsia::ui::gfx::Metrics();
   }
   return true;
 }
@@ -300,7 +299,8 @@ bool Node::SetClipToSelf(bool clip_to_self) {
   return true;
 }
 
-bool Node::SetHitTestBehavior(::gfx::HitTestBehavior hit_test_behavior) {
+bool Node::SetHitTestBehavior(
+    ::fuchsia::ui::gfx::HitTestBehavior hit_test_behavior) {
   hit_test_behavior_ = hit_test_behavior;
   return true;
 }

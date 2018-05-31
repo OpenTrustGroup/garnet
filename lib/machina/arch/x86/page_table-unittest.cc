@@ -16,8 +16,9 @@
 #define ASSERT_EPT_EQ(actual, expected, size, ...) \
   do {                                             \
     int cmp = memcmp(actual, expected, size);      \
-    if (cmp != 0)                                  \
+    if (cmp != 0) {                                \
       hexdump_result(actual, expected);            \
+    }                                              \
     ASSERT_EQ(cmp, 0, ##__VA_ARGS__);              \
   } while (0)
 

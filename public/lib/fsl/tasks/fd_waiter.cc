@@ -5,7 +5,6 @@
 #include "lib/fsl/tasks/fd_waiter.h"
 #include "lib/fxl/logging.h"
 
-#include <fbl/function.h>
 #include <lib/async/default.h>
 #include <zircon/errors.h>
 
@@ -70,10 +69,8 @@ void FDWaiter::Cancel() {
   }
 }
 
-void FDWaiter::Handler(async_t* async,
-                       async::WaitBase* wait,
-                       zx_status_t status,
-                       const zx_packet_signal_t* signal) {
+void FDWaiter::Handler(async_t* async, async::WaitBase* wait,
+                       zx_status_t status, const zx_packet_signal_t* signal) {
   FXL_DCHECK(io_);
 
   uint32_t events = 0;

@@ -19,7 +19,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
 
-#include <fuchsia/cpp/gfx.h>
+#include <fuchsia/ui/gfx/cpp/fidl.h>
 #include <lib/async/cpp/task.h>
 #include <zx/time.h>
 
@@ -40,18 +40,19 @@ namespace hello_scenic {
 
 static constexpr uint64_t kBillion = 1000000000;
 
-App::App()
+App::App(async::Loop* loop)
     : application_context_(
           component::ApplicationContext::CreateFromStartupInfo()),
-      loop_(fsl::MessageLoop::GetCurrent()) {
+      loop_(loop) {
   // Connect to the SceneManager service.
-  scenic_ = application_context_->ConnectToEnvironmentService<ui::Scenic>();
+  scenic_ =
+      application_context_->ConnectToEnvironmentService<fuchsia::ui::scenic::Scenic>();
   scenic_.set_error_handler([this] {
     FXL_LOG(INFO) << "Lost connection to Scenic service.";
-    loop_->QuitNow();
+    loop_->Quit();
   });
   scenic_->GetDisplayInfo(
-      [this](gfx::DisplayInfo display_info) { Init(std::move(display_info)); });
+      [this](fuchsia::ui::gfx::DisplayInfo display_info) { Init(std::move(display_info)); });
 }
 
 void App::InitCheckerboardMaterial(Material* uninitialized_material) {
@@ -72,14 +73,14 @@ void App::InitCheckerboardMaterial(Material* uninitialized_material) {
          checkerboard_pixels_size);
 
   // Create an Image to wrap the checkerboard.
-  images::ImageInfo checkerboard_image_info;
+  fuchsia::images::ImageInfo checkerboard_image_info;
   checkerboard_image_info.width = checkerboard_width;
   checkerboard_image_info.height = checkerboard_height;
   const size_t kBytesPerPixel = 4u;
   checkerboard_image_info.stride = checkerboard_width * kBytesPerPixel;
-  checkerboard_image_info.pixel_format = images::PixelFormat::BGRA_8;
-  checkerboard_image_info.color_space = images::ColorSpace::SRGB;
-  checkerboard_image_info.tiling = images::Tiling::LINEAR;
+  checkerboard_image_info.pixel_format = fuchsia::images::PixelFormat::BGRA_8;
+  checkerboard_image_info.color_space = fuchsia::images::ColorSpace::SRGB;
+  checkerboard_image_info.tiling = fuchsia::images::Tiling::LINEAR;
 
   HostImage checkerboard_image(checkerboard_memory, 0,
                                std::move(checkerboard_image_info));
@@ -195,14 +196,14 @@ void App::CreateExampleScene(float display_width, float display_height) {
   pane_2_contents.SetTranslation(0, 0, 10);
 }
 
-void App::Init(gfx::DisplayInfo display_info) {
+void App::Init(fuchsia::ui::gfx::DisplayInfo display_info) {
   FXL_LOG(INFO) << "Creating new Session";
 
   // TODO: set up SessionListener.
   session_ = std::make_unique<scenic_lib::Session>(scenic_.get());
   session_->set_error_handler([this] {
     FXL_LOG(INFO) << "Session terminated.";
-    loop_->QuitNow();
+    loop_->Quit();
   });
 
   // Wait kSessionDuration seconds, and close the session.
@@ -279,7 +280,7 @@ void App::Update(uint64_t next_presentation_time) {
 
   // Present
   session_->Present(
-      next_presentation_time, [this](images::PresentationInfo info) {
+      next_presentation_time, [this](fuchsia::images::PresentationInfo info) {
         Update(info.presentation_time + info.presentation_interval);
       });
 }

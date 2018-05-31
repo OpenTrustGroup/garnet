@@ -6,13 +6,12 @@
 
 #include <lib/async/cpp/task.h>
 
+#include "garnet/bin/media/media_player/framework/formatting.h"
 #include "lib/media/timeline/timeline.h"
 
 namespace media_player {
 
-Renderer::Renderer() {
-  ClearPendingTimelineFunction();
-}
+Renderer::Renderer() { ClearPendingTimelineFunction(); }
 
 Renderer::~Renderer() {}
 
@@ -26,8 +25,25 @@ void Renderer::Deprovision() {
   update_callback_ = nullptr;
 }
 
-void Renderer::SetProgramRange(uint64_t program,
-                               int64_t min_pts,
+void Renderer::Dump(std::ostream& os) const {
+  os << label() << indent;
+  stage()->Dump(os);
+  os << newl << "timeline:              " << current_timeline_function();
+  os << newl << "end of stream:         " << end_of_stream();
+  os << newl << "end of stream pts:     " << AsNs(end_of_stream_pts());
+  os << newl << "minimum pts:           " << AsNs(program_0_min_pts_);
+  os << newl << "maximum pts:           " << AsNs(program_0_max_pts_);
+  os << outdent;
+}
+
+void Renderer::GetConfiguration(size_t* input_count, size_t* output_count) {
+  FXL_DCHECK(input_count);
+  FXL_DCHECK(output_count);
+  *input_count = 1;
+  *output_count = 0;
+}
+
+void Renderer::SetProgramRange(uint64_t program, int64_t min_pts,
                                int64_t max_pts) {
   FXL_DCHECK(program == 0) << "Only program 0 is currently supported.";
   program_0_min_pts_ = min_pts;
@@ -52,6 +68,8 @@ void Renderer::SetTimelineFunction(media::TimelineFunction timeline_function,
   if (!was_progressing && Progressing()) {
     OnProgressStarted();
   }
+
+  UpdateTimelineAt(timeline_function.reference_time());
 }
 
 bool Renderer::end_of_stream() const {
@@ -94,6 +112,8 @@ void Renderer::UpdateTimelineAt(int64_t reference_time) {
       zx::time(reference_time));
 }
 
+void Renderer::OnTimelineTransition() {}
+
 void Renderer::ApplyPendingChanges(int64_t reference_time) {
   if (!TimelineFunctionPending() ||
       pending_timeline_function_.reference_time() > reference_time) {
@@ -102,6 +122,7 @@ void Renderer::ApplyPendingChanges(int64_t reference_time) {
 
   current_timeline_function_ = pending_timeline_function_;
   ClearPendingTimelineFunction();
+  OnTimelineTransition();
 }
 
 void Renderer::ClearPendingTimelineFunction() {

@@ -10,18 +10,21 @@
 namespace scenic_lib {
 
 constexpr size_t kCommandsPerMessage =
-    (ZX_CHANNEL_MAX_MSG_BYTES - sizeof(fidl_message_header_t)
-                              - sizeof(fidl_vector_t)) / sizeof(ui::Command);
+    (ZX_CHANNEL_MAX_MSG_BYTES - sizeof(fidl_message_header_t) -
+     sizeof(fidl_vector_t)) /
+    sizeof(fuchsia::ui::scenic::Command);
 
-Session::Session(ui::SessionPtr session,
-                 fidl::InterfaceRequest<ui::SessionListener> session_listener)
+Session::Session(fuchsia::ui::scenic::SessionPtr session,
+                 fidl::InterfaceRequest<fuchsia::ui::scenic::SessionListener>
+                     session_listener)
     : session_(std::move(session)), session_listener_binding_(this) {
   FXL_DCHECK(session_);
   if (session_listener.is_valid())
     session_listener_binding_.Bind(std::move(session_listener));
 }
 
-Session::Session(ui::Scenic* mozart) : session_listener_binding_(this) {
+Session::Session(fuchsia::ui::scenic::Scenic* mozart)
+    : session_listener_binding_(this) {
   FXL_DCHECK(mozart);
   mozart->CreateSession(session_.NewRequest(),
                         session_listener_binding_.NewBinding());
@@ -44,7 +47,7 @@ void Session::ReleaseResource(uint32_t resource_id) {
   Enqueue(NewReleaseResourceCommand(resource_id));
 }
 
-void Session::Enqueue(gfx::Command command) {
+void Session::Enqueue(fuchsia::ui::gfx::Command command) {
   commands_.push_back(NewCommand(std::move(command)));
   if (commands_->size() >= kCommandsPerMessage)
     Flush();
@@ -83,16 +86,14 @@ void Session::Present(uint64_t presentation_time, PresentCallback callback) {
                     std::move(release_fences_), std::move(callback));
 }
 
-void Session::HitTest(uint32_t node_id,
-                      const float ray_origin[3],
-                      const float ray_direction[3],
-                      HitTestCallback callback) {
-  gfx::vec3 ray_origin_vec;
+void Session::HitTest(uint32_t node_id, const float ray_origin[3],
+                      const float ray_direction[3], HitTestCallback callback) {
+  fuchsia::ui::gfx::vec3 ray_origin_vec;
   ray_origin_vec.x = ray_origin[0];
   ray_origin_vec.y = ray_origin[1];
   ray_origin_vec.z = ray_origin[2];
 
-  gfx::vec3 ray_direction_vec;
+  fuchsia::ui::gfx::vec3 ray_direction_vec;
   ray_direction_vec.x = ray_direction[0];
   ray_direction_vec.y = ray_direction[1];
   ray_direction_vec.z = ray_direction[2];
@@ -102,15 +103,14 @@ void Session::HitTest(uint32_t node_id,
 }
 
 void Session::HitTestDeviceRay(
-    const float ray_origin[3],
-    const float ray_direction[3],
-    const ui::Session::HitTestDeviceRayCallback& callback) {
-  gfx::vec3 ray_origin_vec;
+    const float ray_origin[3], const float ray_direction[3],
+    const fuchsia::ui::scenic::Session::HitTestDeviceRayCallback& callback) {
+  fuchsia::ui::gfx::vec3 ray_origin_vec;
   ray_origin_vec.x = ray_origin[0];
   ray_origin_vec.y = ray_origin[1];
   ray_origin_vec.z = ray_origin[2];
 
-  gfx::vec3 ray_direction_vec;
+  fuchsia::ui::gfx::vec3 ray_direction_vec;
   ray_direction_vec.x = ray_direction[0];
   ray_direction_vec.y = ray_direction[1];
   ray_direction_vec.z = ray_direction[2];
@@ -123,7 +123,7 @@ void Session::OnError(fidl::StringPtr error) {
   FXL_LOG(ERROR) << "Session error: " << error;
 }
 
-void Session::OnEvent(fidl::VectorPtr<ui::Event> events) {
+void Session::OnEvent(fidl::VectorPtr<fuchsia::ui::scenic::Event> events) {
   if (event_handler_)
     event_handler_(std::move(events));
 }

@@ -21,6 +21,7 @@
 #include "mac.h"
 #include "debug.h"
 
+#if 0 // NEEDS PORTING
 static void ath10k_report_offchan_tx(struct ath10k* ar, struct sk_buff* skb) {
     struct ieee80211_tx_info* info = IEEE80211_SKB_CB(skb);
 
@@ -32,7 +33,7 @@ static void ath10k_report_offchan_tx(struct ath10k* ar, struct sk_buff* skb) {
         return;
     }
 
-    /* If the original completion_wait() timed out before
+    /* If the original wait_for_completion() timed out before
      * {data,mgmt}_tx_completed() was called then we could complete
      * offchan_tx_completed for a different skb. Prevent this by using
      * offchan_tx_skb.
@@ -43,23 +44,18 @@ static void ath10k_report_offchan_tx(struct ath10k* ar, struct sk_buff* skb) {
         goto out;
     }
 
-    completion_signal(&ar->offchan_tx_completed);
+    complete(&ar->offchan_tx_completed);
     ar->offchan_tx_skb = NULL; /* just for sanity */
 
     ath10k_dbg(ar, ATH10K_DBG_HTT, "completed offchannel skb %pK\n", skb);
 out:
     mtx_unlock(&ar->data_lock);
 }
+#endif // NEEDS PORTING
 
-int ath10k_txrx_tx_unref(struct ath10k_htt* htt,
-                         const struct htt_tx_done* tx_done) {
+zx_status_t ath10k_txrx_tx_unref(struct ath10k_htt* htt, const struct htt_tx_done* tx_done) {
     struct ath10k* ar = htt->ar;
-    struct device* dev = ar->dev;
-    struct ieee80211_tx_info* info;
-    struct ieee80211_txq* txq;
-    struct ath10k_skb_cb* skb_cb;
-    struct ath10k_txq* artxq;
-    struct sk_buff* msdu;
+    struct ath10k_msg_buf* msdu;
 
     ath10k_dbg(ar, ATH10K_DBG_HTT,
                "htt tx completion msdu_id %u status %d\n",
@@ -68,40 +64,29 @@ int ath10k_txrx_tx_unref(struct ath10k_htt* htt,
     if (tx_done->msdu_id >= htt->max_num_pending_tx) {
         ath10k_warn("warning: msdu_id %d too big, ignoring\n",
                     tx_done->msdu_id);
-        return -EINVAL;
+        return ZX_ERR_INVALID_ARGS;
     }
 
     mtx_lock(&htt->tx_lock);
-    msdu = idr_find(&htt->pending_tx, tx_done->msdu_id);
-    if (!msdu) {
+    msdu = sa_get(htt->pending_tx, tx_done->msdu_id);
+    if (msdu == NULL) {
         ath10k_warn("received tx completion for invalid msdu_id: %d\n",
                     tx_done->msdu_id);
         mtx_unlock(&htt->tx_lock);
-        return -ENOENT;
-    }
-
-    skb_cb = ATH10K_SKB_CB(msdu);
-    txq = skb_cb->txq;
-
-    if (txq) {
-        artxq = (void*)txq->drv_priv;
-        artxq->num_fw_queued--;
+        return ZX_ERR_IO;
     }
 
     ath10k_htt_tx_free_msdu_id(htt, tx_done->msdu_id);
     ath10k_htt_tx_dec_pending(htt);
-    if (htt->num_pending_tx == 0) {
-        wake_up(&htt->empty_tx_wq);
-    }
     mtx_unlock(&htt->tx_lock);
 
+#if 0 // NEEDS PORTING
     dma_unmap_single(dev, skb_cb->paddr, msdu->len, DMA_TO_DEVICE);
 
     ath10k_report_offchan_tx(htt->ar, msdu);
 
     info = IEEE80211_SKB_CB(msdu);
     memset(&info->status, 0, sizeof(info->status));
-    trace_ath10k_txrx_tx_unref(ar, tx_done->msdu_id);
 
     if (tx_done->status == HTT_TX_COMPL_STATE_DISCARD) {
         ieee80211_free_txskb(htt->ar->hw, msdu);
@@ -120,13 +105,13 @@ int ath10k_txrx_tx_unref(struct ath10k_htt* htt,
             (info->flags & IEEE80211_TX_CTL_NO_ACK)) {
         info->flags |= IEEE80211_TX_STAT_NOACK_TRANSMITTED;
     }
+#endif // NEEDS PORTING
 
-    ieee80211_tx_status(htt->ar->hw, msdu);
-    /* we do not own the msdu anymore */
-
-    return 0;
+    ath10k_msg_buf_free(msdu);
+    return ZX_OK;
 }
 
+#if 0 // NEEDS PORTING
 struct ath10k_peer* ath10k_peer_find(struct ath10k* ar, int vdev_id,
                                      const uint8_t* addr) {
     struct ath10k_peer* peer;
@@ -153,7 +138,7 @@ struct ath10k_peer* ath10k_peer_find_by_id(struct ath10k* ar, int peer_id) {
     ASSERT_MTX_HELD(&ar->data_lock);
 
     list_for_each_entry(peer, &ar->peers, list)
-    if (test_bit(peer_id, peer->peer_ids)) {
+    if (BITARR_TEST(peer->peer_ids, peer_id)) {
         return peer;
     }
 
@@ -172,7 +157,7 @@ static int ath10k_wait_for_peer_common(struct ath10k* ar, int vdev_id,
         mtx_unlock(&ar->data_lock);
 
         (mapped == expect_mapped ||
-         test_bit(ATH10K_FLAG_CRASH_FLUSH, &ar->dev_flags));
+         BITARR_TEST(&ar->dev_flags, ATH10K_FLAG_CRASH_FLUSH));
     }), 3 * HZ);
 
     if (time_left == 0) {
@@ -210,7 +195,7 @@ void ath10k_peer_map_event(struct ath10k_htt* htt,
         }
 
         peer->vdev_id = ev->vdev_id;
-        ether_addr_copy(peer->addr, ev->addr);
+        memcpy(peer->addr, ev->addr, ETH_ALEN);
         list_add(&peer->list, &ar->peers);
         wake_up(&ar->peer_mapping_wq);
     }
@@ -218,9 +203,9 @@ void ath10k_peer_map_event(struct ath10k_htt* htt,
     ath10k_dbg(ar, ATH10K_DBG_HTT, "htt peer map vdev %d peer %pM id %d\n",
                ev->vdev_id, ev->addr, ev->peer_id);
 
-    WARN_ON(ar->peer_map[ev->peer_id] && (ar->peer_map[ev->peer_id] != peer));
+    COND_WARN(ar->peer_map[ev->peer_id] && (ar->peer_map[ev->peer_id] != peer));
     ar->peer_map[ev->peer_id] = peer;
-    set_bit(ev->peer_id, peer->peer_ids);
+    BITARR_SET(peer->peer_ids, ev->peer_id);
 exit:
     mtx_unlock(&ar->data_lock);
 }
@@ -248,7 +233,7 @@ void ath10k_peer_unmap_event(struct ath10k_htt* htt,
                peer->vdev_id, peer->addr, ev->peer_id);
 
     ar->peer_map[ev->peer_id] = NULL;
-    clear_bit(ev->peer_id, peer->peer_ids);
+    BITARR_CLEAR(peer->peer_ids, ev->peer_id);
 
     if (bitmap_empty(peer->peer_ids, ATH10K_MAX_NUM_PEER_IDS)) {
         list_del(&peer->list);
@@ -259,3 +244,4 @@ void ath10k_peer_unmap_event(struct ath10k_htt* htt,
 exit:
     mtx_unlock(&ar->data_lock);
 }
+#endif // NEEDS PORTING

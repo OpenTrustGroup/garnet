@@ -13,16 +13,15 @@ group("tests") {
 source_set("testing_deps") {
   testonly = true
   sources = [
-    "clock_task_runner.cc",
-    "clock_task_runner.h",
     "scenic_test.cc",
     "scenic_test.h",
   ]
   public_deps = [
-    "//garnet/bin/ui/tests:main",
     "//garnet/lib/ui/scenic",
+    "//garnet/public/lib/app/cpp",
     "//garnet/public/lib/fxl",
-    "//third_party/googletest:gtest",
+    "//garnet/public/lib/gtest",
+    "//garnet/public/lib/test_runner/cpp:gtest_main",
   ]
 }
 
@@ -30,7 +29,6 @@ executable("unittests") {
   output_name = "scenic_unittests"
   testonly = true
   sources = [
-    "clock_task_runner_unittest.cc",
     "scenic_unittest.cc",
   ]
   deps = [

@@ -5,9 +5,9 @@
 import("//build/fidl/fidl.gni")
 
 fidl("fidl") {
-  name = "mem"
+  name = "fuchsia.mem"
 
-  sdk_candidate = true
+  sdk_category = "partner"
 
   sources = [
     "buffer.fidl",

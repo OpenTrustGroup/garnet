@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef LIB_ESCHER_IMPL_MODEL_RENDERER_H_
+#define LIB_ESCHER_IMPL_MODEL_RENDERER_H_
 
 #include "lib/escher/forward_declarations.h"
 #include "lib/escher/impl/model_data.h"
 #include "lib/escher/impl/model_display_list_flags.h"
 #include "lib/escher/impl/model_pipeline_cache.h"
+#include "lib/escher/scene/camera.h"
 #include "lib/escher/shape/mesh.h"
 #include "lib/escher/vk/texture.h"
 #include "lib/fxl/memory/ref_counted.h"
@@ -22,9 +24,8 @@ class ModelRenderer final : public fxl::RefCountedThreadSafe<ModelRenderer> {
  public:
   static ModelRendererPtr New(Escher* escher, ModelDataPtr model_data);
 
-  void Draw(const Stage& stage,
-            const ModelDisplayListPtr& display_list,
-            CommandBuffer* command_buffer);
+  void Draw(const Stage& stage, const ModelDisplayListPtr& display_list,
+            CommandBuffer* command_buffer, const Camera::Viewport& viewport);
 
   // Returns a single-pixel white texture.  Do with it what you will.
   const TexturePtr& white_texture() const { return white_texture_; }
@@ -71,3 +72,5 @@ class ModelRenderer final : public fxl::RefCountedThreadSafe<ModelRenderer> {
 
 }  // namespace impl
 }  // namespace escher
+
+#endif  // LIB_ESCHER_IMPL_MODEL_RENDERER_H_

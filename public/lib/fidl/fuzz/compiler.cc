@@ -7,8 +7,7 @@
 #include <fidl/parser.h>
 #include <fidl/source_file.h>
 
-
-extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   std::string string_data(reinterpret_cast<const char*>(data), size);
   // The lexer needs the last character to be zero.
   string_data.append(1, 0);

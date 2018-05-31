@@ -4,10 +4,11 @@
 
 #include <memory>
 
+#include <lib/async-loop/cpp/loop.h>
 #include <trace-provider/provider.h>
 
 #include "lib/app/cpp/application_context.h"
-#include "lib/fsl/tasks/message_loop.h"
+#include "lib/fsl/syslogger/init.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/log_settings_command_line.h"
 #include "lib/fxl/logging.h"
@@ -18,13 +19,15 @@ int main(int argc, const char** argv) {
   auto command_line = fxl::CommandLineFromArgcArgv(argc, argv);
   if (!fxl::SetLogSettingsFromCommandLine(command_line))
     return 1;
+  if (fsl::InitLoggerFromCommandLine(command_line, {"scenic"}) != ZX_OK)
+    return 1;
 
-  fsl::MessageLoop loop;
+  async::Loop loop(&kAsyncLoopConfigMakeDefault);
   trace::TraceProvider trace_provider(loop.async());
   std::unique_ptr<component::ApplicationContext> app_context(
       component::ApplicationContext::CreateFromStartupInfo());
 
-  scenic::App app(app_context.get());
+  scenic::App app(app_context.get(), [&loop] { loop.Quit(); });
 
   loop.Run();
 

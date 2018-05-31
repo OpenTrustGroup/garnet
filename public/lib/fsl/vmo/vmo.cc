@@ -40,8 +40,7 @@ bool VmoFromContainer(const Container& container, SizedVmo* sized_vmo_ptr) {
 }
 
 template <typename Container>
-bool ContainerFromVmo(const zx::vmo& buffer,
-                      uint64_t num_bytes,
+bool ContainerFromVmo(const zx::vmo& buffer, uint64_t num_bytes,
                       Container* container_ptr) {
   FXL_CHECK(container_ptr);
 
@@ -71,7 +70,8 @@ bool StringFromVmo(const SizedVmo& shared_buffer, std::string* string_ptr) {
                                        shared_buffer.size(), string_ptr);
 }
 
-bool StringFromVmo(const mem::Buffer& vmo_transport, std::string* string_ptr) {
+bool StringFromVmo(const fuchsia::mem::Buffer& vmo_transport,
+                   std::string* string_ptr) {
   if (!SizedVmo::IsSizeValid(vmo_transport.vmo, vmo_transport.size)) {
     return false;
   }
@@ -89,7 +89,7 @@ bool VectorFromVmo(const SizedVmo& shared_buffer,
                                              shared_buffer.size(), vector_ptr);
 }
 
-bool VectorFromVmo(const mem::Buffer& vmo_transport,
+bool VectorFromVmo(const fuchsia::mem::Buffer& vmo_transport,
                    std::vector<char>* vector_ptr) {
   if (!SizedVmo::IsSizeValid(vmo_transport.vmo, vmo_transport.size)) {
     return false;
@@ -108,7 +108,7 @@ bool VectorFromVmo(const SizedVmo& shared_buffer,
       shared_buffer.vmo(), shared_buffer.size(), vector_ptr);
 }
 
-bool VectorFromVmo(const mem::Buffer& vmo_transport,
+bool VectorFromVmo(const fuchsia::mem::Buffer& vmo_transport,
                    std::vector<uint8_t>* vector_ptr) {
   if (!SizedVmo::IsSizeValid(vmo_transport.vmo, vmo_transport.size)) {
     return false;

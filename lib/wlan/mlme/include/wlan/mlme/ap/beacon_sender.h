@@ -7,7 +7,7 @@
 #include <wlan/mlme/device_interface.h>
 #include <wlan/mlme/frame_handler.h>
 
-#include <fuchsia/cpp/wlan_mlme.h>
+#include <wlan_mlme/cpp/fidl.h>
 
 #include <zircon/types.h>
 
@@ -43,8 +43,8 @@ class BeaconSender : public FrameHandler {
     DeviceInterface* const device_;
     wlan_mlme::StartRequest req_;
     BssInterface* bss_ = nullptr;
-    // Buffer to write the Partial Virtual Bitmap to which was derived from a Traffic Indication
-    // Map.
+    // Buffer to write the Partial Virtual Bitmap to which was derived from a
+    // Traffic Indication Map.
     uint8_t pvb_[TimElement::kMaxLenBmp];
 };
 

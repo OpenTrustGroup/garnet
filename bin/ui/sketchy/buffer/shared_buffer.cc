@@ -24,13 +24,11 @@ const vk::MemoryPropertyFlags kMemoryPropertyFlags =
     vk::MemoryPropertyFlagBits::eDeviceLocal;
 
 std::unique_ptr<scenic_lib::Buffer> NewScenicBufferFromEscherBuffer(
-    const escher::BufferPtr& buffer,
-    scenic_lib::Session* session) {
-  zx::vmo vmo =
-      escher::ExportMemoryAsVmo(buffer->escher(), buffer->mem());
+    const escher::BufferPtr& buffer, scenic_lib::Session* session) {
+  zx::vmo vmo = escher::ExportMemoryAsVmo(buffer->escher(), buffer->mem());
 
   scenic_lib::Memory memory(session, std::move(vmo),
-                            images::MemoryType::VK_DEVICE_MEMORY);
+                            fuchsia::images::MemoryType::VK_DEVICE_MEMORY);
   return std::make_unique<scenic_lib::Buffer>(memory, 0, buffer->size());
 }
 
@@ -48,32 +46,28 @@ SharedBuffer::SharedBuffer(scenic_lib::Session* session,
                            escher::BufferFactory* factory,
                            vk::DeviceSize capacity)
     : session_(session),
-      escher_buffer_(
-          factory->NewBuffer(
-              capacity, kBufferUsageFlags, kMemoryPropertyFlags)),
-      scenic_buffer_(
-          NewScenicBufferFromEscherBuffer(escher_buffer_, session)) {}
+      escher_buffer_(factory->NewBuffer(capacity, kBufferUsageFlags,
+                                        kMemoryPropertyFlags)),
+      scenic_buffer_(NewScenicBufferFromEscherBuffer(escher_buffer_, session)) {
+}
 
-escher::BufferPtr SharedBuffer::Preserve(Frame* frame,
-                                         vk::DeviceSize size) {
-  FXL_CHECK(size_ + size <= capacity());
+escher::BufferRange SharedBuffer::Reserve(vk::DeviceSize size) {
+  FXL_DCHECK(size_ + size <= capacity());
+  auto old_size = size_;
   size_ += size;
-  auto factory = frame->shared_buffer_pool()->factory();
-  return factory->NewBuffer(
-      escher_buffer_->mem(), kBufferUsageFlags, size, size_ - size);
+  return {old_size, size};
 }
 
 void SharedBuffer::Copy(Frame* frame, const SharedBufferPtr& from) {
-  FXL_CHECK(from->size() <= capacity());
+  FXL_DCHECK(from->size() <= capacity());
   frame->command()->CopyBufferAfterBarrier(
-      from->escher_buffer(), escher_buffer_,
-      {0, 0, from->size()},
-      vk::AccessFlagBits::eTransferWrite | vk::AccessFlagBits::eShaderWrite);
+      from->escher_buffer(), escher_buffer_, {0, 0, from->size()},
+      vk::AccessFlagBits::eTransferWrite | vk::AccessFlagBits::eShaderWrite,
+      vk::PipelineStageFlagBits::eTransfer |
+          vk::PipelineStageFlagBits::eComputeShader);
   size_ = from->size();
 }
 
-void SharedBuffer::Reset() {
-  size_ = 0;
-}
+void SharedBuffer::Reset() { size_ = 0; }
 
 }  // namespace sketchy_service

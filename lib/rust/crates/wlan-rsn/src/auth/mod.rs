@@ -8,9 +8,8 @@ use self::psk::Psk;
 use Error;
 use eapol;
 use failure;
-use futures::future::Either;
-use futures::{task, Async, Poll, Stream};
 use key::exchange::Key;
+use rsna::SecAssocResult;
 
 pub enum Method {
     Psk(psk::Psk),
@@ -23,24 +22,16 @@ impl Method {
             _ => Err(Error::UnknownAuthenticationMethod.into()),
         }
     }
-}
 
-impl Stream for Method {
-    type Item = Either<eapol::Frame, Key>;
-    type Error = failure::Error;
-
-    fn poll_next(&mut self, _cx: &mut task::Context) -> Poll<Option<Self::Item>, Self::Error> {
-        // None of the supported authentication methods requires EAPOL frame exchange.
-        Ok(Async::Pending)
-    }
-}
-
-impl eapol::KeyFrameReceiver for Method {
-    fn on_eapol_key_frame(&self, _frame: &eapol::KeyFrame) -> Result<(), failure::Error> {
+    pub fn on_eapol_key_frame(&self, _frame: &eapol::KeyFrame) -> SecAssocResult {
         match self {
             // None of the supported authentication methods requires EAPOL frame exchange.
-            _ => Ok(()),
+            _ => Ok(vec![]),
         }
+    }
+
+    pub fn by_ref(&self) -> &Self {
+        self
     }
 }
 
@@ -54,5 +45,9 @@ impl Config {
         psk::Config::new(passphrase, ssid)
             .map_err(|e| e.into())
             .map(|c| Config::Psk(c))
+    }
+
+    pub fn by_ref(&self) -> &Self {
+        self
     }
 }

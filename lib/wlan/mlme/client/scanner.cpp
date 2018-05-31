@@ -13,6 +13,7 @@
 #include <wlan/mlme/timer.h>
 #include <wlan/mlme/wlan.h>
 
+#include <wlan_mlme/c/fidl.h>
 #include "lib/fidl/cpp/vector.h"
 
 #include <fbl/unique_ptr.h>
@@ -23,6 +24,8 @@
 #include <utility>
 
 namespace wlan {
+
+// TODO(NET-500): The way we handle Beacons and ProbeResponses in here is kinda gross. Refactor.
 
 Scanner::Scanner(DeviceInterface* device, fbl::unique_ptr<Timer> timer)
     : device_(device), timer_(std::move(timer)) {
@@ -119,44 +122,16 @@ wlan_channel_t Scanner::ScanChannel() const {
 
 zx_status_t Scanner::HandleMgmtFrame(const MgmtFrameHeader& hdr) {
     // Ignore all management frames when scanner is not running.
-    return IsRunning() ? ZX_OK : ZX_ERR_STOP;
-}
+    if (!IsRunning()) { return ZX_ERR_STOP; }
 
-zx_status_t Scanner::HandleBeacon(const ImmutableMgmtFrame<Beacon>& frame,
-                                  const wlan_rx_info_t& rxinfo) {
-    debugfn();
-    ZX_DEBUG_ASSERT(IsRunning());
-
-    // Before processing Beacon, remove stale entries.
-    RemoveStaleBss();
-
-    auto hdr = frame.hdr;
-    common::MacAddr bssid(hdr->addr3);
-    common::MacAddr src_addr(hdr->addr2);
-
+    common::MacAddr bssid(hdr.addr3);
+    common::MacAddr src_addr(hdr.addr2);
     if (bssid != src_addr) {
         // Undefined situation. Investigate if roaming needs this or this is a plain dark art.
+        // Do not process frame.
         debugbcn("Rxed a beacon/probe_resp from the non-BSSID station: BSSID %s   SrcAddr %s\n",
                  MACSTR(bssid), MACSTR(src_addr));
-        return ZX_OK;  // Do not process.
-    }
-
-    // Update existing BSS or insert if already in map.
-    zx_status_t status = ZX_OK;
-    auto bss = nbrs_bss_.Lookup(bssid);
-    if (bss != nullptr) {
-        status = bss->ProcessBeacon(frame.body, frame.body_len, &rxinfo);
-    } else if (nbrs_bss_.IsFull()) {
-        errorf("error, maximum number of BSS reached: %lu\n", nbrs_bss_.Count());
-    } else {
-        bss = fbl::AdoptRef(new Bss(bssid));
-        bss->ProcessBeacon(frame.body, frame.body_len, &rxinfo);
-        status = nbrs_bss_.Insert(bssid, bss);
-    }
-
-    if (status != ZX_OK) {
-        debugbcn("Failed to handle beacon (err %3d): BSSID %s timestamp: %15" PRIu64 "\n", status,
-                 MACSTR(bssid), frame.body->timestamp);
+        return ZX_ERR_STOP;
     }
 
     return ZX_OK;
@@ -177,19 +152,52 @@ void Scanner::RemoveStaleBss() {
         [now](fbl::RefPtr<Bss> bss) -> bool { return (bss->ts_refreshed() + kBssExpiry >= now); });
 }
 
+zx_status_t Scanner::HandleBeacon(const ImmutableMgmtFrame<Beacon>& frame,
+                                  const wlan_rx_info_t& rxinfo) {
+    debugfn();
+    ZX_DEBUG_ASSERT(IsRunning());
+
+    common::MacAddr bssid(frame.hdr()->addr3);
+    return ProcessBeacon(bssid, *frame.body(), frame.len() - frame.hdr()->len(), rxinfo);
+}
+
 zx_status_t Scanner::HandleProbeResponse(const ImmutableMgmtFrame<ProbeResponse>& frame,
                                          const wlan_rx_info_t& rxinfo) {
     debugfn();
+    ZX_DEBUG_ASSERT(IsRunning());
 
-    // A ProbeResponse carries all currently used attributes of a Beacon frame. Hence, treat a
-    // ProbeResponse as a Beacon for now to support active scanning. There are additional
-    // information for either frame type which we have to process on a per frame type basis in the
-    // future. For now, stick with this kind of unification.
-    // TODO(hahnr): The should probably moved somehow into the Dispatcher.
-    auto bcn = reinterpret_cast<const Beacon*>(frame.body);
-    auto mgmt_frame = ImmutableMgmtFrame<Beacon>(frame.hdr, bcn, frame.body_len);
+    common::MacAddr bssid(frame.hdr()->addr3);
+    // ProbeResponse holds the same fields as a Beacon with the only difference in their IEs.
+    // Thus, we can safely convert a ProbeResponse to a Beacon.
+    auto bcn = reinterpret_cast<const Beacon*>(frame.body());
+    return ProcessBeacon(bssid, *bcn, frame.len() - frame.hdr()->len(), rxinfo);
+}
 
-    HandleBeacon(mgmt_frame, rxinfo);
+zx_status_t Scanner::ProcessBeacon(const common::MacAddr& bssid, const Beacon& bcn,
+                                   uint16_t body_ie_len, const wlan_rx_info_t& rxinfo) {
+    debugfn();
+
+    // Before processing Beacon, remove stale entries.
+    RemoveStaleBss();
+
+    // Update existing BSS or insert if already in map.
+    zx_status_t status = ZX_OK;
+    auto bss = nbrs_bss_.Lookup(bssid);
+    if (bss != nullptr) {
+        status = bss->ProcessBeacon(bcn, body_ie_len, &rxinfo);
+    } else if (nbrs_bss_.IsFull()) {
+        errorf("error, maximum number of BSS reached: %lu\n", nbrs_bss_.Count());
+    } else {
+        bss = fbl::AdoptRef(new Bss(bssid));
+        bss->ProcessBeacon(bcn, body_ie_len, &rxinfo);
+        status = nbrs_bss_.Insert(bssid, bss);
+    }
+
+    if (status != ZX_OK) {
+        debugbcn("Failed to handle beacon (err %3d): BSSID %s timestamp: %15" PRIu64 "\n", status,
+                 MACSTR(bssid), bcn.timestamp);
+    }
+
     return ZX_OK;
 }
 
@@ -276,7 +284,7 @@ zx_status_t Scanner::SendProbeRequest() {
 
     if (packet == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
-    auto hdr = frame.hdr;
+    auto hdr = frame.hdr();
     const common::MacAddr& mymac = device_->GetState()->address();
     const common::MacAddr& bssid = common::MacAddr(req_->bssid.data());
 
@@ -288,7 +296,7 @@ zx_status_t Scanner::SendProbeRequest() {
     hdr->sc.set_seq(0);
     FillTxInfo(&packet, *hdr);
 
-    auto body = frame.body;
+    auto body = frame.body();
     ElementWriter w(body->elements, body_payload_len);
 
     if (!w.write<SsidElement>(req_->ssid->data())) {
@@ -317,8 +325,8 @@ zx_status_t Scanner::SendProbeRequest() {
     // Update the length with final values
     body_payload_len = w.size();
     // TODO(porce): implement methods to replace sizeof(ProbeRequest) with body.some_len()
-    frame.body_len = sizeof(ProbeRequest) + body_payload_len;
-    size_t frame_len = hdr->len() + frame.body_len;
+    frame.set_body_len(sizeof(ProbeRequest) + body_payload_len);
+    size_t frame_len = hdr->len() + frame.body_len();
     zx_status_t status = packet->set_len(frame_len);
     if (status != ZX_OK) {
         errorf("could not set packet length to %zu: %d\n", frame_len, status);
@@ -349,7 +357,7 @@ zx_status_t Scanner::SendScanConfirm() {
 
     auto packet = fbl::unique_ptr<Packet>(new Packet(std::move(buffer), buf_len));
     packet->set_peer(Packet::Peer::kService);
-    zx_status_t status = SerializeServiceMsg(packet.get(), wlan_mlme::Method::SCAN_confirm, resp_.get());
+    zx_status_t status = SerializeServiceMsg(packet.get(), wlan_mlme_MLMEScanConfOrdinal, resp_.get());
     if (status != ZX_OK) {
         errorf("could not serialize ScanResponse: %d\n", status);
     } else {

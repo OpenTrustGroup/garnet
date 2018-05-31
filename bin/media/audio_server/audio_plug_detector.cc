@@ -20,7 +20,7 @@
 #include "garnet/bin/media/audio_server/audio_device_manager.h"
 #include "garnet/bin/media/audio_server/audio_input.h"
 #include "garnet/bin/media/audio_server/audio_output.h"
-#include "garnet/bin/media/audio_server/platform/driver_output.h"
+#include "garnet/bin/media/audio_server/driver_output.h"
 #include "lib/fxl/files/unique_fd.h"
 
 namespace media {
@@ -34,9 +34,7 @@ static const struct {
     {.path = "/dev/class/audio-input", .is_input = true},
 };
 
-AudioPlugDetector::~AudioPlugDetector() {
-  FXL_DCHECK(manager_ == nullptr);
-}
+AudioPlugDetector::~AudioPlugDetector() { FXL_DCHECK(manager_ == nullptr); }
 
 MediaResult AudioPlugDetector::Start(AudioDeviceManager* manager) {
   FXL_DCHECK(manager != nullptr);
@@ -84,8 +82,7 @@ void AudioPlugDetector::Stop() {
   watchers_.clear();
 }
 
-void AudioPlugDetector::AddAudioDevice(int dir_fd,
-                                       const std::string& name,
+void AudioPlugDetector::AddAudioDevice(int dir_fd, const std::string& name,
                                        bool is_input) {
   if (manager_ == nullptr)
     return;

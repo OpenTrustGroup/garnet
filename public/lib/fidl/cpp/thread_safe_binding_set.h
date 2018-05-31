@@ -63,8 +63,7 @@ class ThreadSafeBindingSet {
                   async_t* async) {
     std::lock_guard<std::mutex> guard(lock_);
     bindings_.push_back(std::make_unique<Binding>(std::forward<ImplPtr>(impl),
-                                                  std::move(request),
-                                                  async));
+                                                  std::move(request), async));
     auto* binding = bindings_.back().get();
     // Set the connection error handler for the newly added Binding to be a
     // function that will erase it from the vector.

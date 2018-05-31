@@ -10,7 +10,6 @@
 
 #include "garnet/bin/media/net_media_service/media_player_messages.h"
 #include "garnet/bin/media/net_media_service/net_media_service_impl.h"
-#include "garnet/bin/media/util/fidl_publisher.h"
 #include "lib/media/timeline/timeline_function.h"
 #include "lib/netconnector/cpp/message_relay.h"
 
@@ -22,10 +21,8 @@ class MediaPlayerNetProxy
       public MediaPlayer {
  public:
   static std::shared_ptr<MediaPlayerNetProxy> Create(
-      fidl::StringPtr device_name,
-      fidl::StringPtr service_name,
-      fidl::InterfaceRequest<MediaPlayer> request,
-      NetMediaServiceImpl* owner);
+      fidl::StringPtr device_name, fidl::StringPtr service_name,
+      fidl::InterfaceRequest<MediaPlayer> request, NetMediaServiceImpl* owner);
 
   ~MediaPlayerNetProxy() override;
 
@@ -43,24 +40,19 @@ class MediaPlayerNetProxy
 
   void Seek(int64_t position) override;
 
-  void GetStatus(uint64_t version_last_seen,
-                 GetStatusCallback callback) override;
-
   void SetGain(float gain) override;
 
-  void CreateView(fidl::InterfaceHandle<views_v1::ViewManager> view_manager,
-                  fidl::InterfaceRequest<views_v1_token::ViewOwner>
+  void CreateView(fidl::InterfaceHandle<::fuchsia::ui::views_v1::ViewManager> view_manager,
+                  fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
                       view_owner_request) override;
 
   void SetAudioRenderer(
-      fidl::InterfaceHandle<media::AudioRenderer> audio_renderer,
-      fidl::InterfaceHandle<media::MediaRenderer> media_renderer) override;
+      fidl::InterfaceHandle<media::AudioRenderer2> audio_renderer) override;
 
   void AddBinding(fidl::InterfaceRequest<MediaPlayer> request) override;
 
  private:
-  MediaPlayerNetProxy(fidl::StringPtr device_name,
-                      fidl::StringPtr service_name,
+  MediaPlayerNetProxy(fidl::StringPtr device_name, fidl::StringPtr service_name,
                       fidl::InterfaceRequest<MediaPlayer> request,
                       NetMediaServiceImpl* owner);
 
@@ -68,8 +60,9 @@ class MediaPlayerNetProxy
 
   void HandleReceivedMessage(std::vector<uint8_t> message);
 
+  void SendStatusUpdates();
+
   netconnector::MessageRelay message_relay_;
-  media::FidlPublisher<GetStatusCallback> status_publisher_;
   MediaPlayerStatusPtr status_;
   media::TimelineFunction remote_to_local_;
 

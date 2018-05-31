@@ -13,7 +13,7 @@ namespace debug_ipc {
 
 namespace {
 
-template<typename RequestType>
+template <typename RequestType>
 bool SerializeDeserializeRequest(const RequestType& in, RequestType* out) {
   MessageWriter writer;
   uint32_t in_transaction_id = 32;
@@ -23,13 +23,12 @@ bool SerializeDeserializeRequest(const RequestType& in, RequestType* out) {
 
   MessageReader reader(std::move(serialized));
   uint32_t out_transaction_id = 0;
-  if (!ReadRequest(&reader, out, &out_transaction_id))
-    return false;
+  if (!ReadRequest(&reader, out, &out_transaction_id)) return false;
   EXPECT_EQ(in_transaction_id, out_transaction_id);
   return true;
 }
 
-template<typename ReplyType>
+template <typename ReplyType>
 bool SerializeDeserializeReply(const ReplyType& in, ReplyType* out) {
   MessageWriter writer;
   uint32_t in_transaction_id = 32;
@@ -39,16 +38,14 @@ bool SerializeDeserializeReply(const ReplyType& in, ReplyType* out) {
 
   MessageReader reader(std::move(serialized));
   uint32_t out_transaction_id = 0;
-  if (!ReadReply(&reader, out, &out_transaction_id))
-    return false;
+  if (!ReadReply(&reader, out, &out_transaction_id)) return false;
   EXPECT_EQ(in_transaction_id, out_transaction_id);
   return true;
 }
 
-template<typename NotificationType>
+template <typename NotificationType>
 bool SerializeDeserializeNotification(
-    const NotificationType& in,
-    NotificationType* out,
+    const NotificationType& in, NotificationType* out,
     void (*write_fn)(const NotificationType&, MessageWriter*),
     bool (*read_fn)(MessageReader*, NotificationType*)) {
   MessageWriter writer;
@@ -303,45 +300,46 @@ TEST(Protocol, ReadMemoryReply) {
 
 TEST(Protocol, AddOrChangeBreakpointRequest) {
   AddOrChangeBreakpointRequest initial;
-  initial.process_koid = 1234;
   initial.breakpoint.breakpoint_id = 8976;
-  initial.breakpoint.thread_koid = 14612;
-  initial.breakpoint.address = 0x723456234;
   initial.breakpoint.stop = debug_ipc::Stop::kProcess;
+  initial.breakpoint.locations.resize(1);
+
+  ProcessBreakpointSettings& pr_settings = initial.breakpoint.locations.back();
+  pr_settings.process_koid = 1234;
+  pr_settings.thread_koid = 14612;
+  pr_settings.address = 0x723456234;
 
   AddOrChangeBreakpointRequest second;
   ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
 
-  EXPECT_EQ(initial.process_koid, second.process_koid);
   EXPECT_EQ(initial.breakpoint.breakpoint_id, second.breakpoint.breakpoint_id);
-  EXPECT_EQ(initial.breakpoint.thread_koid, second.breakpoint.thread_koid);
-  EXPECT_EQ(initial.breakpoint.address, second.breakpoint.address);
   EXPECT_EQ(initial.breakpoint.stop, second.breakpoint.stop);
+  ASSERT_EQ(initial.breakpoint.locations.size(), second.breakpoint.locations.size());
+
+  EXPECT_EQ(initial.breakpoint.locations[0].process_koid, second.breakpoint.locations[0].process_koid);
+  EXPECT_EQ(initial.breakpoint.locations[0].thread_koid, second.breakpoint.locations[0].thread_koid);
+  EXPECT_EQ(initial.breakpoint.locations[0].address, second.breakpoint.locations[0].address);
 }
 
 TEST(Protocol, AddOrChangeBreakpointReply) {
   AddOrChangeBreakpointReply initial;
   initial.status = 78;
-  initial.error_message = "foo bar";
 
   AddOrChangeBreakpointReply second;
   ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
 
   EXPECT_EQ(initial.status, second.status);
-  EXPECT_EQ(initial.error_message, second.error_message);
 }
 
 // RemoveBreakpoint ------------------------------------------------------------
 
 TEST(Protocol, RemoveBreakpointRequest) {
   RemoveBreakpointRequest initial;
-  initial.process_koid = 1234;
   initial.breakpoint_id = 8976;
 
   RemoveBreakpointRequest second;
   ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
 
-  EXPECT_EQ(initial.process_koid, second.process_koid);
   EXPECT_EQ(initial.breakpoint_id, second.breakpoint_id);
 }
 
@@ -411,6 +409,52 @@ TEST(Protocol, ModulesReply) {
   EXPECT_EQ(initial.modules[0].base, second.modules[0].base);
   EXPECT_EQ(initial.modules[1].name, second.modules[1].name);
   EXPECT_EQ(initial.modules[1].base, second.modules[1].base);
+}
+
+// Modules ---------------------------------------------------------------------
+
+TEST(Protocol, AspaceRequest) {
+  AddressSpaceRequest initial;
+  initial.process_koid = 1234;
+  initial.address = 0x717171;
+
+  AddressSpaceRequest second;
+  ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
+
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+  EXPECT_EQ(initial.address, second.address);
+}
+
+TEST(Protocol, AspaceReply) {
+  const uint64_t kOneT = 1024 * 1024u * 1024u * 1024ull;
+  AddressSpaceReply initial;
+
+  initial.map.resize(4u);
+  initial.map[0] = AddressRegion{"proc:5616", 0x1000000, 127 * kOneT, 0};
+  initial.map[1] = AddressRegion{"root", 0x1000000, 127 * kOneT, 0};
+  initial.map[2] = AddressRegion{"useralloc", 0x371f1276000, 12 * 1024, 1};
+  initial.map[3] = AddressRegion{"initial-thread", 0x371f1277000, 4 * 1024, 2};
+
+  AddressSpaceReply second;
+  ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
+
+  EXPECT_EQ(4u, second.map.size());
+  EXPECT_EQ(initial.map[0].name, second.map[0].name);
+  EXPECT_EQ(initial.map[0].base, second.map[0].base);
+  EXPECT_EQ(initial.map[0].size, second.map[0].size);
+  EXPECT_EQ(initial.map[0].depth, second.map[0].depth);
+  EXPECT_EQ(initial.map[1].name, second.map[1].name);
+  EXPECT_EQ(initial.map[1].base, second.map[1].base);
+  EXPECT_EQ(initial.map[1].size, second.map[1].size);
+  EXPECT_EQ(initial.map[1].depth, second.map[1].depth);
+  EXPECT_EQ(initial.map[2].name, second.map[2].name);
+  EXPECT_EQ(initial.map[2].base, second.map[2].base);
+  EXPECT_EQ(initial.map[2].size, second.map[2].size);
+  EXPECT_EQ(initial.map[2].depth, second.map[2].depth);
+  EXPECT_EQ(initial.map[3].name, second.map[3].name);
+  EXPECT_EQ(initial.map[3].base, second.map[3].base);
+  EXPECT_EQ(initial.map[3].size, second.map[3].size);
+  EXPECT_EQ(initial.map[3].depth, second.map[3].depth);
 }
 
 // Notifications ---------------------------------------------------------------

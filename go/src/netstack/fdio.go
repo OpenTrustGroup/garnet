@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"app/context"
+	"fidl/device_settings"
 
 	"github.com/google/netstack/dns"
 	"github.com/google/netstack/tcpip"
@@ -47,7 +48,6 @@ const LOCAL_SIGNAL_CLOSING = zx.SignalUser5
 const defaultNIC = 2
 
 var (
-	ioctlNetcGetIfInfo   = fdio.IoctlNum(fdio.IoctlKindDefault, fdio.IoctlFamilyNetconfig, 0)
 	ioctlNetcGetNumIfs   = fdio.IoctlNum(fdio.IoctlKindDefault, fdio.IoctlFamilyNetconfig, 1)
 	ioctlNetcGetIfInfoAt = fdio.IoctlNum(fdio.IoctlKindDefault, fdio.IoctlFamilyNetconfig, 2)
 	ioctlNetcGetNodename = fdio.IoctlNum(fdio.IoctlKindDefault, fdio.IoctlFamilyNetconfig, 8)
@@ -902,7 +902,7 @@ func (s *socketServer) buildIfInfos() *c_netc_get_if_info {
 		}
 		rep.info[index].index = uint16(index + 1)
 		rep.info[index].flags |= NETC_IFF_UP
-		copy(rep.info[index].name[:], []byte(fmt.Sprintf("en%d", nicid)))
+		copy(rep.info[index].name[:], ifs.nic.Name)
 		writeSockaddrStorage(&rep.info[index].addr, tcpip.FullAddress{NIC: nicid, Addr: ifs.nic.Addr})
 		writeSockaddrStorage(&rep.info[index].netmask, tcpip.FullAddress{NIC: nicid, Addr: tcpip.Address(ifs.nic.Netmask)})
 
@@ -925,10 +925,6 @@ var lastIfInfo *c_netc_get_if_info
 func (s *socketServer) opIoctl(ios *iostate, msg *zxsocket.Msg) zx.Status {
 	// TODO: deprecated in favor of FIDL service. Remove.
 	switch msg.IoctlOp() {
-	case ioctlNetcGetIfInfo:
-		rep := s.buildIfInfos()
-		rep.Encode(msg)
-		return zx.ErrOk
 	case ioctlNetcGetNumIfs:
 		lastIfInfo = s.buildIfInfos()
 		binary.LittleEndian.PutUint32(msg.Data[:msg.Arg], lastIfInfo.n_info)
@@ -958,10 +954,29 @@ func (s *socketServer) opIoctl(ios *iostate, msg *zxsocket.Msg) zx.Status {
 		lastIfInfo.info[requestedIndex].Encode(msg)
 		return zx.ErrOk
 	case ioctlNetcGetNodename:
-		s.ns.mu.Lock()
-		nodename := s.ns.nodename
-		s.ns.mu.Unlock()
-
+		nodename, status, err := ns.deviceSettings.GetString(deviceSettingsManagerNodenameKey)
+		if err != nil {
+			log.Printf("ioctlNetcGetNodename: error accessing device settings: %s\n", err)
+			nodename = defaultNodename // defined in netstack.go
+		}
+		if status != device_settings.StatusOk {
+			var reportStatus string
+			switch status {
+			case device_settings.StatusErrNotSet:
+				reportStatus = "key not set"
+			case device_settings.StatusErrInvalidSetting:
+				reportStatus = "invalid setting"
+			case device_settings.StatusErrRead:
+				reportStatus = "error reading key"
+			case device_settings.StatusErrIncorrectType:
+				reportStatus = "value type was incorrect"
+			case device_settings.StatusErrUnknown:
+				reportStatus = "unknown"
+			}
+			log.Println("ioctlNetcGetNodename: falling back to default nodename.")
+			log.Printf("ioctlNetcGetNodename: device settings error: %s\n", reportStatus)
+			nodename = defaultNodename // defined in netstack.go
+		}
 		msg.Datalen = uint32(copy(msg.Data[:msg.Arg], nodename))
 		msg.Data[msg.Datalen] = 0
 		return zx.ErrOk

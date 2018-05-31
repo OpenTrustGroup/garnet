@@ -41,7 +41,7 @@ class StatusMessageHandler : public MessageHandler {
 
 class CallbackMessageHandler : public MessageHandler {
  public:
-  std::function<zx_status_t(Message)> callback;
+  fit::function<zx_status_t(Message)> callback;
 
   zx_status_t OnMessage(Message message) override {
     return callback(std::move(message));
@@ -52,6 +52,14 @@ class DestructionCounter {
  public:
   DestructionCounter(int* counter) : counter_(counter) {}
 
+  DestructionCounter(DestructionCounter&& other) : counter_(other.counter_) {
+    other.counter_ = nullptr;
+  }
+
+  DestructionCounter(const DestructionCounter&) = delete;
+  DestructionCounter& operator=(const DestructionCounter&) = delete;
+  DestructionCounter& operator=(DestructionCounter&& other) = delete;
+
   ~DestructionCounter() {
     if (counter_)
       ++(*counter_);
@@ -61,9 +69,7 @@ class DestructionCounter {
   int* counter_ = nullptr;
 };
 
-TEST(MessageReader, Trivial) {
-  MessageReader reader;
-}
+TEST(MessageReader, Trivial) { MessageReader reader; }
 
 TEST(MessageReader, Bind) {
   MessageReader reader;
@@ -394,7 +400,7 @@ TEST(MessageReader, Reset) {
 
   int destruction_count = 0;
   DestructionCounter counter(&destruction_count);
-  reader.set_error_handler([counter] {});
+  reader.set_error_handler([counter = std::move(counter)] {});
 
   zx::channel h1, h2;
   EXPECT_EQ(ZX_OK, zx::channel::create(0, &h1, &h2));
@@ -403,12 +409,12 @@ TEST(MessageReader, Reset) {
   reader.Bind(std::move(h1));
 
   EXPECT_TRUE(reader.is_bound());
-  EXPECT_EQ(2, destruction_count);
+  EXPECT_EQ(0, destruction_count);
 
   reader.Reset();
 
   EXPECT_FALSE(reader.is_bound());
-  EXPECT_EQ(3, destruction_count);
+  EXPECT_EQ(1, destruction_count);
 }
 
 TEST(MessageReader, TakeChannelAndErrorHandlerFrom) {

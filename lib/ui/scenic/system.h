@@ -7,18 +7,16 @@
 
 #include "garnet/lib/ui/scenic/command_dispatcher.h"
 
+#include <lib/fit/function.h>
+
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/ref_counted.h"
 // TODO(MZ-453): Don't support GetDisplayInfo in scenic fidl API.
-#include <fuchsia/cpp/ui.h>
+#include <fuchsia/ui/scenic/cpp/fidl.h>
 
 namespace component {
 class ApplicationContext;
 }  // namespace component
-
-namespace fxl {
-class TaskRunner;
-}  // namespace fxl
 
 namespace scenic {
 
@@ -30,18 +28,17 @@ class Session;
 class SystemContext final {
  public:
   explicit SystemContext(component::ApplicationContext* app_context,
-                         fxl::TaskRunner* task_runner,
-                         Clock* clock);
+                         fit::closure quit_callback);
   SystemContext(SystemContext&& context);
 
   component::ApplicationContext* app_context() const { return app_context_; }
-  fxl::TaskRunner* task_runner() const { return task_runner_; }
-  Clock* clock() const { return clock_; }
+
+  // Calls quit on the associated message loop.
+  void Quit() { quit_callback_(); }
 
  private:
   component::ApplicationContext* const app_context_;
-  fxl::TaskRunner* const task_runner_;
-  Clock* const clock_;
+  fit::closure quit_callback_;
 };
 
 // Systems are a composable way to add functionality to Scenic. A System creates
@@ -75,8 +72,6 @@ class System {
       CommandDispatcherContext context) = 0;
 
   SystemContext* context() { return &context_; }
-  fxl::TaskRunner* task_runner() { return context_.task_runner(); }
-  Clock* clock() { return context_.clock(); }
 
   bool initialized() { return initialized_; };
 
@@ -104,20 +99,22 @@ class TempSystemDelegate : public System {
  public:
   explicit TempSystemDelegate(SystemContext context,
                               bool initialized_after_construction);
-  virtual void GetDisplayInfo(ui::Scenic::GetDisplayInfoCallback callback) = 0;
-  virtual void TakeScreenshot(fidl::StringPtr filename,
-                              ui::Scenic::TakeScreenshotCallback callback) = 0;
+  virtual void GetDisplayInfo(
+      fuchsia::ui::scenic::Scenic::GetDisplayInfoCallback callback) = 0;
+  virtual void TakeScreenshot(
+      fuchsia::ui::scenic::Scenic::TakeScreenshotCallback callback) = 0;
   virtual void GetOwnershipEvent(
-      ui::Scenic::GetOwnershipEventCallback callback) = 0;
+      fuchsia::ui::scenic::Scenic::GetOwnershipEventCallback callback) = 0;
 };
 
 // Return the system type that knows how to handle the specified command.
 // Used by Session to choose a CommandDispatcher.
-inline System::TypeId SystemTypeForCommand(const ui::Command& command) {
+inline System::TypeId SystemTypeForCommand(
+    const fuchsia::ui::scenic::Command& command) {
   switch (command.Which()) {
-    case ui::Command::Tag::kGfx:
+    case fuchsia::ui::scenic::Command::Tag::kGfx:
       return System::TypeId::kGfx;
-    case ui::Command::Tag::kViews:
+    case fuchsia::ui::scenic::Command::Tag::kViews:
       return System::TypeId::kViews;
     default:
       return System::TypeId::kInvalid;

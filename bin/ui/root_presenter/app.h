@@ -9,10 +9,11 @@
 #include <memory>
 #include <vector>
 
-#include <fuchsia/cpp/input.h>
-#include <fuchsia/cpp/presentation.h>
-#include <fuchsia/cpp/views_v1.h>
+#include <fuchsia/ui/input/cpp/fidl.h>
+#include <presentation/cpp/fidl.h>
+#include <fuchsia/ui/views_v1/cpp/fidl.h>
 #include "garnet/bin/ui/input_reader/input_reader.h"
+#include "garnet/bin/ui/root_presenter/presentation.h"
 #include "lib/app/cpp/application_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/command_line.h"
@@ -31,7 +32,7 @@ class Presentation;
 // Any number of view trees can be created, although multi-display support
 // and input routing is not fully supported (TODO).
 class App : public presentation::Presenter,
-            public input::InputDeviceRegistry,
+            public fuchsia::ui::input::InputDeviceRegistry,
             public mozart::InputDeviceImpl::Listener {
  public:
   explicit App(const fxl::CommandLine& command_line);
@@ -40,17 +41,21 @@ class App : public presentation::Presenter,
   // |InputDeviceImpl::Listener|
   void OnDeviceDisconnected(mozart::InputDeviceImpl* input_device) override;
   void OnReport(mozart::InputDeviceImpl* input_device,
-                input::InputReport report) override;
+                fuchsia::ui::input::InputReport report) override;
 
  private:
   // |Presenter|:
-  void Present(fidl::InterfaceHandle<views_v1_token::ViewOwner> view_owner,
+  void Present(fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner> view_owner,
                fidl::InterfaceRequest<presentation::Presentation>
                    presentation_request) override;
 
+  void HACK_SetRendererParams(
+      bool enable_clipping,
+      ::fidl::VectorPtr<fuchsia::ui::gfx::RendererParam> params) override;
+
   // |InputDeviceRegistry|:
-  void RegisterDevice(input::DeviceDescriptor descriptor,
-                      fidl::InterfaceRequest<input::InputDevice>
+  void RegisterDevice(fuchsia::ui::input::DeviceDescriptor descriptor,
+                      fidl::InterfaceRequest<fuchsia::ui::input::InputDevice>
                           input_device_request) override;
 
   void InitializeServices();
@@ -62,16 +67,18 @@ class App : public presentation::Presenter,
 
   std::unique_ptr<component::ApplicationContext> application_context_;
   fidl::BindingSet<presentation::Presenter> presenter_bindings_;
-  fidl::BindingSet<input::InputDeviceRegistry> input_receiver_bindings_;
+  fidl::BindingSet<fuchsia::ui::input::InputDeviceRegistry>
+      input_receiver_bindings_;
   mozart::InputReader input_reader_;
 
-  views_v1::ViewManagerPtr view_manager_;
-  ui::ScenicPtr scenic_;
+  ::fuchsia::ui::views_v1::ViewManagerPtr view_manager_;
+  fuchsia::ui::scenic::ScenicPtr scenic_;
 
   std::unique_ptr<scenic_lib::Session> session_;
   std::unique_ptr<scenic_lib::DisplayCompositor> compositor_;
   std::unique_ptr<scenic_lib::LayerStack> layer_stack_;
 
+  RendererParams renderer_params_;
   std::vector<std::unique_ptr<Presentation>> presentations_;
   // A valid index into presentations_, otherwise size_t::max().
   size_t active_presentation_idx_ = std::numeric_limits<size_t>::max();

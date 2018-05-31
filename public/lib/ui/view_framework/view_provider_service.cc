@@ -28,18 +28,19 @@ ViewProviderService::~ViewProviderService() {
 }
 
 void ViewProviderService::CreateView(
-    fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request,
     fidl::InterfaceRequest<component::ServiceProvider> view_services) {
   ViewContext view_context;
   view_context.application_context = application_context_;
   view_context.view_manager =
-      application_context_->ConnectToEnvironmentService<views_v1::ViewManager>();
+      application_context_
+          ->ConnectToEnvironmentService<::fuchsia::ui::views_v1::ViewManager>();
   view_context.view_owner_request = std::move(view_owner_request);
   view_context.outgoing_services = std::move(view_services);
 
   std::unique_ptr<BaseView> view = view_factory_(std::move(view_context));
   if (view) {
-    view->SetReleaseHandler([ this, view = view.get() ] {
+    view->SetReleaseHandler([this, view = view.get()] {
       auto it = std::find_if(views_.begin(), views_.end(),
                              [view](const std::unique_ptr<BaseView>& other) {
                                return other.get() == view;

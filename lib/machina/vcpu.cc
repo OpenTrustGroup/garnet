@@ -30,8 +30,7 @@ thread_local Vcpu* thread_vcpu = nullptr;
 
 #if __aarch64__
 static zx_status_t HandleMmioArm(const zx_packet_guest_mem_t& mem,
-                                 uint64_t trap_key,
-                                 uint64_t* reg) {
+                                 uint64_t trap_key, uint64_t* reg) {
   TRACE_DURATION("machina", "mmio", "addr", mem.addr, "access_size",
                  mem.access_size);
 
@@ -303,11 +302,13 @@ zx_status_t Vcpu::HandleMem(const zx_packet_guest_mem_t& mem,
   status = HandleMmioArm(mem, trap_key, &vcpu_state.x[mem.xt]);
 #elif __x86_64__
   Instruction inst;
-  status = inst_decode(mem.inst_buf, mem.inst_len, &vcpu_state, &inst);
+  status = inst_decode(mem.inst_buf, mem.inst_len, mem.default_operand_size,
+                       &vcpu_state, &inst);
   if (status != ZX_OK) {
     fbl::StringBuffer<LINE_MAX> buffer;
-    for (uint8_t i = 0; i < mem.inst_len; i++)
+    for (uint8_t i = 0; i < mem.inst_len; i++) {
       buffer.AppendPrintf(" %x", mem.inst_buf[i]);
+    }
     FXL_LOG(ERROR) << "Unsupported instruction:" << buffer.c_str();
   } else {
     status = HandleMmioX86(mem, trap_key, &inst);

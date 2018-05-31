@@ -40,8 +40,13 @@ package("vkcube_image_pipe_swapchain") {
   ]
   binary = "vkcube_image_pipe_swapchain"
 
+  resources = [
+      {
+        path = rebase_path("tests/vkcube/bbb_frame.yuv")
+        dest = "bbb_frame.yuv"
+    } ]
   meta = [ {
-        path = rebase_path("meta/sandbox")
-        dest = "sandbox"
+        path = rebase_path("meta/vkcube_image_pipe_swapchain.cmx")
+        dest = "vkcube_image_pipe_swapchain.cmx"
       } ]
 }

@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <fuchsia/cpp/ree_agent.h>
+#include <ree_agent/cpp/fidl.h>
 
 #include <fbl/auto_lock.h>
 #include <fbl/function.h>

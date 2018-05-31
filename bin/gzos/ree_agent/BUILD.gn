@@ -45,7 +45,7 @@ executable("ree_agent_unittests") {
 
 package("ree_agent_tests") {
   testonly = true
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     ":ree_agent_unittests",

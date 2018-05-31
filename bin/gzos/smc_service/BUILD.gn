@@ -23,7 +23,7 @@ executable("bin") {
 }
 
 package("smc_service") {
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     ":bin",
@@ -57,7 +57,7 @@ executable("smc_service_test") {
 
 package("smc_service_tests") {
   testonly = true
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     ":smc_service_test",

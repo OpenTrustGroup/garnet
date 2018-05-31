@@ -5,7 +5,7 @@
 #pragma once
 
 #include <fbl/string.h>
-#include <fuchsia/cpp/ree_agent.h>
+#include <ree_agent/cpp/fidl.h>
 
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/logging.h"

@@ -7,7 +7,7 @@
 #include <fbl/intrusive_double_list.h>
 #include <fbl/mutex.h>
 #include <fbl/string.h>
-#include <fuchsia/cpp/ree_agent.h>
+#include <ree_agent/cpp/fidl.h>
 
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/logging.h"

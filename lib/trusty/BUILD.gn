@@ -61,7 +61,7 @@ executable("trusty_unittests") {
 
 package("trusty_tests") {
   testonly = true
-  system_image = true
+  deprecated_system_image = true
 
   deps = [
     ":trusty_unittests",

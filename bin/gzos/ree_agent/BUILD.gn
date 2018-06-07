@@ -59,6 +59,7 @@ executable("ree_agent_unittests") {
     "run_all_unittests.cc",
     "ree_message-unittest.cc",
     "channel-unittest.cc",
+    "object-unittest.cc",
     "port_manager-unittest.cc"
   ]
 

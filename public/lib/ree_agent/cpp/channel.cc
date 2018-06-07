@@ -123,11 +123,15 @@ void TipcChannelImpl::NotifyMessageItemIsFilled(
 }
 
 zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
-  FXL_DCHECK(msg != nullptr);
+  FXL_DCHECK(msg);
   fbl::AutoLock lock(&msg_list_lock_);
 
   uint32_t msg_id;
   zx_status_t status;
+
+  if (!is_bound()) {
+    return ZX_ERR_BAD_STATE;
+  }
 
   peer_->GetFreeMessageItem(&status, &msg_id);
   if (status != ZX_OK) {
@@ -147,8 +151,8 @@ zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
 }
 
 zx_status_t TipcChannelImpl::GetMessage(uint32_t* msg_id, size_t* len) {
-  FXL_DCHECK(msg_id != nullptr);
-  FXL_DCHECK(len != nullptr);
+  FXL_DCHECK(msg_id);
+  FXL_DCHECK(len);
   fbl::AutoLock lock(&msg_list_lock_);
 
   if (filled_list_.is_empty()) {
@@ -166,8 +170,8 @@ zx_status_t TipcChannelImpl::GetMessage(uint32_t* msg_id, size_t* len) {
 
 zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
                                          void* buf, size_t* buf_size) {
-  FXL_DCHECK(buf != nullptr);
-  FXL_DCHECK(buf_size != nullptr);
+  FXL_DCHECK(buf);
+  FXL_DCHECK(buf_size);
   fbl::AutoLock lock(&msg_list_lock_);
 
   auto it = read_list_.find_if(

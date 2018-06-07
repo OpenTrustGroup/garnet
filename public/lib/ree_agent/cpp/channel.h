@@ -13,10 +13,11 @@
 #include "lib/fxl/logging.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
 #include "lib/ree_agent/cpp/msg_item.h"
+#include "lib/ree_agent/cpp/object.h"
 
 namespace ree_agent {
 
-class TipcChannelImpl : public TipcChannel {
+class TipcChannelImpl : public TipcChannel, public TipcObject {
  public:
   static zx_status_t Create(uint32_t num_items, size_t item_size,
                             fbl::unique_ptr<TipcChannelImpl>* out);
@@ -42,6 +43,8 @@ class TipcChannelImpl : public TipcChannel {
   }
 
  protected:
+  ObjectType get_type() override { return ObjectType::CHANNEL; }
+
   void Close() override;
   void RequestSharedMessageItems(
       RequestSharedMessageItemsCallback callback) override;
@@ -65,8 +68,6 @@ class TipcChannelImpl : public TipcChannel {
   TipcChannelSyncPtr peer_;
   std::vector<fbl::unique_ptr<MessageItem>> peer_shared_items_;
   size_t num_items_;
-
-  FXL_DISALLOW_COPY_AND_ASSIGN(TipcChannelImpl);
 };
 
 }  // namespace ree_agent

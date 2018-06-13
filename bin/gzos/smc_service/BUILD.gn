@@ -4,21 +4,34 @@
 
 import("//build/package.gni")
 
-executable("bin") {
-  output_name = "smc_service"
-
+source_set("lib") {
   sources = [
-    "main.cc",
     "smc_service.cc",
     "trusty_smc.cc"
   ]
 
-  deps = [
+  public_deps = [
+    "//garnet/public/lib/ree_agent/cpp",
+    "//garnet/public/lib/ree_agent/fidl",
     "//garnet/lib/trusty",
     "//garnet/public/lib/fxl",
     "//zircon/public/lib/async-loop-cpp",
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/zx",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+}
+
+executable("bin") {
+  output_name = "smc_service"
+
+  sources = [
+    "main.cc",
+  ]
+
+  deps = [
+    ":lib",
   ]
 }
 
@@ -39,18 +52,12 @@ executable("smc_service_test") {
   testonly = true
 
   sources = [
-    "smc_service.cc",
-    "trusty_smc.cc",
     "smc_service_test.cc",
     "run_all_unittests.cc",
   ]
 
   deps = [
-    "//garnet/lib/trusty",
-    "//garnet/public/lib/fxl",
-    "//zircon/public/lib/async-loop-cpp",
-    "//zircon/public/lib/fbl",
-    "//zircon/public/lib/zx",
+    ":lib",
     "//third_party/googletest:gtest",
   ]
 }

@@ -161,10 +161,28 @@ class TransactionTest : public ::testing::Test {
     ASSERT_TRUE(tipc_dev_ != nullptr);
     ASSERT_EQ(bus_->AddDevice(tipc_dev_), ZX_OK);
 
-    VirtioBusOnline();
+    VirtioBusStart();
   }
 
-  void VirtioBusOnline() {
+  void TipcDeviceGoOnline() {
+    char msg_buf[sizeof(tipc_hdr) + sizeof(tipc_ctrl_msg_hdr)];
+
+    auto hdr = reinterpret_cast<tipc_hdr*>(msg_buf);
+    auto ctrl_msg = reinterpret_cast<tipc_ctrl_msg_hdr*>(hdr->data);
+
+    hdr->src = kTipcCtrlAddress;
+    hdr->dst = kTipcCtrlAddress;
+    hdr->reserved = 0;
+    hdr->len = sizeof(tipc_ctrl_msg_hdr);
+    hdr->flags = 0;
+
+    ctrl_msg->type = CtrlMessage::GO_ONLINE;
+    ctrl_msg->body_len = 0;
+
+    ASSERT_EQ(channel_.write(0, msg_buf, sizeof(msg_buf), NULL, 0), ZX_OK);
+  }
+
+  void VirtioBusStart() {
     size_t buf_size = PAGE_SIZE;
     auto buf = remote_->AllocBuffer(buf_size);
     ASSERT_TRUE(buf != nullptr);
@@ -186,10 +204,14 @@ class TransactionTest : public ::testing::Test {
                   .Build(),
               ZX_OK);
 
+    TipcDeviceGoOnline();
+
     // Sent the processed resource table back to VirtioBus, and notify
     // it to start service. Each Tipc device will send back a control
     // message to tipc frontend after it is ready to online.
     ASSERT_EQ(bus_->Start(buf, buf_size), ZX_OK);
+
+    loop_.RunUntilIdle();
 
     // Verify the online message
     virtio_desc_t desc;

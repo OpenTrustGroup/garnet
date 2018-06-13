@@ -100,8 +100,6 @@ class TipcDevice : public VirtioDevice {
 
   zx_status_t ValidateDescriptor(tipc_vdev_descr* descr);
   zx_status_t InitializeVring(fw_rsc_vdev* descr);
-  zx_status_t SendCtrlMessage(void* data, uint16_t data_len);
-  zx_status_t Online();
 
   // Queue for handling block requests.
   VirtioQueue queues_[kTipcNumQueues];

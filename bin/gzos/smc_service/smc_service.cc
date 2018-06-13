@@ -52,12 +52,21 @@ SmcService* SmcService::GetInstance() {
   return service_instance.get();
 }
 
-void SmcService::AddSmcEntity(uint32_t entity_nr, SmcEntity* e) {
+zx_status_t SmcService::AddSmcEntity(uint32_t entity_nr, SmcEntity* e) {
   fbl::AutoLock al(&lock_);
-  if (smc_entities_[entity_nr] == nullptr && e != nullptr) {
-    if (e->Init() == ZX_OK)
-      smc_entities_[entity_nr].reset(e);
-  }
+
+  if (smc_entities_[entity_nr] != nullptr)
+    return ZX_ERR_ALREADY_EXISTS;
+
+  if (e == nullptr || (entity_nr >= SMC_NUM_ENTITIES))
+    return ZX_ERR_INVALID_ARGS;
+
+  zx_status_t status = e->Init();
+  if (status != ZX_OK)
+    return status;
+
+  smc_entities_[entity_nr].reset(e);
+  return ZX_OK;
 }
 
 SmcEntity* SmcService::GetSmcEntity(uint32_t entity_nr) {

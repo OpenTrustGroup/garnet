@@ -4,11 +4,14 @@
 
 #include <string.h>
 #include <lib/async-loop/cpp/loop.h>
+#include <lib/fidl/cpp/binding.h>
+#include <ree_agent/cpp/fidl.h>
 #include <zx/channel.h>
 
 #include "garnet/bin/gzos/smc_service/smc_service.h"
 #include "garnet/bin/gzos/smc_service/trusty_smc.h"
 #include "garnet/lib/trusty/tipc_device.h"
+
 #include "lib/fxl/threading/thread.h"
 
 #include "gtest/gtest.h"
@@ -26,6 +29,32 @@
 #define NS_INNER_SHAREABLE                 0x3
 // clang-format on
 
+namespace ree_agent {
+
+class ReeMessageFake : public ReeMessage {
+ public:
+  ReeMessageFake() : binding_(this) {}
+
+  void Bind(zx::channel ch) {
+    binding_.Bind(std::move(ch));
+  }
+  void AddMessageChannel(::fidl::VectorPtr<MessageChannelInfo> infos,
+                         AddMessageChannelCallback callback) {
+    callback(ZX_OK);
+  }
+  void Start(::fidl::VectorPtr<uint32_t> ids, StartCallback callback) {
+    callback(ZX_OK);
+  }
+  void Stop(::fidl::VectorPtr<uint32_t> ids, StopCallback callback) {
+    callback(ZX_OK);
+  }
+
+ private:
+  fidl::Binding<ReeMessage> binding_;
+};
+
+}  // namespace ree_agent
+
 namespace smc_service {
 
 class SmcServiceTest : public testing::Test {
@@ -33,6 +62,10 @@ class SmcServiceTest : public testing::Test {
   virtual void SetUp() {
     smc_service_ = SmcService::GetInstance();
     ASSERT_TRUE(smc_service_ != nullptr);
+  }
+
+  virtual void TearDown() {
+    loop_.Shutdown();
   }
 
   async::Loop loop_;
@@ -54,8 +87,9 @@ class SmcTestEntity : public SmcEntity {
 
 TEST_F(SmcServiceTest, SmcEntityTest) {
   smc32_args_t smc_args = {};
-  smc_service_->AddSmcEntity(SMC_ENTITY_TRUSTED_OS,
-                             new SmcTestEntity(&smc_args));
+  zx_status_t status = smc_service_->AddSmcEntity(SMC_ENTITY_TRUSTED_OS,
+                                                  new SmcTestEntity(&smc_args));
+  ASSERT_EQ(status, ZX_OK);
   smc_service_->Start(loop_.async());
 
   /* issue a test smc call */
@@ -85,16 +119,21 @@ TEST_F(SmcServiceTest, SmcEntityTest) {
 
 class TrustySmcTest : public SmcServiceTest {
  protected:
-  virtual void SetUp() {
+  void SetUp() override {
     SmcServiceTest::SetUp();
 
-    zx_status_t status = zx::channel::create(0, &ch1_, &ch2_);
+    zx::channel ch1, ch2;
+    zx_status_t status = zx::channel::create(0, &ch1, &ch2);
     ASSERT_EQ(status, ZX_OK);
+
+    async_set_default(loop_.async());
+    ree_message_fake_.Bind(fbl::move(ch2));
+    loop_.StartThread();
 
     fbl::RefPtr<SharedMem> shm = smc_service_->GetSharedMem();
     fbl::AllocChecker ac;
     entity_ = fbl::make_unique_checked<TrustySmcEntity>(&ac, loop_.async(),
-                                                        ch1_.get(), shm);
+                                                        fbl::move(ch1), shm);
     ASSERT_TRUE(ac.check());
 
     ASSERT_EQ(entity_->Init(), ZX_OK);
@@ -127,11 +166,11 @@ class TrustySmcTest : public SmcServiceTest {
     return entity_->InvokeSmcFunction(&smc_args);
   }
 
-  zx::channel ch1_, ch2_;
   fbl::unique_ptr<TrustySmcEntity> entity_;
   void* ns_buf_;
   size_t ns_buf_size_;
   uintptr_t ns_buf_pa_;
+  ree_agent::ReeMessageFake ree_message_fake_;
 };
 
 TEST_F(TrustySmcTest, VirtioGetDescriptorTest) {

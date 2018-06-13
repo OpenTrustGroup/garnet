@@ -25,6 +25,8 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <fbl/auto_call.h>
+
 #include "garnet/bin/gzos/smc_service/trusty_smc.h"
 #include "garnet/lib/trusty/tipc_device.h"
 
@@ -83,51 +85,58 @@ using trusty::tipc_vdev_descr;
 using trusty::kTipcDescriptors;
 using trusty::VirtioBus;
 using trusty::TipcDevice;
+using trusty::VirtioDevice;
 
-TrustySmcEntity::TrustySmcEntity(async_t* async,
-                                 zx_handle_t ch,
+TrustySmcEntity::TrustySmcEntity(async_t* async, zx::channel ch,
                                  fbl::RefPtr<SharedMem> shm)
-    : async_(async),
-      ree_agent_ctrl_channel_(ch),
-      shared_mem_(shm),
-      vbus_(nullptr) {}
-
-zx_status_t TrustySmcEntity::CreateReeAgentPerDeviceChannel(zx::channel* out) {
-  // TODO(james): implement fidl interface for ree agent and virtio device
-  //              to create per device channel.
-  zx::channel ree_agent;
-  return zx::channel::create(0u, &ree_agent, out);
+    : async_(async), shared_mem_(shm), vbus_(nullptr) {
+  ree_message_.Bind(fbl::move(ch));
 }
 
 zx_status_t TrustySmcEntity::Init() {
   // Create VirtioBus
-  fbl::AllocChecker ac;
-  vbus_ = fbl::make_unique_checked<trusty::VirtioBus>(&ac, shared_mem_);
-  if (!ac.check()) {
+  vbus_ = fbl::make_unique<trusty::VirtioBus>(shared_mem_);
+  if (vbus_ == nullptr) {
     FXL_LOG(ERROR) << "Failed to create virtio bus object";
     return ZX_ERR_NO_MEMORY;
   }
 
-  // Create tipc devices on the bus and make per device channels to ree agent
+  auto delete_vbus = fbl::MakeAutoCall([&](){ vbus_.reset(nullptr); });
+
+  fidl::VectorPtr<ree_agent::MessageChannelInfo> ch_infos;
+
+  zx_status_t status = ZX_OK;
+  // Create tipc devices and add to virtio bus
   for (uint32_t i = 0; i < arraysize(kTipcDescriptors); i++) {
     const tipc_vdev_descr* desc = &kTipcDescriptors[i];
-    zx::channel per_device_channel;
-    zx_status_t status = CreateReeAgentPerDeviceChannel(&per_device_channel);
+
+    zx::channel h1, h2;
+    status = zx::channel::create(0, &h1, &h2);
     if (status != ZX_OK) {
-      FXL_LOG(ERROR) << "Failed to create per device channel to ree agent: "
-                     << desc->config.dev_name << " (" << status << ")";
+      FXL_LOG(ERROR) << "Failed to create ree message channel";
       return status;
     }
 
-    auto dev = fbl::MakeRefCountedChecked<trusty::TipcDevice>(
-        &ac, kTipcDescriptors[i], async_, fbl::move(per_device_channel));
-    if (!ac.check()) {
+    if (desc->vdev.id != trusty::kTipcVirtioDeviceId) {
+      FXL_LOG(ERROR) << "Unsupported virtio device id: " << desc->vdev.id;
+      return ZX_ERR_NOT_SUPPORTED;
+    }
+
+    auto vdev = fbl::MakeRefCounted<TipcDevice>(kTipcDescriptors[i], async_,
+                                                fbl::move(h2));
+    if (vdev == nullptr) {
       FXL_LOG(ERROR) << "Failed to create tipc device object: "
                      << desc->config.dev_name;
       return ZX_ERR_NO_MEMORY;
     }
 
-    status = vbus_->AddDevice(dev);
+    ree_agent::MessageChannelInfo ch_info{ree_agent::MessageType::Tipc,
+                                          vdev->notify_id(),
+                                          desc->config.msg_buf_max_size,
+                                          fbl::move(h1)};
+    ch_infos.push_back(fbl::move(ch_info));
+
+    status = vbus_->AddDevice(vdev);
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "Failed to add tipc device to virtio bus: "
                      << desc->config.dev_name << " (" << status << ")";
@@ -135,6 +144,12 @@ zx_status_t TrustySmcEntity::Init() {
     }
   }
 
+  status = ZX_ERR_INTERNAL;
+  ree_message_->AddMessageChannel(std::move(ch_infos), &status);
+  if (status != ZX_OK)
+    return status;
+
+  delete_vbus.cancel();
   return ZX_OK;
 }
 
@@ -262,6 +277,9 @@ long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
       status = GetNsBuf(args, &ns_buf, &size);
       if (status == ZX_OK) {
         status = vbus_->Start(ns_buf, size);
+        if (status == ZX_OK) {
+          ree_message_->Start(nullptr, &status);
+        }
       }
       ret = status;
       break;

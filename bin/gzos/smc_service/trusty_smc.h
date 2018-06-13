@@ -7,13 +7,15 @@
 #include "garnet/bin/gzos/smc_service/smc_service.h"
 #include "garnet/lib/trusty/virtio_device.h"
 
+#include <ree_agent/cpp/fidl.h>
+
 #include <lib/zx/channel.h>
 
 namespace smc_service {
 
 class TrustySmcEntity final : public SmcEntity {
  public:
-  TrustySmcEntity(async_t* async, zx_handle_t ch, fbl::RefPtr<SharedMem> shm);
+  TrustySmcEntity(async_t* async, zx::channel ch, fbl::RefPtr<SharedMem> shm);
   ~TrustySmcEntity() {}
 
   zx_status_t Init() override;
@@ -24,9 +26,9 @@ class TrustySmcEntity final : public SmcEntity {
   zx_status_t GetNsBuf(smc32_args_t* args, void** buf, size_t* size);
 
   async_t* async_;
-  zx::channel ree_agent_ctrl_channel_;
   fbl::RefPtr<SharedMem> shared_mem_;
   fbl::unique_ptr<trusty::VirtioBus> vbus_;
+  ree_agent::ReeMessageSyncPtr ree_message_;
 };
 
 } // namespace smc_service

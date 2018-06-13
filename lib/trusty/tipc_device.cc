@@ -37,6 +37,11 @@ zx_status_t TipcDevice::ValidateDescriptor(tipc_vdev_descr* descr) {
     return ZX_ERR_INVALID_ARGS;
   }
 
+  if (descr->vdev.notifyid != notify_id()) {
+    FXL_LOG(ERROR) << "unexpected vdev notifyid " << descr->vdev.notifyid;
+    return ZX_ERR_INVALID_ARGS;
+  }
+
   if (descr->vdev.num_of_vrings != kTipcNumQueues) {
     FXL_LOG(ERROR) << "unexpected number of vrings ("
                    << descr->vdev.num_of_vrings << " vs. " << kTipcNumQueues
@@ -113,65 +118,7 @@ zx_status_t TipcDevice::Probe(void* rsc_entry) {
     return status;
   }
 
-  status = Online();
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to go online: " << status;
-    return status;
-  }
-
   set_state(State::ACTIVE);
-  return ZX_OK;
-}
-
-zx_status_t TipcDevice::Online() {
-  tipc_ctrl_msg_hdr ctrl_msg = {
-      .type = CtrlMessage::GO_ONLINE,
-      .body_len = 0,
-  };
-  return SendCtrlMessage(&ctrl_msg, sizeof(ctrl_msg));
-}
-
-zx_status_t TipcDevice::SendCtrlMessage(void* data, uint16_t data_len) {
-  uint16_t desc_index;
-  zx_status_t status = tx_queue()->NextAvail(&desc_index);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "No available buffer: " << status;
-    return status;
-  }
-
-  virtio_desc_t desc;
-  status = tx_queue()->ReadDesc(desc_index, &desc);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Read descriptor failed: " << status;
-    return status;
-  }
-
-  if (desc.has_next) {
-    FXL_LOG(ERROR) << "Only single buffer is supported";
-    return ZX_ERR_IO;
-  }
-
-  if (desc.len < sizeof(tipc_hdr) + data_len) {
-    FXL_LOG(ERROR) << "Buffer size (" << desc.len << ") is too small";
-    return ZX_ERR_NO_MEMORY;
-  }
-
-  auto hdr = reinterpret_cast<tipc_hdr*>(desc.addr);
-  *hdr = (tipc_hdr){
-      .src = kTipcCtrlAddress,
-      .dst = kTipcCtrlAddress,
-      .reserved = 0,
-      .len = data_len,
-      .flags = 0,
-  };
-  memcpy(hdr->data, data, data_len);
-
-  status = tx_queue()->Return(desc_index, sizeof(tipc_hdr) + data_len);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to return buffer: " << status;
-    return status;
-  }
-
   return ZX_OK;
 }
 

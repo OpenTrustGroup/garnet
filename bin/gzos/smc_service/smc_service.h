@@ -44,7 +44,8 @@ class SmcService {
 
   SmcService(zx_handle_t smc, fbl::RefPtr<SharedMem> shm)
       : smc_handle_(smc), shared_mem_(shm) {
-    smc_entities_.reset(new fbl::unique_ptr<SmcEntity>[SMC_NUM_ENTITIES], SMC_NUM_ENTITIES);
+    smc_entities_.reset(new fbl::unique_ptr<SmcEntity>[SMC_NUM_ENTITIES],
+                        SMC_NUM_ENTITIES);
   }
 
   ~SmcService() {
@@ -53,7 +54,7 @@ class SmcService {
   }
 
   void Init();
-  void AddSmcEntity(uint32_t entity_nr, SmcEntity* e);
+  zx_status_t AddSmcEntity(uint32_t entity_nr, SmcEntity* e);
   zx_status_t Start(async_t* async);
   fbl::RefPtr<SharedMem> GetSharedMem() { return shared_mem_; };
   zx_handle_t GetHandle() { return smc_handle_; };

@@ -84,16 +84,17 @@ class TipcDevice : public VirtioDevice {
                       zx::channel channel);
   ~TipcDevice() override {}
 
+  VirtioQueue* tx_queue() { return &queues_[kTipcTxQueue]; }
+  VirtioQueue* rx_queue() { return &queues_[kTipcRxQueue]; }
+
+ protected:
   size_t ResourceEntrySize(void) override { return sizeof(tipc_vdev_descr); }
   void GetResourceEntry(void* rsc_entry) override {
     memcpy(rsc_entry, &descr_, sizeof(descr_));
   };
   zx_status_t Probe(void* rsc_entry) override;
-
-  VirtioQueue* tx_queue() { return &queues_[kTipcTxQueue]; }
-  VirtioQueue* rx_queue() { return &queues_[kTipcRxQueue]; }
-
-  zx_status_t Connect(async_t* async, zx::channel channel);
+  zx_status_t Reset() override;
+  zx_status_t Kick(uint32_t vq_id) override;
 
  private:
   TipcDevice();

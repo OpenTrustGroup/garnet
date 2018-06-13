@@ -133,10 +133,8 @@ TEST_F(ResourceTableTest, FailedToGetResourceTable) {
             ZX_ERR_OUT_OF_RANGE);
 }
 
-class TransactionTest : public ::testing::Test {
+class VirtioBusStateTest : public ::testing::Test {
  protected:
-  static constexpr size_t kMsgBufferSize = 256;
-
   virtual void SetUp() {
     // Create Shared Memory
     zx::vmo shm_vmo;
@@ -146,8 +144,8 @@ class TransactionTest : public ::testing::Test {
 
     // Create VirtioBus
     fbl::AllocChecker ac;
-    bus_ = fbl::make_unique_checked<VirtioBus>(&ac, shared_mem_);
-    ASSERT_TRUE(ac.check());
+    bus_ = fbl::make_unique<VirtioBus>(shared_mem_);
+    ASSERT_TRUE(bus_ != nullptr);
 
     // Create fake remote system
     remote_ = fbl::move(TipcRemoteFake::Create(shared_mem_));
@@ -161,6 +159,70 @@ class TransactionTest : public ::testing::Test {
     ASSERT_TRUE(tipc_dev_ != nullptr);
     ASSERT_EQ(bus_->AddDevice(tipc_dev_), ZX_OK);
 
+    rsc_table_size_ = PAGE_SIZE;
+    rsc_table_ = remote_->AllocBuffer(rsc_table_size_);
+    ASSERT_TRUE(rsc_table_ != nullptr);
+    ASSERT_EQ(bus_->GetResourceTable(rsc_table_, &rsc_table_size_), ZX_OK);
+
+    auto table = reinterpret_cast<resource_table*>(rsc_table_);
+    ASSERT_EQ(remote_->HandleResourceTable(table, bus_->devices()), ZX_OK);
+  }
+
+  fbl::RefPtr<SharedMem> shared_mem_;
+  fbl::RefPtr<TipcDevice> tipc_dev_;
+  fbl::unique_ptr<VirtioBus> bus_;
+  async::Loop loop_;
+  zx::channel channel_;
+  fbl::unique_ptr<TipcRemoteFake> remote_;
+
+  void* rsc_table_;
+  size_t rsc_table_size_;
+};
+
+TEST_F(VirtioBusStateTest, StartStopTest) {
+  ASSERT_EQ(bus_->Start(rsc_table_, rsc_table_size_), ZX_OK);
+  // Start again should get error
+  ASSERT_EQ(bus_->Start(rsc_table_, rsc_table_size_), ZX_ERR_BAD_STATE);
+
+  ASSERT_EQ(bus_->Stop(rsc_table_, rsc_table_size_), ZX_OK);
+  // Stop again should get error
+  ASSERT_EQ(bus_->Stop(rsc_table_, rsc_table_size_), ZX_ERR_BAD_STATE);
+}
+
+TEST_F(VirtioBusStateTest, ResetDeviceTest) {
+  // Reset device before bus start
+  ASSERT_EQ(bus_->ResetDevice(tipc_dev_->notify_id()), ZX_ERR_BAD_STATE);
+
+  ASSERT_EQ(bus_->Start(rsc_table_, rsc_table_size_), ZX_OK);
+  ASSERT_EQ(bus_->ResetDevice(tipc_dev_->notify_id()), ZX_OK);
+  // Reset device again should not error
+  ASSERT_EQ(bus_->ResetDevice(tipc_dev_->notify_id()), ZX_OK);
+
+  // Reset device with invalid device id
+  ASSERT_EQ(bus_->ResetDevice(tipc_dev_->notify_id() + 1), ZX_ERR_NOT_FOUND);
+}
+
+TEST_F(VirtioBusStateTest, KickVqueueTest) {
+  // Kick vqueue before bus start
+  ASSERT_EQ(bus_->KickVqueue(tipc_dev_->notify_id(), 0), ZX_ERR_BAD_STATE);
+
+  ASSERT_EQ(bus_->Start(rsc_table_, rsc_table_size_), ZX_OK);
+  ASSERT_EQ(bus_->KickVqueue(tipc_dev_->notify_id(), 0), ZX_OK);
+
+  // Kick vqueue with invalid device id
+  ASSERT_EQ(bus_->KickVqueue(tipc_dev_->notify_id() + 1, 0), ZX_ERR_NOT_FOUND);
+
+  // Kick vqueue with invalid vqueue id
+  ASSERT_EQ(bus_->KickVqueue(tipc_dev_->notify_id(), kTipcNumQueues),
+            ZX_ERR_NOT_FOUND);
+}
+
+class TransactionTest : public VirtioBusStateTest {
+ protected:
+  static constexpr size_t kMsgBufferSize = 256;
+
+  virtual void SetUp() {
+    VirtioBusStateTest::SetUp();
     VirtioBusStart();
   }
 
@@ -183,14 +245,6 @@ class TransactionTest : public ::testing::Test {
   }
 
   void VirtioBusStart() {
-    size_t buf_size = PAGE_SIZE;
-    auto buf = remote_->AllocBuffer(buf_size);
-    ASSERT_TRUE(buf != nullptr);
-    ASSERT_EQ(bus_->GetResourceTable(buf, &buf_size), ZX_OK);
-
-    auto table = reinterpret_cast<resource_table*>(buf);
-    ASSERT_EQ(remote_->HandleResourceTable(table, bus_->devices()), ZX_OK);
-
     auto tipc_frontend = remote_->GetFrontend(tipc_dev_->notify_id());
     ASSERT_TRUE(tipc_frontend != nullptr);
 
@@ -204,12 +258,12 @@ class TransactionTest : public ::testing::Test {
                   .Build(),
               ZX_OK);
 
-    TipcDeviceGoOnline();
-
     // Sent the processed resource table back to VirtioBus, and notify
     // it to start service. Each Tipc device will send back a control
     // message to tipc frontend after it is ready to online.
-    ASSERT_EQ(bus_->Start(buf, buf_size), ZX_OK);
+    ASSERT_EQ(bus_->Start(rsc_table_, rsc_table_size_), ZX_OK);
+
+    TipcDeviceGoOnline();
 
     loop_.RunUntilIdle();
 
@@ -231,14 +285,6 @@ class TransactionTest : public ::testing::Test {
     EXPECT_EQ(ctrl_hdr->type, CtrlMessage::GO_ONLINE);
     EXPECT_EQ(ctrl_hdr->body_len, 0u);
   }
-
-  fbl::RefPtr<SharedMem> shared_mem_;
-  fbl::RefPtr<TipcDevice> tipc_dev_;
-  fbl::unique_ptr<VirtioBus> bus_;
-  fbl::unique_ptr<TipcRemoteFake> remote_;
-
-  async::Loop loop_;
-  zx::channel channel_;
 };
 
 TEST_F(TransactionTest, ReceiveTest) {
@@ -418,6 +464,45 @@ TEST_F(TransactionTest, InvalidRxBuffer) {
             ZX_OK);
   EXPECT_TRUE(used->len == sizeof(msg));
   EXPECT_STREQ(reinterpret_cast<const char*>(desc.addr), msg);
+}
+
+TEST_F(TransactionTest, SendWhileBusStopTest) {
+  ASSERT_EQ(bus_->Stop(nullptr, 0), ZX_OK);
+
+  const auto tipc_frontend = remote_->GetFrontend(tipc_dev_->notify_id());
+  ASSERT_TRUE(tipc_frontend != nullptr);
+
+  // Send some buffers from remote side
+  const char msg[] = "This is test message";
+
+  auto buf = remote_->AllocBuffer(sizeof(msg));
+  ASSERT_TRUE(buf != nullptr);
+  memcpy(buf, msg, sizeof(msg));
+  ASSERT_EQ(tipc_frontend->tx_queue()
+                .BuildDescriptor()
+                .AppendReadable(buf, sizeof(msg))
+                .Build(),
+            ZX_OK);
+
+  loop_.RunUntilIdle();
+
+  // Read the message from tipc device and should have no message come in
+  char msg_buf[kMsgBufferSize];
+  uint32_t byte_read;
+  ASSERT_EQ(
+      channel_.read(0, msg_buf, sizeof(msg_buf), &byte_read, NULL, 0, NULL),
+      ZX_ERR_SHOULD_WAIT);
+
+  // Start virtio bus and read message again
+  ASSERT_EQ(bus_->Start(rsc_table_, rsc_table_size_), ZX_OK);
+
+  loop_.RunUntilIdle();
+
+  ASSERT_EQ(
+      channel_.read(0, msg_buf, sizeof(msg_buf), &byte_read, NULL, 0, NULL),
+      ZX_OK);
+  EXPECT_EQ(sizeof(msg), byte_read);
+  EXPECT_STREQ(msg_buf, msg);
 }
 
 }  // namespace trusty

@@ -100,6 +100,49 @@ zx_status_t VirtioBus::Start(void* buf, size_t buf_size) {
   return ZX_OK;
 }
 
+zx_status_t VirtioBus::Stop(void* buf, size_t buf_size) {
+  fbl::AutoLock mutex(&mutex_);
+
+  if (state_ != State::ACTIVE) {
+    return ZX_ERR_BAD_STATE;
+  }
+
+  for (const auto& vdev : vdevs_) {
+    vdev->Reset();
+  }
+
+  state_ = State::IDLE;
+  return ZX_OK;
+}
+
+zx_status_t VirtioBus::ResetDevice(uint32_t dev_id) {
+  fbl::AutoLock mutex(&mutex_);
+
+  if (state_ != State::ACTIVE) {
+    return ZX_ERR_BAD_STATE;
+  }
+
+  for (const auto& vdev : vdevs_) {
+    if (vdev->notify_id() == dev_id)
+      return vdev->Reset();
+  }
+  return ZX_ERR_NOT_FOUND;
+}
+
+zx_status_t VirtioBus::KickVqueue(uint32_t dev_id, uint32_t vq_id) {
+  fbl::AutoLock mutex(&mutex_);
+
+  if (state_ != State::ACTIVE) {
+    return ZX_ERR_BAD_STATE;
+  }
+
+  for (const auto& vdev : vdevs_) {
+    if (vdev->notify_id() == dev_id)
+      return vdev->Kick(vq_id);
+  }
+  return ZX_ERR_NOT_FOUND;
+}
+
 void VirtioBus::FinalizeVdevRegisteryLocked(void) {
   if (state_ == State::UNINITIALIZED) {
     uint32_t offset = rsc_table_hdr_size(vdevs_.size());

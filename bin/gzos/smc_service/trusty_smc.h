@@ -22,8 +22,8 @@ class TrustySmcEntity final : public SmcEntity {
   long InvokeSmcFunction(smc32_args_t* args) override;
 
  private:
-  zx_status_t CreateReeAgentPerDeviceChannel(zx::channel* virtio_dev);
   zx_status_t GetNsBuf(smc32_args_t* args, void** buf, size_t* size);
+  zx_status_t InvokeNopFunction(smc32_args_t* args);
 
   async_t* async_;
   fbl::RefPtr<SharedMem> shared_mem_;

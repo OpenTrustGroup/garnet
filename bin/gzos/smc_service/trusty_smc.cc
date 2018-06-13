@@ -253,13 +253,34 @@ static long to_smc_error(long ret) {
   }
 }
 
+zx_status_t TrustySmcEntity::InvokeNopFunction(smc32_args_t* args) {
+  zx_status_t status;
+
+  switch(args->params[0]) {
+    case SMC_NC_VDEV_KICK_VQ:
+      status = vbus_->KickVqueue(args->params[1], args->params[2]);
+      break;
+
+    default:
+      FXL_DLOG(ERROR) << "unknown nop function: "
+                      << SMC_FUNCTION(args->params[0]);
+      status = ZX_ERR_NOT_SUPPORTED;
+  }
+
+  return status;
+}
+
 long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
-  long ret;
   zx_status_t status;
   void* ns_buf;
   size_t size;
+  bool ret;
 
   switch (args->smc_nr) {
+    case SMC_SC_NOP:
+      status = InvokeNopFunction(args);
+      break;
+
     case SMC_SC_VIRTIO_GET_DESCR:
       status = GetNsBuf(args, &ns_buf, &size);
       if (status == ZX_OK) {
@@ -267,31 +288,59 @@ long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
       }
 
       if (status == ZX_OK) {
-        ret = size;
-      } else {
-        ret = status;
+        status = size;
       }
       break;
 
     case SMC_SC_VIRTIO_START:
-      status = GetNsBuf(args, &ns_buf, &size);
-      if (status == ZX_OK) {
-        status = vbus_->Start(ns_buf, size);
-        if (status == ZX_OK) {
-          ree_message_->Start(nullptr, &status);
+      if ((status = GetNsBuf(args, &ns_buf, &size)) != ZX_OK) break;
+      if ((status = vbus_->Start(ns_buf, size)) != ZX_OK) break;
+
+      ret = ree_message_->Start(nullptr, &status);
+      if (!ret || (status != ZX_OK)) {
+        if (!ret) {
+          FXL_LOG(ERROR) << "Failed to invoke ree_message Start() function";
+        }
+        vbus_->Stop(ns_buf, size);
+      }
+      break;
+
+    case SMC_SC_VIRTIO_STOP:
+      if ((status = GetNsBuf(args, &ns_buf, &size)) != ZX_OK) break;
+      if ((status = vbus_->Stop(ns_buf, size)) != ZX_OK) break;
+
+      ret = ree_message_->Stop(nullptr, &status);
+      if (!ret) {
+        FXL_LOG(ERROR) << "Failed to invoke ree_message Stop() function";
+        status = ZX_ERR_INTERNAL;
+      }
+      break;
+
+    case SMC_SC_VDEV_RESET:
+      if ((status = vbus_->ResetDevice(args->params[0])) != ZX_OK) break;
+
+      {
+        fidl::VectorPtr<uint32_t> ids;
+        ids.push_back(args->params[0]);
+        ret = ree_message_->Stop(fbl::move(ids), &status);
+        if (!ret) {
+          FXL_LOG(ERROR) << "Failed to invoke ree_message Stop() function";
+          status = ZX_ERR_INTERNAL;
         }
       }
-      ret = status;
+      break;
+
+    case SMC_SC_VDEV_KICK_VQ:
+      status = vbus_->KickVqueue(args->params[0], args->params[1]);
       break;
 
     default:
-      FXL_DLOG(ERROR) << "unknown smc function: 0x" << std::hex
-                      << SMC_FUNCTION(args->smc_nr);
-      ret = ZX_ERR_NOT_SUPPORTED;
+      FXL_DLOG(ERROR) << "unknown smc function: " << SMC_FUNCTION(args->smc_nr);
+      status = ZX_ERR_NOT_SUPPORTED;
       break;
   }
 
-  return to_smc_error(ret);
+  return to_smc_error(status);
 }
 
 } // namespace smc_service

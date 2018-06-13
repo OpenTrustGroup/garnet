@@ -34,9 +34,6 @@ class VirtioDevice : public fbl::RefCounted<VirtioDevice> {
  public:
   VirtioDevice() : notify_id_(next_notify_id_++){};
   virtual ~VirtioDevice(){};
-  virtual size_t ResourceEntrySize(void) = 0;
-  virtual void GetResourceEntry(void* rsc_entry) = 0;
-  virtual zx_status_t Probe(void* rsc_entry) = 0;
 
   SharedMem* shared_mem() { return shared_mem_.get(); }
 
@@ -55,6 +52,12 @@ class VirtioDevice : public fbl::RefCounted<VirtioDevice> {
   };
 
   fbl::RefPtr<SharedMem> shared_mem_;
+
+  virtual size_t ResourceEntrySize(void) = 0;
+  virtual void GetResourceEntry(void* rsc_entry) = 0;
+  virtual zx_status_t Probe(void* rsc_entry) = 0;
+  virtual zx_status_t Reset() = 0;
+  virtual zx_status_t Kick(uint32_t vq_id) = 0;
 
   State state(void) {
     fbl::AutoLock lock(&mutex_);
@@ -92,6 +95,9 @@ class VirtioBus {
   zx_status_t AddDevice(fbl::RefPtr<VirtioDevice> vdev);
   zx_status_t GetResourceTable(void* buf, size_t* buf_size);
   zx_status_t Start(void* buf, size_t buf_size);
+  zx_status_t Stop(void* buf, size_t buf_size);
+  zx_status_t ResetDevice(uint32_t dev_id);
+  zx_status_t KickVqueue(uint32_t dev_id, uint32_t vq_id);
 
   const auto& devices() { return vdevs_; }
 

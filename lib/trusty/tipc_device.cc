@@ -122,6 +122,29 @@ zx_status_t TipcDevice::Probe(void* rsc_entry) {
   return ZX_OK;
 }
 
+zx_status_t TipcDevice::Reset() {
+  if (state() == State::RESET) {
+    return ZX_OK;
+  }
+
+  rx_stream_.Stop();
+  tx_stream_.Stop();
+
+  set_state(State::RESET);
+  return ZX_OK;
+}
+
+zx_status_t TipcDevice::Kick(uint32_t vq_id) {
+  if (vq_id >= kTipcNumQueues)
+    return ZX_ERR_NOT_FOUND;
+
+  if (state() != State::ACTIVE) {
+    return ZX_ERR_BAD_STATE;
+  }
+
+  return queues_[vq_id].Signal();
+}
+
 TipcDevice::Stream::Stream(async_t* async,
                            VirtioQueue* queue,
                            zx_handle_t channel)

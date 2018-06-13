@@ -15,7 +15,7 @@
 
 namespace trusty {
 
-VirtioQueue::VirtioQueue() {
+VirtioQueue::VirtioQueue() : device_(nullptr) {
   FXL_CHECK(zx::event::create(0, &event_) == ZX_OK);
 }
 

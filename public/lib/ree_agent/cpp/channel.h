@@ -17,10 +17,15 @@
 
 namespace ree_agent {
 
-class TipcChannelImpl : public TipcChannel, public TipcObject {
+class TipcChannelImpl
+    : public TipcChannel,
+      public TipcObject,
+      public fbl::DoublyLinkedListable<fbl::RefPtr<TipcChannelImpl>> {
  public:
+  using ReadyCallback = std::function<void()>;
+
   static zx_status_t Create(uint32_t num_items, size_t item_size,
-                            fbl::unique_ptr<TipcChannelImpl>* out);
+                            fbl::RefPtr<TipcChannelImpl>* out);
 
   auto GetInterfaceHandle() {
     fidl::InterfaceHandle<TipcChannel> handle;
@@ -28,8 +33,14 @@ class TipcChannelImpl : public TipcChannel, public TipcObject {
     return handle;
   }
 
-  zx_status_t BindPeerInterfaceHandle(
-      fidl::InterfaceHandle<TipcChannel> handle);
+  void BindPeerInterfaceHandle(fidl::InterfaceHandle<TipcChannel> handle) {
+    peer_.Bind(std::move(handle));
+  }
+
+  void SetReadyCallback(ReadyCallback callback) {
+    ready_callback_ = std::move(callback);
+  }
+  void NotifyReady() { peer_->Ready(); }
 
   zx_status_t SendMessage(void* msg, size_t msg_size);
   zx_status_t GetMessage(uint32_t* msg_id, size_t* len);
@@ -37,15 +48,13 @@ class TipcChannelImpl : public TipcChannel, public TipcObject {
                           size_t* buf_size);
   zx_status_t PutMessage(uint32_t msg_id);
 
-  bool is_bound() {
-    return binding_.is_bound() && peer_.is_bound() &&
-           (peer_shared_items_.size() == num_items_);
-  }
+  bool is_bound() { return peer_.is_bound(); }
 
  protected:
   ObjectType get_type() override { return ObjectType::CHANNEL; }
 
   void Close() override;
+  void Ready() override;
   void RequestSharedMessageItems(
       RequestSharedMessageItemsCallback callback) override;
   void GetFreeMessageItem(GetFreeMessageItemCallback callback) override;
@@ -54,7 +63,7 @@ class TipcChannelImpl : public TipcChannel, public TipcObject {
       NotifyMessageItemIsFilledCallback callback) override;
 
  private:
-  TipcChannelImpl() : binding_(this) {}
+  TipcChannelImpl() : binding_(this), peer_shared_items_ready_(false) {}
 
   using MsgList = fbl::DoublyLinkedList<fbl::unique_ptr<MessageItem>>;
   fbl::Mutex msg_list_lock_;
@@ -64,10 +73,17 @@ class TipcChannelImpl : public TipcChannel, public TipcObject {
   MsgList read_list_ FXL_GUARDED_BY(msg_list_lock_);
 
   fidl::Binding<TipcChannel> binding_;
+  size_t num_items_;
 
   TipcChannelSyncPtr peer_;
   std::vector<fbl::unique_ptr<MessageItem>> peer_shared_items_;
-  size_t num_items_;
+
+  fbl::Mutex request_shared_items_lock_;
+  bool peer_shared_items_ready_ FXL_GUARDED_BY(request_shared_items_lock_);
+  zx_status_t PopulatePeerSharedItemsLocked()
+      FXL_EXCLUSIVE_LOCKS_REQUIRED(request_shared_items_lock_);
+
+  ReadyCallback ready_callback_;
 };
 
 }  // namespace ree_agent

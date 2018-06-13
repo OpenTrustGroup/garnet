@@ -31,7 +31,7 @@ class TipcChannelTest : public ::testing::Test {
   };
 
   virtual void SetUp() {
-    loop_.StartThread();
+    ASSERT_EQ(loop_.StartThread(), ZX_OK);
 
     // Create pair of channel
     ASSERT_EQ(TipcChannelImpl::Create(kNumItems, kItemSize, &local_channel_),
@@ -41,11 +41,9 @@ class TipcChannelTest : public ::testing::Test {
 
     // Bind the channel with each other
     auto handle = remote_channel_->GetInterfaceHandle();
-    ASSERT_EQ(local_channel_->BindPeerInterfaceHandle(std::move(handle)),
-              ZX_OK);
+    local_channel_->BindPeerInterfaceHandle(std::move(handle));
     handle = local_channel_->GetInterfaceHandle();
-    ASSERT_EQ(remote_channel_->BindPeerInterfaceHandle(std::move(handle)),
-              ZX_OK);
+    remote_channel_->BindPeerInterfaceHandle(std::move(handle));
   }
 
   virtual void TeadDown() {
@@ -89,8 +87,8 @@ class TipcChannelTest : public ::testing::Test {
   }
 
   async::Loop loop_;
-  fbl::unique_ptr<TipcChannelImpl> local_channel_;
-  fbl::unique_ptr<TipcChannelImpl> remote_channel_;
+  fbl::RefPtr<TipcChannelImpl> local_channel_;
+  fbl::RefPtr<TipcChannelImpl> remote_channel_;
 };
 
 TEST_F(TipcChannelTest, ExchangeMessage) {

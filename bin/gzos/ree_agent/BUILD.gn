@@ -5,8 +5,6 @@
 import("//build/package.gni")
 source_set("lib") {
   sources = [
-    "port_manager.cc",
-    "port_manager.h",
     "ree_agent.cc",
     "ree_agent.h",
     "ree_message_impl.cc",
@@ -60,7 +58,7 @@ executable("ree_agent_unittests") {
     "ree_message-unittest.cc",
     "channel-unittest.cc",
     "object-unittest.cc",
-    "port_manager-unittest.cc"
+    "port-unittest.cc"
   ]
 
   deps = [

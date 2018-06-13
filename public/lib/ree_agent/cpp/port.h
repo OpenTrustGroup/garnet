@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <fbl/intrusive_double_list.h>
+#include <fbl/mutex.h>
 #include <fbl/string.h>
 #include <ree_agent/cpp/fidl.h>
 
@@ -14,38 +16,41 @@
 
 namespace ree_agent {
 
+class TipcChannelImpl;
+
 class TipcPortImpl : public TipcPort, public TipcObject {
  public:
-  using ConnectRequestCallback =
-      std::function<void(fidl::InterfaceRequest<TipcChannel>)>;
-
-  TipcPortImpl(component::Services* services, const fbl::String path,
-               ConnectRequestCallback callback)
-      : binding_(this), path_(path.c_str()), callback_(callback) {
-    services->ConnectToService<TipcPortManager>(port_mgr_.NewRequest());
-  }
+  TipcPortImpl(uint32_t num_items, size_t item_size)
+      : binding_(this), num_items_(num_items), item_size_(item_size) {}
   TipcPortImpl() = delete;
 
-  void Publish(TipcPortManager::PublishCallback callback) {
-    fidl::InterfaceHandle<TipcPort> handle;
-    binding_.Bind(handle.NewRequest());
-    port_mgr_->Publish(path_, std::move(handle), callback);
-  }
-
-  ~TipcPortImpl() {
-    // TODO(sy): unregister port here
-  }
+  zx_status_t Accept(fbl::RefPtr<TipcChannelImpl>* channel_out);
 
   ObjectType get_type() override { return ObjectType::PORT; }
 
- private:
-  void OnConnectionRequest(
-      fidl::InterfaceRequest<TipcChannel> channel) override;
+  void Bind(fidl::InterfaceRequest<TipcPort> request) {
+    binding_.Bind(std::move(request));
+  }
 
+ protected:
+  void Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
+               ConnectCallback callback) override;
+  void GetInfo(GetInfoCallback callback) override;
+
+ private:
   fidl::Binding<TipcPort> binding_;
   fidl::StringPtr path_;
-  ConnectRequestCallback callback_;
-  TipcPortManagerPtr port_mgr_;
+
+  uint32_t num_items_;
+  size_t item_size_;
+
+  fbl::Mutex mutex_;
+  fbl::DoublyLinkedList<fbl::RefPtr<TipcChannelImpl>> pending_requests_
+      FXL_GUARDED_BY(mutex_);
+
+  void AddPendingRequest(fbl::RefPtr<TipcChannelImpl> channel);
+  fbl::RefPtr<TipcChannelImpl> GetPendingRequest();
+  bool HasPendingRequests();
 };
 
 }  // namespace ree_agent

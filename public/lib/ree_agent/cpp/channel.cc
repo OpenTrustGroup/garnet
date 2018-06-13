@@ -12,8 +12,8 @@
 namespace ree_agent {
 
 zx_status_t TipcChannelImpl::Create(uint32_t num_items, size_t item_size,
-                                    fbl::unique_ptr<TipcChannelImpl>* out) {
-  auto chan = fbl::unique_ptr<TipcChannelImpl>(new TipcChannelImpl());
+                                    fbl::RefPtr<TipcChannelImpl>* out) {
+  auto chan = fbl::AdoptRef(new TipcChannelImpl());
   if (!chan) {
     return ZX_ERR_NO_MEMORY;
   }
@@ -29,7 +29,6 @@ zx_status_t TipcChannelImpl::Create(uint32_t num_items, size_t item_size,
     if (status != ZX_OK) {
       return status;
     }
-
     chan->free_list_.push_back(fbl::move(item));
   }
 
@@ -38,10 +37,7 @@ zx_status_t TipcChannelImpl::Create(uint32_t num_items, size_t item_size,
   return ZX_OK;
 }
 
-zx_status_t TipcChannelImpl::BindPeerInterfaceHandle(
-    fidl::InterfaceHandle<TipcChannel> handle) {
-  peer_.Bind(std::move(handle));
-
+zx_status_t TipcChannelImpl::PopulatePeerSharedItemsLocked() {
   fidl::VectorPtr<SharedMessageItem> shared_items;
   peer_->RequestSharedMessageItems(&shared_items);
 
@@ -80,7 +76,6 @@ void TipcChannelImpl::RequestSharedMessageItems(
 
     shared_item.vmo = item.GetDuplicateVmo();
     shared_item.msg_id = item.msg_id();
-
     shared_items.push_back(std::move(shared_item));
   }
 
@@ -96,7 +91,6 @@ void TipcChannelImpl::GetFreeMessageItem(GetFreeMessageItemCallback callback) {
   }
 
   auto item = free_list_.pop_front();
-
   uint32_t msg_id = item->msg_id();
   outgoing_list_.push_back(fbl::move(item));
 
@@ -119,6 +113,10 @@ void TipcChannelImpl::NotifyMessageItemIsFilled(
   item->update_filled_size(filled_size);
   filled_list_.push_back(fbl::move(item));
 
+  // TODO(sy): try not return error code from SignalEvent()
+  zx_status_t err = SignalEvent(TipcEvent::MSG);
+  FXL_DCHECK(err == ZX_OK);
+
   callback(ZX_OK);
 }
 
@@ -130,7 +128,23 @@ zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
   zx_status_t status;
 
   if (!is_bound()) {
-    return ZX_ERR_BAD_STATE;
+    // TODO(sy): try not return error code from SignalEvent()
+    status = SignalEvent(TipcEvent::HUP);
+    FXL_DCHECK(status != ZX_OK);
+
+    return ZX_ERR_PEER_CLOSED;
+  }
+
+  {
+    fbl::AutoLock lock(&request_shared_items_lock_);
+    if (!peer_shared_items_ready_) {
+      zx_status_t err = PopulatePeerSharedItemsLocked();
+      if (err != ZX_OK) {
+        FXL_LOG(ERROR) << "failed to populate peer shared items " << err;
+        return err;
+      }
+      peer_shared_items_ready_ = true;
+    }
   }
 
   peer_->GetFreeMessageItem(&status, &msg_id);
@@ -211,6 +225,12 @@ zx_status_t TipcChannelImpl::PutMessage(uint32_t msg_id) {
   free_list_.push_back(fbl::move(item));
 
   return ZX_OK;
+}
+
+void TipcChannelImpl::Ready() {
+  if (ready_callback_) {
+    ready_callback_();
+  }
 }
 
 }  // namespace ree_agent

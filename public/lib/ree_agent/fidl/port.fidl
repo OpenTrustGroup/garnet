@@ -5,12 +5,7 @@
 library ree_agent;
 
 interface TipcPort {
-  // Called by the port manager when there has an incoming connection request
-  1: OnConnectionRequest(request<TipcChannel>? channel);
-};
+  1: GetInfo() -> (uint32 num_items, uint64 item_size);
 
-[Discoverable]
-interface TipcPortManager {
-  // Publish a Port to PortManager
-  1: Publish(string port_path, TipcPort? port) -> (status s);
+  2: Connect(TipcChannel local_handle) -> (status s, TipcChannel? peer_handle);
 };

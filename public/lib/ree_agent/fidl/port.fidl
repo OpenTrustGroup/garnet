@@ -12,5 +12,5 @@ interface TipcPort {
 [Discoverable]
 interface TipcPortManager {
   // Publish a Port to PortManager
-  1: Publish(string port_path, TipcPort? port) -> (Status @status);
+  1: Publish(string port_path, TipcPort? port) -> (status s);
 };

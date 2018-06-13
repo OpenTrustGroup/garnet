@@ -40,7 +40,7 @@ TEST(TipcPortManagerTest, PublishPort) {
                          [](fidl::InterfaceRequest<TipcChannel> channel) {
                            // Connection Request callback, leave it empty
                          });
-  test_port.Publish([](Status status) { EXPECT_EQ(status, Status::OK); });
+  test_port.Publish([](zx_status_t status) { EXPECT_EQ(status, ZX_OK); });
 
   loop.RunUntilIdle();
 
@@ -50,7 +50,7 @@ TEST(TipcPortManagerTest, PublishPort) {
                                  // Connection Request callback, leave it empty
                                });
   duplicated_port.Publish(
-      [](Status status) { EXPECT_EQ(status, Status::ALREADY_EXISTS); });
+      [](zx_status_t status) { EXPECT_EQ(status, ZX_ERR_ALREADY_EXISTS); });
 
   loop.RunUntilIdle();
 

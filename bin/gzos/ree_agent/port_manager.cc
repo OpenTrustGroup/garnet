@@ -9,14 +9,14 @@ void TipcPortManagerImpl::Publish(
   auto entry = fbl::make_unique<TipcPortTableEntry>(port_path.get(),
                                                     fbl::move(port));
   if (!entry) {
-    callback(Status::NO_MEMORY);
+    callback(ZX_ERR_NO_MEMORY);
   }
   {
     fbl::AutoLock lock(&port_table_lock_);
     if (port_table_.insert_or_find(fbl::move(entry))) {
-      callback(Status::OK);
+      callback(ZX_OK);
     } else {
-      callback(Status::ALREADY_EXISTS);
+      callback(ZX_ERR_ALREADY_EXISTS);
     }
   }
 }

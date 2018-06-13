@@ -11,8 +11,7 @@
 
 namespace ree_agent {
 
-zx_status_t TipcChannelImpl::Create(uint32_t num_items,
-                                    size_t item_size,
+zx_status_t TipcChannelImpl::Create(uint32_t num_items, size_t item_size,
                                     fbl::unique_ptr<TipcChannelImpl>* out) {
   auto chan = fbl::unique_ptr<TipcChannelImpl>(new TipcChannelImpl());
   if (!chan) {
@@ -92,7 +91,7 @@ void TipcChannelImpl::GetFreeMessageItem(GetFreeMessageItemCallback callback) {
   fbl::AutoLock lock(&msg_list_lock_);
 
   if (free_list_.is_empty()) {
-    callback(Status::NO_MEMORY, 0);
+    callback(ZX_ERR_NO_MEMORY, 0);
     return;
   }
 
@@ -101,19 +100,18 @@ void TipcChannelImpl::GetFreeMessageItem(GetFreeMessageItemCallback callback) {
   uint32_t msg_id = item->msg_id();
   outgoing_list_.push_back(fbl::move(item));
 
-  callback(Status::OK, msg_id);
+  callback(ZX_OK, msg_id);
 }
 
 void TipcChannelImpl::NotifyMessageItemIsFilled(
-    uint32_t msg_id,
-    uint64_t filled_size,
+    uint32_t msg_id, uint64_t filled_size,
     NotifyMessageItemIsFilledCallback callback) {
   fbl::AutoLock lock(&msg_list_lock_);
 
   auto iter = outgoing_list_.find_if(
       [&msg_id](const MessageItem& item) { return item.msg_id() == msg_id; });
   if (iter == outgoing_list_.end()) {
-    callback(Status::NOT_FOUND);
+    callback(ZX_ERR_NOT_FOUND);
     return;
   }
 
@@ -121,24 +119,24 @@ void TipcChannelImpl::NotifyMessageItemIsFilled(
   item->update_filled_size(filled_size);
   filled_list_.push_back(fbl::move(item));
 
-  callback(Status::OK);
+  callback(ZX_OK);
 }
 
-Status TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
+zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
   FXL_DCHECK(msg != nullptr);
   fbl::AutoLock lock(&msg_list_lock_);
 
   uint32_t msg_id;
-  Status status;
+  zx_status_t status;
 
   peer_->GetFreeMessageItem(&status, &msg_id);
-  if (status != Status::OK) {
+  if (status != ZX_OK) {
     return status;
   }
 
   auto item = peer_shared_items_[msg_id].get();
   if (msg_size > item->size()) {
-    return Status::NO_MEMORY;
+    return ZX_ERR_NO_MEMORY;
   }
 
   void* buffer_ptr = item->PtrFromOffset(0);
@@ -148,13 +146,13 @@ Status TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
   return status;
 }
 
-Status TipcChannelImpl::GetMessage(uint32_t* msg_id, size_t* len) {
+zx_status_t TipcChannelImpl::GetMessage(uint32_t* msg_id, size_t* len) {
   FXL_DCHECK(msg_id != nullptr);
   FXL_DCHECK(len != nullptr);
   fbl::AutoLock lock(&msg_list_lock_);
 
   if (filled_list_.is_empty()) {
-    return Status::NO_MSG;
+    return ZX_ERR_SHOULD_WAIT;
   }
 
   auto item = filled_list_.pop_front();
@@ -163,13 +161,11 @@ Status TipcChannelImpl::GetMessage(uint32_t* msg_id, size_t* len) {
   *len = item->filled_size();
   read_list_.push_back(fbl::move(item));
 
-  return Status::OK;
+  return ZX_OK;
 }
 
-Status TipcChannelImpl::ReadMessage(uint32_t msg_id,
-                                    uint32_t offset,
-                                    void* buf,
-                                    size_t* buf_size) {
+zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
+                                         void* buf, size_t* buf_size) {
   FXL_DCHECK(buf != nullptr);
   FXL_DCHECK(buf_size != nullptr);
   fbl::AutoLock lock(&msg_list_lock_);
@@ -178,39 +174,39 @@ Status TipcChannelImpl::ReadMessage(uint32_t msg_id,
       [&msg_id](const MessageItem& item) { return msg_id == item.msg_id(); });
 
   if (it == read_list_.end()) {
-    return Status::NOT_FOUND;
+    return ZX_ERR_NOT_FOUND;
   }
 
   size_t filled_size = it->filled_size();
   if (offset > filled_size) {
-    return Status::OUT_OF_RANGE;
+    return ZX_ERR_OUT_OF_RANGE;
   }
 
   size_t bytes_to_copy = filled_size - offset;
   if (*buf_size < bytes_to_copy) {
-    return Status::NO_MEMORY;
+    return ZX_ERR_NO_MEMORY;
   }
 
   memcpy(buf, it->PtrFromOffset(offset), bytes_to_copy);
   *buf_size = bytes_to_copy;
 
-  return Status::OK;
+  return ZX_OK;
 }
 
-Status TipcChannelImpl::PutMessage(uint32_t msg_id) {
+zx_status_t TipcChannelImpl::PutMessage(uint32_t msg_id) {
   fbl::AutoLock lock(&msg_list_lock_);
 
   auto it = read_list_.find_if(
       [&msg_id](const MessageItem& item) { return msg_id == item.msg_id(); });
 
   if (it == read_list_.end()) {
-    return Status::NOT_FOUND;
+    return ZX_ERR_NOT_FOUND;
   }
 
   auto item = read_list_.erase(it);
   free_list_.push_back(fbl::move(item));
 
-  return Status::OK;
+  return ZX_OK;
 }
 
 }  // namespace ree_agent

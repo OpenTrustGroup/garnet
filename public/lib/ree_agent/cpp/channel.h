@@ -18,8 +18,7 @@ namespace ree_agent {
 
 class TipcChannelImpl : public TipcChannel {
  public:
-  static zx_status_t Create(uint32_t num_items,
-                            size_t item_size,
+  static zx_status_t Create(uint32_t num_items, size_t item_size,
                             fbl::unique_ptr<TipcChannelImpl>* out);
 
   auto GetInterfaceHandle() {
@@ -31,13 +30,11 @@ class TipcChannelImpl : public TipcChannel {
   zx_status_t BindPeerInterfaceHandle(
       fidl::InterfaceHandle<TipcChannel> handle);
 
-  Status SendMessage(void* msg, size_t msg_size);
-  Status GetMessage(uint32_t* msg_id, size_t* len);
-  Status ReadMessage(uint32_t msg_id,
-                     uint32_t offset,
-                     void* buf,
-                     size_t* buf_size);
-  Status PutMessage(uint32_t msg_id);
+  zx_status_t SendMessage(void* msg, size_t msg_size);
+  zx_status_t GetMessage(uint32_t* msg_id, size_t* len);
+  zx_status_t ReadMessage(uint32_t msg_id, uint32_t offset, void* buf,
+                          size_t* buf_size);
+  zx_status_t PutMessage(uint32_t msg_id);
 
   bool is_bound() {
     return binding_.is_bound() && peer_.is_bound() &&
@@ -50,8 +47,7 @@ class TipcChannelImpl : public TipcChannel {
       RequestSharedMessageItemsCallback callback) override;
   void GetFreeMessageItem(GetFreeMessageItemCallback callback) override;
   void NotifyMessageItemIsFilled(
-      uint32_t msg_id,
-      uint64_t msg_size,
+      uint32_t msg_id, uint64_t msg_size,
       NotifyMessageItemIsFilledCallback callback) override;
 
  private:

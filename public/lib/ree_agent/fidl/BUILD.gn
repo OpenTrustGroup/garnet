@@ -11,6 +11,5 @@ fidl("fidl") {
     "channel.fidl",
     "port.fidl",
     "ree_message.fidl",
-    "status.fidl",
   ]
 }

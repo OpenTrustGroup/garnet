@@ -61,13 +61,12 @@ class TipcChannelTest : public ::testing::Test {
     // Send test messages from sender
     for (uint32_t i = 0; i < kNumItems; i++) {
       TestMessage test_msg(i);
-      EXPECT_EQ(sender->SendMessage(test_msg.data(), test_msg.size()),
-                Status::OK);
+      EXPECT_EQ(sender->SendMessage(test_msg.data(), test_msg.size()), ZX_OK);
     }
 
     // We ran out of free buffer, should fail
     uint32_t dummy;
-    EXPECT_EQ(sender->SendMessage(&dummy, sizeof(dummy)), Status::NO_MEMORY);
+    EXPECT_EQ(sender->SendMessage(&dummy, sizeof(dummy)), ZX_ERR_NO_MEMORY);
 
     // Read test messages from receiver and verify it
     for (uint32_t i = 0; i < kNumItems; i++) {
@@ -76,18 +75,17 @@ class TipcChannelTest : public ::testing::Test {
       // Get a message from the filled list
       uint32_t msg_id;
       size_t msg_len;
-      EXPECT_EQ(receiver->GetMessage(&msg_id, &msg_len), Status::OK);
+      EXPECT_EQ(receiver->GetMessage(&msg_id, &msg_len), ZX_OK);
       EXPECT_EQ(msg_len, expected_msg.size());
 
       // Read the message and verify it
       char msg_buf[msg_len];
-      EXPECT_EQ(receiver->ReadMessage(msg_id, 0, msg_buf, &msg_len),
-                Status::OK);
+      EXPECT_EQ(receiver->ReadMessage(msg_id, 0, msg_buf, &msg_len), ZX_OK);
       EXPECT_STREQ(msg_buf, expected_msg.data());
       EXPECT_EQ(msg_len, expected_msg.size());
 
       // Put the message back to free list
-      EXPECT_EQ(receiver->PutMessage(msg_id), Status::OK);
+      EXPECT_EQ(receiver->PutMessage(msg_id), ZX_OK);
     }
   }
 
@@ -101,4 +99,4 @@ TEST_F(TipcChannelTest, ExchangeMessage) {
   TestSendAndReceive(remote_channel_.get(), local_channel_.get());
 }
 
-}
+}  // namespace ree_agent

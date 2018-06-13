@@ -18,8 +18,8 @@ interface TipcChannel {
   2: RequestSharedMessageItems() -> (vector<SharedMessageItem> items);
 
   // Get a free message item from peer
-  3: GetFreeMessageItem() -> (Status @status, uint32 msg_id);
+  3: GetFreeMessageItem() -> (status s, uint32 msg_id);
 
   // Notify peer message item is filled
-  4: NotifyMessageItemIsFilled(uint32 msg_id, uint64 msg_size) -> (Status @status);
+  4: NotifyMessageItemIsFilled(uint32 msg_id, uint64 msg_size) -> (status s);
 };

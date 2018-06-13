@@ -1,0 +1,28 @@
+// Copyright 2018 Open Trust Group
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library ree_agent;
+
+enum MessageType {
+  Tipc = 0;
+  Gp = 1;
+};
+
+struct MessageChannelInfo {
+  MessageType type;
+  uint32 id;
+  uint32 max_messge_size;
+  handle<channel> channel;
+};
+
+interface ReeMessage {
+  // Add message channel(s)
+  1: AddMessageChannel(vector<MessageChannelInfo> infos) -> (status err);
+
+  // Start to service ree message channels
+  2: Start(vector<uint32>? ids) -> (status err);
+
+  // Stop to service ree message channels
+  3: Stop(vector<uint32>? ids) -> (status err);
+};

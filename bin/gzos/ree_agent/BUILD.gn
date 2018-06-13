@@ -9,15 +9,16 @@ source_set("lib") {
     "port_manager.h",
     "ree_agent.cc",
     "ree_agent.h",
+    "ree_message_impl.cc",
+    "ree_message_impl.h",
+    "tipc_agent.cc",
+    "tipc_agent.h",
   ]
 
   public_deps = [
     "//garnet/public/lib/ree_agent/cpp",
     "//garnet/public/lib/ree_agent/fidl",
     "//garnet/public/lib/svc/cpp",
-  ]
-
-  deps = [
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/async-loop-cpp",
   ]
@@ -31,6 +32,7 @@ executable("ree_agent_unittests") {
 
   sources = [
     "run_all_unittests.cc",
+    "ree_message-unittest.cc",
     "channel-unittest.cc",
     "port_manager-unittest.cc"
   ]
@@ -38,8 +40,6 @@ executable("ree_agent_unittests") {
   deps = [
     ":lib",
     "//third_party/googletest:gtest",
-    "//zircon/public/lib/fbl",
-    "//zircon/public/lib/async-loop-cpp",
   ]
 }
 

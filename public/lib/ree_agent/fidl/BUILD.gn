@@ -10,6 +10,7 @@ fidl("fidl") {
   sources = [
     "channel.fidl",
     "port.fidl",
+    "ree_message.fidl",
     "status.fidl",
   ]
 }

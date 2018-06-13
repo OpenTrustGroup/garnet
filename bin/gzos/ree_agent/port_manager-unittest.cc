@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <lib/svc/cpp/service_provider_bridge.h>
 #include <ree_agent/cpp/fidl.h>
 #include <zircon/compiler.h>
 
@@ -14,18 +15,18 @@ namespace ree_agent {
 
 TEST(TipcPortManagerTest, PublishPort) {
   async::Loop loop(&kAsyncLoopConfigMakeDefault);
-  ReeAgent ree_agent;
+  component::ServiceProviderBridge service_provider;
 
   // Create and register TipcPortManager service
   TipcPortManagerImpl port_manager;
-  ree_agent.services()->AddService<TipcPortManager>(
+  service_provider.AddService<TipcPortManager>(
       [&port_manager](fidl::InterfaceRequest<TipcPortManager> request) {
         port_manager.Bind(fbl::move(request));
       });
 
   // Grab service directory, this is used by Trusted Application
   // for getting services published by ree_agent
-  zx::channel svc_dir = ree_agent.services()->OpenAsDirectory();
+  zx::channel svc_dir = service_provider.OpenAsDirectory();
   ASSERT_TRUE(svc_dir != ZX_HANDLE_INVALID);
 
   // Create a Services object for Trusted Application to connect

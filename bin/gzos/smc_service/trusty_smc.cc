@@ -144,10 +144,16 @@ zx_status_t TrustySmcEntity::Init() {
     }
   }
 
-  status = ZX_ERR_INTERNAL;
-  ree_message_->AddMessageChannel(std::move(ch_infos), &status);
-  if (status != ZX_OK)
+  bool res = ree_message_->AddMessageChannel(std::move(ch_infos), &status);
+  if (!res) {
+    FXL_LOG(ERROR) << "Failed to invoke AddMessageChannel fidl function";
+    return ZX_ERR_INTERNAL;
+  }
+
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to AddMessageChannel, status=" << status;
     return status;
+  }
 
   delete_vbus.cancel();
   return ZX_OK;

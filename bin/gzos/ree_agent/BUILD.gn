@@ -26,6 +26,31 @@ source_set("lib") {
   defines = [ "_ALL_SOURCE=1" ]
 }
 
+executable("bin") {
+  output_name = "ree_agent"
+
+  sources = [
+    "main.cc",
+  ]
+
+  deps = [
+    ":lib",
+  ]
+}
+
+package("ree_agent") {
+  deprecated_system_image = true
+
+  deps = [
+    ":bin",
+  ]
+  binaries = [
+    {
+      name = "ree_agent"
+    },
+  ]
+}
+
 executable("ree_agent_unittests") {
   visibility = [ ":*" ]
   testonly = true

@@ -119,6 +119,12 @@ zx_status_t TipcDevice::Probe(void* rsc_entry) {
   }
 
   set_state(State::ACTIVE);
+
+  // Kick all vqueues for ree_agent to send message back to REE
+  for (uint8_t vq_id = 0; vq_id < kTipcNumQueues; vq_id++) {
+    Kick(vq_id);
+  }
+
   return ZX_OK;
 }
 

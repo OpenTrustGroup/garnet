@@ -62,8 +62,10 @@ zx_status_t SmcService::AddSmcEntity(uint32_t entity_nr, SmcEntity* e) {
     return ZX_ERR_INVALID_ARGS;
 
   zx_status_t status = e->Init();
-  if (status != ZX_OK)
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to init entity, status=" << status;
     return status;
+  }
 
   smc_entities_[entity_nr].reset(e);
   return ZX_OK;

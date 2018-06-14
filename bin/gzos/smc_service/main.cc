@@ -13,42 +13,35 @@
 using smc_service::SmcService;
 using smc_service::TrustySmcEntity;
 
-// TODO(james): get ree agent control channel from devmgr
 static zx_status_t get_ree_agent_ctrl_channel(zx::channel* out_ch) {
-  zx_handle_t h1, h2;
-
-  zx_status_t status = zx_channel_create(0, &h1, &h2);
-  if (status != ZX_OK) {
-    return status;
+  zx_handle_t request = zx_get_startup_handle(PA_HND(PA_USER0, 0));
+  if (request == ZX_HANDLE_INVALID) {
+    FXL_LOG(ERROR) << "Can not get smc_service channel";
+    return ZX_ERR_NO_RESOURCES;
   }
 
-  out_ch->reset(h1);
+  out_ch->reset(request);
   return ZX_OK;
 }
 
 int main(int argc, const char** argv) {
-
-  SmcService* s = SmcService::GetInstance();
-  if (s == nullptr) {
-    FXL_LOG(ERROR) << "Failed to get smc service instance";
+  zx::channel ch;
+  zx_status_t status = get_ree_agent_ctrl_channel(&ch);
+  if (status != ZX_OK)
     return 1;
-  }
 
   async::Loop loop(&kAsyncLoopConfigMakeDefault);
 
-  zx::channel ree_agent;
-  zx_status_t status = get_ree_agent_ctrl_channel(&ree_agent);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Unable to get ree agent control channel";
+  SmcService* s = SmcService::GetInstance();
+  if (s == nullptr)
     return 1;
-  }
 
   status = s->AddSmcEntity(SMC_ENTITY_TRUSTED_OS,
                            new TrustySmcEntity(loop.async(),
-                           fbl::move(ree_agent),
+                           fbl::move(ch),
                            s->GetSharedMem()));
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to add Trusty smc entity object";
+    FXL_LOG(ERROR) << "Failed to add Trusty smc entity, status=" << status;
     return 1;
   }
 

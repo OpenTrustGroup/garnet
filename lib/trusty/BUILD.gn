@@ -10,7 +10,6 @@ shared_library("trusty") {
     "shared_mem.h",
     "tipc_device.cc",
     "tipc_device.h",
-    "tipc_msg.h",
     "virtio_device.cc",
     "virtio_device.h",
     "virtio_queue.cc",

@@ -11,6 +11,7 @@ source_set("lib") {
     "ree_message_impl.h",
     "tipc_agent.cc",
     "tipc_agent.h",
+    "tipc_msg.h",
   ]
 
   public_deps = [

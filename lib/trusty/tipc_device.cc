@@ -7,7 +7,6 @@
 #include <virtio/virtio_ring.h>
 
 #include "garnet/lib/trusty/tipc_device.h"
-#include "garnet/lib/trusty/tipc_msg.h"
 #include "lib/fxl/logging.h"
 
 namespace trusty {

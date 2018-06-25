@@ -3,14 +3,9 @@
 // found in the LICENSE file.
 
 #include "garnet/bin/gzos/ree_agent/tipc_agent.h"
-#include "garnet/lib/trusty/tipc_msg.h"
+#include "garnet/bin/gzos/ree_agent/tipc_msg.h"
 
 namespace ree_agent {
-
-using trusty::tipc_hdr;
-using trusty::tipc_ctrl_msg_hdr;
-using trusty::CtrlMessage;
-using trusty::kTipcCtrlAddress;
 
 TipcAgent::TipcAgent(uint32_t id, zx::channel ch, size_t max_msg_size)
     : ReeAgent(id, std::move(ch), max_msg_size) {}

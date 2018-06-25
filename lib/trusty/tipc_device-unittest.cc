@@ -14,7 +14,6 @@
 #include <zx/vmo.h>
 
 #include "garnet/lib/trusty/tipc_device.h"
-#include "garnet/lib/trusty/tipc_msg.h"
 #include "garnet/lib/trusty/tipc_remote_fake.h"
 #include "gtest/gtest.h"
 
@@ -226,64 +225,15 @@ class TransactionTest : public VirtioBusStateTest {
     VirtioBusStart();
   }
 
-  void TipcDeviceGoOnline() {
-    char msg_buf[sizeof(tipc_hdr) + sizeof(tipc_ctrl_msg_hdr)];
-
-    auto hdr = reinterpret_cast<tipc_hdr*>(msg_buf);
-    auto ctrl_msg = reinterpret_cast<tipc_ctrl_msg_hdr*>(hdr->data);
-
-    hdr->src = kTipcCtrlAddress;
-    hdr->dst = kTipcCtrlAddress;
-    hdr->reserved = 0;
-    hdr->len = sizeof(tipc_ctrl_msg_hdr);
-    hdr->flags = 0;
-
-    ctrl_msg->type = CtrlMessage::GO_ONLINE;
-    ctrl_msg->body_len = 0;
-
-    ASSERT_EQ(channel_.write(0, msg_buf, sizeof(msg_buf), NULL, 0), ZX_OK);
-  }
-
   void VirtioBusStart() {
     auto tipc_frontend = remote_->GetFrontend(tipc_dev_->notify_id());
     ASSERT_TRUE(tipc_frontend != nullptr);
 
-    // Allocate buffer for online message
-    size_t msg_size = sizeof(tipc_hdr) + sizeof(tipc_ctrl_msg_hdr);
-    auto msg_buf = remote_->AllocBuffer(msg_size);
-    ASSERT_TRUE(msg_buf != nullptr);
-    ASSERT_EQ(tipc_frontend->rx_queue()
-                  .BuildDescriptor()
-                  .AppendWriteable(msg_buf, msg_size)
-                  .Build(),
-              ZX_OK);
-
     // Sent the processed resource table back to VirtioBus, and notify
-    // it to start service. Each Tipc device will send back a control
-    // message to tipc frontend after it is ready to online.
+    // it to start service.
     ASSERT_EQ(bus_->Start(rsc_table_, rsc_table_size_), ZX_OK);
 
-    TipcDeviceGoOnline();
-
     loop_.RunUntilIdle();
-
-    // Verify the online message
-    virtio_desc_t desc;
-    volatile vring_used_elem* used = tipc_frontend->rx_queue().ReadFromUsed();
-    ASSERT_TRUE(used != nullptr);
-    EXPECT_EQ(tipc_frontend->rx_queue().queue()->ReadDesc(used->id, &desc),
-              ZX_OK);
-    EXPECT_TRUE(used->len == sizeof(tipc_hdr) + sizeof(tipc_ctrl_msg_hdr));
-    EXPECT_FALSE(desc.has_next);
-
-    auto hdr = reinterpret_cast<tipc_hdr*>(desc.addr);
-    EXPECT_EQ(hdr->src, kTipcCtrlAddress);
-    EXPECT_EQ(hdr->dst, kTipcCtrlAddress);
-    EXPECT_EQ(hdr->len, sizeof(tipc_ctrl_msg_hdr));
-
-    auto ctrl_hdr = reinterpret_cast<tipc_ctrl_msg_hdr*>(hdr + 1);
-    EXPECT_EQ(ctrl_hdr->type, CtrlMessage::GO_ONLINE);
-    EXPECT_EQ(ctrl_hdr->body_len, 0u);
   }
 };
 

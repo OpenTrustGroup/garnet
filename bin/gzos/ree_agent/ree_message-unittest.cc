@@ -9,7 +9,7 @@
 #include "lib/fxl/strings/string_printf.h"
 
 #include "garnet/bin/gzos/ree_agent/ree_message_impl.h"
-#include "garnet/lib/trusty/tipc_msg.h"
+#include "garnet/bin/gzos/ree_agent/tipc_msg.h"
 
 namespace ree_agent {
 
@@ -83,7 +83,7 @@ TEST_F(ReeMessageTest, StartTipcMessageChannelOK) {
   ASSERT_EQ(status, ZX_OK);
 
   uint32_t expect =
-      sizeof(trusty::tipc_hdr) + sizeof(trusty::tipc_ctrl_msg_hdr);
+      sizeof(tipc_hdr) + sizeof(tipc_ctrl_msg_hdr);
   uint32_t actual;
 
   char buf[expect + 16];
@@ -91,13 +91,13 @@ TEST_F(ReeMessageTest, StartTipcMessageChannelOK) {
             ZX_OK);
   ASSERT_EQ(actual, expect);
 
-  auto hdr = reinterpret_cast<trusty::tipc_hdr*>(buf);
-  EXPECT_EQ(hdr->src, trusty::kTipcCtrlAddress);
-  EXPECT_EQ(hdr->dst, trusty::kTipcCtrlAddress);
-  EXPECT_EQ(hdr->len, sizeof(trusty::tipc_ctrl_msg_hdr));
+  auto hdr = reinterpret_cast<tipc_hdr*>(buf);
+  EXPECT_EQ(hdr->src, kTipcCtrlAddress);
+  EXPECT_EQ(hdr->dst, kTipcCtrlAddress);
+  EXPECT_EQ(hdr->len, sizeof(tipc_ctrl_msg_hdr));
 
-  auto ctrl_hdr = reinterpret_cast<trusty::tipc_ctrl_msg_hdr*>(hdr + 1);
-  EXPECT_EQ(ctrl_hdr->type, trusty::CtrlMessage::GO_ONLINE);
+  auto ctrl_hdr = reinterpret_cast<tipc_ctrl_msg_hdr*>(hdr + 1);
+  EXPECT_EQ(ctrl_hdr->type, CtrlMessage::GO_ONLINE);
   EXPECT_EQ(ctrl_hdr->body_len, 0u);
 }
 

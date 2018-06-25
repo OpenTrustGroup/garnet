@@ -6,7 +6,7 @@
 
 #include <zircon/types.h>
 
-namespace trusty {
+namespace ree_agent {
 
 static constexpr int kTipcMaxServerNameLength = 256;
 
@@ -61,4 +61,4 @@ struct tipc_disc_req_body {
   uint32_t target;
 } __PACKED;
 
-}  // namespace trusty
+}  // namespace ree_agent

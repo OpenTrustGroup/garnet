@@ -14,6 +14,7 @@
 #include <fbl/unique_ptr.h>
 
 #include "garnet/bin/gzos/ree_agent/ree_agent.h"
+#include "garnet/bin/gzos/ree_agent/ta_service.h"
 
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/logging.h"
@@ -27,10 +28,13 @@ enum Action { Start, Stop };
 
 class ReeMessageImpl : public ReeMessage {
  public:
-  ReeMessageImpl() : binding_(this) {}
+  ReeMessageImpl(TaServices& service_provider)
+      : binding_(this), ta_service_provider_(service_provider) {}
 
-  void Bind(zx::channel from_tipc_device) {
-    binding_.Bind(std::move(from_tipc_device));
+  ReeMessageImpl() = delete;
+
+  void Bind(zx::channel from_trusty_virtio) {
+    binding_.Bind(std::move(from_trusty_virtio));
   }
 
   void AddMessageChannel(fidl::VectorPtr<MessageChannelInfo> msg_chan_infos,
@@ -48,6 +52,7 @@ class ReeMessageImpl : public ReeMessage {
   fbl::Mutex lock_;
   fidl::Binding<ReeMessage> binding_;
   fbl::unique_ptr<ReeAgent> agents_[kMaxMsgChannels] FXL_GUARDED_BY(lock_);
+  TaServices& ta_service_provider_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(ReeMessageImpl);
 };

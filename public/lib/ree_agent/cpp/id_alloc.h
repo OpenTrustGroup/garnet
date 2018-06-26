@@ -35,12 +35,14 @@ class IdAllocator {
   }
 
   zx_status_t Free(uint32_t id) {
-    if (!id_bitmap_.GetOne(id)) {
+    if (!InUse(id)) {
       return ZX_ERR_INVALID_ARGS;
     }
 
     return id_bitmap_.ClearOne(id);
   }
+
+  bool InUse(uint32_t id) { return id_bitmap_.GetOne(id); }
 
  private:
   bitmap::RawBitmapGeneric<bitmap::FixedStorage<ID_MAX>> id_bitmap_;

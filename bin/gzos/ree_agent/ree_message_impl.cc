@@ -29,7 +29,7 @@ void ReeMessageImpl::AddMessageChannel(
     switch (info.type) {
       case MessageType::Tipc:
         agent = new TipcAgent(info.id, std::move(info.channel),
-                              info.max_messge_size);
+                              info.max_message_size, ta_service_provider_);
         break;
       default:
         cb(ZX_ERR_NOT_SUPPORTED);

@@ -11,6 +11,8 @@ namespace ree_agent {
 static constexpr int kTipcMaxServerNameLength = 256;
 
 static constexpr uint32_t kTipcCtrlAddress = 53;
+static constexpr uint32_t kTipcAddrMaxNum = 256;
+static constexpr uint32_t kTipcAddrBase = 1000;
 
 struct tipc_hdr {
   uint32_t src;

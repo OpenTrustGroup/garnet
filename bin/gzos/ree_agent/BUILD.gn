@@ -9,6 +9,7 @@ source_set("lib") {
     "ree_agent.h",
     "ree_message_impl.cc",
     "ree_message_impl.h",
+    "ta_service.h",
     "tipc_agent.cc",
     "tipc_agent.h",
     "tipc_msg.h",
@@ -59,7 +60,8 @@ executable("ree_agent_unittests") {
     "ree_message-unittest.cc",
     "channel-unittest.cc",
     "object-unittest.cc",
-    "port-unittest.cc"
+    "port-unittest.cc",
+    "tipc_agent_unittest.cc",
   ]
 
   deps = [

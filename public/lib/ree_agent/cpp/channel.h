@@ -17,6 +17,9 @@
 
 namespace ree_agent {
 
+static constexpr uint32_t kTipcChanMaxBufItems = 32;
+static constexpr uint32_t kTipcChanMaxBufSize = 4096;
+
 class TipcChannelImpl
     : public TipcChannel,
       public TipcObject,

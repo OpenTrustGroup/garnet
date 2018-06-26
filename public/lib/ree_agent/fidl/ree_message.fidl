@@ -12,7 +12,7 @@ enum MessageType {
 struct MessageChannelInfo {
   MessageType type;
   uint32 id;
-  uint32 max_messge_size;
+  uint32 max_message_size;
   handle<channel> channel;
 };
 

@@ -34,21 +34,28 @@ struct WaitResult {
 };
 
 class TipcObject;
-class TipcObjectSet;
+class TipcObjectObserver;
 
-class TipcObjectRef
-    : public fbl::DoublyLinkedListable<fbl::unique_ptr<TipcObjectRef>> {
- public:
+struct TipcObjectRef
+    : public fbl::RefCounted<TipcObjectRef>,
+      public fbl::DoublyLinkedListable<fbl::RefPtr<TipcObjectRef>> {
   TipcObjectRef() = delete;
 
-  TipcObjectRef(TipcObject* obj) : obj_ref_(obj) {}
+  TipcObjectRef(TipcObject* o) : obj(o) {}
 
-  TipcObject* get() const { return obj_ref_.get(); }
+  TipcObjectObserver* parent;
 
-  TipcObject* operator->() const { return obj_ref_.get(); }
+  fbl::RefPtr<TipcObject> obj;
 
- private:
-  fbl::RefPtr<TipcObject> obj_ref_;
+  using NodeState = fbl::DoublyLinkedListNodeState<fbl::RefPtr<TipcObjectRef>>;
+  NodeState pending_list_node;
+};
+
+class TipcObjectObserver {
+ public:
+  virtual void OnChildRemoved(fbl::RefPtr<TipcObjectRef> child_ref) = 0;
+
+  virtual void OnEvent(fbl::RefPtr<TipcObjectRef> child_ref) = 0;
 };
 
 class TipcObject : public fbl::RefCounted<TipcObject> {
@@ -63,56 +70,41 @@ class TipcObject : public fbl::RefCounted<TipcObject> {
 
   virtual zx_status_t Wait(WaitResult* result, zx::time deadline);
 
-  virtual zx_status_t SignalEvent(uint32_t set_mask,
-                                  TipcObject* notifier = nullptr);
+  void SignalEvent(uint32_t set_mask);
 
-  zx_status_t ClearEvent(uint32_t clear_mask);
+  void ClearEvent(uint32_t clear_mask);
 
-  zx_status_t AddParent(TipcObjectSet* obj_set);
-  void RemoveParent(TipcObjectSet* obj_set);
-  void RemoveAllParents();
+  zx_status_t AddParent(TipcObjectObserver* parent,
+                        fbl::RefPtr<TipcObjectRef>* child_ref_out);
+  void RemoveParent(TipcObjectObserver* parent);
 
   bool is_port() { return (get_type() == ObjectType::PORT); }
   bool is_channel() { return (get_type() == ObjectType::CHANNEL); }
   bool is_object_set() { return (get_type() == ObjectType::OBJECT_SET); }
 
   uint32_t handle_id() const { return handle_id_; }
+  uint32_t tipc_event_state();
   void* cookie() { return cookie_; }
+  void set_cookie(void* cookie) { cookie_ = cookie; }
 
  protected:
-  class TipcObjectRefList
-      : public fbl::DoublyLinkedList<fbl::unique_ptr<TipcObjectRef>> {
-   public:
-    bool Contains(uint32_t handle_id) {
-      auto it = find_if([&handle_id](const TipcObjectRef& ref) {
-        return (handle_id == ref->handle_id());
-      });
-      return (it != end());
-    }
-
-    iterator Find(uint32_t handle_id) {
-      auto it = find_if([&handle_id](const TipcObjectRef& ref) {
-        return (handle_id == ref->handle_id());
-      });
-      return it;
-    }
-  };
-
   virtual ObjectType get_type() = 0;
 
  private:
   friend class TipcObjectManager;
-  friend class TipcObjectSet;
+
+  void RemoveAllParents();
 
   uint32_t handle_id_;
   void* cookie_;
 
   zx::event event_;
-  uint32_t tipc_event_state();
 
-  fbl::Mutex mutex_;
+  using RefList = fbl::DoublyLinkedList<fbl::RefPtr<TipcObjectRef>>;
+
+  RefList ref_list_ FXL_GUARDED_BY(mutex_);
   uint32_t tipc_event_state_ FXL_GUARDED_BY(mutex_);
-  TipcObjectRefList parent_list_ FXL_GUARDED_BY(mutex_);
+  fbl::Mutex mutex_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TipcObject);
 };

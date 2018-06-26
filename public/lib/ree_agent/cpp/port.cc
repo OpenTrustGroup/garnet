@@ -37,8 +37,7 @@ void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
   channel->BindPeerInterfaceHandle(std::move(peer_handle));
   AddPendingRequest(channel);
 
-  err = SignalEvent(TipcEvent::READY);
-  FXL_DCHECK(err == ZX_OK);
+  SignalEvent(TipcEvent::READY);
 
   auto local_handle = channel->GetInterfaceHandle();
   callback(ZX_OK, std::move(local_handle));

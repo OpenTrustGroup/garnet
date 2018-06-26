@@ -37,7 +37,7 @@ TEST_F(TipcPortTest, PortConnect) {
   loop_.RunUntilIdle();
 
   channel->SetReadyCallback([&channel]() {
-    EXPECT_EQ(channel->SignalEvent(TipcEvent::READY), ZX_OK);
+    channel->SignalEvent(TipcEvent::READY);
   });
 
   auto local_handle = channel->GetInterfaceHandle();

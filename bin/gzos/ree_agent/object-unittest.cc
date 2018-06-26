@@ -65,14 +65,14 @@ class TipcObjectTest : public ::testing::Test {
   }
 
 TEST_F(TipcObjectTest, WaitObject) {
-  EXPECT_EQ(object1_->SignalEvent(TipcEvent::READY), ZX_OK);
+  object1_->SignalEvent(TipcEvent::READY);
 
   VerifyWaitOne(object1_, TipcEvent::READY);
 
   // Test again should get the same result
   VerifyWaitOne(object1_, TipcEvent::READY);
 
-  EXPECT_EQ(object1_->ClearEvent(TipcEvent::READY), ZX_OK);
+  object1_->ClearEvent(TipcEvent::READY);
 
   // Should timeout now since event is cleared
   WaitResult result;
@@ -81,22 +81,22 @@ TEST_F(TipcObjectTest, WaitObject) {
 }
 
 TEST_F(TipcObjectTest, WaitObjectWithMultipleEvent) {
-  EXPECT_EQ(object1_->SignalEvent(TipcEvent::READY), ZX_OK);
-  EXPECT_EQ(object1_->SignalEvent(TipcEvent::MSG), ZX_OK);
+  object1_->SignalEvent(TipcEvent::READY);
+  object1_->SignalEvent(TipcEvent::MSG);
 
   VerifyWaitOne(object1_, TipcEvent::READY | TipcEvent::MSG);
 }
 
 TEST_F(TipcObjectTest, ClearEvent) {
-  EXPECT_EQ(object1_->SignalEvent(TipcEvent::READY | TipcEvent::MSG), ZX_OK);
+  object1_->SignalEvent(TipcEvent::READY | TipcEvent::MSG);
 
   VerifyWaitOne(object1_, TipcEvent::READY | TipcEvent::MSG);
 
-  EXPECT_EQ(object1_->ClearEvent(TipcEvent::MSG), ZX_OK);
+  object1_->ClearEvent(TipcEvent::MSG);
 
   VerifyWaitOne(object1_, TipcEvent::READY);
 
-  EXPECT_EQ(object1_->ClearEvent(TipcEvent::READY), ZX_OK);
+  object1_->ClearEvent(TipcEvent::READY);
 
   WaitResult result;
   EXPECT_EQ(object1_->Wait(&result, zx::deadline_after(zx::msec(1))),
@@ -104,8 +104,8 @@ TEST_F(TipcObjectTest, ClearEvent) {
 }
 
 TEST_F(TipcObjectTest, WaitAny) {
-  EXPECT_EQ(object1_->SignalEvent(TipcEvent::READY), ZX_OK);
-  EXPECT_EQ(object2_->SignalEvent(TipcEvent::MSG), ZX_OK);
+  object1_->SignalEvent(TipcEvent::READY);
+  object2_->SignalEvent(TipcEvent::MSG);
 
   VerifyWaitAny(object1_->handle_id(), TipcEvent::READY);
   VerifyWaitAny(object2_->handle_id(), TipcEvent::MSG);
@@ -113,13 +113,13 @@ TEST_F(TipcObjectTest, WaitAny) {
   // Should wrap around
   VerifyWaitAny(object1_->handle_id(), TipcEvent::READY);
 
-  EXPECT_EQ(object1_->ClearEvent(TipcEvent::READY), ZX_OK);
+  object1_->ClearEvent(TipcEvent::READY);
 
   // Should always get object2 now since object1 event is cleared
   VerifyWaitAny(object2_->handle_id(), TipcEvent::MSG);
   VerifyWaitAny(object2_->handle_id(), TipcEvent::MSG);
 
-  EXPECT_EQ(object2_->ClearEvent(TipcEvent::MSG), ZX_OK);
+  object2_->ClearEvent(TipcEvent::MSG);
 
   // Should timeout now since all events are cleared
   WaitResult result;
@@ -128,8 +128,8 @@ TEST_F(TipcObjectTest, WaitAny) {
 }
 
 TEST_F(TipcObjectTest, WaitAnyWithMultipleEvent) {
-  EXPECT_EQ(object1_->SignalEvent(TipcEvent::READY), ZX_OK);
-  EXPECT_EQ(object1_->SignalEvent(TipcEvent::MSG), ZX_OK);
+  object1_->SignalEvent(TipcEvent::READY);
+  object1_->SignalEvent(TipcEvent::MSG);
 
   VerifyWaitAny(object1_->handle_id(), TipcEvent::READY | TipcEvent::MSG);
 }
@@ -170,6 +170,56 @@ TEST_F(TipcObjectSetTest, WaitEmptyObjectSet) {
             ZX_ERR_NOT_FOUND);
 }
 
+TEST_F(TipcObjectSetTest, AddRemoveObject) {
+  ASSERT_EQ(object_set1_->AddObject(object1_), ZX_OK);
+  ASSERT_EQ(object_set1_->AddObject(object2_), ZX_OK);
+
+  object1_->SignalEvent(TipcEvent::READY);
+
+  VerifyWaitObjectSet(object_set1_, object1_->handle_id(), TipcEvent::READY);
+
+  object_set1_->RemoveObject(object1_);
+
+  WaitResult result;
+  EXPECT_EQ(object_set1_->Wait(&result, zx::deadline_after(zx::msec(1))),
+            ZX_ERR_TIMED_OUT);
+}
+
+TEST_F(TipcObjectSetTest, NestedAddRemoveObject) {
+  ASSERT_EQ(object_set1_->AddObject(object1_), ZX_OK);
+  ASSERT_EQ(object_set2_->AddObject(object_set1_), ZX_OK);
+
+  object1_->SignalEvent(TipcEvent::READY);
+
+  VerifyWaitObjectSet(object_set2_, object_set1_->handle_id(),
+                      TipcEvent::READY);
+
+  object_set1_->RemoveObject(object1_);
+
+  WaitResult result;
+  EXPECT_EQ(object_set2_->Wait(&result, zx::deadline_after(zx::msec(1))),
+            ZX_ERR_TIMED_OUT);
+}
+
+TEST_F(TipcObjectSetTest, AssertBeforeAdd) {
+  object1_->SignalEvent(TipcEvent::READY);
+
+  ASSERT_EQ(object_set1_->AddObject(object1_), ZX_OK);
+
+  VerifyWaitObjectSet(object_set1_, object1_->handle_id(), TipcEvent::READY);
+}
+
+TEST_F(TipcObjectSetTest, AssertBeforeNestedAdd) {
+  object1_->SignalEvent(TipcEvent::READY);
+
+  ASSERT_EQ(object_set1_->AddObject(object1_), ZX_OK);
+  ASSERT_EQ(object_set2_->AddObject(object_set1_), ZX_OK);
+
+  VerifyWaitObjectSet(object_set2_, object_set1_->handle_id(),
+                      TipcEvent::READY);
+  VerifyWaitObjectSet(object_set1_, object1_->handle_id(), TipcEvent::READY);
+}
+
 TEST_F(TipcObjectSetTest, StackedObjectSet) {
   ASSERT_EQ(object_set1_->AddObject(object1_), ZX_OK);
   ASSERT_EQ(object_set1_->AddObject(object2_), ZX_OK);
@@ -178,8 +228,8 @@ TEST_F(TipcObjectSetTest, StackedObjectSet) {
   ASSERT_EQ(object_set2_->AddObject(object2_), ZX_OK);
   ASSERT_EQ(object_set2_->AddObject(object_set1_), ZX_OK);
 
-  EXPECT_EQ(object1_->SignalEvent(TipcEvent::READY), ZX_OK);
-  EXPECT_EQ(object2_->SignalEvent(TipcEvent::MSG), ZX_OK);
+  object1_->SignalEvent(TipcEvent::READY);
+  object2_->SignalEvent(TipcEvent::MSG);
 
   // Wait from object_set1 and verify result
   VerifyWaitObjectSet(object_set1_, object1_->handle_id(), TipcEvent::READY);
@@ -198,7 +248,7 @@ TEST_F(TipcObjectSetTest, StackedObjectSet) {
   VerifyWaitObjectSet(object_set2_, object_set1_->handle_id(),
                       TipcEvent::READY);
 
-  EXPECT_EQ(object1_->ClearEvent(TipcEvent::READY), ZX_OK);
+  object1_->ClearEvent(TipcEvent::READY);
 
   // Wait from object_set1 should always get object2
   VerifyWaitObjectSet(object_set1_, object2_->handle_id(), TipcEvent::MSG);
@@ -209,7 +259,7 @@ TEST_F(TipcObjectSetTest, StackedObjectSet) {
   VerifyWaitObjectSet(object_set2_, object_set1_->handle_id(),
                       TipcEvent::READY);
 
-  EXPECT_EQ(object2_->ClearEvent(TipcEvent::MSG), ZX_OK);
+  object2_->ClearEvent(TipcEvent::MSG);
 
   // Both object_set should time out
   WaitResult result;

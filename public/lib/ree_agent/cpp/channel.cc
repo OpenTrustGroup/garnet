@@ -113,9 +113,7 @@ void TipcChannelImpl::NotifyMessageItemIsFilled(
   item->update_filled_size(filled_size);
   filled_list_.push_back(fbl::move(item));
 
-  // TODO(sy): try not return error code from SignalEvent()
-  zx_status_t err = SignalEvent(TipcEvent::MSG);
-  FXL_DCHECK(err == ZX_OK);
+  SignalEvent(TipcEvent::MSG);
 
   callback(ZX_OK);
 }
@@ -128,10 +126,7 @@ zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
   zx_status_t status;
 
   if (!is_bound()) {
-    // TODO(sy): try not return error code from SignalEvent()
-    status = SignalEvent(TipcEvent::HUP);
-    FXL_DCHECK(status != ZX_OK);
-
+    SignalEvent(TipcEvent::HUP);
     return ZX_ERR_PEER_CLOSED;
   }
 

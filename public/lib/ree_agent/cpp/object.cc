@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "lib/ree_agent/cpp/object.h"
-#include "lib/ree_agent/cpp/object_set.h"
 
 namespace ree_agent {
 
@@ -14,73 +13,73 @@ TipcObject::TipcObject() : handle_id_(kInvalidHandle), tipc_event_state_(0) {
 
 TipcObject::~TipcObject() = default;
 
-zx_status_t TipcObject::AddParent(TipcObjectSet* obj_set) {
-  FXL_DCHECK(obj_set);
+zx_status_t TipcObject::AddParent(TipcObjectObserver* parent,
+                                  fbl::RefPtr<TipcObjectRef>* child_ref_out) {
+  FXL_DCHECK(parent);
+  FXL_DCHECK(child_ref_out);
   fbl::AutoLock lock(&mutex_);
 
-  if (parent_list_.Contains(obj_set->handle_id())) {
-    return ZX_ERR_ALREADY_EXISTS;
+  for (const auto& ref : ref_list_) {
+    if (ref.parent == parent) {
+      return ZX_ERR_ALREADY_EXISTS;
+    }
   }
 
-  auto ref = fbl::make_unique<TipcObjectRef>(obj_set);
+  auto ref = fbl::MakeRefCounted<TipcObjectRef>(this);
   if (!ref) {
     return ZX_ERR_NO_MEMORY;
   }
+  ref->parent = parent;
 
-  parent_list_.push_back(fbl::move(ref));
+  ref_list_.push_back(ref);
+  *child_ref_out = ref;
+
   return ZX_OK;
 }
 
-void TipcObject::RemoveParent(TipcObjectSet* obj_set) {
+void TipcObject::RemoveParent(TipcObjectObserver* parent) {
+  FXL_DCHECK(parent);
   fbl::AutoLock lock(&mutex_);
 
-  auto it = parent_list_.Find(obj_set->handle_id());
-  if (it != parent_list_.end()) {
-    auto parent = static_cast<TipcObjectSet*>(it->get());
-    parent->RemoveFromPendingList(this);
+  auto it = ref_list_.find_if(
+      [&parent](const TipcObjectRef& ref) { return ref.parent == parent; });
 
-    parent_list_.erase(it);
+  if (it != ref_list_.end()) {
+    ref_list_.erase(it);
+    it->parent->OnChildRemoved(it.CopyPointer());
   }
 }
 
 void TipcObject::RemoveAllParents() {
   fbl::AutoLock lock(&mutex_);
-
-  while (const auto& ref = parent_list_.pop_front()) {
-    auto parent = static_cast<TipcObjectSet*>(ref->get());
-    parent->RemoveFromPendingList(this);
+  while (auto ref = ref_list_.pop_front()) {
+    ref->parent->OnChildRemoved(ref);
   }
 }
 
-zx_status_t TipcObject::SignalEvent(uint32_t set_mask, TipcObject* notifier) {
+void TipcObject::SignalEvent(uint32_t set_mask) {
   if (!set_mask) {
-    return ZX_OK;
+    return;
   }
 
   fbl::AutoLock lock(&mutex_);
-  for (const auto& ref : parent_list_) {
-    auto parent = static_cast<TipcObjectSet*>(ref.get());
-
-    zx_status_t err = parent->SignalEvent(TipcEvent::READY, this);
-    if (err != ZX_OK) {
-      FXL_LOG(ERROR) << "Failed to signal event to parent: " << err;
-      return err;
-    }
+  for (auto& ref : ref_list_) {
+    ref.parent->OnEvent(fbl::WrapRefPtr(&ref));
   }
 
   tipc_event_state_ |= set_mask;
-  return event_.signal(0x0, EVENT_PENDING);
+  zx_status_t err = event_.signal(0x0, EVENT_PENDING);
+  FXL_DCHECK(err == ZX_OK);
 }
 
-zx_status_t TipcObject::ClearEvent(uint32_t clear_mask) {
+void TipcObject::ClearEvent(uint32_t clear_mask) {
   fbl::AutoLock lock(&mutex_);
 
   tipc_event_state_ &= ~clear_mask;
   if (!tipc_event_state_) {
-    return event_.signal(EVENT_PENDING, 0x0);
+    zx_status_t err = event_.signal(EVENT_PENDING, 0x0);
+    FXL_DCHECK(err == ZX_OK);
   }
-
-  return ZX_OK;
 }
 
 zx_signals_t TipcObject::tipc_event_state() {

@@ -26,13 +26,13 @@ class TipcPortImpl : public TipcPort, public TipcObject {
 
   zx_status_t Accept(fbl::RefPtr<TipcChannelImpl>* channel_out);
 
-  ObjectType get_type() override { return ObjectType::PORT; }
-
   void Bind(fidl::InterfaceRequest<TipcPort> request) {
     binding_.Bind(std::move(request));
   }
 
  protected:
+  ObjectType get_type() override { return ObjectType::PORT; }
+
   void Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
                ConnectCallback callback) override;
   void GetInfo(GetInfoCallback callback) override;

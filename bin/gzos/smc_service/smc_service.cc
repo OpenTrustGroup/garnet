@@ -103,7 +103,11 @@ void SmcService::OnSmcReady(async_t* async,
   }
 
   long result = SM_ERR_UNDEFINED_SMC;
-  SmcEntity* entity = GetSmcEntity(SMC_ENTITY(smc_args.smc_nr));
+  uint32_t entity_id = (smc_args.smc_nr == SMC_SC_NOP) ?
+      SMC_ENTITY(smc_args.params[0]) : SMC_ENTITY(smc_args.smc_nr);
+
+  SmcEntity* entity = GetSmcEntity(entity_id);
+
   if (entity != nullptr)
     result = entity->InvokeSmcFunction(&smc_args);
 

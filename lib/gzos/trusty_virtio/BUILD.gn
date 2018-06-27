@@ -4,12 +4,12 @@
 
 import("//build/package.gni")
 
-shared_library("trusty") {
+shared_library("trusty_virtio") {
   sources = [
     "shared_mem.cc",
     "shared_mem.h",
-    "tipc_device.cc",
-    "tipc_device.h",
+    "trusty_virtio_device.cc",
+    "trusty_virtio_device.h",
     "virtio_device.cc",
     "virtio_device.h",
     "virtio_queue.cc",
@@ -37,20 +37,20 @@ shared_library("trusty") {
   configs -= [ "//build/config:symbol_visibility_hidden" ]
 }
 
-executable("trusty_unittests") {
+executable("trusty_virtio_unittests") {
   testonly = true
 
   sources = [
-    "tipc_remote_fake.cc",
-    "tipc_remote_fake.h",
+    "remote_system_fake.cc",
+    "remote_system_fake.h",
     "run_all_unittests.cc",
-    "tipc_device-unittest.cc",
+    "trusty_virtio_device-unittest.cc",
     "virtio_queue_fake.cc",
     "virtio_queue_fake.h"
   ]
 
   deps = [
-    ":trusty",
+    ":trusty_virtio",
     "//third_party/googletest:gtest",
     "//garnet/lib/magma/src/magma_util",
     "//zircon/public/lib/async-loop-cpp",
@@ -58,17 +58,17 @@ executable("trusty_unittests") {
   ]
 }
 
-package("trusty_tests") {
+package("trusty_virtio_tests") {
   testonly = true
   deprecated_system_image = true
 
   deps = [
-    ":trusty_unittests",
+    ":trusty_virtio_unittests",
   ]
 
   tests = [
     {
-      name = "trusty_unittests"
+      name = "trusty_virtio_unittests"
     },
   ]
 }

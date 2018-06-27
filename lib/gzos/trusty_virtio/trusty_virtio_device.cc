@@ -6,33 +6,27 @@
 #include <virtio/virtio.h>
 #include <virtio/virtio_ring.h>
 
-#include "garnet/lib/trusty/tipc_device.h"
+#include "garnet/lib/gzos/trusty_virtio/trusty_virtio_device.h"
 #include "lib/fxl/logging.h"
 
-namespace trusty {
+namespace trusty_virtio {
 
-TipcDevice::TipcDevice(const tipc_vdev_descr& descr,
-                       async_t* async,
-                       zx::channel channel)
+TrustyVirtioDevice::TrustyVirtioDevice(const trusty_vdev_descr& descr,
+                                       async_t* async, zx::channel channel)
     : descr_(descr),
       channel_(fbl::move(channel)),
       rx_stream_(async, rx_queue(), channel_.get()),
       tx_stream_(async, tx_queue(), channel_.get()) {
   descr_.vdev.notifyid = notify_id();
 
-  for (uint8_t i = 0; i < kTipcNumQueues; i++) {
+  for (uint8_t i = 0; i < kNumQueues; i++) {
     queues_[i].set_device(this);
   }
 }
 
-zx_status_t TipcDevice::ValidateDescriptor(tipc_vdev_descr* descr) {
+zx_status_t TrustyVirtioDevice::ValidateDescriptor(trusty_vdev_descr* descr) {
   if (descr->hdr.type != RSC_VDEV) {
     FXL_LOG(ERROR) << "unexpected type " << descr->hdr.type;
-    return ZX_ERR_INVALID_ARGS;
-  }
-
-  if (descr->vdev.id != kTipcVirtioDeviceId) {
-    FXL_LOG(ERROR) << "unexpected vdev id " << descr->vdev.id;
     return ZX_ERR_INVALID_ARGS;
   }
 
@@ -41,10 +35,9 @@ zx_status_t TipcDevice::ValidateDescriptor(tipc_vdev_descr* descr) {
     return ZX_ERR_INVALID_ARGS;
   }
 
-  if (descr->vdev.num_of_vrings != kTipcNumQueues) {
+  if (descr->vdev.num_of_vrings != kNumQueues) {
     FXL_LOG(ERROR) << "unexpected number of vrings ("
-                   << descr->vdev.num_of_vrings << " vs. " << kTipcNumQueues
-                   << ")";
+                   << descr->vdev.num_of_vrings << " vs. " << kNumQueues << ")";
     return ZX_ERR_INVALID_ARGS;
   }
 
@@ -58,7 +51,7 @@ zx_status_t TipcDevice::ValidateDescriptor(tipc_vdev_descr* descr) {
   return ZX_OK;
 }
 
-zx_status_t TipcDevice::InitializeVring(fw_rsc_vdev* descr) {
+zx_status_t TrustyVirtioDevice::InitializeVring(fw_rsc_vdev* descr) {
   for (uint8_t i = 0; i < descr->num_of_vrings; i++) {
     fw_rsc_vdev_vring* vring_descr = &descr->vring[i];
     VirtioQueue* queue = &queues_[i];
@@ -87,8 +80,8 @@ zx_status_t TipcDevice::InitializeVring(fw_rsc_vdev* descr) {
   return ZX_OK;
 }
 
-zx_status_t TipcDevice::Probe(void* rsc_entry) {
-  auto descr = reinterpret_cast<tipc_vdev_descr*>(rsc_entry);
+zx_status_t TrustyVirtioDevice::Probe(void* rsc_entry) {
+  auto descr = reinterpret_cast<trusty_vdev_descr*>(rsc_entry);
 
   zx_status_t status = ValidateDescriptor(descr);
   if (status != ZX_OK) {
@@ -120,14 +113,14 @@ zx_status_t TipcDevice::Probe(void* rsc_entry) {
   set_state(State::ACTIVE);
 
   // Kick all vqueues for ree_agent to send message back to REE
-  for (uint8_t vq_id = 0; vq_id < kTipcNumQueues; vq_id++) {
+  for (uint8_t vq_id = 0; vq_id < kNumQueues; vq_id++) {
     Kick(vq_id);
   }
 
   return ZX_OK;
 }
 
-zx_status_t TipcDevice::Reset() {
+zx_status_t TrustyVirtioDevice::Reset() {
   if (state() == State::RESET) {
     return ZX_OK;
   }
@@ -139,8 +132,8 @@ zx_status_t TipcDevice::Reset() {
   return ZX_OK;
 }
 
-zx_status_t TipcDevice::Kick(uint32_t vq_id) {
-  if (vq_id >= kTipcNumQueues)
+zx_status_t TrustyVirtioDevice::Kick(uint32_t vq_id) {
+  if (vq_id >= kNumQueues)
     return ZX_ERR_NOT_FOUND;
 
   if (state() != State::ACTIVE) {
@@ -150,28 +143,26 @@ zx_status_t TipcDevice::Kick(uint32_t vq_id) {
   return queues_[vq_id].Signal();
 }
 
-TipcDevice::Stream::Stream(async_t* async,
-                           VirtioQueue* queue,
-                           zx_handle_t channel)
+TrustyVirtioDevice::Stream::Stream(async_t* async, VirtioQueue* queue,
+                                   zx_handle_t channel)
     : async_(async),
       channel_(channel),
       queue_(queue),
       queue_wait_(async, queue, fbl::BindMember(this, &Stream::OnQueueReady)) {}
 
-zx_status_t TipcDevice::Stream::Start() {
-  return WaitOnQueue();
-}
+zx_status_t TrustyVirtioDevice::Stream::Start() { return WaitOnQueue(); }
 
-void TipcDevice::Stream::Stop() {
+void TrustyVirtioDevice::Stream::Stop() {
   channel_wait_.Cancel();
   queue_wait_.Cancel();
 }
 
-zx_status_t TipcDevice::Stream::WaitOnQueue() {
+zx_status_t TrustyVirtioDevice::Stream::WaitOnQueue() {
   return queue_wait_.Begin();
 }
 
-void TipcDevice::Stream::OnQueueReady(zx_status_t status, uint16_t index) {
+void TrustyVirtioDevice::Stream::OnQueueReady(zx_status_t status,
+                                              uint16_t index) {
   if (status != ZX_OK) {
     OnStreamClosed(status, "async wait on queue");
     return;
@@ -195,7 +186,7 @@ void TipcDevice::Stream::OnQueueReady(zx_status_t status, uint16_t index) {
   }
 }
 
-void TipcDevice::Stream::DropBuffer() {
+void TrustyVirtioDevice::Stream::DropBuffer() {
   FXL_LOG(WARNING) << "buffer not in shared memory, drop it";
 
   zx_status_t status = queue_->Return(head_, 0);
@@ -209,7 +200,7 @@ void TipcDevice::Stream::DropBuffer() {
   }
 }
 
-zx_status_t TipcDevice::Stream::WaitOnChannel() {
+zx_status_t TrustyVirtioDevice::Stream::WaitOnChannel() {
   zx_signals_t signals = ZX_CHANNEL_PEER_CLOSED;
   signals |= desc_.writable ? ZX_CHANNEL_READABLE : ZX_CHANNEL_WRITABLE;
   channel_wait_.set_object(channel_);
@@ -217,10 +208,9 @@ zx_status_t TipcDevice::Stream::WaitOnChannel() {
   return channel_wait_.Begin(async_);
 }
 
-void TipcDevice::Stream::OnChannelReady(async_t* async,
-                                        async::WaitBase* wait,
-                                        zx_status_t status,
-                                        const zx_packet_signal_t* signal) {
+void TrustyVirtioDevice::Stream::OnChannelReady(
+    async_t* async, async::WaitBase* wait, zx_status_t status,
+    const zx_packet_signal_t* signal) {
   if (status != ZX_OK) {
     OnStreamClosed(status, "async wait on channel");
     return;
@@ -261,11 +251,11 @@ void TipcDevice::Stream::OnChannelReady(async_t* async,
   }
 }
 
-void TipcDevice::Stream::OnStreamClosed(zx_status_t status,
-                                        const char* action) {
+void TrustyVirtioDevice::Stream::OnStreamClosed(zx_status_t status,
+                                                const char* action) {
   Stop();
   FXL_LOG(ERROR) << "Stream closed during step '" << action << "' (" << status
                  << ")";
 }
 
-}  // namespace trusty
+}  // namespace trusty_virtio

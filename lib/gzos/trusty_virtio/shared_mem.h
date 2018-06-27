@@ -13,7 +13,7 @@
 
 #include "garnet/public/lib/fxl/logging.h"
 
-namespace trusty {
+namespace trusty_virtio {
 
 static bool validate_range(uintptr_t addr,
                            size_t size,
@@ -87,4 +87,4 @@ class SharedMem : public fbl::RefCounted<SharedMem> {
   bool use_cache_;
 };
 
-}  // namespace trusty
+}  // namespace trusty_virtio

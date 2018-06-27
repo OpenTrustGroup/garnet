@@ -8,11 +8,11 @@
 #include <virtio/virtio.h>
 #include <virtio/virtio_ring.h>
 
-#include "garnet/lib/trusty/virtio_queue.h"
+#include "garnet/lib/gzos/trusty_virtio/virtio_queue.h"
 
 struct fw_rsc_vdev_vring;
 
-namespace trusty {
+namespace trusty_virtio {
 
 class VirtioQueueFake;
 
@@ -115,4 +115,4 @@ class VirtioQueueFake {
   uint16_t last_used_idx_ = 0;
 };
 
-}  // namespace trusty
+}  // namespace trusty_virtio

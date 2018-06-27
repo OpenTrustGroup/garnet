@@ -28,7 +28,7 @@
 #include <fbl/auto_call.h>
 
 #include "garnet/bin/gzos/smc_service/trusty_smc.h"
-#include "garnet/lib/trusty/tipc_device.h"
+#include "garnet/lib/gzos/trusty_virtio/trusty_virtio_device.h"
 
 #include "lib/fxl/arraysize.h"
 
@@ -73,19 +73,19 @@ typedef struct ns_page_info {
   uint64_t attr;
 } ns_page_info_t;
 
-namespace trusty {
-  constexpr tipc_vdev_descr kTipcDescriptors[] = {
-      DECLARE_TIPC_DEVICE_DESCR("dev0", 32, 32),
-  };
+namespace trusty_virtio {
+constexpr trusty_vdev_descr kVdevDescriptors[] = {
+    DECLARE_TRUSTY_VIRTIO_DEVICE_DESCR(kTipcDeviceId, "dev0", 32, 32),
+};
 }
 
 namespace smc_service {
 
-using trusty::tipc_vdev_descr;
-using trusty::kTipcDescriptors;
-using trusty::VirtioBus;
-using trusty::TipcDevice;
-using trusty::VirtioDevice;
+using trusty_virtio::kVdevDescriptors;
+using trusty_virtio::trusty_vdev_descr;
+using trusty_virtio::TrustyVirtioDevice;
+using trusty_virtio::VirtioBus;
+using trusty_virtio::VirtioDevice;
 
 TrustySmcEntity::TrustySmcEntity(async_t* async, zx::channel ch,
                                  fbl::RefPtr<SharedMem> shm)
@@ -95,20 +95,20 @@ TrustySmcEntity::TrustySmcEntity(async_t* async, zx::channel ch,
 
 zx_status_t TrustySmcEntity::Init() {
   // Create VirtioBus
-  vbus_ = fbl::make_unique<trusty::VirtioBus>(shared_mem_);
+  vbus_ = fbl::make_unique<trusty_virtio::VirtioBus>(shared_mem_);
   if (vbus_ == nullptr) {
     FXL_LOG(ERROR) << "Failed to create virtio bus object";
     return ZX_ERR_NO_MEMORY;
   }
 
-  auto delete_vbus = fbl::MakeAutoCall([&](){ vbus_.reset(nullptr); });
+  auto delete_vbus = fbl::MakeAutoCall([&]() { vbus_.reset(nullptr); });
 
   fidl::VectorPtr<ree_agent::MessageChannelInfo> ch_infos;
 
   zx_status_t status = ZX_OK;
-  // Create tipc devices and add to virtio bus
-  for (uint32_t i = 0; i < arraysize(kTipcDescriptors); i++) {
-    const tipc_vdev_descr* desc = &kTipcDescriptors[i];
+  // Create trusty virtio devices and add to virtio bus
+  for (uint32_t i = 0; i < arraysize(kVdevDescriptors); i++) {
+    const trusty_vdev_descr* desc = &kVdevDescriptors[i];
 
     zx::channel h1, h2;
     status = zx::channel::create(0, &h1, &h2);
@@ -117,28 +117,27 @@ zx_status_t TrustySmcEntity::Init() {
       return status;
     }
 
-    if (desc->vdev.id != trusty::kTipcVirtioDeviceId) {
+    if (desc->vdev.id != trusty_virtio::kTipcDeviceId) {
       FXL_LOG(ERROR) << "Unsupported virtio device id: " << desc->vdev.id;
       return ZX_ERR_NOT_SUPPORTED;
     }
 
-    auto vdev = fbl::MakeRefCounted<TipcDevice>(kTipcDescriptors[i], async_,
-                                                fbl::move(h2));
+    auto vdev = fbl::MakeRefCounted<TrustyVirtioDevice>(kVdevDescriptors[i],
+                                                        async_, fbl::move(h2));
     if (vdev == nullptr) {
-      FXL_LOG(ERROR) << "Failed to create tipc device object: "
+      FXL_LOG(ERROR) << "Failed to create trusty virtio device object: "
                      << desc->config.dev_name;
       return ZX_ERR_NO_MEMORY;
     }
 
-    ree_agent::MessageChannelInfo ch_info{ree_agent::MessageType::Tipc,
-                                          vdev->notify_id(),
-                                          desc->config.msg_buf_max_size,
-                                          fbl::move(h1)};
+    ree_agent::MessageChannelInfo ch_info{
+        ree_agent::MessageType::Tipc, vdev->notify_id(),
+        desc->config.msg_buf_max_size, fbl::move(h1)};
     ch_infos.push_back(fbl::move(ch_info));
 
     status = vbus_->AddDevice(vdev);
     if (status != ZX_OK) {
-      FXL_LOG(ERROR) << "Failed to add tipc device to virtio bus: "
+      FXL_LOG(ERROR) << "Failed to add trusty virtio device to virtio bus: "
                      << desc->config.dev_name << " (" << status << ")";
       return status;
     }
@@ -200,8 +199,7 @@ static zx_status_t check_mem_attr(ns_page_info_t pi, bool is_shm_use_cache) {
   return ZX_OK;
 }
 
-zx_status_t TrustySmcEntity::GetNsBuf(smc32_args_t* args,
-                                      void** buf,
+zx_status_t TrustySmcEntity::GetNsBuf(smc32_args_t* args, void** buf,
                                       size_t* size) {
   FXL_DCHECK(args != nullptr);
   FXL_DCHECK(size != nullptr);
@@ -262,7 +260,7 @@ static long to_smc_error(long ret) {
 zx_status_t TrustySmcEntity::InvokeNopFunction(smc32_args_t* args) {
   zx_status_t status;
 
-  switch(args->params[0]) {
+  switch (args->params[0]) {
     case SMC_NC_VDEV_KICK_VQ:
       status = vbus_->KickVqueue(args->params[1], args->params[2]);
       break;
@@ -299,8 +297,10 @@ long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
       break;
 
     case SMC_SC_VIRTIO_START:
-      if ((status = GetNsBuf(args, &ns_buf, &size)) != ZX_OK) break;
-      if ((status = vbus_->Start(ns_buf, size)) != ZX_OK) break;
+      if ((status = GetNsBuf(args, &ns_buf, &size)) != ZX_OK)
+        break;
+      if ((status = vbus_->Start(ns_buf, size)) != ZX_OK)
+        break;
 
       ret = ree_message_->Start(nullptr, &status);
       if (!ret || (status != ZX_OK)) {
@@ -312,8 +312,10 @@ long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
       break;
 
     case SMC_SC_VIRTIO_STOP:
-      if ((status = GetNsBuf(args, &ns_buf, &size)) != ZX_OK) break;
-      if ((status = vbus_->Stop(ns_buf, size)) != ZX_OK) break;
+      if ((status = GetNsBuf(args, &ns_buf, &size)) != ZX_OK)
+        break;
+      if ((status = vbus_->Stop(ns_buf, size)) != ZX_OK)
+        break;
 
       ret = ree_message_->Stop(nullptr, &status);
       if (!ret) {
@@ -323,7 +325,8 @@ long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
       break;
 
     case SMC_SC_VDEV_RESET:
-      if ((status = vbus_->ResetDevice(args->params[0])) != ZX_OK) break;
+      if ((status = vbus_->ResetDevice(args->params[0])) != ZX_OK)
+        break;
 
       {
         fidl::VectorPtr<uint32_t> ids;
@@ -349,4 +352,4 @@ long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
   return to_smc_error(status);
 }
 
-} // namespace smc_service
+}  // namespace smc_service

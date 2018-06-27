@@ -8,10 +8,10 @@
 
 #include <string>
 
-#include "garnet/lib/trusty/shared_mem.h"
-#include "garnet/lib/trusty/virtio_device.h"
+#include "garnet/lib/gzos/trusty_virtio/shared_mem.h"
+#include "garnet/lib/gzos/trusty_virtio/virtio_device.h"
 
-namespace trusty {
+namespace trusty_virtio {
 
 zx_status_t VirtioBus::AddDevice(fbl::RefPtr<VirtioDevice> vdev) {
   fbl::AutoLock mutex(&mutex_);
@@ -161,4 +161,4 @@ void VirtioBus::FinalizeVdevRegisteryLocked(void) {
 
 uint32_t VirtioDevice::next_notify_id_ = 0;
 
-}  // namespace trusty
+}  // namespace trusty_virtio

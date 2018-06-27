@@ -8,9 +8,9 @@
 #include <lib/async/cpp/wait.h>
 #include <zircon/types.h>
 
-#include "garnet/lib/trusty/virtio_queue.h"
+#include "garnet/lib/gzos/trusty_virtio/virtio_queue.h"
 
-namespace trusty {
+namespace trusty_virtio {
 
 // Helper for performing async waits against a virtio queue.
 class VirtioQueueWaiter {
@@ -38,4 +38,4 @@ class VirtioQueueWaiter {
   bool pending_ __TA_GUARDED(mutex_) = false;
 };
 
-}  // namespace trusty
+}  // namespace trusty_virtio

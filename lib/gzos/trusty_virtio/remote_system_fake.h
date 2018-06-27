@@ -10,27 +10,27 @@
 #include <virtio/virtio.h>
 #include <virtio/virtio_ring.h>
 
-#include "garnet/lib/trusty/shared_mem.h"
-#include "garnet/lib/trusty/tipc_device.h"
-#include "garnet/lib/trusty/virtio_queue_fake.h"
+#include "garnet/lib/gzos/trusty_virtio/shared_mem.h"
+#include "garnet/lib/gzos/trusty_virtio/trusty_virtio_device.h"
+#include "garnet/lib/gzos/trusty_virtio/virtio_queue_fake.h"
 #include "magma_util/simple_allocator.h"
 
-namespace trusty {
+namespace trusty_virtio {
 
-class TipcFrontendFake;
+class TrustyVirtioDeviceFrontendFake;
 
 // This class emulates a remote system that communicate with us
-class TipcRemoteFake {
+class RemoteSystemFake {
  public:
-  static fbl::unique_ptr<TipcRemoteFake> Create(
+  static fbl::unique_ptr<RemoteSystemFake> Create(
       fbl::RefPtr<SharedMem> shared_mem) {
     auto alloc =
         magma::SimpleAllocator::Create(shared_mem->addr(), shared_mem->size());
     if (!alloc)
       return NULL;
 
-    return fbl::unique_ptr<TipcRemoteFake>(
-        new TipcRemoteFake(std::move(alloc), shared_mem));
+    return fbl::unique_ptr<RemoteSystemFake>(
+        new RemoteSystemFake(std::move(alloc), shared_mem));
   }
 
   zx_status_t HandleResourceTable(
@@ -53,39 +53,40 @@ class TipcRemoteFake {
     return shared_mem_->VirtToPhys(addr, size);
   }
 
-  TipcFrontendFake* GetFrontend(uint32_t notify_id);
+  TrustyVirtioDeviceFrontendFake* GetFrontend(uint32_t notify_id);
 
  private:
-  TipcRemoteFake(std::unique_ptr<magma::SimpleAllocator> alloc,
-                 fbl::RefPtr<SharedMem> shared_mem)
+  RemoteSystemFake(std::unique_ptr<magma::SimpleAllocator> alloc,
+                   fbl::RefPtr<SharedMem> shared_mem)
       : alloc_(std::move(alloc)), shared_mem_(shared_mem) {}
 
   std::unique_ptr<magma::SimpleAllocator> alloc_;
 
   fbl::RefPtr<SharedMem> shared_mem_;
-  fbl::Vector<fbl::unique_ptr<TipcFrontendFake>> frontends_;
+  fbl::Vector<fbl::unique_ptr<TrustyVirtioDeviceFrontendFake>> frontends_;
 };
 
-// This class emulates a fake tipc frontend on the remote system
-class TipcFrontendFake {
+// This class emulates a fake trusty vdev frontend on the remote system
+class TrustyVirtioDeviceFrontendFake {
  public:
-  TipcFrontendFake(TipcDevice* device, TipcRemoteFake* remote)
+  TrustyVirtioDeviceFrontendFake(TrustyVirtioDevice* device,
+                                 RemoteSystemFake* remote)
       : rx_queue_(device->tx_queue()),
         tx_queue_(device->rx_queue()),
         notify_id_(device->notify_id()),
         remote_(remote) {}
-  ~TipcFrontendFake() {}
+  ~TrustyVirtioDeviceFrontendFake() {}
 
   zx_status_t Init(fw_rsc_vdev* vdev) {
     zx_status_t status;
 
-    // Tipc Tx Queue is our Rx Queue
-    status = AllocVring(&rx_queue_, &vdev->vring[kTipcTxQueue]);
+    // Vdev Tx Queue is our Rx Queue
+    status = AllocVring(&rx_queue_, &vdev->vring[kTxQueue]);
     if (status != ZX_OK)
       return status;
 
-    // Tipc Rx Queue is our Tx Queue
-    status = AllocVring(&tx_queue_, &vdev->vring[kTipcRxQueue]);
+    // Vdev Rx Queue is our Tx Queue
+    status = AllocVring(&tx_queue_, &vdev->vring[kRxQueue]);
     if (status != ZX_OK)
       return status;
 
@@ -117,7 +118,7 @@ class TipcFrontendFake {
   VirtioQueueFake rx_queue_;
   VirtioQueueFake tx_queue_;
   uint32_t notify_id_;
-  TipcRemoteFake* remote_ = nullptr;
+  RemoteSystemFake* remote_ = nullptr;
 };
 
-}  // namespace trusty
+}  // namespace trusty_virtio

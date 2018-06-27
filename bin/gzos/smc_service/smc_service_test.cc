@@ -10,7 +10,7 @@
 
 #include "garnet/bin/gzos/smc_service/smc_service.h"
 #include "garnet/bin/gzos/smc_service/trusty_smc.h"
-#include "garnet/lib/trusty/tipc_device.h"
+#include "garnet/lib/gzos/trusty_virtio/trusty_virtio_device.h"
 
 #include "lib/fxl/threading/thread.h"
 
@@ -178,18 +178,18 @@ TEST_F(TrustySmcTest, VirtioGetDescriptorTest) {
   ASSERT_GE((size_t)InvokeSmc(mem_attr), sizeof(resource_table));
 
   resource_table* table = reinterpret_cast<resource_table*>(ns_buf_);
-  EXPECT_EQ(table->ver, trusty::kVirtioResourceTableVersion);
+  EXPECT_EQ(table->ver, trusty_virtio::kVirtioResourceTableVersion);
   EXPECT_EQ(table->num, 1u);
 
-  auto descr = trusty::rsc_entry<trusty::tipc_vdev_descr>(table, 0);
+  auto descr = trusty_virtio::rsc_entry<trusty_virtio::trusty_vdev_descr>(table, 0);
   EXPECT_EQ(descr->hdr.type, RSC_VDEV);
-  EXPECT_EQ(descr->vdev.config_len, sizeof(trusty::tipc_dev_config));
-  EXPECT_EQ(descr->vdev.num_of_vrings, trusty::kTipcNumQueues);
-  EXPECT_EQ(descr->vdev.id, trusty::kTipcVirtioDeviceId);
-  EXPECT_EQ(descr->vrings[trusty::kTipcTxQueue].num, 32u);
-  EXPECT_EQ(descr->vrings[trusty::kTipcTxQueue].notifyid, 1u);
-  EXPECT_EQ(descr->vrings[trusty::kTipcRxQueue].num, 32u);
-  EXPECT_EQ(descr->vrings[trusty::kTipcRxQueue].notifyid, 2u);
+  EXPECT_EQ(descr->vdev.config_len, sizeof(trusty_virtio::trusty_vdev_config));
+  EXPECT_EQ(descr->vdev.num_of_vrings, trusty_virtio::kNumQueues);
+  EXPECT_EQ(descr->vdev.id, trusty_virtio::kTipcDeviceId);
+  EXPECT_EQ(descr->vrings[trusty_virtio::kTxQueue].num, 32u);
+  EXPECT_EQ(descr->vrings[trusty_virtio::kTxQueue].notifyid, 1u);
+  EXPECT_EQ(descr->vrings[trusty_virtio::kRxQueue].num, 32u);
+  EXPECT_EQ(descr->vrings[trusty_virtio::kRxQueue].notifyid, 2u);
   EXPECT_STREQ(descr->config.dev_name, "dev0");
 }
 

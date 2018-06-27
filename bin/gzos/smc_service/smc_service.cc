@@ -28,22 +28,24 @@ SmcService* SmcService::GetInstance() {
     return nullptr;
   }
 
-  auto close_handle = fbl::MakeAutoCall([&](){ zx_handle_close(smc_handle); });
+  auto close_handle = fbl::MakeAutoCall([&]() { zx_handle_close(smc_handle); });
 
   fbl::RefPtr<SharedMem> shared_mem;
   zx::vmo shm_vmo(vmo_handle);
   zx_info_ns_shm_t shm_info = smc_info.ns_shm;
   status = SharedMem::Create(fbl::move(shm_vmo), shm_info, &shared_mem);
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to create shared memory object, status=" << status;
+    FXL_LOG(ERROR) << "Failed to create shared memory object, status="
+                   << status;
     return nullptr;
   }
 
   fbl::AllocChecker ac;
-  service_instance = fbl::make_unique_checked<SmcService>(&ac,
-      smc_handle, fbl::move(shared_mem));
+  service_instance = fbl::make_unique_checked<SmcService>(
+      &ac, smc_handle, fbl::move(shared_mem));
   if (!ac.check()) {
-    FXL_LOG(ERROR) << "Failed to create SmcService object due to not enough memory";
+    FXL_LOG(ERROR)
+        << "Failed to create SmcService object due to not enough memory";
     return nullptr;
   }
 
@@ -73,12 +75,11 @@ zx_status_t SmcService::AddSmcEntity(uint32_t entity_nr, SmcEntity* e) {
 
 SmcEntity* SmcService::GetSmcEntity(uint32_t entity_nr) {
   fbl::AutoLock al(&lock_);
-  return (entity_nr < SMC_NUM_ENTITIES) ? smc_entities_[entity_nr].get() : nullptr;
+  return (entity_nr < SMC_NUM_ENTITIES) ? smc_entities_[entity_nr].get()
+                                        : nullptr;
 };
 
-zx_status_t SmcService::Start(async_t* async) {
-  return WaitOnSmc(async);
-}
+zx_status_t SmcService::Start(async_t* async) { return WaitOnSmc(async); }
 
 zx_status_t SmcService::WaitOnSmc(async_t* async) {
   smc_wait_.set_object(smc_handle_);
@@ -86,8 +87,7 @@ zx_status_t SmcService::WaitOnSmc(async_t* async) {
   return smc_wait_.Begin(async);
 }
 
-void SmcService::OnSmcReady(async_t* async,
-                            async::WaitBase* wait,
+void SmcService::OnSmcReady(async_t* async, async::WaitBase* wait,
                             zx_status_t status,
                             const zx_packet_signal_t* signal) {
   if (status != ZX_OK) {
@@ -103,8 +103,9 @@ void SmcService::OnSmcReady(async_t* async,
   }
 
   long result = SM_ERR_UNDEFINED_SMC;
-  uint32_t entity_id = (smc_args.smc_nr == SMC_SC_NOP) ?
-      SMC_ENTITY(smc_args.params[0]) : SMC_ENTITY(smc_args.smc_nr);
+  uint32_t entity_id = (smc_args.smc_nr == SMC_SC_NOP)
+                           ? SMC_ENTITY(smc_args.params[0])
+                           : SMC_ENTITY(smc_args.smc_nr);
 
   SmcEntity* entity = GetSmcEntity(entity_id);
 
@@ -112,7 +113,7 @@ void SmcService::OnSmcReady(async_t* async,
     result = entity->InvokeSmcFunction(&smc_args);
 
   status = zx_smc_set_result(smc_handle_, result);
-  if(status != ZX_OK) {
+  if (status != ZX_OK) {
     OnSmcClosed(status, "zx_smc_set_result");
     return;
   }
@@ -127,9 +128,8 @@ void SmcService::OnSmcReady(async_t* async,
 
 void SmcService::OnSmcClosed(zx_status_t status, const char* action) {
   smc_wait_.Cancel();
-  FXL_LOG(ERROR) << "Smc handling failed during step '" << action << "' (" << status
-                 << ")";
+  FXL_LOG(ERROR) << "Smc handling failed during step '" << action << "' ("
+                 << status << ")";
 }
 
-} // namespace smc_service
-
+}  // namespace smc_service

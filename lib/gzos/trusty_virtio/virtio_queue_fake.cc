@@ -2,17 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "garnet/lib/trusty/virtio_queue_fake.h"
+#include "garnet/lib/gzos/trusty_virtio/virtio_queue_fake.h"
 
 #include <string.h>
 #include <virtio/virtio.h>
 #include <virtio/virtio_ring.h>
 #include "lib/fxl/logging.h"
 
-#include "garnet/lib/trusty/third_party/remoteproc/remoteproc.h"
-#include "garnet/lib/trusty/virtio_device.h"
+#include "garnet/lib/gzos/trusty_virtio/third_party/remoteproc/remoteproc.h"
+#include "garnet/lib/gzos/trusty_virtio/virtio_device.h"
 
-namespace trusty {
+namespace trusty_virtio {
 
 void VirtioQueueFake::Init(fw_rsc_vdev_vring* vring_descr) {
   queue_size_ = vring_descr->num;
@@ -125,4 +125,4 @@ DescBuilder& DescBuilder::Append(void* buf, size_t buf_len, bool write) {
   return *this;
 }
 
-}  // namespace trusty
+}  // namespace trusty_virtio

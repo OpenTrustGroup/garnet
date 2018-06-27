@@ -18,7 +18,7 @@ struct vring_desc;
 struct vring_avail;
 struct vring_used;
 
-namespace trusty {
+namespace trusty_virtio {
 
 class VirtioDevice;
 class VirtioQueue;
@@ -123,7 +123,7 @@ class VirtioQueue {
 
   // Gets or sets the associated device with this queue.
   VirtioDevice* device() const { return device_; }
-  void set_device(trusty::VirtioDevice* device) { device_ = device; }
+  void set_device(VirtioDevice* device) { device_ = device; }
 
   // Gets of sets the number of descriptors in the queue.
   uint16_t size() const;
@@ -242,10 +242,10 @@ class VirtioQueue {
                           void* ctx);
 
   mutable fbl::Mutex mutex_;
-  trusty::VirtioDevice* device_;
+  VirtioDevice* device_;
   virtio_queue_t ring_ __TA_GUARDED(mutex_) = {};
   zx::event event_;
   uint16_t avail_event_num_ __TA_GUARDED(mutex_) = 1;
 };
 
-}  // namespace trusty
+}  // namespace trusty_virtio

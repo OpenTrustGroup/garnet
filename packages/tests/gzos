@@ -3,7 +3,7 @@
         "cpp"
     ],
     "packages": {
-        "trusty_tests": "//garnet/lib/trusty:trusty_tests",
+        "trusty_virtio_tests": "//garnet/lib/gzos/trusty_virtio:trusty_virtio_tests",
         "ree_agent_tests": "//garnet/bin/gzos/ree_agent:ree_agent_tests",
         "smc_service_tests": "//garnet/bin/gzos/smc_service:smc_service_tests"
     }

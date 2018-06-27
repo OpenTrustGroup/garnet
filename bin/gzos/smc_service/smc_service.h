@@ -16,12 +16,12 @@
 #include <array>
 #include <unordered_map>
 
-#include "garnet/lib/trusty/shared_mem.h"
+#include "garnet/lib/gzos/trusty_virtio/shared_mem.h"
 #include "lib/fxl/logging.h"
 
 namespace smc_service {
 
-using trusty::SharedMem;
+using trusty_virtio::SharedMem;
 using SmcFunction = fbl::Function<long(smc32_args_t* args)>;
 
 class SmcEntity {
@@ -30,9 +30,7 @@ class SmcEntity {
 
   virtual ~SmcEntity() {}
 
-  virtual zx_status_t Init() {
-    return ZX_ERR_NOT_SUPPORTED;
-  };
+  virtual zx_status_t Init() { return ZX_ERR_NOT_SUPPORTED; };
   virtual long InvokeSmcFunction(smc32_args_t* args) {
     return SM_ERR_UNDEFINED_SMC;
   };
@@ -62,9 +60,7 @@ class SmcService {
  private:
   SmcEntity* GetSmcEntity(uint32_t entity_nr);
   zx_status_t WaitOnSmc(async_t* async);
-  void OnSmcReady(async_t* async,
-                  async::WaitBase* wait,
-                  zx_status_t status,
+  void OnSmcReady(async_t* async, async::WaitBase* wait, zx_status_t status,
                   const zx_packet_signal_t* signal);
   void OnSmcClosed(zx_status_t status, const char* action);
 
@@ -75,4 +71,4 @@ class SmcService {
   fbl::Array<fbl::unique_ptr<SmcEntity>> smc_entities_ __TA_GUARDED(lock_);
 };
 
-} // namespace smc_service
+}  // namespace smc_service

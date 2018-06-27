@@ -5,7 +5,7 @@
 #pragma once
 
 #include "garnet/bin/gzos/smc_service/smc_service.h"
-#include "garnet/lib/trusty/virtio_device.h"
+#include "garnet/lib/gzos/trusty_virtio/virtio_device.h"
 
 #include <ree_agent/cpp/fidl.h>
 
@@ -27,8 +27,8 @@ class TrustySmcEntity final : public SmcEntity {
 
   async_t* async_;
   fbl::RefPtr<SharedMem> shared_mem_;
-  fbl::unique_ptr<trusty::VirtioBus> vbus_;
+  fbl::unique_ptr<trusty_virtio::VirtioBus> vbus_;
   ree_agent::ReeMessageSyncPtr ree_message_;
 };
 
-} // namespace smc_service
+}  // namespace smc_service

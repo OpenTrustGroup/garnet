@@ -12,12 +12,12 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "garnet/lib/trusty/shared_mem.h"
+#include "garnet/lib/gzos/trusty_virtio/shared_mem.h"
 
 static constexpr uint32_t kMapFlags =
     ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE | ZX_VM_FLAG_MAP_RANGE;
 
-namespace trusty {
+namespace trusty_virtio {
 
 zx_status_t SharedMem::Create(zx::vmo vmo, zx_info_ns_shm_t vmo_info, fbl::RefPtr<SharedMem>* out) {
   uintptr_t vaddr;
@@ -43,4 +43,4 @@ SharedMem::~SharedMem() {
   }
 }
 
-}  // namespace trusty
+}  // namespace trusty_virtio

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "garnet/lib/trusty/virtio_queue.h"
+#include "garnet/lib/gzos/trusty_virtio/virtio_queue.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -10,10 +10,10 @@
 #include <fbl/unique_ptr.h>
 #include <virtio/virtio_ring.h>
 
-#include "garnet/lib/trusty/virtio_device.h"
+#include "garnet/lib/gzos/trusty_virtio/virtio_device.h"
 #include "lib/fxl/logging.h"
 
-namespace trusty {
+namespace trusty_virtio {
 
 VirtioQueue::VirtioQueue() : device_(nullptr) {
   FXL_CHECK(zx::event::create(0, &event_) == ZX_OK);
@@ -24,7 +24,7 @@ static void queue_set_segment_addr(VirtioQueue* queue,
                                    uint64_t guest_paddr,
                                    size_t size,
                                    T** ptr) {
-  trusty::VirtioDevice* device = queue->device();
+  VirtioDevice* device = queue->device();
   *ptr = device->shared_mem()->PhysToVirt<T>(guest_paddr, size);
 }
 
@@ -364,4 +364,4 @@ zx_status_t VirtioQueue::HandleDescriptor(virtio_queue_fn_t handler,
   return HasAvailLocked() ? ZX_ERR_NEXT : ZX_OK;
 }
 
-}  // namespace trusty
+}  // namespace trusty_virtio

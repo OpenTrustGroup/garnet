@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "garnet/lib/trusty/virtio_queue_waiter.h"
+#include "garnet/lib/gzos/trusty_virtio/virtio_queue_waiter.h"
 
 #include "lib/fxl/logging.h"
 
-namespace trusty {
+namespace trusty_virtio {
 
 VirtioQueueWaiter::VirtioQueueWaiter(async_t* async,
                                      VirtioQueue* queue,
@@ -69,4 +69,4 @@ void VirtioQueueWaiter::WaitHandler(
   handler_(status, index);
 }
 
-}  // namespace trusty
+}  // namespace trusty_virtio

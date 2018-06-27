@@ -12,10 +12,10 @@
 #include <fbl/vector.h>
 #include <zx/vmo.h>
 
-#include "garnet/lib/trusty/shared_mem.h"
-#include "garnet/lib/trusty/third_party/remoteproc/remoteproc.h"
+#include "garnet/lib/gzos/trusty_virtio/shared_mem.h"
+#include "garnet/lib/gzos/trusty_virtio/third_party/remoteproc/remoteproc.h"
 
-namespace trusty {
+namespace trusty_virtio {
 
 static constexpr uint8_t kVirtioResourceTableVersion = 1u;
 
@@ -119,4 +119,4 @@ class VirtioBus {
   fbl::Vector<fbl::RefPtr<VirtioDevice>> vdevs_ __TA_GUARDED(mutex_);
 };
 
-}  // namespace trusty
+}  // namespace trusty_virtio

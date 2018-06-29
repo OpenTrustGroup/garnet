@@ -15,9 +15,11 @@
 #include "garnet/bin/gzos/ree_agent/ta_service.h"
 #include "garnet/bin/gzos/ree_agent/tipc_msg.h"
 
-#include "lib/ree_agent/cpp/channel.h"
-#include "lib/ree_agent/cpp/id_alloc.h"
-#include "lib/ree_agent/cpp/object.h"
+#include "lib/gzos/trusty_ipc/cpp/channel.h"
+#include "lib/gzos/trusty_ipc/cpp/id_alloc.h"
+#include "lib/gzos/trusty_ipc/cpp/object.h"
+
+using namespace trusty_ipc;
 
 namespace ree_agent {
 

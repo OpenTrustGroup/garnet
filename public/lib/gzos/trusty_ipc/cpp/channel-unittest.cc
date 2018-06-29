@@ -7,9 +7,9 @@
 
 #include "gtest/gtest.h"
 #include "lib/fxl/strings/string_printf.h"
-#include "lib/ree_agent/cpp/channel.h"
+#include "lib/gzos/trusty_ipc/cpp/channel.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 class TipcChannelTest : public ::testing::Test {
  public:
@@ -96,4 +96,4 @@ TEST_F(TipcChannelTest, ExchangeMessage) {
   TestSendAndReceive(remote_channel_.get(), local_channel_.get());
 }
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

@@ -2,14 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library ree_agent;
+library trusty_ipc;
 
 struct SharedMessageItem {
   uint32 msg_id;
   handle<vmo> vmo;
 };
 
-[ServiceName="ree_agent::TipcChannel"]
 interface TipcChannel {
   // Close the channel
   1: Close();

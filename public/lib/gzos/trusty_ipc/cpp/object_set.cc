@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "lib/ree_agent/cpp/object_set.h"
-#include "lib/ree_agent/cpp/object_manager.h"
+#include "lib/gzos/trusty_ipc/cpp/object_set.h"
+#include "lib/gzos/trusty_ipc/cpp/object_manager.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 zx_status_t TipcObjectSet::AddObject(fbl::RefPtr<TipcObject> obj) {
   FXL_DCHECK(obj);
@@ -121,4 +121,4 @@ zx_status_t TipcObjectSet::Wait(WaitResult* result, zx::time deadline) {
   return ZX_OK;
 }
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

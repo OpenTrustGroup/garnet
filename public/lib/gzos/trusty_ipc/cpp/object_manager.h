@@ -12,9 +12,9 @@
 
 #include "lib/fxl/logging.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
-#include "lib/ree_agent/cpp/object_set.h"
+#include "lib/gzos/trusty_ipc/cpp/object_set.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 static constexpr uint32_t kMaxHandle = 64;
 
@@ -29,8 +29,7 @@ class TipcObjectManager {
   zx_status_t Wait(WaitResult* result, zx::time deadline);
 
  private:
-  TipcObjectManager()
-      : root_obj_set_(fbl::AdoptRef(new TipcObjectSet())) {}
+  TipcObjectManager() : root_obj_set_(fbl::AdoptRef(new TipcObjectSet())) {}
 
   fbl::RefPtr<TipcObject> object_table_[kMaxHandle] FXL_GUARDED_BY(
       object_table_lock_);
@@ -41,4 +40,4 @@ class TipcObjectManager {
   FXL_DISALLOW_COPY_AND_ASSIGN(TipcObjectManager);
 };
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

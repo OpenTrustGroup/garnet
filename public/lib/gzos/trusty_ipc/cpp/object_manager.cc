@@ -4,10 +4,10 @@
 
 #include <fbl/auto_call.h>
 
-#include "lib/ree_agent/cpp/id_alloc.h"
-#include "lib/ree_agent/cpp/object_manager.h"
+#include "lib/gzos/trusty_ipc/cpp/id_alloc.h"
+#include "lib/gzos/trusty_ipc/cpp/object_manager.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 static IdAllocator<kMaxHandle> id_allocator_;
 
@@ -85,4 +85,4 @@ zx_status_t TipcObjectManager::Wait(WaitResult* result, zx::time deadline) {
   return root_obj_set_->Wait(result, fbl::move(deadline));
 }
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

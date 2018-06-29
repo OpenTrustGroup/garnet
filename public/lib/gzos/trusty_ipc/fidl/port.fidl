@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library ree_agent;
+library trusty_ipc;
 
 interface TipcPort {
   1: GetInfo() -> (uint32 num_items, uint64 item_size);

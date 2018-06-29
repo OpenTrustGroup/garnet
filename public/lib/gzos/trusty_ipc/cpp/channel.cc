@@ -7,9 +7,9 @@
 #include <lib/zx/vmo.h>
 #include <zircon/types.h>
 
-#include "lib/ree_agent/cpp/channel.h"
+#include "lib/gzos/trusty_ipc/cpp/channel.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 zx_status_t TipcChannelImpl::Create(uint32_t num_items, size_t item_size,
                                     fbl::RefPtr<TipcChannelImpl>* out) {
@@ -228,4 +228,4 @@ void TipcChannelImpl::Ready() {
   }
 }
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

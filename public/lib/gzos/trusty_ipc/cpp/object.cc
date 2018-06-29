@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "lib/ree_agent/cpp/object.h"
+#include "lib/gzos/trusty_ipc/cpp/object.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 TipcObject::TipcObject() : handle_id_(kInvalidHandle), tipc_event_state_(0) {
   zx_status_t err = zx::event::create(0, &event_);
@@ -105,4 +105,4 @@ zx_status_t TipcObject::Wait(WaitResult* result, zx::time deadline) {
   return ZX_OK;
 }
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

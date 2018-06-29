@@ -13,9 +13,9 @@
 
 #include "lib/fxl/logging.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
-#include "lib/ree_agent/cpp/object.h"
+#include "lib/gzos/trusty_ipc/cpp/object.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 class TipcObjectSet : public TipcObject, public TipcObjectObserver {
  public:
@@ -45,11 +45,12 @@ class TipcObjectSet : public TipcObject, public TipcObjectObserver {
       return ref.pending_list_node;
     }
   };
-  using PendingList = fbl::DoublyLinkedList<fbl::RefPtr<TipcObjectRef>, PendingListTraits>;
+  using PendingList =
+      fbl::DoublyLinkedList<fbl::RefPtr<TipcObjectRef>, PendingListTraits>;
 
   PendingList pending_list_ FXL_GUARDED_BY(mutex_);
   uint32_t children_count_ FXL_GUARDED_BY(mutex_);
   fbl::Mutex mutex_;
 };
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

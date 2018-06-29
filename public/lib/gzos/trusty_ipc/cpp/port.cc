@@ -4,11 +4,11 @@
 
 #include <fbl/auto_lock.h>
 
-#include "lib/ree_agent/cpp/channel.h"
-#include "lib/ree_agent/cpp/object_manager.h"
-#include "lib/ree_agent/cpp/port.h"
+#include "lib/gzos/trusty_ipc/cpp/channel.h"
+#include "lib/gzos/trusty_ipc/cpp/object_manager.h"
+#include "lib/gzos/trusty_ipc/cpp/port.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 void TipcPortImpl::AddPendingRequest(fbl::RefPtr<TipcChannelImpl> channel) {
   fbl::AutoLock lock(&mutex_);
@@ -65,4 +65,4 @@ zx_status_t TipcPortImpl::Accept(fbl::RefPtr<TipcChannelImpl>* channel_out) {
   return ZX_OK;
 }
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

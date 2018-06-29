@@ -15,9 +15,9 @@
 
 #include "lib/fxl/logging.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
-#include "lib/ree_agent/cpp/id_alloc.h"
+#include "lib/gzos/trusty_ipc/cpp/id_alloc.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 enum TipcEvent : uint32_t {
   READY = 0x1,
@@ -109,4 +109,4 @@ class TipcObject : public fbl::RefCounted<TipcObject> {
   FXL_DISALLOW_COPY_AND_ASSIGN(TipcObject);
 };
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

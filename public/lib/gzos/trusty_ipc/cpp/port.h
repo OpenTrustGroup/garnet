@@ -11,10 +11,9 @@
 
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/logging.h"
-#include "lib/ree_agent/cpp/object.h"
-#include "lib/svc/cpp/services.h"
+#include "lib/gzos/trusty_ipc/cpp/object.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 class TipcChannelImpl;
 
@@ -53,4 +52,4 @@ class TipcPortImpl : public TipcPort, public TipcObject {
   bool HasPendingRequests();
 };
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

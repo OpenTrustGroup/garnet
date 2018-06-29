@@ -7,15 +7,15 @@
 #include <fbl/intrusive_double_list.h>
 #include <fbl/mutex.h>
 #include <fbl/string.h>
-#include <ree_agent/cpp/fidl.h>
+#include <trusty_ipc/cpp/fidl.h>
 
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
-#include "lib/ree_agent/cpp/msg_item.h"
-#include "lib/ree_agent/cpp/object.h"
+#include "lib/gzos/trusty_ipc/cpp/msg_item.h"
+#include "lib/gzos/trusty_ipc/cpp/object.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 static constexpr uint32_t kTipcChanMaxBufItems = 32;
 static constexpr uint32_t kTipcChanMaxBufSize = 4096;
@@ -89,4 +89,4 @@ class TipcChannelImpl
   ReadyCallback ready_callback_;
 };
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

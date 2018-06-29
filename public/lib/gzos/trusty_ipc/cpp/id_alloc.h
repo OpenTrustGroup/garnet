@@ -9,9 +9,9 @@
 
 #include "lib/fxl/logging.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
-template<uint32_t ID_MAX>
+template <uint32_t ID_MAX>
 class IdAllocator {
  public:
   IdAllocator() { id_bitmap_.Reset(ID_MAX); }
@@ -48,4 +48,4 @@ class IdAllocator {
   bitmap::RawBitmapGeneric<bitmap::FixedStorage<ID_MAX>> id_bitmap_;
 };
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

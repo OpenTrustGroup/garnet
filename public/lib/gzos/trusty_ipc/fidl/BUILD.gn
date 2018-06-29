@@ -5,11 +5,10 @@
 import("//build/fidl/fidl.gni")
 
 fidl("fidl") {
-  name = "ree_agent"
+  name = "trusty_ipc"
 
   sources = [
     "channel.fidl",
     "port.fidl",
-    "ree_message.fidl",
   ]
 }

@@ -1,0 +1,60 @@
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/package.gni")
+source_set("cpp") {
+  sources = [
+    "channel.cc",
+    "channel.h",
+    "object.cc",
+    "object.h",
+    "object_set.cc",
+    "object_set.h",
+    "object_manager.cc",
+    "object_manager.h",
+    "port.cc",
+    "port.h",
+    "msg_item.h",
+  ]
+
+  public_deps = [
+    "//garnet/public/lib/fxl",
+    "//garnet/public/lib/gzos/trusty_ipc/fidl",
+    "//zircon/public/lib/bitmap",
+    "//zircon/public/lib/fbl",
+  ]
+}
+
+executable("trusty_ipc_unittests") {
+  visibility = [ ":*" ]
+  testonly = true
+
+  sources = [
+    "run_all_unittests.cc",
+    "port-unittest.cc",
+    "channel-unittest.cc",
+    "object-unittest.cc",
+  ]
+
+  deps = [
+    ":cpp",
+    "//third_party/googletest:gtest",
+    "//zircon/public/lib/async-loop-cpp",
+  ]
+}
+
+package("trusty_ipc_tests") {
+  testonly = true
+  deprecated_system_image = true
+
+  deps = [
+    ":trusty_ipc_unittests",
+  ]
+
+  tests = [
+    {
+      name = "trusty_ipc_unittests"
+    },
+  ]
+}

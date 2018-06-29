@@ -7,10 +7,10 @@
 #include <zircon/compiler.h>
 
 #include "gtest/gtest.h"
-#include "lib/ree_agent/cpp/channel.h"
-#include "lib/ree_agent/cpp/port.h"
+#include "lib/gzos/trusty_ipc/cpp/channel.h"
+#include "lib/gzos/trusty_ipc/cpp/port.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 class TipcPortTest : public ::testing::Test {
  public:
@@ -36,9 +36,8 @@ TEST_F(TipcPortTest, PortConnect) {
 
   loop_.RunUntilIdle();
 
-  channel->SetReadyCallback([&channel]() {
-    channel->SignalEvent(TipcEvent::READY);
-  });
+  channel->SetReadyCallback(
+      [&channel]() { channel->SignalEvent(TipcEvent::READY); });
 
   auto local_handle = channel->GetInterfaceHandle();
   port_client->Connect(
@@ -64,4 +63,4 @@ TEST_F(TipcPortTest, PortConnect) {
   EXPECT_EQ(result.event, TipcEvent::READY);
 }
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

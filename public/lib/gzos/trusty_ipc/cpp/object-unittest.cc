@@ -4,10 +4,10 @@
 
 #include "gtest/gtest.h"
 
-#include "lib/ree_agent/cpp/object.h"
-#include "lib/ree_agent/cpp/object_manager.h"
+#include "lib/gzos/trusty_ipc/cpp/object.h"
+#include "lib/gzos/trusty_ipc/cpp/object_manager.h"
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 class TipcObjectFake : public TipcObject {
  public:
@@ -269,4 +269,4 @@ TEST_F(TipcObjectSetTest, StackedObjectSet) {
             ZX_ERR_TIMED_OUT);
 }
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

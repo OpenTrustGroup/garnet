@@ -6,7 +6,7 @@
 
 #include <fbl/intrusive_double_list.h>
 
-namespace ree_agent {
+namespace trusty_ipc {
 
 class MessageItem
     : public fbl::DoublyLinkedListable<fbl::unique_ptr<MessageItem>> {
@@ -107,4 +107,4 @@ class MessageItem
   FXL_DISALLOW_COPY_AND_ASSIGN(MessageItem);
 };
 
-}  // namespace ree_agent
+}  // namespace trusty_ipc

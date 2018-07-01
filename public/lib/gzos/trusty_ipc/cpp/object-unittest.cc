@@ -159,6 +159,10 @@ class TipcObjectSetTest : public TipcObjectTest {
   fbl::RefPtr<TipcObjectSet> object_set2_;
 };
 
+TEST_F(TipcObjectSetTest, AddSelf) {
+  ASSERT_EQ(object_set1_->AddObject(object_set1_), ZX_ERR_INVALID_ARGS);
+}
+
 TEST_F(TipcObjectSetTest, AddDuplicatedObject) {
   ASSERT_EQ(object_set1_->AddObject(object1_), ZX_OK);
   ASSERT_EQ(object_set1_->AddObject(object1_), ZX_ERR_ALREADY_EXISTS);
@@ -218,6 +222,16 @@ TEST_F(TipcObjectSetTest, AssertBeforeNestedAdd) {
   VerifyWaitObjectSet(object_set2_, object_set1_->handle_id(),
                       TipcEvent::READY);
   VerifyWaitObjectSet(object_set1_, object1_->handle_id(), TipcEvent::READY);
+}
+
+TEST_F(TipcObjectSetTest, CircularReference) {
+  auto object_set3 = fbl::MakeRefCounted<TipcObjectSet>();
+  ASSERT_TRUE(object_set3 != nullptr);
+
+  ASSERT_EQ(object_set2_->AddObject(object_set1_), ZX_OK);
+  ASSERT_EQ(object_set3->AddObject(object_set2_), ZX_OK);
+
+  EXPECT_EQ(object_set1_->AddObject(object_set3), ZX_ERR_INVALID_ARGS);
 }
 
 TEST_F(TipcObjectSetTest, StackedObjectSet) {

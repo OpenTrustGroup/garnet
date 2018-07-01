@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "lib/gzos/trusty_ipc/cpp/object.h"
+#include "lib/gzos/trusty_ipc/cpp/object_set.h"
 
 namespace trusty_ipc {
 
@@ -13,7 +14,7 @@ TipcObject::TipcObject() : handle_id_(kInvalidHandle), tipc_event_state_(0) {
 
 TipcObject::~TipcObject() = default;
 
-zx_status_t TipcObject::AddParent(TipcObjectObserver* parent,
+zx_status_t TipcObject::AddParent(TipcObjectSet* parent,
                                   fbl::RefPtr<TipcObjectRef>* child_ref_out) {
   FXL_DCHECK(parent);
   FXL_DCHECK(child_ref_out);
@@ -37,7 +38,7 @@ zx_status_t TipcObject::AddParent(TipcObjectObserver* parent,
   return ZX_OK;
 }
 
-void TipcObject::RemoveParent(TipcObjectObserver* parent) {
+void TipcObject::RemoveParent(TipcObjectSet* parent) {
   FXL_DCHECK(parent);
   fbl::AutoLock lock(&mutex_);
 
@@ -55,6 +56,27 @@ void TipcObject::RemoveAllParents() {
   while (auto ref = ref_list_.pop_front()) {
     ref->parent->OnChildRemoved(ref);
   }
+}
+
+bool TipcObject::IsMyAncestor(TipcObjectSet* ancestor) {
+  fbl::AutoLock lock(&mutex_);
+
+  if (ref_list_.is_empty()) {
+    return false;
+  }
+
+  for (const auto& ref : ref_list_) {
+    if (ref.parent == ancestor) {
+      return true;
+    }
+
+    auto parent = static_cast<TipcObjectSet*>(ref.parent);
+    if (parent->IsMyAncestor(ancestor)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 void TipcObject::SignalEvent(uint32_t set_mask) {

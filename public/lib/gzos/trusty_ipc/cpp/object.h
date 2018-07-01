@@ -35,11 +35,14 @@ struct WaitResult {
 
 class TipcObject;
 class TipcObjectObserver;
+class TipcObjectSet;
 
 struct TipcObjectRef
     : public fbl::RefCounted<TipcObjectRef>,
       public fbl::DoublyLinkedListable<fbl::RefPtr<TipcObjectRef>> {
   TipcObjectRef() = delete;
+
+  bool InPendingList() { return pending_list_node.InContainer(); }
 
   TipcObjectRef(TipcObject* o) : obj(o) {}
 
@@ -74,9 +77,9 @@ class TipcObject : public fbl::RefCounted<TipcObject> {
 
   void ClearEvent(uint32_t clear_mask);
 
-  zx_status_t AddParent(TipcObjectObserver* parent,
+  zx_status_t AddParent(TipcObjectSet* parent,
                         fbl::RefPtr<TipcObjectRef>* child_ref_out);
-  void RemoveParent(TipcObjectObserver* parent);
+  void RemoveParent(TipcObjectSet* parent);
 
   bool is_port() { return (get_type() == ObjectType::PORT); }
   bool is_channel() { return (get_type() == ObjectType::CHANNEL); }
@@ -89,6 +92,8 @@ class TipcObject : public fbl::RefCounted<TipcObject> {
 
  protected:
   virtual ObjectType get_type() = 0;
+
+  bool IsMyAncestor(TipcObjectSet* ancestor);
 
  private:
   friend class TipcObjectManager;

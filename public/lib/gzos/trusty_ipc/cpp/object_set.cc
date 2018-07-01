@@ -63,11 +63,8 @@ void TipcObjectSet::OnEvent(fbl::RefPtr<TipcObjectRef> child_ref) {
 void TipcObjectSet::AppendToPendingList(fbl::RefPtr<TipcObjectRef> child_ref) {
   fbl::AutoLock lock(&mutex_);
 
-  // ignore if already in the pending list
-  for (const auto& ref : pending_list_) {
-    if (ref.obj == child_ref->obj) {
-      return;
-    }
+  if (child_ref->InPendingList()) {
+    return;
   }
 
   pending_list_.push_back(child_ref);

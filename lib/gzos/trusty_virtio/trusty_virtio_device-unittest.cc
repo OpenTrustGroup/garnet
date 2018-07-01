@@ -145,7 +145,6 @@ class VirtioBusStateTest : public ::testing::Test {
               ZX_OK);
 
     // Create VirtioBus
-    fbl::AllocChecker ac;
     bus_ = fbl::make_unique<VirtioBus>(shared_mem_);
     ASSERT_TRUE(bus_ != nullptr);
 

@@ -9,7 +9,7 @@
 #include <virtio/virtio.h>
 #include <virtio/virtio_ring.h>
 #include <zircon/syscalls.h>
-#include <zircon/syscalls/smc.h>
+#include <zircon/syscalls/smc_service.h>
 #include <zx/channel.h>
 #include <zx/vmo.h>
 

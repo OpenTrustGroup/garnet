@@ -13,20 +13,20 @@
 using smc_service::SmcService;
 using smc_service::TrustySmcEntity;
 
-static zx_status_t get_ree_agent_ctrl_channel(zx::channel* out_ch) {
-  zx_handle_t request = zx_get_startup_handle(PA_HND(PA_USER0, 0));
+static zx_status_t get_startup_channel(zx::channel* ree_agent_out) {
+  zx_handle_t request = zx_take_startup_handle(PA_HND(PA_USER0, 0));
   if (request == ZX_HANDLE_INVALID) {
     FXL_LOG(ERROR) << "Can not get smc_service channel";
     return ZX_ERR_NO_RESOURCES;
   }
 
-  out_ch->reset(request);
+  ree_agent_out->reset(request);
   return ZX_OK;
 }
 
 int main(int argc, const char** argv) {
-  zx::channel ch;
-  zx_status_t status = get_ree_agent_ctrl_channel(&ch);
+  zx::channel ree_agent_cli;
+  zx_status_t status = get_startup_channel(&ree_agent_cli);
   if (status != ZX_OK)
     return 1;
 
@@ -38,7 +38,7 @@ int main(int argc, const char** argv) {
 
   status = s->AddSmcEntity(SMC_ENTITY_TRUSTED_OS,
                            new TrustySmcEntity(loop.async(),
-                           fbl::move(ch),
+                           fbl::move(ree_agent_cli),
                            s->GetSharedMem()));
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to add Trusty smc entity, status=" << status;

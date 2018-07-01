@@ -7,7 +7,7 @@
 
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
-#include <zircon/syscalls/smc.h>
+#include <zircon/syscalls/smc_service.h>
 #include <zx/vmo.h>
 #include <type_traits>
 

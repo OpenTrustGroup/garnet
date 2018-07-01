@@ -1,9 +1,6 @@
 {
-    "languages": [
-        "cpp"
-    ],
-    "packages": {
-        "smc_service": "//garnet/bin/gzos/smc_service",
-        "ree_agent": "//garnet/bin/gzos/ree_agent"
-    }
+    "packages": [
+        "//garnet/bin/gzos/smc_service",
+        "//garnet/bin/gzos/ree_agent"
+    ]
 }

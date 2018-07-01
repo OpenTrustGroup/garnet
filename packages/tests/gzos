@@ -1,11 +1,7 @@
 {
-    "languages": [
-        "cpp"
-    ],
-    "packages": {
-        "trusty_virtio_tests": "//garnet/lib/gzos/trusty_virtio:trusty_virtio_tests",
-        "trusty_ipc_tests": "//garnet/public/lib/gzos/trusty_ipc/cpp:trusty_ipc_tests",
-        "ree_agent_tests": "//garnet/bin/gzos/ree_agent:ree_agent_tests",
-        "smc_service_tests": "//garnet/bin/gzos/smc_service:smc_service_tests"
-    }
+    "packages": [
+        "//garnet/lib/gzos/test:gzos_lib_tests",
+        "//garnet/bin/gzos/ree_agent:ree_agent_tests",
+        "//garnet/bin/gzos/smc_service:smc_service_tests"
+    ]
 }

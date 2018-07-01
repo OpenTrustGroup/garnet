@@ -24,47 +24,36 @@ class TaServiceProvider : public TaServices {
   }
 
  private:
-  component::Services service_provider_;
+  fuchsia::sys::Services service_provider_;
 };
 
 }  // namespace ree_agent
 
-static zx_status_t get_ree_agent_server_channel(zx::channel* out_ch) {
-  zx_handle_t request = zx_get_startup_handle(PA_HND(PA_USER0, 0));
-  if (request == ZX_HANDLE_INVALID) {
-    FXL_LOG(ERROR) << "Can not get ree_agent request server channel";
+static zx_status_t get_startup_channels(zx::channel* ree_agent_out,
+                                        zx::channel* appmgr_out) {
+  zx_handle_t h0 = zx_take_startup_handle(PA_HND(PA_USER0, 0));
+  zx_handle_t h1 = zx_take_startup_handle(PA_HND(PA_USER0, 1));
+
+  if (h0 == ZX_HANDLE_INVALID || h1 == ZX_HANDLE_INVALID) {
+    FXL_LOG(ERROR) << "Can not get startup handles";
     return ZX_ERR_NO_RESOURCES;
   }
 
-  out_ch->reset(request);
-  return ZX_OK;
-}
-
-static zx_status_t get_appmgr_client_channel(zx::channel* out_ch) {
-  zx_handle_t request = zx_get_startup_handle(PA_HND(PA_USER0, 1));
-  if (request == ZX_HANDLE_INVALID) {
-    FXL_LOG(ERROR) << "Can not get appmgr request client channel";
-    return ZX_ERR_NO_RESOURCES;
-  }
-
-  out_ch->reset(request);
+  ree_agent_out->reset(h0);
+  appmgr_out->reset(h1);
   return ZX_OK;
 }
 
 int main(int argc, const char** argv) {
   async::Loop loop(&kAsyncLoopConfigMakeDefault);
 
+  zx::channel ree_agent_srv;
   zx::channel appmgr_cli;
-  zx_status_t status = get_appmgr_client_channel(&appmgr_cli);
+  zx_status_t status = get_startup_channels(&ree_agent_srv, &appmgr_cli);
   if (status != ZX_OK)
     return 1;
 
   ree_agent::TaServiceProvider ta_service_provider(std::move(appmgr_cli));
-
-  zx::channel ree_agent_srv;
-  status = get_ree_agent_server_channel(&ree_agent_srv);
-  if (status != ZX_OK)
-    return 1;
 
   ree_agent::ReeMessageImpl ree_message_impl(ta_service_provider);
   ree_message_impl.Bind(std::move(ree_agent_srv));

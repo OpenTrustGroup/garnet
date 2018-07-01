@@ -37,13 +37,12 @@ shared_library("trusty_virtio") {
   configs -= [ "//build/config:symbol_visibility_hidden" ]
 }
 
-executable("trusty_virtio_unittests") {
+source_set("unittests") {
   testonly = true
 
   sources = [
     "remote_system_fake.cc",
     "remote_system_fake.h",
-    "run_all_unittests.cc",
     "trusty_virtio_device-unittest.cc",
     "virtio_queue_fake.cc",
     "virtio_queue_fake.h"
@@ -58,17 +57,3 @@ executable("trusty_virtio_unittests") {
   ]
 }
 
-package("trusty_virtio_tests") {
-  testonly = true
-  deprecated_system_image = true
-
-  deps = [
-    ":trusty_virtio_unittests",
-  ]
-
-  tests = [
-    {
-      name = "trusty_virtio_unittests"
-    },
-  ]
-}

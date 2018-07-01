@@ -11,7 +11,7 @@
 #include <lib/async/cpp/wait.h>
 #include <lib/async/default.h>
 #include <zircon/syscalls.h>
-#include <zircon/syscalls/smc.h>
+#include <zircon/syscalls/smc_service.h>
 
 #include <array>
 #include <unordered_map>

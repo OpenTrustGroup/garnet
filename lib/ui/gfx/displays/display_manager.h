@@ -12,9 +12,9 @@
 #include "garnet/lib/ui/gfx/displays/display_watcher.h"
 #include "lib/async/cpp/wait.h"
 #include "lib/fidl/cpp/synchronous_interface_ptr.h"
-#include "lib/fxl/functional/closure.h"
 #include "lib/fxl/macros.h"
 
+#include <lib/fit/function.h>
 #include <zircon/pixelformat.h>
 #include <zx/event.h>
 
@@ -29,7 +29,7 @@ class DisplayManager {
 
   // Waits for the default display to become available then invokes the
   // callback.
-  void WaitForDefaultDisplay(fxl::Closure callback);
+  void WaitForDefaultDisplay(fit::closure callback);
 
   zx::vmo AllocateDisplayMemory(int32_t size);
   // Fetches the necessary linear stride (in px) from the display controller.
@@ -80,8 +80,11 @@ class DisplayManager {
   uint64_t next_event_id_ = fuchsia::display::invalidId + 1;
 
   DisplayWatcher display_watcher_;
-  fxl::Closure display_available_cb_;
+  fit::closure display_available_cb_;
   std::unique_ptr<Display> default_display_;
+  // A boolean indicating whether or not we have ownership of the display
+  // controller (not just individual displays). The default is no.
+  bool owns_display_controller_ = false;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(DisplayManager);
 };

@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <wlan_mlme/cpp/fidl.h>
+#include <fuchsia/wlan/mlme/cpp/fidl.h>
 #include <wlan/mlme/ap/beacon_sender.h>
 #include <wlan/mlme/ap/bss_client_map.h>
 #include <wlan/mlme/ap/bss_interface.h>
@@ -36,7 +36,7 @@ class InfraBss : public BssInterface, public FrameHandler, public RemoteClient::
     // BssInterface implementation
     const common::MacAddr& bssid() const override;
     uint64_t timestamp() override;
-    void Start(const wlan_mlme::StartRequest& req) override;
+    void Start(const MlmeMsg<::fuchsia::wlan::mlme::StartRequest>& req) override;
     void Stop() override;
     zx_status_t AssignAid(const common::MacAddr& client, aid_t* out_aid) override;
     zx_status_t ReleaseAid(const common::MacAddr& client) override;
@@ -49,8 +49,7 @@ class InfraBss : public BssInterface, public FrameHandler, public RemoteClient::
     seq_t NextSeq(const MgmtFrameHeader& hdr, uint8_t aci) override;
     seq_t NextSeq(const DataFrameHeader& hdr) override;
 
-    zx_status_t EthToDataFrame(const ImmutableBaseFrame<EthernetII>& frame,
-                               fbl::unique_ptr<Packet>* out_packet) override;
+    zx_status_t EthToDataFrame(const EthFrame& frame, fbl::unique_ptr<Packet>* out_packet) override;
     void OnPreTbtt() override;
     void OnBcnTxComplete() override;
 
@@ -70,13 +69,11 @@ class InfraBss : public BssInterface, public FrameHandler, public RemoteClient::
     static constexpr size_t kMaxGroupAddressedBu = 128;
 
     // FrameHandler implementation
-    zx_status_t HandleEthFrame(const ImmutableBaseFrame<EthernetII>& frame) override;
+    zx_status_t HandleEthFrame(const EthFrame& frame) override;
     zx_status_t HandleDataFrame(const DataFrameHeader& hdr) override;
     zx_status_t HandleMgmtFrame(const MgmtFrameHeader& hdr) override;
-    zx_status_t HandleAuthentication(const ImmutableMgmtFrame<Authentication>& frame,
-                                     const wlan_rx_info_t& rxinfo) override;
-    zx_status_t HandlePsPollFrame(const ImmutableCtrlFrame<PsPollFrame>& frame,
-                                  const wlan_rx_info_t& rxinfo) override;
+    zx_status_t HandleAuthentication(const MgmtFrame<Authentication>& frame) override;
+    zx_status_t HandlePsPollFrame(const CtrlFrame<PsPollFrame>& frame) override;
 
     // RemoteClient::Listener implementation
     zx_status_t HandleClientDeauth(const common::MacAddr& client) override;
@@ -102,7 +99,7 @@ class InfraBss : public BssInterface, public FrameHandler, public RemoteClient::
     wlan_channel_t chan_;
     // MLME-START.request holds all information required to correctly configure
     // and start a BSS.
-    wlan_mlme::StartRequest start_req_;
+    ::fuchsia::wlan::mlme::StartRequest start_req_;
 };
 
 }  // namespace wlan

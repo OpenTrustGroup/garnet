@@ -5,7 +5,9 @@
 import("//build/fidl/fidl.gni")
 
 fidl("fidl") {
-  name = "fonts"
+  name = "fuchsia.fonts"
+
+  sdk_category = "partner"
 
   sources = [
     "font_provider.fidl",

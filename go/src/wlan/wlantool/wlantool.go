@@ -12,8 +12,8 @@ import (
 
 	"app/context"
 
-	"fidl/wlan_mlme"
-	"fidl/wlan_service"
+	"fidl/fuchsia/wlan/mlme"
+	wlan_service "fidl/fuchsia/wlan/service"
 )
 
 const (
@@ -23,6 +23,7 @@ const (
 	cmdStatus     = "status"
 	cmdStartBSS   = "start-bss"
 	cmdStopBSS    = "stop-bss"
+	cmdStats      = "stats"
 )
 
 type ToolApp struct {
@@ -31,26 +32,26 @@ type ToolApp struct {
 }
 
 // LINT.IfChange
-func CbwToStr(cbw wlan_mlme.Cbw) string {
+func CbwToStr(cbw mlme.Cbw) string {
 	switch cbw {
-	case wlan_mlme.CbwCbw20:
+	case mlme.CbwCbw20:
 		return " "
-	case wlan_mlme.CbwCbw40:
+	case mlme.CbwCbw40:
 		return "+"
-	case wlan_mlme.CbwCbw40Below:
+	case mlme.CbwCbw40Below:
 		return "-"
-	case wlan_mlme.CbwCbw80:
+	case mlme.CbwCbw80:
 		return "V"
-	case wlan_mlme.CbwCbw160:
+	case mlme.CbwCbw160:
 		return "W"
-	case wlan_mlme.CbwCbw80P80:
+	case mlme.CbwCbw80P80:
 		return "P"
 	default:
 		return "(unknown CBW)"
 	}
 }
 
-func ChanToStr(ch wlan_mlme.WlanChan) string {
+func ChanToStr(ch mlme.WlanChan) string {
 	return fmt.Sprintf("%3d%s", ch.Primary, CbwToStr(ch.Cbw))
 }
 
@@ -190,6 +191,19 @@ func (a *ToolApp) Status() {
 	}
 }
 
+func (a *ToolApp) ShowStats() {
+	result, err := a.wlan.Stats()
+	if err != nil {
+		fmt.Printf("Cannot get stats. Error: %+v\n", err)
+		return
+	}
+	stats := result.Stats
+	fmt.Printf("Dispatcher stats:\n%+v\n", stats.DispatcherStats);
+	if stats.MlmeStats != nil {
+		fmt.Printf("\nMLME stats:\n%+v\n", stats.MlmeStats);
+	}
+}
+
 var Usage = func() {
 	fmt.Printf("Usage: %v %v [-t <timeout>]\n", os.Args[0], cmdScan)
 	fmt.Printf("       %v %v [-p <passphrase>] [-t <timeout>] [-b <bssid>] ssid\n", os.Args[0], cmdConnect)
@@ -197,6 +211,7 @@ var Usage = func() {
 	fmt.Printf("       %v %v\n", os.Args[0], cmdStatus)
 	fmt.Printf("       %v %v [-b <beacon period>] [-d <DTIM period>] [-c channel] ssid\n", os.Args[0], cmdStartBSS)
 	fmt.Printf("       %v %v\n", os.Args[0], cmdStopBSS)
+	fmt.Printf("       %v %v\n", os.Args[0], cmdStats)
 }
 
 func main() {
@@ -291,6 +306,14 @@ func main() {
 			return
 		}
 		a.StopBSS()
+	case cmdStats:
+		statusFlagSet := flag.NewFlagSet(cmdStatus, flag.ExitOnError)
+		statusFlagSet.Parse(os.Args[2:])
+		if statusFlagSet.NArg() != 0 {
+			Usage()
+			return
+		}
+		a.ShowStats()
 	default:
 		Usage()
 	}

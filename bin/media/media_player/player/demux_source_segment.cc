@@ -4,7 +4,7 @@
 
 #include "garnet/bin/media/media_player/player/demux_source_segment.h"
 
-#include <media/cpp/fidl.h>
+#include <fuchsia/media/cpp/fidl.h>
 #include <lib/async/cpp/task.h>
 
 #include "garnet/bin/media/media_player/util/safe_clone.h"
@@ -76,14 +76,14 @@ void DemuxSourceSegment::BuildGraph() {
   }
 }
 
-void DemuxSourceSegment::Flush(bool hold_frame, fxl::Closure callback) {
+void DemuxSourceSegment::Flush(bool hold_frame, fit::closure callback) {
   FXL_DCHECK(demux_initialized_.occurred());
-  graph().FlushAllOutputs(demux_node_, hold_frame, callback);
+  graph().FlushAllOutputs(demux_node_, hold_frame, std::move(callback));
 }
 
-void DemuxSourceSegment::Seek(int64_t position, fxl::Closure callback) {
+void DemuxSourceSegment::Seek(int64_t position, fit::closure callback) {
   FXL_DCHECK(demux_initialized_.occurred());
-  demux_->Seek(position, callback);
+  demux_->Seek(position, std::move(callback));
 }
 
 }  // namespace media_player

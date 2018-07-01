@@ -22,10 +22,13 @@
 //#include <linux/if_ether.h>
 //#include <linux/skbuff.h>
 
-#include "linuxisms.h"
+#include <zircon/listnode.h>
 
+#include <endian.h>
 #include <string.h>
 
+#include "linuxisms.h"
+#include "netbuf.h"
 #include "workqueue.h"
 
 /* formward declarations */
@@ -318,7 +321,7 @@ struct brcmf_fweh_info {
     bool p2pdev_setup_ongoing;
     struct work_struct event_work;
     //spinlock_t evt_q_lock;
-    struct list_head event_q;
+    struct list_node event_q;
     zx_status_t (*evt_handler[BRCMF_E_LAST])(struct brcmf_if* ifp,
                                              const struct brcmf_event_msg* evtmsg, void* data);
 };
@@ -337,24 +340,31 @@ void brcmf_fweh_process_event(struct brcmf_pub* drvr, struct brcmf_event* event_
                               uint32_t packet_len);
 void brcmf_fweh_p2pdev_setup(struct brcmf_if* ifp, bool ongoing);
 
-static inline void brcmf_fweh_process_skb(struct brcmf_pub* drvr, struct sk_buff* skb) {
+static inline void brcmf_fweh_process_netbuf(struct brcmf_pub* drvr, struct brcmf_netbuf* netbuf) {
     struct brcmf_event* event_packet;
     uint16_t usr_stype;
 
     /* only process events when protocol matches */
-    if (skb->protocol != cpu_to_be16(ETH_P_LINK_CTL)) { return; }
+    if (netbuf->protocol != htobe16(ETH_P_LINK_CTL)) {
+        return;
+    }
 
-    if ((skb->len + ETH_HLEN) < sizeof(*event_packet)) { return; }
+    if ((netbuf->len + ETH_HLEN) < sizeof(*event_packet)) {
+       return;
+    }
 
     /* check for BRCM oui match */
-    event_packet = (struct brcmf_event*)skb_mac_header(skb);
-    if (memcmp(BRCM_OUI, &event_packet->hdr.oui[0], sizeof(event_packet->hdr.oui))) { return; }
+    event_packet = (struct brcmf_event*)(netbuf->eth_header);
+    if (memcmp(BRCM_OUI, &event_packet->hdr.oui[0], sizeof(event_packet->hdr.oui))) {
+        return;
+    }
 
     /* final match on usr_subtype */
-    usr_stype = get_unaligned_be16(&event_packet->hdr.usr_subtype);
-    if (usr_stype != BCMILCP_BCM_SUBTYPE_EVENT) { return; }
-
-    brcmf_fweh_process_event(drvr, event_packet, skb->len + ETH_HLEN);
+    usr_stype = be16toh(event_packet->hdr.usr_subtype);
+    if (usr_stype != BCMILCP_BCM_SUBTYPE_EVENT) {
+        return;
+    }
+    brcmf_fweh_process_event(drvr, event_packet, netbuf->len + ETH_HLEN);
 }
 
 #endif /* GARNET_DRIVERS_WLAN_THIRD_PARTY_BROADCOM_BRCMFMAC_FWEH_H_ */

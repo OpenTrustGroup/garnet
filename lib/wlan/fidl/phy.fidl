@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library wlan_device;
+library fuchsia.wlan.device;
 
 enum ChannelBandwidth {
   CBW20 = 0;
@@ -30,6 +30,7 @@ enum SupportedPhy {
 enum DriverFeature {
   SCAN_OFFLOAD = 0;
   RATE_SELECTION = 1;
+  SYNTH = 2;
 };
 
 enum MacRole {
@@ -101,7 +102,7 @@ struct CreateIfaceRequest {
 
 struct CreateIfaceResponse {
   int32 @status;
-  IfaceInfo info;
+  uint16 iface_id;
 };
 
 struct DestroyIfaceRequest {

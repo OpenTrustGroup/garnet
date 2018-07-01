@@ -14,8 +14,7 @@ namespace escher {
 
 class Buffer;
 class Camera;
-class DescriptorSetAllocator;
-struct DescriptorSetLayout;
+class CommandBuffer;
 class Escher;
 class Frame;
 class Framebuffer;
@@ -31,12 +30,17 @@ class Material;
 class Mesh;
 class Model;
 class Object;
+// TODO(ES-83): move to vk/impl.  Cannot do this yet because there is already
+// a PipelineLayout in impl/vk.
+class PipelineLayout;
 class PaperRenderer;
 class Resource;
 class ResourceRecycler;
 class Renderer;
 class RenderPass;
+struct RenderPassInfo;
 class Semaphore;
+class ShaderProgram;
 class ShadowMap;
 class ShadowMapRenderer;
 class Shape;
@@ -49,6 +53,7 @@ struct VulkanContext;
 struct VulkanSwapchain;
 
 typedef fxl::RefPtr<Buffer> BufferPtr;
+typedef fxl::RefPtr<CommandBuffer> CommandBufferPtr;
 typedef fxl::RefPtr<Escher> EscherPtr;
 typedef fxl::RefPtr<Frame> FramePtr;
 typedef fxl::RefPtr<Framebuffer> FramebufferPtr;
@@ -59,16 +64,21 @@ typedef fxl::RefPtr<Material> MaterialPtr;
 typedef fxl::RefPtr<Mesh> MeshPtr;
 typedef fxl::RefPtr<MeshBuilder> MeshBuilderPtr;
 typedef fxl::RefPtr<PaperRenderer> PaperRendererPtr;
+// TODO(ES-83): move to vk/impl.  Cannot do this yet because there is already
+// a PipelineLayout in impl/vk.
+typedef fxl::RefPtr<PipelineLayout> PipelineLayoutPtr;
 typedef fxl::RefPtr<Resource> ResourcePtr;
 typedef fxl::RefPtr<Renderer> RendererPtr;
 typedef fxl::RefPtr<RenderPass> RenderPassPtr;
 typedef fxl::RefPtr<Semaphore> SemaphorePtr;
+typedef fxl::RefPtr<ShaderProgram> ShaderProgramPtr;
 typedef fxl::RefPtr<ShadowMap> ShadowMapPtr;
 typedef fxl::RefPtr<ShadowMapRenderer> ShadowMapRendererPtr;
 typedef fxl::RefPtr<Texture> TexturePtr;
 typedef fxl::RefPtr<TimestampProfiler> TimestampProfilerPtr;
 
 namespace impl {
+// From deprecated escher/impl directory.
 class CommandBuffer;
 class CommandBufferPool;
 class CommandBufferSequencer;
@@ -95,6 +105,22 @@ typedef fxl::RefPtr<ModelPipelineCache> ModelPipelineCachePtr;
 typedef fxl::RefPtr<ModelRenderer> ModelRendererPtr;
 typedef fxl::RefPtr<ModelRenderPass> ModelRenderPassPtr;
 typedef fxl::RefPtr<Pipeline> PipelinePtr;
+
+// From escher/vk/impl
+class DescriptorSetAllocator;
+class Framebuffer;
+class FramebufferAllocator;
+class PipelineLayoutCache;
+class RenderPass;
+class RenderPassCache;
+
+typedef fxl::RefPtr<Framebuffer> FramebufferPtr;
+typedef fxl::RefPtr<RenderPass> RenderPassPtr;
+
+// From escher/third_party/granite
+struct DescriptorSetLayout;
+struct ShaderModuleResourceLayout;
+
 }  // namespace impl
 }  // namespace escher
 

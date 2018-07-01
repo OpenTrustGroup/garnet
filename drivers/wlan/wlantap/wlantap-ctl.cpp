@@ -4,7 +4,7 @@
 
 #include <ddk/debug.h>
 #include <ddk/device.h>
-#include <wlan_device/cpp/fidl.h>
+#include <fuchsia/wlan/device/cpp/fidl.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/dispatcher.h>
 #include <wlan/protocol/ioctl.h>
@@ -17,6 +17,8 @@
 #include "wlantap-phy.h"
 
 namespace {
+
+namespace wlantap = ::fuchsia::wlan::tap;
 
 class WlantapDriver {
 public:
@@ -81,7 +83,7 @@ struct WlantapCtl {
         // Immediately wrap the handle to make sure we don't leak it
         zx::channel user_channel(in.channel);
 
-        auto phy_config = ::wlantap::WlantapPhyConfig::New();
+        auto phy_config = wlantap::WlantapPhyConfig::New();
         const uint8_t* in_end = static_cast<const uint8_t*>(in_buf) + in_len;
         zx_status_t status = DecodeFidl(&in.config[0], in_end - &in.config[0], phy_config.get());
         if (status != ZX_OK) {
@@ -94,8 +96,7 @@ struct WlantapCtl {
             zxlogf(ERROR, "could not start wlantap event loop: %d", status);
             return status;
         }
-        status = wlan::wlantap::CreatePhy(device_, std::move(user_channel), std::move(phy_config),
-                                          loop);
+        status = wlan::CreatePhy(device_, std::move(user_channel), std::move(phy_config), loop);
         if (status != ZX_OK) {
             zxlogf(ERROR, "could not create wlantap phy: %d\n", status);
             return status;

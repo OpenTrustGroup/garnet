@@ -15,10 +15,11 @@ namespace {
 constexpr char kAppLoaders[] = "loaders";
 constexpr char kApps[] = "apps";
 constexpr char kServices[] = "services";
+constexpr char kStartupServices[] = "startup_services";
 
-component::LaunchInfoPtr GetLaunchInfo(
+fuchsia::sys::LaunchInfoPtr GetLaunchInfo(
     const rapidjson::Document::ValueType& value) {
-  auto launch_info = component::LaunchInfo::New();
+  auto launch_info = fuchsia::sys::LaunchInfo::New();
   if (value.IsString()) {
     launch_info->url = value.GetString();
   } else if (value.IsArray()) {
@@ -38,8 +39,7 @@ component::LaunchInfoPtr GetLaunchInfo(
 }
 
 bool ParseServiceMap(const rapidjson::Document& document,
-                     const std::string& key,
-                     Config::ServiceMap* services) {
+                     const std::string& key, Config::ServiceMap* services) {
   auto it = document.FindMember(key);
   if (it != document.MemberEnd()) {
     const auto& value = it->value;
@@ -61,6 +61,10 @@ bool ParseServiceMap(const rapidjson::Document& document,
 }  // namespace
 
 Config::Config() = default;
+
+Config::Config(Config&& other) = default;
+
+Config& Config::operator=(Config&& other) = default;
 
 Config::~Config() = default;
 
@@ -90,6 +94,18 @@ bool Config::Parse(const std::string& string, const std::string& config_file) {
       if (!launch_info)
         return false;
       apps_.push_back(std::move(launch_info));
+    }
+  }
+
+  auto startup_services_it = document.FindMember(kStartupServices);
+  if (startup_services_it != document.MemberEnd()) {
+    const auto& value = startup_services_it->value;
+    if (!value.IsArray())
+      return false;
+    for (const auto& service : value.GetArray()) {
+      if (!service.IsString())
+        return false;
+      startup_services_.push_back(service.GetString());
     }
   }
 

@@ -101,6 +101,17 @@ struct BreakpointSettings {
   std::vector<ProcessBreakpointSettings> locations;
 };
 
+struct BreakpointStats {
+  uint32_t breakpoint_id = 0;
+  uint32_t hit_count = 0;
+
+  // On a "breakpoint hit" message from the debug agent, if this flag is set,
+  // the agent has deleted the breakpoint because it was a one-shot breakpoint.
+  // Whenever a client gets a breakpoint hit with this flag set, it should
+  // clear the local state associated with the breakpoint.
+  bool should_delete = false;
+};
+
 // Information on one loaded module.
 struct Module {
   std::string name;
@@ -118,6 +129,12 @@ struct AddressRegion {
   uint64_t base;
   uint64_t size;
   uint64_t depth;
+};
+
+// Value representing a particular register
+struct Register {
+  std::string name;
+  uint64_t value;
 };
 
 #pragma pack(pop)

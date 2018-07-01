@@ -32,6 +32,7 @@
 #include "device.h"
 #include "fwsignal.h"
 #include "linuxisms.h"
+#include "netbuf.h"
 #include "proto.h"
 #include "tracepoint.h"
 
@@ -106,6 +107,7 @@ struct brcmf_bcdc {
     uint16_t reqid;
     uint8_t bus_header[BUS_HEADER_LEN];
     struct brcmf_proto_bcdc_dcmd msg;
+    // buf must be packed right after msg; see brcmf_proto_bcdc_msg
     unsigned char buf[BRCMF_DCMD_MAXLEN];
     struct brcmf_fws_info* fws;
 };
@@ -122,7 +124,7 @@ static zx_status_t brcmf_proto_bcdc_msg(struct brcmf_pub* drvr, int ifidx, uint 
     struct brcmf_proto_bcdc_dcmd* msg = &bcdc->msg;
     uint32_t flags;
 
-    brcmf_dbg(BCDC, "Enter\n");
+    //brcmf_dbg(BCDC, "Enter\n");
 
     memset(msg, 0, sizeof(struct brcmf_proto_bcdc_dcmd));
 
@@ -153,7 +155,7 @@ static zx_status_t brcmf_proto_bcdc_cmplt(struct brcmf_pub* drvr, uint32_t id, u
     zx_status_t ret;
     struct brcmf_bcdc* bcdc = (struct brcmf_bcdc*)drvr->proto->pd;
 
-    brcmf_dbg(BCDC, "Enter\n");
+    //brcmf_dbg(BCDC, "Enter\n");
     len += sizeof(struct brcmf_proto_bcdc_dcmd);
     do {
         ret = brcmf_bus_rxctl(drvr->bus_if, (unsigned char*)&bcdc->msg, len, rxlen_out);
@@ -175,7 +177,7 @@ static zx_status_t brcmf_proto_bcdc_query_dcmd(struct brcmf_pub* drvr, int ifidx
     int rxlen;
     uint32_t id, flags;
 
-    brcmf_dbg(BCDC, "Enter, cmd %d len %d\n", cmd, len);
+    //brcmf_dbg(BCDC, "Enter, cmd %d len %d\n", cmd, len);
 
     *fwerr = ZX_OK;
     ret = brcmf_proto_bcdc_msg(drvr, ifidx, cmd, buf, len, false);
@@ -233,7 +235,7 @@ static zx_status_t brcmf_proto_bcdc_set_dcmd(struct brcmf_pub* drvr, int ifidx, 
     uint32_t flags, id;
     int rxlen_out;
 
-    brcmf_dbg(BCDC, "Enter, cmd %d len %d\n", cmd, len);
+    //brcmf_dbg(BCDC, "Enter, cmd %d len %d\n", cmd, len);
 
     *fwerr = ZX_OK;
     ret = brcmf_proto_bcdc_msg(drvr, ifidx, cmd, buf, len, true);
@@ -268,13 +270,13 @@ done:
 }
 
 static void brcmf_proto_bcdc_hdrpush(struct brcmf_pub* drvr, int ifidx, uint8_t offset,
-                                     struct sk_buff* pktbuf) {
+                                     struct brcmf_netbuf* pktbuf) {
     struct brcmf_proto_bcdc_header* h;
 
     brcmf_dbg(BCDC, "Enter\n");
 
     /* Push BDC header used to convey priority for buses that don't */
-    skb_push(pktbuf, BCDC_HEADER_LEN);
+    brcmf_netbuf_grow_head(pktbuf, BCDC_HEADER_LEN);
 
     h = (struct brcmf_proto_bcdc_header*)(pktbuf->data);
 
@@ -287,11 +289,11 @@ static void brcmf_proto_bcdc_hdrpush(struct brcmf_pub* drvr, int ifidx, uint8_t 
     h->flags2 = 0;
     h->data_offset = offset;
     BCDC_SET_IF_IDX(h, ifidx);
-    trace_brcmf_bcdchdr(pktbuf->data);
+    // trace_brcmf_bcdchdr(pktbuf->data);
 }
 
 static zx_status_t brcmf_proto_bcdc_hdrpull(struct brcmf_pub* drvr, bool do_fws,
-                                            struct sk_buff* pktbuf,
+                                            struct brcmf_netbuf* pktbuf,
                                             struct brcmf_if** ifp) {
     struct brcmf_proto_bcdc_header* h;
     struct brcmf_if* tmp_if;
@@ -304,7 +306,7 @@ static zx_status_t brcmf_proto_bcdc_hdrpull(struct brcmf_pub* drvr, bool do_fws,
         return ZX_ERR_IO_DATA_INTEGRITY;
     }
 
-    trace_brcmf_bcdchdr(pktbuf->data);
+    // trace_brcmf_bcdchdr(pktbuf->data);
     h = (struct brcmf_proto_bcdc_header*)(pktbuf->data);
 
     tmp_if = brcmf_get_ifp(drvr, BCDC_GET_IF_IDX(h));
@@ -324,11 +326,11 @@ static zx_status_t brcmf_proto_bcdc_hdrpull(struct brcmf_pub* drvr, bool do_fws,
 
     pktbuf->priority = h->priority & BCDC_PRIORITY_MASK;
 
-    skb_pull(pktbuf, BCDC_HEADER_LEN);
+    brcmf_netbuf_shrink_head(pktbuf, BCDC_HEADER_LEN);
     if (do_fws) {
         brcmf_fws_hdrpull(tmp_if, h->data_offset << 2, pktbuf);
     } else {
-        skb_pull(pktbuf, h->data_offset << 2);
+        brcmf_netbuf_shrink_head(pktbuf, h->data_offset << 2);
     }
 
     if (pktbuf->len == 0) {
@@ -342,19 +344,19 @@ static zx_status_t brcmf_proto_bcdc_hdrpull(struct brcmf_pub* drvr, bool do_fws,
 }
 
 static zx_status_t brcmf_proto_bcdc_tx_queue_data(struct brcmf_pub* drvr, int ifidx,
-                                                  struct sk_buff* skb) {
+                                                  struct brcmf_netbuf* netbuf) {
     struct brcmf_if* ifp = brcmf_get_ifp(drvr, ifidx);
     struct brcmf_bcdc* bcdc = drvr->proto->pd;
 
-    if (!brcmf_fws_queue_skbs(bcdc->fws)) {
-        return brcmf_proto_txdata(drvr, ifidx, 0, skb);
+    if (!brcmf_fws_queue_netbufs(bcdc->fws)) {
+        return brcmf_proto_txdata(drvr, ifidx, 0, netbuf);
     }
 
-    return brcmf_fws_process_skb(ifp, skb);
+    return brcmf_fws_process_netbuf(ifp, netbuf);
 }
 
 static int brcmf_proto_bcdc_txdata(struct brcmf_pub* drvr, int ifidx, uint8_t offset,
-                                   struct sk_buff* pktbuf) {
+                                   struct brcmf_netbuf* pktbuf) {
     brcmf_proto_bcdc_hdrpush(drvr, ifidx, offset, pktbuf);
     return brcmf_bus_txdata(drvr->bus_if, pktbuf);
 }
@@ -368,7 +370,7 @@ void brcmf_proto_bcdc_txflowblock(struct brcmf_device* dev, bool state) {
     brcmf_fws_bus_blocked(drvr, state);
 }
 
-void brcmf_proto_bcdc_txcomplete(struct brcmf_device* dev, struct sk_buff* txp, bool success) {
+void brcmf_proto_bcdc_txcomplete(struct brcmf_device* dev, struct brcmf_netbuf* txp, bool success) {
     struct brcmf_bus* bus_if = dev_get_drvdata(dev);
     struct brcmf_bcdc* bcdc = bus_if->drvr->proto->pd;
     struct brcmf_if* ifp;
@@ -380,7 +382,7 @@ void brcmf_proto_bcdc_txcomplete(struct brcmf_device* dev, struct sk_buff* txp, 
         }
     } else {
         if (brcmf_proto_bcdc_hdrpull(bus_if->drvr, false, txp, &ifp)) {
-            brcmu_pkt_buf_free_skb(txp);
+            brcmu_pkt_buf_free_netbuf(txp);
         } else {
             brcmf_txfinalize(ifp, txp, success);
         }
@@ -390,12 +392,14 @@ void brcmf_proto_bcdc_txcomplete(struct brcmf_device* dev, struct sk_buff* txp, 
 static void brcmf_proto_bcdc_configure_addr_mode(struct brcmf_pub* drvr, int ifidx,
                                                  enum proto_addr_mode addr_mode) {}
 
-static void brcmf_proto_bcdc_delete_peer(struct brcmf_pub* drvr, int ifidx, uint8_t peer[ETH_ALEN]) {}
+static void brcmf_proto_bcdc_delete_peer(struct brcmf_pub* drvr, int ifidx,
+                                         uint8_t peer[ETH_ALEN]) {}
 
-static void brcmf_proto_bcdc_add_tdls_peer(struct brcmf_pub* drvr, int ifidx, uint8_t peer[ETH_ALEN]) {}
+static void brcmf_proto_bcdc_add_tdls_peer(struct brcmf_pub* drvr, int ifidx,
+                                           uint8_t peer[ETH_ALEN]) {}
 
-static void brcmf_proto_bcdc_rxreorder(struct brcmf_if* ifp, struct sk_buff* skb) {
-    brcmf_fws_rxreorder(ifp, skb);
+static void brcmf_proto_bcdc_rxreorder(struct brcmf_if* ifp, struct brcmf_netbuf* netbuf) {
+    brcmf_fws_rxreorder(ifp, netbuf);
 }
 
 static void brcmf_proto_bcdc_add_if(struct brcmf_if* ifp) {
@@ -428,7 +432,7 @@ static zx_status_t brcmf_proto_bcdc_init_done(struct brcmf_pub* drvr) {
 zx_status_t brcmf_proto_bcdc_attach(struct brcmf_pub* drvr) {
     struct brcmf_bcdc* bcdc;
 
-    bcdc = kzalloc(sizeof(*bcdc), GFP_ATOMIC);
+    bcdc = calloc(1, sizeof(*bcdc));
     if (!bcdc) {
         goto fail;
     }

@@ -5,26 +5,30 @@
 import("//build/fidl/fidl.gni")
 
 fidl("mlme") {
-  name = "wlan_mlme"
+  name = "fuchsia.wlan.mlme"
   sources = [
     "wlan_mlme.fidl",
     "wlan_mlme_ext.fidl",
   ]
+  deps = [
+    ":stats",
+  ]
 }
 
 fidl("service") {
-  name = "wlan_service"
+  name = "fuchsia.wlan.service"
   sources = [
     "wlan_service.fidl",
   ]
   deps = [
     ":mlme",
+    ":stats"
   ]
 }
 
 
 fidl("stats") {
-  name = "wlan_stats"
+  name = "fuchsia.wlan.stats"
   sources = [
     "wlan_stats.fidl"
   ]

@@ -33,7 +33,7 @@ TimelineControlPoint::TimelineControlPoint()
 
   status_publisher_.SetCallbackRunner(
       [this](GetStatusCallback callback, uint64_t version) {
-        MediaTimelineControlPointStatus status;
+        fuchsia::media::MediaTimelineControlPointStatus status;
         {
           std::lock_guard<std::mutex> locker(mutex_);
           status.timeline_transform =
@@ -58,7 +58,7 @@ TimelineControlPoint::~TimelineControlPoint() {
 }
 
 void TimelineControlPoint::Bind(
-    fidl::InterfaceRequest<MediaTimelineControlPoint> request) {
+    fidl::InterfaceRequest<fuchsia::media::MediaTimelineControlPoint> request) {
   if (control_point_binding_.is_bound()) {
     control_point_binding_.Unbind();
   }
@@ -112,25 +112,26 @@ void TimelineControlPoint::SetEndOfStreamPts(int64_t end_of_stream_pts) {
 
 void TimelineControlPoint::ClearEndOfStream() {
   std::lock_guard<std::mutex> locker(mutex_);
-  if (end_of_stream_pts_ != kUnspecifiedTime) {
-    end_of_stream_pts_ = kUnspecifiedTime;
+  if (end_of_stream_pts_ != fuchsia::media::kUnspecifiedTime) {
+    end_of_stream_pts_ = fuchsia::media::kUnspecifiedTime;
     end_of_stream_published_ = false;
   }
 }
 
 bool TimelineControlPoint::ReachedEndOfStream() {
-  return end_of_stream_pts_ != kUnspecifiedTime &&
+  return end_of_stream_pts_ != fuchsia::media::kUnspecifiedTime &&
          current_timeline_function_(Timeline::local_now()) >=
              end_of_stream_pts_;
 }
 
 void TimelineControlPoint::GetStatus(uint64_t version_last_seen,
                                      GetStatusCallback callback) {
-  status_publisher_.Get(version_last_seen, callback);
+  status_publisher_.Get(version_last_seen, std::move(callback));
 }
 
 void TimelineControlPoint::GetTimelineConsumer(
-    fidl::InterfaceRequest<TimelineConsumer> timeline_consumer) {
+    fidl::InterfaceRequest<fuchsia::media::TimelineConsumer>
+        timeline_consumer) {
   if (consumer_binding_.is_bound()) {
     consumer_binding_.Unbind();
   }
@@ -147,41 +148,44 @@ void TimelineControlPoint::SetProgramRange(uint64_t program, int64_t min_pts,
 
 void TimelineControlPoint::Prime(PrimeCallback callback) {
   if (prime_requested_callback_) {
-    prime_requested_callback_([this, callback]() { callback(); });
+    prime_requested_callback_(
+        [this, callback = std::move(callback)]() { callback(); });
   } else {
     callback();
   }
 }
 
 void TimelineControlPoint::SetTimelineTransform(
-    TimelineTransform timeline_transform,
+    fuchsia::media::TimelineTransform timeline_transform,
     SetTimelineTransformCallback callback) {
   std::lock_guard<std::mutex> locker(mutex_);
 
   SetTimelineTransformLocked(std::move(timeline_transform));
 
-  set_timeline_transform_callback_ = callback;
+  set_timeline_transform_callback_ = std::move(callback);
 }
 
 void TimelineControlPoint::SetTimelineTransformNoReply(
-    TimelineTransform timeline_transform) {
+    fuchsia::media::TimelineTransform timeline_transform) {
   std::lock_guard<std::mutex> locker(mutex_);
 
   SetTimelineTransformLocked(std::move(timeline_transform));
 }
 
 void TimelineControlPoint::SetTimelineTransformLocked(
-    TimelineTransform timeline_transform) {
+    fuchsia::media::TimelineTransform timeline_transform) {
   RCHECK(timeline_transform.reference_delta != 0);
 
   bool was_progressing = ProgressingInternal();
 
-  int64_t reference_time = timeline_transform.reference_time == kUnspecifiedTime
-                               ? Timeline::local_now()
-                               : timeline_transform.reference_time;
-  int64_t subject_time = timeline_transform.subject_time == kUnspecifiedTime
-                             ? current_timeline_function_(reference_time)
-                             : timeline_transform.subject_time;
+  int64_t reference_time =
+      timeline_transform.reference_time == fuchsia::media::kUnspecifiedTime
+          ? Timeline::local_now()
+          : timeline_transform.reference_time;
+  int64_t subject_time =
+      timeline_transform.subject_time == fuchsia::media::kUnspecifiedTime
+          ? current_timeline_function_(reference_time)
+          : timeline_transform.subject_time;
 
   // Eject any previous pending change.
   ClearPendingTimelineFunction(false);
@@ -215,13 +219,13 @@ void TimelineControlPoint::ApplyPendingChanges(int64_t reference_time) {
 }
 
 void TimelineControlPoint::ClearPendingTimelineFunction(bool completed) {
-  pending_timeline_function_ =
-      TimelineFunction(kUnspecifiedTime, kUnspecifiedTime, 0, 1);
+  pending_timeline_function_ = TimelineFunction(
+      fuchsia::media::kUnspecifiedTime, fuchsia::media::kUnspecifiedTime, 0, 1);
   if (set_timeline_transform_callback_) {
-    SetTimelineTransformCallback callback = set_timeline_transform_callback_;
-    set_timeline_transform_callback_ = nullptr;
-    async::PostTask(async_,
-                    [this, callback, completed]() { callback(completed); });
+    SetTimelineTransformCallback callback =
+        std::move(set_timeline_transform_callback_);
+    async::PostTask(async_, [this, callback = std::move(callback),
+                             completed]() { callback(completed); });
   }
 }
 

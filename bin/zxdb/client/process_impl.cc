@@ -7,6 +7,7 @@
 #include <set>
 
 #include "garnet/bin/zxdb/client/memory_dump.h"
+#include "garnet/bin/zxdb/client/remote_api.h"
 #include "garnet/bin/zxdb/client/session.h"
 #include "garnet/bin/zxdb/client/target_impl.h"
 #include "garnet/bin/zxdb/client/thread_impl.h"
@@ -14,14 +15,13 @@
 
 namespace zxdb {
 
-ProcessImpl::ProcessImpl(TargetImpl* target,
-                         uint64_t koid,
+ProcessImpl::ProcessImpl(TargetImpl* target, uint64_t koid,
                          const std::string& name)
     : Process(target->session()),
       target_(target),
       koid_(koid),
       name_(name),
-      symbols_(this),
+      symbols_(this, target->symbols()),
       weak_factory_(this) {}
 
 ProcessImpl::~ProcessImpl() {
@@ -39,27 +39,19 @@ ThreadImpl* ProcessImpl::GetThreadImplFromKoid(uint64_t koid) {
   return found->second.get();
 }
 
-Target* ProcessImpl::GetTarget() const {
-  return target_;
-}
+Target* ProcessImpl::GetTarget() const { return target_; }
 
-uint64_t ProcessImpl::GetKoid() const {
-  return koid_;
-}
+uint64_t ProcessImpl::GetKoid() const { return koid_; }
 
-const std::string& ProcessImpl::GetName() const {
-  return name_;
-}
+const std::string& ProcessImpl::GetName() const { return name_; }
 
-ProcessSymbols* ProcessImpl::GetSymbols() {
-  return &symbols_;
-}
+ProcessSymbols* ProcessImpl::GetSymbols() { return &symbols_; }
 
 void ProcessImpl::GetModules(
     std::function<void(const Err&, std::vector<debug_ipc::Module>)> callback) {
   debug_ipc::ModulesRequest request;
   request.process_koid = koid_;
-  session()->Send<debug_ipc::ModulesRequest, debug_ipc::ModulesReply>(
+  session()->remote_api()->Modules(
       request, [process = weak_factory_.GetWeakPtr(), callback](
                    const Err& err, debug_ipc::ModulesReply reply) {
         if (process)
@@ -76,7 +68,7 @@ void ProcessImpl::GetAspace(
   debug_ipc::AddressSpaceRequest request;
   request.process_koid = koid_;
   request.address = address;
-  session()->Send<debug_ipc::AddressSpaceRequest, debug_ipc::AddressSpaceReply>(
+  session()->remote_api()->AddressSpace(
       request, [callback](const Err& err, debug_ipc::AddressSpaceReply reply) {
         if (callback)
           callback(err, std::move(reply.map));
@@ -98,7 +90,7 @@ Thread* ProcessImpl::GetThreadFromKoid(uint64_t koid) {
 void ProcessImpl::SyncThreads(std::function<void()> callback) {
   debug_ipc::ThreadsRequest request;
   request.process_koid = koid_;
-  session()->Send<debug_ipc::ThreadsRequest, debug_ipc::ThreadsReply>(
+  session()->remote_api()->Threads(
       request, [callback, process = weak_factory_.GetWeakPtr()](
                    const Err& err, debug_ipc::ThreadsReply reply) {
         if (process) {
@@ -113,8 +105,8 @@ void ProcessImpl::Pause() {
   debug_ipc::PauseRequest request;
   request.process_koid = koid_;
   request.thread_koid = 0;  // 0 means all threads.
-  session()->Send<debug_ipc::PauseRequest, debug_ipc::PauseReply>(
-      request, [](const Err& err, debug_ipc::PauseReply) {});
+  session()->remote_api()->Pause(request,
+                                 [](const Err& err, debug_ipc::PauseReply) {});
 }
 
 void ProcessImpl::Continue() {
@@ -122,19 +114,18 @@ void ProcessImpl::Continue() {
   request.process_koid = koid_;
   request.thread_koid = 0;  // 0 means all threads.
   request.how = debug_ipc::ResumeRequest::How::kContinue;
-  session()->Send<debug_ipc::ResumeRequest, debug_ipc::ResumeReply>(
+  session()->remote_api()->Resume(
       request, [](const Err& err, debug_ipc::ResumeReply) {});
 }
 
 void ProcessImpl::ReadMemory(
-    uint64_t address,
-    uint32_t size,
+    uint64_t address, uint32_t size,
     std::function<void(const Err&, MemoryDump)> callback) {
   debug_ipc::ReadMemoryRequest request;
   request.process_koid = koid_;
   request.address = address;
   request.size = size;
-  session()->Send<debug_ipc::ReadMemoryRequest, debug_ipc::ReadMemoryReply>(
+  session()->remote_api()->ReadMemory(
       request, [callback](const Err& err, debug_ipc::ReadMemoryReply reply) {
         callback(err, MemoryDump(std::move(reply.blocks)));
       });
@@ -170,9 +161,8 @@ void ProcessImpl::OnThreadExiting(const debug_ipc::ThreadRecord& record) {
   threads_.erase(found);
 }
 
-void ProcessImpl::NotifyOnSymbolLoadFailure(const Err& err) {
-  for (auto& observer : observers())
-    observer.OnSymbolLoadFailure(this, err);
+void ProcessImpl::NotifyModuleLoaded(const debug_ipc::Module& module) {
+  symbols_.AddModule(module, std::function<void(const std::string&)>());
 }
 
 void ProcessImpl::UpdateThreads(
@@ -203,6 +193,21 @@ void ProcessImpl::UpdateThreads(
       OnThreadExiting(record);
     }
   }
+}
+
+void ProcessImpl::DidLoadModuleSymbols(LoadedModuleSymbols* module) {
+  for (auto& observer : observers())
+    observer.DidLoadModuleSymbols(this, module);
+}
+
+void ProcessImpl::WillUnloadModuleSymbols(LoadedModuleSymbols* module) {
+  for (auto& observer : observers())
+    observer.WillUnloadModuleSymbols(this, module);
+}
+
+void ProcessImpl::OnSymbolLoadFailure(const Err& err) {
+  for (auto& observer : observers())
+    observer.OnSymbolLoadFailure(this, err);
 }
 
 }  // namespace zxdb

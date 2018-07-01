@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"fidl/device_settings"
+	"fidl/fuchsia/devicesettings"
 	"netstack/filter"
 	"netstack/link/eth"
 	"netstack/link/stats"
@@ -41,13 +41,15 @@ type netstack struct {
 	stack      *stack.Stack
 	dispatcher *socketServer
 
-	deviceSettings *device_settings.DeviceSettingsManagerInterface
+	deviceSettings *devicesettings.DeviceSettingsManagerInterface
 
 	mu       sync.Mutex
 	nodename string
 	ifStates map[tcpip.NICID]*ifState
 
 	countNIC tcpip.NICID
+
+	filter   *filter.Filter
 }
 
 type dhcpState struct {
@@ -393,9 +395,11 @@ func (ns *netstack) addEth(path string) error {
 		// and manifest itself to 3rd party netstack.
 		linkID = sniffer.New(linkID)
 	}
-	if filter.Enabled {
-		linkID = filter.New(linkID)
-	}
+
+	f := filter.New(ns.stack.PortManager)
+	linkID = filter.NewEndpoint(f, linkID)
+	ns.filter = f
+
 	linkID = ifs.statsEP.Wrap(linkID)
 
 	ns.mu.Lock()

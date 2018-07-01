@@ -2,15 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_DEBUG_AGENT_LAUNCHER_H_
+#define GARNET_BIN_DEBUG_AGENT_LAUNCHER_H_
 
 #include <string>
 #include <vector>
 
-#include <launchpad/launchpad.h>
 #include <lib/zx/process.h>
+#include "garnet/lib/process/process_builder.h"
 
-#include "garnet/public/lib/fxl/macros.h"
+#include "lib/fxl/macros.h"
 
 namespace debug_agent {
 
@@ -39,9 +40,11 @@ class Launcher {
   zx_status_t Start();
 
  private:
-  launchpad_t* lp_ = nullptr;
+  process::ProcessBuilder builder_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Launcher);
 };
 
 }  // namespace debug_agent
+
+#endif  // GARNET_BIN_DEBUG_AGENT_LAUNCHER_H_

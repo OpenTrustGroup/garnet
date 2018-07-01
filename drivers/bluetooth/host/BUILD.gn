@@ -25,8 +25,6 @@ source_set("sources") {
     "host_device.h",
 
     # FIDL servers
-    "fidl/adapter_server.cc",
-    "fidl/adapter_server.h",
     "fidl/gatt_client_server.cc",
     "fidl/gatt_client_server.h",
     "fidl/gatt_remote_service_server.cc",
@@ -46,16 +44,17 @@ source_set("sources") {
 
   deps = [
     "//garnet/drivers/bluetooth/lib/gap",
-    "//garnet/public/lib/bluetooth/fidl:bluetooth",
-    "//garnet/public/lib/bluetooth/fidl:bluetooth_control",
-    "//garnet/public/lib/bluetooth/fidl:bluetooth_gatt",
-    "//garnet/public/lib/bluetooth/fidl:bluetooth_low_energy",
+    "//garnet/public/lib/bluetooth/fidl/common",
+    "//garnet/public/lib/bluetooth/fidl/control",
+    "//garnet/public/lib/bluetooth/fidl/gatt",
+    "//garnet/public/lib/bluetooth/fidl/le",
     "//garnet/public/lib/fxl",
     "//garnet/lib/bluetooth/fidl:bluetooth_host",
     "//garnet/lib/bluetooth/c",
     "//zircon/public/lib/ddk",
     "//zircon/public/lib/driver",
     "//zircon/public/lib/fbl",
+    "//zircon/public/lib/fit",
     "//zircon/public/lib/zx",
   ]
 }

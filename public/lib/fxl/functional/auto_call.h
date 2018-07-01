@@ -30,6 +30,7 @@ namespace fxl {
 template <typename T>
 class AutoCall {
  public:
+  constexpr explicit AutoCall(std::nullptr_t) : active_(false) {}
   constexpr explicit AutoCall(T c) : call_(std::move(c)) {}
   ~AutoCall() { call(); }
 
@@ -39,8 +40,11 @@ class AutoCall {
   }
 
   AutoCall& operator=(AutoCall&& c) {
+    call();
     call_ = std::move(c.call_);
+    active_ = c.active_;
     c.cancel();
+    return *this;
   }
 
   // no copy, assign, but allow move

@@ -7,32 +7,35 @@
 
 #include <unordered_map>
 
+#include <fuchsia/media/cpp/fidl.h>
 #include <lib/async/default.h>
-#include <media/cpp/fidl.h>
+#include <lib/fit/function.h>
 
+#include "garnet/bin/media/media_player/decode/decoder.h"
+#include "garnet/bin/media/media_player/demux/demux.h"
 #include "garnet/bin/media/media_player/demux/reader.h"
 #include "garnet/bin/media/media_player/player/player.h"
 #include "garnet/bin/media/media_player/render/fidl_audio_renderer.h"
 #include "garnet/bin/media/media_player/render/fidl_video_renderer.h"
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
-#include "lib/fxl/functional/closure.h"
 #include "lib/media/timeline/timeline.h"
 #include "lib/media/timeline/timeline_function.h"
 
 namespace media_player {
 
 // Fidl agent that renders streams.
-class MediaPlayerImpl : public MediaPlayer {
+class MediaPlayerImpl : public fuchsia::mediaplayer::MediaPlayer {
  public:
   static std::unique_ptr<MediaPlayerImpl> Create(
-      fidl::InterfaceRequest<MediaPlayer> request,
-      component::ApplicationContext* application_context,
-      fxl::Closure quit_callback);
+      fidl::InterfaceRequest<fuchsia::mediaplayer::MediaPlayer> request,
+      fuchsia::sys::StartupContext* startup_context,
+      fit::closure quit_callback);
 
-  MediaPlayerImpl(fidl::InterfaceRequest<MediaPlayer> request,
-                  component::ApplicationContext* application_context,
-                  fxl::Closure quit_callback);
+  MediaPlayerImpl(
+      fidl::InterfaceRequest<fuchsia::mediaplayer::MediaPlayer> request,
+      fuchsia::sys::StartupContext* startup_context,
+      fit::closure quit_callback);
 
   ~MediaPlayerImpl() override;
 
@@ -42,7 +45,8 @@ class MediaPlayerImpl : public MediaPlayer {
   void SetFileSource(zx::channel file_channel) override;
 
   void SetReaderSource(
-      fidl::InterfaceHandle<SeekingReader> reader_handle) override;
+      fidl::InterfaceHandle<fuchsia::mediaplayer::SeekingReader> reader_handle)
+      override;
 
   void Play() override;
 
@@ -52,14 +56,16 @@ class MediaPlayerImpl : public MediaPlayer {
 
   void SetGain(float gain) override;
 
-  void CreateView(fidl::InterfaceHandle<::fuchsia::ui::views_v1::ViewManager> view_manager,
-                  fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
-                      view_owner_request) override;
+  void CreateView(
+      fidl::InterfaceHandle<::fuchsia::ui::views_v1::ViewManager> view_manager,
+      fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+          view_owner_request) override;
 
-  void SetAudioRenderer(
-      fidl::InterfaceHandle<media::AudioRenderer2> audio_renderer) override;
+  void SetAudioRenderer(fidl::InterfaceHandle<fuchsia::media::AudioRenderer2>
+                            audio_renderer) override;
 
-  void AddBinding(fidl::InterfaceRequest<MediaPlayer> request) override;
+  void AddBinding(fidl::InterfaceRequest<fuchsia::mediaplayer::MediaPlayer>
+                      request) override;
 
  private:
   static constexpr int64_t kMinimumLeadTime = media::Timeline::ns_from_ms(30);
@@ -88,16 +94,13 @@ class MediaPlayerImpl : public MediaPlayer {
   // Creates sinks as needed and connects enabled streams.
   void ConnectSinks();
 
-  // Prepares a stream.
-  void PrepareStream(size_t index, const media::MediaType& input_media_type,
-                     const std::function<void()>& callback);
-
   // Takes action based on current state.
   void Update();
 
   // Determines whether we need to flush.
   bool NeedToFlush() const {
-    return setting_reader_ || target_position_ != media::kUnspecifiedTime ||
+    return setting_reader_ ||
+           target_position_ != fuchsia::media::kUnspecifiedTime ||
            target_state_ == State::kFlushed;
   }
 
@@ -108,7 +111,7 @@ class MediaPlayerImpl : public MediaPlayer {
 
   // Sets the timeline function.
   void SetTimelineFunction(float rate, int64_t reference_time,
-                           fxl::Closure callback);
+                           fit::closure callback);
 
   // Sends status updates to clients.
   void SendStatusUpdates();
@@ -117,10 +120,12 @@ class MediaPlayerImpl : public MediaPlayer {
   void UpdateStatus();
 
   async_t* async_;
-  component::ApplicationContext* application_context_;
-  fxl::Closure quit_callback_;
-  fidl::BindingSet<MediaPlayer> bindings_;
+  fuchsia::sys::StartupContext* startup_context_;
+  fit::closure quit_callback_;
+  fidl::BindingSet<fuchsia::mediaplayer::MediaPlayer> bindings_;
   Player player_;
+  std::unique_ptr<DemuxFactory> demux_factory_;
+  std::unique_ptr<DecoderFactory> decoder_factory_;
 
   float gain_ = 1.0f;
   std::shared_ptr<FidlAudioRenderer> audio_renderer_;
@@ -135,16 +140,16 @@ class MediaPlayerImpl : public MediaPlayer {
   State target_state_ = State::kFlushed;
 
   // The position we want to seek to (because the client called Seek) or
-  // media::kUnspecifiedTime, which indicates there's no desire to seek.
-  int64_t target_position_ = media::kUnspecifiedTime;
+  // kUnspecifiedTime, which indicates there's no desire to seek.
+  int64_t target_position_ = fuchsia::media::kUnspecifiedTime;
 
   // The subject time to be used for SetTimelineFunction. The value is
-  // media::kUnspecifiedTime if there's no need to seek or the position we want
+  // kUnspecifiedTime if there's no need to seek or the position we want
   // to seek to if there is.
-  int64_t transform_subject_time_ = media::kUnspecifiedTime;
+  int64_t transform_subject_time_ = fuchsia::media::kUnspecifiedTime;
 
   // The minimum program range PTS to be used for SetProgramRange.
-  int64_t program_range_min_pts_ = media::kMinTime;
+  int64_t program_range_min_pts_ = fuchsia::media::kMinTime;
 
   // Whether we need to set the reader, possibly with nothing. When this is
   // true, the state machine will transition to |kIdle|, removing an existing
@@ -157,7 +162,7 @@ class MediaPlayerImpl : public MediaPlayer {
   // reader and transition to kInactive.
   std::shared_ptr<Reader> new_reader_;
 
-  MediaPlayerStatus status_;
+  fuchsia::mediaplayer::MediaPlayerStatus status_;
 };
 
 }  // namespace media_player

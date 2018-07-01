@@ -21,26 +21,11 @@ msd_context_t* msd_connection_create_context(msd_connection_t* abi_connection)
         std::make_unique<ClientContext>(connection, connection->per_process_gtt()));
 }
 
-magma_status_t msd_connection_wait_rendering(msd_connection_t* abi_connection, msd_buffer_t* buffer)
+void msd_connection_set_notification_callback(struct msd_connection_t* connection,
+                                              msd_connection_notification_callback_t callback,
+                                              void* token)
 {
-    auto connection = MsdIntelAbiConnection::cast(abi_connection)->ptr();
-
-    if (connection->context_killed())
-        return DRET(MAGMA_STATUS_CONTEXT_KILLED);
-
-    MsdIntelAbiBuffer::cast(buffer)->ptr()->WaitRendering();
-
-    if (connection->context_killed())
-        return DRET(MAGMA_STATUS_CONTEXT_KILLED);
-
-    return MAGMA_STATUS_OK;
-}
-
-void msd_connection_set_notification_channel(msd_connection_t* connection,
-                                             msd_channel_send_callback_t callback,
-                                             msd_channel_t channel)
-{
-    // The channel isn't used for anything.
+    MsdIntelAbiConnection::cast(connection)->ptr()->SetNotificationCallback(callback, token);
 }
 
 magma_status_t msd_connection_map_buffer_gpu(msd_connection_t* connection, msd_buffer_t* buffer,

@@ -60,7 +60,6 @@ struct ath10k_channel {
 
 struct ath10k_band {
     const char* name;
-    enum wmi_phy_mode mode;
     wlan_ht_caps_t ht_caps;
     bool vht_supported;
     wlan_vht_caps_t vht_caps;
@@ -81,6 +80,7 @@ zx_status_t ath10k_start(struct ath10k* ar, wlanmac_ifc_t* ifc, void* cookie);
 void __ath10k_scan_finish(struct ath10k* ar);
 void ath10k_scan_finish(struct ath10k* ar);
 zx_status_t ath10k_mac_op_tx(struct ath10k* ar, wlan_tx_packet_t* pkt);
+zx_status_t ath10k_mac_set_bss(struct ath10k* ar, wlan_bss_config_t* config);
 int ath10k_mac_bss_assoc(void* thrd_data);
 zx_status_t ath10k_mac_set_key(struct ath10k* ar, wlan_key_config_t* key_config);
 #if 0 // NEEDS PORTING

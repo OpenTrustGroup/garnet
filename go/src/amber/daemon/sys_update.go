@@ -6,26 +6,30 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"time"
 
 	"app/context"
-	"fidl/amber"
+	"fidl/fuchsia/amber"
+	"fidl/fuchsia/sys"
 	"syscall/zx"
 	"syscall/zx/zxwait"
 
 	"fuchsia.googlesource.com/merkle"
 )
 
-const updaterDir = "/pkgfs/packages/system_updater"
-const updaterBin = "bin/app"
+var updaterDir = filepath.Join("/pkgfs", "packages", "update")
+var updaterBin = filepath.Join("bin", "app")
 
 type SystemUpdateMonitor struct {
-	halt   uint32
-	daemon *Daemon
+	halt     uint32
+	daemon   *Daemon
+	checkNow chan struct{}
+	// if auto is allowed to be reset after instantiation, changes must be made
+	// in the run loop to avoid a panic
+	auto bool
 }
 
 type ErrNoUpdater string
@@ -38,12 +42,19 @@ func NewErrNoUpdater() ErrNoUpdater {
 	return ""
 }
 
-func NewSystemUpdateMonitor(d *Daemon) *SystemUpdateMonitor {
-	return &SystemUpdateMonitor{daemon: d, halt: 0}
+func NewSystemUpdateMonitor(d *Daemon, a bool) *SystemUpdateMonitor {
+	return &SystemUpdateMonitor{daemon: d, halt: 0, checkNow: make(chan struct{}), auto: a}
 }
 
 func (upMon *SystemUpdateMonitor) Stop() {
 	atomic.StoreUint32(&upMon.halt, 1)
+}
+
+func (upMon *SystemUpdateMonitor) Check() {
+	if atomic.LoadUint32(&upMon.halt) == 1 {
+		return
+	}
+	upMon.checkNow <- struct{}{}
 }
 
 func (upMon *SystemUpdateMonitor) Start() {
@@ -71,17 +82,28 @@ func (upMon *SystemUpdateMonitor) Start() {
 		return
 	}
 
-	timerDur := 3 * time.Hour
-	// do the first check almost immediately
-	timer := time.NewTimer(time.Second)
+	timerDur := time.Hour
+	var timer *time.Timer
+	if upMon.auto {
+		timer = time.NewTimer(timerDur)
+	}
+
 	for {
-		<-timer.C
-		timer.Reset(timerDur)
+		if upMon.auto {
+			select {
+			case <-timer.C:
+				timer.Reset(timerDur)
+			case <-upMon.checkNow:
+			}
+		} else {
+			<-upMon.checkNow
+		}
+
 		if atomic.LoadUint32(&upMon.halt) == 1 {
 			return
 		}
 
-		updatePkg := &pkg.Package{Name: fmt.Sprintf("/system_updater/%d", 0)}
+		updatePkg := &pkg.Package{Name: fmt.Sprintf("/update/%d", 0)}
 		if err = fetchPackage(updatePkg, amber); err != nil {
 			log.Printf("sys_upd_mon: unable to fetch package update: %s", err)
 			continue
@@ -103,12 +125,39 @@ func (upMon *SystemUpdateMonitor) Start() {
 
 		if !bytes.Equal(newMerkle, merkle) {
 			log.Println("System update starting...")
-			// TODO(jmatt) find a way to invoke the new updater directly
-			c := exec.Command("run", "system_updater")
-			c.Start()
+			launchDesc := sys.LaunchInfo{Url: "system_updater"}
+			if err = runProgram(&launchDesc); err != nil {
+				log.Printf("sys_upd_mon: updater failed to start: %s", err)
+			}
+		} else {
+			log.Println("sys_upd_mon: no newer system version available")
 		}
 		merkle = newMerkle
 	}
+}
+
+func runProgram(info *sys.LaunchInfo) error {
+	context := context.CreateFromStartupInfo()
+	req, pxy, err := sys.NewLauncherInterfaceRequest()
+	if err != nil {
+		return fmt.Errorf("could not make launcher request object: %s", err)
+	}
+	context.ConnectToEnvService(req)
+	defer func() {
+		c := req.ToChannel()
+		(&c).Close()
+	}()
+	contReq, _, err := sys.NewComponentControllerInterfaceRequest()
+	if err != nil {
+		return fmt.Errorf("error creating component controller request: %s", err)
+	}
+
+	err = pxy.CreateComponent(*info, contReq)
+	if err != nil {
+		return fmt.Errorf("error starting system updater: %s", err)
+	}
+
+	return nil
 }
 
 func connectToUpdateSrvc() (*amber.ControlInterface, error) {

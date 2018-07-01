@@ -4,8 +4,8 @@
 
 #pragma once
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <string>
 
 #include "garnet/bin/zxdb/client/client_object.h"
@@ -16,6 +16,7 @@
 
 namespace zxdb {
 
+class Err;
 class Frame;
 class Process;
 
@@ -42,6 +43,7 @@ class Thread : public ClientObject {
   // as they were previously).
   virtual void Pause() = 0;
   virtual void Continue() = 0;
+  virtual Err Step() = 0;
   virtual void StepInstruction() = 0;
 
   // Access to the stack frames for this thread at its current stopped
@@ -71,6 +73,14 @@ class Thread : public ClientObject {
   virtual std::vector<Frame*> GetFrames() const = 0;
   virtual bool HasAllFrames() const = 0;
   virtual void SyncFrames(std::function<void()> callback) = 0;
+
+  // Obtains the state of the registers for a particular thread.
+  // The thread must be stopped in order to get the values.
+  //
+  // The returned structures are architecture independent, but the contents
+  // will be dependent on the architecture the target is running on.
+  virtual void GetRegisters(
+      std::function<void(const Err&, std::vector<debug_ipc::Register>)>) = 0;
 
  protected:
   fxl::ObserverList<ThreadObserver>& observers() { return observers_; }

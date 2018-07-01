@@ -10,7 +10,7 @@
 #include "lib/escher/impl/command_buffer.h"
 #include "lib/escher/profiling/timestamp_profiler.h"
 #include "lib/escher/vk/buffer_factory.h"
-#include "lib/ui/scenic/client/session.h"
+#include "lib/ui/scenic/cpp/session.h"
 
 namespace sketchy_service {
 
@@ -24,9 +24,9 @@ class Frame final {
                  bool enable_profiler = false);
 
   zx::event DuplicateReleaseFence();
-  void RequestScenicPresent(scenic_lib::Session* session,
+  void RequestScenicPresent(scenic::Session* session,
                             uint64_t presentation_time,
-                            scenic_lib::Session::PresentCallback callback);
+                            scenic::Session::PresentCallback callback);
 
   SharedBufferPool* shared_buffer_pool() const { return shared_buffer_pool_; }
   escher::impl::CommandBuffer* command() const { return command_; }

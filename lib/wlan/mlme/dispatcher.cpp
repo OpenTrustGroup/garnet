@@ -12,22 +12,27 @@
 #include <wlan/mlme/client/client_mlme.h>
 #include <wlan/mlme/debug.h>
 #include <wlan/mlme/device_interface.h>
+#include <wlan/mlme/frame_dispatcher.h>
 #include <wlan/mlme/frame_handler.h>
 #include <wlan/mlme/packet.h>
 #include <wlan/mlme/service.h>
 #include <wlan/protocol/mac.h>
+#include <zircon/fidl.h>
 #include <zircon/types.h>
 
-#include <wlan_mlme/c/fidl.h>
-#include <wlan_mlme/cpp/fidl.h>
-#include <wlan_stats/c/fidl.h>
+#include <fuchsia/wlan/mlme/c/fidl.h>
+#include <fuchsia/wlan/mlme/cpp/fidl.h>
 
+#include <zircon/fidl.h>
 #include <atomic>
 #include <cinttypes>
 #include <cstring>
 #include <sstream>
 
 namespace wlan {
+
+namespace wlan_mlme = ::fuchsia::wlan::mlme;
+namespace wlan_stats = ::fuchsia::wlan::stats;
 
 Dispatcher::Dispatcher(DeviceInterface* device, fbl::unique_ptr<Mlme> mlme)
     : device_(device), mlme_(std::move(mlme)) {
@@ -36,10 +41,6 @@ Dispatcher::Dispatcher(DeviceInterface* device, fbl::unique_ptr<Mlme> mlme)
 }
 
 Dispatcher::~Dispatcher() {}
-
-template <>
-zx_status_t Dispatcher::HandleMlmeMethod<wlan_mlme::DeviceQueryRequest>(
-    fbl::unique_ptr<Packet> packet, uint32_t ordinal);
 
 zx_status_t Dispatcher::HandlePacket(fbl::unique_ptr<Packet> packet) {
     debugfn();
@@ -64,37 +65,25 @@ zx_status_t Dispatcher::HandlePacket(fbl::unique_ptr<Packet> packet) {
         status = HandleSvcPacket(fbl::move(packet));
         break;
     case Packet::Peer::kEthernet:
-        status = HandleEthPacket(fbl::move(packet));
+        status = mlme_->HandleFramePacket(fbl::move(packet));
         break;
     case Packet::Peer::kWlan: {
         auto fc = packet->field<FrameControl>(0);
-
-        // TODO(porce): Handle HTC field.
-        if (fc->HasHtCtrl()) {
-            warnf("WLAN frame (type %u:%u) HTC field is present but not handled. Drop.", fc->type(),
-                  fc->subtype());
-            status = ZX_ERR_NOT_SUPPORTED;
-            break;
-        }
-
         switch (fc->type()) {
         case FrameType::kManagement:
             WLAN_STATS_INC(mgmt_frame.in);
-            status = HandleMgmtPacket(fbl::move(packet));
             break;
         case FrameType::kControl:
             WLAN_STATS_INC(ctrl_frame.in);
-            status = HandleCtrlPacket(fbl::move(packet));
             break;
         case FrameType::kData:
             WLAN_STATS_INC(data_frame.in);
-            status = HandleDataPacket(fbl::move(packet));
             break;
         default:
-            warnf("unknown MAC frame type %u\n", fc->type());
-            status = ZX_ERR_NOT_SUPPORTED;
             break;
         }
+
+        status = mlme_->HandleFramePacket(fbl::move(packet));
         break;
     }
     default:
@@ -123,235 +112,6 @@ zx_status_t Dispatcher::HandlePortPacket(uint64_t key) {
     return ZX_OK;
 }
 
-zx_status_t Dispatcher::HandleCtrlPacket(fbl::unique_ptr<Packet> packet) {
-    debugfn();
-
-    auto rxinfo = packet->ctrl_data<wlan_rx_info_t>();
-    ZX_DEBUG_ASSERT(rxinfo);
-
-    ImmutableFrame<FrameControl, UnknownBody> ctrl_frame(fbl::move(packet));
-    if (!ctrl_frame.HasValidLen()) {
-        errorf("short control frame len=%zu\n", ctrl_frame.take()->len());
-        return ZX_OK;
-    }
-
-    auto fc = ctrl_frame.hdr();
-    switch (fc->subtype()) {
-    case ControlSubtype::kPsPoll: {
-        ImmutableCtrlFrame<PsPollFrame> ps_poll(ctrl_frame.take());
-        if (!ps_poll.HasValidLen()) {
-            errorf("short ps poll frame len=%zu\n", ps_poll.take()->len());
-            return ZX_OK;
-        }
-        return mlme_->HandleFrame(ps_poll, *rxinfo);
-    }
-    default:
-        debugf("rxed unfiltered control subtype 0x%02x\n", fc->subtype());
-        return ZX_OK;
-    }
-}
-
-zx_status_t Dispatcher::HandleDataPacket(fbl::unique_ptr<Packet> packet) {
-    debugfn();
-
-    auto rxinfo = packet->ctrl_data<wlan_rx_info_t>();
-    ZX_DEBUG_ASSERT(rxinfo);
-
-    ImmutableDataFrame<UnknownBody> data_frame(fbl::move(packet));
-    if (!data_frame.HasValidLen()) {
-        errorf("short data packet len=%zu\n", data_frame.take()->len());
-        return ZX_OK;
-    }
-
-    auto hdr = data_frame.hdr();
-    switch (hdr->fc.subtype()) {
-    case DataSubtype::kNull:
-        // Fall-through
-    case DataSubtype::kQosnull: {
-        ImmutableDataFrame<NilHeader> null_frame(data_frame.take());
-        return mlme_->HandleFrame(null_frame, *rxinfo);
-    }
-    case DataSubtype::kDataSubtype:
-        // Fall-through
-    case DataSubtype::kQosdata:
-        break;
-    default:
-        warnf("unsupported data subtype %02x\n", hdr->fc.subtype());
-        return ZX_OK;
-    }
-
-    ImmutableDataFrame<LlcHeader> llc(data_frame.take());
-    if (!llc.HasValidLen()) {
-        errorf("short data packet len=%zu\n", llc.take()->len());
-        return ZX_ERR_IO;
-    }
-    return mlme_->HandleFrame(llc, *rxinfo);
-}
-
-zx_status_t Dispatcher::HandleMgmtPacket(fbl::unique_ptr<Packet> packet) {
-    debugfn();
-
-    auto rxinfo = packet->ctrl_data<wlan_rx_info_t>();
-    ZX_DEBUG_ASSERT(rxinfo);
-
-    ImmutableMgmtFrame<UnknownBody> mgmt_frame(fbl::move(packet));
-    if (!mgmt_frame.HasValidLen()) {
-        errorf("short mgmt packet len=%zu\n", mgmt_frame.take()->len());
-        return ZX_OK;
-    }
-
-    auto hdr = mgmt_frame.hdr();
-    debughdr("Frame control: %04x  duration: %u  seq: %u frag: %u\n", hdr->fc.val(), hdr->duration,
-             hdr->sc.seq(), hdr->sc.frag());
-
-    const common::MacAddr& dst = hdr->addr1;
-    const common::MacAddr& src = hdr->addr2;
-    const common::MacAddr& bssid = hdr->addr3;
-
-    debughdr("dest: %s source: %s bssid: %s\n", MACSTR(dst), MACSTR(src), MACSTR(bssid));
-
-    switch (hdr->fc.subtype()) {
-    case ManagementSubtype::kBeacon: {
-        ImmutableMgmtFrame<Beacon> frame(mgmt_frame.take());
-        if (!frame.HasValidLen()) {
-            errorf("beacon packet too small (len=%zd)\n", frame.take()->len());
-            return ZX_ERR_IO;
-        }
-        return mlme_->HandleFrame(frame, *rxinfo);
-    }
-    case ManagementSubtype::kProbeResponse: {
-        ImmutableMgmtFrame<ProbeResponse> frame(mgmt_frame.take());
-        if (!frame.HasValidLen()) {
-            errorf("probe response packet too small (len=%zd)\n", frame.take()->len());
-            return ZX_ERR_IO;
-        }
-        return mlme_->HandleFrame(frame, *rxinfo);
-    }
-    case ManagementSubtype::kProbeRequest: {
-        ImmutableMgmtFrame<ProbeRequest> frame(mgmt_frame.take());
-        if (!frame.HasValidLen()) {
-            errorf("probe request packet too small (len=%zd)\n", frame.take()->len());
-            return ZX_ERR_IO;
-        }
-        return mlme_->HandleFrame(frame, *rxinfo);
-    }
-    case ManagementSubtype::kAuthentication: {
-        ImmutableMgmtFrame<Authentication> frame(mgmt_frame.take());
-        if (!frame.HasValidLen()) {
-            errorf("authentication packet too small (len=%zd)\n", frame.take()->len());
-            return ZX_ERR_IO;
-        }
-        return mlme_->HandleFrame(frame, *rxinfo);
-    }
-    case ManagementSubtype::kDeauthentication: {
-        ImmutableMgmtFrame<Deauthentication> frame(mgmt_frame.take());
-        if (!frame.HasValidLen()) {
-            errorf("deauthentication packet too small (len=%zd)\n", frame.take()->len());
-            return ZX_ERR_IO;
-        }
-        return mlme_->HandleFrame(frame, *rxinfo);
-    }
-    case ManagementSubtype::kAssociationRequest: {
-        ImmutableMgmtFrame<AssociationRequest> frame(mgmt_frame.take());
-        if (!frame.HasValidLen()) {
-            errorf("assocation request packet too small (len=%zd)\n", frame.take()->len());
-            return ZX_ERR_IO;
-        }
-        return mlme_->HandleFrame(frame, *rxinfo);
-    }
-    case ManagementSubtype::kAssociationResponse: {
-        ImmutableMgmtFrame<AssociationResponse> frame(mgmt_frame.take());
-        if (!frame.HasValidLen()) {
-            errorf("assocation response packet too small (len=%zd)\n", frame.take()->len());
-            return ZX_ERR_IO;
-        }
-        return mlme_->HandleFrame(frame, *rxinfo);
-    }
-    case ManagementSubtype::kDisassociation: {
-        ImmutableMgmtFrame<Disassociation> frame(mgmt_frame.take());
-        if (!frame.HasValidLen()) {
-            errorf("disassociation packet too small (len=%zd)\n", frame.take()->len());
-            return ZX_ERR_IO;
-        }
-        return mlme_->HandleFrame(frame, *rxinfo);
-    }
-    case ManagementSubtype::kAction: {
-        ImmutableMgmtFrame<ActionFrame> frame(mgmt_frame.take());
-        if (!frame.HasValidLen()) {
-            errorf("action packet too small (len=%zd)\n", frame.take()->len());
-            return ZX_ERR_IO;
-        }
-        if (!frame.hdr()->IsAction()) {
-            errorf("action packet is not an action\n");
-            return ZX_ERR_IO;
-        }
-        HandleActionPacket(fbl::move(frame), rxinfo);
-    }
-    default:
-        if (!dst.IsBcast()) {
-            // TODO(porce): Evolve this logic to support AP role.
-            debugf("Rxed Mgmt frame (type: %d) but not handled\n", hdr->fc.subtype());
-        }
-        break;
-    }
-    return ZX_OK;
-}
-
-zx_status_t Dispatcher::HandleActionPacket(ImmutableMgmtFrame<ActionFrame> action_frame,
-                                           const wlan_rx_info_t* rxinfo) {
-    if (action_frame.body()->category != action::Category::kBlockAck) {
-        verbosef("Rxed Action frame with category %d. Not handled.\n",
-                 action_frame.body()->category);
-        return ZX_OK;
-    }
-
-    ImmutableMgmtFrame<ActionFrameBlockAck> ba_frame(action_frame.take());
-    if (!ba_frame.HasValidLen()) {
-        errorf("bloackack packet too small (len=%zd)\n", ba_frame.take()->len());
-        return ZX_ERR_IO;
-    }
-
-    switch (ba_frame.body()->action) {
-    case action::BaAction::kAddBaRequest: {
-        ImmutableMgmtFrame<AddBaRequestFrame> addbar(ba_frame.take());
-        if (!addbar.HasValidLen()) {
-            errorf("addbar packet too small (len=%zd)\n", addbar.take()->len());
-            return ZX_ERR_IO;
-        }
-
-        // TODO(porce): Support AddBar. Work with lower mac.
-        // TODO(porce): Make this conditional depending on the hardware capability.
-
-        return mlme_->HandleFrame(addbar, *rxinfo);
-    }
-    case action::BaAction::kAddBaResponse: {
-        ImmutableMgmtFrame<AddBaResponseFrame> addba_resp(ba_frame.take());
-        if (!addba_resp.HasValidLen()) {
-            errorf("addba_resp packet too small (len=%zd)\n", addba_resp.take()->len());
-            return ZX_ERR_IO;
-        }
-        return mlme_->HandleFrame(addba_resp, *rxinfo);
-    }
-    case action::BaAction::kDelBa:
-    // fall-through
-    default:
-        warnf("BlockAck action frame with action %u not handled.\n", ba_frame.body()->action);
-        break;
-    }
-    return ZX_OK;
-}
-
-zx_status_t Dispatcher::HandleEthPacket(fbl::unique_ptr<Packet> packet) {
-    debugfn();
-
-    ImmutableBaseFrame<EthernetII> eth_frame(fbl::move(packet));
-    if (!eth_frame.HasValidLen()) {
-        errorf("short ethernet frame len=%zu\n", eth_frame.take()->len());
-        return ZX_ERR_IO;
-    }
-    return mlme_->HandleFrame(eth_frame);
-}
-
 zx_status_t Dispatcher::HandleSvcPacket(fbl::unique_ptr<Packet> packet) {
     debugfn();
 
@@ -363,37 +123,47 @@ zx_status_t Dispatcher::HandleSvcPacket(fbl::unique_ptr<Packet> packet) {
     }
     debughdr("service packet txid=%u flags=%u ordinal=%u\n", hdr->txid, hdr->flags, hdr->ordinal);
 
-    if (hdr->ordinal == wlan_mlme_MLMEDeviceQueryReqOrdinal) {
-        return HandleMlmeMethod<wlan_mlme::DeviceQueryRequest>(fbl::move(packet), hdr->ordinal);
+    if (hdr->ordinal == fuchsia_wlan_mlme_MLMEDeviceQueryReqOrdinal) {
+        MlmeMsg<wlan_mlme::DeviceQueryRequest> msg;
+        auto status = MlmeMsg<wlan_mlme::DeviceQueryRequest>::FromPacket(fbl::move(packet), &msg);
+        if (status != ZX_OK) {
+            errorf("could not deserialize custom MLME-DeviceQueryRequest primitive\n");
+            return status;
+        }
+        return HandleDeviceQueryRequest();
+    }
+
+    if (hdr->ordinal == fuchsia_wlan_mlme_MLMEStatsQueryReqOrdinal) {
+        return HandleMlmeStats(hdr->ordinal);
     }
 
     switch (hdr->ordinal) {
-    case wlan_mlme_MLMEResetReqOrdinal:
+    case fuchsia_wlan_mlme_MLMEResetReqOrdinal:
         infof("resetting MLME\n");
-        HandleMlmeMethod<wlan_mlme::ResetRequest>(fbl::move(packet), hdr->ordinal);
+        HandleMlmeMessage<wlan_mlme::ResetRequest>(fbl::move(packet), hdr->ordinal);
         return ZX_OK;
-    case wlan_mlme_MLMEStartReqOrdinal:
-        return HandleMlmeMethod<wlan_mlme::StartRequest>(fbl::move(packet), hdr->ordinal);
-    case wlan_mlme_MLMEStopReqOrdinal:
-        return HandleMlmeMethod<wlan_mlme::StopRequest>(fbl::move(packet), hdr->ordinal);
-    case wlan_mlme_MLMEScanReqOrdinal:
-        return HandleMlmeMethod<wlan_mlme::ScanRequest>(fbl::move(packet), hdr->ordinal);
-    case wlan_mlme_MLMEJoinReqOrdinal:
-        return HandleMlmeMethod<wlan_mlme::JoinRequest>(fbl::move(packet), hdr->ordinal);
-    case wlan_mlme_MLMEAuthenticateReqOrdinal:
-        return HandleMlmeMethod<wlan_mlme::AuthenticateRequest>(fbl::move(packet), hdr->ordinal);
-    case wlan_mlme_MLMEAuthenticateRespOrdinal:
-        return HandleMlmeMethod<wlan_mlme::AuthenticateResponse>(fbl::move(packet), hdr->ordinal);
-    case wlan_mlme_MLMEDeauthenticateReqOrdinal:
-        return HandleMlmeMethod<wlan_mlme::DeauthenticateRequest>(fbl::move(packet), hdr->ordinal);
-    case wlan_mlme_MLMEAssociateReqOrdinal:
-        return HandleMlmeMethod<wlan_mlme::AssociateRequest>(fbl::move(packet), hdr->ordinal);
-    case wlan_mlme_MLMEAssociateRespOrdinal:
-        return HandleMlmeMethod<wlan_mlme::AssociateResponse>(fbl::move(packet), hdr->ordinal);
-    case wlan_mlme_MLMEEapolReqOrdinal:
-        return HandleMlmeMethod<wlan_mlme::EapolRequest>(fbl::move(packet), hdr->ordinal);
-    case wlan_mlme_MLMESetKeysReqOrdinal:
-        return HandleMlmeMethod<wlan_mlme::SetKeysRequest>(fbl::move(packet), hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEStartReqOrdinal:
+        return HandleMlmeMessage<wlan_mlme::StartRequest>(fbl::move(packet), hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEStopReqOrdinal:
+        return HandleMlmeMessage<wlan_mlme::StopRequest>(fbl::move(packet), hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEScanReqOrdinal:
+        return HandleMlmeMessage<wlan_mlme::ScanRequest>(fbl::move(packet), hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEJoinReqOrdinal:
+        return HandleMlmeMessage<wlan_mlme::JoinRequest>(fbl::move(packet), hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEAuthenticateReqOrdinal:
+        return HandleMlmeMessage<wlan_mlme::AuthenticateRequest>(fbl::move(packet), hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEAuthenticateRespOrdinal:
+        return HandleMlmeMessage<wlan_mlme::AuthenticateResponse>(fbl::move(packet), hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEDeauthenticateReqOrdinal:
+        return HandleMlmeMessage<wlan_mlme::DeauthenticateRequest>(fbl::move(packet), hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEAssociateReqOrdinal:
+        return HandleMlmeMessage<wlan_mlme::AssociateRequest>(fbl::move(packet), hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEAssociateRespOrdinal:
+        return HandleMlmeMessage<wlan_mlme::AssociateResponse>(fbl::move(packet), hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEEapolReqOrdinal:
+        return HandleMlmeMessage<wlan_mlme::EapolRequest>(fbl::move(packet), hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMESetKeysReqOrdinal:
+        return HandleMlmeMessage<wlan_mlme::SetKeysRequest>(fbl::move(packet), hdr->ordinal);
     default:
         warnf("unknown MLME method %u\n", hdr->ordinal);
         return ZX_ERR_NOT_SUPPORTED;
@@ -401,26 +171,41 @@ zx_status_t Dispatcher::HandleSvcPacket(fbl::unique_ptr<Packet> packet) {
 }
 
 template <typename Message>
-zx_status_t Dispatcher::HandleMlmeMethod(fbl::unique_ptr<Packet> packet, uint32_t ordinal) {
-    Message msg;
-    auto status = DeserializeServiceMsg<Message>(*packet, ordinal, &msg);
+zx_status_t Dispatcher::HandleMlmeMessage(fbl::unique_ptr<Packet> packet, uint32_t ordinal) {
+    MlmeMsg<Message> msg;
+    auto status = MlmeMsg<Message>::FromPacket(fbl::move(packet), &msg);
     if (status != ZX_OK) {
-        errorf("could not deserialize MLME Method %d: %d\n", ordinal, status);
+        errorf("could not deserialize MLME primitive %d: \n", ordinal);
         return status;
     }
-    return mlme_->HandleFrame(ordinal, msg);
+    return mlme_->HandleMlmeMsg(msg);
 }
 
-template <>
-zx_status_t Dispatcher::HandleMlmeMethod<wlan_mlme::DeviceQueryRequest>(fbl::unique_ptr<Packet> _,
-                                                                        uint32_t ordinal) {
+template <typename T> zx_status_t Dispatcher::SendServiceMessage(uint32_t ordinal, T* msg) const {
+  // fidl2 doesn't have a way to get the serialized size yet. 4096 bytes should be enough for
+  // everyone.
+  size_t buf_len = 4096;
+  // size_t buf_len = sizeof(fidl_message_header_t) + resp->GetSerializedSize();
+  fbl::unique_ptr<Buffer> buffer = GetBuffer(buf_len);
+  if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
+
+  auto packet = fbl::make_unique<Packet>(std::move(buffer), buf_len);
+  packet->set_peer(Packet::Peer::kService);
+  zx_status_t status = SerializeServiceMsg(packet.get(), ordinal, msg);
+  if (status != ZX_OK) {
+      errorf("could not serialize MLME primitive: %d\n", ordinal);
+      return status;
+  }
+  return device_->SendService(fbl::move(packet));
+}
+
+zx_status_t Dispatcher::HandleDeviceQueryRequest() {
     debugfn();
-    ZX_DEBUG_ASSERT(ordinal == wlan_mlme_MLMEDeviceQueryReqOrdinal);
 
     wlan_mlme::DeviceQueryConfirm resp;
     const wlanmac_info_t& info = device_->GetWlanInfo();
 
-    memcpy(resp.mac_addr.mutable_data(), info.eth_info.mac, ETH_MAC_SIZE);
+    memcpy(resp.mac_addr.mutable_data(), info.mac_addr, ETH_MAC_SIZE);
 
     switch (info.mac_role) {
     case WLAN_MAC_ROLE_CLIENT:
@@ -455,23 +240,20 @@ zx_status_t Dispatcher::HandleMlmeMethod<wlan_mlme::DeviceQueryRequest>(fbl::uni
         resp.bands->push_back(std::move(band));
     }
 
-    // fidl2 doesn't have a way to get the serialized size yet. 4096 bytes should be enough for
-    // everyone.
-    size_t buf_len = 4096;
-    // size_t buf_len = sizeof(fidl_message_header_t) + resp->GetSerializedSize();
-    fbl::unique_ptr<Buffer> buffer = GetBuffer(buf_len);
-    if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
+    return SendServiceMessage(fuchsia_wlan_mlme_MLMEDeviceQueryConfOrdinal, &resp);
+}
 
-    auto packet = fbl::unique_ptr<Packet>(new Packet(std::move(buffer), buf_len));
-    packet->set_peer(Packet::Peer::kService);
-    zx_status_t status =
-        SerializeServiceMsg(packet.get(), wlan_mlme_MLMEDeviceQueryConfOrdinal, &resp);
-    if (status != ZX_OK) {
-        errorf("could not serialize DeviceQueryResponse: %d\n", status);
-        return status;
+zx_status_t Dispatcher::HandleMlmeStats(uint32_t ordinal) const {
+    debugfn();
+    ZX_DEBUG_ASSERT(ordinal == fuchsia_wlan_mlme_MLMEStatsQueryReqOrdinal);
+
+    wlan_mlme::StatsQueryResponse resp;
+    resp.stats.dispatcher_stats = stats_.ToFidl();
+    auto mlme_stats = mlme_->GetMlmeStats();
+    if (!mlme_stats.has_invalid_tag()) {
+      resp.stats.mlme_stats = std::make_unique<wlan_stats::MlmeStats>(mlme_->GetMlmeStats());
     }
-
-    return device_->SendService(std::move(packet));
+    return SendServiceMessage(fuchsia_wlan_mlme_MLMEStatsQueryRespOrdinal, &resp);
 }
 
 zx_status_t Dispatcher::PreChannelChange(wlan_channel_t chan) {

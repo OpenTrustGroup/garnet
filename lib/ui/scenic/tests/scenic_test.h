@@ -10,16 +10,16 @@
 #include "garnet/lib/ui/scenic/scenic.h"
 #include "garnet/lib/ui/scenic/util/error_reporter.h"
 #include "gtest/gtest.h"
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fxl/tasks/task_runner.h"
-#include "lib/gtest/test_with_loop.h"
+#include "lib/gtest/test_loop_fixture.h"
 
 namespace scenic {
 namespace test {
 
 // Base class that can be specialized to configure a Scenic with the systems
 // required for a set of tests.
-class ScenicTest : public ::gtest::TestWithLoop,
+class ScenicTest : public ::gtest::TestLoopFixture,
                    public ErrorReporter,
                    public EventReporter {
  protected:
@@ -52,7 +52,7 @@ class ScenicTest : public ::gtest::TestWithLoop,
     }
   }
 
-  static std::unique_ptr<component::ApplicationContext> app_context_;
+  static std::unique_ptr<fuchsia::sys::StartupContext> app_context_;
   std::unique_ptr<Scenic> scenic_;
   std::vector<std::string> reported_errors_;
   std::vector<fuchsia::ui::scenic::Event> events_;

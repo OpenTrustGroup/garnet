@@ -8,7 +8,8 @@ import (
 	"app/context"
 	"fidl/bindings"
 
-	"fidl/wlan_service"
+	"fidl/fuchsia/wlan/stats"
+	wlan_service "fidl/fuchsia/wlan/service"
 	"netstack/watcher"
 	"wlan/wlan"
 
@@ -17,6 +18,8 @@ import (
 	"sync"
 	"syscall/zx"
 )
+
+const debug = false
 
 type Wlanstack struct {
 	cfg   *wlan.Config
@@ -152,6 +155,29 @@ func (ws *Wlanstack) StopBss() (wserr wlan_service.Error, err error) {
 	return wlan_service.Error{wlan_service.ErrCodeOk, "OK"}, nil
 }
 
+func (ws *Wlanstack) Stats() (result wlan_service.WlanStats, err error) {
+	cli := ws.getCurrentClient()
+	if cli == nil {
+		return wlan_service.WlanStats{
+			wlan_service.Error{
+				wlan_service.ErrCodeNotFound,
+				"No wlan interface found"},
+			stats.IfaceStats{},
+		}, nil
+	}
+
+	respC := make(chan *wlan.CommandResult, 1)
+	var noArgs interface{}
+	cli.PostCommand(wlan.CmdStats, noArgs, respC)
+
+	resp := <-respC
+	if resp.Err != nil {
+		return wlan_service.WlanStats{*resp.Err, stats.IfaceStats{}}, nil
+	}
+
+	return wlan_service.WlanStats{wlan_service.Error{wlan_service.ErrCodeOk, "OK"}, resp.Resp.(stats.IfaceStats)}, nil
+}
+
 func main() {
 	log.SetFlags(0)
 	log.SetPrefix("wlanstack: ")
@@ -192,15 +218,16 @@ func (ws *Wlanstack) readConfigFile() {
 	// TODO(tkilbourn): monitor this file for changes
 	// TODO(tkilbourn): replace this with a FIDL interface
 	const configFile = "/pkg/data/config.json"
-	// Once we remove the overrideFile, remove "system" access from meta/sandbox.
-	const overrideFile = "/system/data/wlanstack/override.json"
 
-	cfg, err := wlan.ReadConfigFromFile(overrideFile)
+	cfg, err := wlan.ReadConfigUser()
 	if err != nil {
 		if cfg, err = wlan.ReadConfigFromFile(configFile); err != nil {
 			log.Printf("[W] could not open config (%v)", configFile)
 			return
 		}
+	}
+	if debug {
+		log.Printf("cfg read: %+v, err: %+v", cfg, err)
 	}
 	ws.cfg = cfg
 }

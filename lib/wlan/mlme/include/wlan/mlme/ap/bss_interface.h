@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <wlan_mlme/cpp/fidl.h>
+#include <fuchsia/wlan/mlme/cpp/fidl.h>
 #include <wlan/mlme/ap/tim.h>
 #include <wlan/mlme/device_interface.h>
 #include <wlan/mlme/mac_frame.h>
@@ -18,6 +18,7 @@ namespace wlan {
 
 class Buffer;
 class StartRequest;
+template <typename T> class MlmeMsg;
 
 // Power Saving configuration managing TIM and DTIM.
 class PsCfg {
@@ -65,7 +66,7 @@ class BssInterface {
     virtual uint64_t timestamp() = 0;
 
     // Starts the BSS. Beacons will be sent and incoming frames are processed.
-    virtual void Start(const wlan_mlme::StartRequest& req) = 0;
+    virtual void Start(const MlmeMsg<::fuchsia::wlan::mlme::StartRequest>& req) = 0;
     // Stops the BSS. All incoming frames are dropped and Beacons are not sent
     // anymore.
     virtual void Stop() = 0;
@@ -82,7 +83,7 @@ class BssInterface {
     virtual seq_t NextSeq(const MgmtFrameHeader& hdr, uint8_t aci) = 0;
     virtual seq_t NextSeq(const DataFrameHeader& hdr) = 0;
 
-    virtual zx_status_t EthToDataFrame(const ImmutableBaseFrame<EthernetII>& frame,
+    virtual zx_status_t EthToDataFrame(const EthFrame& frame,
                                        fbl::unique_ptr<Packet>* out_packet) = 0;
 
     virtual bool IsRsn() const = 0;

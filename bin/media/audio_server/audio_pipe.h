@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MEDIA_AUDIO_SERVER_AUDIO_PIPE_H_
+#define GARNET_BIN_MEDIA_AUDIO_SERVER_AUDIO_PIPE_H_
 
 #include <memory>
 
-#include <media/cpp/fidl.h>
+#include <fuchsia/media/cpp/fidl.h>
+
 #include "garnet/bin/media/audio_server/audio_packet_ref.h"
 #include "garnet/bin/media/audio_server/fwd_decls.h"
 #include "lib/media/transport/media_packet_consumer_base.h"
@@ -41,7 +43,8 @@ class AudioPipe : public MediaPacketConsumerBase {
 
   // Indicates the priming was requested. The pipe is responsible for calling
   // the callback when priming is complete.
-  void PrimeRequested(MediaTimelineControlPoint::PrimeCallback callback);
+  void PrimeRequested(
+      fuchsia::media::MediaTimelineControlPoint::PrimeCallback callback);
 
  protected:
   void OnPacketSupplied(
@@ -56,8 +59,8 @@ class AudioPipe : public MediaPacketConsumerBase {
   AudioRenderer1Impl* owner_;
   AudioServerImpl* server_;
 
-  MediaTimelineControlPoint::PrimeCallback prime_callback_;
-  int64_t min_pts_ = kMinTime;
+  fuchsia::media::MediaTimelineControlPoint::PrimeCallback prime_callback_;
+  int64_t min_pts_ = fuchsia::media::kMinTime;
   bool min_pts_dirty_ = false;
 
   // State used for timestamp interpolation
@@ -67,3 +70,5 @@ class AudioPipe : public MediaPacketConsumerBase {
 
 }  // namespace audio
 }  // namespace media
+
+#endif  // GARNET_BIN_MEDIA_AUDIO_SERVER_AUDIO_PIPE_H_

@@ -2,29 +2,31 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MDNS_SERVICE_FIDL_INTERFACE_MONITOR_H_
+#define GARNET_BIN_MDNS_SERVICE_FIDL_INTERFACE_MONITOR_H_
 
 #include <memory>
 
+#include <fuchsia/netstack/cpp/fidl.h>
+
 #include "garnet/bin/mdns/service/interface_monitor.h"
-#include "lib/app/cpp/application_context.h"
-#include <netstack/cpp/fidl.h>
+#include "lib/app/cpp/startup_context.h"
 
 namespace mdns {
 
 // FIDL-based interface monitor implementation.
-class FidlInterfaceMonitor : public netstack::NotificationListener,
+class FidlInterfaceMonitor : public fuchsia::netstack::NotificationListener,
                              public InterfaceMonitor {
  public:
   static std::unique_ptr<InterfaceMonitor> Create(
-      component::ApplicationContext* application_context);
+      fuchsia::sys::StartupContext* startup_context);
 
-  FidlInterfaceMonitor(component::ApplicationContext* application_context);
+  FidlInterfaceMonitor(fuchsia::sys::StartupContext* startup_context);
 
   ~FidlInterfaceMonitor();
 
   // InterfaceMonitor implementation.
-  void RegisterLinkChangeCallback(const fxl::Closure& callback) override;
+  void RegisterLinkChangeCallback(fit::closure callback) override;
 
   const std::vector<std::unique_ptr<InterfaceDescriptor>>& GetInterfaces()
       override;
@@ -32,12 +34,14 @@ class FidlInterfaceMonitor : public netstack::NotificationListener,
  private:
   // NotificationListener implementation.
   void OnInterfacesChanged(
-      fidl::VectorPtr<netstack::NetInterface> interfaces) override;
+      fidl::VectorPtr<fuchsia::netstack::NetInterface> interfaces) override;
 
-  netstack::NetstackPtr netstack_;
-  fidl::Binding<netstack::NotificationListener> binding_;
-  fxl::Closure link_change_callback_;
+  fuchsia::netstack::NetstackPtr netstack_;
+  fidl::Binding<fuchsia::netstack::NotificationListener> binding_;
+  fit::closure link_change_callback_;
   std::vector<std::unique_ptr<InterfaceDescriptor>> interfaces_;
 };
 
 }  // namespace mdns
+
+#endif  // GARNET_BIN_MDNS_SERVICE_FIDL_INTERFACE_MONITOR_H_

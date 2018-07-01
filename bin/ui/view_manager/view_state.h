@@ -14,7 +14,7 @@
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
-#include "lib/ui/scenic/client/resources.h"
+#include "lib/ui/scenic/cpp/resources.h"
 #include "lib/ui/views/cpp/formatting.h"
 
 namespace view_manager {
@@ -48,7 +48,7 @@ class ViewState : public ViewContainerState {
   ViewState(ViewRegistry* registry, ::fuchsia::ui::views_v1_token::ViewToken view_token,
             fidl::InterfaceRequest<::fuchsia::ui::views_v1::View> view_request,
             ::fuchsia::ui::views_v1::ViewListenerPtr view_listener,
-            scenic_lib::Session* session, const std::string& label);
+            scenic::Session* session, const std::string& label);
   ~ViewState() override;
 
   fxl::WeakPtr<ViewState> GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
@@ -64,7 +64,7 @@ class ViewState : public ViewContainerState {
   }
 
   // Gets the view's attachment point.
-  scenic_lib::EntityNode& top_node() { return top_node_; }
+  scenic::EntityNode& top_node() { return top_node_; }
 
   // Gets or sets the view stub which links this view into the
   // view hierarchy, or null if the view isn't linked anywhere.
@@ -106,11 +106,11 @@ class ViewState : public ViewContainerState {
     return focus_chain_.get();
   }
 
-  component::ServiceProvider* GetServiceProviderIfSupports(
+  fuchsia::sys::ServiceProvider* GetServiceProviderIfSupports(
       std::string service_name);
 
   void SetServiceProvider(
-      fidl::InterfaceHandle<component::ServiceProvider> service_provider,
+      fidl::InterfaceHandle<fuchsia::sys::ServiceProvider> service_provider,
       fidl::VectorPtr<fidl::StringPtr> service_names);
 
  private:
@@ -118,7 +118,7 @@ class ViewState : public ViewContainerState {
 
   ::fuchsia::ui::views_v1_token::ViewToken view_token_;
   ::fuchsia::ui::views_v1::ViewListenerPtr view_listener_;
-  scenic_lib::EntityNode top_node_;
+  scenic::EntityNode top_node_;
 
   const std::string label_;
   mutable std::string formatted_label_cache_;
@@ -134,7 +134,7 @@ class ViewState : public ViewContainerState {
   uint32_t invalidation_flags_ = 0u;
 
   std::unique_ptr<FocusChain> focus_chain_;
-  component::ServiceProviderPtr service_provider_;
+  fuchsia::sys::ServiceProviderPtr service_provider_;
   fidl::VectorPtr<fidl::StringPtr> service_names_;
 
   fxl::WeakPtrFactory<ViewState> weak_factory_;  // must be last

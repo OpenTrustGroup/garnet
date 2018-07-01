@@ -6,7 +6,6 @@
 //! [syscalls](https://fuchsia.googlesource.com/zircon/+/master/docs/syscalls.md).
 
 #![deny(warnings)]
-#![feature(repr_transparent)]
 
 #[macro_use]
 extern crate bitflags;

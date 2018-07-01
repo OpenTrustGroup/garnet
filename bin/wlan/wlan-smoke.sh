@@ -15,6 +15,13 @@
 TEST_LOG="$1"
 [ -z ${TEST_LOG} ] && TEST_LOG="/tmp/wlan-doctor.log"
 
+WLAN_DISCONNECT_QUERY_PERIOD=2 # seconds
+WLAN_DISCONNECT_QUERY_RETRY_MAX=10
+WLAN_CONNECT_QUERY_PERIOD=5 # seconds
+WLAN_CONNECT_QUERY_RETRY_MAX=10
+DHCP_QUERY_RETRY_PERIOD=1 # seconds
+DHCP_QUERY_RETRY_MAX=5
+
 log () {
   msg="$*"
   now=$(date)
@@ -34,7 +41,6 @@ log_fail() {
 
 ping_dst() {
   dst="$1"
-  shift
   cmd="ping -c 2 ${dst}"
   ${cmd} > /dev/null 2>&1
 
@@ -68,27 +74,29 @@ get_file_size() {
   echo "${filesize}"
 }
 
-wget_dst() {
-  tmp_file="/tmp/wlan_smoke_wget.tmp"
-  dst="$1"
-  bytes_want="$2"
+curl_md5sum() {
+  url="$1"
+  tmp_file="/tmp/wlan_smoke_md5sum.tmp"
+  md5_wanted="$2"
 
-  # Fuchsia Dash's pipe and redirection is funky when used in $(..)
-  cmd="wget ${dst} > ${tmp_file}"
-  wget "${dst}" > "${tmp_file}"
+  speed=$(curl -sw "%{speed_download}" -o "${tmp_file}" "${url}" | cut -f 1 -d ".")
+  speed=$((speed/1024))
+  md5_download=$(md5sum "${tmp_file}" | cut -f 1 -d " ")
 
-  bytes_got=$(get_file_size "${tmp_file}")
-  if [ "${bytes_got}" -lt "${bytes_want}" ]; then
-    log_fail "${cmd}"
+  msg="curl_md5sum ${speed}kB/s ${url}"
+  if [ "${md5_download}" = "${md5_wanted}" ]; then
+    log_pass "${msg}"
   else
-    log_pass "${cmd}"
+    log_fail "${msg}"
   fi
 }
 
-
-test_wget() {
-  wget_dst www.google.com 40000
-  wget_dst example.com 1400
+test_curl_md5sum() {
+  curl_md5sum http://ovh.net/files/1Mb.dat 62501d556539559fb422943553cd235a
+  # curl_md5sum http://ovh.net/files/1Mio.dat 6cb91af4ed4c60c11613b75cd1fc6116
+  # curl_md5sum http://ovh.net/files/10Mb.dat 241cead4562ebf274f76f2e991750b9d
+  # curl_md5sum http://ovh.net/files/10Mio.dat ecf2a421f46ab33f277fa2aaaf141780
+  # curl_md5sum http://ipv4.download.thinkbroadband.com/5MB.zip b3215c06647bc550406a9c8ccc378756
 }
 
 check_wlan_status() {
@@ -97,39 +105,33 @@ check_wlan_status() {
 }
 
 wlan_disconnect() {
-  WLAN_STATUS_QUERY_PERIOD=2
-  WLAN_STATUS_QUERY_RETRY_MAX=10
-  for i in $(seq 1 ${WLAN_STATUS_QUERY_RETRY_MAX}); do
+  for i in $(seq 1 ${WLAN_DISCONNECT_QUERY_RETRY_MAX}); do
     status=$(check_wlan_status)
     if [ "${status}" = "scanning" ]; then
       log_pass "disconnect"
       return 0
     fi
 
-    log "attempting to disconnect (${i} / ${WLAN_STATUS_QUERY_RETRY_MAX})"
+    log "attempting to disconnect (${i} / ${WLAN_DISCONNECT_QUERY_RETRY_MAX})"
     wlan disconnect > /dev/null
-    sleep ${WLAN_STATUS_QUERY_PERIOD}
+    sleep ${WLAN_DISCONNECT_QUERY_PERIOD}
   done
   log_fail "fails to disconnect"
   return 1
 }
 
 wlan_connect() {
-  WLAN_STATUS_QUERY_PERIOD=5
-  WLAN_STATUS_QUERY_RETRY_MAX=10
-
   ssid=$1
-  shift
-  for i in $(seq 1 ${WLAN_STATUS_QUERY_RETRY_MAX}); do
+  for i in $(seq 1 ${WLAN_CONNECT_QUERY_RETRY_MAX}); do
     status=$(check_wlan_status)
     if [ "${status}" = "associated" ]; then
       log_pass "connect to ${ssid}"
       return 0
     fi
 
-    log "attempting to connect to ${ssid} (${i} / ${WLAN_STATUS_QUERY_RETRY_MAX})"
+    log "attempting to connect to ${ssid} (${i} / ${WLAN_CONNECT_QUERY_RETRY_MAX})"
     wlan connect "${ssid}" > /dev/null
-    sleep ${WLAN_STATUS_QUERY_PERIOD}
+    sleep ${WLAN_CONNECT_QUERY_PERIOD}
   done
 
   log_fail "fails to connect to ${ssid}"
@@ -137,8 +139,20 @@ wlan_connect() {
 }
 
 wait_for_dhcp() {
-  DHCP_WAIT_PERIOD=3
-  sleep "${DHCP_WAIT_PERIOD}"
+  for i in $(seq 1 ${DHCP_QUERY_RETRY_MAX}); do
+    inet_addr=$(get_wlan_inet_addr)
+    if [ ! -z "${inet_addr}" ]; then
+      log_pass "dhcp address: ${inet_addr}"
+      return 0
+    fi
+    sleep "${DHCP_QUERY_RETRY_PERIOD}"
+  done
+}
+
+get_wlan_inet_addr() {
+  wlan_iface=$(ifconfig | grep ^wlan | tr '[:blank:]' ' ' | cut -f1 -d' ')
+  wlan_inet_addr=$(ifconfig $wlan_iface | grep "inet addr" | cut -f2 -d':' | cut -f1 -d' ' | grep ".")
+  echo "${wlan_inet_addr}"
 }
 
 get_eth_iface_list() {
@@ -164,7 +178,6 @@ test_teardown() {
 
 run() {
   cmd="$*"
-  shift
   ${cmd}
   if [ "$?" -ne 0 ]; then
     log_fail "failed in ${cmd}"
@@ -176,15 +189,15 @@ main() {
   log "Start"
   eth_iface_list=$(get_eth_iface_list)
   run test_setup "${eth_iface_list}"
-  run wlan_disconnect "${eth_iface_list}"
-  run wlan_connect GoogleGuest "${eth_iface_list}"
+  run wlan_disconnect
+  run wlan_connect GoogleGuest
   run wait_for_dhcp
   log "Starting traffic tests"
-  run test_ping "${eth_iface_list}"
+  run test_ping
   run test_dns
-  run test_wget
+  run test_curl_md5sum
   log "Ending traffic tests"
-  run wlan_disconnect "${eth_iface_list}"
+  run wlan_disconnect
   run test_teardown "${eth_iface_list}"
   log "End"
 }

@@ -5,13 +5,13 @@
 #ifndef GARNET_BIN_MEDIA_MEDIA_PLAYER_PLAYER_SEGMENT_H_
 #define GARNET_BIN_MEDIA_MEDIA_PLAYER_PLAYER_SEGMENT_H_
 
-#include <media/cpp/fidl.h>
-#include <media_player/cpp/fidl.h>
+#include <fuchsia/media/cpp/fidl.h>
+#include <fuchsia/mediaplayer/cpp/fidl.h>
 #include <lib/async/dispatcher.h>
+#include <lib/fit/function.h>
 
 #include "garnet/bin/media/media_player/framework/graph.h"
 #include "garnet/bin/media/media_player/framework/metadata.h"
-#include "lib/fxl/functional/closure.h"
 #include "lib/fxl/logging.h"
 
 namespace media_player {
@@ -35,7 +35,7 @@ class Segment {
   // changes. The update callback is used to notify of changes to the value
   // returned by problem(). Subclasses of Segment may use this callback to
   // signal additional changes.
-  void Provision(Graph* graph, async_t* async, fxl::Closure update_callback);
+  void Provision(Graph* graph, async_t* async, fit::closure update_callback);
 
   // Revokes the graph, task runner and update callback provided in a previous
   // call to |Provision|.
@@ -43,7 +43,9 @@ class Segment {
 
   // Returns the current problem preventing intended operation or nullptr if
   // there is no such problem.
-  const Problem* problem() const { return problem_.get(); }
+  const fuchsia::mediaplayer::Problem* problem() const {
+    return problem_.get();
+  }
 
  protected:
   Graph& graph() {
@@ -79,8 +81,8 @@ class Segment {
  private:
   Graph* graph_ = nullptr;
   async_t* async_ = nullptr;
-  fxl::Closure update_callback_;
-  ProblemPtr problem_;
+  fit::closure update_callback_;
+  fuchsia::mediaplayer::ProblemPtr problem_;
 };
 
 }  // namespace media_player

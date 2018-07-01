@@ -8,15 +8,15 @@
 #include <mutex>
 #include <thread>
 
-#include <fbl/vmo_mapper.h>
-#include <media/cpp/fidl.h>
-#include <tts/cpp/fidl.h>
+#include <fuchsia/media/cpp/fidl.h>
+#include <fuchsia/tts/cpp/fidl.h>
 #include <lib/async-loop/cpp/loop.h>
+#include <lib/vmo-utils/vmo_mapper.h>
+#include <lib/fit/function.h>
 #include <zircon/types.h>
 
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fidl/cpp/string.h"
-#include "lib/fxl/functional/closure.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
 #include "third_party/flite/include/flite_fuchsia.h"
@@ -28,11 +28,10 @@ class TtsSpeaker : public std::enable_shared_from_this<TtsSpeaker> {
   TtsSpeaker(async_t* master_async);
   ~TtsSpeaker() = default;
 
-  zx_status_t Init(const std::unique_ptr<component::ApplicationContext>&
-                       application_context);
+  zx_status_t Init(
+      const std::unique_ptr<fuchsia::sys::StartupContext>& startup_context);
 
-  zx_status_t Speak(fidl::StringPtr words,
-                    const fxl::Closure& speak_complete_cbk);
+  zx_status_t Speak(fidl::StringPtr words, fit::closure speak_complete_cbk);
   void Shutdown();
 
  private:
@@ -71,8 +70,8 @@ class TtsSpeaker : public std::enable_shared_from_this<TtsSpeaker> {
   async::Loop engine_loop_;
   async_t* master_async_;
 
-  media::AudioRenderer2Ptr audio_renderer_;
-  fbl::VmoMapper shared_buf_;
+  fuchsia::media::AudioRenderer2Ptr audio_renderer_;
+  vmo_utils::VmoMapper shared_buf_;
 
   std::mutex ring_buffer_lock_;
   uint64_t wr_ptr_ FXL_GUARDED_BY(ring_buffer_lock_) = 0;
@@ -81,7 +80,7 @@ class TtsSpeaker : public std::enable_shared_from_this<TtsSpeaker> {
   zx::event wakeup_event_;
 
   fidl::StringPtr words_;
-  fxl::Closure speak_complete_cbk_;
+  fit::closure speak_complete_cbk_;
   std::atomic<bool> abort_playback_;
   std::atomic<bool> synthesis_complete_;
 

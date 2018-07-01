@@ -42,7 +42,7 @@ void RootLoader::LoadComponent(fidl::StringPtr url,
         if (fd.is_valid()) {
           zx::channel directory = fsl::CloneChannelFromFileDescriptor(fd.get());
           if (directory) {
-            Package package;
+            fuchsia::sys::Package package;
             package.directory = std::move(directory);
             package.resolved_url = fxl::Concatenate({"file://", pkg_path});
             callback(fidl::MakeOptional(std::move(package)));
@@ -62,7 +62,7 @@ void RootLoader::LoadComponent(fidl::StringPtr url,
     }
     fsl::SizedVmo data;
     if (fd.is_valid() && fsl::VmoFromFd(std::move(fd), &data)) {
-      Package package;
+      fuchsia::sys::Package package;
       package.data = fidl::MakeOptional(std::move(data).ToTransport());
       package.resolved_url = fxl::Concatenate({"file://", path});
       callback(fidl::MakeOptional(std::move(package)));
@@ -74,7 +74,8 @@ void RootLoader::LoadComponent(fidl::StringPtr url,
   callback(nullptr);
 }
 
-void RootLoader::AddBinding(fidl::InterfaceRequest<Loader> request) {
+void RootLoader::AddBinding(
+    fidl::InterfaceRequest<fuchsia::sys::Loader> request) {
   bindings_.AddBinding(this, std::move(request));
 }
 

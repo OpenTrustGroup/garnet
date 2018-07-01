@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <wlan_stats/c/fidl.h>
+#include <fuchsia/wlan/stats/cpp/fidl.h>
 
 #include <atomic>
 #include <string>
@@ -29,12 +29,12 @@ constexpr bool kStatsDebugEnabled = false;
 namespace common {
 
 struct Counter {
-    std::atomic_uint64_t count{0};
+    std::atomic_uint64_t count;
     std::string name;  // Dynamically set at run-time
-    const wlan_stats_Counter ToFidl() const {
-        return wlan_stats_Counter{
-            .count = count.load(),
-            .name = fidl_string_t{.size = name.length(), .data = strdup(name.c_str())}};
+    ::fuchsia::wlan::stats::Counter ToFidl() const {
+        return ::fuchsia::wlan::stats::Counter{
+            .count = count.load(std::memory_order_relaxed),
+            .name = name};
     };
     uint64_t Inc(uint64_t i) { return count.fetch_add(i, std::memory_order_relaxed); }
 };
@@ -43,8 +43,8 @@ struct PacketCounter {
     Counter in;
     Counter out;
     Counter drop;
-    const wlan_stats_PacketCounter ToFidl() const {
-        return wlan_stats_PacketCounter{
+    ::fuchsia::wlan::stats::PacketCounter ToFidl() const {
+        return ::fuchsia::wlan::stats::PacketCounter{
             .in = in.ToFidl(), .out = out.ToFidl(), .drop = drop.ToFidl()};
     };
 };
@@ -55,8 +55,8 @@ struct DispatcherStats {
     PacketCounter mgmt_frame;
     PacketCounter ctrl_frame;
     PacketCounter data_frame;
-    const wlan_stats_DispatcherStats ToFidl() const {
-        return wlan_stats_DispatcherStats{.any_packet = any_packet.ToFidl(),
+    ::fuchsia::wlan::stats::DispatcherStats ToFidl() const {
+        return ::fuchsia::wlan::stats::DispatcherStats{.any_packet = any_packet.ToFidl(),
                                           .mgmt_frame = mgmt_frame.ToFidl(),
                                           .ctrl_frame = ctrl_frame.ToFidl(),
                                           .data_frame = data_frame.ToFidl()};
@@ -67,8 +67,8 @@ struct ClientMlmeStats {
     PacketCounter svc_msg;
     PacketCounter data_frame;
     PacketCounter mgmt_frame;
-    const wlan_stats_ClientMlmeStats ToFidl() const {
-        return wlan_stats_ClientMlmeStats{.svc_msg = svc_msg.ToFidl(),
+    ::fuchsia::wlan::stats::ClientMlmeStats ToFidl() const {
+        return ::fuchsia::wlan::stats::ClientMlmeStats{.svc_msg = svc_msg.ToFidl(),
                                           .data_frame = data_frame.ToFidl(),
                                           .mgmt_frame = mgmt_frame.ToFidl()};
     };
@@ -78,7 +78,7 @@ struct ClientMlmeStats {
 template <typename T, typename U> class WlanStats {
    public:
     T stats;
-    const U ToFidl() const { return stats.toFidl(); };
+    U ToFidl() const { return stats.ToFidl(); };
 };
 
 }  // namespace common

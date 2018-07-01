@@ -1,5 +1,8 @@
 {
-    "packages": {
-        "magma": "//garnet/lib/magma"
-    }
+    "packages": [
+        "//garnet/lib/magma:libmagma",
+        "//garnet/lib/magma/gnbuild/magma-intel-gen",
+        "//garnet/lib/magma/gnbuild/magma-arm-mali",
+        "//garnet/lib/magma/gnbuild/magma-vsl-gc"
+    ]
 }

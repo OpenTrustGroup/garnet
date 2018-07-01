@@ -2,29 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 use async;
 
 use bt::error::Error as BTError;
 use common::gatt_types::Service;
 use failure::Error;
-use fidl::endpoints2::ServerEnd;
-use fidl_gatt::{Characteristic as FidlCharacteristic, ClientMarker, ClientProxy,
-                RemoteServiceEvent, RemoteServiceMarker, RemoteServiceProxy, ServiceInfo};
-use futures::{Future, FutureExt, Never, Stream, StreamExt, future};
+use fidl::endpoints2;
+use fidl_gatt::{Characteristic as FidlCharacteristic, ClientProxy, RemoteServiceEvent,
+                RemoteServiceProxy, ServiceInfo};
 use futures::channel::mpsc::channel;
 use futures::future::Either::{Left, Right};
 use futures::future::FutureResult;
+use futures::{future, Future, FutureExt, Never, Stream, StreamExt};
 
 use parking_lot::RwLock;
 use std::io::{self, Read, Write};
 use std::string::String;
 use std::sync::Arc;
 use std::thread;
-use zx;
 
 macro_rules! left_ok {
-    () => (Left(future::ok(())))
+    () => {
+        Left(future::ok(()))
+    };
 }
 
 type GattClientPtr = Arc<RwLock<GattClient>>;
@@ -117,21 +117,23 @@ pub fn start_gatt_loop(proxy: ClientProxy) -> impl Future<Item = (), Error = Err
     get_services.and_then(|_| {
         stdin_stream()
             .map_err(|e| BTError::new(&format!("stream error: {:?}", e)).into())
-            .for_each(move |cmd| if cmd == "exit" {
-                Left(future::err(BTError::new("exited").into()))
-            } else {
-                Right(
-                    handle_cmd(cmd, client2.clone())
-                        .map_err(|e| {
-                            println!("Error: {}", e);
-                            e
-                        })
-                        .and_then(|_| {
-                            print!("> ");
-                            io::stdout().flush().unwrap();
-                            Ok(())
-                        }),
-                )
+            .for_each(move |cmd| {
+                if cmd == "exit" {
+                    Left(future::err(BTError::new("exited").into()))
+                } else {
+                    Right(
+                        handle_cmd(cmd, client2.clone())
+                            .map_err(|e| {
+                                println!("Error: {}", e);
+                                e
+                            })
+                            .and_then(|_| {
+                                print!("> ");
+                                io::stdout().flush().unwrap();
+                                Ok(())
+                            }),
+                    )
+                }
             })
             .and_then(|_| Ok(()))
     })
@@ -204,8 +206,9 @@ fn read_characteristic(client: GattClientPtr, id: u64) -> impl Future<Item = (),
 }
 
 // Write to a characteristic.
-fn write_characteristic(client: GattClientPtr, id: u64, value: Vec<u8>)
-    -> impl Future<Item = (), Error = Error> {
+fn write_characteristic(
+    client: GattClientPtr, id: u64, value: Vec<u8>,
+) -> impl Future<Item = (), Error = Error> {
     client
         .read()
         .active_proxy
@@ -251,26 +254,6 @@ fn do_list(args: Vec<&str>, client: GattClientPtr) -> FutureResult<(), Error> {
     future::ok(())
 }
 
-fn create_remote_service_pair()
-    -> Result<(RemoteServiceProxy, ServerEnd<RemoteServiceMarker>), Error>
-{
-    let (chan_local, chan_remote) = zx::Channel::create()?;
-    let local = async::Channel::from_channel(chan_local)?;
-    let server_end = ServerEnd::<RemoteServiceMarker>::new(chan_remote);
-    let proxy = RemoteServiceProxy::new(local);
-
-    Ok((proxy, server_end))
-}
-
-pub fn create_client_pair() -> Result<(ClientProxy, ServerEnd<ClientMarker>), Error> {
-    let (chan_local, chan_remote) = zx::Channel::create()?;
-    let local = async::Channel::from_channel(chan_local)?;
-    let server_end = ServerEnd::<ClientMarker>::new(chan_remote);
-    let proxy = ClientProxy::new(local);
-
-    Ok((proxy, server_end))
-}
-
 fn do_connect(args: Vec<&str>, client: GattClientPtr) -> impl Future<Item = (), Error = Error> {
     if args.len() != 1 {
         println!("usage: connect <index>");
@@ -294,7 +277,7 @@ fn do_connect(args: Vec<&str>, client: GattClientPtr) -> impl Future<Item = (), 
     };
 
     // Initialize the remote service proxy.
-    match create_remote_service_pair() {
+    match endpoints2::create_endpoints() {
         Err(e) => Left(future::err(e.into())),
         Ok((proxy, server)) => {
             // First close the connection to the currently active service.
@@ -310,7 +293,6 @@ fn do_connect(args: Vec<&str>, client: GattClientPtr) -> impl Future<Item = (), 
             Right(discover_characteristics(client))
         }
     }
-
 }
 
 fn do_read_chr(args: Vec<&str>, client: GattClientPtr) -> impl Future<Item = (), Error = Error> {
@@ -365,8 +347,9 @@ fn do_write_chr(args: Vec<&str>, client: GattClientPtr) -> impl Future<Item = ()
     }
 }
 
-fn do_enable_notify(args: Vec<&str>, client: GattClientPtr)
-    -> impl Future<Item = (), Error = Error> {
+fn do_enable_notify(
+    args: Vec<&str>, client: GattClientPtr,
+) -> impl Future<Item = (), Error = Error> {
     if args.len() != 1 {
         println!("usage: enable-notify <id>");
         return left_ok!();
@@ -406,8 +389,9 @@ fn do_enable_notify(args: Vec<&str>, client: GattClientPtr)
     )
 }
 
-fn do_disable_notify(args: Vec<&str>, client: GattClientPtr)
-    -> impl Future<Item = (), Error = Error> {
+fn do_disable_notify(
+    args: Vec<&str>, client: GattClientPtr,
+) -> impl Future<Item = (), Error = Error> {
     if args.len() != 1 {
         println!("usage: disable-notify <id>");
         return left_ok!();
@@ -451,9 +435,9 @@ fn do_disable_notify(args: Vec<&str>, client: GattClientPtr)
 // because the handlers potentially return different concrete types which can't be returned in the
 // same Either branch.
 macro_rules! right_cmd {
-    ($cmd: expr) => (
+    ($cmd:expr) => {
         Right(Box::new($cmd) as Box<Future<Item = (), Error = Error> + Send>)
-    )
+    };
 }
 
 // Processes |cmd| and returns its result.

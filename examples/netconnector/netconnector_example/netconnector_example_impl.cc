@@ -6,8 +6,8 @@
 
 #include <lib/async/default.h>
 #include <lib/zx/channel.h>
+#include <fuchsia/netconnector/cpp/fidl.h>
 
-#include <netconnector/cpp/fidl.h>
 #include "garnet/examples/netconnector/netconnector_example/netconnector_example_params.h"
 #include "lib/fxl/logging.h"
 
@@ -21,11 +21,9 @@ static const std::vector<std::string> kConversation = {
 }  // namespace
 
 NetConnectorExampleImpl::NetConnectorExampleImpl(
-    NetConnectorExampleParams* params,
-    fxl::Closure quit_callback)
-    : quit_callback_(quit_callback),
-      application_context_(
-          component::ApplicationContext::CreateFromStartupInfo()) {
+    NetConnectorExampleParams* params, fit::closure quit_callback)
+    : quit_callback_(std::move(quit_callback)),
+      startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
   // The MessageRelay makes using the channel easier. Hook up its callbacks.
   message_relay_.SetMessageReceivedCallback(
       [this](std::vector<uint8_t> message) { HandleReceivedMessage(message); });
@@ -51,7 +49,7 @@ NetConnectorExampleImpl::NetConnectorExampleImpl(
   if (params->request_device_name().empty()) {
     // Params say we should be responding. Register the responding service.
     FXL_LOG(INFO) << "Running as responder";
-    application_context_->outgoing_services()->AddServiceForName(
+    startup_context_->outgoing_services()->AddServiceForName(
         [this](zx::channel channel) {
           message_relay_.SetChannel(std::move(channel));
         },
@@ -60,13 +58,12 @@ NetConnectorExampleImpl::NetConnectorExampleImpl(
     if (params->register_provider()) {
       // Register our provider with netconnector.
       FXL_LOG(INFO) << "Registering provider";
-      netconnector::NetConnectorPtr connector =
-          application_context_
-              ->ConnectToEnvironmentService<netconnector::NetConnector>();
+      fuchsia::netconnector::NetConnectorPtr connector =
+          startup_context_
+              ->ConnectToEnvironmentService<fuchsia::netconnector::NetConnector>();
 
-      fidl::InterfaceHandle<component::ServiceProvider> handle;
-      application_context_->outgoing_services()->AddBinding(
-          handle.NewRequest());
+      fidl::InterfaceHandle<fuchsia::sys::ServiceProvider> handle;
+      startup_context_->outgoing_services()->AddBinding(handle.NewRequest());
 
       FXL_DCHECK(handle);
 
@@ -76,9 +73,9 @@ NetConnectorExampleImpl::NetConnectorExampleImpl(
   } else {
     // Params say we should be a requestor.
     FXL_LOG(INFO) << "Running as requestor";
-    netconnector::NetConnectorPtr connector =
-        application_context_
-            ->ConnectToEnvironmentService<netconnector::NetConnector>();
+    fuchsia::netconnector::NetConnectorPtr connector =
+        startup_context_
+            ->ConnectToEnvironmentService<fuchsia::netconnector::NetConnector>();
 
     // Create a pair of channels.
     zx::channel local;
@@ -92,7 +89,7 @@ NetConnectorExampleImpl::NetConnectorExampleImpl(
     message_relay_.SetChannel(std::move(local));
 
     // Pass the remote end to NetConnector.
-    component::ServiceProviderPtr device_service_provider;
+    fuchsia::sys::ServiceProviderPtr device_service_provider;
     connector->GetDeviceServiceProvider(params->request_device_name(),
                                         device_service_provider.NewRequest());
 

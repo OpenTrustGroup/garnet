@@ -5,7 +5,7 @@
 #![deny(warnings)]
 
 extern crate failure;
-extern crate fidl_bluetooth_control;
+extern crate fidl_fuchsia_bluetooth_control;
 extern crate fuchsia_app as app;
 #[macro_use]
 extern crate fuchsia_async as async;
@@ -20,9 +20,8 @@ use bluetooth::types::Status;
 use commands::{Cmd, CmdCompleter};
 use failure::{Fail, ResultExt};
 use failure::Error;
-use fidl_bluetooth_control::{ControlEvent, ControlMarker, ControlProxy};
+use fidl_fuchsia_bluetooth_control::{ControlEvent, ControlMarker, ControlProxy};
 use futures::{Future, FutureExt, StreamExt};
-use futures::{task, Poll};
 use futures::future::ok as fok;
 use parking_lot::RwLock;
 use rustyline::{CompletionType, Config, EditMode, Editor};
@@ -159,10 +158,13 @@ fn main() -> Result<(), Error> {
                         Output::GetActiveAdapter(get_active_adapter(bt_svc.clone()))
                     }
                     Ok(Cmd::Help) => Output::Help(fok(Cmd::help_msg())),
+                    Ok(Cmd::Nothing) => Output::Error(fok(String::from(""))),
                     Err(e) => Output::Error(fok(format!("Error: {:?}", e))),
                 };
                 let res = exec.run_singlethreaded(fut)?;
-                println!("{}", res);
+                if res != "" {
+                    println!("{}", res);
+                }
             }
             Err(ReadlineError::Interrupted) => break,
             Err(_) => break, // empty line

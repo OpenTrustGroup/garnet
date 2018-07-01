@@ -6,11 +6,13 @@
 #define LIB_NETCONNECTOR_CPP_MESSAGE_RELAY_H_
 
 #include <lib/async/cpp/wait.h>
+#include <lib/fit/function.h>
 #include <lib/zx/channel.h>
 
 #include <queue>
 #include <vector>
 
+#include "garnet/public/lib/callback/destruction_sentinel.h"
 #include "lib/fxl/macros.h"
 
 namespace netconnector {
@@ -44,23 +46,23 @@ class MessageRelayBase {
 
  private:
   // Tries to read messages from channel_ and waits for more.
-  void ReadChannelMessages(async_t* async,
-                           async::WaitBase* wait,
+  void ReadChannelMessages(async_t* async, async::WaitBase* wait,
                            zx_status_t status,
                            const zx_packet_signal_t* signal);
 
   // Writes all the messages in messages_to_write_.
-  void WriteChannelMessages(async_t* async,
-                            async::WaitBase* wait,
+  void WriteChannelMessages(async_t* async, async::WaitBase* wait,
                             zx_status_t status,
                             const zx_packet_signal_t* signal);
 
   zx::channel channel_;
-  async::WaitMethod<MessageRelayBase,
-                    &MessageRelayBase::ReadChannelMessages> read_wait_{this};
-  async::WaitMethod<MessageRelayBase,
-                    &MessageRelayBase::WriteChannelMessages> write_wait_{this};
+  async::WaitMethod<MessageRelayBase, &MessageRelayBase::ReadChannelMessages>
+      read_wait_{this};
+  async::WaitMethod<MessageRelayBase, &MessageRelayBase::WriteChannelMessages>
+      write_wait_{this};
   std::queue<std::vector<uint8_t>> messages_to_write_;
+
+  callback::DestructionSentinel destruction_sentinel_;
 };
 
 // Moves data-only (no handles) messages across an zx::channel.
@@ -73,9 +75,9 @@ class MessageRelay : public MessageRelayBase {
   ~MessageRelay() override;
 
   void SetMessageReceivedCallback(
-      std::function<void(std::vector<uint8_t>)> callback);
+      fit::function<void(std::vector<uint8_t>)> callback);
 
-  void SetChannelClosedCallback(std::function<void()> callback);
+  void SetChannelClosedCallback(fit::closure callback);
 
  protected:
   void OnMessageReceived(std::vector<uint8_t> message) override;
@@ -83,8 +85,8 @@ class MessageRelay : public MessageRelayBase {
   void OnChannelClosed() override;
 
  private:
-  std::function<void(std::vector<uint8_t>)> message_received_callback_;
-  std::function<void()> channel_closed_callback_;
+  fit::function<void(std::vector<uint8_t>)> message_received_callback_;
+  fit::closure channel_closed_callback_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(MessageRelay);
 };

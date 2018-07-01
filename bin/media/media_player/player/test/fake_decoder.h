@@ -31,11 +31,11 @@ class FakeDecoder : public Decoder {
   }
 
   void FlushInput(bool hold_frame, size_t input_index,
-                  fxl::Closure callback) override {
+                  fit::closure callback) override {
     callback();
   }
 
-  void FlushOutput(size_t output_index, fxl::Closure callback) override {
+  void FlushOutput(size_t output_index, fit::closure callback) override {
     callback();
   }
 
@@ -64,6 +64,16 @@ class FakeDecoder : public Decoder {
 
  private:
   std::unique_ptr<StreamType> output_stream_type_;
+};
+
+class FakeDecoderFactory : public DecoderFactory {
+ public:
+  FakeDecoderFactory();
+
+  ~FakeDecoderFactory() override;
+
+  Result CreateDecoder(const StreamType& stream_type,
+                       std::shared_ptr<Decoder>* decoder_out) override;
 };
 
 }  // namespace test

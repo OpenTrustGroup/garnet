@@ -4,18 +4,17 @@
 
 #include "garnet/bin/zxdb/client/symbols/file_line.h"
 
+#include "garnet/bin/zxdb/client/file_util.h"
+
 namespace zxdb {
 
 FileLine::FileLine() = default;
-FileLine::FileLine(const std::string& file, int line)
-    : file_(file), line_(line) {}
+FileLine::FileLine(std::string file, int line)
+    : file_(std::move(file)), line_(line) {}
 FileLine::~FileLine() = default;
 
 std::string FileLine::GetFileNamePart() const {
-  size_t last_slash = file_.rfind('/');
-  if (last_slash == std::string::npos)
-    return file_;
-  return file_.substr(last_slash + 1);
+  return ExtractLastFileComponent(file_).ToString();
 }
 
 }  // namespace zxdb

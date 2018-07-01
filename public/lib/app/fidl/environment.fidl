@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library component;
+library fuchsia.sys;
 
 // Maximum length for an environment label.
 const uint32 kLabelMaxLength = 32;
@@ -16,7 +16,7 @@ interface Environment {
   // Creates a new environment nested inside this environment.
   //
   // When applications are created inside the nested environment using the
-  // environment's |ApplicationLauncher|, the environment requests the
+  // environment's |Launcher|, the environment requests the
   // environment services from |host_directory| before passing those services to
   // the newly created application in its |StartupInfo|.
   //
@@ -40,11 +40,11 @@ interface Environment {
                             request<EnvironmentController>? controller,
                             string? label);
 
-  // Gets the ApplicationLauncher associated with this environment.
+  // Gets the Launcher associated with this environment.
   //
   // Applications created using this application launcher will be given the
   // environment services provided by this environment's |host_directory|.
-  2: GetApplicationLauncher(request<ApplicationLauncher> launcher);
+  2: GetLauncher(request<Launcher> launcher);
 
   // Gets a superset of services provided by this environment's
   // |host_directory|.

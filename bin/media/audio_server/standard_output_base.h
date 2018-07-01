@@ -2,11 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MEDIA_AUDIO_SERVER_STANDARD_OUTPUT_BASE_H_
+#define GARNET_BIN_MEDIA_AUDIO_SERVER_STANDARD_OUTPUT_BASE_H_
 
 #include <dispatcher-pool/dispatcher-timer.h>
+#include <fuchsia/media/cpp/fidl.h>
 
-#include <media/cpp/fidl.h>
 #include "garnet/bin/media/audio_server/audio_link.h"
 #include "garnet/bin/media/audio_server/audio_link_packet_source.h"
 #include "garnet/bin/media/audio_server/audio_output.h"
@@ -37,6 +38,9 @@ class StandardOutputBase : public AudioOutput {
     uint32_t local_to_output_gen;
     bool accumulate;
     const TimelineFunction* local_to_output;
+
+    float sw_output_db_gain;
+    bool sw_output_muted;
 
     // State for the job which is set up for each renderer during SetupMix
     uint32_t frames_produced;
@@ -72,7 +76,7 @@ class StandardOutputBase : public AudioOutput {
 
   explicit StandardOutputBase(AudioDeviceManager* manager);
 
-  MediaResult Init() override;
+  zx_status_t Init() override;
 
   void Process() FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token());
 
@@ -133,18 +137,7 @@ class StandardOutputBase : public AudioOutput {
       FXL_GUARDED_BY(mix_domain_->token());
 
   // State for the internal buffer which holds intermediate mix results.
-  //
-  // TODO(johngro): Right now, the cannonical intermediate format is signed 32
-  // bit ints.  As time goes on, we may need to reconsider this.  This will
-  // become more important when...
-  //
-  // 1) We support 24 bit audio.  Right now, with a 16 bit max, we can
-  //    accumulate for up to a maximum of 2^16-1 renderers without needing to do
-  //    anything special about about clipping.  With 24 bit audio, this number
-  //    will drop to only 255 simultanious renderers.  It is unclear if this is
-  //    a reasonable system-wide limitation or not.
-  // 2) We support floating point audio.
-  std::unique_ptr<int32_t[]> mix_buf_ FXL_GUARDED_BY(mix_domain_->token());
+  std::unique_ptr<float[]> mix_buf_ FXL_GUARDED_BY(mix_domain_->token());
   uint32_t mix_buf_frames_ FXL_GUARDED_BY(mix_domain_->token()) = 0;
 
   // State used by the mix task.
@@ -156,3 +149,5 @@ class StandardOutputBase : public AudioOutput {
 
 }  // namespace audio
 }  // namespace media
+
+#endif  // GARNET_BIN_MEDIA_AUDIO_SERVER_STANDARD_OUTPUT_BASE_H_

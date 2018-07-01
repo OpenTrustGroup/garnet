@@ -5,9 +5,10 @@
 #ifndef GARNET_BIN_MEDIA_MEDIA_PLAYER_DEMUX_READER_H_
 #define GARNET_BIN_MEDIA_MEDIA_PLAYER_DEMUX_READER_H_
 
-#include <functional>
 #include <limits>
 #include <memory>
+
+#include <lib/fit/function.h>
 
 #include "garnet/bin/media/media_player/framework/result.h"
 
@@ -17,8 +18,8 @@ namespace media_player {
 class Reader {
  public:
   using DescribeCallback =
-      std::function<void(Result result, size_t size, bool can_seek)>;
-  using ReadAtCallback = std::function<void(Result result, size_t bytes_read)>;
+      fit::function<void(Result result, size_t size, bool can_seek)>;
+  using ReadAtCallback = fit::function<void(Result result, size_t bytes_read)>;
 
   static constexpr size_t kUnknownSize = std::numeric_limits<size_t>::max();
 
@@ -32,9 +33,7 @@ class Reader {
   // Reads the specified number of bytes into the buffer from the specified
   // position and returns a result and the number of bytes read via the
   // callback.
-  virtual void ReadAt(size_t position,
-                      uint8_t* buffer,
-                      size_t bytes_to_read,
+  virtual void ReadAt(size_t position, uint8_t* buffer, size_t bytes_to_read,
                       ReadAtCallback callback) = 0;
 };
 

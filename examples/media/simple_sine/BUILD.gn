@@ -4,7 +4,6 @@
 
 executable("simple_sine") {
   sources = [
-    "main.cc",
     "simple_sine.cc",
     "simple_sine.h",
   ]
@@ -14,5 +13,7 @@ executable("simple_sine") {
     "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/media/fidl",
+    "//zircon/public/lib/async-loop-cpp",
+    "//zircon/public/lib/vmo-utils",
   ]
 }

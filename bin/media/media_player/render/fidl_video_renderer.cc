@@ -78,7 +78,7 @@ void FidlVideoRenderer::Dump(std::ostream& os) const {
 }
 
 void FidlVideoRenderer::FlushInput(bool hold_frame, size_t input_index,
-                                   fxl::Closure callback) {
+                                   fit::closure callback) {
   FXL_DCHECK(input_index == 0);
   FXL_DCHECK(callback);
 
@@ -98,7 +98,7 @@ void FidlVideoRenderer::FlushInput(bool hold_frame, size_t input_index,
     held_packet_.reset();
   }
 
-  SetEndOfStreamPts(media::kUnspecifiedTime);
+  SetEndOfStreamPts(fuchsia::media::kUnspecifiedTime);
 
   InvalidateViews();
 
@@ -172,7 +172,7 @@ void FidlVideoRenderer::SetStreamType(const StreamType& stream_type) {
   converter_.SetStreamType(stream_type.Clone());
 }
 
-void FidlVideoRenderer::Prime(fxl::Closure callback) {
+void FidlVideoRenderer::Prime(fit::closure callback) {
   flushed_ = false;
 
   if (packet_queue_.size() >= kPacketDemand || end_of_stream_pending()) {
@@ -180,7 +180,7 @@ void FidlVideoRenderer::Prime(fxl::Closure callback) {
     return;
   }
 
-  prime_callback_ = callback;
+  prime_callback_ = std::move(callback);
   stage()->RequestInputPacket();
 }
 
@@ -192,13 +192,14 @@ fuchsia::math::Size FidlVideoRenderer::pixel_aspect_ratio() const {
   return converter_.GetPixelAspectRatio();
 }
 
-void FidlVideoRenderer::SetGeometryUpdateCallback(fxl::Closure callback) {
-  geometry_update_callback_ = callback;
+void FidlVideoRenderer::SetGeometryUpdateCallback(fit::closure callback) {
+  geometry_update_callback_ = std::move(callback);
 }
 
 void FidlVideoRenderer::CreateView(
     fidl::InterfacePtr<::fuchsia::ui::views_v1::ViewManager> view_manager,
-    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request) {
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+        view_owner_request) {
   auto view =
       std::make_unique<View>(std::move(view_manager),
                              std::move(view_owner_request), shared_from_this());
@@ -296,7 +297,8 @@ void FidlVideoRenderer::OnSceneInvalidated(int64_t reference_time) {
 
 FidlVideoRenderer::View::View(
     ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+        view_owner_request,
     std::shared_ptr<FidlVideoRenderer> renderer)
     : mozart::BaseView(std::move(view_manager), std::move(view_owner_request),
                        "Video Renderer"),
@@ -321,7 +323,7 @@ void FidlVideoRenderer::View::OnSceneInvalidated(
   }
 
   // Update the image.
-  const scenic_lib::HostImage* image = image_cycler_.AcquireImage(
+  const scenic::HostImage* image = image_cycler_.AcquireImage(
       video_size.width, video_size.height, video_size.width * 4u,
       fuchsia::images::PixelFormat::BGRA_8, fuchsia::images::ColorSpace::SRGB);
   FXL_DCHECK(image);

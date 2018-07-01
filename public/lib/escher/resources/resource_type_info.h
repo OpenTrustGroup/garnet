@@ -23,11 +23,15 @@ enum class ResourceType {
   kBuffer = 1 << 6,
   kMesh = 1 << 7,
   kRenderPass = 1 << 8,
+  kPipelineLayout = 1 << 9,
+  kShaderProgram = 1 << 10,
 
   // Resources defined in escher::impl namespace.
-  kImplModelPipelineCache = 1 << 29,
-  kImplModelDisplayList = 1 << 30,
-  kImplDescriptorSetAllocation = 1 << 31,
+  kImplModelPipelineCache = 1 << 27,
+  kImplModelDisplayList = 1 << 28,
+  kImplDescriptorSetAllocation = 1 << 29,
+  kImplFramebuffer = 1 << 30,
+  kImplRenderPass = 1 << 31,
 };
 
 typedef TypeInfo<ResourceType> ResourceTypeInfo;

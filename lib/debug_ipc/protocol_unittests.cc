@@ -23,7 +23,8 @@ bool SerializeDeserializeRequest(const RequestType& in, RequestType* out) {
 
   MessageReader reader(std::move(serialized));
   uint32_t out_transaction_id = 0;
-  if (!ReadRequest(&reader, out, &out_transaction_id)) return false;
+  if (!ReadRequest(&reader, out, &out_transaction_id))
+    return false;
   EXPECT_EQ(in_transaction_id, out_transaction_id);
   return true;
 }
@@ -38,7 +39,8 @@ bool SerializeDeserializeReply(const ReplyType& in, ReplyType* out) {
 
   MessageReader reader(std::move(serialized));
   uint32_t out_transaction_id = 0;
-  if (!ReadReply(&reader, out, &out_transaction_id)) return false;
+  if (!ReadReply(&reader, out, &out_transaction_id))
+    return false;
   EXPECT_EQ(in_transaction_id, out_transaction_id);
   return true;
 }
@@ -181,13 +183,17 @@ TEST(Protocol, ResumeRequest) {
   ResumeRequest initial;
   initial.process_koid = 3746234;
   initial.thread_koid = 123523;
-  initial.how = ResumeRequest::How::kStepInstruction;
+  initial.how = ResumeRequest::How::kStepInRange;
+  initial.range_begin = 0x12345;
+  initial.range_end = 0x123456;
 
   ResumeRequest second;
   ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
   EXPECT_EQ(initial.process_koid, second.process_koid);
   EXPECT_EQ(initial.thread_koid, second.thread_koid);
   EXPECT_EQ(initial.how, second.how);
+  EXPECT_EQ(initial.range_begin, second.range_begin);
+  EXPECT_EQ(initial.range_end, second.range_end);
 }
 
 // ProcessTree -----------------------------------------------------------------
@@ -314,11 +320,15 @@ TEST(Protocol, AddOrChangeBreakpointRequest) {
 
   EXPECT_EQ(initial.breakpoint.breakpoint_id, second.breakpoint.breakpoint_id);
   EXPECT_EQ(initial.breakpoint.stop, second.breakpoint.stop);
-  ASSERT_EQ(initial.breakpoint.locations.size(), second.breakpoint.locations.size());
+  ASSERT_EQ(initial.breakpoint.locations.size(),
+            second.breakpoint.locations.size());
 
-  EXPECT_EQ(initial.breakpoint.locations[0].process_koid, second.breakpoint.locations[0].process_koid);
-  EXPECT_EQ(initial.breakpoint.locations[0].thread_koid, second.breakpoint.locations[0].thread_koid);
-  EXPECT_EQ(initial.breakpoint.locations[0].address, second.breakpoint.locations[0].address);
+  EXPECT_EQ(initial.breakpoint.locations[0].process_koid,
+            second.breakpoint.locations[0].process_koid);
+  EXPECT_EQ(initial.breakpoint.locations[0].thread_koid,
+            second.breakpoint.locations[0].thread_koid);
+  EXPECT_EQ(initial.breakpoint.locations[0].address,
+            second.breakpoint.locations[0].address);
 }
 
 TEST(Protocol, AddOrChangeBreakpointReply) {
@@ -411,7 +421,7 @@ TEST(Protocol, ModulesReply) {
   EXPECT_EQ(initial.modules[1].base, second.modules[1].base);
 }
 
-// Modules ---------------------------------------------------------------------
+// ASpace ----------------------------------------------------------------------
 
 TEST(Protocol, AspaceRequest) {
   AddressSpaceRequest initial;
@@ -438,7 +448,7 @@ TEST(Protocol, AspaceReply) {
   AddressSpaceReply second;
   ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
 
-  EXPECT_EQ(4u, second.map.size());
+  ASSERT_EQ(4u, second.map.size());
   EXPECT_EQ(initial.map[0].name, second.map[0].name);
   EXPECT_EQ(initial.map[0].base, second.map[0].base);
   EXPECT_EQ(initial.map[0].size, second.map[0].size);
@@ -455,6 +465,41 @@ TEST(Protocol, AspaceReply) {
   EXPECT_EQ(initial.map[3].base, second.map[3].base);
   EXPECT_EQ(initial.map[3].size, second.map[3].size);
   EXPECT_EQ(initial.map[3].depth, second.map[3].depth);
+}
+
+// Registers -------------------------------------------------------------------
+
+TEST(Protocol, RegistersRequest) {
+  RegistersRequest initial;
+  initial.process_koid = 0x1234;
+  initial.thread_koid = 0x5678;
+
+  RegistersRequest second;
+  ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
+
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+  EXPECT_EQ(initial.thread_koid, second.thread_koid);
+}
+
+TEST(Protocol, RegistersReply) {
+  RegistersReply initial;
+  initial.registers.push_back({"W0", 0xF000});
+  initial.registers.push_back({"W1", 0xF001});
+  initial.registers.push_back({"W2", 0xF002});
+  initial.registers.push_back({"W3", 0xF003});
+
+  RegistersReply second;
+  ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
+
+  ASSERT_EQ(4u, second.registers.size());
+  EXPECT_EQ(initial.registers[0].name, second.registers[0].name);
+  EXPECT_EQ(initial.registers[0].value, second.registers[0].value);
+  EXPECT_EQ(initial.registers[1].name, second.registers[1].name);
+  EXPECT_EQ(initial.registers[1].value, second.registers[1].value);
+  EXPECT_EQ(initial.registers[2].name, second.registers[2].name);
+  EXPECT_EQ(initial.registers[2].value, second.registers[2].value);
+  EXPECT_EQ(initial.registers[3].name, second.registers[3].name);
+  EXPECT_EQ(initial.registers[3].value, second.registers[3].value);
 }
 
 // Notifications ---------------------------------------------------------------
@@ -487,6 +532,16 @@ TEST(Protocol, NotifyException) {
   initial.frame.ip = 0x7647342634;
   initial.frame.sp = 0x9861238251;
 
+  initial.hit_breakpoints.emplace_back();
+  initial.hit_breakpoints[0].breakpoint_id = 45;
+  initial.hit_breakpoints[0].hit_count = 15;
+  initial.hit_breakpoints[0].should_delete = true;
+
+  initial.hit_breakpoints.emplace_back();
+  initial.hit_breakpoints[1].breakpoint_id = 46;
+  initial.hit_breakpoints[1].hit_count = 16;
+  initial.hit_breakpoints[1].should_delete = false;
+
   NotifyException second;
   ASSERT_TRUE(SerializeDeserializeNotification(
       initial, &second, &WriteNotifyException, &ReadNotifyException));
@@ -496,6 +551,21 @@ TEST(Protocol, NotifyException) {
   EXPECT_EQ(initial.type, second.type);
   EXPECT_EQ(initial.frame.ip, second.frame.ip);
   EXPECT_EQ(initial.frame.sp, second.frame.sp);
+  ASSERT_EQ(initial.hit_breakpoints.size(), second.hit_breakpoints.size());
+
+  EXPECT_EQ(initial.hit_breakpoints[0].breakpoint_id,
+            second.hit_breakpoints[0].breakpoint_id);
+  EXPECT_EQ(initial.hit_breakpoints[0].hit_count,
+            second.hit_breakpoints[0].hit_count);
+  EXPECT_EQ(initial.hit_breakpoints[0].should_delete,
+            second.hit_breakpoints[0].should_delete);
+
+  EXPECT_EQ(initial.hit_breakpoints[1].breakpoint_id,
+            second.hit_breakpoints[1].breakpoint_id);
+  EXPECT_EQ(initial.hit_breakpoints[1].hit_count,
+            second.hit_breakpoints[1].hit_count);
+  EXPECT_EQ(initial.hit_breakpoints[1].should_delete,
+            second.hit_breakpoints[1].should_delete);
 }
 
 }  // namespace debug_ipc

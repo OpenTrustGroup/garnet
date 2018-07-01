@@ -29,6 +29,7 @@
 #include "fwil.h"
 #include "fwil_types.h"
 #include "linuxisms.h"
+#include "netbuf.h"
 #include "p2p.h"
 
 static zx_status_t brcmf_cfg80211_vndr_cmds_dcmd_handler(struct wiphy* wiphy,
@@ -37,7 +38,7 @@ static zx_status_t brcmf_cfg80211_vndr_cmds_dcmd_handler(struct wiphy* wiphy,
     struct brcmf_cfg80211_vif* vif;
     struct brcmf_if* ifp;
     const struct brcmf_vndr_dcmd_hdr* cmdhdr = data;
-    struct sk_buff* reply;
+    struct brcmf_netbuf* reply;
     zx_status_t ret;
     int payload, ret_len;
     void* dcmd_buf = NULL;
@@ -72,7 +73,7 @@ static zx_status_t brcmf_cfg80211_vndr_cmds_dcmd_handler(struct wiphy* wiphy,
             ret_len = BRCMF_DCMD_MAXLEN;
         }
         payload = max(ret_len, len) + 1;
-        dcmd_buf = vzalloc(payload);
+        dcmd_buf = calloc(1, payload);
         if (NULL == dcmd_buf) {
             return ZX_ERR_NO_MEMORY;
         }
@@ -95,7 +96,7 @@ static zx_status_t brcmf_cfg80211_vndr_cmds_dcmd_handler(struct wiphy* wiphy,
         msglen = ret_len > maxmsglen ? maxmsglen : ret_len;
         ret_len -= msglen;
         payload = msglen + sizeof(msglen);
-        reply = cfg80211_vendor_cmd_alloc_reply_skb(wiphy, payload);
+        reply = cfg80211_vendor_cmd_alloc_reply_netbuf(wiphy, payload);
         if (NULL == reply) {
             ret = ZX_ERR_NO_MEMORY;
             break;
@@ -103,7 +104,7 @@ static zx_status_t brcmf_cfg80211_vndr_cmds_dcmd_handler(struct wiphy* wiphy,
 
         if (nla_put(reply, BRCMF_NLATTR_DATA, msglen, wr_pointer) ||
                 nla_put_u16(reply, BRCMF_NLATTR_LEN, msglen)) {
-            kfree_skb(reply);
+            brcmf_netbuf_free(reply);
             ret = ZX_ERR_NO_RESOURCES;
             break;
         }
@@ -117,7 +118,7 @@ static zx_status_t brcmf_cfg80211_vndr_cmds_dcmd_handler(struct wiphy* wiphy,
     }
 
 exit:
-    vfree(dcmd_buf);
+    free(dcmd_buf);
 
     return ret;
 }

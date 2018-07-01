@@ -16,7 +16,7 @@ namespace component {
 RealmHub::RealmHub(fbl::RefPtr<fs::PseudoDir> root)
     : Hub(root), realm_dir_(fbl::AdoptRef(new fs::PseudoDir())) {
   AddEntry("r", realm_dir_);
-  CreateComponentDir();
+  EnsureComponentDir();
 }
 
 zx_status_t RealmHub::AddRealm(const HubInfo& hub_info) {

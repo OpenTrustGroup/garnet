@@ -14,12 +14,11 @@ SourceSegment::SourceSegment() {}
 
 SourceSegment::~SourceSegment() {}
 
-void SourceSegment::Provision(Graph* graph,
-                              async_t* async,
-                              fxl::Closure updateCallback,
+void SourceSegment::Provision(Graph* graph, async_t* async,
+                              fit::closure updateCallback,
                               StreamUpdateCallback stream_update_callback) {
-  stream_update_callback_ = stream_update_callback;
-  Segment::Provision(graph, async, updateCallback);
+  stream_update_callback_ = std::move(stream_update_callback);
+  Segment::Provision(graph, async, std::move(updateCallback));
 }
 
 void SourceSegment::Deprovision() {
@@ -27,10 +26,8 @@ void SourceSegment::Deprovision() {
   stream_update_callback_ = nullptr;
 }
 
-void SourceSegment::OnStreamUpdated(size_t index,
-                                    const StreamType& type,
-                                    OutputRef output,
-                                    bool more) {
+void SourceSegment::OnStreamUpdated(size_t index, const StreamType& type,
+                                    OutputRef output, bool more) {
   FXL_DCHECK(stream_update_callback_)
       << "OnStreamUpdated() called on unprovisioned segment.";
 

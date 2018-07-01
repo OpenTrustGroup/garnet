@@ -23,9 +23,11 @@ class Session;
 // objects and watches for changes.
 //
 // This class maintains the mapping between objects and IDs.
-class ConsoleContext
-    : public ProcessObserver, public SystemObserver, public TargetObserver,
-      public ThreadObserver, public BreakpointObserver {
+class ConsoleContext : public ProcessObserver,
+                       public SystemObserver,
+                       public TargetObserver,
+                       public ThreadObserver,
+                       public BreakpointObserver {
  public:
   explicit ConsoleContext(Session* session);
   ~ConsoleContext();
@@ -50,7 +52,9 @@ class ConsoleContext
 
   // Frames are a little bit different than threads and targets since they
   // have an intrinsic numbering supplied by the Thread object (the index into
-  // the backtrace).
+  // the backtrace). If there are no frames on the thread, the return value
+  // will be 0 (so the return value can't be blindly indexed into the frames
+  // list).
   void SetActiveFrameForThread(const Frame* frame);
   int GetActiveFrameIdForThread(const Thread* thread);
 
@@ -95,8 +99,8 @@ class ConsoleContext
 
   // TargetObserver implementation:
   void DidCreateProcess(Target* target, Process* process) override;
-  void DidDestroyProcess(Target* target, DestroyReason reason,
-                         int exit_code) override;
+  void WillDestroyProcess(Target* target, Process* process,
+                          DestroyReason reason, int exit_code) override;
 
   // ProcessObserver implementation:
   void DidCreateThread(Process* process, Thread* thread) override;

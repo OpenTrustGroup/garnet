@@ -9,7 +9,7 @@
 #include <map>
 #include <memory>
 
-#include "garnet/bin/zxdb/client/process_symbols_impl.h"
+#include "garnet/bin/zxdb/client/symbols/process_symbols_impl.h"
 #include "garnet/public/lib/fxl/macros.h"
 #include "garnet/public/lib/fxl/memory/weak_ptr.h"
 
@@ -18,7 +18,7 @@ namespace zxdb {
 class TargetImpl;
 class ThreadImpl;
 
-class ProcessImpl : public Process {
+class ProcessImpl : public Process, public ProcessSymbolsImpl::Notifications {
  public:
   ProcessImpl(TargetImpl* target, uint64_t koid, const std::string& name);
   ~ProcessImpl() override;
@@ -44,20 +44,24 @@ class ProcessImpl : public Process {
   void Pause() override;
   void Continue() override;
   void ReadMemory(
-      uint64_t address,
-      uint32_t size,
+      uint64_t address, uint32_t size,
       std::function<void(const Err&, MemoryDump)> callback) override;
 
   // Notifications from the agent that a thread has started or exited.
   void OnThreadStarting(const debug_ipc::ThreadRecord& record);
   void OnThreadExiting(const debug_ipc::ThreadRecord& record);
 
-  // Broadcasts the notification OnSymbolLoadFailure().
-  void NotifyOnSymbolLoadFailure(const Err& err);
+  // Notification that a module has been loaded.
+  void NotifyModuleLoaded(const debug_ipc::Module& module);
 
  private:
   // Syncs the threads_ list to the new list of threads passed in .
   void UpdateThreads(const std::vector<debug_ipc::ThreadRecord>& new_threads);
+
+  // ProcessSymbolsImpl::Notifications implementation:
+  void DidLoadModuleSymbols(LoadedModuleSymbols* module) override;
+  void WillUnloadModuleSymbols(LoadedModuleSymbols* module) override;
+  void OnSymbolLoadFailure(const Err& err) override;
 
   TargetImpl* const target_;  // The target owns |this|.
   const uint64_t koid_;

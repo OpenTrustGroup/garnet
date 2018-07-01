@@ -6,7 +6,7 @@ import("//build/package.gni")
 
 group("services") {
   public_deps = [
-    "//garnet/bin/media/audio_policy",
+    "//garnet/bin/media/codec_factory",
     "//garnet/bin/media/media_player",
     "//garnet/bin/media/net_media_service",
   ]
@@ -14,6 +14,7 @@ group("services") {
 
 group("tools") {
   public_deps = [
+    "//garnet/bin/media/signal_generator",
     "//garnet/bin/media/vol",
   ]
 }
@@ -33,16 +34,35 @@ package("audio_server") {
   ]
 }
 
-package("media_client") {
-  deprecated_system_image = true
-
+package("codec_factory") {
   deps = [
-    "//garnet/public/lib/media/c",
+    "//garnet/bin/media/codec_factory:codec_factory",
   ]
 
-  libraries = [
+  binary = "codec_factory"
+
+  meta = [
     {
-      name = "libmedia_client.so"
+      path = rebase_path("codec_factory/meta/codec_factory.cmx")
+      dest = "codec_factory.cmx"
+    },
+  ]
+}
+
+# This package is only really expected to be used by the codec_factory package.
+package("codec_runner_sw_omx") {
+  deps = [
+    "//garnet/bin/media/codecs/sw/omx/codec_runner_sw_omx:codec_runner_sw_omx",
+
+    # Codec loadable_module(s)
+    "//garnet/bin/media/codecs/sw/omx/dec/aac:libcodec_sw_omx_dec_aac",
+  ]
+
+  binary = "codec_runner_sw_omx"
+
+  loadable_modules = [
+    {
+      name = "libcodec_sw_omx_dec_aac.so"
     },
   ]
 }
@@ -61,7 +81,6 @@ package("tests") {
     "//garnet/bin/media/media_player/player:tests",
     "//garnet/bin/media/media_player/util:tests",
     "//garnet/bin/media/net_media_service:tests",
-    "//garnet/public/lib/media/c:tests",
     "//garnet/public/lib/media/timeline:tests",
     "//garnet/public/lib/media/transport:tests",
   ]
@@ -73,10 +92,6 @@ package("tests") {
 
     {
       name = "audio_server_tests"
-    },
-
-    {
-      name = "media_client_tests"
     },
 
     {

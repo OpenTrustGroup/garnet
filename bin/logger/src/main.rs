@@ -7,7 +7,7 @@
 extern crate byteorder;
 extern crate failure;
 extern crate fidl;
-extern crate fidl_logger;
+extern crate fidl_fuchsia_logger;
 extern crate fuchsia_app as app;
 extern crate fuchsia_async as async;
 extern crate fuchsia_zircon as zx;
@@ -30,8 +30,9 @@ use std::collections::HashSet;
 use std::collections::{vec_deque, VecDeque};
 use std::sync::Arc;
 
-use fidl_logger::{Log, LogFilterOptions, LogImpl, LogLevelFilter, LogListenerMarker,
-                  LogListenerProxy, LogMarker, LogMessage, LogSink, LogSinkImpl, LogSinkMarker};
+use fidl_fuchsia_logger::{Log, LogFilterOptions, LogImpl, LogLevelFilter, LogListenerMarker,
+                          LogListenerProxy, LogMarker, LogMessage, LogSink, LogSinkImpl,
+                          LogSinkMarker};
 
 mod klogger;
 mod logger;
@@ -205,12 +206,12 @@ fn log_manager_helper(
 
     if let Some(mut options) = options {
         lw.tags = options.tags.drain(..).collect();
-        if lw.tags.len() > fidl_logger::MAX_TAGS as usize {
+        if lw.tags.len() > fidl_fuchsia_logger::MAX_TAGS as usize {
             // TODO: close channel
             return fok(());
         }
         for tag in &lw.tags {
-            if tag.len() > fidl_logger::MAX_TAG_LEN as usize {
+            if tag.len() > fidl_fuchsia_logger::MAX_TAG_LEN as usize {
                 // TODO: close channel
                 return fok(());
             }
@@ -233,7 +234,7 @@ fn log_manager_helper(
         let mut v = vec![];
         for (msg, s) in shared_members.log_msg_buffer.iter_mut() {
             if lw.filter(msg) {
-                if log_length + s > fidl_logger::MAX_LOG_MANY_SIZE as usize {
+                if log_length + s > fidl_fuchsia_logger::MAX_LOG_MANY_SIZE as usize {
                     if ListenerStatus::Fine != lw.send_filtered_logs(&mut v) {
                         return fok(());
                     }
@@ -361,8 +362,8 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use fidl::encoding2::OutOfLine;
-    use fidl_logger::{LogFilterOptions, LogListener, LogListenerImpl, LogListenerMarker, LogProxy,
-                      LogSinkProxy};
+    use fidl_fuchsia_logger::{LogFilterOptions, LogListener, LogListenerImpl, LogListenerMarker,
+                              LogProxy, LogSinkProxy};
     use logger::fx_log_packet_t;
     use zx::prelude::*;
 
@@ -404,6 +405,7 @@ mod tests {
         expected: Vec<LogMessage>,
         done: Arc<AtomicBool>,
         closed: Arc<AtomicBool>,
+        test_name: String,
     }
     impl LogListenerState {
         fn log(&mut self, msg: LogMessage) {
@@ -420,6 +422,7 @@ mod tests {
             );
             if self.expected.len() == 0 {
                 self.done.store(true, Ordering::Relaxed);
+                println!("DEBUG: {}: setting done=true", self.test_name);
             }
         }
     }
@@ -462,21 +465,28 @@ mod tests {
                 state: ll,
                 on_open: |_, _| fok(()),
                 done: |ll, _| {
+                    println!("DEBUG: {}: done called", ll.test_name);
                     ll.closed.store(true, Ordering::Relaxed);
                     fok(())
                 },
                 log: |ll, msg, _controller| {
+                    println!("DEBUG: {}: log called", ll.test_name);
                     ll.log(msg);
                     fok(())
                 },
                 log_many: |ll, msgs, _controller| {
+                    println!(
+                        "DEBUG: {}: logMany called, msgs.len(): {}",
+                        ll.test_name,
+                        msgs.len()
+                    );
                     for msg in msgs {
                         ll.log(msg);
                     }
                     fok(())
                 },
             }.serve(chan)
-                .recover(|e| panic!("ankur test fail {:?}", e)),
+                .recover(|e| panic!("test fail {:?}", e)),
         )
     }
 
@@ -572,6 +582,7 @@ mod tests {
             expected: vec![lm1, lm2, lm3],
             done: done.clone(),
             closed: closed.clone(),
+            test_name: "log_manager_test".to_string(),
         };
 
         setup_listener(ls, log_proxy, None, test_dump_logs);
@@ -624,6 +635,7 @@ mod tests {
             expected: expected,
             done: done.clone(),
             closed: Arc::new(AtomicBool::new(false)),
+            test_name: test_name.clone().to_string(),
         };
         println!("DEBUG: {}: call setup_listener", test_name);
         setup_listener(ls, log_proxy, filter_options, false);

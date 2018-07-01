@@ -10,16 +10,19 @@
 #include <zircon/errors.h>
 #include <zircon/syscalls.h>
 
+extern zx_status_t amlogic_video_init(void** out_ctx);
 extern zx_status_t amlogic_video_bind(void* ctx, zx_device_t* parent);
 
 static zx_driver_ops_t amlogic_video_driver_ops = {
     .version = DRIVER_OPS_VERSION,
+    .init = amlogic_video_init,
     .bind = amlogic_video_bind,
+    // .release is not critical for this driver because dedicated devhost
+    // process
 };
 
 ZIRCON_DRIVER_BEGIN(amlogic_video, amlogic_video_driver_ops, "zircon", "0.1", 4)
 BI_ABORT_IF(NE, BIND_PROTOCOL, ZX_PROTOCOL_PLATFORM_DEV),
     BI_ABORT_IF(NE, BIND_PLATFORM_DEV_VID, PDEV_VID_AMLOGIC),
-    BI_ABORT_IF(NE, BIND_PLATFORM_DEV_PID, PDEV_PID_AMLOGIC_S912),
     BI_MATCH_IF(EQ, BIND_PLATFORM_DEV_DID, PDEV_DID_AMLOGIC_VIDEO),
     ZIRCON_DRIVER_END(amlogic_video)

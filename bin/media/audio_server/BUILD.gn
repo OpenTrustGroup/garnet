@@ -61,14 +61,14 @@ executable("audio_server") {
     "audio_pipe.h",
     "audio_plug_detector.cc",
     "audio_plug_detector.h",
-    "audio_renderer_format_info.cc",
-    "audio_renderer_format_info.h",
-    "audio_renderer_impl.cc",
-    "audio_renderer_impl.h",
     "audio_renderer1_impl.cc",
     "audio_renderer1_impl.h",
     "audio_renderer2_impl.cc",
     "audio_renderer2_impl.h",
+    "audio_renderer_format_info.cc",
+    "audio_renderer_format_info.h",
+    "audio_renderer_impl.cc",
+    "audio_renderer_impl.h",
     "audio_server_impl.cc",
     "audio_server_impl.h",
     "driver_output.cc",
@@ -102,10 +102,16 @@ executable("audio_server") {
     "//garnet/public/lib/media/fidl",
     "//garnet/public/lib/media/timeline",
     "//garnet/public/lib/media/transport",
+    "//zircon/public/lib/async-loop-cpp",
     "//zircon/public/lib/audio-proto-utils",
     "//zircon/public/lib/dispatcher-pool",
     "//zircon/public/lib/fbl",
+    "//zircon/public/lib/vmo-utils",
     "//zircon/public/lib/zx",
+  ]
+
+  public_deps = [
+    "//zircon/public/lib/fit",
   ]
 }
 
@@ -115,7 +121,7 @@ test("tests") {
 
   sources = [
     "test/audio_renderer2_tests.cc",
-    "test/main.cc",
+    "test/audio_server_tests.cc",
   ]
 
   deps = [

@@ -5,16 +5,19 @@
 package main
 
 import (
+	"bufio"
 	"crypto/sha512"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"hash"
 	"io"
+	"io/ioutil"
 	"log"
-	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"amber/daemon"
@@ -22,23 +25,20 @@ import (
 	"amber/pkg"
 	"amber/source"
 
-	amber_fidl "fidl/amber"
+	amber_fidl "fidl/fuchsia/amber"
 
 	"app/context"
 	"syscall/zx"
-
-	tuf_data "github.com/flynn/go-tuf/data"
 )
 
-const lhIP = "http://127.0.0.1"
-const port = 8083
+const (
+	defaultSourceDir = "/system/data/amber/sources"
+)
 
 var (
 	// TODO(jmatt) replace hard-coded values with something better/more flexible
 	usage      = "usage: amber [-k=<path>] [-s=<path>] [-u=<url>]"
-	store      = flag.String("s", "/data/amber/tuf", "The path to the local file store")
-	addr       = flag.String("u", fmt.Sprintf("%s:%d", lhIP, port), "The URL (including port if not using port 80)  of the update server.")
-	keys       = flag.String("k", "/pkg/data/keys", "Path to use to initialize the client's keys. This is only needed the first time the command is run.")
+	store      = flag.String("s", "/data/amber/store", "The path to the local file store")
 	delay      = flag.Duration("d", 0*time.Second, "Set a delay before Amber does its work")
 	autoUpdate = flag.Bool("a", false, "Automatically update and restart the system as updates become available")
 
@@ -51,80 +51,119 @@ func main() {
 		flag.CommandLine.PrintDefaults()
 	}
 
-	flag.Parse()
 	log.SetPrefix("amber: ")
 	log.SetFlags(log.Ltime)
+
+	readExtraFlags()
+
+	flag.Parse()
 	time.Sleep(*delay)
 
-	srvUrl, err := url.Parse(*addr)
+	// The source dir is where we store our database of sources. Because we
+	// don't currently have a mechanism to run "post-install" scripts,
+	// we'll use the existence of the data dir to signify if we need to
+	// load in the default sources.
+	storeExists, err := exists(*store)
 	if err != nil {
-		log.Fatalf("bad address for update server %s", err)
+		log.Fatal(err)
 	}
 
-	keys, err := source.LoadKeys(*keys)
+	d, err := startupDaemon(*store)
 	if err != nil {
-		log.Fatalf("loading root keys failed %s", err)
+		log.Fatalf("failed to start daemon: %s", err)
 	}
-
-	ticker := source.NewTickGenerator(source.InitBackoff)
-	go ticker.Run()
-
-	d := startupDaemon(srvUrl, *store, keys, ticker)
-	if *autoUpdate {
-		go func() {
-			supMon := daemon.NewSystemUpdateMonitor(d)
-			supMon.Start()
-			log.Println("system update monitor exited")
-		}()
-	}
-
-	startFIDLSvr(d, ticker)
-
 	defer d.CancelAll()
+
+	// Now that the daemon is up and running, we can register all of the
+	// system configured sources.
+	//
+	// TODO(etryzelaar): Since these sources are only installed once,
+	// there's currently no way to upgrade them. PKG-82 is tracking coming
+	// up with a plan to address this.
+	if !storeExists {
+		log.Printf("initializing store: %s", *store)
+
+		if err := addDefaultSourceConfigs(d, defaultSourceDir); err != nil {
+			log.Fatalf("failed to register default sources: %s", err)
+		}
+	}
+
+	supMon := daemon.NewSystemUpdateMonitor(d, *autoUpdate)
+	go func(s *daemon.SystemUpdateMonitor) {
+		s.Start()
+		log.Println("system update monitor exited")
+	}(supMon)
+
+	startFIDLSvr(d, supMon)
 
 	//block forever
 	select {}
 }
 
-func startFIDLSvr(d *daemon.Daemon, t *source.TickGenerator) {
+// LoadSourceConfigs install source configs from a directory.  The directory
+// structure looks like:
+//
+//     $dir/source1/config.json
+//     $dir/source2/config.json
+//     ...
+func addDefaultSourceConfigs(d *daemon.Daemon, dir string) error {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		p := filepath.Join(dir, file.Name(), "config.json")
+		log.Printf("loading source config %s", p)
+
+		cfg, err := loadSourceConfig(p)
+		if err != nil {
+			return err
+		}
+
+		if err := d.AddTUFSource(cfg); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func loadSourceConfig(path string) (*amber_fidl.SourceConfig, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var cfg amber_fidl.SourceConfig
+	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+func startFIDLSvr(d *daemon.Daemon, s *daemon.SystemUpdateMonitor) {
 	cxt := context.CreateFromStartupInfo()
-	apiSrvr := ipcserver.NewControlSrvr(d, t)
+	apiSrvr := ipcserver.NewControlSrvr(d, s)
 	cxt.OutgoingService.AddService(amber_fidl.ControlName, func(c zx.Channel) error {
 		return apiSrvr.Bind(c)
 	})
 	cxt.Serve()
 }
 
-func startupDaemon(srvURL *url.URL, store string, keys []*tuf_data.Key,
-	ticker *source.TickGenerator) *daemon.Daemon {
-
+func startupDaemon(store string) (*daemon.Daemon, error) {
 	reqSet := newPackageSet([]string{"/pkg/bin/app"})
 
-	checker := daemon.NewDaemon(reqSet, daemon.ProcessPackage, []source.Source{})
-
-	blobURL := *srvURL
-	blobURL.Path = filepath.Join(blobURL.Path, "blobs")
-	checker.AddBlobRepo(daemon.BlobRepo{Address: blobURL.String(), Interval: time.Second * 5})
+	d, err := daemon.NewDaemon(store, reqSet, daemon.ProcessPackage, []source.Source{})
+	if err != nil {
+		return nil, err
+	}
 
 	log.Println("monitoring for updates")
 
-	go func() {
-		client, _, err := source.InitNewTUFClient(srvURL.String(), store, keys, ticker)
-		if err != nil {
-			log.Printf("client initialization failed: %s", err)
-			return
-		}
-
-		// create source with an average 10qps over 5 seconds and a possible burst
-		// of up to 50 queries
-		fetcher := &source.TUFSource{
-			Client:   client,
-			Interval: 0,
-			Limit:    0,
-		}
-		checker.AddSource(fetcher)
-	}()
-	return checker
+	return d, err
 }
 
 func newPackageSet(files []string) *pkg.PackageSet {
@@ -160,4 +199,63 @@ func digest(name string, hash hash.Hash) ([]byte, error) {
 		return nil, e
 	}
 	return hash.Sum(nil), nil
+}
+
+var flagsDir = filepath.Join("/system", "data", "amber", "flags")
+
+func readExtraFlags() {
+	d, err := os.Open(flagsDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Println("unexpected error reading %q: %s", flagsDir, err)
+		}
+		return
+	}
+	defer d.Close()
+
+	files, err := d.Readdir(0)
+	if err != nil {
+		log.Printf("error listing flags directory %s", err)
+		return
+	}
+	for _, f := range files {
+		if f.IsDir() || f.Size() == 0 {
+			continue
+		}
+
+		fPath := filepath.Join(d.Name(), f.Name())
+		file, err := os.Open(fPath)
+		if err != nil {
+			log.Printf("flags file %q could not be opened: %s", fPath, err)
+			continue
+		}
+		r := bufio.NewReader(file)
+		for {
+			line, err := r.ReadString('\n')
+			if err != nil && err != io.EOF {
+				log.Printf("flags file %q had read error: %s", fPath, err)
+				break
+			}
+
+			line = strings.TrimSpace(line)
+			os.Args = append(os.Args, line)
+			if err == io.EOF {
+				break
+			}
+		}
+		file.Close()
+	}
+}
+
+// Check if a path exists.
+func exists(path string) (bool, error) {
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		} else {
+			return false, err
+		}
+	}
+
+	return true, nil
 }

@@ -9,14 +9,12 @@
 
 #include "helpers.h"
 
-using bluetooth::ErrorCode;
-using bluetooth::Int8;
-using bluetooth::Status;
+using fuchsia::bluetooth::ErrorCode;
+using fuchsia::bluetooth::Int8;
+using fuchsia::bluetooth::Status;
 
-using bluetooth_gatt::Client;
-using bluetooth_low_energy::CentralDelegate;
-using bluetooth_low_energy::CentralDelegatePtr;
-using bluetooth_low_energy::ScanFilterPtr;
+using fuchsia::bluetooth::gatt::Client;
+using fuchsia::bluetooth::le::ScanFilterPtr;
 
 namespace bthost {
 
@@ -35,20 +33,6 @@ LowEnergyCentralServer::~LowEnergyCentralServer() {
   gatt_host_->UnbindGattClient(reinterpret_cast<GattHost::Token>(this));
 }
 
-void LowEnergyCentralServer::SetDelegate(
-    ::fidl::InterfaceHandle<CentralDelegate> delegate) {
-  if (!delegate) {
-    FXL_VLOG(1) << "Cannot set a null delegate";
-    return;
-  }
-
-  delegate_ = delegate.Bind();
-  delegate_.set_error_handler([this] {
-    FXL_VLOG(1) << "LowEnergyCentral delegate disconnected";
-    delegate_ = nullptr;
-  });
-}
-
 void LowEnergyCentralServer::GetPeripherals(
     ::fidl::VectorPtr<::fidl::StringPtr> service_uuids,
     GetPeripheralsCallback callback) {
@@ -58,7 +42,7 @@ void LowEnergyCentralServer::GetPeripherals(
 
 void LowEnergyCentralServer::GetPeripheral(
     ::fidl::StringPtr identifier,
-     GetPeripheralCallback callback) {
+    GetPeripheralCallback callback) {
   // TODO:
   FXL_NOTIMPLEMENTED();
 }
@@ -92,7 +76,7 @@ void LowEnergyCentralServer::StartScan(ScanFilterPtr filter,
   requesting_scan_ = true;
   adapter()->le_discovery_manager()->StartDiscovery(
       [self = weak_ptr_factory_.GetWeakPtr(), filter = std::move(filter),
-       callback](auto session) {
+       callback = std::move(callback)](auto session) {
         if (!self)
           return;
 
@@ -141,7 +125,7 @@ void LowEnergyCentralServer::StopScan() {
 
 void LowEnergyCentralServer::ConnectPeripheral(
     ::fidl::StringPtr identifier,
-    ::fidl::InterfaceRequest<bluetooth_gatt::Client> client_request,
+    ::fidl::InterfaceRequest<Client> client_request,
     ConnectPeripheralCallback callback) {
   FXL_VLOG(1) << "Low Energy Central ConnectPeripheral()";
 
@@ -158,7 +142,7 @@ void LowEnergyCentralServer::ConnectPeripheral(
   }
 
   auto self = weak_ptr_factory_.GetWeakPtr();
-  auto conn_cb = [self, callback, peer_id = identifier.get(),
+  auto conn_cb = [self, callback = callback.share(), peer_id = identifier.get(),
                   request = std::move(client_request)](auto status,
                                                        auto conn_ref) mutable {
     if (!self)
@@ -251,8 +235,6 @@ void LowEnergyCentralServer::DisconnectPeripheral(
 
 void LowEnergyCentralServer::OnScanResult(
     const ::btlib::gap::RemoteDevice& remote_device) {
-  if (!delegate_)
-    return;
 
   auto fidl_device = fidl_helpers::NewLERemoteDevice(remote_device);
   if (!fidl_device) {
@@ -265,18 +247,16 @@ void LowEnergyCentralServer::OnScanResult(
     fidl_device->rssi->value = remote_device.rssi();
   }
 
-  delegate_->OnDeviceDiscovered(std::move(*fidl_device));
+  binding()->events().OnDeviceDiscovered(std::move(*fidl_device));
 }
 
 void LowEnergyCentralServer::NotifyScanStateChanged(bool scanning) {
-  if (delegate_)
-    delegate_->OnScanStateChanged(scanning);
+  binding()->events().OnScanStateChanged(scanning);
 }
 
 void LowEnergyCentralServer::NotifyPeripheralDisconnected(
     const std::string& identifier) {
-  if (delegate_)
-    delegate_->OnPeripheralDisconnected(identifier);
+  binding()->events().OnPeripheralDisconnected(identifier);
 }
 
 }  // namespace bthost

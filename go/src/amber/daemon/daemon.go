@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +19,8 @@ import (
 
 	"amber/pkg"
 	"amber/source"
+
+	"fidl/fuchsia/amber"
 )
 
 var DstUpdate = "/pkgfs/install/pkg"
@@ -37,17 +41,15 @@ const CheckInterval = 5 * time.Minute
 // Execution contexts sharing a single Daemon instance should mediate access
 // to all calls into the Daemon.
 type Daemon struct {
+	store    string
 	srcMons  []*SourceMonitor
 	muSrcs   sync.Mutex
-	srcs     []source.Source
+	srcs     map[string]source.Source
 	pkgs     *pkg.PackageSet
 	runCount sync.WaitGroup
 	// takes an update Package, an original Package and a Source to get the
 	// update Package content from.
 	processor func(*GetResult, *pkg.PackageSet) error
-
-	//blobSrc       *BlobFetcher
-	muBlobUpdates sync.Mutex
 
 	muRepos sync.Mutex
 	repos   []BlobRepo
@@ -57,11 +59,14 @@ type Daemon struct {
 }
 
 // NewDaemon creates a Daemon with the given SourceSet
-func NewDaemon(r *pkg.PackageSet, f func(*GetResult, *pkg.PackageSet) error,
-	s []source.Source) *Daemon {
-	d := &Daemon{pkgs: r,
+func NewDaemon(store string, r *pkg.PackageSet, f func(*GetResult, *pkg.PackageSet) error,
+	s []source.Source) (*Daemon, error) {
+	d := &Daemon{
+		store:     store,
+		pkgs:      r,
 		runCount:  sync.WaitGroup{},
 		srcMons:   []*SourceMonitor{},
+		srcs:      make(map[string]source.Source),
 		processor: f,
 		repos:     []BlobRepo{},
 		muInProg:  sync.Mutex{},
@@ -76,26 +81,123 @@ func NewDaemon(r *pkg.PackageSet, f func(*GetResult, *pkg.PackageSet) error,
 		mon.Run()
 		d.runCount.Done()
 	}()
-	return d
+
+	// Ignore if the directory doesn't exist
+	if err := d.loadSourcesFromPath(store); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+
+	return d, nil
+}
+
+// loadSourcesFromPath loads sources from a directory, where each source gets
+// it's own directory.  The actual directory structure is source dependent.
+func (d *Daemon) loadSourcesFromPath(dir string) error {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+
+	for _, f := range files {
+		p := filepath.Join(dir, f.Name())
+		src, err := source.LoadTUFSourceFromPath(p)
+		if err != nil {
+			return err
+		}
+
+		d.addTUFSource(src)
+	}
+
+	return nil
 }
 
 func (d *Daemon) addSrc(s source.Source) {
 	d.muSrcs.Lock()
 	defer d.muSrcs.Unlock()
-	s = NewSourceKeeper(s)
-	d.srcs = append(d.srcs, s)
+
+	id := s.GetId()
+
+	if oldSource, ok := d.srcs[id]; ok {
+		log.Printf("overwriting source: %s", id)
+		oldSource.Close()
+	}
+
+	d.srcs[id] = NewSourceKeeper(s)
+
+	log.Printf("added source: %s", id)
 }
 
-// AddSource is called to add a Source that can be used to get updates. When the
-// Source is added, the Daemon will start polling it at the interval from
-// Source.GetInterval()
-func (d *Daemon) AddSource(s source.Source) {
-	d.addSrc(s)
+// AddTUFSource is called to add a Source that can be used to get updates. When
+// the TUFSource is added, the Daemon will start polling it at the interval
+// from TUFSource.GetInterval()
+func (d *Daemon) AddTUFSource(cfg *amber.SourceConfig) error {
+	// Make sure the id is safe to be written to disk.
+	store := filepath.Join(d.store, url.PathEscape(cfg.Id))
+
+	src, err := source.NewTUFSource(store, cfg)
+	if err != nil {
+		log.Printf("failed to create TUF source: %v: %s", cfg.Id, err)
+		return err
+	}
+
+	// Save the config.
+	if err := src.Save(); err != nil {
+		log.Printf("failed to save TUF config: %v: %s", cfg.Id, err)
+		return err
+	}
+
+	return d.addTUFSource(src)
+}
+
+func (d *Daemon) addTUFSource(src *source.TUFSource) error {
+	cfg := src.GetConfig()
+	if cfg == nil {
+		return fmt.Errorf("TUFSource does not have a config")
+	}
+
+	// Add the source's blob repo. If not specified, assume the blobs are
+	// found under $RepoURL/blobs.
+	blobRepoUrl := cfg.BlobRepoUrl
+	if blobRepoUrl == "" {
+		blobRepoUrl = filepath.Join(cfg.RepoUrl, "blobs")
+	}
+
+	blobRepo := BlobRepo{
+		Source:   src,
+		Address:  cfg.BlobRepoUrl,
+		Interval: time.Second * 5,
+	}
+
+	if err := d.AddBlobRepo(blobRepo); err != nil {
+		return err
+	}
+
+	// If we made it to this point, we're ready to actually add the source.
+	d.addSrc(src)
+
 	// after the source is added, let the monitor(s) know so they can decide if they
 	// want to look again for updates
 	for _, m := range d.srcMons {
 		m.SourcesAdded()
 	}
+
+	log.Printf("added TUF source %s %v\n", cfg.Id, cfg.RepoUrl)
+
+	return nil
+}
+
+func (d *Daemon) Login(srcId string) (*amber.DeviceCode, error) {
+	log.Printf("logging into %s", srcId)
+	d.muSrcs.Lock()
+	src, ok := d.srcs[srcId]
+	d.muSrcs.Unlock()
+
+	if !ok {
+		log.Printf("unknown source id: %v", srcId)
+		return nil, fmt.Errorf("unknown source: %v", srcId)
+	}
+
+	return src.Login()
 }
 
 func (d *Daemon) blobRepos() []BlobRepo {
@@ -106,16 +208,25 @@ func (d *Daemon) blobRepos() []BlobRepo {
 	return c
 }
 
-func (d *Daemon) AddBlobRepo(br BlobRepo) {
+func (d *Daemon) AddBlobRepo(br BlobRepo) error {
+	if _, err := url.ParseRequestURI(br.Address); err != nil {
+		log.Printf("Provided URL %q is not valid", br.Address)
+		return err
+	}
+
 	d.muRepos.Lock()
 	d.repos = append(d.repos, br)
 	d.muRepos.Unlock()
+
+	log.Printf("added blob repo: %v\n", br.Address)
+
+	return nil
 }
 
-// GetBlob is a blocking call which tries to get all requested blobs
+// GetBlob is a blocking call which downloads the requested blob
 func (d *Daemon) GetBlob(blob string) error {
 	repos := d.blobRepos()
-	return FetchBlob(repos, blob, &d.muBlobUpdates, DstBlob)
+	return FetchBlob(repos, blob, DstBlob)
 }
 
 func (d *Daemon) RemoveBlobRepo(r BlobRepo) {
@@ -242,13 +353,17 @@ func (d *Daemon) GetUpdates(pkgs *pkg.PackageSet) map[pkg.Package]*GetResult {
 		}
 	}
 
-	var rec *upRec
+	// see if any requested packages are already on the system. We'll avoid
+	// fetching these, but otherwise send through the rest of the process
+	toGet = detectExisting(toGet, totalRes)
 
+	var rec *upRec
 	if len(toGet) > 0 {
 		rec = &upRec{
 			pkgs: toGet,
 			c:    make([]chan<- map[pkg.Package]*GetResult, 0, 0),
 		}
+
 		wg.Add(1)
 		go func() {
 			d.awaitResults(c, wanted, totalRes, &resLock)
@@ -287,18 +402,61 @@ func (d *Daemon) GetUpdates(pkgs *pkg.PackageSet) map[pkg.Package]*GetResult {
 	return totalRes
 }
 
+// detectExisting checks to see if packages in the `pkgs` list already exist on
+// the device. If they do exist an entry is inserted into resultSet with the
+// Orig and Update set to the packge value in the `pkgs` list, with the Err
+// value set to one that passes os.IsExist(). The list returned is any pkgs
+// that do not exist already on the system. The expectation is that the
+// synthesized GetResults will get passed through the rest of the pipeline
+// and cause a 're-activation' of the installed package. This will cause
+// the pipeline to 'repair' or complete the package if it is missing any
+// contents.
+func detectExisting(pkgs []*pkg.Package, resultSet map[pkg.Package]*GetResult) []*pkg.Package {
+	//synthesize fetch results for existing packages
+
+	retained := []*pkg.Package{}
+	for _, pkg := range pkgs {
+		if pkg.Merkle != "" {
+			// try to create in the incoming package directory of pkgfs. If
+			// this bounces back with ErrExist, the blob is already in blobfs
+			// in some state. If we get any other error or no error at all,
+			// try to install the package from scratch.
+			f, err := os.OpenFile(filepath.Join(DstUpdate, pkg.Merkle), os.O_WRONLY|os.O_CREATE,
+				os.ModePerm)
+			if err != nil && os.IsExist(err) {
+				resultSet[*pkg] = &GetResult{
+					Orig:   *pkg,
+					Update: *pkg,
+					Err:    err,
+				}
+				continue
+			} else if err == nil {
+				// open succeeded, so clean up
+				f.Close()
+				// any error should be benign or result in an error down the line
+				if rmErr := os.Remove(f.Name()); rmErr != nil {
+					log.Printf("Unexpected error removing file: %s", rmErr)
+				}
+			}
+		}
+		retained = append(retained, pkg)
+	}
+	return retained
+}
+
 func (d *Daemon) getUpdates(rec *upRec) map[pkg.Package]*GetResult {
 	fetchRecs := []*pkgSrcPair{}
 
-	d.muSrcs.Lock()
-	srcs := make([]source.Source, len(d.srcs))
-	copy(srcs, d.srcs)
-	d.muSrcs.Unlock()
+	srcs := d.GetSources()
 
 	unfoundPkgs := rec.pkgs
 	// TODO thread-safe access for sources?
-	for i := 0; i < len(srcs) && len(unfoundPkgs) > 0; i++ {
-		updates, err := srcs[i].AvailableUpdates(unfoundPkgs)
+	for _, src := range srcs {
+		if len(unfoundPkgs) == 0 {
+			break
+		}
+
+		updates, err := src.AvailableUpdates(unfoundPkgs)
 		if len(updates) == 0 || err != nil {
 			if err == ErrRateExceeded {
 				log.Printf("daemon: source rate limit exceeded\n")
@@ -312,7 +470,7 @@ func (d *Daemon) getUpdates(rec *upRec) map[pkg.Package]*GetResult {
 
 		pkgsToSrc := pkgSrcPair{
 			pkgs: make(map[pkg.Package]pkg.Package),
-			src:  srcs[i],
+			src:  src,
 		}
 		fetchRecs = append(fetchRecs, &pkgsToSrc)
 
@@ -379,14 +537,29 @@ func cleanupFiles(files []*os.File) {
 func (d *Daemon) RemoveSource(src source.Source) error {
 	d.muSrcs.Lock()
 	defer d.muSrcs.Unlock()
-	for i, m := range d.srcs {
+
+	id := src.GetId()
+
+	if m, ok := d.srcs[id]; ok {
 		if m.Equals(src) {
-			d.srcs = append(d.srcs[:i], d.srcs[i+1:]...)
+			delete(d.srcs, id)
 			return nil
 		}
 	}
 
 	return ErrSrcNotFound
+}
+
+func (d *Daemon) GetSources() map[string]source.Source {
+	d.muSrcs.Lock()
+	defer d.muSrcs.Unlock()
+
+	srcs := make(map[string]source.Source)
+	for key, value := range d.srcs {
+		srcs[key] = value
+	}
+
+	return srcs
 }
 
 // CancelAll stops all update retrieval operations, blocking until any
@@ -431,9 +604,12 @@ func ProcessPackage(data *GetResult, pkgs *pkg.PackageSet) error {
 		return NewErrProcessPackage("invalid path")
 	}
 
-	_, err := WriteUpdateToPkgFS(data)
-
+	file, err := CreateOutputFile(data)
 	if err != nil {
+		return err
+	}
+
+	if _, err = WriteUpdateToPkgFS(data, file); err != nil {
 		return err
 	}
 
@@ -441,24 +617,29 @@ func ProcessPackage(data *GetResult, pkgs *pkg.PackageSet) error {
 	return nil
 }
 
-func WriteUpdateToPkgFS(data *GetResult) (string, error) {
+// CreateOutputFile opens a path in pkgfs based on `data`'s merkle root. This
+// function will return an error if the file already exists. Files which
+// already exist will still cause pkgfs to import and/or heal the package that
+// it represents, so the caller should consider whether an os.IsExist()-matching
+// error should be treated as a failure.
+func CreateOutputFile(data *GetResult) (*os.File, error) {
+	dstPath := filepath.Join(DstUpdate, data.Update.Merkle)
+	dst, e := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE, os.ModePerm)
+	if e != nil {
+		return nil, e
+	}
+	return dst, nil
+}
+
+// WriteUpdateToPkgFS writes the data in the GetResult to `dst`. `dst` is
+// closed before exiting.
+func WriteUpdateToPkgFS(data *GetResult, dst *os.File) (string, error) {
+	defer dst.Close()
 	e := data.Open()
 	if e != nil {
 		return "", e
 	}
 	defer data.Close()
-
-	dstPath := filepath.Join(DstUpdate, data.Update.Merkle)
-	dst, e := os.Create(dstPath)
-
-	if e != nil {
-		// if the file already exists, treat as success
-		if os.IsExist(e) {
-			return dstPath, e
-		}
-		return "", NewErrProcessPackage("couldn't open file to write update %s", e)
-	}
-	defer dst.Close()
 
 	i, err := data.Stat()
 	if err != nil {
@@ -469,11 +650,14 @@ func WriteUpdateToPkgFS(data *GetResult) (string, error) {
 	if err != nil {
 		return "", NewErrProcessPackage("couldn't truncate file destination %s", e)
 	}
-	_, e = io.Copy(dst, data)
-	// TODO(jmatt) validate file on disk, size, hash, etc
-	if e != nil {
-		return "", NewErrProcessPackage("couldn't write update to file %s", e)
+	written, err := io.Copy(dst, data)
+	if err != nil {
+		return "", NewErrProcessPackage("couldn't write update to file %s", err)
 	}
 
-	return dstPath, nil
+	if written != i.Size() {
+		return "", NewErrProcessPackage("pkg blob incomplete, only wrote %d out of %d bytes", written, i.Size())
+	}
+
+	return dst.Name(), nil
 }

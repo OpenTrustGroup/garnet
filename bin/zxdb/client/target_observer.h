@@ -11,21 +11,18 @@ namespace zxdb {
 class TargetObserver {
  public:
   // Reason for destroying a process object.
-  enum class DestroyReason {
-    kExit,
-    kDetach,
-    kKill
-  };
+  enum class DestroyReason { kExit, kDetach, kKill };
 
   // The process could have been newly launched or attached to an existing
   // process.
   virtual void DidCreateProcess(Target* target, Process* process) {}
 
   // Called after detaching from or destroying a process. The Process object
-  // will no longer exist. The exit code will only have meaning when reason ==
+  // will exist but the Target object will report there is no process
+  // currently running. The exit code will only have meaning when reason ==
   // kExit, otherwise it will be 0.
-  virtual void DidDestroyProcess(Target* target, DestroyReason reason,
-                                 int exit_code) {}
+  virtual void WillDestroyProcess(Target* target, Process* process,
+                                  DestroyReason reason, int exit_code) {}
 };
 
 }  // namespace zxdb

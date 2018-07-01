@@ -9,82 +9,101 @@
 #include <fuchsia/ui/views_v1/cpp/fidl.h>
 #include "lib/app/cpp/connect.h"
 #include "lib/fidl/cpp/clone.h"
+#include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 #include "lib/ui/input/cpp/formatting.h"
 
 namespace root_presenter {
 
 App::App(const fxl::CommandLine& command_line)
-    : application_context_(
-          component::ApplicationContext::CreateFromStartupInfo()),
+    : startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()),
       input_reader_(this) {
-  FXL_DCHECK(application_context_);
+  FXL_DCHECK(startup_context_);
 
   input_reader_.Start();
 
-  application_context_->outgoing().AddPublicService<presentation::Presenter>(
-      [this](fidl::InterfaceRequest<presentation::Presenter> request) {
-        presenter_bindings_.AddBinding(this, std::move(request));
-      });
-
-  application_context_->outgoing()
-      .AddPublicService<fuchsia::ui::input::InputDeviceRegistry>(
-          [this](fidl::InterfaceRequest<fuchsia::ui::input::InputDeviceRegistry>
-                     request) {
-            input_receiver_bindings_.AddBinding(this, std::move(request));
-          });
+  startup_context_->outgoing().AddPublicService(
+      presenter_bindings_.GetHandler(this));
+  startup_context_->outgoing().AddPublicService(
+      presenter2_bindings_.GetHandler(this));
+  startup_context_->outgoing().AddPublicService(
+      input_receiver_bindings_.GetHandler(this));
 }
 
 App::~App() {}
 
-void App::Present(
-    fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_handle,
-    fidl::InterfaceRequest<presentation::Presentation> presentation_request) {
-  InitializeServices();
-
-  auto presentation = std::make_unique<Presentation>(
-      view_manager_.get(), scenic_.get(), session_.get(), renderer_params_);
-  Presentation::YieldCallback yield_callback = [this](bool yield_to_next) {
+Presentation::YieldCallback App::GetYieldCallback() {
+  return fxl::MakeCopyable([this](bool yield_to_next) {
     if (yield_to_next) {
       SwitchToNextPresentation();
     } else {
       SwitchToPreviousPresentation();
     }
-  };
-  Presentation::ShutdownCallback shutdown_callback =
-      [this, presentation = presentation.get()] {
-        size_t idx;
-        for (idx = 0; idx < presentations_.size(); ++idx) {
-          if (presentations_[idx].get() == presentation) {
-            break;
-          }
-        }
-        FXL_DCHECK(idx != presentations_.size());
+  });
+}
 
-        if (idx == active_presentation_idx_) {
-          // This works fine when idx == 0, because the previous idx chosen will
-          // also be 0, and it will be an no-op within
-          // SwitchToPreviousPresentation. Finally, at the end of the callback,
-          // everything will be cleaned up.
-          SwitchToPreviousPresentation();
-        }
+Presentation::ShutdownCallback App::GetShutdownCallback(
+    Presentation* presentation) {
+  return fxl::MakeCopyable([this, presentation] {
+    size_t idx;
+    for (idx = 0; idx < presentations_.size(); ++idx) {
+      if (presentations_[idx].get() == presentation) {
+        break;
+      }
+    }
+    FXL_DCHECK(idx != presentations_.size());
 
-        presentations_.erase(presentations_.begin() + idx);
-        if (idx < active_presentation_idx_) {
-          // Adjust index into presentations_.
-          active_presentation_idx_--;
-        }
+    if (idx == active_presentation_idx_) {
+      // This works fine when idx == 0, because the previous idx chosen will
+      // also be 0, and it will be an no-op within SwitchToPreviousPresentation.
+      // Finally, at the end of the callback, everything will be cleaned up.
+      SwitchToPreviousPresentation();
+    }
 
-        if (presentations_.empty()) {
-          layer_stack_->RemoveAllLayers();
-          active_presentation_idx_ = std::numeric_limits<size_t>::max();
-        }
-      };
+    presentations_.erase(presentations_.begin() + idx);
+    if (idx < active_presentation_idx_) {
+      // Adjust index into presentations_.
+      active_presentation_idx_--;
+    }
 
+    if (presentations_.empty()) {
+      layer_stack_->RemoveAllLayers();
+      active_presentation_idx_ = std::numeric_limits<size_t>::max();
+    }
+  });
+}
+
+void App::Present(
+    fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner>
+        view_owner_handle,
+    fidl::InterfaceRequest<fuchsia::ui::policy::Presentation>
+        presentation_request) {
+  InitializeServices();
+
+  auto presentation = std::make_unique<PresentationOld>(
+      view_manager_.get(), scenic_.get(), session_.get(), renderer_params_);
   presentation->Present(view_owner_handle.Bind(),
-                        std::move(presentation_request), yield_callback,
-                        shutdown_callback);
+                        std::move(presentation_request), GetYieldCallback(),
+                        GetShutdownCallback(presentation.get()));
 
+  AddPresentation(std::move(presentation));
+}
+
+void App::PresentView(
+    zx::eventpair view_holder_token,
+    ::fidl::InterfaceRequest<fuchsia::ui::policy::Presentation>
+        presentation_request) {
+  InitializeServices();
+
+  auto presentation = std::make_unique<PresentationNew>(
+      scenic_.get(), session_.get(), std::move(view_holder_token),
+      renderer_params_);
+  presentation->PresentView(std::move(presentation_request), GetYieldCallback(),
+                            GetShutdownCallback(presentation.get()));
+  AddPresentation(std::move(presentation));
+}
+
+void App::AddPresentation(std::unique_ptr<Presentation> presentation) {
   for (auto& it : devices_by_id_) {
     presentation->OnDeviceAdded(it.second.get());
   }
@@ -187,8 +206,7 @@ void App::OnReport(mozart::InputDeviceImpl* input_device,
 
 void App::InitializeServices() {
   if (!view_manager_) {
-    application_context_->ConnectToEnvironmentService(
-        view_manager_.NewRequest());
+    startup_context_->ConnectToEnvironmentService(view_manager_.NewRequest());
     view_manager_.set_error_handler([this] {
       FXL_LOG(ERROR) << "ViewManager died, destroying view trees.";
       Reset();
@@ -200,19 +218,18 @@ void App::InitializeServices() {
       Reset();
     });
 
-    session_ = std::make_unique<scenic_lib::Session>(scenic_.get());
+    session_ = std::make_unique<scenic::Session>(scenic_.get());
     session_->set_error_handler([this] {
       FXL_LOG(ERROR) << "Session died, destroying view trees.";
       Reset();
     });
 
-    compositor_ =
-        std::make_unique<scenic_lib::DisplayCompositor>(session_.get());
-    layer_stack_ = std::make_unique<scenic_lib::LayerStack>(session_.get());
+    compositor_ = std::make_unique<scenic::DisplayCompositor>(session_.get());
+    layer_stack_ = std::make_unique<scenic::LayerStack>(session_.get());
     compositor_->SetLayerStack(*layer_stack_.get());
     session_->Present(0, [](fuchsia::images::PresentationInfo info) {});
 
-    scenic_->GetOwnershipEvent([this](zx::event event) {
+    scenic_->GetDisplayOwnershipEvent([this](zx::event event) {
       input_reader_.SetOwnershipEvent(std::move(event));
     });
   }

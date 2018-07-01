@@ -26,6 +26,7 @@
 
 #include <ddk/debug.h>
 #include <ddk/device.h>
+#include <ddk/protocol/usb.h> // Remove when the USB structs move out
 #include <netinet/if_ether.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -37,11 +38,7 @@
 #include <zircon/syscalls.h>
 #include <zircon/types.h>
 
-#include "device.h"
-
 // TODO(cphoenix): Clean up the list stuff
-// TODO(cphoenix): Replace other functions e.g. pci_write_config_dword() in code
-#define list_head list_node // for struct list_head
 #define INIT_LIST_HEAD(head) list_initialize(head)
 #define list_empty(list) list_is_empty(list)
 #define list_del(item) list_delete(item)
@@ -57,9 +54,6 @@
 typedef uint16_t __be16;
 typedef uint32_t __be32;
 typedef uint64_t __be64;
-typedef struct {
-    int counter;
-} atomic_t;
 
 // FROM Josh's linuxisms.h
 
@@ -159,16 +153,16 @@ typedef uint32_t gfp_t;
         return 0;                                                                              \
     }
 
-#define BCMA_CORE_ARM_CM3      0x82a
-#define BCMA_CORE_INTERNAL_MEM 0x80e
-#define BCMA_CORE_ARM_CR4      0x83e
-#define BCMA_CORE_ARM_CA7      0x847
-#define BCMA_CORE_80211        0x812
-#define BCMA_CORE_PCIE2        0x83c
-#define BCMA_CORE_SDIO_DEV     0x829
-#define BCMA_CORE_CHIPCOMMON   0x800
-#define BCMA_CORE_SYS_MEM      0x849
-#define BCMA_CORE_PMU          0x827
+#define CHIPSET_ARM_CM3_CORE      0x82a
+#define CHIPSET_INTERNAL_MEM_CORE 0x80e
+#define CHIPSET_ARM_CR4_CORE      0x83e
+#define CHIPSET_ARM_CA7_CORE      0x847
+#define CHIPSET_80211_CORE        0x812
+#define CHIPSET_PCIE2_CORE        0x83c
+#define CHIPSET_SDIO_DEV_CORE     0x829
+#define CHIPSET_CHIPCOMMON_CORE   0x800
+#define CHIPSET_SYS_MEM_CORE      0x849
+#define CHIPSET_PMU_CORE          0x827
 
 // clang-format off
 #define LINUX_FUNCII(name) LINUX_FUNC(name, int, int)
@@ -181,198 +175,145 @@ typedef uint32_t gfp_t;
 #define LINUX_FUNCcVV(name) LINUX_FUNC(name, const void*, void*)
 #define LINUX_FUNCVU(name) LINUX_FUNC(name, void*, uint16_t)
 #define LINUX_FUNCUU(name) LINUX_FUNC(name, uint32_t, uint32_t)
-LINUX_FUNCVV(skb_peek_tail)
-LINUX_FUNCVV(skb_peek)
-LINUX_FUNCVI(skb_cloned)
-LINUX_FUNCVV(eth_broadcast_addr)
-LINUX_FUNCcVV(is_multicast_ether_addr)
-LINUX_FUNCVV(eth_zero_addr)
-LINUX_FUNCIV(kcalloc)
-LINUX_FUNCVV(skb_mac_header)
-LINUX_FUNCVI(pskb_expand_head)
-LINUX_FUNCVV(skb_queue_head)
-LINUX_FUNCVI(skb_queue_empty)
-LINUX_FUNCVV(skb_dequeue)
-LINUX_FUNCVV(__skb_dequeue)
-LINUX_FUNCVI(skb_queue_len)
-LINUX_FUNCVI(skb_pull)
-LINUX_FUNCVI(__skb_trim)
-LINUX_FUNCVI(brfcmf_dbg)
-LINUX_FUNCII(time_after)
-#define net_ratelimit() (true)
-// Last parameter of this returns an error code. Must be a zx_status_t (0 or negative).
-LINUX_FUNCVI(sdio_readb)
-// Last parameter of this returns an error code. Must be a zx_status_t (0 or negative).
-LINUX_FUNCVI(sdio_writeb)
-LINUX_FUNCVI(sdio_claim_host)
-LINUX_FUNCVI(sdio_release_host)
-LINUX_FUNCVI(no_printk)
-LINUX_FUNCVI(skb_unlink)
-LINUX_FUNCVI(skb_push)
-LINUX_FUNCVU(skb_headroom)
-LINUX_FUNCVI(skb_tailroom)
-LINUX_FUNCVI(skb_cow_head)
-LINUX_FUNCVI(skb_queue_tail)
-LINUX_FUNCVI(skb_queue_is_last)
-LINUX_FUNCVI(skb_trim)
-LINUX_FUNCVI(skb_linearize)
-LINUX_FUNCVI(__skb_queue_after)
-LINUX_FUNCVI(__skb_unlink)
-LINUX_FUNCVI(skb_put)
-LINUX_FUNCVI(__skb_put)
-LINUX_FUNCVI(__skb_queue_head_init)
-LINUX_FUNCVI(__skb_queue_tail)
-LINUX_FUNCVI(kfree_skb)
-LINUX_FUNCVI(skb_queue_head_init)
-#define skb_queue_walk_safe(a, b, c) for((void)c, b=(a)->next;;)
-#define skb_queue_walk(a, b) for(b=(a)->next;;)
-LINUX_FUNCVV(netdev_priv)
-LINUX_FUNCVI(free_netdev)
-LINUX_FUNCcVI(is_zero_ether_addr)
-LINUX_FUNCII(trace_brcmf_sdpcm_hdr)
-LINUX_FUNCVI(atomic_inc)
-LINUX_FUNCVI(atomic_set)
-LINUX_FUNCVI(atomic_read)
-LINUX_FUNCII(atomic_or)
-LINUX_FUNCVI(atomic_xchg)
-LINUX_FUNCVI(atomic_dec)
-LINUX_FUNCUU(cpu_to_be16)
-LINUX_FUNCUU(cpu_to_be32)
-LINUX_FUNCUU(be16_to_cpu)
-LINUX_FUNCUU(be32_to_cpu)
-LINUX_FUNCVU(__get_unaligned_be16)
-LINUX_FUNCVU(get_unaligned_be16)
-LINUX_FUNCVU(get_unaligned_be32)
+
+LINUX_FUNCVI(netif_carrier_on)
+LINUX_FUNCVI(netif_carrier_ok)
+LINUX_FUNCVI(ether_addr_equal) // Trivial
+LINUX_FUNCVI(is_valid_ether_addr)
+LINUX_FUNCVI(eth_type_trans)
+LINUX_FUNCII(BITS_TO_LONGS)
+LINUX_FUNCII(gcd)
+LINUX_FUNCX(get_random_int)
+LINUX_FUNCII(round_up)
+LINUX_FUNCVI(nla_put) // Add netlink attribute to netbuf
+LINUX_FUNCVI(nla_put_u16) // Add u16 attribute to netbuf
+LINUX_FUNCII(MBM_TO_DBM)
+LINUX_FUNCX(prandom_u32)
 LINUX_FUNCVU(get_unaligned_le16)
+LINUX_FUNCUU(put_unaligned_le32)
 static inline uint32_t get_unaligned_le32(void* addr) {
     uint32_t value;
     memcpy(&value, addr, sizeof(uint32_t));
     return value;
 }
-LINUX_FUNCUU(put_unaligned_le32)
-LINUX_FUNCVI(brcmf_dbg_hex_dump)
-LINUX_FUNCVI(trace_brcmf_hexdump)
-LINUX_FUNCVI(trace_brcmf_debug)
-LINUX_FUNCVI(add_wait_queue)
-LINUX_FUNCII(set_current_state)
-LINUX_FUNCII(send_sig)
-LINUX_FUNCVI(kthread_stop)
-LINUX_FUNCVI(signal_pending)
-LINUX_FUNCII(schedule_timeout)
-LINUX_FUNCVV(remove_wait_queue)
-LINUX_FUNCVI(wake_up_interruptible)
-LINUX_FUNCIV(kmalloc)
-LINUX_FUNCcVV(kmemdup)
-LINUX_FUNCIV(vzalloc)
-LINUX_FUNCIV(kzalloc)
-//LINUX_FUNCIV(valloc)
-LINUX_FUNCVV(vfree)
-LINUX_FUNCVI(pr_warn)
+
+LINUX_FUNCVI(brcmf_netbuf_realloc_head) // Realloc if necessary
+LINUX_FUNCVV(brcmf_netbuf_list_peek_tail) // netbuf list
+LINUX_FUNCVV(brcmf_netbuf_list_peek_head) // netbuf list
+LINUX_FUNCVV(brcmf_netbuf_list_add_head) // netbuf list
+LINUX_FUNCVI(brcmf_netbuf_list_is_empty) // netbuf list
+LINUX_FUNCVV(brcmf_netbuf_list_remove_head) // netbuf list
+LINUX_FUNCVV(brcmf_netbuf_list_remove_head_locked) // netbuf list
+LINUX_FUNCVI(brcmf_netbuf_list_length) // netbuf list
+LINUX_FUNCVI(brcmf_netbuf_set_length_to) // May either grow or shrink.
+LINUX_FUNCVI(brcmf_netbuf_list_remove) // netbuf list
+LINUX_FUNCVI(brcmf_netbuf_grow_head) // onion
+//LINUX_FUNCVU(brcmf_netbuf_head_space) // Already implemented
+//LINUX_FUNCVI(netbuf_cow_head) // Replaced using brcmf_netbuf_realloc_head()
+LINUX_FUNCVI(brcmf_netbuf_list_add_tail) // netbuf list
+//LINUX_FUNCVI(netbuf_queue_is_last) // Replaced using brcmf_netbuf_list_peek_tail()
+LINUX_FUNCVI(brcmf_netbuf_reduce_length_to) // If length is already shorter, NOP.
+//LINUX_FUNCVI(netbuf_linearize) // Not needed / used in this driver architecture
+LINUX_FUNCVI(brcmf_netbuf_add_after_locked) // netbuf list
+LINUX_FUNCVI(brcmf_netbuf_list_remove_locked) // netbuf list
+//LINUX_FUNCVI(brcmf_netbuf_grow_tail) // Already implemented
+LINUX_FUNCVI(brcmf_netbuf_list_init_nonlocked) // netbuf list
+LINUX_FUNCVI(brcmf_netbuf_add_tail_locked) // netbuf list
+LINUX_FUNCVV(brcmf_netbuf_remove_tail) // netbuf list
+LINUX_FUNCVV(brcmf_netbuf_list_prev) // netbuf list
+// LINUX_FUNCVV(netbuf_header_cloned) // Not needed / used in this driver architecture
+// LINUX_FUNCVI(__netbuf_insert) // Replaced by brcmf_netbuf_add_after_locked(): see fwsignal.c:1291
+// LINUX_FUNCVI(netbuf_orphan) // Not needed in this driver architecture
+#define brcmf_netbuf_list_for_every_safe(a, b, c)  \
+    for(({brcmf_err("Calling brcmf_netbuf_list_for_every_safe"); \
+                                        (void)c;}), b=(a)->next;true;)
+#define brcmf_netbuf_list_for_every(a, b) for(({brcmf_err("Calling brcmf_netbuf_list_for_every"); \
+                                    b=(a)->next;});true;)
+
+LINUX_FUNCVI(netdev_mc_count) // In core.c
+LINUX_FUNCVI(waitqueue_active) // In core.c
+LINUX_FUNCX(rtnl_lock) // In core.c and p2p.c
+LINUX_FUNCX(rtnl_unlock) // In core.c and p2p.c
+LINUX_FUNCVV(bcm47xx_nvram_get_contents) // In firmware.c
+LINUX_FUNCVI(bcm47xx_nvram_release_contents) // In firmware.c
+LINUX_FUNCX(in_interrupt) // In core.c and sdio.c
+
+LINUX_FUNCVI(device_set_wakeup_enable) // USB only
+LINUX_FUNCVI(usb_deregister) // USB only
+LINUX_FUNCVI(driver_for_each_device) // In usb.c only
+
+LINUX_FUNCII(send_sig) // SDIO only
+LINUX_FUNCVI(kthread_stop) // SDIO only
+LINUX_FUNCVI(pr_warn) // SDIO only
+LINUX_FUNCII(enable_irq) // SDIO only
+// Last parameter of this returns an error code. Must be a zx_status_t (0 or negative).
+LINUX_FUNCVI(sdio_readb) // SDIO only
+// Last parameter of this returns an error code. Must be a zx_status_t (0 or negative).
+LINUX_FUNCVI(sdio_writeb) // SDIO only
+LINUX_FUNCVI(sdio_claim_host) // SDIO only
+LINUX_FUNCVI(sdio_release_host) // SDIO only
 LINUX_FUNCVS(sdio_enable_func)
 LINUX_FUNCVI(sdio_disable_func)
-LINUX_FUNCX(wmb)
-LINUX_FUNCX(rmb)
-
-// TODO(cphoenix): Make sure we free everything we've gotten.
-static inline void release_firmware(const struct brcmf_firmware* firmware) {
-    return;
-}
-
-LINUX_FUNCII(enable_irq)
-LINUX_FUNCVV(wiphy_priv)
-LINUX_FUNCVS(wiphy_register)
-LINUX_FUNCVI(wiphy_unregister)
-LINUX_FUNCVV(wiphy_new)
-LINUX_FUNCVI(wiphy_free)
-LINUX_FUNCVI(wiphy_ext_feature_set)
-LINUX_FUNCVI(wiphy_read_of_freq_limits)
-LINUX_FUNCVI(wiphy_apply_custom_regulatory)
-LINUX_FUNCVV(wdev_priv)
-LINUX_FUNCVI(set_wiphy_dev)
-LINUX_FUNCVI(cfg80211_unregister_wdev)
-LINUX_FUNCVI(cfg80211_sched_scan_stopped)
-typedef struct wait_queue_head {
-  int foo;
-} wait_queue_head_t;
-LINUX_FUNC(wait_event_interruptible_timeout, struct wait_queue_head, int)
-LINUX_FUNC(wait_event_timeout, struct wait_queue_head, uint32_t)
+LINUX_FUNCVI(sdio_claim_irq)
+LINUX_FUNCVI(sdio_release_irq)
+LINUX_FUNCVI(sdio_readl)  // Last param is zx_status_t
+LINUX_FUNCVI(sdio_writel) // Last param is zx_status_t
+LINUX_FUNCVS(sdio_memcpy_fromio)
+LINUX_FUNCVS(sdio_readsb)
+LINUX_FUNCVS(sdio_set_block_size)
+#define SDIO_DEVICE(a,b) (a)
+LINUX_FUNCVS(sdio_register_driver)
+LINUX_FUNCVV(sdio_unregister_driver)
 LINUX_FUNCVI(sdio_f0_writeb)
-#define max_t(a, b, c) (b)
-LINUX_FUNCX(in_interrupt)
+LINUX_FUNCVI(sdio_memcpy_toio)
 LINUX_FUNCVI(sdio_f0_readb)
-LINUX_FUNCII(allow_signal)
-LINUX_FUNCX(kthread_should_stop)
-LINUX_FUNCVI(mod_timer)
-LINUX_FUNCVI(add_timer)
-LINUX_FUNCVI(timer_setup)
-LINUX_FUNCVI(timer_pending)
-LINUX_FUNCII(__ffs)
-LINUX_FUNCVS(kthread_run)
-static inline const char* dev_name(void* dev) {
-    return device_get_name(dev);
-}
-LINUX_FUNCVI(init_waitqueue_head)
+LINUX_FUNCVI(pm_runtime_allow) // SDIO only
+LINUX_FUNCVI(pm_runtime_forbid) // SDIO only
+LINUX_FUNCII(disable_irq_nosync) // SDIO only
+LINUX_FUNCII(request_irq) // SDIO only
+LINUX_FUNCII(enable_irq_wake) // SDIO only
+LINUX_FUNCII(disable_irq_wake) // SDIO only
+LINUX_FUNCVI(mmc_set_data_timeout) // SDIO only
+// NOTE: mmc_wait_for_req sets .error fields of mmc_command and mmc_data structs
+// to ENOMEDIUM sometimes.
+LINUX_FUNCVI(mmc_wait_for_req) // SDIO only
+LINUX_FUNCVI(of_device_is_compatible)
+LINUX_FUNCVI(of_property_read_u32)
+LINUX_FUNCVI(of_find_property)
+LINUX_FUNCVI(irq_of_parse_and_map) // OF only
+LINUX_FUNCII(irqd_get_trigger_type) // OF only
+LINUX_FUNCII(irq_get_irq_data) // OF only
+LINUX_FUNCII(free_irq) // PCI & SDIO only
+LINUX_FUNCVI(sg_set_buf)
+LINUX_FUNCVV(sg_next)
+LINUX_FUNCVI(sg_init_table)
+LINUX_FUNCVI(sg_free_table)
+LINUX_FUNCVI(sg_alloc_table)
+LINUX_FUNCII(allow_signal) // SDIO only
+LINUX_FUNCX(kthread_should_stop) // SDIO only
+LINUX_FUNCVS(kthread_run) // SDIO only
+LINUX_FUNCX(wmb) // SDIO only
+LINUX_FUNCX(rmb) // SDIO only
+
 LINUX_FUNCVI(device_release_driver)
-LINUX_FUNCVI(del_timer_sync)
-LINUX_FUNCVV(strnchr)
-LINUX_FUNCVI(request_firmware)
-#define from_timer(a, b, c) ((void*)0)
 #define module_param_string(a, b, c, d)
 #define module_exit(a) \
     void* __modexit() { return a; }
 #define module_init(a) \
     void* __modinit() { return a; }
-// platform_driver_probe() is checked for return ENODEV / ZX_ERR_IO_NOT_PRESENT (just for logging)
-LINUX_FUNCVI(platform_driver_probe)
-LINUX_FUNCVI(platform_driver_unregister)
-LINUX_FUNCII(set_bit)
-LINUX_FUNCII(clear_bit)
-LINUX_FUNCII(test_bit)
-LINUX_FUNCII(test_and_clear_bit)
+
+LINUX_FUNCVI(netif_stop_queue)
+LINUX_FUNCVI(cfg80211_classify8021d)
+LINUX_FUNCVI(cfg80211_crit_proto_stopped)
+LINUX_FUNCVV(cfg80211_vendor_cmd_alloc_reply_netbuf)
+LINUX_FUNCVI(cfg80211_vendor_cmd_reply)
 LINUX_FUNCVI(cfg80211_ready_on_channel)
-LINUX_FUNCVI(cfg80211_sched_scan_results)
 LINUX_FUNCcVS(cfg80211_get_p2p_attr) // TODO(cphoenix): Can this return >0? If so, adjust usage.
-LINUX_FUNCII(ieee80211_frequency_to_channel)
 LINUX_FUNCVI(cfg80211_remain_on_channel_expired)
-LINUX_FUNCII(ieee80211_channel_to_frequency)
-LINUX_FUNCVV(ieee80211_get_channel)
-LINUX_FUNCII(ieee80211_is_mgmt)
-LINUX_FUNCII(ieee80211_is_action)
-LINUX_FUNCII(ieee80211_is_probe_resp)
+LINUX_FUNCVI(cfg80211_unregister_wdev)
+LINUX_FUNCVI(cfg80211_sched_scan_stopped)
 LINUX_FUNCVI(cfg80211_rx_mgmt)
 LINUX_FUNCVI(cfg80211_mgmt_tx_status)
-LINUX_FUNCX(prandom_u32)
-LINUX_FUNCVI(ether_addr_equal)
-LINUX_FUNCX(rtnl_lock)
-LINUX_FUNCX(rtnl_unlock)
-#define pci_write_config_dword(pdev, offset, value) \
-    pci_config_write32(&pdev->pci_proto, offset, value)
-#define pci_read_config_dword(pdev, offset, value) \
-    pci_config_read32(&pdev->pci_proto, offset, value)
-LINUX_FUNCcVI(pci_enable_msi)
-LINUX_FUNCcVI(pci_disable_msi)
-LINUX_FUNCcVI(pci_resource_start)
-LINUX_FUNCcVI(pci_resource_len)
-LINUX_FUNCcVS(pci_register_driver)
-LINUX_FUNCcVI(pci_unregister_driver)
-
-// TODO(cphoenix): Check with cja@ for when we support power management.
-static inline bool pci_pme_capable(struct brcmf_pci_device* pdev, int level) {
-    return false;
-}
-static inline void device_wakeup_enable(struct brcmf_device* dev) {
-    return;
-}
-
-LINUX_FUNCVI(wake_up)
-LINUX_FUNCII(request_threaded_irq)
-LINUX_FUNCII(free_irq)
-LINUX_FUNCVV(dma_alloc_coherent)
-LINUX_FUNCVV(dma_free_coherent)
-LINUX_FUNCVI(memcpy_fromio)
-LINUX_FUNCVS(memcpy_toio)
-LINUX_FUNCVI(sdio_memcpy_toio)
-LINUX_FUNCVV(dma_zalloc_coherent)
 LINUX_FUNCVI(cfg80211_check_combinations)
 LINUX_FUNCVI(cfg80211_scan_done)
 LINUX_FUNCVI(cfg80211_disconnected)
@@ -384,128 +325,50 @@ LINUX_FUNCVV(cfg80211_new_sta)
 LINUX_FUNCVV(cfg80211_del_sta)
 LINUX_FUNCVV(cfg80211_ibss_joined)
 LINUX_FUNCVV(cfg80211_michael_mic_failure)
-LINUX_FUNCII(MBM_TO_DBM)
-LINUX_FUNCVI(SET_NETDEV_DEV)
-LINUX_FUNCVV(wiphy_dev)
-LINUX_FUNCX(cond_resched)
-LINUX_FUNCII(max)
-LINUX_FUNCVI(netdev_mc_count)
-LINUX_FUNCVI(netif_stop_queue)
-LINUX_FUNCVI(netif_wake_queue)
-LINUX_FUNCVI(dev_kfree_skb)
-LINUX_FUNCVV(skb_header_cloned)
-LINUX_FUNCUU(htons)
-LINUX_FUNCUU(ntohs)
-LINUX_FUNCVI(cfg80211_classify8021d)
+LINUX_FUNCII(ieee80211_channel_to_frequency)
+LINUX_FUNCVV(ieee80211_get_channel)
+LINUX_FUNCII(ieee80211_is_mgmt)
+LINUX_FUNCII(ieee80211_is_action)
+LINUX_FUNCII(ieee80211_is_probe_resp)
+LINUX_FUNCVS(wiphy_register)
 LINUX_FUNCVI(netif_rx)
 LINUX_FUNCVI(netif_rx_ni)
-LINUX_FUNCVI(eth_type_trans)
-LINUX_FUNCVI(waitqueue_active)
 LINUX_FUNCVI(netif_carrier_off)
-LINUX_FUNCVI(dev_net_set)
-LINUX_FUNCVI(register_netdevice)
-LINUX_FUNCVI(unregister_netdevice)
-LINUX_FUNCVI(register_netdev)
-LINUX_FUNCVI(unregister_netdev)
-LINUX_FUNCVV(wiphy_net)
-LINUX_FUNCVI(netif_carrier_ok)
-LINUX_FUNCVI(netif_carrier_on)
-LINUX_FUNCVI(dev_kfree_skb_any)
-LINUX_FUNCIV(alloc_netdev)
+
 LINUX_FUNCVI(seq_printf)
 LINUX_FUNCVS(seq_write)
-LINUX_FUNCVI(netif_queue_stopped)
-LINUX_FUNCVI(trace_brcmf_bcdchdr)
-LINUX_FUNCVI(of_device_is_compatible)
-LINUX_FUNCVI(of_property_read_u32)
-LINUX_FUNCVI(of_find_property)
-LINUX_FUNCVI(irq_of_parse_and_map)
-LINUX_FUNCII(irqd_get_trigger_type)
-LINUX_FUNCII(irq_get_irq_data)
-LINUX_FUNCVV(bcm47xx_nvram_get_contents)
-LINUX_FUNCVI(bcm47xx_nvram_release_contents)
-LINUX_FUNCVI(dma_map_single)
-LINUX_FUNCVI(dma_mapping_error)
-LINUX_FUNCVI(atomic_cmpxchg)
-LINUX_FUNCVI(dma_unmap_single)
-LINUX_FUNCVI(skb_orphan)
-LINUX_FUNCVI(__skb_insert)
-LINUX_FUNCVI(strnstr)
-LINUX_FUNCX(get_random_int)
-LINUX_FUNCII(gcd)
-LINUX_FUNCVI(usb_fill_control_urb)
-LINUX_FUNCVS(usb_submit_urb)
-LINUX_FUNCVI(usb_sndctrlpipe)
-LINUX_FUNCVI(usb_rcvctrlpipe)
-LINUX_FUNCVI(sdio_claim_irq)
-LINUX_FUNCVI(is_valid_ether_addr)
-LINUX_FUNCVI(test_and_set_bit)
-LINUX_FUNCII(disable_irq_nosync)
-LINUX_FUNCII(request_irq)
-LINUX_FUNCII(enable_irq_wake)
-LINUX_FUNCII(disable_irq_wake)
-LINUX_FUNCVI(sdio_release_irq)
-LINUX_FUNCVI(sdio_readl)  // Last param is zx_status_t
-LINUX_FUNCVI(sdio_writel) // Last param is zx_status_t
-LINUX_FUNCVS(sdio_memcpy_fromio)
-LINUX_FUNCVS(sdio_readsb)
-LINUX_FUNCVI(dev_coredumpv)
-LINUX_FUNCVI(sg_set_buf)
-LINUX_FUNCVV(sg_next)
-LINUX_FUNCVI(cfg80211_crit_proto_stopped)
-LINUX_FUNCVI(scnprintf)
 LINUX_FUNCVI(seq_puts)
-LINUX_FUNCII(round_up)
-LINUX_FUNCVV(skb_queue_prev)
-LINUX_FUNCII(BITS_TO_LONGS)
-LINUX_FUNCVV(cfg80211_vendor_cmd_alloc_reply_skb)
-LINUX_FUNCVI(cfg80211_vendor_cmd_reply)
-LINUX_FUNCIV(dev_alloc_skb)
-LINUX_FUNCVI(usb_fill_bulk_urb)
-LINUX_FUNCIV(usb_alloc_urb)
-LINUX_FUNCVI(usb_free_urb)
-LINUX_FUNCVI(nla_put)
-LINUX_FUNCVI(nla_put_u16)
-LINUX_FUNCVI(mmc_set_data_timeout)
-// NOTE: mmc_wait_for_req sets .error fields of mmc_command and mmc_data structs to ENOMEDIUM sometimes.
-LINUX_FUNCVI(mmc_wait_for_req)
-LINUX_FUNCVI(sg_init_table)
-LINUX_FUNCVI(device_set_wakeup_enable)
-LINUX_FUNCVI(usb_kill_urb)
-LINUX_FUNCVI(sg_free_table)
-LINUX_FUNCVV(interface_to_usbdev)
-LINUX_FUNCVI(sg_alloc_table)
-LINUX_FUNCVI(pm_runtime_allow)
-LINUX_FUNCVI(pm_runtime_forbid)
-LINUX_FUNCVS(sdio_set_block_size)
-#define SDIO_DEVICE(a,b) (a)
-#define USB_DEVICE(a,b) .idVendor=a, .idProduct=b
-LINUX_FUNCVS(sdio_register_driver)
-LINUX_FUNCVV(sdio_unregister_driver)
-LINUX_FUNCVI(usb_set_intfdata)
-LINUX_FUNCVI(usb_endpoint_xfer_bulk)
-LINUX_FUNCVI(usb_endpoint_num)
-LINUX_FUNCVI(usb_rcvbulkpipe)
-LINUX_FUNCVI(usb_sndbulkpipe)
-LINUX_FUNCVV(usb_get_intfdata)
-LINUX_FUNCVI(usb_endpoint_dir_in)
-LINUX_FUNCVI(driver_for_each_device)
-LINUX_FUNCVI(usb_deregister)
-LINUX_FUNCVI(usb_register)
-LINUX_FUNCVV(skb_dequeue_tail)
-LINUX_FUNCVI(print_hex_dump_bytes)
+LINUX_FUNCVI(dev_coredumpv)
+// I can't find this defined (or even declared) anywhere in the Linux codebase.
+//LINUX_FUNCVI(trace_brcmf_bcdchdr)
 
-#define netdev_for_each_mc_addr(a, b) for (a = (void*)0;;)
-#define for_each_set_bit(a, b, c) for (a = 0;;)
+#define pci_write_config_dword(pdev, offset, value) \
+    pci_config_write32(&pdev->pci_proto, offset, value)
+#define pci_read_config_dword(pdev, offset, value) \
+    pci_config_read32(&pdev->pci_proto, offset, value)
+LINUX_FUNCcVI(pci_enable_msi)
+LINUX_FUNCcVI(pci_disable_msi)
+//LINUX_FUNCII(free_irq) // PCI & SDIO only
+LINUX_FUNCII(request_threaded_irq) // PCI only
+LINUX_FUNCVV(dma_alloc_coherent) // PCI only
+LINUX_FUNCVV(dma_free_coherent) // PCI only
+LINUX_FUNCVI(memcpy_fromio) // PCI only
+LINUX_FUNCVS(memcpy_toio) // PCI only
+LINUX_FUNCVV(dma_zalloc_coherent) // PCI only
+LINUX_FUNCVI(dma_map_single) // PCI only
+LINUX_FUNCVI(dma_mapping_error) // PCI only
+LINUX_FUNCVI(dma_unmap_single) // PCI only
+
+#define netdev_for_each_mc_addr(a, b) for (({brcmf_err("Calling netdev_for_each_mc_addr"); \
+                                             a = (void*)0;});1;)
+#define for_each_set_bit(a, b, c) for (({brcmf_err("Calling for_each_set_bit"); a = 0;});1;)
 
 typedef uint64_t phys_addr_t;
 typedef uint64_t pm_message_t;
-typedef void* usb_complete_t;
 #define DEBUG                         // Turns on struct members that debug.c needs
 #define CONFIG_OF                     // Turns on functions that of.c needs
 #define CONFIG_BRCMFMAC_PROTO_MSGBUF  // turns on msgbuf.h
 #define CONFIG_BRCMFMAC_PROTO_BCDC    // Needed to see func defs in bcdc.h
-#define DECLARE_WAITQUEUE(name, b) struct linuxwait name
 #define READ_ONCE(a) (a)
 #define BUG_ON(a)
 
@@ -531,7 +394,7 @@ enum {
     TASK_RUNNING = (1),
     GFP_ATOMIC = (1),
     GFP_KERNEL = (2),
-    IFNAMSIZ = (32),
+    IFNAMSIZ = (16),
     WLAN_PMKID_LEN = (16),
     WLAN_MAX_KEY_LEN = (128),
     IEEE80211_MAX_SSID_LEN = (32),
@@ -631,21 +494,17 @@ enum {
     WIPHY_FLAG_HAS_REMAIN_ON_CHANNEL,
     WIPHY_FLAG_SUPPORTS_TDLS,
     WIPHY_FLAG_SUPPORTS_FW_ROAM,
-    NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK,
-    NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_1X,
     WIPHY_FLAG_NETNS_OK,
     WIPHY_FLAG_OFFCHAN_TX,
     REGULATORY_CUSTOM_REG,
     NL80211_FEATURE_SCHED_SCAN_RANDOM_MAC_ADDR,
     IFF_ALLMULTI = 0,
-    NET_SKB_PAD,
+    NET_NETBUF_PAD,
     IFF_PROMISC,
     NETDEV_TX_OK,
-    PACKET_MULTICAST,
     IFF_UP,
     NETIF_F_IP_CSUM,
     NETREG_REGISTERED,
-    NET_NAME_UNKNOWN,
     CHECKSUM_PARTIAL,
     CHECKSUM_UNNECESSARY,
     BRCMF_H2D_TXFLOWRING_MAX_ITEM,
@@ -654,6 +513,13 @@ enum {
     WLAN_AUTH_OPEN,
     IRQF_TRIGGER_HIGH,
     SDIO_CCCR_IENx,
+    SSB_IMSTATE_BUSY,
+    SSB_IDLOW_INITIATOR,
+    SSB_TMSHIGH_SERR,
+    SSB_IMSTATE_IBE,
+    SSB_IMSTATE_TO,
+    BCMA_CC_CAP_EXT_AOB_PRESENT,
+    SSB_TMSLOW_FGC,
     MMC_RSP_SPI_R5,
     MMC_RSP_R5,
     MMC_CMD_ADTC,
@@ -760,34 +626,6 @@ struct sg_table {
     int orig_nents;
 };
 
-struct sk_buff;
-struct sk_buff_head {
-    uint32_t priority;
-    int qlen;
-    struct sk_buff* next;
-};
-
-struct sk_buff {
-    uint16_t protocol;
-    int priority;
-    uint16_t len;
-    uint32_t data_len;
-    uint32_t end;
-    uint32_t tail;
-    void* data;
-    void* next;
-    void* prev;
-    void* cb;
-    uint32_t pkt_type;
-    uint32_t ip_summed;
-};
-
-struct current_with_pid {
-    int pid;
-};
-
-extern struct current_with_pid* current;
-
 struct brcmfmac_pd_cc_entry {
     uint8_t* iso3166;
     uint32_t rev;
@@ -797,35 +635,6 @@ struct brcmfmac_pd_cc_entry {
 struct brcmfmac_pd_cc {
     int table_size;
     struct brcmfmac_pd_cc_entry* table;
-};
-
-struct brcmfmac_pd_device {
-    uint32_t bus_type;
-    uint32_t id;
-    int rev;
-    struct brcmfmac_pd_cc country_codes[555];
-    struct {
-        void* sdio;
-    } bus;
-};
-
-struct brcmfmac_platform_data {
-    int (*power_on)();
-    int (*power_off)();
-    char* fw_alternative_path;
-    int device_count;
-    struct brcmfmac_pd_device devices[555];
-};
-
-struct platform_device {
-    struct brcmf_device dev;
-};
-
-struct platform_driver {
-    int (*remove)(struct platform_device* pdev);
-    struct {
-        char* name;
-    } driver;
 };
 
 struct net_device_ops { // Probably all return zx_status_t
@@ -838,31 +647,6 @@ struct net_device_ops { // Probably all return zx_status_t
 
 struct ethtool_ops {
     void* get_drvinfo;
-};
-
-struct net_device {
-    struct wireless_dev* ieee80211_ptr;
-    const struct net_device_ops* netdev_ops;
-    const struct ethtool_ops* ethtool_ops;
-    void* dev_addr;
-    void* name;
-    uint8_t name_assign_type;
-    uint32_t flags;
-    struct {
-        int tx_dropped;
-        int tx_packets;
-        int tx_bytes;
-        int rx_packets;
-        int rx_bytes;
-        int multicast;
-        int rx_errors;
-        int tx_errors;
-    } stats;
-    uint32_t features;
-    uint32_t needed_headroom;
-    void* priv_destructor;
-    int reg_state;
-    int needs_free_netdev;
 };
 
 void ether_setup(void);
@@ -895,7 +679,7 @@ struct ieee80211_supported_band {
         int ampdu_factor;
         int ampdu_density;
         struct {
-            void* rx_mask;
+            uint8_t rx_mask[32]; // At most 32 bytes are set; it's never read in this driver.
             uint32_t tx_params;
         } mcs;
     } ht_cap;
@@ -910,7 +694,7 @@ struct ieee80211_supported_band {
 };
 
 struct mac_address {
-    uint8_t* addr;
+    uint8_t addr[ETH_ALEN];
 };
 
 struct regulatory_request {
@@ -929,7 +713,7 @@ struct wiphy {
     uint32_t retry_long;
     uint32_t retry_short;
     uint32_t interface_modes;
-    struct ieee80211_supported_band* bands[555];
+    struct ieee80211_supported_band* bands[5];
     int n_iface_combinations;
     struct ieee80211_iface_combination* iface_combinations;
     uint32_t max_scan_ssids;
@@ -946,21 +730,25 @@ struct wiphy {
     uint32_t max_remain_on_channel_duration;
     uint32_t n_vendor_commands;
     const struct wiphy_vendor_command* vendor_commands;
-    void* perm_addr;
+    uint8_t perm_addr[ETH_ALEN];
     void (*reg_notifier)(struct wiphy*, struct regulatory_request*);
     uint32_t regulatory_flags;
     uint32_t features;
+    struct brcmf_cfg80211_info* priv_info;
+    struct cfg80211_ops* ops;
+    struct brcmf_device* dev;
 };
 
 struct vif_params {
-    void* macaddr;
+    uint8_t macaddr[ETH_ALEN];
 };
 
 struct wireless_dev {
     struct net_device* netdev;
     int iftype;
-    void* address;
+    uint8_t address[ETH_ALEN];
     struct wiphy* wiphy;
+    void* priv_info;
 };
 
 struct cfg80211_ssid {
@@ -971,8 +759,8 @@ struct cfg80211_ssid {
 struct cfg80211_scan_request {
     int n_ssids;
     int n_channels;
-    void* ie;
-    void* wdev;
+    uint8_t* ie;
+    struct wireless_dev* wdev;
     int ie_len;
     struct ieee80211_channel* channels[555];
     struct cfg80211_ssid* ssids;
@@ -996,9 +784,9 @@ enum nl80211_iftype {
 
 struct ieee80211_mgmt {
     int u;
-    char* bssid;
-    void* da;
-    void* sa;
+    uint8_t bssid[ETH_ALEN];
+    uint8_t da[ETH_ALEN];
+    uint8_t sa[ETH_ALEN];
     uint16_t frame_control;
 };
 
@@ -1025,41 +813,10 @@ struct seq_file {
     void* private;
 };
 
-struct timer_list {
-    zx_time_t expires;
-};
-
-struct asdf {
-    int foo;
-};
-
-struct sdio_func {
-    uint32_t class;
-    uint32_t vendor;
-    int cur_blksize;
-    int enable_timeout;
-    int device;
-    struct brcmf_device dev;
-    int num;
-    struct {
-        struct mmc_host* host;
-        uint32_t quirks;
-        void** sdio_func;
-    } * card;
-};
-
 typedef uint64_t dma_addr_t;
 
 struct pci_device_id {
     int a, b, c, d, e, f, g;
-};
-
-struct pci_driver {
-    struct pci_device_id node;
-    char* name;
-    const void* id_table;
-    zx_status_t (*probe)(struct brcmf_pci_device* pdev, const struct pci_device_id* id);
-    void (*remove)(struct brcmf_pci_device* pdev);
 };
 
 struct ieee80211_regdomain {
@@ -1082,20 +839,25 @@ struct ieee80211_regdomain {
 #define REG_RULE(...) \
     { .flags = 0 }  // Fill up reg_rules
 
+struct cfg80211_match_set {
+    struct cfg80211_ssid ssid;
+    uint8_t bssid[ETH_ALEN];
+};
+
 struct cfg80211_sched_scan_request {
     int n_ssids;
     int n_match_sets;
     uint64_t reqid;
     int flags;
-    void* mac_addr;
+    uint8_t mac_addr[ETH_ALEN];
     struct cfg80211_ssid* ssids;
     int n_channels;
     struct ieee80211_channel* channels[555];
     struct {
         int interval;
     } * scan_plans;
-    void* mac_addr_mask;
-    void* match_sets;
+    uint8_t mac_addr_mask[ETH_ALEN];
+    struct cfg80211_match_set match_sets[123];
 };
 
 struct wiphy_vendor_command {
@@ -1104,7 +866,7 @@ struct wiphy_vendor_command {
         int subcmd;
     } unknown_name;
     uint32_t flags;
-    void* doit;
+    zx_status_t (*doit)(struct wiphy* wiphy, struct wireless_dev* wdev, const void* data, int len);
 };
 
 struct cfg80211_chan_def {
@@ -1128,10 +890,10 @@ struct cfg80211_ibss_params {
     int privacy;
     int beacon_interval;
     int ssid_len;
-    char* bssid;
+    uint8_t* bssid;
     int channel_fixed;
     struct cfg80211_chan_def chandef;
-    void* ie;
+    uint8_t* ie;
     int ie_len;
     int basic_rates;
 };
@@ -1155,10 +917,10 @@ struct cfg80211_connect_params {
         int cipher_group;
         int n_akm_suites;
         int akm_suites[555];
-        void* psk;
+        uint8_t* psk;
     } crypto;
     int auth_type;
-    void* ie;
+    uint8_t* ie;
     int ie_len;
     int privacy;
     uint32_t key_len;
@@ -1166,10 +928,9 @@ struct cfg80211_connect_params {
     void* key;
     int want_1x;
     struct ieee80211_channel* channel;
-    void* ssid;
+    uint8_t* ssid;
     int ssid_len;
-    void* bssid;
-    int bssid_len;
+    uint8_t* bssid;
     struct cfg80211_bss_selection bss_select;
 };
 
@@ -1247,7 +1008,7 @@ struct cfg80211_wowlan_nd_info {
 };
 
 struct cfg80211_pmksa {
-    uint8_t* bssid;
+    uint8_t bssid[ETH_ALEN];
     uint8_t* pmkid;
 };
 
@@ -1273,7 +1034,7 @@ struct cfg80211_ap_settings {
 };
 
 struct station_del_parameters {
-    void* mac;
+    uint8_t* mac;
     int reason_code;
 };
 
@@ -1342,7 +1103,7 @@ struct cfg80211_ops { // Most of these return zx_status_t
 
 struct cfg80211_roam_info {
     struct ieee80211_channel* channel;
-    void* bssid;
+    uint8_t* bssid;
     void* req_ie;
     int req_ie_len;
     void* resp_ie;
@@ -1351,7 +1112,7 @@ struct cfg80211_roam_info {
 
 struct cfg80211_connect_resp_params {
     int status;
-    void* bssid;
+    uint8_t* bssid;
     void* req_ie;
     int req_ie_len;
     void* resp_ie;
@@ -1377,7 +1138,7 @@ struct ieee80211_iface_limit {
 };
 
 struct netdev_hw_addr {
-    void* addr;
+    uint8_t addr[ETH_ALEN];
 };
 
 typedef int netdev_tx_t;
@@ -1420,18 +1181,6 @@ struct usb_ctrlrequest {
     int bRequestType;
 };
 
-struct urb {
-    void* context;
-    int actual_length;
-    uint32_t status;
-    int transfer_buffer_length;
-};
-
-struct cfg80211_match_set {
-    struct cfg80211_ssid ssid;
-    void* bssid;
-};
-
 struct va_format {
     va_list* va;
     const char* fmt;
@@ -1446,41 +1195,6 @@ struct mmc_host {
     int max_seg_size;
 };
 
-struct usb_interface_descriptor {
-    int bInterfaceClass;
-    int bInterfaceSubClass;
-    int bInterfaceProtocol;
-    int bInterfaceNumber;
-    int bNumEndpoints;
-};
-
-struct usb_endpoint_descriptor {
-    int foo;
-};
-
-struct usb_interface {
-    struct {
-        struct usb_interface_descriptor desc;
-        struct {
-            struct usb_endpoint_descriptor desc;
-        } * endpoint;
-    } * altsetting;
-};
-
-struct usb_device_id {
-    int idVendor;
-    int idProduct;
-};
-
-struct usb_device {
-    int speed;
-    struct brcmf_device dev;
-    struct {
-        int bNumConfigurations;
-        int bDeviceClass;
-    } descriptor;
-};
-
 struct sdio_device_id {
     int foo;
 };
@@ -1493,24 +1207,6 @@ struct sdio_driver {
     struct {
         void* pm;
     } drv;
-};
-
-struct device_driver {
-    int foo;
-};
-
-struct usb_driver {
-    char* name;
-    void* probe;
-    void* disconnect;
-    void* suspend;
-    void* resume;
-    void* reset_resume;
-    int disable_hub_initiated_lpm;
-    const struct usb_device_id* id_table;
-    struct {
-        struct device_driver driver;
-    } drvwrap;
 };
 
 struct dentry {

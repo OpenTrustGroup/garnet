@@ -11,11 +11,8 @@ namespace guestmgr {
 static uint32_t g_next_env_id = 0;
 
 GuestManagerImpl::GuestManagerImpl()
-    : context_(component::ApplicationContext::CreateFromStartupInfo()) {
-  context_->outgoing().AddPublicService<fuchsia::guest::GuestManager>(
-      [this](fidl::InterfaceRequest<fuchsia::guest::GuestManager> request) {
-        bindings_.AddBinding(this, std::move(request));
-      });
+    : context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
+  context_->outgoing().AddPublicService(bindings_.GetHandler(this));
 }
 
 GuestManagerImpl::~GuestManagerImpl() = default;

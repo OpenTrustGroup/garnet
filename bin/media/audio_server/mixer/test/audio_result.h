@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MEDIA_AUDIO_SERVER_MIXER_TEST_AUDIO_RESULT_H_
+#define GARNET_BIN_MEDIA_AUDIO_SERVER_MIXER_TEST_AUDIO_RESULT_H_
 
 #include <cmath>
 #include "garnet/bin/media/audio_server/constants.h"
+#include "garnet/bin/media/audio_server/gain.h"
 #include "garnet/bin/media/audio_server/mixer/test/frequency_set.h"
 
 namespace media {
@@ -225,15 +227,49 @@ class AudioResult {
   //
   // Scale
   //
-  // The nearest-unity scale at which we observe effects on signals.
-  static uint32_t ScaleEpsilon;
-  static constexpr uint32_t kPrevScaleEpsilon =
-      0x0FFFFFFF - (1 << (28 - kAudioPipelineWidth));
+  // The lowest (furthest-from-Unity) AScale with no observable attenuation on
+  // full-scale data (i.e. the smallest AScale indistinguishable from Unity).
+  //
+  // This const is determined by the number of precision bits in a float32.
+  // Conceptually, it is exactly (2^25 - 1) / (2^25) -- float32 contains 25 bits
+  // of precision, minus 1 for sign, plus 1 for rounding effects. At this value
+  // exactly (or slightly more, if it cannot be perfectly expressed in float32),
+  // all values effectly round back to their original values.
+  static constexpr Gain::AScale kMinUnityScale = 0.999999970198f;
 
-  // The lowest scale at which full-scale signals are not reduced to zero.
-  static uint32_t MinScaleNonZero;
-  static constexpr uint32_t kPrevMinScaleNonZero =
-      0x10000000 >> kAudioPipelineWidth;
+  // The highest (closest-to-Unity) AScale with an observable effect on
+  // full-scale (i.e. the largest sub-Unity AScale distinguishable from Unity).
+  //
+  // Related to kMinUnityScale, this const is also determined by the number of
+  // precision bits in a float32. Conceptually, it is infinitesimally less than
+  // (2^25 - 1) / (2^25).  At this value, for the first time the largest values
+  // (i.e. full-scale) will not round back to their original values.
+  static constexpr Gain::AScale kPrevScaleEpsilon = 0.999999970197f;
+
+  // The lowest (closest-to-zero) AScale at which full-scale data are not
+  // silenced (i.e. the smallest AScale that is distinguishable from Mute).
+  //
+  // This value would actually be infinitesimally close to zero, if it were not
+  // for our -160dB limit. kPrevMinScaleNonMute is essentially the scale that
+  // leads to kMutedGain -- plus the smallest-possible increment that a float32
+  // can express.  Note the close relation to kMaxScaleMute.
+  static constexpr Gain::AScale kPrevMinScaleNonMute = 0.000000010000000384f;
+
+  // The highest (furthest-from-Mute) AScale at which full-scale data are
+  // silenced (i.e. the largest AScale that is indistinguishable from Mute).
+  //
+  // This value would actually be infinitesimally close to zero, if it were not
+  // for our -160dB limit. kMaxScaleMute is essentially the scale that leads to
+  // kMutedGain -- plus an increment that float32 ultimately cannot express.
+  static constexpr Gain::AScale kMaxScaleMute = 0.000000010000000383f;
+
+  static_assert(kMinUnityScale > kPrevScaleEpsilon,
+                "kPrevScaleEpsilon should be distinguishable from Unity");
+  static_assert(kPrevMinScaleNonMute > kMaxScaleMute,
+                "kPrevMinScaleNonMute should be distinguishable from Mute");
+
+  static Gain::AScale ScaleEpsilon;
+  static Gain::AScale MinScaleNonZero;
 
   // Dynamic Range
   // (gain integrity and system response at low volume levels)
@@ -259,6 +295,7 @@ class AudioResult {
   static constexpr double kPrevLevelEpsilonDown = -1.6807164e-04;
 
   static double SinadEpsilonDown;
+  // Previously-cached sinad when applying the smallest-detectable gain change.
   static constexpr double kPrevSinadEpsilonDown = 93.232593;
 
   // Level and unwanted artifacts -- as well as previously-cached threshold
@@ -267,6 +304,7 @@ class AudioResult {
   static constexpr double kPrevLevel60Down = 60.0;
 
   static double Sinad60Down;
+  // Previously-cached sinad when applying exactly -60.0 dB gain.
   static constexpr double kPrevSinad60Down = 34.196374;
 
   //
@@ -310,7 +348,8 @@ class AudioResult {
   static double LevelToleranceOutputFloat;
 
   static constexpr double kPrevLevelToleranceOutput8 = 6.5638245e-02;
-  static constexpr double kPrevLevelToleranceOutput16 = 8.4876728e-05;
+  static constexpr double kPrevLevelToleranceOutput16 = 6.7860087e-02;
+  // was: 8.4876728e-05;
   static constexpr double kPrevLevelToleranceOutputFloat = 6.8541681e-07;
 
   static double LevelOutput8;
@@ -389,3 +428,5 @@ class AudioResult {
     2018-03-21  Initial frequency response / sinad tests: 1kHz, 40Hz, 12kHz.
     2018-03-20  Initial source/output noise floor tests: 8- & 16-bit, 1kHz.
 */
+
+#endif  // GARNET_BIN_MEDIA_AUDIO_SERVER_MIXER_TEST_AUDIO_RESULT_H_

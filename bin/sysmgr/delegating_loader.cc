@@ -12,16 +12,16 @@ namespace {
 
 std::string GetScheme(const std::string& url) {
   size_t pos = url.find(':');
-  if (pos == std::string::npos) return std::string();
+  if (pos == std::string::npos)
+    return std::string();
   return url.substr(0, pos);
 }
 
 }  // namespace
 
-DelegatingLoader::DelegatingLoader(
-    Config::ServiceMap delegates,
-    component::ApplicationLauncher* delegate_launcher,
-    component::LoaderPtr fallback)
+DelegatingLoader::DelegatingLoader(Config::ServiceMap delegates,
+                                   fuchsia::sys::Launcher* delegate_launcher,
+                                   fuchsia::sys::LoaderPtr fallback)
     : delegate_launcher_(delegate_launcher), fallback_(std::move(fallback)) {
   for (auto& pair : delegates) {
     auto& record = delegate_instances_[pair.second->url];
@@ -42,24 +42,24 @@ void DelegatingLoader::LoadComponent(fidl::StringPtr url,
       if (!record->loader) {
         StartDelegate(record);
       }
-      record->loader->LoadComponent(url, callback);
+      record->loader->LoadComponent(url, std::move(callback));
       return;
     }
   }
 
-  fallback_->LoadComponent(url, callback);
+  fallback_->LoadComponent(url, std::move(callback));
 }
 
 void DelegatingLoader::StartDelegate(LoaderRecord* record) {
-  component::Services services;
-  component::LaunchInfo dup_launch_info;
+  fuchsia::sys::Services services;
+  fuchsia::sys::LaunchInfo dup_launch_info;
   dup_launch_info.url = record->launch_info->url;
   fidl::Clone(record->launch_info->arguments, &dup_launch_info.arguments);
   dup_launch_info.directory_request = services.NewRequest();
-  delegate_launcher_->CreateApplication(std::move(dup_launch_info),
-                                        record->controller.NewRequest());
+  delegate_launcher_->CreateComponent(std::move(dup_launch_info),
+                                      record->controller.NewRequest());
 
-  record->loader = services.ConnectToService<component::Loader>();
+  record->loader = services.ConnectToService<fuchsia::sys::Loader>();
   record->loader.set_error_handler([this, record] {
     // proactively kill the loader app entirely if its Loader died on
     // us

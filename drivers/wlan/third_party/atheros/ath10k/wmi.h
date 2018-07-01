@@ -395,11 +395,10 @@ static inline char* wmi_service_name(int service_id) {
 #undef SVCSTR
 }
 
-#if 0 // NEEDS PORTING
 #define WMI_SERVICE_IS_ENABLED(wmi_svc_bmap, svc_id, len) \
     ((svc_id) < (len) && \
      (wmi_svc_bmap)[(svc_id) / (sizeof(uint32_t))] & \
-     BIT((svc_id) % (sizeof(uint32_t))))
+     (1 << ((svc_id) % (sizeof(uint32_t)))))
 
 #define SVCMAP(x, y, len) \
     do { \
@@ -537,6 +536,7 @@ static inline void wmi_main_svc_map(const uint32_t* in, unsigned long* out,
            WMI_SERVICE_TX_ENCAP, len);
 }
 
+#if 0 // NEEDS PORTING
 static inline void wmi_10_4_svc_map(const uint32_t* in, unsigned long* out,
                                     size_t len) {
     SVCMAP(WMI_10_4_SERVICE_BEACON_OFFLOAD,
@@ -6577,8 +6577,26 @@ struct wmi_pdev_chan_info_req_cmd {
     uint32_t reserved;
 } __PACKED;
 
+#define WMI_PFX(type) ATH10K_MSG_TYPE_WMI_##type
+
+#define WMI_MSG(type, hdr) \
+    MSG(WMI_PFX(type), ATH10K_MSG_TYPE_WMI, sizeof(struct hdr))
+
 #define WMI_MSGS \
-    MSG(ATH10K_MSG_TYPE_WMI, ATH10K_MSG_TYPE_HTC, sizeof(struct wmi_cmd_hdr))
+    MSG(ATH10K_MSG_TYPE_WMI, ATH10K_MSG_TYPE_HTC, sizeof(struct wmi_cmd_hdr)), \
+    WMI_MSG(ECHO_CMD, wmi_echo_cmd),                                           \
+    WMI_MSG(INIT_CMD_10_2, wmi_init_cmd_10_2),                                 \
+    WMI_MSG(PDEV_SET_PARAM, wmi_pdev_set_param_cmd),                           \
+    WMI_MSG(PDEV_SET_RD, wmi_pdev_set_regdomain_cmd),                          \
+    WMI_MSG(PDEV_SUSPEND, wmi_pdev_suspend_cmd),                               \
+    WMI_MSG(VDEV_CREATE, wmi_vdev_create_cmd),                                 \
+    WMI_MSG(VDEV_DELETE, wmi_vdev_delete_cmd),                                 \
+    WMI_MSG(VDEV_DOWN, wmi_vdev_down_cmd),                                     \
+    WMI_MSG(VDEV_INSTALL_KEY, wmi_vdev_install_key_cmd),                       \
+    WMI_MSG(VDEV_SET_PARAM, wmi_vdev_set_param_cmd),                           \
+    WMI_MSG(VDEV_START, wmi_vdev_start_request_cmd),                           \
+    WMI_MSG(VDEV_STOP, wmi_vdev_stop_cmd),                                     \
+    WMI_MSG(VDEV_UP, wmi_vdev_up_cmd)
 
 #define WMI_TX_CREDITS_AVAILABLE ZX_USER_SIGNAL_0
 
@@ -6633,8 +6651,8 @@ int ath10k_wmi_event_debug_mesg(struct ath10k* ar, struct sk_buff* skb);
 void ath10k_wmi_event_update_stats(struct ath10k* ar, struct sk_buff* skb);
 #endif // NEEDS PORTING
 void ath10k_wmi_event_vdev_start_resp(struct ath10k* ar, struct ath10k_msg_buf* buf);
+void ath10k_wmi_event_vdev_stopped(struct ath10k* ar, struct ath10k_msg_buf* buf);
 #if 0 // NEEDS PORTING
-void ath10k_wmi_event_vdev_stopped(struct ath10k* ar, struct sk_buff* skb);
 void ath10k_wmi_event_peer_sta_kickout(struct ath10k* ar, struct sk_buff* skb);
 void ath10k_wmi_event_host_swba(struct ath10k* ar, struct sk_buff* skb);
 void ath10k_wmi_event_tbttoffset_update(struct ath10k* ar, struct sk_buff* skb);

@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_NETCONNECTOR_SOCKET_ADDRESS_H_
+#define GARNET_BIN_NETCONNECTOR_SOCKET_ADDRESS_H_
 
 #include <ostream>
 
@@ -13,9 +14,11 @@
 #include "garnet/bin/netconnector/ip_port.h"
 #include "lib/fxl/logging.h"
 
+namespace fuchsia {
 namespace netstack {
 class SocketAddress;
 }
+}  // namespace fuchsia
 
 namespace netconnector {
 
@@ -37,15 +40,8 @@ class SocketAddress {
   explicit SocketAddress(const sockaddr_in& addr);
 
   // Creates an IPV6 socket address from eight address words and an IpPort.
-  SocketAddress(uint16_t w0,
-                uint16_t w1,
-                uint16_t w2,
-                uint16_t w3,
-                uint16_t w4,
-                uint16_t w5,
-                uint16_t w6,
-                uint16_t w7,
-                IpPort port);
+  SocketAddress(uint16_t w0, uint16_t w1, uint16_t w2, uint16_t w3, uint16_t w4,
+                uint16_t w5, uint16_t w6, uint16_t w7, IpPort port);
 
   // Creates an IPV6 socket address from two address words and an IpPort.
   SocketAddress(uint16_t w0, uint16_t w7, IpPort port);
@@ -63,7 +59,7 @@ class SocketAddress {
   explicit SocketAddress(const sockaddr_storage& addr);
 
   // Creates a socket address from a SocketAddress struct.
-  explicit SocketAddress(const netstack::SocketAddress* addr);
+  explicit SocketAddress(const fuchsia::netstack::SocketAddress* addr);
 
   bool is_valid() const { return family() != AF_UNSPEC; }
 
@@ -118,3 +114,5 @@ class SocketAddress {
 std::ostream& operator<<(std::ostream& os, const SocketAddress& value);
 
 }  // namespace netconnector
+
+#endif  // GARNET_BIN_NETCONNECTOR_SOCKET_ADDRESS_H_

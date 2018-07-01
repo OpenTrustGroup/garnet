@@ -5,15 +5,13 @@
 #ifndef GARNET_LIB_UI_SCENIC_SCENIC_H_
 #define GARNET_LIB_UI_SCENIC_SCENIC_H_
 
-#include <set>
-
 #include <fuchsia/ui/scenic/cpp/fidl.h>
 #include <lib/fit/function.h>
+#include <set>
 
 #include "garnet/lib/ui/scenic/session.h"
 #include "garnet/lib/ui/scenic/system.h"
 #include "lib/fidl/cpp/binding_set.h"
-#include "lib/fxl/functional/closure.h"
 #include "lib/fxl/macros.h"
 
 namespace scenic {
@@ -25,7 +23,7 @@ class Clock;
 //   - provide a host environment for Services
 class Scenic : public fuchsia::ui::scenic::Scenic {
  public:
-  explicit Scenic(component::ApplicationContext* app_context,
+  explicit Scenic(fuchsia::sys::StartupContext* app_context,
                   fit::closure quit_callback);
   ~Scenic();
 
@@ -43,12 +41,12 @@ class Scenic : public fuchsia::ui::scenic::Scenic {
       ::fidl::InterfaceHandle<fuchsia::ui::scenic::SessionListener> listener)
       override;
 
-  component::ApplicationContext* app_context() const { return app_context_; }
+  fuchsia::sys::StartupContext* app_context() const { return app_context_; }
 
   size_t num_sessions() { return session_bindings_.size(); }
 
  private:
-  component::ApplicationContext* const app_context_;
+  fuchsia::sys::StartupContext* const app_context_;
   fit::closure quit_callback_;
 
   fidl::BindingSet<fuchsia::ui::scenic::Session, std::unique_ptr<Session>>
@@ -64,7 +62,7 @@ class Scenic : public fuchsia::ui::scenic::Scenic {
   std::set<System*> uninitialized_systems_;
 
   // Closures that will be run when all systems are initialized.
-  std::vector<fxl::Closure> run_after_all_systems_initialized_;
+  std::vector<fit::closure> run_after_all_systems_initialized_;
 
   void CreateSessionImmediately(
       ::fidl::InterfaceRequest<fuchsia::ui::scenic::Session> session_request,
@@ -79,8 +77,8 @@ class Scenic : public fuchsia::ui::scenic::Scenic {
   void TakeScreenshot(
       fuchsia::ui::scenic::Scenic::TakeScreenshotCallback callback) override;
 
-  void GetOwnershipEvent(
-      fuchsia::ui::scenic::Scenic::GetOwnershipEventCallback callback) override;
+  void GetDisplayOwnershipEvent(
+      fuchsia::ui::scenic::Scenic::GetDisplayOwnershipEventCallback callback) override;
 
   size_t next_session_id_ = 1;
 

@@ -8,7 +8,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	mlme "fidl/wlan_mlme"
+	"fidl/fuchsia/wlan/mlme"
 	"log"
 	"math/big"
 	"wlan/eapol"
@@ -222,7 +222,7 @@ func (s *fourWayStateWaitingGTK) handleMessage3(hs *FourWay, msg3 *eapol.KeyFram
 	hs.keyReplayCounter = msg3.ReplayCounter
 
 	// Extract GTK and RSNE from message's data.
-	gtkKDE, rsne, err := extractInfoFromMessage3(msg3.Data)
+	gtkKDE, rsne, err := ExtractInfoFromMessage3(msg3.Data)
 	if err != nil {
 		return err
 	}
@@ -371,7 +371,9 @@ func (hs *FourWay) isIntegrous(f *eapol.KeyFrame) (bool, error) {
 	}
 	// IEEE Std 802.11-2016, 12.7.6.2
 	if isFirstMsg && !isZero(f.MIC[:]) {
-		return false, fmt.Errorf("invalid MIC, must be zero")
+		// Some routers don't zero the MIC in the first message of the handshake. Rather than refusing the
+		// handshake entirely, fix the glitch ourselves (NET-927).
+		f.MIC = make([]byte, len(f.MIC))
 	}
 
 	// IEEE Std 802.11-2016, 12.7.2 b.8) & b.9)
@@ -487,7 +489,7 @@ func (hs *FourWay) isStateCompliant(f *eapol.KeyFrame) (bool, error) {
 
 // Extracts GTK KDE and first RSNE from a given key data. Either can be nil if it was not specified.
 // Note: A second, optional RSNE is ignored so far.
-func extractInfoFromMessage3(keyData []byte) (*eapol.GTKKDE, *eapol.RSNElement, error) {
+func ExtractInfoFromMessage3(keyData []byte) (*eapol.GTKKDE, *eapol.RSNElement, error) {
 	var gtkKDE *eapol.GTKKDE
 	var rsne *eapol.RSNElement
 

@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MDNS_SERVICE_MDNS_INTERFACE_TRANSCEIVER_H_
+#define GARNET_BIN_MDNS_SERVICE_MDNS_INTERFACE_TRANSCEIVER_H_
 
 #include <memory>
 #include <vector>
+
+#include <lib/fit/function.h>
 
 #include "garnet/bin/mdns/service/dns_message.h"
 #include "garnet/bin/mdns/service/ip_address.h"
@@ -24,13 +27,13 @@ class MdnsInterfaceTransceiver {
  public:
   // Callback to deliver inbound messages with reply address.
   using InboundMessageCallback =
-      std::function<void(std::unique_ptr<DnsMessage>, const ReplyAddress&)>;
+      fit::function<void(std::unique_ptr<DnsMessage>, const ReplyAddress&)>;
 
   // Creates the variant of |MdnsInterfaceTransceiver| appropriate for the
   // address family specified in |address|. |name| is the name of the interface,
   // and |index| is its index.
-  static std::unique_ptr<MdnsInterfaceTransceiver>
-  Create(IpAddress address, const std::string& name, uint32_t index);
+  static std::unique_ptr<MdnsInterfaceTransceiver> Create(
+      IpAddress address, const std::string& name, uint32_t index);
 
   virtual ~MdnsInterfaceTransceiver();
 
@@ -39,7 +42,7 @@ class MdnsInterfaceTransceiver {
   const IpAddress& address() const { return address_; }
 
   // Starts the interface transceiver.
-  bool Start(const InboundMessageCallback& callback);
+  bool Start(InboundMessageCallback callback);
 
   // Stops the interface transceiver.
   void Stop();
@@ -68,8 +71,7 @@ class MdnsInterfaceTransceiver {
   static constexpr int kTimeToLive_ = 255;
   static constexpr size_t kMaxPacketSize = 1500;
 
-  MdnsInterfaceTransceiver(IpAddress address,
-                           const std::string& name,
+  MdnsInterfaceTransceiver(IpAddress address, const std::string& name,
                            uint32_t index);
 
   uint32_t index() const { return index_; }
@@ -82,8 +84,7 @@ class MdnsInterfaceTransceiver {
   virtual int SetOptionMulticastTtl() = 0;
   virtual int SetOptionFamilySpecific() = 0;
   virtual int Bind() = 0;
-  virtual int SendTo(const void* buffer,
-                     size_t size,
+  virtual int SendTo(const void* buffer, size_t size,
                      const SocketAddress& address) = 0;
 
  private:
@@ -105,8 +106,7 @@ class MdnsInterfaceTransceiver {
 
   // Makes an address resource (A/AAAA) record with the given name and address.
   std::shared_ptr<DnsResource> MakeAddressResource(
-      const std::string& host_full_name,
-      const IpAddress& address);
+      const std::string& host_full_name, const IpAddress& address);
 
   // Fixes up the address records in the vector. This method expects there to
   // be at most two address records in the vector and, if there are two, that
@@ -134,3 +134,5 @@ class MdnsInterfaceTransceiver {
 };
 
 }  // namespace mdns
+
+#endif  // GARNET_BIN_MDNS_SERVICE_MDNS_INTERFACE_TRANSCEIVER_H_

@@ -4,27 +4,28 @@
 
 #include "garnet/bin/netconnector/host_name.h"
 
+#include <fuchsia/netstack/cpp/fidl.h>
 #include <limits.h>
 #include <unistd.h>
 
 #include "garnet/bin/netconnector/socket_address.h"
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/logging.h"
-#include <netstack/cpp/fidl.h>
 
 namespace netconnector {
 namespace {
 
-static const std::string kFuchsia = "fuchsia";
+static const std::string kFuchsia = "fuchsia-unset-device-name";
 
 class NetstackClient {
  public:
   static void GetInterfaces(
-      const netstack::Netstack::GetInterfacesCallback& callback) {
+      fuchsia::netstack::Netstack::GetInterfacesCallback callback) {
     NetstackClient* client = new NetstackClient();
     client->netstack_->GetInterfaces(
-        [client, callback](fidl::VectorPtr<netstack::NetInterface> interfaces) {
+        [client, callback = std::move(callback)](
+            fidl::VectorPtr<fuchsia::netstack::NetInterface> interfaces) {
           callback(std::move(interfaces));
           delete client;
         });
@@ -32,14 +33,15 @@ class NetstackClient {
 
  private:
   NetstackClient()
-      : context_(component::ApplicationContext::CreateFromStartupInfo()) {
+      : context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
     FXL_DCHECK(context_);
-    netstack_ = context_->ConnectToEnvironmentService<netstack::Netstack>();
+    netstack_ =
+        context_->ConnectToEnvironmentService<fuchsia::netstack::Netstack>();
     FXL_DCHECK(netstack_);
   }
 
-  std::unique_ptr<component::ApplicationContext> context_;
-  netstack::NetstackPtr netstack_;
+  std::unique_ptr<fuchsia::sys::StartupContext> context_;
+  fuchsia::netstack::NetstackPtr netstack_;
 };
 
 // Returns a host address, preferably V4. Returns an invalid address if no
@@ -51,13 +53,15 @@ IpAddress GetHostAddress() {
     return ip_address;
 
   NetstackClient::GetInterfaces(
-      [](const fidl::VectorPtr<netstack::NetInterface>& interfaces) {
+      [](const fidl::VectorPtr<fuchsia::netstack::NetInterface>& interfaces) {
         for (const auto& interface : *interfaces) {
-          if (interface.addr.family == netstack::NetAddressFamily::IPV4) {
+          if (interface.addr.family ==
+              fuchsia::netstack::NetAddressFamily::IPV4) {
             ip_address = IpAddress(&interface.addr);
             break;
           }
-          if (interface.addr.family == netstack::NetAddressFamily::IPV6) {
+          if (interface.addr.family ==
+              fuchsia::netstack::NetAddressFamily::IPV6) {
             ip_address = IpAddress(&interface.addr);
             // Keep looking...v4 is preferred.
           }
@@ -69,9 +73,7 @@ IpAddress GetHostAddress() {
 
 }  // namespace
 
-bool NetworkIsReady() {
-  return GetHostAddress().is_valid();
-}
+bool NetworkIsReady() { return GetHostAddress().is_valid(); }
 
 // TODO: this should probably be an asynchronous interface.
 std::string GetHostName() {

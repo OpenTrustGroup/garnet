@@ -21,10 +21,11 @@ fi
 OUT_DIR="$1"
 
 # Benchmark example, here for demonstration.
-runbench_exec "${OUT_DIR}/benchmark_example.json" \
-    trace record \
-    --spec-file=/system/data/benchmark_example/benchmark_example.tspec \
-    --benchmark-results-file="${OUT_DIR}/benchmark_example.json"
+# TODO(IN-458): Re-enable after tracing failure is addressed.
+#runbench_exec "${OUT_DIR}/benchmark_example.json" \
+#    trace record \
+#    --spec-file=/system/data/benchmark_example/benchmark_example.tspec \
+#    --benchmark-results-file="${OUT_DIR}/benchmark_example.json"
 
 # Performance tests implemented in the Zircon repo.
 runbench_exec "${OUT_DIR}/zircon.perf_test.json" \
@@ -35,5 +36,8 @@ runbench_exec "${OUT_DIR}/zircon.perf_test.json" \
 runbench_exec "${OUT_DIR}/zircon_benchmarks.json" \
     /system/bin/zircon_benchmarks -p --out="${OUT_DIR}/zircon_benchmarks.json"
 
+# Scenic performance tests.
+runbench_exec "${OUT_DIR}/benchmark_hello_scenic.json" \
+    /system/data/scenic_benchmarks/hello_scenic_benchmark.sh "${OUT_DIR}" "${OUT_DIR}/benchmark_hello_scenic.json"
 # Exit with a code indicating whether any errors occurred.
 runbench_finish "${OUT_DIR}"

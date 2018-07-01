@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_NETCONNECTOR_MESSAGE_TRANSCEIVER_H_
+#define GARNET_BIN_NETCONNECTOR_MESSAGE_TRANSCEIVER_H_
 
 #include <queue>
 #include <vector>
 
 #include <lib/async/dispatcher.h>
+#include <lib/fit/function.h>
 #include <lib/zx/channel.h>
 
 #include "lib/fsl/tasks/fd_waiter.h"
@@ -120,7 +122,7 @@ class MessageTransceiver {
 
   // Queues up a task that calls |SendPacket| to be run when the socket is
   // ready.
-  void PostSendTask(std::function<void()> task);
+  void PostSendTask(fit::closure task);
 
   // Waits (using |fd_send_waiter_|) for the socket to be ready to send if there
   // are send tasks pending.
@@ -157,11 +159,8 @@ class MessageTransceiver {
   // at least |dest_packet_offset| and less than the sum of |dest_packet_offset|
   // and |dest_size|. |receive_packet_offset_| is also increased to reflect the
   // number of bytes actually copied.
-  bool CopyReceivedBytes(uint8_t** bytes,
-                         size_t* byte_count,
-                         uint8_t* dest,
-                         size_t dest_size,
-                         size_t dest_packet_offset);
+  bool CopyReceivedBytes(uint8_t** bytes, size_t* byte_count, uint8_t* dest,
+                         size_t dest_size, size_t dest_packet_offset);
 
   // Parses a uint32 out of receive_buffer_.
   uint32_t ParsePayloadUint32();
@@ -187,9 +186,11 @@ class MessageTransceiver {
   // empty. The only exception to this is in the code that actually does the
   // sending (the waiter callback, |SendPacket| and the send tasks).
   fsl::FDWaiter fd_send_waiter_;
-  std::queue<std::function<void()>> send_tasks_;
+  std::queue<fit::closure> send_tasks_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(MessageTransceiver);
 };
 
 }  // namespace netconnector
+
+#endif  // GARNET_BIN_NETCONNECTOR_MESSAGE_TRANSCEIVER_H_

@@ -24,14 +24,14 @@ DisplayManager::~DisplayManager() {
   }
 }
 
-void DisplayManager::WaitForDefaultDisplay(fxl::Closure callback) {
+void DisplayManager::WaitForDefaultDisplay(fit::closure callback) {
   FXL_DCHECK(!default_display_);
 
   display_available_cb_ = std::move(callback);
   display_watcher_.WaitForDisplay(
       [this](fxl::UniqueFD fd, zx::channel dc_handle) {
   // See declare_args() in lib/ui/gfx/BUILD.gn
-#if SCENE_MANAGER_VULKAN_SWAPCHAIN == 2
+#if SCENIC_VULKAN_SWAPCHAIN == 2
         // This is just for testing, so notify that there's a fake display
         // that's 800x608. Without a display the scene manager won't try to draw
         // anything.
@@ -97,13 +97,10 @@ void DisplayManager::DisplaysChanged(
     auto& mode = display.modes.get()[0];
     default_display_ = std::make_unique<Display>(
         display.id, mode.horizontal_resolution, mode.vertical_resolution);
-    // By default we don't own the display
-    default_display_->ownership_event().signal(
-        fuchsia::ui::scenic::displayOwnedSignal,
-        fuchsia::ui::scenic::displayNotOwnedSignal);
+    ClientOwnershipChange(owns_display_controller_);
 
     // See declare_args() in lib/ui/gfx/BUILD.gn.
-#if SCENE_MANAGER_VULKAN_SWAPCHAIN != 0
+#if SCENIC_VULKAN_SWAPCHAIN != 0
     // Vulkan swapchains don't necessarily support the concurrent
     // connection to the display controller.
     wait_.Cancel();
@@ -126,14 +123,17 @@ void DisplayManager::DisplaysChanged(
 }
 
 void DisplayManager::ClientOwnershipChange(bool has_ownership) {
-  if (has_ownership) {
-    default_display_->ownership_event().signal(
-        fuchsia::ui::scenic::displayNotOwnedSignal,
-        fuchsia::ui::scenic::displayOwnedSignal);
-  } else {
-    default_display_->ownership_event().signal(
-        fuchsia::ui::scenic::displayOwnedSignal,
-        fuchsia::ui::scenic::displayNotOwnedSignal);
+  owns_display_controller_ = has_ownership;
+  if (default_display_) {
+    if (has_ownership) {
+      default_display_->ownership_event().signal(
+          fuchsia::ui::scenic::displayNotOwnedSignal,
+          fuchsia::ui::scenic::displayOwnedSignal);
+    } else {
+      default_display_->ownership_event().signal(
+          fuchsia::ui::scenic::displayOwnedSignal,
+          fuchsia::ui::scenic::displayNotOwnedSignal);
+    }
   }
 }
 

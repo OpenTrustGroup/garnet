@@ -20,10 +20,10 @@
 #include "garnet/bin/ui/view_manager/view_state.h"
 #include "garnet/bin/ui/view_manager/view_stub.h"
 #include "garnet/bin/ui/view_manager/view_tree_state.h"
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
-#include "lib/ui/scenic/client/session.h"
+#include "lib/ui/scenic/cpp/session.h"
 
 namespace view_manager {
 
@@ -31,7 +31,7 @@ namespace view_manager {
 // All ViewState objects are owned by the registry.
 class ViewRegistry : public ViewInspector, public InputOwner {
  public:
-  explicit ViewRegistry(component::ApplicationContext* application_context);
+  explicit ViewRegistry(fuchsia::sys::StartupContext* startup_context);
   ~ViewRegistry() override;
 
   // VIEW MANAGER REQUESTS
@@ -117,11 +117,11 @@ class ViewRegistry : public ViewInspector, public InputOwner {
                const fuchsia::math::Point3F& ray_direction,
                HitTestCallback callback) override;
   void ResolveFocusChain(::fuchsia::ui::views_v1::ViewTreeToken view_tree_token,
-                         const ResolveFocusChainCallback& callback) override;
+                         ResolveFocusChainCallback callback) override;
   void ActivateFocusChain(::fuchsia::ui::views_v1_token::ViewToken view_token,
-                          const ActivateFocusChainCallback& callback) override;
+                          ActivateFocusChainCallback callback) override;
   void HasFocus(::fuchsia::ui::views_v1_token::ViewToken view_token,
-                const HasFocusCallback& callback) override;
+                HasFocusCallback callback) override;
   void GetSoftKeyboardContainer(
       ::fuchsia::ui::views_v1_token::ViewToken view_token,
       fidl::InterfaceRequest<fuchsia::ui::input::SoftKeyboardContainer>
@@ -210,8 +210,8 @@ class ViewRegistry : public ViewInspector, public InputOwner {
 
   // Walk up the view tree starting at |view_token| to find a service
   // provider that offers a service named |service_name|.
-  component::ServiceProvider* FindViewServiceProvider(uint32_t view_token,
-                                                      std::string service_name);
+  fuchsia::sys::ServiceProvider* FindViewServiceProvider(
+      uint32_t view_token, std::string service_name);
 
   ViewState* FindView(uint32_t view_token_value);
   ViewTreeState* FindViewTree(uint32_t view_tree_token_value);
@@ -231,9 +231,15 @@ class ViewRegistry : public ViewInspector, public InputOwner {
             IsViewTreeStateRegisteredDebug(container_state->AsViewTreeState()));
   }
 
-  component::ApplicationContext* application_context_;
+  // A11Y CLIENTS
+
+  // Calls a view's accessibility service if it exists.
+  void A11yNotifyViewSelected(
+      ::fuchsia::ui::views_v1_token::ViewToken view_token);
+
+  fuchsia::sys::StartupContext* startup_context_;
   fuchsia::ui::scenic::ScenicPtr scenic_;
-  scenic_lib::Session session_;
+  scenic::Session session_;
 
   bool traversal_scheduled_ = false;
   bool present_session_scheduled_ = false;

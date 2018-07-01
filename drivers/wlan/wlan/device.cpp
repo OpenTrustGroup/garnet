@@ -101,7 +101,7 @@ zx_status_t Device::Bind() __TA_NO_THREAD_SAFETY_ANALYSIS {
         errorf("could not query wlanmac device: %d\n", status);
         return status;
     }
-    state_->set_address(common::MacAddr(wlanmac_info_.eth_info.mac));
+    state_->set_address(common::MacAddr(wlanmac_info_.mac_addr));
 
     fbl::unique_ptr<Mlme> mlme;
     switch (wlanmac_info_.mac_role) {
@@ -259,9 +259,14 @@ zx_status_t Device::EthmacQuery(uint32_t options, ethmac_info_t* info) {
     debugfn();
     if (info == nullptr) return ZX_ERR_INVALID_ARGS;
 
-    *info = wlanmac_info_.eth_info;
-    // Make sure this device is reported as a wlan device
-    info->features |= ETHMAC_FEATURE_WLAN;
+    memset(info, 0, sizeof(*info));
+    memcpy(info->mac, wlanmac_info_.mac_addr, ETH_MAC_SIZE);
+    info->features = ETHMAC_FEATURE_WLAN;
+    if (wlanmac_info_.driver_features & WLAN_DRIVER_FEATURE_SYNTH) {
+        info->features |= ETHMAC_FEATURE_SYNTH;
+    }
+    info->mtu = 1500;
+
     return ZX_OK;
 }
 
@@ -355,6 +360,14 @@ zx_status_t Device::GetTimer(uint64_t id, fbl::unique_ptr<Timer>* timer) {
 }
 
 zx_status_t Device::SendEthernet(fbl::unique_ptr<Packet> packet) {
+    ZX_DEBUG_ASSERT(packet != nullptr);
+    ZX_DEBUG_ASSERT(packet->len() <= ETH_FRAME_MAX_SIZE);
+
+    if (packet->len() > ETH_FRAME_MAX_SIZE) {
+        errorf("SendEthernet drops Ethernet frame of invalid length: %zu\n", packet->len());
+        return ZX_ERR_INVALID_ARGS;
+    }
+
     if (ethmac_proxy_ != nullptr) { ethmac_proxy_->Recv(packet->mut_data(), packet->len(), 0u); }
     return ZX_OK;
 }

@@ -4,12 +4,13 @@
 
 #include "lib/app/cpp/outgoing.h"
 
-#include <fdio/util.h>
 #include <lib/async/default.h>
+#include <lib/fdio/util.h>
 #include <zircon/process.h>
 #include <zircon/processargs.h>
 
-namespace component {
+namespace fuchsia {
+namespace sys {
 
 Outgoing::Outgoing()
     : vfs_(async_get_default()),
@@ -26,13 +27,15 @@ Outgoing::Outgoing()
 Outgoing::~Outgoing() = default;
 
 zx_status_t Outgoing::Serve(zx::channel dir_request) {
-  if (!dir_request) return ZX_ERR_BAD_HANDLE;
+  if (!dir_request)
+    return ZX_ERR_BAD_HANDLE;
   return vfs_.ServeDirectory(root_dir_, std::move(dir_request));
 }
 
 zx_status_t Outgoing::ServeFromStartupInfo() {
-  zx_handle_t dir_request = zx_get_startup_handle(PA_DIRECTORY_REQUEST);
+  zx_handle_t dir_request = zx_take_startup_handle(PA_DIRECTORY_REQUEST);
   return Serve(zx::channel(dir_request));
 }
 
-}  // namespace component
+}  // namespace sys
+}  // namespace fuchsia

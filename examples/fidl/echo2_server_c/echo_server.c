@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <fdio/util.h>
+#include <lib/fdio/util.h>
 #include <lib/async-loop/loop.h>
 #include <lib/svc/dir.h>
 #include <stdio.h>
@@ -18,7 +18,7 @@ static void connect(void* context, const char* service_name, zx_handle_t service
 }
 
 int main(int argc, char** argv) {
-  zx_handle_t directory_request = zx_get_startup_handle(PA_DIRECTORY_REQUEST);
+  zx_handle_t directory_request = zx_take_startup_handle(PA_DIRECTORY_REQUEST);
   if (directory_request == ZX_HANDLE_INVALID) {
     printf("error: directory_request was ZX_HANDLE_INVALID\n");
     return -1;

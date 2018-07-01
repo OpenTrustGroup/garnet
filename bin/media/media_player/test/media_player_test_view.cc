@@ -47,33 +47,34 @@ int64_t rand_less_than(int64_t limit) {
 }  // namespace
 
 MediaPlayerTestView::MediaPlayerTestView(
-    std::function<void(int)> quit_callback,
+    fit::function<void(int)> quit_callback,
     ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request,
-    component::ApplicationContext* application_context,
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+        view_owner_request,
+    fuchsia::sys::StartupContext* startup_context,
     const MediaPlayerTestParams& params)
     : mozart::BaseView(std::move(view_manager), std::move(view_owner_request),
                        "Media Player"),
-      quit_callback_(quit_callback),
+      quit_callback_(std::move(quit_callback)),
       params_(params),
       background_node_(session()),
       progress_bar_node_(session()),
       progress_bar_slider_node_(session()) {
-  FXL_DCHECK(quit_callback);
+  FXL_DCHECK(quit_callback_);
   FXL_DCHECK(params_.is_valid());
   FXL_DCHECK(!params_.urls().empty());
 
-  scenic_lib::Material background_material(session());
+  scenic::Material background_material(session());
   background_material.SetColor(0x00, 0x00, 0x00, 0xff);
   background_node_.SetMaterial(background_material);
   parent_node().AddChild(background_node_);
 
-  scenic_lib::Material progress_bar_material(session());
+  scenic::Material progress_bar_material(session());
   progress_bar_material.SetColor(0x23, 0x23, 0x23, 0xff);
   progress_bar_node_.SetMaterial(progress_bar_material);
   parent_node().AddChild(progress_bar_node_);
 
-  scenic_lib::Material progress_bar_slider_material(session());
+  scenic::Material progress_bar_slider_material(session());
   progress_bar_slider_material.SetColor(0x00, 0x00, 0xff, 0xff);
   progress_bar_slider_node_.SetMaterial(progress_bar_slider_material);
   parent_node().AddChild(progress_bar_slider_node_);
@@ -87,20 +88,23 @@ MediaPlayerTestView::MediaPlayerTestView(
 
   // Create a player from all that stuff.
   media_player_ =
-      application_context->ConnectToEnvironmentService<MediaPlayer>();
+      startup_context
+          ->ConnectToEnvironmentService<fuchsia::mediaplayer::MediaPlayer>();
 
-  media_player_.events().StatusChanged = [this](MediaPlayerStatus status) {
-    HandleStatusChanged(status);
-  };
+  media_player_.events().StatusChanged =
+      [this](fuchsia::mediaplayer::MediaPlayerStatus status) {
+        HandleStatusChanged(status);
+      };
 
   ::fuchsia::ui::views_v1_token::ViewOwnerPtr video_view_owner;
   media_player_->CreateView(
-      application_context->ConnectToEnvironmentService<::fuchsia::ui::views_v1::ViewManager>()
+      startup_context
+          ->ConnectToEnvironmentService<::fuchsia::ui::views_v1::ViewManager>()
           .Unbind(),
       video_view_owner.NewRequest());
 
   zx::eventpair video_host_import_token;
-  video_host_node_.reset(new scenic_lib::EntityNode(session()));
+  video_host_node_.reset(new scenic::EntityNode(session()));
   video_host_node_->ExportAsRequest(&video_host_import_token);
   parent_node().AddChild(*video_host_node_);
   GetViewContainer()->AddChild(kVideoChildKey, std::move(video_view_owner),
@@ -178,7 +182,7 @@ void MediaPlayerTestView::Layout() {
     return;
 
   // Make the background fill the space.
-  scenic_lib::Rectangle background_shape(session(), logical_size().width,
+  scenic::Rectangle background_shape(session(), logical_size().width,
                                          logical_size().height);
   background_node_.SetShape(background_shape);
   background_node_.SetTranslation(logical_size().width * .5f,
@@ -222,7 +226,7 @@ void MediaPlayerTestView::Layout() {
   controls_rect_.height = kControlsHeight;
 
   // Put the progress bar under the content.
-  scenic_lib::Rectangle progress_bar_shape(session(), controls_rect_.width,
+  scenic::Rectangle progress_bar_shape(session(), controls_rect_.width,
                                            controls_rect_.height);
   progress_bar_node_.SetShape(progress_bar_shape);
   progress_bar_node_.SetTranslation(
@@ -230,7 +234,7 @@ void MediaPlayerTestView::Layout() {
       controls_rect_.y + controls_rect_.height * 0.5f, kProgressBarElevation);
 
   // Put the progress bar slider on top of the progress bar.
-  scenic_lib::Rectangle progress_bar_slider_shape(
+  scenic::Rectangle progress_bar_slider_shape(
       session(), controls_rect_.width, controls_rect_.height);
   progress_bar_slider_node_.SetShape(progress_bar_slider_shape);
   progress_bar_slider_node_.SetTranslation(
@@ -262,7 +266,7 @@ void MediaPlayerTestView::OnSceneInvalidated(
 
   float progress_bar_slider_width =
       controls_rect_.width * normalized_progress();
-  scenic_lib::Rectangle progress_bar_slider_shape(
+  scenic::Rectangle progress_bar_slider_shape(
       session(), progress_bar_slider_width, controls_rect_.height);
   progress_bar_slider_node_.SetShape(progress_bar_slider_shape);
   progress_bar_slider_node_.SetTranslation(
@@ -280,8 +284,8 @@ void MediaPlayerTestView::OnSceneInvalidated(
   }
 }
 
-void MediaPlayerTestView::OnChildAttached(uint32_t child_key,
-                                          ::fuchsia::ui::views_v1::ViewInfo child_view_info) {
+void MediaPlayerTestView::OnChildAttached(
+    uint32_t child_key, ::fuchsia::ui::views_v1::ViewInfo child_view_info) {
   FXL_DCHECK(child_key == kVideoChildKey);
 
   parent_node().AddChild(*video_host_node_);
@@ -300,12 +304,12 @@ void MediaPlayerTestView::OnChildUnavailable(uint32_t child_key) {
 }
 
 void MediaPlayerTestView::HandleStatusChanged(
-    const media_player::MediaPlayerStatus& status) {
+    const fuchsia::mediaplayer::MediaPlayerStatus& status) {
   // Process status received from the player.
   if (status.timeline_transform) {
     timeline_function_ = media::TimelineFunction(*status.timeline_transform);
 
-    if (seek_interval_start_ != media::kUnspecifiedTime &&
+    if (seek_interval_start_ != fuchsia::media::kUnspecifiedTime &&
         !in_current_seek_interval_ &&
         timeline_function_.subject_time() == seek_interval_start_) {
       // The seek issued in |StartNewSeekInterval| is now reflected in the
@@ -425,7 +429,7 @@ void MediaPlayerTestView::StartNewSeekInterval() {
     // We have no duration yet. Just start over at the start of the file.
     media_player_->Seek(0);
     media_player_->Play();
-    seek_interval_end_ = media::kUnspecifiedTime;
+    seek_interval_end_ = fuchsia::media::kUnspecifiedTime;
   }
 
   int64_t duration = metadata_->duration;

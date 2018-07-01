@@ -6,10 +6,13 @@ package source
 
 import (
 	"errors"
+	"net/http"
 	"os"
 	"time"
 
 	"amber/pkg"
+
+	"fidl/fuchsia/amber"
 )
 
 // ErrNoUpdate is returned if no update is available
@@ -26,6 +29,16 @@ var ErrNoUpdateContent = errors.New("amber/source: update content not available"
 // Source provides a way to get information about a package update and a way
 // to get that update.
 type Source interface {
+	// A unique identifier that distinquishes this source from others.
+	GetId() string
+
+	// The config definition for this source.
+	GetConfig() *amber.SourceConfig
+
+	// TODO(etryzelaar) This is a bit of a hack, but the blob fetcher also
+	// needs an authenticated http.Client. This really ought to be refactored.
+	GetHttpClient() *http.Client
+
 	// AvailableUpdates takes a list of packages and returns update metadata
 	// for any updates available for those packages.
 	AvailableUpdates(pkg []*pkg.Package) (map[pkg.Package]pkg.Package, error)
@@ -45,4 +58,13 @@ type Source interface {
 
 	// Equals should return true if the provide Source is the same as the receiver.
 	Equals(s Source) bool
+
+	Save() error
+
+	// Log into the TUF remote server and return the oauth2 device flow
+	// code to complete the authentication process.
+	Login() (*amber.DeviceCode, error)
+
+	// Close any resources we might have open.
+	Close()
 }

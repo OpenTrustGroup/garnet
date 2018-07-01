@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <utility>
 #include <lib/async-loop/cpp/loop.h>
+#include <utility>
 
-#include "lib/app/cpp/application_context.h"
 #include "garnet/bin/fonts/font_provider_impl.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
 
@@ -14,17 +14,17 @@ namespace fonts {
 
 class App {
  public:
-  App() : context_(component::ApplicationContext::CreateFromStartupInfo()) {
+  App() : context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
     if (!font_provider_.LoadFonts())
       exit(ZX_ERR_UNAVAILABLE);
-    context_->outgoing().AddPublicService<FontProvider>(
-        [this](fidl::InterfaceRequest<FontProvider> request) {
+    context_->outgoing().AddPublicService<fuchsia::fonts::FontProvider>(
+        [this](fidl::InterfaceRequest<fuchsia::fonts::FontProvider> request) {
           font_provider_.AddBinding(std::move(request));
         });
   }
 
  private:
-  std::unique_ptr<component::ApplicationContext> context_;
+  std::unique_ptr<fuchsia::sys::StartupContext> context_;
   FontProviderImpl font_provider_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(App);

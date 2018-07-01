@@ -26,6 +26,7 @@ class ThreadImpl : public Thread {
   debug_ipc::ThreadRecord::State GetState() const override;
   void Pause() override;
   void Continue() override;
+  Err Step() override;
   void StepInstruction() override;
   std::vector<Frame*> GetFrames() const override;
   bool HasAllFrames() const override;
@@ -36,6 +37,10 @@ class ThreadImpl : public Thread {
 
   // Notification from the agent of an exception.
   void OnException(const debug_ipc::NotifyException& notify);
+
+  virtual void GetRegisters(
+      std::function<void(const Err&, std::vector<debug_ipc::Register>)>)
+      override;
 
  private:
   // Symbolizes the given stack frames, saves them, and issues the callback.

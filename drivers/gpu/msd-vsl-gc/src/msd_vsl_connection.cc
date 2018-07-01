@@ -29,11 +29,6 @@ magma_status_t msd_context_execute_immediate_commands(msd_context_t* ctx, uint64
     return MAGMA_STATUS_UNIMPLEMENTED;
 }
 
-magma_status_t msd_connection_wait_rendering(msd_connection_t* abi_connection, msd_buffer_t* buffer)
-{
-    return MAGMA_STATUS_UNIMPLEMENTED;
-}
-
 magma_status_t msd_connection_map_buffer_gpu(msd_connection_t* abi_connection,
                                              msd_buffer_t* abi_buffer, uint64_t gpu_va,
                                              uint64_t page_offset, uint64_t page_count,
@@ -55,9 +50,9 @@ magma_status_t msd_connection_commit_buffer(msd_connection_t* abi_connection,
     return MAGMA_STATUS_UNIMPLEMENTED;
 }
 
-void msd_connection_set_notification_channel(msd_connection_t* abi_connection,
-                                             msd_channel_send_callback_t send_callback,
-                                             msd_channel_t notification_channel)
+void msd_connection_set_notification_callback(struct msd_connection_t* connection,
+                                              msd_connection_notification_callback_t callback,
+                                              void* token)
 {
 }
 

@@ -2,7 +2,8 @@
     "imports": [
         "garnet/packages/prod/scenic"
     ],
-    "packages": {
-        "scenic_tests": "//garnet/bin/ui:scenic_tests"
-    }
+    "packages": [
+        "//garnet/bin/ui:scenic_tests",
+        "//garnet/bin/ui/tests/performance:scenic_benchmarks"
+    ]
 }

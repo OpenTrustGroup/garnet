@@ -6,6 +6,7 @@
 #define GARNET_LIB_UI_SCENIC_COMMAND_DISPATCHER_H_
 
 #include <fuchsia/ui/scenic/cpp/fidl.h>
+
 #include "garnet/lib/ui/scenic/forward_declarations.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/ref_counted.h"
@@ -19,6 +20,7 @@ class CommandDispatcherContext final {
   explicit CommandDispatcherContext(Scenic* scenic, Session* session);
   CommandDispatcherContext(CommandDispatcherContext&& context);
 
+  // TODO(SCN-808): can/should we avoid exposing any/all of these?
   Scenic* scenic() { return scenic_; }
   Session* session() { return session_; }
   SessionId session_id() { return session_id_; }

@@ -4,7 +4,7 @@
 
 #include <memory>
 
-#include <auth/cpp/fidl.h>
+#include <fuchsia/auth/cpp/fidl.h>
 
 #include "garnet/bin/auth/token_manager/token_manager_impl.h"
 #include "lib/app/cpp/connect.h"
@@ -14,35 +14,24 @@ namespace auth {
 
 namespace {
 
-const cache::CacheKey GetCacheKey(auth::AuthProviderType auth_provider_type,
+const cache::CacheKey GetCacheKey(fidl::StringPtr auth_provider_type,
                                   fidl::StringPtr user_profile_id) {
-  // TODO: consider replacing the static cast with a string map (more type safe)
-  return cache::CacheKey(std::to_string(static_cast<int>(auth_provider_type)),
-                         user_profile_id.get());
+  return cache::CacheKey(auth_provider_type, user_profile_id.get());
 }
 
-// Maps |AuthProviderType| to store |IdentityProvider| value.
-auth::store::IdentityProvider MapToStoreIdentityProvider(
-    auth::AuthProviderType provider_type) {
-  switch (provider_type) {
-    case AuthProviderType::GOOGLE:
-      return auth::store::IdentityProvider::GOOGLE;
-    case AuthProviderType::SPOTIFY:
-      return auth::store::IdentityProvider::SPOTIFY;
-    case AuthProviderType::DEV:
-      return auth::store::IdentityProvider::TEST;
-  }
-}
 }  // namespace
 
-using auth::AuthProviderStatus;
-using auth::Status;
+using fuchsia::auth::AppConfig;
+using fuchsia::auth::AuthProviderStatus;
+using fuchsia::auth::AuthTokenPtr;
+using fuchsia::auth::FirebaseTokenPtr;
+using fuchsia::auth::Status;
 
 TokenManagerImpl::TokenManagerImpl(
-    component::ApplicationContext* app_context,
+    fuchsia::sys::StartupContext* app_context,
     std::unique_ptr<store::AuthDb> auth_db,
-    fidl::VectorPtr<AuthProviderConfig> auth_provider_configs,
-    fidl::InterfaceHandle<auth::AuthenticationContextProvider>
+    fidl::VectorPtr<fuchsia::auth::AuthProviderConfig> auth_provider_configs,
+    fidl::InterfaceHandle<fuchsia::auth::AuthenticationContextProvider>
         auth_context_provider)
     : token_cache_(kMaxCacheSize), auth_db_(std::move(auth_db)) {
   FXL_CHECK(app_context);
@@ -58,14 +47,14 @@ TokenManagerImpl::TokenManagerImpl(
       continue;
     }
 
-    component::LaunchInfo launch_info;
+    fuchsia::sys::LaunchInfo launch_info;
     launch_info.url = config.url;
-    component::Services services;
+    fuchsia::sys::Services services;
     launch_info.directory_request = services.NewRequest();
 
-    component::ComponentControllerPtr controller;
-    app_context->launcher()->CreateApplication(std::move(launch_info),
-                                               controller.NewRequest());
+    fuchsia::sys::ComponentControllerPtr controller;
+    app_context->launcher()->CreateComponent(std::move(launch_info),
+                                             controller.NewRequest());
     controller.set_error_handler(
         [this, url = config.url,
          auth_provider_type = config.auth_provider_type] {
@@ -78,10 +67,10 @@ TokenManagerImpl::TokenManagerImpl(
     auth_provider_controllers_[config.auth_provider_type] =
         std::move(controller);
 
-    auth::AuthProviderFactoryPtr auth_provider_factory;
+    fuchsia::auth::AuthProviderFactoryPtr auth_provider_factory;
     services.ConnectToService(auth_provider_factory.NewRequest());
 
-    auth::AuthProviderPtr auth_provider_ptr;
+    fuchsia::auth::AuthProviderPtr auth_provider_ptr;
     auth_provider_factory->GetAuthProvider(
         auth_provider_ptr.NewRequest(), [](auth::AuthProviderStatus status) {
           if (status != auth::AuthProviderStatus::OK) {
@@ -112,7 +101,7 @@ void TokenManagerImpl::Authorize(
     callback(Status::AUTH_PROVIDER_SERVICE_UNAVAILABLE, nullptr);
   }
 
-  auth::AuthenticationUIContextPtr auth_ui_context;
+  fuchsia::auth::AuthenticationUIContextPtr auth_ui_context;
   auth_context_provider_->GetAuthenticationUIContext(
       auth_ui_context.NewRequest());
 
@@ -126,15 +115,14 @@ void TokenManagerImpl::Authorize(
       std::move(auth_ui_context),
       [this, auth_provider_type = app_config.auth_provider_type, callback](
           AuthProviderStatus status, fidl::StringPtr credential,
-          UserProfileInfoPtr user_profile_info) {
+          fuchsia::auth::UserProfileInfoPtr user_profile_info) {
         if (status != AuthProviderStatus::OK || credential.get().empty()) {
           callback(Status::INTERNAL_ERROR, nullptr);
           return;
         }
 
-        auto cred_id = store::CredentialIdentifier(
-            user_profile_info->id,
-            MapToStoreIdentityProvider(auth_provider_type));
+        auto cred_id = store::CredentialIdentifier(user_profile_info->id,
+                                                   auth_provider_type);
 
         if (auth_db_->AddCredential(store::CredentialValue(
                 cred_id, credential)) != store::Status::kOK) {
@@ -157,9 +145,8 @@ void TokenManagerImpl::GetAccessToken(
   }
 
   std::string credential;
-  auto cred_id = store::CredentialIdentifier(
-      user_profile_id,
-      MapToStoreIdentityProvider(app_config.auth_provider_type));
+  auto cred_id = store::CredentialIdentifier(user_profile_id,
+                                             app_config.auth_provider_type);
   auth_db_->GetRefreshToken(cred_id, &credential);
 
   auto cache_key = GetCacheKey(app_config.auth_provider_type, user_profile_id);
@@ -211,9 +198,8 @@ void TokenManagerImpl::GetIdToken(AppConfig app_config,
   }
 
   std::string credential;
-  auto cred_id = store::CredentialIdentifier(
-      user_profile_id,
-      MapToStoreIdentityProvider(app_config.auth_provider_type));
+  auto cred_id = store::CredentialIdentifier(user_profile_id,
+                                             app_config.auth_provider_type);
   auth_db_->GetRefreshToken(cred_id, &credential);
   auto cache_key = GetCacheKey(app_config.auth_provider_type, user_profile_id);
   cache::OAuthTokens tokens;
@@ -270,7 +256,7 @@ void TokenManagerImpl::GetFirebaseToken(AppConfig app_config,
   if (token_cache_.Get(cache_key, &tokens) == cache::Status::kOK) {
     auto fb_token_it = tokens.firebase_tokens_map.find(firebase_api_key);
     if (fb_token_it != tokens.firebase_tokens_map.end()) {
-      auto fb_token = auth::FirebaseToken::New();
+      auto fb_token = fuchsia::auth::FirebaseToken::New();
       fb_token->id_token = fb_token_it->second.fb_id_token;
       fb_token->email = fb_token_it->second.email;
       fb_token->local_id = fb_token_it->second.local_id;
@@ -328,9 +314,8 @@ void TokenManagerImpl::DeleteAllTokens(AppConfig app_config,
   }
 
   std::string credential;
-  auto cred_id = store::CredentialIdentifier(
-      user_profile_id,
-      MapToStoreIdentityProvider(app_config.auth_provider_type));
+  auto cred_id = store::CredentialIdentifier(user_profile_id,
+                                             app_config.auth_provider_type);
   cache::CacheKey cache_key =
       GetCacheKey(app_config.auth_provider_type, user_profile_id);
 
@@ -353,8 +338,7 @@ void TokenManagerImpl::DeleteAllTokens(AppConfig app_config,
         }
 
         auto cred_id = store::CredentialIdentifier(
-            user_profile_id,
-            MapToStoreIdentityProvider(app_config.auth_provider_type));
+            user_profile_id, app_config.auth_provider_type);
         auth_db_->DeleteCredential(cred_id);
 
         callback(Status::OK);

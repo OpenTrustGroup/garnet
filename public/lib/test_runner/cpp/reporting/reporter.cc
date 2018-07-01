@@ -4,21 +4,22 @@
 
 #include "lib/test_runner/cpp/reporting/reporter.h"
 
-#include <test_runner/cpp/fidl.h>
+#include <fuchsia/testing/runner/cpp/fidl.h>
 
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fidl/cpp/synchronous_interface_ptr.h"
+
+using fuchsia::testing::runner::TestRunnerSync2Ptr;
 
 namespace test_runner {
 
-void ReportResult(std::string identity,
-                  component::ApplicationContext* context,
+void ReportResult(std::string identity, fuchsia::sys::StartupContext* context,
                   std::vector<TestResultPtr> results) {
   if (!context->has_environment_services()) {
     return;
   }
 
-  TestRunnerSyncPtr test_runner;
+  TestRunnerSync2Ptr test_runner;
   context->ConnectToEnvironmentService(test_runner.NewRequest());
 
   test_runner->Identify(identity);

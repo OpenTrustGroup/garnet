@@ -6,20 +6,20 @@
 
 namespace sketchy_example {
 
-View::View(async::Loop* loop,
-           component::ApplicationContext* application_context,
+View::View(async::Loop* loop, fuchsia::sys::StartupContext* startup_context,
            ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-           fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request)
+           fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+               view_owner_request)
     : BaseView(std::move(view_manager), std::move(view_owner_request),
                "Sketchy Example"),
-      canvas_(application_context, loop),
+      canvas_(startup_context, loop),
       background_node_(session()),
       import_node_holder_(session()),
       import_node_(&canvas_, import_node_holder_),
       scratch_group_(&canvas_),
       stable_group_(&canvas_) {
   parent_node().AddChild(background_node_);
-  scenic_lib::Material background_material(session());
+  scenic::Material background_material(session());
   background_material.SetColor(220, 220, 220, 255);
   background_node_.SetMaterial(background_material);
 
@@ -29,10 +29,11 @@ View::View(async::Loop* loop,
   import_node_.AddChild(stable_group_);
 }
 
-void View::OnPropertiesChanged(::fuchsia::ui::views_v1::ViewProperties old_properties) {
+void View::OnPropertiesChanged(
+    ::fuchsia::ui::views_v1::ViewProperties old_properties) {
   float width = properties().view_layout->size.width;
   float height = properties().view_layout->size.height;
-  scenic_lib::Rectangle background_shape(session(), width, height);
+  scenic::Rectangle background_shape(session(), width, height);
   background_node_.SetShape(background_shape);
   background_node_.SetTranslation(width * .5f, height * .5f, .1f);
   canvas_.Present(zx_clock_get(ZX_CLOCK_MONOTONIC),

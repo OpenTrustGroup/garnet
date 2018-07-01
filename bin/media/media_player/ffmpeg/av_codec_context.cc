@@ -12,7 +12,7 @@
 #include "garnet/bin/media/media_player/framework/types/video_stream_type.h"
 #include "lib/fxl/logging.h"
 extern "C" {
-#include "third_party/ffmpeg/libavformat/avformat.h"
+#include "libavformat/avformat.h"
 }
 
 namespace media_player {
@@ -141,8 +141,7 @@ std::unique_ptr<StreamType> StreamTypeFromAudioCodecParameters(
 
 // Converts AVColorSpace and AVColorRange to ColorSpace.
 VideoStreamType::ColorSpace ColorSpaceFromAVColorSpaceAndRange(
-    AVColorSpace color_space,
-    AVColorRange color_range) {
+    AVColorSpace color_space, AVColorRange color_range) {
   // TODO(dalesat): Blindly copied from Chromium.
   if (color_range == AVCOL_RANGE_JPEG) {
     return VideoStreamType::ColorSpace::kJpeg;

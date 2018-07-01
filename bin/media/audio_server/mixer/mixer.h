@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MEDIA_AUDIO_SERVER_MIXER_MIXER_H_
+#define GARNET_BIN_MEDIA_AUDIO_SERVER_MIXER_MIXER_H_
 
 #include <memory>
 
-#include <media/cpp/fidl.h>
+#include <fuchsia/media/cpp/fidl.h>
+
 #include "garnet/bin/media/audio_server/constants.h"
 #include "garnet/bin/media/audio_server/gain.h"
 
@@ -52,9 +54,10 @@ class Mixer {
   // For optimum system performance across changing conditions, callers should
   // take care when directly specifying a resampler type, if they do so at all.
   // The default should be allowed whenever possible.
-  static MixerPtr Select(const AudioMediaTypeDetails& src_format,
-                         const AudioMediaTypeDetails& dst_format,
-                         Resampler resampler_type = Resampler::Default);
+  static MixerPtr Select(
+      const fuchsia::media::AudioMediaTypeDetails& src_format,
+      const fuchsia::media::AudioMediaTypeDetails& dst_format,
+      Resampler resampler_type = Resampler::Default);
 
   //
   // Mix
@@ -94,9 +97,8 @@ class Mixer {
   // frame produced.
   //
   // @param amplitude_scale
-  // The scale factor for the amplitude to be applied when mixing.  Currently,
-  // this is expressed as a 4.28 fixed point integer.  See the AudioLink class
-  // for details.
+  // The amplitude scaling factor to be applied when mixing.  This is expressed
+  // as a 32-bit single-precision floating-point value.
   //
   // @param accumulate
   // When true, the mixer will accumulate into the destination buffer (read,
@@ -121,7 +123,7 @@ class Mixer {
   //
   // TODO(mpuryear): Change frac_src_frames parameter to be (integer)
   // src_frames, as number of src_frames was never intended to be fractional.
-  virtual bool Mix(int32_t* dst, uint32_t dst_frames, uint32_t* dst_offset,
+  virtual bool Mix(float* dst, uint32_t dst_frames, uint32_t* dst_offset,
                    const void* src, uint32_t frac_src_frames,
                    int32_t* frac_src_offset, uint32_t frac_step_size,
                    Gain::AScale amplitude_scale, bool accumulate,
@@ -193,3 +195,5 @@ class Mixer {
 
 }  // namespace audio
 }  // namespace media
+
+#endif  // GARNET_BIN_MEDIA_AUDIO_SERVER_MIXER_MIXER_H_

@@ -18,6 +18,7 @@
 #include "lib/escher/impl/image_cache.h"
 #include "lib/fsl/vmo/sized_vmo.h"
 #include "lib/fsl/vmo/vector.h"
+#include "lib/fxl/functional/make_copyable.h"
 
 namespace scenic {
 namespace gfx {
@@ -34,23 +35,25 @@ void Screenshotter::OnCommandBufferDone(
 
   constexpr uint32_t kBytesPerPixel = 4u;
   std::vector<uint8_t> imgvec;
+  const size_t kImgVecElementSize = sizeof(decltype(imgvec)::value_type);
   imgvec.resize(kBytesPerPixel * width * height);
-  uint8_t* imgvec_ptr = &imgvec[0];
 
   const uint8_t* row = image->memory()->mapped_ptr();
   FXL_CHECK(row != nullptr);
   row += sr_layout.offset;
   if (width == sr_layout.rowPitch) {
-    uint32_t num_bytes = width * kBytesPerPixel;
-    FXL_DCHECK(num_bytes <= imgvec.size());
-    memcpy(imgvec_ptr, row, width * height * kBytesPerPixel);
+    uint32_t num_bytes = width * height * kBytesPerPixel;
+    FXL_DCHECK(num_bytes <= kImgVecElementSize * imgvec.size());
+    memcpy(imgvec.data(), row, num_bytes);
   } else {
+    uint8_t* imgvec_ptr = imgvec.data();
     for (uint32_t y = 0; y < height; y++) {
       uint32_t num_bytes = width * kBytesPerPixel;
-      FXL_DCHECK(num_bytes <= &imgvec.back() - imgvec_ptr);
+      FXL_DCHECK(num_bytes <=
+                 kImgVecElementSize * (1 + &imgvec.back() - imgvec_ptr));
       memcpy(imgvec_ptr, row, num_bytes);
       row += sr_layout.rowPitch;
-      imgvec_ptr += width * kBytesPerPixel;
+      imgvec_ptr += num_bytes;
     }
   }
 
@@ -97,9 +100,12 @@ void Screenshotter::TakeScreenshot(
   vk::Queue queue = escher->command_buffer_pool()->queue();
   auto* command_buffer = escher->command_buffer_pool()->GetCommandBuffer();
 
-  auto submit_callback = std::bind(&OnCommandBufferDone, image, width, height,
-                                   escher->vk_device(), done_callback);
-  command_buffer->Submit(queue, std::move(submit_callback));
+  command_buffer->Submit(queue, fxl::MakeCopyable([
+    image, width, height, device = escher->vk_device(),
+    done_callback = std::move(done_callback)
+  ]() mutable {
+    OnCommandBufferDone(image, width, height, device, std::move(done_callback));
+  }));
   // Force the command buffer to retire so that the submitted commands will run.
   // TODO(SCN-211): Make this a proper wait instead of spinning.
   while (!escher->command_buffer_pool()->Cleanup()) {

@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_DEBUG_AGENT_DEBUGGED_THREAD_H_
+#define GARNET_BIN_DEBUG_AGENT_DEBUGGED_THREAD_H_
 
 #include <zx/thread.h>
 
 #include "garnet/lib/debug_ipc/protocol.h"
-#include "garnet/public/lib/fxl/macros.h"
+#include "lib/fxl/macros.h"
 
 struct zx_thread_state_general_regs;
 
@@ -39,10 +40,8 @@ class DebuggedThread {
   // will be suspended, but when we attach to a process with existing threads
   // it won't in in this state. The |starting| flag indicates that this is
   // a thread discoverd via a debug notification.
-  DebuggedThread(DebuggedProcess* process,
-                 zx::thread thread,
-                 zx_koid_t thread_koid,
-                 bool starting);
+  DebuggedThread(DebuggedProcess* process, zx::thread thread,
+                 zx_koid_t thread_koid, bool starting);
   ~DebuggedThread();
 
   zx::thread& thread() { return thread_; }
@@ -57,21 +56,41 @@ class DebuggedThread {
 
   // Resumes execution of the thread. The thead should currently be in a
   // stopped state. If it's not stopped, this will be ignored.
-  void Resume(debug_ipc::ResumeRequest::How how);
+  void Resume(const debug_ipc::ResumeRequest& request);
 
   // Fills in the backtrace if available. Otherwise fills in nothing.
   void GetBacktrace(std::vector<debug_ipc::StackFrame>* frames) const;
 
+  // Fills in the information for the registers of the thread
+  void GetRegisters(std::vector<debug_ipc::Register>* registers) const;
+
   // Sends a notification to the client about the state of this thread.
   void SendThreadNotification() const;
 
- private:
-  enum class AfterBreakpointStep {
-    kContinue,  // Resume execution.
-    kBreak      // Send the client the exception and keep stopped.
-  };
+  // Notification that a ProcessBreakpoint is about to be deleted.
+  void WillDeleteProcessBreakpoint(ProcessBreakpoint* bp);
 
-  void UpdateForSoftwareBreakpoint(zx_thread_state_general_regs* regs);
+ private:
+  // Handles a software breakpoint exception, updating the state as necessary.
+  // If the address corresponds to a breakpoint we have set, it will call
+  // UpdateForHitProcessBreakpoint (see below).
+  void UpdateForSoftwareBreakpoint(
+      zx_thread_state_general_regs* regs,
+      std::vector<debug_ipc::BreakpointStats>* hit_breakpoints);
+
+  // Handles a software exception corresponding to a ProcessBreakpoint. All
+  // Breakpoints affected will have their updated stats added to
+  // *hit_breakpoints.
+  //
+  // WARNING: The ProcessBreakpoint argument could be deleted in this call
+  // if it was a one-shot breakpoint.
+  void UpdateForHitProcessBreakpoint(
+      ProcessBreakpoint* process_breakpoint,
+      zx_thread_state_general_regs* regs,
+      std::vector<debug_ipc::BreakpointStats>* hit_breakpoints);
+
+  // Resumes the thread according to the current run mode.
+  void ResumeForRunMode();
 
   // Sets or clears the single step bit on the thread.
   void SetSingleStep(bool single_step);
@@ -80,6 +99,15 @@ class DebuggedThread {
   DebuggedProcess* process_;  // Non-owning.
   zx::thread thread_;
   zx_koid_t koid_;
+
+  // The main thing we're doing. When automatically resuming, this will be
+  // what happens.
+  debug_ipc::ResumeRequest::How run_mode_ =
+      debug_ipc::ResumeRequest::How::kContinue;
+
+  // When run_mode_ == kStepInRange, this defines the range (end non-inclusive).
+  uint64_t step_in_range_begin_ = 0;
+  uint64_t step_in_range_end_ = 0;
 
   // This is the reason for the thread suspend. This controls how the thread
   // will be resumed. Note that when a breakpoint is hit and other threads
@@ -95,9 +123,9 @@ class DebuggedThread {
   //   being stepped over.
   ProcessBreakpoint* current_breakpoint_ = nullptr;
 
-  AfterBreakpointStep after_breakpoint_step_ = AfterBreakpointStep::kContinue;
-
   FXL_DISALLOW_COPY_AND_ASSIGN(DebuggedThread);
 };
 
 }  // namespace debug_agent
+
+#endif  // GARNET_BIN_DEBUG_AGENT_DEBUGGED_THREAD_H_

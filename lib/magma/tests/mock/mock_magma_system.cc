@@ -121,8 +121,6 @@ void magma_submit_command_buffer(struct magma_connection_t* connection, uint64_t
     DLOG("magma_system submit command buffer - STUB");
 }
 
-void magma_wait_rendering(magma_connection_t* connection, uintptr_t buffer) {}
-
 magma_status_t magma_export(magma_connection_t* connection, magma_buffer_t buffer,
                             uint32_t* buffer_handle_out)
 {
@@ -191,4 +189,14 @@ void magma_map_buffer_gpu(struct magma_connection_t* connection, magma_buffer_t 
                           uint64_t gpu_va, uint64_t page_offset, uint64_t page_count,
                           uint64_t map_flags)
 {
+}
+
+int32_t magma_get_notification_channel_fd(struct magma_connection_t* connection) { return 0; }
+
+// Read a notification from the channel into |buffer|. Sets |*buffer_size_out| to 0 if there are no
+// messages pending.
+magma_status_t magma_read_notification_channel(struct magma_connection_t* connection, void* buffer,
+                                               uint64_t buffer_size, uint64_t* buffer_size_out)
+{
+    return MAGMA_STATUS_UNIMPLEMENTED;
 }

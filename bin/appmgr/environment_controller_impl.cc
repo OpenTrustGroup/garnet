@@ -6,13 +6,14 @@
 
 #include <utility>
 
+#include <lib/fit/function.h>
+
 #include "garnet/bin/appmgr/realm.h"
-#include "lib/fxl/functional/closure.h"
 
 namespace component {
 
 EnvironmentControllerImpl::EnvironmentControllerImpl(
-    fidl::InterfaceRequest<EnvironmentController> request,
+    fidl::InterfaceRequest<fuchsia::sys::EnvironmentController> request,
     std::unique_ptr<Realm> realm)
     : binding_(this), realm_(std::move(realm)) {
   if (request.is_valid()) {
@@ -25,8 +26,7 @@ EnvironmentControllerImpl::EnvironmentControllerImpl(
   }
 }
 
-EnvironmentControllerImpl::~EnvironmentControllerImpl() =
-    default;
+EnvironmentControllerImpl::~EnvironmentControllerImpl() = default;
 
 void EnvironmentControllerImpl::Kill(KillCallback callback) {
   std::unique_ptr<EnvironmentControllerImpl> self =
@@ -37,7 +37,7 @@ void EnvironmentControllerImpl::Kill(KillCallback callback) {
 }
 
 void EnvironmentControllerImpl::Detach() {
-  binding_.set_error_handler(fxl::Closure());
+  binding_.set_error_handler(nullptr);
 }
 
 }  // namespace component

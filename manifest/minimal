@@ -8,9 +8,6 @@
              gerrithost="https://review.gerrithub.io"/>
   </projects>
   <hooks>
-    <hook name="build-update"
-          project="garnet"
-          action="tools/update.sh"/>
     <hook name="cipd-update"
           project="garnet"
           action="tools/cipd-update.sh"/>
@@ -20,5 +17,8 @@
     <hook name="fonts-update"
           project="garnet"
           action="bin/fonts/update.sh"/>
+    <hook name="ffmpeg-update"
+          project="garnet"
+          action="bin/media/media_player/ffmpeg/update_prebuilt_ffmpeg.sh"/>
   </hooks>
 </manifest>

@@ -4,14 +4,17 @@
 
 #include "garnet/bin/media/media_player/demux/http_reader.h"
 
-#include <network/cpp/fidl.h>
+#include <fuchsia/net/oldhttp/cpp/fidl.h>
 #include <lib/async/default.h>
 
-#include "garnet/bin/network/net_errors.h"
+#include "garnet/bin/http/http_errors.h"
 #include "lib/app/cpp/connect.h"
 #include "lib/fxl/logging.h"
 
 namespace media_player {
+
+namespace http = ::fuchsia::net::oldhttp;
+
 namespace {
 
 const char* kContentLengthHeaderName = "Content-Length";
@@ -27,75 +30,70 @@ constexpr uint32_t kStatusNotFound = 404u;
 
 // static
 std::shared_ptr<HttpReader> HttpReader::Create(
-    component::ApplicationContext* application_context,
-    const std::string& url) {
-  return std::make_shared<HttpReader>(application_context, url);
+    fuchsia::sys::StartupContext* startup_context, const std::string& url) {
+  return std::make_shared<HttpReader>(startup_context, url);
 }
 
-HttpReader::HttpReader(component::ApplicationContext* application_context,
+HttpReader::HttpReader(fuchsia::sys::StartupContext* startup_context,
                        const std::string& url)
-    : url_(url) {
-  network::NetworkServicePtr network_service =
-      application_context
-          ->ConnectToEnvironmentService<network::NetworkService>();
+    : url_(url), ready_(async_get_default()) {
+  http::HttpServicePtr network_service =
+      startup_context->ConnectToEnvironmentService<http::HttpService>();
 
   network_service->CreateURLLoader(url_loader_.NewRequest());
 
-  network::URLRequest url_request;
+  http::URLRequest url_request;
   url_request.url = url_;
   url_request.method = "HEAD";
   url_request.auto_follow_redirects = true;
 
-  url_loader_->Start(
-      std::move(url_request), [this](network::URLResponse response) {
-        if (response.error) {
-          FXL_LOG(ERROR) << "HEAD response error " << response.error->code
-                         << " "
-                         << (response.error->description
-                                 ? response.error->description
-                                 : "<no description>");
-          result_ =
-              response.error->code == network::NETWORK_ERR_NAME_NOT_RESOLVED
-                  ? Result::kNotFound
-                  : Result::kUnknownError;
-          ready_.Occur();
-          return;
-        }
+  url_loader_->Start(std::move(url_request), [this](
+                                                 http::URLResponse response) {
+    if (response.error) {
+      FXL_LOG(ERROR) << "HEAD response error " << response.error->code << " "
+                     << (response.error->description
+                             ? response.error->description
+                             : "<no description>");
+      result_ = response.error->code == ::http::HTTP_ERR_NAME_NOT_RESOLVED
+                    ? Result::kNotFound
+                    : Result::kUnknownError;
+      ready_.Occur();
+      return;
+    }
 
-        if (response.status_code != kStatusOk) {
-          FXL_LOG(ERROR) << "HEAD response status code "
-                         << response.status_code;
-          result_ = response.status_code == kStatusNotFound
-                        ? Result::kNotFound
-                        : Result::kUnknownError;
-          ready_.Occur();
-          return;
-        }
+    if (response.status_code != kStatusOk) {
+      FXL_LOG(ERROR) << "HEAD response status code " << response.status_code;
+      result_ = response.status_code == kStatusNotFound ? Result::kNotFound
+                                                        : Result::kUnknownError;
+      ready_.Occur();
+      return;
+    }
 
-        for (const network::HttpHeader& header : *response.headers) {
-          if (header.name == kContentLengthHeaderName) {
-            size_ = std::stoull(header.value);
-          } else if (header.name == kAcceptRangesHeaderName &&
-                     header.value == kAcceptRangesHeaderBytesValue) {
-            can_seek_ = true;
-          }
-        }
+    for (const http::HttpHeader& header : *response.headers) {
+      if (header.name == kContentLengthHeaderName) {
+        size_ = std::stoull(header.value);
+      } else if (header.name == kAcceptRangesHeaderName &&
+                 header.value == kAcceptRangesHeaderBytesValue) {
+        can_seek_ = true;
+      }
+    }
 
-        ready_.Occur();
-      });
+    ready_.Occur();
+  });
 }
 
 HttpReader::~HttpReader() {}
 
 void HttpReader::Describe(DescribeCallback callback) {
-  ready_.When([this, callback]() { callback(result_, size_, can_seek_); });
+  ready_.When([this, callback = std::move(callback)]() {
+    callback(result_, size_, can_seek_);
+  });
 }
 
-void HttpReader::ReadAt(size_t position,
-                        uint8_t* buffer,
-                        size_t bytes_to_read,
+void HttpReader::ReadAt(size_t position, uint8_t* buffer, size_t bytes_to_read,
                         ReadAtCallback callback) {
-  ready_.When([this, position, buffer, bytes_to_read, callback]() {
+  ready_.When([this, position, buffer, bytes_to_read,
+               callback = std::move(callback)]() mutable {
     if (result_ != Result::kOk) {
       callback(result_, 0);
       return;
@@ -116,7 +114,7 @@ void HttpReader::ReadAt(size_t position,
     }
 
     read_at_bytes_remaining_ = read_at_bytes_to_read_;
-    read_at_callback_ = callback;
+    read_at_callback_ = std::move(callback);
 
     if (!socket_ || socket_position_ != read_at_position_) {
       socket_.reset();
@@ -215,7 +213,7 @@ void HttpReader::LoadAndReadFromSocket() {
     return;
   }
 
-  network::URLRequest request;
+  http::URLRequest request;
   request.url = url_;
   request.method = "GET";
 
@@ -223,13 +221,13 @@ void HttpReader::LoadAndReadFromSocket() {
     std::ostringstream value;
     value << kAcceptRangesHeaderBytesValue << "=" << read_at_position_ << "-";
 
-    network::HttpHeader header;
+    http::HttpHeader header;
     header.name = kRangeHeaderName;
     header.value = value.str();
     request.headers.push_back(std::move(header));
   }
 
-  url_loader_->Start(std::move(request), [this](network::URLResponse response) {
+  url_loader_->Start(std::move(request), [this](http::URLResponse response) {
     if (response.status_code != kStatusOk &&
         response.status_code != kStatusPartialContent) {
       FXL_LOG(WARNING) << "GET response status code " << response.status_code;

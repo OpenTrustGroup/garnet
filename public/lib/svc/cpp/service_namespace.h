@@ -6,41 +6,33 @@
 #define LIB_SVC_CPP_SERVICE_NAMESPACE_H_
 
 #include <fbl/ref_ptr.h>
-#include <fs/synchronous-vfs.h>
 #include <fs/pseudo-dir.h>
+#include <fs/synchronous-vfs.h>
+#include <lib/fit/function.h>
 #include <lib/zx/channel.h>
 
-#include <functional>
 #include <string>
 #include <unordered_map>
 #include <utility>
 
-#include <component/cpp/fidl.h>
+#include <fuchsia/sys/cpp/fidl.h>
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
 
-namespace component {
+namespace fuchsia {
+namespace sys {
 
 // ServiceNamespace lets a client to publish services in the form of a
 // directory and provides compatibility with ServiceProvider.
 //
 // This class will be deprecated and removed once ServiceProvider is replaced
 // by direct use of directories for publishing and discoverying services.
-class ServiceNamespace : public component::ServiceProvider {
+class ServiceNamespace : public ServiceProvider {
  public:
   // |ServiceConnector| is the generic, type-unsafe interface for objects used
   // by |ServiceNamespace| to connect generic "interface requests" (i.e.,
   // just channels) specified by service name to service implementations.
-  using ServiceConnector = std::function<void(zx::channel)>;
-
-  // A |InterfaceRequestHandler<Interface>| is simply a function that
-  // handles an interface request for |Interface|. If it determines that the
-  // request should be "accepted", then it should "connect" ("take ownership
-  // of") request. Otherwise, it can simply drop |interface_request| (as implied
-  // by the interface).
-  template <typename Interface>
-  using InterfaceRequestHandler =
-      std::function<void(fidl::InterfaceRequest<Interface> interface_request)>;
+  using ServiceConnector = fit::function<void(zx::channel)>;
 
   // Constructs this service namespace implementation in an unbound state.
   ServiceNamespace();
@@ -48,8 +40,7 @@ class ServiceNamespace : public component::ServiceProvider {
   // Constructs this service provider implementation, binding it to the given
   // interface request. Note: If |request| is not valid ("pending"), then the
   // object will be put into an unbound state.
-  explicit ServiceNamespace(
-      fidl::InterfaceRequest<component::ServiceProvider> request);
+  explicit ServiceNamespace(fidl::InterfaceRequest<ServiceProvider> request);
 
   explicit ServiceNamespace(fbl::RefPtr<fs::PseudoDir> directory);
 
@@ -61,7 +52,7 @@ class ServiceNamespace : public component::ServiceProvider {
   // Binds this service provider implementation to the given interface request.
   // Multiple bindings may be added.  They are automatically removed when closed
   // remotely.
-  void AddBinding(fidl::InterfaceRequest<component::ServiceProvider> request);
+  void AddBinding(fidl::InterfaceRequest<ServiceProvider> request);
 
   // Disconnect this service provider implementation and put it in a state where
   // it can be rebound to a new request (i.e., restores this object to an
@@ -74,21 +65,17 @@ class ServiceNamespace : public component::ServiceProvider {
                          const std::string& service_name);
 
   // Adds a supported service with the given |service_name|, using the given
-  // |interface_request_handler| (see above for information about
-  // |InterfaceRequestHandler<Interface>|). |interface_request_handler| should
-  // remain valid for the lifetime of this object.
+  // |InterfaceRequestHandler|, which should remain valid for the lifetime of
+  // this object.
   //
   // A typical usage may be:
   //
-  //   service_namespace_->AddService<Foobar>(
-  //       [](InterfaceRequest<FooBar> foobar_request) {
-  //         foobar_binding_.AddBinding(this, std::move(foobar_request));
-  //       });
+  //   service_namespace_->AddService(foobar_bindings_.GetHandler(this));
   template <typename Interface>
-  void AddService(InterfaceRequestHandler<Interface> handler,
+  void AddService(fidl::InterfaceRequestHandler<Interface> handler,
                   const std::string& service_name = Interface::Name_) {
     AddServiceForName(
-        [handler](zx::channel channel) {
+        [handler = std::move(handler)](zx::channel channel) {
           handler(fidl::InterfaceRequest<Interface>(std::move(channel)));
         },
         service_name);
@@ -107,7 +94,7 @@ class ServiceNamespace : public component::ServiceProvider {
   }
 
  private:
-  // Overridden from |component::ServiceProvider|:
+  // Overridden from |ServiceProvider|:
   void ConnectToService(fidl::StringPtr service_name,
                         zx::channel channel) override;
 
@@ -117,11 +104,12 @@ class ServiceNamespace : public component::ServiceProvider {
   std::unordered_map<std::string, ServiceConnector> name_to_service_connector_;
 
   fbl::RefPtr<fs::PseudoDir> directory_;
-  fidl::BindingSet<component::ServiceProvider> bindings_;
+  fidl::BindingSet<ServiceProvider> bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(ServiceNamespace);
 };
 
-}  // namespace component
+}  // namespace sys
+}  // namespace fuchsia
 
 #endif  // LIB_SVC_CPP_SERVICE_NAMESPACE_H_

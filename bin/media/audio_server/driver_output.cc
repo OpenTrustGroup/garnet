@@ -4,13 +4,14 @@
 
 #include "garnet/bin/media/audio_server/driver_output.h"
 
+#include <iomanip>
+
 #include <audio-proto-utils/format-utils.h>
 #include <dispatcher-pool/dispatcher-channel.h>
 #include <fbl/atomic.h>
 #include <fbl/auto_call.h>
 #include <fbl/limits.h>
 #include <zircon/process.h>
-#include <iomanip>
 
 #include "garnet/bin/media/audio_server/audio_device_manager.h"
 #include "garnet/lib/media/wav_writer/wav_writer.h"
@@ -23,8 +24,8 @@ namespace audio {
 
 static constexpr uint32_t kDefaultFramesPerSec = 48000;
 static constexpr uint32_t kDefaultChannelCount = 2;
-static constexpr AudioSampleFormat kDefaultAudioFmt =
-    AudioSampleFormat::SIGNED_16;
+static constexpr fuchsia::media::AudioSampleFormat kDefaultAudioFmt =
+    fuchsia::media::AudioSampleFormat::SIGNED_16;
 static constexpr int64_t kDefaultLowWaterNsec = ZX_MSEC(20);
 static constexpr int64_t kDefaultHighWaterNsec = ZX_MSEC(30);
 static constexpr int64_t kDefaultMaxRetentionNsec = ZX_MSEC(60);
@@ -46,23 +47,22 @@ DriverOutput::DriverOutput(AudioDeviceManager* manager,
 
 DriverOutput::~DriverOutput() { wav_writer_.Close(); }
 
-MediaResult DriverOutput::Init() {
+zx_status_t DriverOutput::Init() {
   FXL_DCHECK(state_ == State::Uninitialized);
 
-  MediaResult init_res = StandardOutputBase::Init();
-  if (init_res != MediaResult::OK) {
-    return init_res;
+  zx_status_t res = StandardOutputBase::Init();
+  if (res != ZX_OK) {
+    return res;
   }
 
-  zx_status_t zx_res = driver_->Init(fbl::move(initial_stream_channel_));
-  if (zx_res != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to initialize driver object (res " << zx_res
-                   << ")";
-    return MediaResult::INTERNAL_ERROR;
+  res = driver_->Init(fbl::move(initial_stream_channel_));
+  if (res != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to initialize driver object (res " << res << ")";
+    return res;
   }
 
   state_ = State::FormatsUnknown;
-  return MediaResult::OK;
+  return res;
 }
 
 void DriverOutput::OnWakeup() {
@@ -73,9 +73,9 @@ void DriverOutput::OnWakeup() {
     return;
   }
 
-  // Kick off the process of driver configuration by requesting the modes which
-  // the driver supports.
-  driver_->GetSupportedFormats();
+  // Kick off the process of driver configuration by requesting the basic driver
+  // info, which will include the modes which the driver supports.
+  driver_->GetDriverInfo();
   state_ = State::FetchingFormats;
 }
 
@@ -92,6 +92,27 @@ bool DriverOutput::StartMixJob(MixJob* job, fxl::TimePoint process_start) {
     ShutdownSelf();
     return false;
   }
+
+  // TODO(johngro): Depending on policy, use send appropriate commands to the
+  // driver to control gain as well.  Some policy settings which might be useful
+  // include...
+  //
+  // ++ Never use HW gain, even if it supports it.
+  // ++ Always use HW gain when present, regarless of its limitations.
+  // ++ Use HW gain when present, but only if it reaches a minimum bar of
+  //    functionality.
+  // ++ Implement a hybrid of HW/SW gain.  IOW - Get as close as possible to our
+  //    target using HW, and then get the rest of the way there using SW
+  //    scaling.  This approach may end up being unreasonably tricky as we may
+  //    not be able to synchronize the HW and SW changes in gain well enough to
+  //    avoid strange situations where the jumps in one direction (because of
+  //    the SW component), and then in the other (as the HW gain command takes
+  //    affect).
+  //
+  GainState cur_gain_state;
+  SnapshotGainState(&cur_gain_state);
+  job->sw_output_db_gain = cur_gain_state.db_gain;
+  job->sw_output_muted = cur_gain_state.muted;
 
   FXL_DCHECK(driver_ring_buffer() != nullptr);
   int64_t now = process_start.ToEpochDelta().ToNanoseconds();
@@ -238,6 +259,22 @@ bool DriverOutput::FinishMixJob(const MixJob& job) {
   return true;
 }
 
+void DriverOutput::ApplyGainLimits(::fuchsia::media::AudioGainInfo* in_out_info,
+                                   uint32_t set_flags) {
+  // See the comment at the start of StartMixJob.  The actual limits we set here
+  // are going to eventually depend on what our HW gain control capabilities
+  // are, and how we choose to apply them (based on policy)
+  FXL_DCHECK(in_out_info != nullptr);
+
+  // We do not currently allow more than unity gain for audio outputs.
+  if (in_out_info->db_gain > 0.0) {
+    in_out_info->db_gain = 0;
+  }
+
+  // Audio outputs should never support AGC
+  in_out_info->flags &= ~(::fuchsia::media::AudioGainInfoFlag_AgcEnabled);
+}
+
 void DriverOutput::ScheduleNextLowWaterWakeup() {
   // Schedule the next callback for when we are at the low water mark behind
   // the write pointer.
@@ -248,7 +285,7 @@ void DriverOutput::ScheduleNextLowWaterWakeup() {
       fxl::TimeDelta::FromNanoseconds(low_water_time)));
 }
 
-void DriverOutput::OnDriverGetFormatsComplete() {
+void DriverOutput::OnDriverInfoFetched() {
   auto cleanup = fbl::MakeAutoCall([this]() FXL_NO_THREAD_SAFETY_ANALYSIS {
     state_ = State::Shutdown;
     ShutdownSelf();
@@ -266,7 +303,7 @@ void DriverOutput::OnDriverGetFormatsComplete() {
   // match among the formats supported by the driver.
   uint32_t pref_fps = kDefaultFramesPerSec;
   uint32_t pref_chan = kDefaultChannelCount;
-  AudioSampleFormat pref_fmt = kDefaultAudioFmt;
+  fuchsia::media::AudioSampleFormat pref_fmt = kDefaultAudioFmt;
   zx_duration_t min_rb_duration = kDefaultHighWaterNsec +
                                   kDefaultMaxRetentionNsec +
                                   kDefaultRetentionGapNsec;
@@ -295,7 +332,8 @@ void DriverOutput::OnDriverGetFormatsComplete() {
       static_cast<uint32_t>(retention_frames));
 
   // Select our output formatter
-  AudioMediaTypeDetailsPtr config(AudioMediaTypeDetails::New());
+  fuchsia::media::AudioMediaTypeDetailsPtr config(
+      fuchsia::media::AudioMediaTypeDetails::New());
   config->frames_per_second = pref_fps;
   config->channels = pref_chan;
   config->sample_format = pref_fmt;
@@ -321,6 +359,10 @@ void DriverOutput::OnDriverGetFormatsComplete() {
 
   wav_writer_.Initialize(nullptr, pref_fmt, pref_chan, pref_fps,
                          driver_->bytes_per_frame() * 8 / pref_chan);
+
+  // Let the AudioDeviceManager that we are ready to be added to the set of
+  // active audio devices.
+  ActivateSelf();
 
   // Success, wait until configuration completes.
   state_ = State::Configuring;
@@ -427,15 +469,11 @@ void DriverOutput::OnDriverStartComplete() {
 void DriverOutput::OnDriverPlugStateChange(bool plugged, zx_time_t plug_time) {
   // Reflect this message to the AudioDeviceManager so it can deal with the plug
   // state change.
-  // clang-format off
-  manager_->ScheduleMainThreadTask(
-    [ manager = manager_,
-      output = fbl::WrapRefPtr(this),
-      plugged,
-      plug_time ]() {
-      manager->HandlePlugStateChange(output, plugged, plug_time);
-    });
-  // clang-format on
+  manager_->ScheduleMainThreadTask([manager = manager_,
+                                    output = fbl::WrapRefPtr(this), plugged,
+                                    plug_time]() {
+    manager->HandlePlugStateChange(output, plugged, plug_time);
+  });
 }
 
 }  // namespace audio

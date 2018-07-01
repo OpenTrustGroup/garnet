@@ -4,6 +4,7 @@
 
 #include "garnet/bin/mdns/tool/mdns_params.h"
 
+#include <functional>
 #include <iostream>
 
 #include "lib/fxl/logging.h"
@@ -165,7 +166,7 @@ bool MdnsParams::Parse(const std::string& string_value, uint32_t* out) {
 }
 
 bool MdnsParams::Parse(const std::string& string_value,
-                           std::vector<std::string>* out) {
+                       std::vector<std::string>* out) {
   FXL_DCHECK(out);
 
   if (string_value.empty()) {
@@ -187,7 +188,7 @@ bool MdnsParams::Parse(const std::string& string_value,
 }
 
 bool MdnsParams::ParseHostName(const std::string& string_value,
-                                   std::string* out) {
+                               std::string* out) {
   FXL_DCHECK(out);
 
   if (string_value.empty() || string_value[string_value.size() - 1] == '.') {
@@ -200,7 +201,7 @@ bool MdnsParams::ParseHostName(const std::string& string_value,
 }
 
 bool MdnsParams::ParseServiceName(const std::string& string_value,
-                                      std::string* out) {
+                                  std::string* out) {
   FXL_DCHECK(out);
 
   if (string_value.size() <= kTcpSuffix.size()) {
@@ -221,7 +222,7 @@ bool MdnsParams::ParseServiceName(const std::string& string_value,
 }
 
 bool MdnsParams::ParseInstanceName(const std::string& string_value,
-                                       std::string* out) {
+                                   std::string* out) {
   FXL_DCHECK(out);
 
   if (string_value.empty() || string_value[string_value.size() - 1] == '.') {

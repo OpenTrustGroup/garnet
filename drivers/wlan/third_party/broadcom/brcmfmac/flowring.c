@@ -29,6 +29,7 @@
 #include "device.h"
 #include "linuxisms.h"
 #include "msgbuf.h"
+#include "netbuf.h"
 #include "proto.h"
 
 #define BRCMF_FLOWRING_HIGH 1024
@@ -55,7 +56,8 @@ static bool brcmf_flowring_is_tdls_mac(struct brcmf_flowring* flow, uint8_t mac[
     return false;
 }
 
-uint32_t brcmf_flowring_lookup(struct brcmf_flowring* flow, uint8_t da[ETH_ALEN], uint8_t prio, uint8_t ifidx) {
+uint32_t brcmf_flowring_lookup(struct brcmf_flowring* flow, uint8_t da[ETH_ALEN], uint8_t prio,
+                               uint8_t ifidx) {
     struct brcmf_flowring_hash* hash;
     uint16_t hash_idx;
     uint32_t i;
@@ -67,7 +69,7 @@ uint32_t brcmf_flowring_lookup(struct brcmf_flowring* flow, uint8_t da[ETH_ALEN]
     fifo = brcmf_flowring_prio2fifo[prio];
     sta = (flow->addr_mode[ifidx] == ADDR_INDIRECT);
     mac = da;
-    if ((!sta) && (is_multicast_ether_addr(da))) {
+    if ((!sta) && (address_is_multicast(da))) {
         mac = (uint8_t*)ALLFFMAC;
         fifo = 0;
     }
@@ -109,7 +111,7 @@ zx_status_t brcmf_flowring_create(struct brcmf_flowring* flow, uint8_t da[ETH_AL
     fifo = brcmf_flowring_prio2fifo[prio];
     sta = (flow->addr_mode[ifidx] == ADDR_INDIRECT);
     mac = da;
-    if ((!sta) && (is_multicast_ether_addr(da))) {
+    if ((!sta) && (address_is_multicast(da))) {
         mac = (uint8_t*)ALLFFMAC;
         fifo = 0;
     }
@@ -123,7 +125,7 @@ zx_status_t brcmf_flowring_create(struct brcmf_flowring* flow, uint8_t da[ETH_AL
     hash = flow->hash;
     for (i = 0; i < BRCMF_FLOWRING_HASHSIZE; i++) {
         if ((hash[hash_idx].ifidx == BRCMF_FLOWRING_INVALID_IFIDX) &&
-                (is_zero_ether_addr(hash[hash_idx].mac))) {
+                (address_is_zero(hash[hash_idx].mac))) {
             found = true;
             break;
         }
@@ -140,7 +142,7 @@ zx_status_t brcmf_flowring_create(struct brcmf_flowring* flow, uint8_t da[ETH_AL
             return ZX_ERR_NO_MEMORY;
         }
 
-        ring = kzalloc(sizeof(*ring), GFP_ATOMIC);
+        ring = calloc(1, sizeof(*ring));
         if (!ring) {
             return ZX_ERR_NO_MEMORY;
         }
@@ -152,7 +154,7 @@ zx_status_t brcmf_flowring_create(struct brcmf_flowring* flow, uint8_t da[ETH_AL
 
         ring->hash_id = hash_idx;
         ring->status = RING_CLOSED;
-        skb_queue_head_init(&ring->skblist);
+        brcmf_netbuf_list_init(&ring->netbuf_list);
         flow->rings[i] = ring;
 
         return i;
@@ -222,7 +224,7 @@ void brcmf_flowring_delete(struct brcmf_flowring* flow, uint16_t flowid) {
     struct brcmf_if* ifp;
     uint16_t hash_idx;
     uint8_t ifidx;
-    struct sk_buff* skb;
+    struct brcmf_netbuf* netbuf;
 
     ring = flow->rings[flowid];
     if (!ring) {
@@ -235,26 +237,27 @@ void brcmf_flowring_delete(struct brcmf_flowring* flow, uint16_t flowid) {
     brcmf_flowring_block(flow, flowid, false);
     hash_idx = ring->hash_id;
     flow->hash[hash_idx].ifidx = BRCMF_FLOWRING_INVALID_IFIDX;
-    eth_zero_addr(flow->hash[hash_idx].mac);
+    fill_with_zero_addr(flow->hash[hash_idx].mac);
     flow->rings[flowid] = NULL;
 
-    skb = skb_dequeue(&ring->skblist);
-    while (skb) {
-        brcmf_txfinalize(ifp, skb, false);
-        skb = skb_dequeue(&ring->skblist);
+    netbuf = brcmf_netbuf_list_remove_head(&ring->netbuf_list);
+    while (netbuf) {
+        brcmf_txfinalize(ifp, netbuf, false);
+        netbuf = brcmf_netbuf_list_remove_head(&ring->netbuf_list);
     }
 
     free(ring);
 }
 
-uint32_t brcmf_flowring_enqueue(struct brcmf_flowring* flow, uint16_t flowid, struct sk_buff* skb) {
+uint32_t brcmf_flowring_enqueue(struct brcmf_flowring* flow, uint16_t flowid,
+                                struct brcmf_netbuf* netbuf) {
     struct brcmf_flowring_ring* ring;
 
     ring = flow->rings[flowid];
 
-    skb_queue_tail(&ring->skblist, skb);
+    brcmf_netbuf_list_add_tail(&ring->netbuf_list, netbuf);
 
-    if (!ring->blocked && (skb_queue_len(&ring->skblist) > BRCMF_FLOWRING_HIGH)) {
+    if (!ring->blocked && (brcmf_netbuf_list_length(&ring->netbuf_list) > BRCMF_FLOWRING_HIGH)) {
         brcmf_flowring_block(flow, flowid, true);
         brcmf_dbg(MSGBUF, "Flowcontrol: BLOCK for ring %d\n", flowid);
         /* To prevent (work around) possible race condition, check
@@ -263,38 +266,39 @@ uint32_t brcmf_flowring_enqueue(struct brcmf_flowring* flow, uint16_t flowid, st
          * dequeue. This simple check will solve a possible race
          * condition if it occurs.
          */
-        if (skb_queue_len(&ring->skblist) < BRCMF_FLOWRING_LOW) {
+        if (brcmf_netbuf_list_length(&ring->netbuf_list) < BRCMF_FLOWRING_LOW) {
             brcmf_flowring_block(flow, flowid, false);
         }
     }
-    return skb_queue_len(&ring->skblist);
+    return brcmf_netbuf_list_length(&ring->netbuf_list);
 }
 
-struct sk_buff* brcmf_flowring_dequeue(struct brcmf_flowring* flow, uint16_t flowid) {
+struct brcmf_netbuf* brcmf_flowring_dequeue(struct brcmf_flowring* flow, uint16_t flowid) {
     struct brcmf_flowring_ring* ring;
-    struct sk_buff* skb;
+    struct brcmf_netbuf* netbuf;
 
     ring = flow->rings[flowid];
     if (ring->status != RING_OPEN) {
         return NULL;
     }
 
-    skb = skb_dequeue(&ring->skblist);
+    netbuf = brcmf_netbuf_list_remove_head(&ring->netbuf_list);
 
-    if (ring->blocked && (skb_queue_len(&ring->skblist) < BRCMF_FLOWRING_LOW)) {
+    if (ring->blocked && (brcmf_netbuf_list_length(&ring->netbuf_list) < BRCMF_FLOWRING_LOW)) {
         brcmf_flowring_block(flow, flowid, false);
         brcmf_dbg(MSGBUF, "Flowcontrol: OPEN for ring %d\n", flowid);
     }
 
-    return skb;
+    return netbuf;
 }
 
-void brcmf_flowring_reinsert(struct brcmf_flowring* flow, uint16_t flowid, struct sk_buff* skb) {
+void brcmf_flowring_reinsert(struct brcmf_flowring* flow, uint16_t flowid,
+                             struct brcmf_netbuf* netbuf) {
     struct brcmf_flowring_ring* ring;
 
     ring = flow->rings[flowid];
 
-    skb_queue_head(&ring->skblist, skb);
+    brcmf_netbuf_list_add_head(&ring->netbuf_list, netbuf);
 }
 
 uint32_t brcmf_flowring_qlen(struct brcmf_flowring* flow, uint16_t flowid) {
@@ -309,7 +313,7 @@ uint32_t brcmf_flowring_qlen(struct brcmf_flowring* flow, uint16_t flowid) {
         return 0;
     }
 
-    return skb_queue_len(&ring->skblist);
+    return brcmf_netbuf_list_length(&ring->netbuf_list);
 }
 
 void brcmf_flowring_open(struct brcmf_flowring* flow, uint16_t flowid) {
@@ -349,7 +353,7 @@ struct brcmf_flowring* brcmf_flowring_attach(struct brcmf_device* dev, uint16_t 
         for (i = 0; i < ARRAY_SIZE(flow->hash); i++) {
             flow->hash[i].ifidx = BRCMF_FLOWRING_INVALID_IFIDX;
         }
-        flow->rings = kcalloc(nrofrings, sizeof(*flow->rings), GFP_KERNEL);
+        flow->rings = calloc(nrofrings, sizeof(*flow->rings));
         if (!flow->rings) {
             free(flow);
             flow = NULL;
@@ -455,7 +459,7 @@ void brcmf_flowring_add_tdls_peer(struct brcmf_flowring* flow, int ifidx, uint8_
     struct brcmf_flowring_tdls_entry* tdls_entry;
     struct brcmf_flowring_tdls_entry* search;
 
-    tdls_entry = kzalloc(sizeof(*tdls_entry), GFP_ATOMIC);
+    tdls_entry = calloc(1, sizeof(*tdls_entry));
     if (tdls_entry == NULL) {
         return;
     }

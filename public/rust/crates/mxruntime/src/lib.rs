@@ -27,14 +27,14 @@ pub enum HandleType {
     Resource = mxruntime_sys::PA_RESOURCE,
     // Handle types used by the mojo application model
     DirectoryRequest = mxruntime_sys::PA_DIRECTORY_REQUEST,
-    ApplicationLauncher = mxruntime_sys::PA_APP_LAUNCHER,
+    Launcher = mxruntime_sys::PA_APP_LAUNCHER,
     User0 = mxruntime_sys::PA_USER0,
 }
 
 /// Get a startup handle of the given type, if available.
 pub fn get_startup_handle(htype: HandleType) -> Option<Handle> {
     unsafe {
-        let raw = mxruntime_sys::zx_get_startup_handle(htype as u32);
+        let raw = mxruntime_sys::zx_take_startup_handle(htype as u32);
         if raw == mxruntime_sys::ZX_HANDLE_INVALID {
             None
         } else {

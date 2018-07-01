@@ -32,6 +32,7 @@ struct MsgHeader {
     kProcessTree,
     kThreads,
     kReadMemory,
+    kRegisters,
     kAddOrChangeBreakpoint,
     kRemoveBreakpoint,
     kBacktrace,
@@ -122,6 +123,7 @@ struct ResumeRequest {
   enum class How : uint32_t {
     kContinue = 0,     // Continue execution without stopping.
     kStepInstruction,  // Step one machine instruction.
+    kStepInRange,      // Step until control exits an address range.
 
     kLast  // Not a real state, used for validation.
   };
@@ -129,10 +131,17 @@ struct ResumeRequest {
   // If 0, all threads of all debugged processes will be continued.
   uint64_t process_koid = 0;
 
-  // If 0, all threads in the given process will be continued.
+  // If 0, all threads in the given process will be continued. Not compatible
+  // with kStepInRange.
   uint64_t thread_koid = 0;
 
   How how = How::kContinue;
+
+  // When how == kStepInRange, these variables define the address range to
+  // step in. As long as the instruction pointer is inside
+  // [range_begin, range_end), execution will continue.
+  uint64_t range_begin = 0;
+  uint64_t range_end = 0;
 };
 struct ResumeReply {};
 
@@ -206,6 +215,16 @@ struct ModulesReply {
   std::vector<Module> modules;
 };
 
+// Registers -------------------------------------------------------------------
+
+struct RegistersRequest {
+  uint64_t process_koid = 0;
+  uint32_t thread_koid = 0;
+};
+struct RegistersReply {
+  std::vector<Register> registers;
+};
+
 // Notifications ---------------------------------------------------------------
 
 // Data for process destroyed messages (process created messages are in
@@ -238,6 +257,14 @@ struct NotifyException {
 
   // The frame of the top of the stack.
   StackFrame frame;
+
+  // When the stop was caused by hitting a breakpoint, this vector will contain
+  // the post-hit stats of every hit breakpoint (since there can be more than
+  // one breakpoint at any given address).
+  //
+  // Be sure to check should_delete on each of these and update local state as
+  // necessary.
+  std::vector<BreakpointStats> hit_breakpoints;
 };
 
 #pragma pack(pop)

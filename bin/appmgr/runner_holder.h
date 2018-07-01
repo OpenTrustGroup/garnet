@@ -7,9 +7,10 @@
 
 #include <lib/zx/vmo.h>
 
-#include <component/cpp/fidl.h>
+#include <fuchsia/sys/cpp/fidl.h>
+#include "garnet/bin/appmgr/component_container.h"
+#include "garnet/bin/appmgr/component_controller_impl.h"
 #include "garnet/bin/appmgr/namespace.h"
-#include "garnet/lib/farfs/file_system.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/ref_ptr.h"
@@ -17,25 +18,37 @@
 
 namespace component {
 
-class RunnerHolder {
+class Realm;
+
+class RunnerHolder : public ComponentContainer<ComponentBridge> {
  public:
-  RunnerHolder(Services services, ComponentControllerPtr controller);
+  RunnerHolder(fuchsia::sys::Services services,
+               fuchsia::sys::ComponentControllerPtr controller,
+               fuchsia::sys::LaunchInfo launch_info, Realm* realm,
+               std::function<void()> error_handler = nullptr);
   ~RunnerHolder();
 
-  void StartComponent(Package package, StartupInfo startup_info,
-                      std::unique_ptr<archive::FileSystem> file_system,
-                      fxl::RefPtr<Namespace> ns,
-                      fidl::InterfaceRequest<ComponentController> controller);
+  void StartComponent(
+      fuchsia::sys::Package package, fuchsia::sys::StartupInfo startup_info,
+      fxl::RefPtr<Namespace> ns,
+      fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller);
+
+  std::unique_ptr<ComponentBridge> ExtractComponent(
+      ComponentBridge* controller) override;
 
  private:
-  Services services_;
-  ComponentControllerPtr controller_;
-  RunnerPtr runner_;
+  void CreateComponentCallback(ComponentControllerImpl* component);
+  void Cleanup();
 
-  // TODO(abarth): We hold these objects for the lifetime of the runner, but we
-  // should actuall drop them once their controller is done.
-  std::vector<std::unique_ptr<archive::FileSystem>> file_systems_;
-  std::vector<fxl::RefPtr<Namespace>> namespaces_;
+  fuchsia::sys::Services services_;
+  fuchsia::sys::ComponentControllerPtr controller_;
+  fuchsia::sys::RunnerPtr runner_;
+  ComponentControllerImpl* impl_object_;
+  std::function<void()> error_handler_;
+  std::unordered_map<ComponentBridge*, std::unique_ptr<ComponentBridge>>
+      components_;
+  uint64_t component_id_counter_;
+  std::string koid_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(RunnerHolder);
 };

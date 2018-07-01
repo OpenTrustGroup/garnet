@@ -2,14 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MDNS_SERVICE_MDNS_AGENT_H_
+#define GARNET_BIN_MDNS_SERVICE_MDNS_AGENT_H_
 
 #include <memory>
+
+#include <lib/fit/function.h>
 
 #include "garnet/bin/mdns/service/dns_message.h"
 #include "garnet/bin/mdns/service/mdns_addresses.h"
 #include "garnet/bin/mdns/service/socket_address.h"
-#include "lib/fxl/functional/closure.h"
 #include "lib/fxl/time/time_point.h"
 
 namespace mdns {
@@ -27,8 +29,7 @@ class MdnsAgent : public std::enable_shared_from_this<MdnsAgent> {
 
     // Posts a task to be executed at the specified time. Scheduled tasks posted
     // by agents that have since been removed are not executed.
-    virtual void PostTaskForTime(MdnsAgent* agent,
-                                 fxl::Closure task,
+    virtual void PostTaskForTime(MdnsAgent* agent, fit::closure task,
                                  fxl::TimePoint target_time) = 0;
 
     // Sends a question to the multicast address.
@@ -87,8 +88,8 @@ class MdnsAgent : public std::enable_shared_from_this<MdnsAgent> {
 
   // Posts a task to be executed at the specified time. Scheduled tasks posted
   // by agents that have since been removed are not executed.
-  void PostTaskForTime(fxl::Closure task, fxl::TimePoint target_time) {
-    host_->PostTaskForTime(this, task, target_time);
+  void PostTaskForTime(fit::closure task, fxl::TimePoint target_time) {
+    host_->PostTaskForTime(this, std::move(task), target_time);
   }
 
   // Sends a question to the multicast address.
@@ -139,3 +140,5 @@ class MdnsAgent : public std::enable_shared_from_this<MdnsAgent> {
 };
 
 }  // namespace mdns
+
+#endif  // GARNET_BIN_MDNS_SERVICE_MDNS_AGENT_H_

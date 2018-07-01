@@ -2,19 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MDNS_SERVICE_ADDRESS_PROBER_H_
+#define GARNET_BIN_MDNS_SERVICE_ADDRESS_PROBER_H_
 
 #include "garnet/bin/mdns/service/prober.h"
+
+#include <lib/fit/function.h>
 
 namespace mdns {
 
 // Probes for host name conflicts prior to invoking |AddressResponder|.
 class AddressProber : public Prober {
  public:
-  using CompletionCallback = std::function<void(bool)>;
+  using CompletionCallback = fit::function<void(bool)>;
 
   // Creates an |AddressProber|.
-  AddressProber(MdnsAgent::Host* host, const CompletionCallback& callback);
+  AddressProber(MdnsAgent::Host* host, CompletionCallback callback);
 
   ~AddressProber() override;
 
@@ -26,3 +29,5 @@ class AddressProber : public Prober {
 };
 
 }  // namespace mdns
+
+#endif  // GARNET_BIN_MDNS_SERVICE_ADDRESS_PROBER_H_

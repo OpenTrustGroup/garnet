@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MEDIA_AUDIO_SERVER_DRIVER_OUTPUT_H_
+#define GARNET_BIN_MEDIA_AUDIO_SERVER_DRIVER_OUTPUT_H_
 
 #include <dispatcher-pool/dispatcher-channel.h>
 #include <lib/zx/channel.h>
@@ -25,7 +26,7 @@ class DriverOutput : public StandardOutputBase {
   ~DriverOutput();
 
   // AudioOutput implementation
-  MediaResult Init() override;
+  zx_status_t Init() override;
   void OnWakeup() FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token()) override;
 
   void Cleanup() override;
@@ -35,6 +36,11 @@ class DriverOutput : public StandardOutputBase {
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token()) override;
   bool FinishMixJob(const MixJob& job)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token()) override;
+
+ protected:
+  // AudioDevice impl
+  void ApplyGainLimits(::fuchsia::media::AudioGainInfo* in_out_info,
+                       uint32_t set_flags) override;
 
  private:
   enum class State {
@@ -52,7 +58,7 @@ class DriverOutput : public StandardOutputBase {
 
   // Callbacks triggered by our driver object as it completes various
   // asynchronous tasks.
-  void OnDriverGetFormatsComplete() override
+  void OnDriverInfoFetched() override
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token());
 
   void OnDriverConfigComplete() override
@@ -80,3 +86,5 @@ class DriverOutput : public StandardOutputBase {
 
 }  // namespace audio
 }  // namespace media
+
+#endif  // GARNET_BIN_MEDIA_AUDIO_SERVER_DRIVER_OUTPUT_H_

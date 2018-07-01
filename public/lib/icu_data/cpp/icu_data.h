@@ -5,13 +5,15 @@
 #ifndef LIB_ICU_DATA_CPP_ICU_DATA_H_
 #define LIB_ICU_DATA_CPP_ICU_DATA_H_
 
-namespace component {
-class ApplicationContext;
+namespace fuchsia {
+namespace sys {
+class StartupContext;
+}
 }
 
 namespace icu_data {
 
-bool Initialize(component::ApplicationContext* context);
+bool Initialize(fuchsia::sys::StartupContext* context, const char* optional_data_path = 0);
 bool Release();
 
 }  // namespace icu_data

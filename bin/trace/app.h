@@ -5,7 +5,6 @@
 #ifndef GARNET_BIN_TRACE_APP_H_
 #define GARNET_BIN_TRACE_APP_H_
 
-#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -17,7 +16,7 @@ namespace tracing {
 
 class App : public Command {
  public:
-  App(component::ApplicationContext* context);
+  App(fuchsia::sys::StartupContext* context);
   ~App();
 
  protected:

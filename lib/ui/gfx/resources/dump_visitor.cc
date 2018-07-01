@@ -20,6 +20,7 @@
 #include "garnet/lib/ui/gfx/resources/lights/directional_light.h"
 #include "garnet/lib/ui/gfx/resources/material.h"
 #include "garnet/lib/ui/gfx/resources/nodes/entity_node.h"
+#include "garnet/lib/ui/gfx/resources/nodes/opacity_node.h"
 #include "garnet/lib/ui/gfx/resources/nodes/scene.h"
 #include "garnet/lib/ui/gfx/resources/nodes/shape_node.h"
 #include "garnet/lib/ui/gfx/resources/renderers/renderer.h"
@@ -27,6 +28,8 @@
 #include "garnet/lib/ui/gfx/resources/shapes/mesh_shape.h"
 #include "garnet/lib/ui/gfx/resources/shapes/rectangle_shape.h"
 #include "garnet/lib/ui/gfx/resources/shapes/rounded_rectangle_shape.h"
+#include "garnet/lib/ui/gfx/resources/view.h"
+#include "garnet/lib/ui/gfx/resources/view_holder.h"
 #include "lib/fxl/logging.h"
 
 namespace scenic {
@@ -89,8 +92,29 @@ void DumpVisitor::Visit(ImagePipe* r) {
   EndItem();
 }
 
+void DumpVisitor::Visit(View* r) {
+  // TODO(SCN-793): improve DumpVisitor to display View/ViewHolder during
+  // traversal.
+  BeginItem("View", r);
+  EndItem();
+}
+
+void DumpVisitor::Visit(ViewHolder* r) {
+  // TODO(SCN-793): improve DumpVisitor to display View/ViewHolder during
+  // traversal.
+  BeginItem("ViewHolder", r);
+  EndItem();
+}
+
 void DumpVisitor::Visit(EntityNode* r) {
   BeginItem("EntityNode", r);
+  VisitNode(r);
+  EndItem();
+}
+
+void DumpVisitor::Visit(OpacityNode* r) {
+  BeginItem("OpacityNode", r);
+  WriteProperty("opacity") << r->opacity();
   VisitNode(r);
   EndItem();
 }
@@ -128,7 +152,9 @@ void DumpVisitor::VisitNode(Node* r) {
   if (r->clip_to_self()) {
     WriteProperty("clip_to_self") << r->clip_to_self();
   }
-  if (!r->transform().IsIdentity()) {
+  if (r->transform().IsIdentity()) {
+    WriteProperty("transform") << "identity";
+  } else {
     WriteProperty("transform") << r->transform();
   }
   if (!r->parts().empty()) {
@@ -235,6 +261,8 @@ void DumpVisitor::Visit(LayerStack* r) {
 
 void DumpVisitor::Visit(Layer* r) {
   BeginItem("Layer", r);
+  WriteProperty("width") << r->width();
+  WriteProperty("height") << r->height();
   if (r->renderer()) {
     BeginSection("renderer");
     r->renderer()->Accept(this);
@@ -316,7 +344,7 @@ void DumpVisitor::VisitResource(Resource* r) {
 void DumpVisitor::BeginItem(const char* type, Resource* r) {
   BeginLine();
   if (r) {
-    output_ << r->id();
+    output_ << r->session()->id() << "-" << r->id();
     if (!r->label().empty())
       output_ << ":\"" << r->label() << "\"";
     output_ << "> ";

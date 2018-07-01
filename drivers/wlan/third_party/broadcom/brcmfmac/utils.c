@@ -19,53 +19,55 @@
 //#include <linux/module.h>
 //#include <linux/netdevice.h>
 
-#include "linuxisms.h"
 #include <string.h>
 
 #include "brcmu_utils.h"
+#include "debug.h"
+#include "linuxisms.h"
+#include "netbuf.h"
 
 MODULE_AUTHOR("Broadcom Corporation");
 MODULE_DESCRIPTION("Broadcom 802.11n wireless LAN driver utilities.");
 MODULE_SUPPORTED_DEVICE("Broadcom 802.11n WLAN cards");
 MODULE_LICENSE("Dual BSD/GPL");
 
-struct sk_buff* brcmu_pkt_buf_get_skb(uint len) {
-    struct sk_buff* skb;
+struct brcmf_netbuf* brcmu_pkt_buf_get_netbuf(uint len) {
+    struct brcmf_netbuf* netbuf;
 
-    skb = dev_alloc_skb(len);
-    if (skb) {
-        skb_put(skb, len);
-        skb->priority = 0;
+    netbuf = brcmf_netbuf_allocate(len);
+    if (netbuf) {
+        brcmf_netbuf_grow_tail(netbuf, len);
+        netbuf->priority = 0;
     }
 
-    return skb;
+    return netbuf;
 }
-EXPORT_SYMBOL(brcmu_pkt_buf_get_skb);
+EXPORT_SYMBOL(brcmu_pkt_buf_get_netbuf);
 
 /* Free the driver packet. Free the tag if present */
-void brcmu_pkt_buf_free_skb(struct sk_buff* skb) {
-    if (!skb) {
+void brcmu_pkt_buf_free_netbuf(struct brcmf_netbuf* netbuf) {
+    if (!netbuf) {
         return;
     }
 
-    WARN_ON(skb->next);
-    dev_kfree_skb_any(skb);
+    WARN_ON(netbuf->next);
+    brcmf_netbuf_free(netbuf);
 }
-EXPORT_SYMBOL(brcmu_pkt_buf_free_skb);
+EXPORT_SYMBOL(brcmu_pkt_buf_free_netbuf);
 
 /*
  * osl multiple-precedence packet queue
  * hi_prec is always >= the number of the highest non-empty precedence
  */
-struct sk_buff* brcmu_pktq_penq(struct pktq* pq, int prec, struct sk_buff* p) {
-    struct sk_buff_head* q;
+struct brcmf_netbuf* brcmu_pktq_penq(struct pktq* pq, int prec, struct brcmf_netbuf* p) {
+    struct brcmf_netbuf_list* q;
 
     if (pktq_full(pq) || pktq_pfull(pq, prec)) {
         return NULL;
     }
 
-    q = &pq->q[prec].skblist;
-    skb_queue_tail(q, p);
+    q = &pq->q[prec].netbuf_list;
+    brcmf_netbuf_list_add_tail(q, p);
     pq->len++;
 
     if (pq->hi_prec < prec) {
@@ -76,15 +78,15 @@ struct sk_buff* brcmu_pktq_penq(struct pktq* pq, int prec, struct sk_buff* p) {
 }
 EXPORT_SYMBOL(brcmu_pktq_penq);
 
-struct sk_buff* brcmu_pktq_penq_head(struct pktq* pq, int prec, struct sk_buff* p) {
-    struct sk_buff_head* q;
+struct brcmf_netbuf* brcmu_pktq_penq_head(struct pktq* pq, int prec, struct brcmf_netbuf* p) {
+    struct brcmf_netbuf_list* q;
 
     if (pktq_full(pq) || pktq_pfull(pq, prec)) {
         return NULL;
     }
 
-    q = &pq->q[prec].skblist;
-    skb_queue_head(q, p);
+    q = &pq->q[prec].netbuf_list;
+    brcmf_netbuf_list_add_head(q, p);
     pq->len++;
 
     if (pq->hi_prec < prec) {
@@ -95,12 +97,12 @@ struct sk_buff* brcmu_pktq_penq_head(struct pktq* pq, int prec, struct sk_buff* 
 }
 EXPORT_SYMBOL(brcmu_pktq_penq_head);
 
-struct sk_buff* brcmu_pktq_pdeq(struct pktq* pq, int prec) {
-    struct sk_buff_head* q;
-    struct sk_buff* p;
+struct brcmf_netbuf* brcmu_pktq_pdeq(struct pktq* pq, int prec) {
+    struct brcmf_netbuf_list* q;
+    struct brcmf_netbuf* p;
 
-    q = &pq->q[prec].skblist;
-    p = skb_dequeue(q);
+    q = &pq->q[prec].netbuf_list;
+    p = brcmf_netbuf_list_remove_head(q);
     if (p == NULL) {
         return NULL;
     }
@@ -116,16 +118,17 @@ EXPORT_SYMBOL(brcmu_pktq_pdeq);
  * any packet on the queue is returned. In that case it is no different
  * from brcmu_pktq_pdeq() above.
  */
-struct sk_buff* brcmu_pktq_pdeq_match(struct pktq* pq, int prec,
-                                      bool (*match_fn)(struct sk_buff* skb, void* arg), void* arg) {
-    struct sk_buff_head* q;
-    struct sk_buff* p;
-    struct sk_buff* next;
+struct brcmf_netbuf* brcmu_pktq_pdeq_match(struct pktq* pq, int prec,
+                                           bool (*match_fn)(struct brcmf_netbuf* netbuf, void* arg),
+                                           void* arg) {
+    struct brcmf_netbuf_list* q;
+    struct brcmf_netbuf* p;
+    struct brcmf_netbuf* next;
 
-    q = &pq->q[prec].skblist;
-    skb_queue_walk_safe(q, p, next) {
+    q = &pq->q[prec].netbuf_list;
+    brcmf_netbuf_list_for_every_safe(q, p, next) {
         if (match_fn == NULL || match_fn(p, arg)) {
-            skb_unlink(p, q);
+            brcmf_netbuf_list_remove(p, q);
             pq->len--;
             return p;
         }
@@ -134,12 +137,12 @@ struct sk_buff* brcmu_pktq_pdeq_match(struct pktq* pq, int prec,
 }
 EXPORT_SYMBOL(brcmu_pktq_pdeq_match);
 
-struct sk_buff* brcmu_pktq_pdeq_tail(struct pktq* pq, int prec) {
-    struct sk_buff_head* q;
-    struct sk_buff* p;
+struct brcmf_netbuf* brcmu_pktq_pdeq_tail(struct pktq* pq, int prec) {
+    struct brcmf_netbuf_list* q;
+    struct brcmf_netbuf* p;
 
-    q = &pq->q[prec].skblist;
-    p = skb_dequeue_tail(q);
+    q = &pq->q[prec].netbuf_list;
+    p = brcmf_netbuf_remove_tail(q);
     if (p == NULL) {
         return NULL;
     }
@@ -149,24 +152,25 @@ struct sk_buff* brcmu_pktq_pdeq_tail(struct pktq* pq, int prec) {
 }
 EXPORT_SYMBOL(brcmu_pktq_pdeq_tail);
 
-void brcmu_pktq_pflush(struct pktq* pq, int prec, bool dir, bool (*fn)(struct sk_buff*, void*),
+void brcmu_pktq_pflush(struct pktq* pq, int prec, bool dir, bool (*fn)(struct brcmf_netbuf*, void*),
                        void* arg) {
-    struct sk_buff_head* q;
-    struct sk_buff* p;
-    struct sk_buff* next;
+    struct brcmf_netbuf_list* q;
+    struct brcmf_netbuf* p;
+    struct brcmf_netbuf* next;
 
-    q = &pq->q[prec].skblist;
-    skb_queue_walk_safe(q, p, next) {
+    q = &pq->q[prec].netbuf_list;
+    brcmf_netbuf_list_for_every_safe(q, p, next) {
         if (fn == NULL || (*fn)(p, arg)) {
-            skb_unlink(p, q);
-            brcmu_pkt_buf_free_skb(p);
+            brcmf_netbuf_list_remove(p, q);
+            brcmu_pkt_buf_free_netbuf(p);
             pq->len--;
         }
     }
 }
 EXPORT_SYMBOL(brcmu_pktq_pflush);
 
-void brcmu_pktq_flush(struct pktq* pq, bool dir, bool (*fn)(struct sk_buff*, void*), void* arg) {
+void brcmu_pktq_flush(struct pktq* pq, bool dir, bool (*fn)(struct brcmf_netbuf*, void*),
+                      void* arg) {
     int prec;
     for (prec = 0; prec < pq->num_prec; prec++) {
         brcmu_pktq_pflush(pq, prec, dir, fn, arg);
@@ -186,12 +190,12 @@ void brcmu_pktq_init(struct pktq* pq, int num_prec, int max_len) {
 
     for (prec = 0; prec < num_prec; prec++) {
         pq->q[prec].max = pq->max;
-        skb_queue_head_init(&pq->q[prec].skblist);
+        brcmf_netbuf_list_init(&pq->q[prec].netbuf_list);
     }
 }
 EXPORT_SYMBOL(brcmu_pktq_init);
 
-struct sk_buff* brcmu_pktq_peek_tail(struct pktq* pq, int* prec_out) {
+struct brcmf_netbuf* brcmu_pktq_peek_tail(struct pktq* pq, int* prec_out) {
     int prec;
 
     if (pq->len == 0) {
@@ -199,7 +203,7 @@ struct sk_buff* brcmu_pktq_peek_tail(struct pktq* pq, int* prec_out) {
     }
 
     for (prec = 0; prec < pq->hi_prec; prec++)
-        if (!skb_queue_empty(&pq->q[prec].skblist)) {
+        if (!brcmf_netbuf_list_is_empty(&pq->q[prec].netbuf_list)) {
             break;
         }
 
@@ -207,7 +211,7 @@ struct sk_buff* brcmu_pktq_peek_tail(struct pktq* pq, int* prec_out) {
         *prec_out = prec;
     }
 
-    return skb_peek_tail(&pq->q[prec].skblist);
+    return brcmf_netbuf_list_peek_tail(&pq->q[prec].netbuf_list);
 }
 EXPORT_SYMBOL(brcmu_pktq_peek_tail);
 
@@ -219,7 +223,7 @@ int brcmu_pktq_mlen(struct pktq* pq, uint prec_bmp) {
 
     for (prec = 0; prec <= pq->hi_prec; prec++)
         if (prec_bmp & (1 << prec)) {
-            len += pq->q[prec].skblist.qlen;
+            len += pq->q[prec].netbuf_list.qlen;
         }
 
     return len;
@@ -227,26 +231,26 @@ int brcmu_pktq_mlen(struct pktq* pq, uint prec_bmp) {
 EXPORT_SYMBOL(brcmu_pktq_mlen);
 
 /* Priority dequeue from a specific set of precedences */
-struct sk_buff* brcmu_pktq_mdeq(struct pktq* pq, uint prec_bmp, int* prec_out) {
-    struct sk_buff_head* q;
-    struct sk_buff* p;
+struct brcmf_netbuf* brcmu_pktq_mdeq(struct pktq* pq, uint prec_bmp, int* prec_out) {
+    struct brcmf_netbuf_list* q;
+    struct brcmf_netbuf* p;
     int prec;
 
     if (pq->len == 0) {
         return NULL;
     }
 
-    while ((prec = pq->hi_prec) > 0 && skb_queue_empty(&pq->q[prec].skblist)) {
+    while ((prec = pq->hi_prec) > 0 && brcmf_netbuf_list_is_empty(&pq->q[prec].netbuf_list)) {
         pq->hi_prec--;
     }
 
-    while ((prec_bmp & (1 << prec)) == 0 || skb_queue_empty(&pq->q[prec].skblist))
+    while ((prec_bmp & (1 << prec)) == 0 || brcmf_netbuf_list_is_empty(&pq->q[prec].netbuf_list))
         if (prec-- == 0) {
             return NULL;
         }
 
-    q = &pq->q[prec].skblist;
-    p = skb_dequeue(q);
+    q = &pq->q[prec].netbuf_list;
+    p = brcmf_netbuf_list_remove_head(q);
     if (p == NULL) {
         return NULL;
     }
@@ -301,15 +305,15 @@ EXPORT_SYMBOL(brcmu_dotrev_str);
 
 #if defined(DEBUG)
 /* pretty hex print a pkt buffer chain */
-void brcmu_prpkt(const char* msg, struct sk_buff* p0) {
-    struct sk_buff* p;
+void brcmu_prpkt(const char* msg, struct brcmf_netbuf* p0) {
+    struct brcmf_netbuf* p;
 
     if (msg && (msg[0] != '\0')) {
         zxlogf(INFO, "brcmfmac: %s:\n", msg);
     }
 
     for (p = p0; p; p = p->next) {
-        print_hex_dump_bytes("", DUMP_PREFIX_OFFSET, p->data, p->len);
+        brcmf_hexdump(p->data, p->len + DUMP_PREFIX_OFFSET);
     }
 }
 EXPORT_SYMBOL(brcmu_prpkt);
@@ -327,7 +331,7 @@ void brcmu_dbg_hex_dump(const void* data, size_t size, const char* fmt, ...) {
 
     va_end(args);
 
-    print_hex_dump_bytes("", DUMP_PREFIX_OFFSET, data, size);
+    brcmf_hexdump(data, size);
 }
 EXPORT_SYMBOL(brcmu_dbg_hex_dump);
 

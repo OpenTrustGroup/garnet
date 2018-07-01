@@ -6,7 +6,9 @@ package daemon
 
 import (
 	"fmt"
+	"io/ioutil"
 	"math/rand"
+	"net/http"
 	"os"
 	"sync"
 	"testing"
@@ -14,6 +16,8 @@ import (
 
 	"amber/pkg"
 	"amber/source"
+
+	"fidl/fuchsia/amber"
 )
 
 var letters = []rune("1234567890abcdef")
@@ -30,12 +34,29 @@ func randSeq(n int) string {
 
 type testSrc struct {
 	mu         sync.Mutex
+	id         string
 	UpdateReqs map[string]int
 	getReqs    map[pkg.Package]*struct{}
 	interval   time.Duration
 	pkgs       map[string]struct{}
 	replyDelay time.Duration
 	limit      uint64
+}
+
+func (t *testSrc) GetId() string {
+	return t.id
+}
+
+func (t *testSrc) GetConfig() *amber.SourceConfig {
+	return nil
+}
+
+func (t *testSrc) GetHttpClient() *http.Client {
+	return nil
+}
+
+func (t *testSrc) Login() (*amber.DeviceCode, error) {
+	return nil, fmt.Errorf("Login() is not implemented")
 }
 
 func (t *testSrc) AvailableUpdates(pkgs []*pkg.Package) (map[pkg.Package]pkg.Package, error) {
@@ -83,6 +104,14 @@ func (t *testSrc) Equals(o source.Source) bool {
 
 func (t *testSrc) CheckLimit() uint64 {
 	return t.limit
+}
+
+func (t *testSrc) Save() error {
+	return nil
+}
+
+func (t *testSrc) Close() {
+	return
 }
 
 type testTicker struct {
@@ -144,7 +173,17 @@ func TestDaemon(t *testing.T) {
 		src.interval = 1 * time.Nanosecond
 		sources = append(sources, src)
 	}
-	d := NewDaemon(pkgSet, processPackage, sources)
+
+	store, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(store)
+
+	d, err := NewDaemon(store, pkgSet, processPackage, sources)
+	if err != nil {
+		t.Error(err)
+	}
 
 	tickerGroup.Wait()
 	// protect against improper test rewrites
@@ -178,20 +217,25 @@ func TestGetRequest(t *testing.T) {
 	pkgs[emailPkg.Name] = struct{}{}
 	pkgs[videoPkg.Name] = struct{}{}
 	srcRateLimit := time.Millisecond * 1
-	tSrc := testSrc{UpdateReqs: make(map[string]int),
-		getReqs:  make(map[pkg.Package]*struct{}),
-		interval: srcRateLimit,
-		pkgs:     pkgs,
-		limit:    1}
+	tSrc := testSrc{
+		id:         "src",
+		UpdateReqs: make(map[string]int),
+		getReqs:    make(map[pkg.Package]*struct{}),
+		interval:   srcRateLimit,
+		pkgs:       pkgs,
+		limit:      1}
 
 	pkgs = make(map[string]struct{})
 	pkgs[videoPkg.Name] = struct{}{}
 	pkgs[srchPkg.Name] = struct{}{}
-	tSrc2 := testSrc{UpdateReqs: make(map[string]int),
-		getReqs:  make(map[pkg.Package]*struct{}),
-		interval: srcRateLimit,
-		pkgs:     pkgs,
-		limit:    1}
+	tSrc2 := testSrc{
+		id:         "src2",
+		UpdateReqs: make(map[string]int),
+		getReqs:    make(map[pkg.Package]*struct{}),
+		interval:   srcRateLimit,
+		pkgs:       pkgs,
+		limit:      1,
+	}
 	sources := []source.Source{&tSrc, &tSrc2}
 
 	tickers := []testTicker{}
@@ -206,7 +250,17 @@ func TestGetRequest(t *testing.T) {
 
 	tickerGroup.Add(1)
 
-	d := NewDaemon(pkg.NewPackageSet(), processPackage, sources)
+	store, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(store)
+
+	d, err := NewDaemon(store, pkg.NewPackageSet(), processPackage, sources)
+	if err != nil {
+		t.Error(err)
+	}
+
 	tickerGroup.Wait()
 
 	pkgSet := pkg.NewPackageSet()
@@ -227,11 +281,14 @@ func TestGetRequest(t *testing.T) {
 
 func TestRateLimit(t *testing.T) {
 	srcRateLimit := 20 * time.Millisecond
-	tSrc := testSrc{UpdateReqs: make(map[string]int),
-		getReqs:  make(map[pkg.Package]*struct{}),
-		interval: srcRateLimit,
-		pkgs:     make(map[string]struct{}),
-		limit:    1}
+	tSrc := testSrc{
+		id:         "src",
+		UpdateReqs: make(map[string]int),
+		getReqs:    make(map[pkg.Package]*struct{}),
+		interval:   srcRateLimit,
+		pkgs:       make(map[string]struct{}),
+		limit:      1,
+	}
 	wrapped := NewSourceKeeper(&tSrc)
 	dummy := []*pkg.Package{&pkg.Package{Name: "None", Version: "aaaaaa"}}
 
@@ -265,20 +322,26 @@ func TestRequestCollapse(t *testing.T) {
 	pkgs[videoPkg.Name] = struct{}{}
 	srcRateLimit := time.Millisecond
 	replyDelay := 20 * time.Millisecond
-	tSrc := testSrc{UpdateReqs: make(map[string]int),
-		getReqs:  make(map[pkg.Package]*struct{}),
-		interval: srcRateLimit,
-		pkgs:     pkgs,
-		limit:    1}
+	tSrc := testSrc{
+		id:         "src",
+		UpdateReqs: make(map[string]int),
+		getReqs:    make(map[pkg.Package]*struct{}),
+		interval:   srcRateLimit,
+		pkgs:       pkgs,
+		limit:      1,
+	}
 
 	pkgs = make(map[string]struct{})
 	pkgs[videoPkg.Name] = struct{}{}
 	pkgs[srchPkg.Name] = struct{}{}
-	tSrc2 := testSrc{UpdateReqs: make(map[string]int),
-		getReqs:  make(map[pkg.Package]*struct{}),
-		interval: srcRateLimit,
-		pkgs:     pkgs,
-		limit:    1}
+	tSrc2 := testSrc{
+		id:         "src2",
+		UpdateReqs: make(map[string]int),
+		getReqs:    make(map[pkg.Package]*struct{}),
+		interval:   srcRateLimit,
+		pkgs:       pkgs,
+		limit:      1,
+	}
 	sources := []source.Source{&tSrc, &tSrc2}
 	testSrcs := []*testSrc{&tSrc, &tSrc2}
 
@@ -299,7 +362,17 @@ func TestRequestCollapse(t *testing.T) {
 		// simultaneously
 		src.replyDelay = replyDelay
 	}
-	d := NewDaemon(pkg.NewPackageSet(), processPackage, sources)
+
+	store, err := ioutil.TempDir("", "")
+	if err != nil {
+		t.Error(err)
+	}
+	defer os.RemoveAll(store)
+
+	d, err := NewDaemon(store, pkg.NewPackageSet(), processPackage, sources)
+	if err != nil {
+		t.Error(err)
+	}
 
 	tickerGroup.Wait()
 
@@ -345,20 +418,26 @@ func createTestSrcs() []*testSrc {
 	pkgs := make(map[string]struct{})
 	pkgs["email"] = struct{}{}
 	pkgs["video"] = struct{}{}
-	tSrc := testSrc{UpdateReqs: make(map[string]int),
-		getReqs:  make(map[pkg.Package]*struct{}),
-		interval: time.Millisecond * 3,
-		pkgs:     pkgs,
-		limit:    1}
+	tSrc := testSrc{
+		id:         "src",
+		UpdateReqs: make(map[string]int),
+		getReqs:    make(map[pkg.Package]*struct{}),
+		interval:   time.Millisecond * 3,
+		pkgs:       pkgs,
+		limit:      1,
+	}
 
 	pkgs = make(map[string]struct{})
 	pkgs["video"] = struct{}{}
 	pkgs["search"] = struct{}{}
-	tSrc2 := testSrc{UpdateReqs: make(map[string]int),
-		getReqs:  make(map[pkg.Package]*struct{}),
-		interval: time.Millisecond * 5,
-		pkgs:     pkgs,
-		limit:    1}
+	tSrc2 := testSrc{
+		id:         "src2",
+		UpdateReqs: make(map[string]int),
+		getReqs:    make(map[pkg.Package]*struct{}),
+		interval:   time.Millisecond * 5,
+		pkgs:       pkgs,
+		limit:      1,
+	}
 	return []*testSrc{&tSrc, &tSrc2}
 }
 

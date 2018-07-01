@@ -37,17 +37,16 @@ bool IsBreakpointInstruction(zx::process& process, uint64_t address) {
   return data == kBreakInstruction;
 }
 
-uint64_t* IPInRegs(zx_thread_state_general_regs* regs) {
-  return &regs->rip;
-}
-uint64_t* SPInRegs(zx_thread_state_general_regs* regs) {
-  return &regs->rsp;
-}
+uint64_t* IPInRegs(zx_thread_state_general_regs* regs) { return &regs->rip; }
+uint64_t* SPInRegs(zx_thread_state_general_regs* regs) { return &regs->rsp; }
 
-::debug_ipc::Arch GetArch() {
-  return ::debug_ipc::Arch::kX64;
-}
+::debug_ipc::Arch GetArch() { return ::debug_ipc::Arch::kX64; }
 
+bool GetRegisterStateFromCPU(const zx::thread&,
+                             std::vector<debug_ipc::Register>*) {
+  // TODO(donosoc): Implement the x64 logic
+  return false;
+}
 
 }  // namespace arch
 }  // namespace debug_agent

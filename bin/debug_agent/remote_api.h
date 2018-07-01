@@ -50,6 +50,9 @@ class RemoteAPI {
   virtual void OnReadMemory(const debug_ipc::ReadMemoryRequest& request,
                             debug_ipc::ReadMemoryReply* reply) = 0;
 
+  virtual void OnRegisters(const debug_ipc::RegistersRequest& request,
+                           debug_ipc::RegistersReply* reply) = 0;
+
   virtual void OnAddOrChangeBreakpoint(
       const debug_ipc::AddOrChangeBreakpointRequest& request,
       debug_ipc::AddOrChangeBreakpointReply* reply) = 0;
@@ -58,9 +61,8 @@ class RemoteAPI {
       const debug_ipc::RemoveBreakpointRequest& request,
       debug_ipc::RemoveBreakpointReply* reply) = 0;
 
-  virtual void OnBacktrace(
-      const debug_ipc::BacktraceRequest& request,
-      debug_ipc::BacktraceReply* reply) = 0;
+  virtual void OnBacktrace(const debug_ipc::BacktraceRequest& request,
+                           debug_ipc::BacktraceReply* reply) = 0;
 
   virtual void OnAddressSpace(const debug_ipc::AddressSpaceRequest& request,
                               debug_ipc::AddressSpaceReply* reply) = 0;

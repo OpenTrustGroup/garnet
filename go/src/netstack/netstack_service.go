@@ -15,7 +15,7 @@ import (
 	"netstack/link/eth"
 	"syscall/zx"
 
-	nsfidl "fidl/netstack"
+	nsfidl "fidl/fuchsia/netstack"
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/network/ipv4"
@@ -252,6 +252,15 @@ func (ni *netstackImpl) BridgeInterfaces(nicids []uint32) (nsfidl.NetErr, error)
 		return nsfidl.NetErr{Status: nsfidl.StatusUnknownError}, nil
 	}
 	return nsfidl.NetErr{Status: nsfidl.StatusOk}, nil
+}
+
+func (ni *netstackImpl) SetFilterStatus(enabled bool) (result nsfidl.NetErr, err error) {
+	ns.filter.Enable(enabled)
+	return nsfidl.NetErr{nsfidl.StatusOk, ""}, nil
+}
+
+func (ni *netstackImpl) GetFilterStatus() (enabled bool, err error) {
+	return ns.filter.IsEnabled(), nil
 }
 
 func (ni *netstackImpl) GetAggregateStats() (stats nsfidl.AggregateStats, err error) {

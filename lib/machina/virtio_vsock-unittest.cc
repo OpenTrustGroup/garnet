@@ -6,7 +6,7 @@
 
 #include "garnet/lib/machina/phys_mem_fake.h"
 #include "garnet/lib/machina/virtio_queue_fake.h"
-#include "gtest/gtest.h"
+#include "lib/gtest/test_loop_fixture.h"
 
 namespace machina {
 namespace {
@@ -60,11 +60,11 @@ struct TestConnection {
   }
 };
 
-class VirtioVsockTest : public testing::Test,
+class VirtioVsockTest : public ::gtest::TestLoopFixture,
                         public fuchsia::guest::SocketConnector {
  public:
   VirtioVsockTest()
-      : vsock_(nullptr, phys_mem_, loop_.async()),
+      : vsock_(nullptr, phys_mem_, dispatcher()),
         rx_queue_(vsock_.rx_queue()),
         tx_queue_(vsock_.tx_queue()) {}
 
@@ -76,12 +76,11 @@ class VirtioVsockTest : public testing::Test,
     endpoint_->SetContextId(kVirtioVsockGuestCid,
                             connector_binding_.NewBinding(),
                             acceptor_.NewRequest());
-    loop_.RunUntilIdle();
+    RunLoopUntilIdle();
   }
 
  protected:
   PhysMemFake phys_mem_;
-  async::Loop loop_{&kAsyncLoopConfigMakeDefault};
   VirtioVsock vsock_;
   VirtioQueueFake rx_queue_;
   VirtioQueueFake tx_queue_;
@@ -122,7 +121,7 @@ class VirtioVsockTest : public testing::Test,
   }
 
   RxBuffer* DoReceive() {
-    loop_.RunUntilIdle();
+    RunLoopUntilIdle();
     if (!rx_queue_.HasUsed()) {
       return nullptr;
     }
@@ -147,7 +146,7 @@ class VirtioVsockTest : public testing::Test,
                   .Build(),
               ZX_OK);
 
-    loop_.RunUntilIdle();
+    RunLoopUntilIdle();
   }
 
   void HostConnectOnPortRequest(
@@ -228,7 +227,7 @@ class VirtioVsockTest : public testing::Test,
     memcpy(tx_buffer + sizeof(virtio_vsock_hdr_t), expected_data, kDataSize);
     HostQueueWriteOnPort(host_port, tx_buffer, sizeof(tx_buffer));
 
-    loop_.RunUntilIdle();
+    RunLoopUntilIdle();
 
     uint8_t actual_data[kDataSize];
     size_t actual;
@@ -242,7 +241,7 @@ class VirtioVsockTest : public testing::Test,
     TestConnection connection;
     HostConnectOnPortRequest(host_port, connection.callback());
     HostConnectOnPortResponse(host_port);
-    loop_.RunUntilIdle();
+    RunLoopUntilIdle();
     ASSERT_EQ(1u, connection.count);
     ASSERT_EQ(ZX_OK, connection.status);
     ASSERT_TRUE(connection.socket.is_valid());
@@ -259,7 +258,7 @@ class VirtioVsockTest : public testing::Test,
   void GuestConnectOnPortRequest(uint32_t host_port, uint32_t guest_port) {
     DoSend(host_port, guest_port, VIRTIO_VSOCK_TYPE_STREAM,
            VIRTIO_VSOCK_OP_REQUEST);
-    loop_.RunUntilIdle();
+    RunLoopUntilIdle();
   }
 
   void GuestConnectInvokeCallbacks(zx_status_t status = ZX_OK) {
@@ -274,7 +273,7 @@ class VirtioVsockTest : public testing::Test,
       it->callback(status, std::move(h1));
       connections_established_.emplace_back(
           ConnectionRequest{it->src_port, it->cid, it->port, nullptr});
-      loop_.RunUntilIdle();
+      RunLoopUntilIdle();
     }
   }
 
@@ -331,7 +330,7 @@ TEST_F(VirtioVsockTest, ConnectMultipleTimesSamePort) {
   TestConnection connection;
   acceptor_->Accept(fuchsia::guest::kHostCid, kVirtioVsockHostPort,
                     kVirtioVsockGuestPort, connection.callback());
-  loop_.RunUntilIdle();
+  RunLoopUntilIdle();
   ASSERT_EQ(1u, connection.count);
   ASSERT_EQ(ZX_ERR_ALREADY_BOUND, connection.status);
   ASSERT_FALSE(connection.socket.is_valid());
@@ -344,7 +343,7 @@ TEST_F(VirtioVsockTest, ConnectRefused) {
   // Test connection reset.
   DoSend(kVirtioVsockHostPort, kVirtioVsockGuestPort, VIRTIO_VSOCK_TYPE_STREAM,
          VIRTIO_VSOCK_OP_RST);
-  loop_.RunUntilIdle();
+  RunLoopUntilIdle();
   ASSERT_EQ(1u, connection.count);
   ASSERT_EQ(ZX_ERR_CONNECTION_REFUSED, connection.status);
   ASSERT_FALSE(connection.socket.is_valid());
@@ -402,7 +401,7 @@ TEST_F(VirtioVsockTest, Reset) {
   HostConnectOnPortRequest(kVirtioVsockHostPort, connection.callback());
   HostConnectOnPortResponse(kVirtioVsockHostPort);
   connection.socket.reset();
-  loop_.RunUntilIdle();
+  RunLoopUntilIdle();
   HostShutdownOnPort(kVirtioVsockHostPort, VIRTIO_VSOCK_FLAG_SHUTDOWN_BOTH);
 }
 
@@ -534,7 +533,7 @@ TEST_F(VirtioVsockTest, WriteMultiple) {
                        sizeof(p1));
   HostQueueWriteOnPort(kVirtioVsockHostPort, reinterpret_cast<uint8_t*>(&p2),
                        sizeof(p2));
-  loop_.RunUntilIdle();
+  RunLoopUntilIdle();
 
   size_t actual_len = 0;
   uint8_t actual_data[3] = {};
@@ -557,7 +556,7 @@ TEST_F(VirtioVsockTest, WriteUpdateCredit) {
                        sizeof(p1));
   HostQueueWriteOnPort(kVirtioVsockHostPort, reinterpret_cast<uint8_t*>(&p2),
                        sizeof(p2));
-  loop_.RunUntilIdle();
+  RunLoopUntilIdle();
 
   // Request credit update, expect 0 fwd_cnt bytes as the data is still in the
   // socket.
@@ -584,7 +583,12 @@ TEST_F(VirtioVsockTest, WriteUpdateCredit) {
   EXPECT_EQ(header->fwd_cnt, 2u);
 }
 
-TEST_F(VirtioVsockTest, WriteSocketFullDropBytes) {
+TEST_F(VirtioVsockTest, WriteSocketFullReset) {
+  // If the guest writes enough bytes to overflow our socket buffer then we
+  // must reset the connection as we would lose data.
+  //
+  // 5.7.6.3.1: VIRTIO_VSOCK_OP_RW data packets MUST only be transmitted when
+  // the peer has sufficient free buffer space for the payload.
   TestConnection connection;
   HostConnectOnPortRequest(kVirtioVsockHostPort, connection.callback());
   HostConnectOnPortResponse(kVirtioVsockHostPort);
@@ -598,26 +602,50 @@ TEST_F(VirtioVsockTest, WriteSocketFullDropBytes) {
   memset(buf.get(), 'a', buf_size);
 
   // Queue one descriptor that will completely fill the socket (and then some),
-  // and a second descriptor with a single byte. We'll verify everything that
-  // comes after the socket is full gets dropped.
-  SingleBytePacket p1('z');
+  // We'll verify that this resets the connection.
   HostQueueWriteOnPort(kVirtioVsockHostPort, buf.get(), buf_size);
-  HostQueueWriteOnPort(kVirtioVsockHostPort, reinterpret_cast<uint8_t*>(&p1),
-                       sizeof(p1));
-  loop_.RunUntilIdle();
+  RunLoopUntilIdle();
 
+  RxBuffer* reset = DoReceive();
+  ASSERT_NE(nullptr, reset);
+  VerifyHeader(&reset->header, kVirtioVsockHostPort, kVirtioVsockGuestPort, 0,
+               VIRTIO_VSOCK_OP_RST, 0);
+}
+
+TEST_F(VirtioVsockTest, SendCreditUpdateWhenSocketIsDrained) {
+  TestConnection connection;
+  HostConnectOnPortRequest(kVirtioVsockHostPort, connection.callback());
+  HostConnectOnPortResponse(kVirtioVsockHostPort);
+
+  // Fill socket buffer completely.
+  size_t socket_size = 0;
+  ASSERT_EQ(ZX_OK,
+            connection.socket.get_property(ZX_PROP_SOCKET_TX_BUF_MAX,
+                                           &socket_size, sizeof(socket_size)));
+  size_t buf_size = socket_size + sizeof(virtio_vsock_hdr_t);
+  auto buf = std::make_unique<uint8_t[]>(buf_size);
+  memset(buf.get(), 'a', buf_size);
+  HostQueueWriteOnPort(kVirtioVsockHostPort, buf.get(), buf_size);
+  RunLoopUntilIdle();
+
+  // No buffers should be available to read.
+  ASSERT_EQ(nullptr, DoReceive());
+
+  // Read a single byte from socket to free up space in the socket buffer and
+  // make the socket writable again.
   memset(buf.get(), 0, buf_size);
+  uint8_t byte;
   size_t actual_len = 0;
-  ASSERT_EQ(connection.socket.read(0, buf.get(), buf_size, &actual_len), ZX_OK);
-  ASSERT_EQ(socket_size, actual_len);
-  for (size_t i = 0; i < actual_len; ++i) {
-    ASSERT_EQ('a', buf[i]);
-  }
+  ASSERT_EQ(connection.socket.read(0, &byte, 1, &actual_len), ZX_OK);
+  ASSERT_EQ(1u, actual_len);
+  ASSERT_EQ('a', byte);
 
-  // Verify nothing more gets written now that the socket is wriable again.
-  loop_.RunUntilIdle();
-  ASSERT_EQ(ZX_ERR_SHOULD_WAIT,
-            connection.socket.read(0, buf.get(), buf_size, &actual_len));
+  // Verify we get a credit update now that the socket is wirtable.
+  RunLoopUntilIdle();
+  RxBuffer* credit_update = DoReceive();
+  ASSERT_NE(credit_update, nullptr);
+  ASSERT_EQ(socket_size, credit_update->header.buf_alloc);
+  ASSERT_EQ(actual_len, credit_update->header.fwd_cnt);
 }
 
 TEST_F(VirtioVsockTest, MultipleConnections) {

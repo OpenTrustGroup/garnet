@@ -12,17 +12,19 @@
 
 #include "helpers.h"
 
-using bluetooth::ErrorCode;
-using bluetooth::Status;
-using GattErrorCode = bluetooth_gatt::ErrorCode;
+#include "lib/fxl/functional/make_copyable.h"
 
-using bluetooth_gatt::Characteristic;
-using bluetooth_gatt::Descriptor;
-using bluetooth_gatt::LocalService;
-using bluetooth_gatt::LocalServiceDelegate;
-using bluetooth_gatt::LocalServiceDelegatePtr;
-using bluetooth_gatt::SecurityRequirementsPtr;
-using bluetooth_gatt::ServiceInfo;
+using fuchsia::bluetooth::ErrorCode;
+using fuchsia::bluetooth::Status;
+using GattErrorCode = fuchsia::bluetooth::gatt::ErrorCode;
+
+using fuchsia::bluetooth::gatt::Characteristic;
+using fuchsia::bluetooth::gatt::Descriptor;
+using fuchsia::bluetooth::gatt::LocalService;
+using fuchsia::bluetooth::gatt::LocalServiceDelegate;
+using fuchsia::bluetooth::gatt::LocalServiceDelegatePtr;
+using fuchsia::bluetooth::gatt::SecurityRequirementsPtr;
+using fuchsia::bluetooth::gatt::ServiceInfo;
 
 namespace bthost {
 namespace {
@@ -134,7 +136,7 @@ CharacteristicResult NewCharacteristic(const Characteristic& fidl_chrc) {
 // Implements the gatt::LocalService FIDL interface. Instances of this class are
 // only created by a GattServerServer.
 class GattServerServer::LocalServiceImpl
-    : public GattServerBase<::bluetooth_gatt::LocalService> {
+    : public GattServerBase<fuchsia::bluetooth::gatt::LocalService> {
  public:
   LocalServiceImpl(GattServerServer* owner,
                    uint64_t id,
@@ -161,7 +163,7 @@ class GattServerServer::LocalServiceImpl
   LocalServiceDelegate* delegate() { return delegate_.get(); }
 
  private:
-  // ::bluetooth_gatt::Service overrides:
+  // fuchsia::bluetooth::gatt::Service overrides:
   void RemoveService() override {
     CleanUp();
     owner_->RemoveService(id_);
@@ -195,7 +197,7 @@ class GattServerServer::LocalServiceImpl
 
 GattServerServer::GattServerServer(
     fbl::RefPtr<btlib::gatt::GATT> gatt,
-    fidl::InterfaceRequest<bluetooth_gatt::Server> request)
+    fidl::InterfaceRequest<fuchsia::bluetooth::gatt::Server> request)
     : GattServerBase(gatt, this, std::move(request)), weak_ptr_factory_(this) {}
 
 GattServerServer::~GattServerServer() {
@@ -259,18 +261,18 @@ void GattServerServer::PublishService(
 
   // Set up event handlers.
   auto read_handler = [self](auto svc_id, auto id, auto offset,
-                             const auto& responder) {
+                             auto responder) mutable {
     if (self) {
-      self->OnReadRequest(svc_id, id, offset, responder);
+      self->OnReadRequest(svc_id, id, offset, std::move(responder));
     } else {
       responder(::btlib::att::ErrorCode::kUnlikelyError,
                 ::btlib::common::BufferView());
     }
   };
   auto write_handler = [self](auto svc_id, auto id, auto offset,
-                              const auto& value, const auto& responder) {
+                              const auto& value, auto responder) mutable {
     if (self) {
-      self->OnWriteRequest(svc_id, id, offset, value, responder);
+      self->OnWriteRequest(svc_id, id, offset, value, std::move(responder));
     } else {
       responder(::btlib::att::ErrorCode::kUnlikelyError);
     }
@@ -327,7 +329,7 @@ void GattServerServer::OnReadRequest(
     ::btlib::gatt::IdType service_id,
     ::btlib::gatt::IdType id,
     uint16_t offset,
-    const ::btlib::gatt::ReadResponder& responder) {
+    ::btlib::gatt::ReadResponder responder) {
   auto iter = services_.find(service_id);
   if (iter == services_.end()) {
     responder(::btlib::att::ErrorCode::kUnlikelyError,
@@ -335,14 +337,14 @@ void GattServerServer::OnReadRequest(
     return;
   }
 
-  auto cb = [responder](fidl::VectorPtr<uint8_t> value, auto error_code) {
+  auto cb = [responder = std::move(responder)](fidl::VectorPtr<uint8_t> value, auto error_code) {
     responder(GattErrorCodeFromFidl(error_code, true /* is_read */),
               ::btlib::common::BufferView(value->data(), value->size()));
   };
 
   auto* delegate = iter->second->delegate();
   FXL_DCHECK(delegate);
-  delegate->OnReadValue(id, offset, cb);
+  delegate->OnReadValue(id, offset, fxl::MakeCopyable(std::move(cb)));
 }
 
 void GattServerServer::OnWriteRequest(
@@ -350,7 +352,7 @@ void GattServerServer::OnWriteRequest(
     ::btlib::gatt::IdType id,
     uint16_t offset,
     const ::btlib::common::ByteBuffer& value,
-    const ::btlib::gatt::WriteResponder& responder) {
+    ::btlib::gatt::WriteResponder responder) {
   auto iter = services_.find(service_id);
   if (iter == services_.end()) {
     responder(::btlib::att::ErrorCode::kUnlikelyError);
@@ -366,11 +368,12 @@ void GattServerServer::OnWriteRequest(
     return;
   }
 
-  auto cb = [responder](auto error_code) {
+  auto cb = [responder = std::move(responder)](auto error_code) {
     responder(GattErrorCodeFromFidl(error_code, false /* is_read */));
   };
 
-  delegate->OnWriteValue(id, offset, std::move(fidl_value), cb);
+  delegate->OnWriteValue(id, offset, std::move(fidl_value),
+      fxl::MakeCopyable(std::move(cb)));
 }
 
 void GattServerServer::OnCharacteristicConfig(::btlib::gatt::IdType service_id,

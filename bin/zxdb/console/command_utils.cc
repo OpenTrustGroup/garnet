@@ -18,37 +18,11 @@
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/console_context.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
+#include "garnet/bin/zxdb/console/string_util.h"
 #include "garnet/public/lib/fxl/logging.h"
 #include "garnet/public/lib/fxl/strings/string_printf.h"
 
 namespace zxdb {
-
-namespace {
-
-// Appends the given string to the output, padding with spaces to the width
-// as necessary.
-void AppendPadded(const std::string& str, int width, Align align, Syntax syntax,
-                  bool is_last_col, OutputBuffer* out) {
-  std::string text;
-
-  int pad = std::max(0, width - static_cast<int>(str.size()));
-  if (align == Align::kRight)
-    text.append(pad, ' ');
-
-  text.append(str);
-
-  // Padding on the right. Don't add for the last col.
-  if (!is_last_col && align == Align::kLeft)
-    text.append(pad, ' ');
-
-  // Separator after columns for all but the last.
-  if (!is_last_col)
-    text.push_back(' ');
-
-  out->Append(syntax, std::move(text));
-}
-
-}  // namespace
 
 Err AssertRunningTarget(ConsoleContext* context, const char* command_name,
                         Target* target) {
@@ -60,6 +34,29 @@ Err AssertRunningTarget(ConsoleContext* context, const char* command_name,
       fxl::StringPrintf("%s requires a running process but process %d is %s.",
                         command_name, context->IdForTarget(target),
                         TargetStateToString(state).c_str()));
+}
+
+Err AssertStoppedThreadCommand(ConsoleContext* context, const Command& cmd,
+                               const char* command_name) {
+  Err err = cmd.ValidateNouns({Noun::kProcess, Noun::kThread});
+  if (err.has_error())
+    return err;
+
+  if (!cmd.thread()) {
+    return Err(fxl::StringPrintf(
+        "\"%s\" requires a thread but there is no current thread.",
+        command_name));
+  }
+  if (cmd.thread()->GetState() != debug_ipc::ThreadRecord::State::kBlocked &&
+      cmd.thread()->GetState() != debug_ipc::ThreadRecord::State::kSuspended) {
+    return Err(fxl::StringPrintf(
+        "\"%s\" requires a suspended thread but thread %d is %s.\n"
+        "To view and sync thread state with the remote system, type "
+        "\"thread\".",
+        command_name, context->IdForThread(cmd.thread()),
+        ThreadStateToString(cmd.thread()->GetState()).c_str()));
+  }
+  return Err();
 }
 
 Err StringToUint64(const std::string& s, uint64_t* out) {
@@ -152,38 +149,36 @@ Err ParseHostPort(const std::string& input, std::string* out_host,
 }
 
 std::string TargetStateToString(Target::State state) {
-  struct Mapping {
-    Target::State state;
-    const char* string;
-  };
-  static const Mapping mappings[] = {{Target::State::kNone, "Not running"},
-                                     {Target::State::kStarting, "Starting"},
-                                     {Target::State::kRunning, "Running"}};
-
-  for (const Mapping& mapping : mappings) {
-    if (mapping.state == state)
-      return mapping.string;
+  switch (state) {
+    case Target::State::kNone:
+      return "Not running";
+    case Target::State::kStarting:
+      return "Starting";
+    case Target::State::kAttaching:
+      return "Attaching";
+    case Target::State::kRunning:
+      return "Running";
   }
   FXL_NOTREACHED();
   return std::string();
 }
 
 std::string ThreadStateToString(debug_ipc::ThreadRecord::State state) {
-  struct Mapping {
-    debug_ipc::ThreadRecord::State state;
-    const char* string;
-  };
-  static const Mapping mappings[] = {
-      {debug_ipc::ThreadRecord::State::kNew, "New"},
-      {debug_ipc::ThreadRecord::State::kRunning, "Running"},
-      {debug_ipc::ThreadRecord::State::kSuspended, "Suspended"},
-      {debug_ipc::ThreadRecord::State::kBlocked, "Blocked"},
-      {debug_ipc::ThreadRecord::State::kDying, "Dying"},
-      {debug_ipc::ThreadRecord::State::kDead, "Dead"}};
-
-  for (const Mapping& mapping : mappings) {
-    if (mapping.state == state)
-      return mapping.string;
+  switch (state) {
+    case debug_ipc::ThreadRecord::State::kNew:
+      return "New";
+    case debug_ipc::ThreadRecord::State::kRunning:
+      return "Running";
+    case debug_ipc::ThreadRecord::State::kSuspended:
+      return "Suspended";
+    case debug_ipc::ThreadRecord::State::kBlocked:
+      return "Blocked";
+    case debug_ipc::ThreadRecord::State::kDying:
+      return "Dying";
+    case debug_ipc::ThreadRecord::State::kDead:
+      return "Dead";
+    case debug_ipc::ThreadRecord::State::kLast:
+      break;  // Fall through to assertion, this value shouldn't be used.
   }
   FXL_NOTREACHED();
   return std::string();
@@ -196,11 +191,11 @@ std::string BreakpointScopeToString(const ConsoleContext* context,
       return "Global";
     case BreakpointSettings::Scope::kTarget:
       return fxl::StringPrintf("pr %d",
-          context->IdForTarget(settings.scope_target));
+                               context->IdForTarget(settings.scope_target));
     case BreakpointSettings::Scope::kThread:
       return fxl::StringPrintf(
-          "pr %d t %d",
-          context->IdForTarget(settings.scope_thread->GetProcess()->GetTarget()),
+          "pr %d t %d", context->IdForTarget(
+                            settings.scope_thread->GetProcess()->GetTarget()),
           context->IdForThread(settings.scope_thread));
   }
   FXL_NOTREACHED();
@@ -227,17 +222,15 @@ const char* BreakpointEnabledToString(bool enabled) {
 }
 
 std::string ExceptionTypeToString(debug_ipc::NotifyException::Type type) {
-  struct Mapping {
-    debug_ipc::NotifyException::Type type;
-    const char* string;
-  };
-  static const Mapping mappings[] = {
-      {debug_ipc::NotifyException::Type::kGeneral, "General"},
-      {debug_ipc::NotifyException::Type::kHardware, "Hardware"},
-      {debug_ipc::NotifyException::Type::kSoftware, "Software"}};
-  for (const Mapping& mapping : mappings) {
-    if (mapping.type == type)
-      return mapping.string;
+  switch (type) {
+    case debug_ipc::NotifyException::Type::kGeneral:
+      return "General";
+    case debug_ipc::NotifyException::Type::kHardware:
+      return "Hardware";
+    case debug_ipc::NotifyException::Type::kSoftware:
+      return "Software";
+    case debug_ipc::NotifyException::Type::kLast:
+      break;  // Fall through to assertion, this value shouldn't be used.
   }
   FXL_NOTREACHED();
   return std::string();
@@ -290,7 +283,7 @@ std::string DescribeThread(const ConsoleContext* context,
 std::string DescribeFrame(const Frame* frame, int id) {
   // This will need symbols hooked up.
   return fxl::StringPrintf("Frame %d ", id) +
-         DescribeLocation(frame->GetLocation());
+         DescribeLocation(frame->GetLocation(), false);
 }
 
 std::string DescribeBreakpoint(const ConsoleContext* context,
@@ -300,72 +293,49 @@ std::string DescribeBreakpoint(const ConsoleContext* context,
   std::string scope = BreakpointScopeToString(context, settings);
   std::string stop = BreakpointStopToString(settings.stop_mode);
   const char* enabled = BreakpointEnabledToString(settings.enabled);
-  std::string location =
-      fxl::StringPrintf("0x%" PRIx64, settings.location_address);
+  std::string location = DescribeInputLocation(settings.location);
 
-  return fxl::StringPrintf("Breakpoint %d on %s, %s, stop=%s, hit=%d, @ %s",
+  return fxl::StringPrintf("Breakpoint %d on %s, %s, stop=%s, @ %s",
                            context->IdForBreakpoint(breakpoint), scope.c_str(),
-                           enabled, stop.c_str(), breakpoint->GetHitCount(),
-                           location.c_str());
+                           enabled, stop.c_str(), location.c_str());
 }
 
-std::string DescribeLocation(const Location& loc) {
+std::string DescribeInputLocation(const InputLocation& location) {
+  switch (location.type) {
+    case InputLocation::Type::kNone:
+      return "<no location>";
+    case InputLocation::Type::kLine:
+      return DescribeFileLine(location.line);
+    case InputLocation::Type::kSymbol:
+      return location.symbol;
+    case InputLocation::Type::kAddress:
+      return fxl::StringPrintf("0x%" PRIx64, location.address);
+  }
+  FXL_NOTREACHED();
+  return std::string();
+}
+
+std::string DescribeLocation(const Location& loc, bool always_show_address) {
   if (!loc.is_valid())
     return "<invalid address>";
   if (!loc.has_symbols())
     return fxl::StringPrintf("0x%" PRIx64, loc.address());
-  return fxl::StringPrintf("0x%" PRIx64 " @ %s:%d", loc.address(),
-                           loc.file_line().GetFileNamePart().c_str(),
-                           loc.file_line().line());
+
+  std::string result;
+  if (always_show_address)
+    result = fxl::StringPrintf("0x%" PRIx64 ", ", loc.address());
+
+  if (!loc.function().empty())
+    result += loc.function() + "() " + GetBullet() + " ";
+  result += DescribeFileLine(loc.file_line());
+  return result;
 }
 
-void FormatColumns(const std::vector<ColSpec>& spec,
-                   const std::vector<std::vector<std::string>>& rows,
-                   OutputBuffer* out) {
-  std::vector<int> max;  // Max width of each column.
-
-  // Max widths of headings.
-  bool has_head = false;
-  for (const auto& col : spec) {
-    max.push_back(col.head.size());
-    has_head |= !col.head.empty();
-  }
-
-  // Max widths of contents.
-  for (const auto& row : rows) {
-    FXL_DCHECK(row.size() == max.size()) << "Column spec size doesn't match.";
-    for (size_t i = 0; i < row.size(); i++) {
-      // Only count the ones that don't overflow.
-      int cell_size = static_cast<int>(row[i].size());
-      if (spec[i].max_width == 0 || cell_size <= spec[i].max_width)
-        max[i] = std::max(max[i], cell_size);
-    }
-  }
-
-  // Print heading.
-  if (has_head) {
-    for (size_t i = 0; i < max.size(); i++) {
-      const ColSpec& col = spec[i];
-      if (col.pad_left)
-        out->Append(Syntax::kNormal, std::string(col.pad_left, ' '));
-      AppendPadded(col.head, max[i], col.align, Syntax::kHeading,
-                   i == max.size() - 1, out);
-    }
-    out->Append("\n");
-  }
-
-  // Print rows.
-  for (const auto& row : rows) {
-    std::string text;
-    for (size_t i = 0; i < row.size(); i++) {
-      const ColSpec& col = spec[i];
-      if (col.pad_left)
-        out->Append(Syntax::kNormal, std::string(col.pad_left, ' '));
-      AppendPadded(row[i], max[i], col.align, col.syntax, i == max.size() - 1,
-                   out);
-    }
-    out->Append("\n");
-  }
+std::string DescribeFileLine(const FileLine& file_line, bool show_path) {
+  return fxl::StringPrintf("%s:%d",
+                           show_path ? file_line.file().c_str()
+                                     : file_line.GetFileNamePart().c_str(),
+                           file_line.line());
 }
 
 }  // namespace zxdb

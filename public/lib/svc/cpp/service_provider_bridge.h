@@ -7,19 +7,20 @@
 
 #include <fbl/ref_ptr.h>
 #include <fs/synchronous-vfs.h>
+#include <lib/fit/function.h>
 #include <lib/zx/channel.h>
 
-#include <functional>
 #include <string>
 #include <unordered_map>
 #include <utility>
 
-#include <component/cpp/fidl.h>
+#include <fuchsia/sys/cpp/fidl.h>
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
 
-namespace component {
+namespace fuchsia {
+namespace sys {
 
 // ServiceProviderBridge is a bridge between a service provider and a service
 // directory.
@@ -27,31 +28,27 @@ namespace component {
 // The bridge takes a service provider to use as a backend and exposes both the
 // service provider interface and the directory interface, which will make it
 // easier to migrate clients to the directory interface.
-class ServiceProviderBridge : public component::ServiceProvider {
+class ServiceProviderBridge : public ServiceProvider {
  public:
   ServiceProviderBridge();
   ~ServiceProviderBridge() override;
 
-  using ServiceConnector = std::function<void(zx::channel)>;
-
-  template <typename Interface>
-  using InterfaceRequestHandler =
-      std::function<void(fidl::InterfaceRequest<Interface> interface_request)>;
+  using ServiceConnector = fit::function<void(zx::channel)>;
 
   void AddServiceForName(ServiceConnector connector,
                          const std::string& service_name);
 
   template <typename Interface>
-  void AddService(InterfaceRequestHandler<Interface> handler,
+  void AddService(fidl::InterfaceRequestHandler<Interface> handler,
                   const std::string& service_name = Interface::Name_) {
     AddServiceForName(
-        [handler](zx::channel channel) {
+        [handler = std::move(handler)](zx::channel channel) {
           handler(fidl::InterfaceRequest<Interface>(std::move(channel)));
         },
         service_name);
   }
 
-  void set_backend(component::ServiceProviderPtr backend) {
+  void set_backend(ServiceProviderPtr backend) {
     backend_ = std::move(backend);
   }
 
@@ -59,7 +56,7 @@ class ServiceProviderBridge : public component::ServiceProvider {
     backing_dir_ = std::move(backing_dir);
   }
 
-  void AddBinding(fidl::InterfaceRequest<component::ServiceProvider> request);
+  void AddBinding(fidl::InterfaceRequest<ServiceProvider> request);
   bool ServeDirectory(zx::channel channel);
 
   zx::channel OpenAsDirectory();
@@ -83,16 +80,16 @@ class ServiceProviderBridge : public component::ServiceProvider {
     fxl::WeakPtr<ServiceProviderBridge> const bridge_;
   };
 
-  // Overridden from |component::ServiceProvider|:
+  // Overridden from |ServiceProvider|:
   void ConnectToService(fidl::StringPtr service_name,
                         zx::channel channel) override;
 
   fs::SynchronousVfs vfs_;
-  fidl::BindingSet<component::ServiceProvider> bindings_;
+  fidl::BindingSet<ServiceProvider> bindings_;
   fbl::RefPtr<ServiceProviderDir> directory_;
 
   std::map<std::string, ServiceConnector> name_to_service_connector_;
-  component::ServiceProviderPtr backend_;
+  ServiceProviderPtr backend_;
   zx::channel backing_dir_;
 
   fxl::WeakPtrFactory<ServiceProviderBridge> weak_factory_;
@@ -100,6 +97,7 @@ class ServiceProviderBridge : public component::ServiceProvider {
   FXL_DISALLOW_COPY_AND_ASSIGN(ServiceProviderBridge);
 };
 
-}  // namespace component
+}  // namespace sys
+}  // namespace fuchsia
 
 #endif  // LIB_SVC_CPP_SERVICE_PROVIDER_BRIDGE_H_

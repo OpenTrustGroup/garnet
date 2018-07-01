@@ -5,20 +5,15 @@
 #ifndef GARNET_BIN_APPMGR_ROOT_LOADER_H_
 #define GARNET_BIN_APPMGR_ROOT_LOADER_H_
 
-#include <functional>
-#include <string>
-#include <tuple>
-#include <vector>
-
+#include <fuchsia/sys/cpp/fidl.h>
 #include <lib/zx/vmo.h>
 
-#include <component/cpp/fidl.h>
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
 
 namespace component {
 
-class RootLoader : public Loader {
+class RootLoader : public fuchsia::sys::Loader {
  public:
   explicit RootLoader();
   ~RootLoader() override;
@@ -26,10 +21,10 @@ class RootLoader : public Loader {
   void LoadComponent(fidl::StringPtr url,
                      LoadComponentCallback callback) override;
 
-  void AddBinding(fidl::InterfaceRequest<Loader> request);
+  void AddBinding(fidl::InterfaceRequest<fuchsia::sys::Loader> request);
 
  private:
-  fidl::BindingSet<Loader> bindings_;
+  fidl::BindingSet<fuchsia::sys::Loader> bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(RootLoader);
 };

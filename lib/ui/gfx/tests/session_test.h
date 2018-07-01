@@ -5,16 +5,18 @@
 #ifndef GARNET_LIB_UI_GFX_TESTS_SESSION_TEST_H_
 #define GARNET_LIB_UI_GFX_TESTS_SESSION_TEST_H_
 
+#include <lib/fit/function.h>
+
 #include "garnet/lib/ui/gfx/engine/engine.h"
 #include "garnet/lib/ui/gfx/engine/session.h"
 #include "garnet/lib/ui/gfx/tests/mocks.h"
-#include "lib/gtest/test_with_loop.h"
+#include "lib/gtest/test_loop_fixture.h"
 
 namespace scenic {
 namespace gfx {
 namespace test {
 
-class SessionTest : public ::gtest::TestWithLoop,
+class SessionTest : public ::gtest::TestLoopFixture,
                     public ErrorReporter,
                     public EventReporter {
  public:

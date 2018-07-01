@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MDNS_SERVICE_MDNS_FIDL_UTIL_H_
+#define GARNET_BIN_MDNS_SERVICE_MDNS_FIDL_UTIL_H_
 
+#include <fuchsia/mdns/cpp/fidl.h>
+
+#include <fuchsia/mdns/cpp/fidl.h>
 #include "garnet/bin/mdns/service/mdns.h"
 #include "garnet/bin/mdns/service/socket_address.h"
-#include <mdns/cpp/fidl.h>
 
 namespace mdns {
 
@@ -15,35 +18,34 @@ class MdnsFidlUtil {
  public:
   static const std::string kFuchsiaServiceName;
 
-  static MdnsServiceInstancePtr CreateServiceInstance(
-      const std::string& service_name,
-      const std::string& instance_name,
-      const SocketAddress& v4_address,
-      const SocketAddress& v6_address,
+  static fuchsia::mdns::MdnsServiceInstancePtr CreateServiceInstance(
+      const std::string& service_name, const std::string& instance_name,
+      const SocketAddress& v4_address, const SocketAddress& v6_address,
       const std::vector<std::string>& text);
 
   static void UpdateServiceInstance(
-      const MdnsServiceInstancePtr& service_instance,
-      const SocketAddress& v4_address,
-      const SocketAddress& v6_address,
+      const fuchsia::mdns::MdnsServiceInstancePtr& service_instance,
+      const SocketAddress& v4_address, const SocketAddress& v6_address,
       const std::vector<std::string>& text);
 
-  static netstack::SocketAddressPtr CreateSocketAddressIPv4(
+  static fuchsia::netstack::SocketAddressPtr CreateSocketAddressIPv4(
       const IpAddress& ip_address);
 
-  static netstack::SocketAddressPtr CreateSocketAddressIPv6(
+  static fuchsia::netstack::SocketAddressPtr CreateSocketAddressIPv6(
       const IpAddress& ip_address);
 
-  static netstack::SocketAddressPtr CreateSocketAddressIPv4(
+  static fuchsia::netstack::SocketAddressPtr CreateSocketAddressIPv4(
       const SocketAddress& socket_address);
 
-  static netstack::SocketAddressPtr CreateSocketAddressIPv6(
+  static fuchsia::netstack::SocketAddressPtr CreateSocketAddressIPv6(
       const SocketAddress& socket_address);
 
-  static IpAddress IpAddressFrom(const netstack::NetAddress* addr);
+  static IpAddress IpAddressFrom(const fuchsia::netstack::NetAddress* addr);
 
   static std::unique_ptr<Mdns::Publication> Convert(
-      const MdnsPublicationPtr& publication_ptr);
+      const fuchsia::mdns::MdnsPublicationPtr& publication_ptr);
 };
 
 }  // namespace mdns
+
+#endif  // GARNET_BIN_MDNS_SERVICE_MDNS_FIDL_UTIL_H_

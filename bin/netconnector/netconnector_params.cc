@@ -4,10 +4,10 @@
 
 #include "garnet/bin/netconnector/netconnector_params.h"
 
+#include <fuchsia/sys/cpp/fidl.h>
 #include <rapidjson/document.h>
 
 #include "garnet/bin/netconnector/ip_address.h"
-#include <component/cpp/fidl.h>
 #include "lib/fxl/files/file.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/split_string.h"
@@ -17,8 +17,7 @@ namespace {
 
 constexpr char kConfigServices[] = "services";
 constexpr char kConfigDevices[] = "devices";
-constexpr char kDefaultConfigFileName[] =
-    "/pkg/data/netconnector.config";
+constexpr char kDefaultConfigFileName[] = "/pkg/data/netconnector.config";
 }  // namespace
 
 NetConnectorParams::NetConnectorParams(const fxl::CommandLine& command_line) {
@@ -65,7 +64,7 @@ void NetConnectorParams::Usage() {
 }
 
 void NetConnectorParams::RegisterService(
-    const std::string& name, component::LaunchInfoPtr launch_info) {
+    const std::string& name, fuchsia::sys::LaunchInfoPtr launch_info) {
   auto result =
       launch_infos_by_service_name_.emplace(name, std::move(launch_info));
 
@@ -113,7 +112,7 @@ bool NetConnectorParams::ParseConfig(const std::string& string) {
         return false;
       }
 
-      auto launch_info = component::LaunchInfo::New();
+      auto launch_info = fuchsia::sys::LaunchInfo::New();
       if (pair.value.IsString()) {
         launch_info->url = pair.value.GetString();
       } else if (pair.value.IsArray()) {

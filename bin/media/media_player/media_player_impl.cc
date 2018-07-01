@@ -7,10 +7,11 @@
 #include <sstream>
 
 #include <fs/pseudo-file.h>
+#include <fuchsia/media/cpp/fidl.h>
+#include <fuchsia/mediaplayer/cpp/fidl.h>
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
-#include <media/cpp/fidl.h>
-#include <media_player/cpp/fidl.h>
+#include <lib/fit/function.h>
 
 #include "garnet/bin/media/media_player/demux/fidl_reader.h"
 #include "garnet/bin/media/media_player/demux/file_reader.h"
@@ -37,26 +38,29 @@ static const char* kDumpEntry = "dump";
 
 // static
 std::unique_ptr<MediaPlayerImpl> MediaPlayerImpl::Create(
-    fidl::InterfaceRequest<MediaPlayer> request,
-    component::ApplicationContext* application_context,
-    fxl::Closure quit_callback) {
-  return std::make_unique<MediaPlayerImpl>(std::move(request),
-                                           application_context, quit_callback);
+    fidl::InterfaceRequest<fuchsia::mediaplayer::MediaPlayer> request,
+    fuchsia::sys::StartupContext* startup_context, fit::closure quit_callback) {
+  return std::make_unique<MediaPlayerImpl>(std::move(request), startup_context,
+                                           std::move(quit_callback));
 }
 
 MediaPlayerImpl::MediaPlayerImpl(
-    fidl::InterfaceRequest<MediaPlayer> request,
-    component::ApplicationContext* application_context,
-    fxl::Closure quit_callback)
+    fidl::InterfaceRequest<fuchsia::mediaplayer::MediaPlayer> request,
+    fuchsia::sys::StartupContext* startup_context, fit::closure quit_callback)
     : async_(async_get_default()),
-      application_context_(application_context),
-      quit_callback_(quit_callback),
+      startup_context_(startup_context),
+      quit_callback_(std::move(quit_callback)),
       player_(async_) {
   FXL_DCHECK(request);
-  FXL_DCHECK(application_context_);
+  FXL_DCHECK(startup_context_);
   FXL_DCHECK(quit_callback_);
 
-  application_context_->outgoing().debug_dir()->AddEntry(
+  demux_factory_ = DemuxFactory::Create(startup_context_);
+  FXL_DCHECK(demux_factory_);
+  decoder_factory_ = DecoderFactory::Create(startup_context_);
+  FXL_DCHECK(decoder_factory_);
+
+  startup_context_->outgoing().debug_dir()->AddEntry(
       kDumpEntry,
       fbl::AdoptRef(new fs::BufferedPseudoFile([this](fbl::String* out) {
         std::ostringstream os;
@@ -99,7 +103,7 @@ MediaPlayerImpl::MediaPlayerImpl(
           os << newl << "transitioning to:   " << ToString(target_state_);
         }
 
-        if (target_position_ != media::kUnspecifiedTime) {
+        if (target_position_ != fuchsia::media::kUnspecifiedTime) {
           os << newl << "pending seek to:    " << AsNs(target_position_);
         }
 
@@ -139,17 +143,17 @@ void MediaPlayerImpl::MaybeCreateRenderer(StreamType::Medium medium) {
   switch (medium) {
     case StreamType::Medium::kAudio:
       if (!audio_renderer_) {
-        auto audio_server =
-            application_context_
-                ->ConnectToEnvironmentService<media::AudioServer>();
-        media::AudioRenderer2Ptr audio_renderer;
-        audio_server->CreateRendererV2(audio_renderer.NewRequest());
+        auto audio = startup_context_
+                         ->ConnectToEnvironmentService<fuchsia::media::Audio>();
+        fuchsia::media::AudioRenderer2Ptr audio_renderer;
+        audio->CreateRendererV2(audio_renderer.NewRequest());
         audio_renderer_ = FidlAudioRenderer::Create(std::move(audio_renderer));
         if (gain_ != 1.0f) {
           audio_renderer_->SetGain(gain_);
         }
 
-        player_.SetSinkSegment(RendererSinkSegment::Create(audio_renderer_),
+        player_.SetSinkSegment(RendererSinkSegment::Create(
+                                   audio_renderer_, decoder_factory_.get()),
                                medium);
       }
       break;
@@ -159,7 +163,8 @@ void MediaPlayerImpl::MaybeCreateRenderer(StreamType::Medium medium) {
         video_renderer_->SetGeometryUpdateCallback(
             [this]() { SendStatusUpdates(); });
 
-        player_.SetSinkSegment(RendererSinkSegment::Create(video_renderer_),
+        player_.SetSinkSegment(RendererSinkSegment::Create(
+                                   video_renderer_, decoder_factory_.get()),
                                medium);
       }
       break;
@@ -223,7 +228,7 @@ void MediaPlayerImpl::Update() {
 
         // Presentation time is not progressing, and the pipeline is clear of
         // packets.
-        if (target_position_ != media::kUnspecifiedTime) {
+        if (target_position_ != fuchsia::media::kUnspecifiedTime) {
           // We want to seek. Enter |kWaiting| state until the operation is
           // complete.
           state_ = State::kWaiting;
@@ -234,7 +239,7 @@ void MediaPlayerImpl::Update() {
           // seeking the source, we'll notice that and do those things
           // again.
           int64_t target_position = target_position_;
-          target_position_ = media::kUnspecifiedTime;
+          target_position_ = fuchsia::media::kUnspecifiedTime;
 
           // |program_range_min_pts_| will be delivered in the
           // |SetProgramRange| call, ensuring that the renderers discard
@@ -247,8 +252,9 @@ void MediaPlayerImpl::Update() {
               0.0f, media::Timeline::local_now(), [this, target_position]() {
                 if (target_position_ == target_position) {
                   // We've had a rendundant seek request. Ignore it.
-                  target_position_ = media::kUnspecifiedTime;
-                } else if (target_position_ != media::kUnspecifiedTime) {
+                  target_position_ = fuchsia::media::kUnspecifiedTime;
+                } else if (target_position_ !=
+                           fuchsia::media::kUnspecifiedTime) {
                   // We've had a seek request to a new position. Refrain from
                   // seeking the source and re-enter this sequence.
                   state_ = State::kFlushed;
@@ -276,7 +282,8 @@ void MediaPlayerImpl::Update() {
           // when the operation is complete.
           state_ = State::kWaiting;
           waiting_reason_ = "for priming to complete";
-          player_.SetProgramRange(0, program_range_min_pts_, media::kMaxTime);
+          player_.SetProgramRange(0, program_range_min_pts_,
+                                  fuchsia::media::kMaxTime);
 
           player_.Prime([this]() {
             state_ = State::kPrimed;
@@ -369,17 +376,17 @@ void MediaPlayerImpl::Update() {
 }
 
 void MediaPlayerImpl::SetTimelineFunction(float rate, int64_t reference_time,
-                                          fxl::Closure callback) {
+                                          fit::closure callback) {
   player_.SetTimelineFunction(
       media::TimelineFunction(transform_subject_time_, reference_time,
                               media::TimelineRate(rate)),
-      callback);
-  transform_subject_time_ = media::kUnspecifiedTime;
+      std::move(callback));
+  transform_subject_time_ = fuchsia::media::kUnspecifiedTime;
   SendStatusUpdates();
 }
 
 void MediaPlayerImpl::SetHttpSource(fidl::StringPtr http_url) {
-  BeginSetReader(HttpReader::Create(application_context_, http_url));
+  BeginSetReader(HttpReader::Create(startup_context_, http_url));
 }
 
 void MediaPlayerImpl::SetFileSource(zx::channel file_channel) {
@@ -387,7 +394,7 @@ void MediaPlayerImpl::SetFileSource(zx::channel file_channel) {
 }
 
 void MediaPlayerImpl::SetReaderSource(
-    fidl::InterfaceHandle<SeekingReader> reader_handle) {
+    fidl::InterfaceHandle<fuchsia::mediaplayer::SeekingReader> reader_handle) {
   if (!reader_handle) {
     BeginSetReader(nullptr);
     return;
@@ -426,8 +433,9 @@ void MediaPlayerImpl::FinishSetReader() {
 
   MaybeCreateRenderer(StreamType::Medium::kAudio);
 
-  std::shared_ptr<Demux> demux =
-      Demux::Create(ReaderCache::Create(new_reader_));
+  std::shared_ptr<Demux> demux;
+  demux_factory_->CreateDemux(ReaderCache::Create(new_reader_), &demux);
+  // TODO(dalesat): Handle CreateDemux failure.
   FXL_DCHECK(demux);
 
   new_reader_ = nullptr;
@@ -464,7 +472,8 @@ void MediaPlayerImpl::SetGain(float gain) {
 
 void MediaPlayerImpl::CreateView(
     fidl::InterfaceHandle<::fuchsia::ui::views_v1::ViewManager> view_manager,
-    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request) {
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+        view_owner_request) {
   MaybeCreateRenderer(StreamType::Medium::kVideo);
   if (!video_renderer_) {
     return;
@@ -475,7 +484,7 @@ void MediaPlayerImpl::CreateView(
 }
 
 void MediaPlayerImpl::SetAudioRenderer(
-    fidl::InterfaceHandle<media::AudioRenderer2> audio_renderer) {
+    fidl::InterfaceHandle<fuchsia::media::AudioRenderer2> audio_renderer) {
   if (audio_renderer_) {
     return;
   }
@@ -485,11 +494,13 @@ void MediaPlayerImpl::SetAudioRenderer(
     audio_renderer_->SetGain(gain_);
   }
 
-  player_.SetSinkSegment(RendererSinkSegment::Create(audio_renderer_),
-                         StreamType::Medium::kAudio);
+  player_.SetSinkSegment(
+      RendererSinkSegment::Create(audio_renderer_, decoder_factory_.get()),
+      StreamType::Medium::kAudio);
 }
 
-void MediaPlayerImpl::AddBinding(fidl::InterfaceRequest<MediaPlayer> request) {
+void MediaPlayerImpl::AddBinding(
+    fidl::InterfaceRequest<fuchsia::mediaplayer::MediaPlayer> request) {
   FXL_DCHECK(request);
   bindings_.AddBinding(this, std::move(request));
 
@@ -518,7 +529,8 @@ void MediaPlayerImpl::UpdateStatus() {
   status_.video_connected =
       player_.medium_connected(StreamType::Medium::kVideo);
 
-  status_.metadata = fxl::To<MediaMetadataPtr>(player_.metadata());
+  status_.metadata =
+      fxl::To<fuchsia::mediaplayer::MediaMetadataPtr>(player_.metadata());
 
   if (video_renderer_) {
     status_.video_size = SafeClone(video_renderer_->video_size());

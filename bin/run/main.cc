@@ -2,14 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <fdio/limits.h>
-#include <fdio/util.h>
+#include <lib/fdio/limits.h>
+#include <lib/fdio/util.h>
 #include <stdio.h>
 
-#include <component/cpp/fidl.h>
+#include <fuchsia/sys/cpp/fidl.h>
+#include <zircon/syscalls.h>
+
 #include "lib/app/cpp/environment_services.h"
 
-static component::FileDescriptorPtr CloneFileDescriptor(int fd) {
+static fuchsia::sys::FileDescriptorPtr CloneFileDescriptor(int fd) {
   zx_handle_t handles[FDIO_MAX_HANDLES] = {0, 0, 0};
   uint32_t types[FDIO_MAX_HANDLES] = {
       ZX_HANDLE_INVALID,
@@ -19,7 +21,7 @@ static component::FileDescriptorPtr CloneFileDescriptor(int fd) {
   zx_status_t status = fdio_clone_fd(fd, 0, handles, types);
   if (status <= 0)
     return nullptr;
-  component::FileDescriptorPtr result = component::FileDescriptor::New();
+  fuchsia::sys::FileDescriptorPtr result = fuchsia::sys::FileDescriptor::New();
   result->type0 = types[0];
   result->handle0 = zx::handle(handles[0]);
   result->type1 = types[1];
@@ -29,31 +31,51 @@ static component::FileDescriptorPtr CloneFileDescriptor(int fd) {
   return result;
 }
 
+static void consume_arg(int* argc, const char*** argv) {
+  --(*argc);
+  ++(*argv);
+}
+
 int main(int argc, const char** argv) {
   if (argc < 2) {
-    fprintf(stderr, "Usage: run <program> <args>*\n");
+    fprintf(stderr, "Usage: run [-d] <program> <args>*\n");
     return 1;
   }
-  component::LaunchInfo launch_info;
-  launch_info.url = argv[1];
-  for (int i = 0; i < argc - 2; ++i) {
-    launch_info.arguments.push_back(argv[2 + i]);
+  // argv[0] is the program name;
+  consume_arg(&argc, &argv);
+
+  bool daemonize = false;
+  if (std::string(argv[0]) == "-d") {
+    daemonize = true;
+    consume_arg(&argc, &argv);
+  }
+  fuchsia::sys::LaunchInfo launch_info;
+  launch_info.url = argv[0];
+  consume_arg(&argc, &argv);
+  while (argc) {
+    launch_info.arguments.push_back(*argv);
+    consume_arg(&argc, &argv);
+  }
+
+  // Connect to the Launcher service through our static environment.
+  fuchsia::sys::LauncherSync2Ptr launcher;
+  fuchsia::sys::ConnectToEnvironmentService(launcher.NewRequest());
+
+  if (daemonize) {
+    launcher->CreateComponent(std::move(launch_info), {});
+    return 0;
   }
 
   launch_info.out = CloneFileDescriptor(STDOUT_FILENO);
   launch_info.err = CloneFileDescriptor(STDERR_FILENO);
+  fuchsia::sys::ComponentControllerSync2Ptr controller;
+  launcher->CreateComponent(std::move(launch_info), controller.NewRequest());
 
-  // Connect to the ApplicationLauncher service through our static environment.
-  component::ApplicationLauncherSyncPtr launcher;
-  component::ConnectToEnvironmentService(launcher.NewRequest());
-
-  component::ComponentControllerSyncPtr controller;
-  launcher->CreateApplication(std::move(launch_info), controller.NewRequest());
-
-  int32_t return_code;
-  if (!controller->Wait(&return_code)) {
+  int64_t return_code;
+  if (controller->Wait(&return_code).statvs != ZX_OK) {
     fprintf(stderr, "%s exited without a return code\n", argv[1]);
     return 1;
   }
-  return return_code;
+  zx_process_exit(return_code);
+  return 0;
 }

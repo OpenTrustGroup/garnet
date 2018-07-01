@@ -7,6 +7,8 @@ use failure;
 use key::exchange::Key;
 
 mod esssa;
+#[cfg(test)]
+pub mod test_util;
 
 #[derive(Debug)]
 pub enum Role {

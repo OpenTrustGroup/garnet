@@ -20,6 +20,8 @@
 #include <sync/completion.h>
 #include <threads.h>
 
+#include <zircon/listnode.h>
+
 /* for brcmu_d11inf */
 #include "brcmu_d11.h"
 #include "core.h"
@@ -198,9 +200,9 @@ struct brcmf_cfg80211_vif {
     struct brcmf_if* ifp;
     struct wireless_dev wdev;
     struct brcmf_cfg80211_profile profile;
-    unsigned long sme_state;
+    atomic_ulong sme_state;
     struct vif_saved_ie saved_ie;
-    struct list_head list;
+    struct list_node list;
     uint16_t mgmt_rx_reg;
     bool mbss;
     int is_11d;
@@ -235,14 +237,13 @@ struct escan_info {
 /**
  * struct brcmf_cfg80211_vif_event - virtual interface event information.
  *
- * @vif_wq: waitqueue awaiting interface event from firmware.
+ * @vif_event_wait: Completion awaiting interface event from firmware.
  * @vif_event_lock: protects other members in this structure.
- * @vif_complete: completion for net attach.
  * @action: either add, change, or delete.
  * @vif: virtual interface object related to the event.
  */
 struct brcmf_cfg80211_vif_event {
-    wait_queue_head_t vif_wq;
+    completion_t vif_event_wait;
     mtx_t vif_event_lock;
     uint8_t action;
     struct brcmf_cfg80211_vif* vif;
@@ -255,8 +256,7 @@ struct brcmf_cfg80211_vif_event {
  * @pre_pmmode: firmware PM mode at entering suspend.
  * @nd: net dectect data.
  * @nd_info: helper struct to pass to cfg80211.
- * @nd_data_wait: wait queue to sync net detect data.
- * @nd_data_completed: completion for net detect data.
+ * @nd_data_wait: Completion to sync net detect data.
  * @nd_enabled: net detect enabled.
  */
 struct brcmf_cfg80211_wowl {
@@ -264,8 +264,7 @@ struct brcmf_cfg80211_wowl {
     uint32_t pre_pmmode;
     struct cfg80211_wowlan_nd_match* nd;
     struct cfg80211_wowlan_nd_info* nd_info;
-    wait_queue_head_t nd_data_wait;
-    bool nd_data_completed;
+    completion_t nd_data_wait;
     bool nd_enabled;
 };
 
@@ -301,6 +300,7 @@ struct brcmf_cfg80211_wowl {
  * @vif_list: linked list of vif instances.
  * @vif_cnt: number of vif instances.
  * @vif_event: vif event signalling.
+ * @vif_event_pending_action: If vif_event is set, this is what it's waiting for.
  * @wowl: wowl related information.
  * @pno: information of pno module.
  */
@@ -315,7 +315,7 @@ struct brcmf_cfg80211_info {
     struct wl_cfg80211_bss_info* bss_info;
     struct brcmf_cfg80211_connect_info conn_info;
     struct brcmf_pmk_list_le pmk_list;
-    unsigned long scan_status;
+    atomic_ulong scan_status;
     struct brcmf_pub* pub;
     uint32_t channel;
     uint32_t int_escan_map;
@@ -327,10 +327,11 @@ struct brcmf_cfg80211_info {
     uint8_t* extra_buf;
     struct dentry* debugfsdir;
     struct escan_info escan_info;
-    struct timer_list escan_timeout;
+    brcmf_timer_info_t escan_timeout;
     struct work_struct escan_timeout_work;
-    struct list_head vif_list;
+    struct list_node vif_list;
     struct brcmf_cfg80211_vif_event vif_event;
+    uint8_t vif_event_pending_action;
     completion_t vif_disabled;
     struct brcmu_d11inf d11inf;
     struct brcmf_assoclist_le assoclist;
@@ -356,11 +357,11 @@ static inline struct wiphy* cfg_to_wiphy(struct brcmf_cfg80211_info* cfg) {
 }
 
 static inline struct brcmf_cfg80211_info* wiphy_to_cfg(struct wiphy* w) {
-    return (struct brcmf_cfg80211_info*)(wiphy_priv(w));
+    return w->priv_info;
 }
 
 static inline struct brcmf_cfg80211_info* wdev_to_cfg(struct wireless_dev* wd) {
-    return (struct brcmf_cfg80211_info*)(wdev_priv(wd));
+    return wd->priv_info;
 }
 
 static inline struct net_device* cfg_to_ndev(struct brcmf_cfg80211_info* cfg) {
@@ -373,14 +374,20 @@ static inline struct brcmf_cfg80211_info* ndev_to_cfg(struct net_device* ndev) {
     return wdev_to_cfg(ndev->ieee80211_ptr);
 }
 
-static inline struct brcmf_cfg80211_profile* ndev_to_prof(struct net_device* nd) {
-    struct brcmf_if* ifp = netdev_priv(nd);
-    return &ifp->vif->profile;
+static inline struct brcmf_if* ndev_to_if(struct net_device* ndev) {
+    return ndev->priv;
+}
+
+static inline struct brcmf_if* cfg_to_if(struct brcmf_cfg80211_info* cfg) {
+    return cfg_to_ndev(cfg)->priv;
 }
 
 static inline struct brcmf_cfg80211_vif* ndev_to_vif(struct net_device* ndev) {
-    struct brcmf_if* ifp = netdev_priv(ndev);
-    return ifp->vif;
+    return ndev_to_if(ndev)->vif;
+}
+
+static inline struct brcmf_cfg80211_profile* ndev_to_prof(struct net_device* ndev) {
+    return &ndev_to_vif(ndev)->profile;
 }
 
 static inline struct brcmf_cfg80211_connect_info* cfg_to_conn(struct brcmf_cfg80211_info* cfg) {
@@ -404,14 +411,21 @@ zx_status_t brcmf_vif_set_mgmt_ie(struct brcmf_cfg80211_vif* vif, int32_t pktfla
 zx_status_t brcmf_vif_clear_mgmt_ies(struct brcmf_cfg80211_vif* vif);
 uint16_t channel_to_chanspec(struct brcmu_d11inf* d11inf, struct ieee80211_channel* ch);
 bool brcmf_get_vif_state_any(struct brcmf_cfg80211_info* cfg, unsigned long state);
-void brcmf_cfg80211_arm_vif_event(struct brcmf_cfg80211_info* cfg, struct brcmf_cfg80211_vif* vif);
+void brcmf_cfg80211_arm_vif_event(struct brcmf_cfg80211_info* cfg, struct brcmf_cfg80211_vif* vif,
+                                  uint8_t pending_action);
+void brcmf_cfg80211_disarm_vif_event(struct brcmf_cfg80211_info* cfg);
 bool brcmf_cfg80211_vif_event_armed(struct brcmf_cfg80211_info* cfg);
-uint32_t brcmf_cfg80211_wait_vif_event(struct brcmf_cfg80211_info* cfg, uint8_t action,
-                                       ulong timeout);
+zx_status_t brcmf_cfg80211_wait_vif_event(struct brcmf_cfg80211_info* cfg, zx_duration_t timeout);
 zx_status_t brcmf_notify_escan_complete(struct brcmf_cfg80211_info* cfg, struct brcmf_if* ifp,
                                         bool aborted, bool fw_abort);
 void brcmf_set_mpc(struct brcmf_if* ndev, int mpc);
 void brcmf_abort_scanning(struct brcmf_cfg80211_info* cfg);
-void brcmf_cfg80211_free_netdev(struct net_device* ndev);
+void brcmf_free_net_device_vif(struct net_device* ndev);
+
+// TODO(cphoenix): These three are temporary, for hard-coded testing in usb.c
+zx_status_t brcmf_cfg80211_scan(struct wiphy* wiphy, struct cfg80211_scan_request* request);
+zx_status_t brcmf_cfg80211_connect(struct wiphy* wiphy, struct net_device* ndev,
+                                   struct cfg80211_connect_params* sme);
+zx_status_t brcmf_netdev_open(struct net_device* ndev);
 
 #endif /* BRCMFMAC_CFG80211_H */

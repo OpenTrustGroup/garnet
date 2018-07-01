@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <wlan_mlme/cpp/fidl.h>
+#include <fuchsia/wlan/mlme/cpp/fidl.h>
 #include <wlan/mlme/ap/beacon_sender.h>
 #include <wlan/mlme/ap/infra_bss.h>
 #include <wlan/mlme/mlme.h>
@@ -15,26 +15,29 @@
 
 namespace wlan {
 
+class BaseMlmeMsg;
+
 // ApMlme is an MLME which operates in AP role. It is not thread-safe.
 class ApMlme : public Mlme {
    public:
     explicit ApMlme(DeviceInterface* device);
     ~ApMlme();
 
-    // FrameHandler methods.
-    zx_status_t HandleMlmeStartReq(const wlan_mlme::StartRequest& req) override;
-    zx_status_t HandleMlmeStopReq(const wlan_mlme::StopRequest& req) override;
-
     // Mlme interface methods.
     zx_status_t Init() override;
     zx_status_t PreChannelChange(wlan_channel_t chan) override;
     zx_status_t PostChannelChange() override;
+    zx_status_t HandleMlmeMsg(const BaseMlmeMsg& msg) override;
+    zx_status_t HandleFramePacket(fbl::unique_ptr<Packet> pkt) override;
     zx_status_t HandleTimeout(const ObjectId id) override;
     void HwIndication(uint32_t ind) override;
 
    private:
+    zx_status_t HandleMlmeStartReq(const MlmeMsg<::fuchsia::wlan::mlme::StartRequest>& req);
+    zx_status_t HandleMlmeStopReq(const MlmeMsg<::fuchsia::wlan::mlme::StopRequest>& req);
+
     DeviceInterface* const device_;
-    fbl::RefPtr<InfraBss> bss_;
+    fbl::unique_ptr<InfraBss> bss_;
 };
 
 }  // namespace wlan

@@ -168,7 +168,6 @@ extern {
         args: *const zx_channel_call_args_t,
         actual_bytes: *mut u32,
         actual_handles: *mut u32,
-        read_status: *mut zx_status_t
         ) -> zx_status_t;
 
     pub fn zx_channel_call_finish(
@@ -176,7 +175,6 @@ extern {
         args: *const zx_channel_call_args_t,
         actual_bytes: *mut u32,
         actual_handles: *mut u32,
-        read_status: *mut zx_status_t
         ) -> zx_status_t;
 
     pub fn zx_channel_call(
@@ -186,7 +184,6 @@ extern {
         args: *const zx_channel_call_args_t,
         actual_bytes: *mut u32,
         actual_handles: *mut u32,
-        read_status: *mut zx_status_t
         ) -> zx_status_t;
 
     pub fn zx_socket_create(
@@ -250,7 +247,7 @@ extern {
         ) -> zx_status_t;
 
     pub fn zx_process_exit(
-        retcode: isize
+        retcode: i64
         );
 
     pub fn zx_process_create(
@@ -483,9 +480,8 @@ extern {
 
     pub fn zx_cprng_draw(
         buffer: *mut u8,
-        len: usize,
-        actual: *mut usize
-        ) -> zx_status_t;
+        len: usize
+        );
 
     pub fn zx_cprng_add_entropy(
         buffer: *const u8,
@@ -821,12 +817,6 @@ extern {
         bootimage: zx_handle_t,
         cmdline: *const u8,
         cmdline_len: u32
-        ) -> zx_status_t;
-
-    pub fn zx_job_set_relative_importance(
-        root_resource: zx_handle_t,
-        job: zx_handle_t,
-        less_important_job: zx_handle_t
         ) -> zx_status_t;
 
     pub fn zx_syscall_test_0(

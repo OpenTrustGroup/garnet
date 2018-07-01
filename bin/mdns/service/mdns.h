@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MDNS_SERVICE_MDNS_H_
+#define GARNET_BIN_MDNS_SERVICE_MDNS_H_
 
 #include <memory>
 #include <queue>
@@ -11,12 +12,12 @@
 #include <vector>
 
 #include <lib/async/dispatcher.h>
+#include <lib/fit/function.h>
 
 #include "garnet/bin/mdns/service/dns_message.h"
 #include "garnet/bin/mdns/service/mdns_agent.h"
 #include "garnet/bin/mdns/service/mdns_transceiver.h"
 #include "garnet/bin/mdns/service/socket_address.h"
-#include "lib/fxl/functional/closure.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/time/time_point.h"
 
@@ -114,9 +115,8 @@ class Mdns : public MdnsAgent::Host {
     // empty. If the publication provided by the callback is null, no
     // announcement or response is transmitted.
     virtual void GetPublication(
-        bool query,
-        const std::string& subtype,
-        const std::function<void(std::unique_ptr<Publication>)>& callback) = 0;
+        bool query, const std::string& subtype,
+        fit::function<void(std::unique_ptr<Publication>)> callback) = 0;
 
    protected:
     Publisher() {}
@@ -129,10 +129,9 @@ class Mdns : public MdnsAgent::Host {
     friend class Mdns;
   };
 
-  using ResolveHostNameCallback =
-      std::function<void(const std::string& host_name,
-                         const IpAddress& v4_address,
-                         const IpAddress& v6_address)>;
+  using ResolveHostNameCallback = fit::function<void(
+      const std::string& host_name, const IpAddress& v4_address,
+      const IpAddress& v6_address)>;
 
   Mdns();
 
@@ -159,8 +158,7 @@ class Mdns : public MdnsAgent::Host {
   std::string host_name() { return host_name_; }
 
   // Resolves |host_name| to one or two |IpAddress|es.
-  void ResolveHostName(const std::string& host_name,
-                       fxl::TimePoint timeout,
+  void ResolveHostName(const std::string& host_name, fxl::TimePoint timeout,
                        ResolveHostNameCallback callback);
 
   // Subscribes to the specified service. The subscription is cancelled when
@@ -188,11 +186,14 @@ class Mdns : public MdnsAgent::Host {
   };
 
   struct TaskQueueEntry {
-    TaskQueueEntry(MdnsAgent* agent, fxl::Closure task, fxl::TimePoint time)
-        : agent_(agent), task_(task), time_(time) {}
+    TaskQueueEntry(MdnsAgent* agent, fit::closure task, fxl::TimePoint time)
+        : agent_(agent), task_(std::move(task)), time_(time) {}
 
     MdnsAgent* agent_;
-    fxl::Closure task_;
+    // mutable because std::priority_queue doesn't provide a non-const accessor
+    // for its contents which makes it otherwise impossible to move the closure
+    // out of the queue when it is time to dispatch the task
+    mutable fit::closure task_;
     fxl::TimePoint time_;
 
     bool operator<(const TaskQueueEntry& other) const {
@@ -227,8 +228,7 @@ class Mdns : public MdnsAgent::Host {
   void OnHostNameConflict();
 
   // MdnsAgent::Host implementation.
-  void PostTaskForTime(MdnsAgent* agent,
-                       fxl::Closure task,
+  void PostTaskForTime(MdnsAgent* agent, fit::closure task,
                        fxl::TimePoint target_time) override;
 
   void SendQuestion(std::shared_ptr<DnsQuestion> question) override;
@@ -304,3 +304,5 @@ class Mdns : public MdnsAgent::Host {
 };
 
 }  // namespace mdns
+
+#endif  // GARNET_BIN_MDNS_SERVICE_MDNS_H_

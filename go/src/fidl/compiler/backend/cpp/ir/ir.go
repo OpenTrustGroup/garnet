@@ -7,12 +7,16 @@ package ir
 import (
 	"fidl/compiler/backend/common"
 	"fidl/compiler/backend/types"
+	"flag"
 	"fmt"
 	"io"
 	"log"
 	"strings"
 	"text/template"
 )
+
+var legacyCallbacks = flag.Bool("cpp-legacy-callbacks", false,
+	"use std::function instead of fit::function in C++ callbacks")
 
 type Decl interface {
 	ForwardDeclaration(*template.Template, io.Writer) error
@@ -86,6 +90,8 @@ type Interface struct {
 	EventSenderName string
 	SyncName        string
 	SyncProxyName   string
+	Sync2Name       string
+	Sync2ProxyName  string
 	Methods         []Method
 }
 
@@ -113,10 +119,11 @@ type Parameter struct {
 }
 
 type Root struct {
-	PrimaryHeader string
-	Headers       []string
-	Library       types.LibraryIdentifier
-	Decls         []Decl
+	PrimaryHeader   string
+	Headers         []string
+	Library         types.LibraryIdentifier
+	LibraryReversed types.LibraryIdentifier
+	Decls           []Decl
 }
 
 func (c *Const) ForwardDeclaration(tmpls *template.Template, wr io.Writer) error {
@@ -197,6 +204,13 @@ func (i *Interface) Traits(tmpls *template.Template, wr io.Writer) error {
 
 func (i *Interface) Definition(tmpls *template.Template, wr io.Writer) error {
 	return tmpls.ExecuteTemplate(wr, "InterfaceDefinition", i)
+}
+
+func (m *Method) CallbackWrapper() string {
+	if *legacyCallbacks {
+		return "std::function"
+	}
+	return "fit::function"
 }
 
 var reservedWords = map[string]bool{
@@ -334,7 +348,7 @@ func formatLibrary(library types.LibraryIdentifier, sep string) string {
 }
 
 func formatNamespace(library types.LibraryIdentifier) string {
-	return formatLibrary(library, "::")
+	return "::" + formatLibrary(library, "::")
 }
 
 func formatLibraryPrefix(library types.LibraryIdentifier) string {
@@ -542,6 +556,8 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 		c.compileCompoundIdentifier(val.Name, "_EventSender"),
 		c.compileCompoundIdentifier(val.Name, "_Sync"),
 		c.compileCompoundIdentifier(val.Name, "_SyncProxy"),
+		c.compileCompoundIdentifier(val.Name, "_Sync2"),
+		c.compileCompoundIdentifier(val.Name, "_Sync2Proxy"),
 		[]Method{},
 	}
 
@@ -647,6 +663,14 @@ func Compile(r types.Root) Root {
 	}
 
 	root.Library = library
+	libraryReversed := make(types.LibraryIdentifier, len(library))
+	for i, j := 0, len(library)-1; i < len(library); i, j = i+1, j-1 {
+		libraryReversed[i] = library[j]
+	}
+	for i, identifier := range library {
+		libraryReversed[len(libraryReversed)-i-1] = identifier
+	}
+	root.LibraryReversed = libraryReversed
 
 	decls := map[types.EncodedCompoundIdentifier]Decl{}
 

@@ -52,7 +52,7 @@ class BrEdrDiscoverySession final {
   // Set a result callback that will be notified whenever a result is returned
   // from the controller.  You will get duplicate results when using this
   // method.
-  // Prefer RemoteDeviceCache.OnleviceUpdateCallback() instead.
+  // Prefer RemoteDeviceCache.set_device_updated_callback() instead.
   using DeviceFoundCallback = fit::function<void(const RemoteDevice& device)>;
   void set_result_callback(DeviceFoundCallback callback) {
     device_found_callback_ = std::move(callback);
@@ -115,7 +115,7 @@ class BrEdrDiscoveryManager final {
   // been successfully started, the callback will receive a session object that
   // it owns. If no sessions are owned, device discovery is stopped.
   using DiscoveryCallback =
-      std::function<void(const hci::Status& status,
+      fit::function<void(const hci::Status& status,
                          std::unique_ptr<BrEdrDiscoverySession> session)>;
   void RequestDiscovery(DiscoveryCallback callback);
 
@@ -125,7 +125,7 @@ class BrEdrDiscoveryManager final {
   // Requests this device be discoverable. Devices are discoverable as long as
   // anyone holds a discoverable session.
   using DiscoverableCallback =
-      std::function<void(const hci::Status& status,
+      fit::function<void(const hci::Status& status,
                          std::unique_ptr<BrEdrDiscoverableSession> session)>;
   void RequestDiscoverable(DiscoverableCallback callback);
 

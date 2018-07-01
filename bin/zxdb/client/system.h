@@ -18,19 +18,22 @@ namespace zxdb {
 class Breakpoint;
 class Err;
 class SystemObserver;
+class SystemSymbols;
 
 // Represents system-wide state on the debugged computer.
 class System : public ClientObject {
  public:
   // Callback for requesting the process tree.
-  using ProcessTreeCallback = std::function<
-      void(const Err&, debug_ipc::ProcessTreeReply)>;
+  using ProcessTreeCallback =
+      std::function<void(const Err&, debug_ipc::ProcessTreeReply)>;
 
   System(Session* session);
   ~System() override;
 
   void AddObserver(SystemObserver* observer);
   void RemoveObserver(SystemObserver* observer);
+
+  virtual SystemSymbols* GetSymbols() = 0;
 
   // Returns all targets currently in the System. The returned pointers are
   // managed by the System object and should not be cached once you return to

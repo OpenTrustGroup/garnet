@@ -10,14 +10,19 @@
 #include <netdb.h>
 #include <stdio.h>
 #include <sys/socket.h>
-#include <thread>
 #include <unistd.h>
+#include <thread>
 
 #include "garnet/bin/zxdb/client/arch_info.h"
 #include "garnet/bin/zxdb/client/process_impl.h"
+#include "garnet/bin/zxdb/client/remote_api_impl.h"
 #include "garnet/bin/zxdb/client/thread_impl.h"
+#include "garnet/lib/debug_ipc/client_protocol.h"
 #include "garnet/lib/debug_ipc/helper/buffered_fd.h"
+#include "garnet/lib/debug_ipc/helper/message_loop.h"
 #include "garnet/lib/debug_ipc/helper/stream_buffer.h"
+#include "garnet/lib/debug_ipc/message_reader.h"
+#include "garnet/lib/debug_ipc/message_writer.h"
 #include "garnet/public/lib/fxl/logging.h"
 #include "garnet/public/lib/fxl/memory/ref_counted.h"
 #include "garnet/public/lib/fxl/strings/string_printf.h"
@@ -130,8 +135,7 @@ class Session::PendingConnection
 };
 
 void Session::PendingConnection::Initiate(
-    fxl::WeakPtr<Session> session,
-    std::function<void(const Err&)> callback) {
+    fxl::WeakPtr<Session> session, std::function<void(const Err&)> callback) {
   FXL_DCHECK(!thread_.get());  // Duplicate Initiate() call.
 
   main_loop_ = debug_ipc::MessageLoop::Current();
@@ -140,9 +144,8 @@ void Session::PendingConnection::Initiate(
 
   // Create the background thread, and run the background function. The
   // context will keep a ref to this class.
-  thread_ =
-      std::make_unique<std::thread>([owner = fxl::RefPtr<PendingConnection>(
-                                         this)]() {
+  thread_ = std::make_unique<std::thread>(
+      [owner = fxl::RefPtr<PendingConnection>(this)]() {
         owner->ConnectBackgroundThread(owner);
       });
 }
@@ -150,14 +153,13 @@ void Session::PendingConnection::Initiate(
 void Session::PendingConnection::ConnectBackgroundThread(
     fxl::RefPtr<PendingConnection> owner) {
   Err err = DoConnectBackgroundThread();
-  main_loop_->PostTask([ owner = std::move(owner), err ]() {
+  main_loop_->PostTask([owner = std::move(owner), err]() {
     owner->ConnectCompleteMainThread(owner, err);
   });
 }
 
 void Session::PendingConnection::ConnectCompleteMainThread(
-    fxl::RefPtr<PendingConnection> owner,
-    const Err& err) {
+    fxl::RefPtr<PendingConnection> owner, const Err& err) {
   // The background thread function has now completed so the thread can be
   // destroyed. We do want to join with the thread here to ensure there are no
   // references to the PendingConnection on the background thread, which might
@@ -183,9 +185,8 @@ void Session::PendingConnection::ConnectCompleteMainThread(
   std::vector<char> serialized = writer.MessageComplete();
   buffer_->stream().Write(std::move(serialized));
 
-  buffer_->set_data_available_callback([owner = std::move(owner)]() {
-    owner->DataAvailableMainThread(owner);
-  });
+  buffer_->set_data_available_callback(
+      [owner = std::move(owner)]() { owner->DataAvailableMainThread(owner); });
 }
 
 void Session::PendingConnection::DataAvailableMainThread(
@@ -222,8 +223,7 @@ void Session::PendingConnection::DataAvailableMainThread(
 }
 
 void Session::PendingConnection::HelloCompleteMainThread(
-    fxl::RefPtr<PendingConnection> owner,
-    const Err& err,
+    fxl::RefPtr<PendingConnection> owner, const Err& err,
     const debug_ipc::HelloReply& reply) {
   if (session_) {
     // The buffer must be created here on the main thread since it will
@@ -270,7 +270,13 @@ Err Session::PendingConnection::DoConnectBackgroundThread() {
 
 // Session ---------------------------------------------------------------------
 
-Session::Session() : system_(this), weak_factory_(this) {}
+Session::Session()
+    : remote_api_(std::make_unique<RemoteAPIImpl>(this)),
+      system_(this),
+      weak_factory_(this) {}
+
+Session::Session(std::unique_ptr<RemoteAPI> remote_api)
+    : remote_api_(std::move(remote_api)), system_(this), weak_factory_(this) {}
 
 Session::Session(debug_ipc::StreamBuffer* stream)
     : stream_(stream), system_(this), weak_factory_(this) {}
@@ -345,12 +351,9 @@ void Session::OnStreamReadable() {
   }
 }
 
-bool Session::IsConnected() const {
-  return !!stream_;
-}
+bool Session::IsConnected() const { return !!stream_; }
 
-void Session::Connect(const std::string& host,
-                      uint16_t port,
+void Session::Connect(const std::string& host, uint16_t port,
                       std::function<void(const Err&)> callback) {
   Err err;
   if (IsConnected()) {

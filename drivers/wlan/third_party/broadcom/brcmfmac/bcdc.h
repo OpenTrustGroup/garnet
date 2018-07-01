@@ -18,12 +18,13 @@
 
 #include "core.h"
 #include "device.h"
+#include "netbuf.h"
 
 #ifdef CONFIG_BRCMFMAC_PROTO_BCDC
 zx_status_t brcmf_proto_bcdc_attach(struct brcmf_pub* drvr);
 void brcmf_proto_bcdc_detach(struct brcmf_pub* drvr);
 void brcmf_proto_bcdc_txflowblock(struct brcmf_device* dev, bool state);
-void brcmf_proto_bcdc_txcomplete(struct brcmf_device* dev, struct sk_buff* txp, bool success);
+void brcmf_proto_bcdc_txcomplete(struct brcmf_device* dev, struct brcmf_netbuf* txp, bool success);
 struct brcmf_fws_info* drvr_to_fws(struct brcmf_pub* drvr);
 #else
 static inline zx_status_t brcmf_proto_bcdc_attach(struct brcmf_pub* drvr) {

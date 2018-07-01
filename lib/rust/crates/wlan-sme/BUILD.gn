@@ -3,14 +3,30 @@
 # found in the LICENSE file.
 
 import("//build/rust/rustc_library.gni")
+import("//build/package.gni")
 
 rustc_library("wlan-sme") {
   name = "wlan_sme"
   version = "0.1.0"
+  with_unit_tests = true
 
   deps = [
+    "//garnet/lib/rust/crates/wlan-rsn",
     "//garnet/public/lib/wlan/fidl:mlme-rustc",
     "//garnet/public/rust/crates/fuchsia-zircon",
+    "//third_party/rust-crates/rustc_deps:bytes",
+    "//third_party/rust-crates/rustc_deps:failure",
     "//third_party/rust-crates/rustc_deps:futures",
   ]
+}
+
+package("wlan-sme-tests") {
+  deprecated_system_image = true
+  testonly = true
+
+  deps = [
+    ":wlan-sme"
+  ]
+
+  tests = [ { name = "wlan_sme_lib_test_rustc" } ]
 }

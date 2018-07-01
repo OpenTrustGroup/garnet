@@ -5,10 +5,10 @@
 #include "garnet/bin/appmgr/realm.h"
 
 #include <fcntl.h>
-#include <fdio/namespace.h>
-#include <fdio/util.h>
-#include <launchpad/launchpad.h>
 #include <lib/async/default.h>
+#include <lib/fdio/namespace.h>
+#include <lib/fdio/spawn.h>
+#include <lib/fdio/util.h>
 #include <lib/zx/process.h>
 #include <unistd.h>
 #include <zircon/process.h>
@@ -24,11 +24,14 @@
 #include "garnet/bin/appmgr/runtime_metadata.h"
 #include "garnet/bin/appmgr/sandbox_metadata.h"
 #include "garnet/bin/appmgr/url_resolver.h"
+#include "garnet/bin/appmgr/util.h"
 #include "garnet/lib/far/format.h"
 #include "lib/app/cpp/connect.h"
 #include "lib/fsl/handles/object_info.h"
 #include "lib/fsl/io/fd.h"
 #include "lib/fsl/vmo/file.h"
+#include "lib/fsl/vmo/strings.h"
+#include "lib/fxl/files/directory.h"
 #include "lib/fxl/files/file.h"
 #include "lib/fxl/functional/auto_call.h"
 #include "lib/fxl/functional/make_copyable.h"
@@ -45,164 +48,121 @@ constexpr char kAppPath[] = "bin/app";
 constexpr char kAppArv0[] = "/pkg/bin/app";
 constexpr char kLegacyFlatExportedDirPath[] = "meta/legacy_flat_exported_dir";
 constexpr char kRuntimePath[] = "meta/runtime";
-constexpr char kSandboxPath[] = "meta/sandbox";
-
-enum class LaunchType {
-  kProcess,
-  kArchive,
-};
 
 std::vector<const char*> GetArgv(const std::string& argv0,
-                                 const LaunchInfo& launch_info) {
+                                 const fuchsia::sys::LaunchInfo& launch_info) {
   std::vector<const char*> argv;
-  argv.reserve(launch_info.arguments->size() + 1);
+  argv.reserve(launch_info.arguments->size() + 2);
   argv.push_back(argv0.c_str());
   for (const auto& argument : *launch_info.arguments)
-    argv.push_back(argument.get().c_str());
+    argv.push_back(argument->c_str());
+  argv.push_back(nullptr);
   return argv;
 }
 
-std::string GetLabelFromURL(const std::string& url) {
-  size_t last_slash = url.rfind('/');
-  if (last_slash == std::string::npos || last_slash + 1 == url.length())
-    return url;
-  return url.substr(last_slash + 1);
+void PushHandle(uint32_t id, zx_handle_t handle,
+                std::vector<fdio_spawn_action_t>* actions) {
+  actions->push_back({.action = FDIO_SPAWN_ACTION_ADD_HANDLE,
+                      .h = {.id = id, .handle = handle}});
 }
 
-void PushFileDescriptor(component::FileDescriptorPtr fd, int new_fd,
-                        std::vector<uint32_t>* ids,
-                        std::vector<zx_handle_t>* handles) {
-  if (!fd)
+void PushFileDescriptor(fuchsia::sys::FileDescriptorPtr fd, int target_fd,
+                        std::vector<fdio_spawn_action_t>* actions) {
+  if (!fd) {
+    actions->push_back({.action = FDIO_SPAWN_ACTION_CLONE_FD,
+                        .fd = {.local_fd = target_fd, .target_fd = target_fd}});
     return;
+  }
   if (fd->type0) {
-    ids->push_back(PA_HND(PA_HND_TYPE(fd->type0), new_fd));
-    handles->push_back(fd->handle0.release());
+    uint32_t id = PA_HND(PA_HND_TYPE(fd->type0), target_fd);
+    PushHandle(id, fd->handle0.release(), actions);
   }
   if (fd->type1) {
-    ids->push_back(PA_HND(PA_HND_TYPE(fd->type1), new_fd));
-    handles->push_back(fd->handle1.release());
+    uint32_t id = PA_HND(PA_HND_TYPE(fd->type1), target_fd);
+    PushHandle(id, fd->handle1.release(), actions);
   }
   if (fd->type2) {
-    ids->push_back(PA_HND(PA_HND_TYPE(fd->type2), new_fd));
-    handles->push_back(fd->handle2.release());
+    uint32_t id = PA_HND(PA_HND_TYPE(fd->type2), target_fd);
+    PushHandle(id, fd->handle2.release(), actions);
   }
 }
 
 zx::process CreateProcess(const zx::job& job, fsl::SizedVmo data,
-                          const std::string& argv0, LaunchInfo launch_info,
+                          const std::string& argv0,
+                          fuchsia::sys::LaunchInfo launch_info,
                           zx::channel loader_service,
                           fdio_flat_namespace_t* flat) {
   if (!data)
     return zx::process();
 
-  std::string label = GetLabelFromURL(launch_info.url);
+  zx::job duplicate_job;
+  zx_status_t status = job.duplicate(ZX_RIGHT_SAME_RIGHTS, &duplicate_job);
+  if (status != ZX_OK)
+    return zx::process();
+
+  std::string label = Util::GetLabelFromURL(launch_info.url);
   std::vector<const char*> argv = GetArgv(argv0, launch_info);
-
-  std::vector<uint32_t> ids;
-  std::vector<zx_handle_t> handles;
-
-  zx::channel directory_request = std::move(launch_info.directory_request);
-  if (directory_request) {
-    ids.push_back(PA_DIRECTORY_REQUEST);
-    handles.push_back(directory_request.release());
-  }
-
-  PushFileDescriptor(std::move(launch_info.out), STDOUT_FILENO, &ids, &handles);
-  PushFileDescriptor(std::move(launch_info.err), STDERR_FILENO, &ids, &handles);
-
-  for (size_t i = 0; i < flat->count; ++i) {
-    ids.push_back(flat->type[i]);
-    handles.push_back(flat->handle[i]);
-  }
-
-  data.vmo().set_property(ZX_PROP_NAME, label.data(), label.size());
 
   // TODO(abarth): We probably shouldn't pass environ, but currently this
   // is very useful as a way to tell the loader in the child process to
   // print out load addresses so we can understand crashes.
-  launchpad_t* lp = nullptr;
-  launchpad_create(job.get(), label.c_str(), &lp);
+  uint32_t flags = FDIO_SPAWN_CLONE_ENVIRON;
 
-  launchpad_clone(lp, LP_CLONE_ENVIRON);
-  launchpad_clone_fd(lp, STDIN_FILENO, STDIN_FILENO);
-  if (!launch_info.out)
-    launchpad_clone_fd(lp, STDOUT_FILENO, STDOUT_FILENO);
-  if (!launch_info.err)
-    launchpad_clone_fd(lp, STDERR_FILENO, STDERR_FILENO);
-  if (loader_service)
-    launchpad_use_loader_service(lp, loader_service.release());
-  launchpad_set_args(lp, argv.size(), argv.data());
-  launchpad_set_nametable(lp, flat->count, flat->path);
-  launchpad_add_handles(lp, handles.size(), handles.data(), ids.data());
-  launchpad_load_from_vmo(lp, data.vmo().release());
+  std::vector<fdio_spawn_action_t> actions;
 
-  zx_handle_t proc;
-  const char* errmsg;
-  zx_handle_t status = launchpad_go(lp, &proc, &errmsg);
+  PushHandle(PA_JOB_DEFAULT, duplicate_job.release(), &actions);
+
+  if (loader_service) {
+    PushHandle(PA_LDSVC_LOADER, loader_service.release(), &actions);
+  } else {
+    // TODO(CP-62): Processes that don't have their own package use the appmgr's
+    // dynamic library loader, which doesn't make much sense. We need to find an
+    // appropriate loader service for each executable.
+    flags |= FDIO_SPAWN_CLONE_LDSVC;
+  }
+
+  zx::channel directory_request = std::move(launch_info.directory_request);
+  if (directory_request)
+    PushHandle(PA_DIRECTORY_REQUEST, directory_request.release(), &actions);
+
+  PushFileDescriptor(nullptr, STDIN_FILENO, &actions);
+  PushFileDescriptor(std::move(launch_info.out), STDOUT_FILENO, &actions);
+  PushFileDescriptor(std::move(launch_info.err), STDERR_FILENO, &actions);
+
+  actions.push_back(
+      {.action = FDIO_SPAWN_ACTION_SET_NAME, .name = {.data = label.c_str()}});
+
+  for (size_t i = 0; i < flat->count; ++i) {
+    actions.push_back(
+        {.action = FDIO_SPAWN_ACTION_ADD_NS_ENTRY,
+         .ns = {.prefix = flat->path[i], .handle = flat->handle[i]}});
+  }
+
+  data.vmo().set_property(ZX_PROP_NAME, label.data(), label.size());
+
+  zx::process process;
+  char err_msg[FDIO_SPAWN_ERR_MSG_MAX_LENGTH];
+
+  status = fdio_spawn_vmo(job.get(), flags, data.vmo().release(), argv.data(),
+                          nullptr, actions.size(), actions.data(),
+                          process.reset_and_get_address(), err_msg);
+
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Cannot run executable " << label << " due to error "
                    << status << " (" << zx_status_get_string(status)
-                   << "): " << errmsg;
-    return zx::process();
-  }
-  return zx::process(proc);
-}
-
-LaunchType Classify(const zx::vmo& data, std::string* runner) {
-  if (!data)
-    return LaunchType::kProcess;
-  std::string magic(archive::kMagicLength, '\0');
-  zx_status_t status = data.read(&magic[0], 0, magic.length());
-  if (status != ZX_OK)
-    return LaunchType::kProcess;
-  if (memcmp(magic.data(), &archive::kMagic, sizeof(archive::kMagic)) == 0)
-    return LaunchType::kArchive;
-  return LaunchType::kProcess;
-}
-
-struct ExportedDirChannels {
-  // The client side of the channel serving connected application's exported
-  // dir.
-  zx::channel exported_dir;
-
-  // The server side of our client's |LaunchInfo.directory_request|.
-  zx::channel client_request;
-};
-
-ExportedDirChannels BindDirectory(LaunchInfo* launch_info) {
-  zx::channel exported_dir_server, exported_dir_client;
-  zx_status_t status =
-      zx::channel::create(0u, &exported_dir_server, &exported_dir_client);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to create channel for service directory: status="
-                   << status;
-    return {zx::channel(), zx::channel()};
+                   << "): " << err_msg;
   }
 
-  auto client_request = std::move(launch_info->directory_request);
-  launch_info->directory_request = std::move(exported_dir_server);
-  return {std::move(exported_dir_client), std::move(client_request)};
-}
-
-std::string GetArgsString(
-    const ::fidl::VectorPtr<::fidl::StringPtr>& arguments) {
-  std::string args = "";
-  if (!arguments->empty()) {
-    std::ostringstream buf;
-    std::copy(arguments->begin(), arguments->end() - 1,
-              std::ostream_iterator<std::string>(buf, " "));
-    buf << *arguments->rbegin();
-    args = buf.str();
-  }
-  return args;
+  return process;
 }
 
 }  // namespace
 
 uint32_t Realm::next_numbered_label_ = 1u;
 
-Realm::Realm(Realm* parent, zx::channel host_directory, fidl::StringPtr label)
-    : parent_(parent),
+Realm::Realm(RealmArgs args)
+    : parent_(args.parent),
+      run_virtual_console_(args.run_virtual_console),
       default_namespace_(
           fxl::MakeRefCounted<Namespace>(nullptr, this, nullptr)),
       hub_(fbl::AdoptRef(new fs::PseudoDir())),
@@ -221,20 +181,23 @@ Realm::Realm(Realm* parent, zx::channel host_directory, fidl::StringPtr label)
   FXL_CHECK(job_.duplicate(kChildJobRights, &job_for_child_) == ZX_OK);
 
   koid_ = std::to_string(fsl::GetKoid(job_.get()));
-  if (label->size() == 0)
+  if (args.label->size() == 0)
     label_ = fxl::StringPrintf(kNumberedLabelFormat, next_numbered_label_++);
   else
-    label_ = label.get().substr(0, component::kLabelMaxLength);
+    label_ = args.label.get().substr(0, fuchsia::sys::kLabelMaxLength);
 
   fsl::SetObjectName(job_.get(), label_);
   hub_.SetName(label_);
   hub_.SetJobId(koid_);
+  hub_.AddServices(default_namespace_->services());
 
-  default_namespace_->services().set_backing_dir(std::move(host_directory));
+  default_namespace_->services()->set_backing_dir(
+      std::move(args.host_directory));
 
-  ServiceProviderPtr service_provider;
-  default_namespace_->services().AddBinding(service_provider.NewRequest());
-  loader_ = ConnectToService<Loader>(service_provider.get());
+  fuchsia::sys::ServiceProviderPtr service_provider;
+  default_namespace_->services()->AddBinding(service_provider.NewRequest());
+  loader_ = fuchsia::sys::ConnectToService<fuchsia::sys::Loader>(
+      service_provider.get());
 }
 
 Realm::~Realm() { job_.kill(); }
@@ -245,15 +208,7 @@ zx::channel Realm::OpenRootInfoDir() {
   while (root_realm->parent() != nullptr) {
     root_realm = root_realm->parent();
   }
-  zx::channel h1, h2;
-  if (zx::channel::create(0, &h1, &h2) < 0) {
-    return zx::channel();
-  }
-
-  if (info_vfs_.ServeDirectory(root_realm->hub_dir(), std::move(h1)) != ZX_OK) {
-    return zx::channel();
-  }
-  return h2;
+  return Util::OpenAsDirectory(&info_vfs_, root_realm->hub_dir());
 }
 
 HubInfo Realm::HubInfo() {
@@ -261,12 +216,14 @@ HubInfo Realm::HubInfo() {
 }
 
 void Realm::CreateNestedJob(
-    zx::channel host_directory, fidl::InterfaceRequest<Environment> environment,
-    fidl::InterfaceRequest<EnvironmentController> controller_request,
+    zx::channel host_directory,
+    fidl::InterfaceRequest<fuchsia::sys::Environment> environment,
+    fidl::InterfaceRequest<fuchsia::sys::EnvironmentController>
+        controller_request,
     fidl::StringPtr label) {
+  RealmArgs args{this, std::move(host_directory), label, false};
   auto controller = std::make_unique<EnvironmentControllerImpl>(
-      std::move(controller_request),
-      std::make_unique<Realm>(this, std::move(host_directory), label));
+      std::move(controller_request), std::make_unique<Realm>(std::move(args)));
   Realm* child = controller->realm();
   child->AddBinding(std::move(environment));
 
@@ -279,19 +236,20 @@ void Realm::CreateNestedJob(
   while (root_realm->parent() != nullptr) {
     root_realm = root_realm->parent();
   }
-  child->default_namespace_->services().ServeDirectory(
+  child->default_namespace_->ServeServiceDirectory(
       std::move(root_realm->svc_channel_server_));
 
-  if (!parent()) {
+  if (run_virtual_console_) {
     child->CreateShell("/boot/bin/run-vc");
     child->CreateShell("/boot/bin/run-vc");
     child->CreateShell("/boot/bin/run-vc");
   }
 }
 
-void Realm::CreateApplication(
-    LaunchInfo launch_info,
-    fidl::InterfaceRequest<ComponentController> controller) {
+void Realm::CreateComponent(
+    fuchsia::sys::LaunchInfo launch_info,
+    fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
+    ComponentObjectCreatedCallback callback) {
   if (launch_info.url.get().empty()) {
     FXL_LOG(ERROR) << "Cannot create application because launch_info contains"
                       " an empty url";
@@ -305,46 +263,44 @@ void Realm::CreateApplication(
   }
   launch_info.url = canon_url;
 
+  std::string scheme = GetSchemeFromURL(canon_url);
+
+  fxl::RefPtr<Namespace> ns = default_namespace_;
+  if (launch_info.additional_services) {
+    ns = fxl::MakeRefCounted<Namespace>(
+        default_namespace_, this, std::move(launch_info.additional_services));
+  }
+
+  // TODO(CP-69): Provision this map as a config file rather than hard-coding.
+  if (scheme == "http" || scheme == "https") {
+    CreateComponentFromNetwork(std::move(launch_info), std::move(controller),
+                               std::move(ns), std::move(callback));
+    return;
+  }
+
   // launch_info is moved before LoadComponent() gets at its first argument.
   fidl::StringPtr url = launch_info.url;
   loader_->LoadComponent(
       url, fxl::MakeCopyable([this, launch_info = std::move(launch_info),
-                              controller = std::move(controller)](
-                                 PackagePtr package) mutable {
-        fxl::RefPtr<Namespace> ns = default_namespace_;
-        if (launch_info.additional_services) {
-          ns = fxl::MakeRefCounted<Namespace>(
-              default_namespace_, this,
-              std::move(launch_info.additional_services));
-        }
-
+                              controller = std::move(controller), ns,
+                              callback = fbl::move(callback)](
+                                 fuchsia::sys::PackagePtr package) mutable {
         if (package) {
           if (package->data) {
-            std::string runner;
-            LaunchType type = Classify(package->data->vmo, &runner);
-            switch (type) {
-              case LaunchType::kProcess:
-                CreateApplicationWithProcess(
-                    std::move(package), std::move(launch_info),
-                    std::move(controller), std::move(ns));
-                break;
-              case LaunchType::kArchive:
-                CreateApplicationFromPackage(
-                    std::move(package), std::move(launch_info),
-                    std::move(controller), std::move(ns));
-                break;
-            }
+            CreateComponentWithProcess(
+                std::move(package), std::move(launch_info),
+                std::move(controller), std::move(ns), fbl::move(callback));
           } else if (package->directory) {
-            CreateApplicationFromPackage(std::move(package),
-                                         std::move(launch_info),
-                                         std::move(controller), std::move(ns));
+            CreateComponentFromPackage(
+                std::move(package), std::move(launch_info),
+                std::move(controller), std::move(ns), fbl::move(callback));
           }
         }
       }));
 }
 
 void Realm::CreateShell(const std::string& path) {
-  zx::channel svc = default_namespace_->services().OpenAsDirectory();
+  zx::channel svc = default_namespace_->OpenServicesAsDirectory();
   if (!svc)
     return;
 
@@ -359,7 +315,7 @@ void Realm::CreateShell(const std::string& path) {
   if (!fsl::VmoFromFilename(path, &executable))
     return;
 
-  LaunchInfo launch_info;
+  fuchsia::sys::LaunchInfo launch_info;
   launch_info.url = path;
   zx::process process =
       CreateProcess(job_for_child_, std::move(executable), path,
@@ -380,7 +336,7 @@ std::unique_ptr<EnvironmentControllerImpl> Realm::ExtractChild(Realm* child) {
   return controller;
 }
 
-std::unique_ptr<ComponentControllerImpl> Realm::ExtractApplication(
+std::unique_ptr<ComponentControllerImpl> Realm::ExtractComponent(
     ComponentControllerImpl* controller) {
   auto it = applications_.find(controller);
   if (it == applications_.end()) {
@@ -395,15 +351,16 @@ std::unique_ptr<ComponentControllerImpl> Realm::ExtractApplication(
   return application;
 }
 
-void Realm::AddBinding(fidl::InterfaceRequest<Environment> environment) {
+void Realm::AddBinding(
+    fidl::InterfaceRequest<fuchsia::sys::Environment> environment) {
   default_namespace_->AddBinding(std::move(environment));
 }
 
-void Realm::CreateApplicationWithProcess(
-    PackagePtr package, LaunchInfo launch_info,
-    fidl::InterfaceRequest<ComponentController> controller,
-    fxl::RefPtr<Namespace> ns) {
-  zx::channel svc = ns->services().OpenAsDirectory();
+void Realm::CreateComponentWithProcess(
+    fuchsia::sys::PackagePtr package, fuchsia::sys::LaunchInfo launch_info,
+    fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
+    fxl::RefPtr<Namespace> ns, ComponentObjectCreatedCallback callback) {
+  zx::channel svc = ns->OpenServicesAsDirectory();
   if (!svc)
     return;
 
@@ -424,75 +381,95 @@ void Realm::CreateApplicationWithProcess(
   if (!fsl::SizedVmo::FromTransport(std::move(*package->data), &executable))
     return;
 
-  const std::string args = GetArgsString(launch_info.arguments);
+  const std::string args = Util::GetArgsString(launch_info.arguments);
   const std::string url = launch_info.url;  // Keep a copy before moving it.
-  auto channels = BindDirectory(&launch_info);
+  auto channels = Util::BindDirectory(&launch_info);
   zx::process process =
       CreateProcess(job_for_child_, std::move(executable), url,
                     std::move(launch_info), zx::channel(), builder.Build());
 
   if (process) {
     auto application = std::make_unique<ComponentControllerImpl>(
-        std::move(controller), this, nullptr, std::move(process), url,
-        std::move(args), GetLabelFromURL(url), std::move(ns),
+        std::move(controller), this, koid_, std::move(process), url,
+        std::move(args), Util::GetLabelFromURL(url), std::move(ns),
         ExportedDirType::kPublicDebugCtrlLayout,
         std::move(channels.exported_dir), std::move(channels.client_request));
     // update hub
     hub_.AddComponent(application->HubInfo());
     ComponentControllerImpl* key = application.get();
+    if (callback != nullptr) {
+      callback(key);
+    }
     applications_.emplace(key, std::move(application));
   }
 }
 
-void Realm::CreateApplicationFromPackage(
-    PackagePtr package, LaunchInfo launch_info,
-    fidl::InterfaceRequest<ComponentController> controller,
-    fxl::RefPtr<Namespace> ns) {
-  zx::channel svc = ns->services().OpenAsDirectory();
+void Realm::CreateComponentFromNetwork(
+    fuchsia::sys::LaunchInfo launch_info,
+    fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
+    fxl::RefPtr<Namespace> ns, ComponentObjectCreatedCallback callback) {
+  zx::channel svc = ns->OpenServicesAsDirectory();
   if (!svc)
     return;
 
-  zx::channel pkg;
-  std::unique_ptr<archive::FileSystem> pkg_fs;
+  NamespaceBuilder builder;
+  builder.AddServices(std::move(svc));
+
+  fuchsia::sys::Package package;
+  package.resolved_url = launch_info.url;
+
+  fuchsia::sys::StartupInfo startup_info;
+  startup_info.launch_info = std::move(launch_info);
+  startup_info.flat_namespace = builder.BuildForRunner();
+
+  // TODO(CP-71): Remove web_runner_prototype scaffolding once there is a real
+  // web_runner.
+  const char* runner_url = "web_runner_prototype";
+  if (!files::IsDirectory("/pkgfs/packages/web_runner_prototype"))
+    runner_url = "web_runner";
+
+  auto* runner = GetOrCreateRunner(runner_url);
+  if (runner == nullptr) {
+    FXL_LOG(ERROR) << "Cannot create " << runner_url << " to run "
+                   << launch_info.url;
+    return;
+  }
+
+  runner->StartComponent(std::move(package), std::move(startup_info),
+                         std::move(ns), std::move(controller));
+}
+
+void Realm::CreateComponentFromPackage(
+    fuchsia::sys::PackagePtr package, fuchsia::sys::LaunchInfo launch_info,
+    fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
+    fxl::RefPtr<Namespace> ns, ComponentObjectCreatedCallback callback) {
+  zx::channel svc = ns->OpenServicesAsDirectory();
+  if (!svc)
+    return;
+
+  fxl::UniqueFD fd =
+      fsl::OpenChannelAsFileDescriptor(std::move(package->directory));
+
   std::string cmx_data;
   std::string cmx_path = CmxMetadata::GetCmxPath(package->resolved_url.get());
-  std::string sandbox_data;
-  std::string runtime_data;
-  ExportedDirType exported_dir_layout(ExportedDirType::kPublicDebugCtrlLayout);
-  fsl::SizedVmo app_data;
-  zx::channel loader_service;
+  if (!cmx_path.empty())
+    files::ReadFileToStringAt(fd.get(), cmx_path, &cmx_data);
 
-  if (package->data) {
-    pkg_fs =
-        std::make_unique<archive::FileSystem>(std::move(package->data->vmo));
-    pkg = pkg_fs->OpenAsDirectory();
-    pkg_fs->GetFileAsString(cmx_path, &cmx_data);
-    pkg_fs->GetFileAsString(kSandboxPath, &sandbox_data);
-    if (!pkg_fs->GetFileAsString(kRuntimePath, &runtime_data))
-      app_data = pkg_fs->GetFileAsVMO(kAppPath);
-    exported_dir_layout = pkg_fs->IsFile(kLegacyFlatExportedDirPath)
-                              ? ExportedDirType::kLegacyFlatLayout
-                              : ExportedDirType::kPublicDebugCtrlLayout;
-  } else if (package->directory) {
-    fxl::UniqueFD fd =
-        fsl::OpenChannelAsFileDescriptor(std::move(package->directory));
-    if (!cmx_path.empty()) {
-      files::ReadFileToStringAt(fd.get(), cmx_path, &cmx_data);
-    }
-    files::ReadFileToStringAt(fd.get(), kSandboxPath, &sandbox_data);
-    if (!files::ReadFileToStringAt(fd.get(), kRuntimePath, &runtime_data))
-      VmoFromFilenameAt(fd.get(), kAppPath, &app_data);
-    exported_dir_layout = files::IsFileAt(fd.get(), kLegacyFlatExportedDirPath)
-                              ? ExportedDirType::kLegacyFlatLayout
-                              : ExportedDirType::kPublicDebugCtrlLayout;
-    // TODO(abarth): We shouldn't need to clone the channel here. Instead, we
-    // should be able to tear down the file descriptor in a way that gives us
-    // the channel back.
-    pkg = fsl::CloneChannelFromFileDescriptor(fd.get());
-    if (DynamicLibraryLoader::Start(std::move(fd), &loader_service) != ZX_OK)
-      return;
-  }
-  if (!pkg)
+  std::string runtime_data;
+  fsl::SizedVmo app_data;
+  if (!files::ReadFileToStringAt(fd.get(), kRuntimePath, &runtime_data))
+    VmoFromFilenameAt(fd.get(), kAppPath, &app_data);
+
+  ExportedDirType exported_dir_layout =
+      files::IsFileAt(fd.get(), kLegacyFlatExportedDirPath)
+          ? ExportedDirType::kLegacyFlatLayout
+          : ExportedDirType::kPublicDebugCtrlLayout;
+  // TODO(abarth): We shouldn't need to clone the channel here. Instead, we
+  // should be able to tear down the file descriptor in a way that gives us
+  // the channel back.
+  zx::channel pkg = fsl::CloneChannelFromFileDescriptor(fd.get());
+  zx::channel loader_service;
+  if (DynamicLibraryLoader::Start(std::move(fd), &loader_service) != ZX_OK)
     return;
 
   // Note that |builder| is only used in the else block below. It is left here
@@ -501,21 +478,17 @@ void Realm::CreateApplicationFromPackage(
   builder.AddPackage(std::move(pkg));
   builder.AddServices(std::move(svc));
 
-  // If meta/*.cmx exists, read sandbox data from it, instead of meta/sandbox.
-  // TODO(CP-37): Remove meta/sandbox once completely migrated.
-  if (!sandbox_data.empty() || !cmx_data.empty()) {
+  // If meta/*.cmx exists, read sandbox data from it.
+  if (!cmx_data.empty()) {
     SandboxMetadata sandbox;
-
     CmxMetadata cmx;
-    if (!cmx_data.empty()) {
-      sandbox.Parse(cmx.ParseSandboxMetadata(cmx_data));
-    } else {
-      if (!sandbox.Parse(sandbox_data)) {
-        FXL_LOG(ERROR) << "Failed to parse sandbox metadata for "
-                       << launch_info.url;
-        return;
-      }
+    rapidjson::Value sandbox_meta;
+    if (!cmx.ParseSandboxMetadata(cmx_data, &sandbox_meta)) {
+      FXL_LOG(ERROR) << "Failed to parse sandbox metadata for "
+                     << launch_info.url;
+      return;
     }
+    sandbox.Parse(sandbox_meta);
 
     // If an app has the "shell" feature, then we use the libraries from the
     // system rather than from the package because programs spawned from the
@@ -533,22 +506,25 @@ void Realm::CreateApplicationFromPackage(
   builder.AddFlatNamespace(std::move(launch_info.flat_namespace));
 
   if (app_data) {
-    const std::string args = GetArgsString(launch_info.arguments);
+    const std::string args = Util::GetArgsString(launch_info.arguments);
     const std::string url = launch_info.url;  // Keep a copy before moving it.
-    auto channels = BindDirectory(&launch_info);
+    auto channels = Util::BindDirectory(&launch_info);
     zx::process process = CreateProcess(
         job_for_child_, std::move(app_data), kAppArv0, std::move(launch_info),
         std::move(loader_service), builder.Build());
 
     if (process) {
       auto application = std::make_unique<ComponentControllerImpl>(
-          std::move(controller), this, std::move(pkg_fs), std::move(process),
-          url, std::move(args), GetLabelFromURL(url), std::move(ns),
+          std::move(controller), this, koid_, std::move(process), url,
+          std::move(args), Util::GetLabelFromURL(url), std::move(ns),
           exported_dir_layout, std::move(channels.exported_dir),
           std::move(channels.client_request));
       // update hub
       hub_.AddComponent(application->HubInfo());
       ComponentControllerImpl* key = application.get();
+      if (callback != nullptr) {
+        callback(key);
+      }
       applications_.emplace(key, std::move(application));
     }
   } else {
@@ -559,10 +535,10 @@ void Realm::CreateApplicationFromPackage(
       return;
     }
 
-    Package inner_package;
+    fuchsia::sys::Package inner_package;
     inner_package.resolved_url = package->resolved_url;
 
-    StartupInfo startup_info;
+    fuchsia::sys::StartupInfo startup_info;
     startup_info.launch_info = std::move(launch_info);
     startup_info.flat_namespace = builder.BuildForRunner();
 
@@ -573,8 +549,7 @@ void Realm::CreateApplicationFromPackage(
       return;
     }
     runner->StartComponent(std::move(inner_package), std::move(startup_info),
-                           std::move(pkg_fs), std::move(ns),
-                           std::move(controller));
+                           std::move(ns), std::move(controller));
   }
 }
 
@@ -583,19 +558,16 @@ RunnerHolder* Realm::GetOrCreateRunner(const std::string& runner) {
   // recursively to detect cycles.
   auto result = runners_.emplace(runner, nullptr);
   if (result.second) {
-    Services runner_services;
-    ComponentControllerPtr runner_controller;
-    LaunchInfo runner_launch_info;
+    fuchsia::sys::Services runner_services;
+    fuchsia::sys::ComponentControllerPtr runner_controller;
+    fuchsia::sys::LaunchInfo runner_launch_info;
     runner_launch_info.url = runner;
     runner_launch_info.directory_request = runner_services.NewRequest();
-    CreateApplication(std::move(runner_launch_info),
-                      runner_controller.NewRequest());
-
-    runner_controller.set_error_handler(
+    result.first->second = std::make_unique<RunnerHolder>(
+        std::move(runner_services), std::move(runner_controller),
+        std::move(runner_launch_info), this,
         [this, runner] { runners_.erase(runner); });
 
-    result.first->second = std::make_unique<RunnerHolder>(
-        std::move(runner_services), std::move(runner_controller));
   } else if (!result.first->second) {
     // There was a cycle in the runner graph.
     FXL_LOG(ERROR) << "Detected a cycle in the runner graph for " << runner

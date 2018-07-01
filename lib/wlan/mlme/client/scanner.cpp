@@ -13,7 +13,7 @@
 #include <wlan/mlme/timer.h>
 #include <wlan/mlme/wlan.h>
 
-#include <wlan_mlme/c/fidl.h>
+#include <fuchsia/wlan/mlme/c/fidl.h>
 #include "lib/fidl/cpp/vector.h"
 
 #include <fbl/unique_ptr.h>
@@ -25,6 +25,8 @@
 
 namespace wlan {
 
+namespace wlan_mlme = ::fuchsia::wlan::mlme;
+
 // TODO(NET-500): The way we handle Beacons and ProbeResponses in here is kinda gross. Refactor.
 
 Scanner::Scanner(DeviceInterface* device, fbl::unique_ptr<Timer> timer)
@@ -32,11 +34,11 @@ Scanner::Scanner(DeviceInterface* device, fbl::unique_ptr<Timer> timer)
     ZX_DEBUG_ASSERT(timer_.get());
 }
 
-zx_status_t Scanner::HandleMlmeScanReq(const wlan_mlme::ScanRequest& req) {
+zx_status_t Scanner::HandleMlmeScanReq(const MlmeMsg<wlan_mlme::ScanRequest>& req) {
     return Start(req);
 }
 
-zx_status_t Scanner::Start(const wlan_mlme::ScanRequest& req) {
+zx_status_t Scanner::Start(const MlmeMsg<wlan_mlme::ScanRequest>& req) {
     debugfn();
 
     if (IsRunning()) { return ZX_ERR_UNAVAILABLE; }
@@ -47,10 +49,11 @@ zx_status_t Scanner::Start(const wlan_mlme::ScanRequest& req) {
     resp_->bss_description_set = fidl::VectorPtr<wlan_mlme::BSSDescription>::New(0);
     resp_->result_code = wlan_mlme::ScanResultCodes::NOT_SUPPORTED;
 
-    if (req.channel_list->size() == 0) { return SendScanConfirm(); }
-    if (req.max_channel_time < req.min_channel_time) { return SendScanConfirm(); }
+    if (req.body()->channel_list->size() == 0) { return SendScanConfirm(); }
+    if (req.body()->max_channel_time < req.body()->min_channel_time) { return SendScanConfirm(); }
     // TODO(NET-629): re-enable checking the enum value after fidl2 lands
-    //if (!BSSTypes_IsValidValue(req.bss_type) || !ScanTypes_IsValidValue(req.scan_type)) {
+    // if (!BSSTypes_IsValidValue(req.body()->bss_type) ||
+    // !ScanTypes_IsValidValue(req.body()->scan_type)) {
     //    return SendScanConfirm();
     //}
 
@@ -58,7 +61,7 @@ zx_status_t Scanner::Start(const wlan_mlme::ScanRequest& req) {
     // NOT_SUPPORTED errors. Then set SUCCESS only when we've successfully finished scanning.
     resp_->result_code = wlan_mlme::ScanResultCodes::SUCCESS;
     req_ = wlan_mlme::ScanRequest::New();
-    zx_status_t status = req.Clone(req_.get());
+    zx_status_t status = req.body()->Clone(req_.get());
     if (status != ZX_OK) {
         errorf("could not clone Scanrequest: %d\n", status);
         Reset();
@@ -120,9 +123,9 @@ wlan_channel_t Scanner::ScanChannel() const {
     };
 }
 
-zx_status_t Scanner::HandleMgmtFrame(const MgmtFrameHeader& hdr) {
+bool Scanner::ShouldDropMgmtFrame(const MgmtFrameHeader& hdr) {
     // Ignore all management frames when scanner is not running.
-    if (!IsRunning()) { return ZX_ERR_STOP; }
+    if (!IsRunning()) { return true; }
 
     common::MacAddr bssid(hdr.addr3);
     common::MacAddr src_addr(hdr.addr2);
@@ -131,10 +134,10 @@ zx_status_t Scanner::HandleMgmtFrame(const MgmtFrameHeader& hdr) {
         // Do not process frame.
         debugbcn("Rxed a beacon/probe_resp from the non-BSSID station: BSSID %s   SrcAddr %s\n",
                  MACSTR(bssid), MACSTR(src_addr));
-        return ZX_ERR_STOP;
+        return true;
     }
 
-    return ZX_OK;
+    return false;
 }
 
 void Scanner::RemoveStaleBss() {
@@ -149,33 +152,29 @@ void Scanner::RemoveStaleBss() {
     // Prune stale entries.
     ts_last_prune = now;
     nbrs_bss_.RemoveIf(
-        [now](fbl::RefPtr<Bss> bss) -> bool { return (bss->ts_refreshed() + kBssExpiry >= now); });
+        [now](fbl::RefPtr<Bss> bss) -> bool { return (bss->ts_refreshed() + kBssExpiry <= now); });
 }
 
-zx_status_t Scanner::HandleBeacon(const ImmutableMgmtFrame<Beacon>& frame,
-                                  const wlan_rx_info_t& rxinfo) {
+zx_status_t Scanner::HandleBeacon(const MgmtFrameView<Beacon>& frame) {
     debugfn();
-    ZX_DEBUG_ASSERT(IsRunning());
+    if (ShouldDropMgmtFrame(*frame.hdr())) { return ZX_OK; }
 
-    common::MacAddr bssid(frame.hdr()->addr3);
-    return ProcessBeacon(bssid, *frame.body(), frame.len() - frame.hdr()->len(), rxinfo);
+    return ProcessBeacon(frame);
 }
 
-zx_status_t Scanner::HandleProbeResponse(const ImmutableMgmtFrame<ProbeResponse>& frame,
-                                         const wlan_rx_info_t& rxinfo) {
+zx_status_t Scanner::HandleProbeResponse(const MgmtFrameView<ProbeResponse>& frame) {
     debugfn();
-    ZX_DEBUG_ASSERT(IsRunning());
+    if (ShouldDropMgmtFrame(*frame.hdr())) { return ZX_OK; }
 
-    common::MacAddr bssid(frame.hdr()->addr3);
     // ProbeResponse holds the same fields as a Beacon with the only difference in their IEs.
     // Thus, we can safely convert a ProbeResponse to a Beacon.
-    auto bcn = reinterpret_cast<const Beacon*>(frame.body());
-    return ProcessBeacon(bssid, *bcn, frame.len() - frame.hdr()->len(), rxinfo);
+    auto bcn_frame = frame.Specialize<Beacon>();
+    return ProcessBeacon(bcn_frame);
 }
 
-zx_status_t Scanner::ProcessBeacon(const common::MacAddr& bssid, const Beacon& bcn,
-                                   uint16_t body_ie_len, const wlan_rx_info_t& rxinfo) {
+zx_status_t Scanner::ProcessBeacon(const MgmtFrameView<Beacon>& bcn_frame) {
     debugfn();
+    common::MacAddr bssid(bcn_frame.hdr()->addr3);
 
     // Before processing Beacon, remove stale entries.
     RemoveStaleBss();
@@ -184,18 +183,18 @@ zx_status_t Scanner::ProcessBeacon(const common::MacAddr& bssid, const Beacon& b
     zx_status_t status = ZX_OK;
     auto bss = nbrs_bss_.Lookup(bssid);
     if (bss != nullptr) {
-        status = bss->ProcessBeacon(bcn, body_ie_len, &rxinfo);
+        status = bss->ProcessBeacon(*bcn_frame.body(), bcn_frame.body_len(), bcn_frame.rx_info());
     } else if (nbrs_bss_.IsFull()) {
         errorf("error, maximum number of BSS reached: %lu\n", nbrs_bss_.Count());
     } else {
         bss = fbl::AdoptRef(new Bss(bssid));
-        bss->ProcessBeacon(bcn, body_ie_len, &rxinfo);
+        bss->ProcessBeacon(*bcn_frame.body(), bcn_frame.body_len(), bcn_frame.rx_info());
         status = nbrs_bss_.Insert(bssid, bss);
     }
 
     if (status != ZX_OK) {
         debugbcn("Failed to handle beacon (err %3d): BSSID %s timestamp: %15" PRIu64 "\n", status,
-                 MACSTR(bssid), bcn.timestamp);
+                 MACSTR(bssid), bcn_frame.body()->timestamp);
     }
 
     return ZX_OK;
@@ -279,10 +278,9 @@ zx_status_t Scanner::SendProbeRequest() {
     debugfn();
 
     size_t body_payload_len = 128;  // TODO(porce): Revisit this value choice.
-    fbl::unique_ptr<Packet> packet = nullptr;
-    auto frame = BuildMgmtFrame<ProbeRequest>(&packet, body_payload_len);
-
-    if (packet == nullptr) { return ZX_ERR_NO_RESOURCES; }
+    MgmtFrame<ProbeRequest> frame;
+    auto status = BuildMgmtFrame(&frame, body_payload_len);
+    if (status != ZX_OK) { return status; }
 
     auto hdr = frame.hdr();
     const common::MacAddr& mymac = device_->GetState()->address();
@@ -294,7 +292,7 @@ zx_status_t Scanner::SendProbeRequest() {
     // TODO(NET-556): Clarify 'Sequence' ownership of MLME and STA. Don't set sequence number for
     // now.
     hdr->sc.set_seq(0);
-    FillTxInfo(&packet, *hdr);
+    frame.FillTxInfo();
 
     auto body = frame.body();
     ElementWriter w(body->elements, body_payload_len);
@@ -323,17 +321,15 @@ zx_status_t Scanner::SendProbeRequest() {
     ZX_DEBUG_ASSERT(body->Validate(w.size()));
 
     // Update the length with final values
-    body_payload_len = w.size();
     // TODO(porce): implement methods to replace sizeof(ProbeRequest) with body.some_len()
-    frame.set_body_len(sizeof(ProbeRequest) + body_payload_len);
-    size_t frame_len = hdr->len() + frame.body_len();
-    zx_status_t status = packet->set_len(frame_len);
+    size_t body_len = sizeof(ProbeRequest) + w.size();
+    status = frame.set_body_len(body_len);
     if (status != ZX_OK) {
-        errorf("could not set packet length to %zu: %d\n", frame_len, status);
+        errorf("could not set body length to %zu: %d\n", body_len, status);
         return status;
     }
 
-    status = device_->SendWlan(std::move(packet));
+    status = device_->SendWlan(frame.Take());
     if (status != ZX_OK) { errorf("could not send probe request packet: %d\n", status); }
 
     return status;
@@ -357,7 +353,7 @@ zx_status_t Scanner::SendScanConfirm() {
 
     auto packet = fbl::unique_ptr<Packet>(new Packet(std::move(buffer), buf_len));
     packet->set_peer(Packet::Peer::kService);
-    zx_status_t status = SerializeServiceMsg(packet.get(), wlan_mlme_MLMEScanConfOrdinal, resp_.get());
+    zx_status_t status = SerializeServiceMsg(packet.get(), fuchsia_wlan_mlme_MLMEScanConfOrdinal, resp_.get());
     if (status != ZX_OK) {
         errorf("could not serialize ScanResponse: %d\n", status);
     } else {

@@ -22,6 +22,7 @@
 #include "garnet/lib/ui/gfx/resources/material.h"
 #include "garnet/lib/ui/gfx/resources/nodes/entity_node.h"
 #include "garnet/lib/ui/gfx/resources/nodes/node.h"
+#include "garnet/lib/ui/gfx/resources/nodes/opacity_node.h"
 #include "garnet/lib/ui/gfx/resources/nodes/scene.h"
 #include "garnet/lib/ui/gfx/resources/nodes/shape_node.h"
 #include "garnet/lib/ui/gfx/resources/renderers/renderer.h"
@@ -30,6 +31,8 @@
 #include "garnet/lib/ui/gfx/resources/shapes/rectangle_shape.h"
 #include "garnet/lib/ui/gfx/resources/shapes/rounded_rectangle_shape.h"
 #include "garnet/lib/ui/gfx/resources/shapes/shape.h"
+#include "garnet/lib/ui/gfx/resources/view.h"
+#include "garnet/lib/ui/gfx/resources/view_holder.h"
 
 namespace scenic {
 namespace gfx {
@@ -44,9 +47,15 @@ void HostImage::Accept(ResourceVisitor* visitor) { visitor->Visit(this); }
 
 void ImagePipe::Accept(ResourceVisitor* visitor) { visitor->Visit(this); }
 
+void View::Accept(ResourceVisitor* visitor) { visitor->Visit(this); }
+
+void ViewHolder::Accept(ResourceVisitor* visitor) { visitor->Visit(this); }
+
 void Buffer::Accept(ResourceVisitor* visitor) { visitor->Visit(this); }
 
 void EntityNode::Accept(ResourceVisitor* visitor) { visitor->Visit(this); }
+
+void OpacityNode::Accept(ResourceVisitor* visitor) { visitor->Visit(this); }
 
 void ShapeNode::Accept(ResourceVisitor* visitor) { visitor->Visit(this); }
 

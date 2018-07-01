@@ -22,21 +22,20 @@ using Resampler = media::audio::Mixer::Resampler;
 //
 // Gain tests using the Gain and AScale objects only
 //
-// Test the internally-used inline func that converts fixed-point gain to dB.
+// Test the internally-used inline func that converts AScale gain to dB.
 TEST(Gain, GainScaleToDb) {
   // Unity scale is 0.0dB (no change).
   EXPECT_EQ(GainScaleToDb(Gain::kUnityScale), 0.0f);
 
   // 10x scale-up in amplitude (by definition) is exactly +20.0dB.
-  EXPECT_EQ(GainScaleToDb(Gain::kUnityScale * 10), 20.0f);
+  EXPECT_EQ(GainScaleToDb(Gain::kUnityScale * 10.0f), 20.0f);
 
-  float gain_db = GainScaleToDb(Gain::kUnityScale / 100);
   // 1/100x scale-down in amplitude (by definition) is exactly -40.0dB.
-  EXPECT_EQ(gain_db, -40.0f);
+  EXPECT_EQ(static_cast<float>(GainScaleToDb(Gain::kUnityScale * 0.01f)),
+            -40.0f);
 
-  gain_db = GainScaleToDb(Gain::kUnityScale >> 1);
-  // 1/2x scale-down in amplitude (by calculation) is -6.02059991327962...dB.
-  EXPECT_EQ(gain_db, -6.020600f);  // that val, precise to float32 limitations.
+  EXPECT_EQ(static_cast<float>(GainScaleToDb(Gain::kUnityScale * 0.5f)),
+            -6.020600f);  // 1/2x scale-down by calculation: -6.02059991328..dB.
 }
 
 // Do renderer and output gains correctly combine to produce unity scaling?
@@ -49,13 +48,13 @@ TEST(Gain, Unity) {
   EXPECT_EQ(Gain::kUnityScale, amplitude_scale);
 
   // These positive/negative values should sum to 0.0: UNITY
-  gain.SetRendererGain(Gain::kMaxGain / 2);
-  amplitude_scale = gain.GetGainScale(-Gain::kMaxGain / 2);
+  gain.SetRendererGain(Gain::kMaxGainDb / 2);
+  amplitude_scale = gain.GetGainScale(-Gain::kMaxGainDb / 2);
   EXPECT_EQ(Gain::kUnityScale, amplitude_scale);
 
   // These positive/negative values should sum to 0.0: UNITY
-  gain.SetRendererGain(Gain::kMaxGain);
-  amplitude_scale = gain.GetGainScale(-Gain::kMaxGain);
+  gain.SetRendererGain(Gain::kMaxGainDb);
+  amplitude_scale = gain.GetGainScale(-Gain::kMaxGainDb);
   EXPECT_EQ(Gain::kUnityScale, amplitude_scale);
 }
 
@@ -87,80 +86,59 @@ TEST(Gain, Caching) {
   EXPECT_EQ(expect_amplitude_scale, amplitude_scale);
 }
 
-// System independently limits RendererGain to kMaxGain (24 dB) and OutputGain
+// System independently limits RendererGain to kMaxGainDb (24 dB) and OutputGain
 // to 0, intending for their sum to fit into a fixed-point (4.28) container.
 // MTWN-70 relates to Gain's statefulness. Does it need this complexity?
 TEST(Gain, MaxClamp) {
   Gain gain, expect_gain;
   Gain::AScale amplitude_scale;
 
-  // RendererGain of 2 * kMaxGain is clamped to kMaxGain (+24 dB).
-  gain.SetRendererGain(Gain::kMaxGain * 2);
+  // RendererGain of 2 * kMaxGainDb is clamped to kMaxGainDb (+24 dB).
+  gain.SetRendererGain(Gain::kMaxGainDb * 2);
   amplitude_scale = gain.GetGainScale(0.0f);
   EXPECT_EQ(Gain::kMaxScale, amplitude_scale);
 
-  // System limits RendererGain to kMaxGain, even when the sum is less than 0.
+  constexpr float kScale24DbDown = 0.0630957344f;
+  // System limits RendererGain to kMaxGainDb, even when the sum is less than 0.
   // RenderGain +36dB (clamped to +24dB) plus OutputGain -48dB becomes -24dB.
-  gain.SetRendererGain(Gain::kMaxGain * 1.5f);
-  amplitude_scale = gain.GetGainScale(-2 * Gain::kMaxGain);
-  // A gain_scale value of 0x10270AC represents -24.0dB.
-  EXPECT_EQ(0x10270ACu, amplitude_scale);
+  gain.SetRendererGain(Gain::kMaxGainDb * 1.5f);
+  amplitude_scale = gain.GetGainScale(-2 * Gain::kMaxGainDb);
+  EXPECT_EQ(kScale24DbDown, amplitude_scale);
 
   // This combination (24.05 dB) would even fit into 4.24, but clamps to 24.0dB.
-  gain.SetRendererGain(Gain::kMaxGain);
+  gain.SetRendererGain(Gain::kMaxGainDb);
   amplitude_scale = gain.GetGainScale(0.05f);
   EXPECT_EQ(Gain::kMaxScale, amplitude_scale);
 
   // System limits OutputGain to 0, independent of renderer gain.
-  // RendGain = -kMaxGain, OutGain = 1.0 (limited to 0). Expect -kMaxGain.
-  gain.SetRendererGain(-Gain::kMaxGain);
+  // RendGain = -kMaxGainDb, OutGain = 1.0 (limited to 0). Expect -kMaxGainDb.
+  gain.SetRendererGain(-Gain::kMaxGainDb);
   amplitude_scale = gain.GetGainScale(1.0);
-  EXPECT_EQ(0x10270ACu, amplitude_scale);
+  EXPECT_EQ(kScale24DbDown, amplitude_scale);
 }
 
-// System independently limits RendererGain and OutputGain to kMinGain (-160dB).
-// Is scale set to zero, if either (or the combo) is at or below kMinGain?
+// System independently limits RendererGain and OutputGain to kMinGainDb
+// (-160dB). Is scale set to zero, if either (or the combo) is at or below
+// kMinGainDb?
 TEST(Gain, MinMute) {
   Gain gain;
   Gain::AScale amplitude_scale;
 
-  // if OutputGain <= kMinGain, scale must be 0, regardless of RendererGain
-  gain.SetRendererGain(-2 * Gain::kMinGain);
-  amplitude_scale = gain.GetGainScale(Gain::kMinGain);
-  EXPECT_EQ(0u, amplitude_scale);
+  // if OutputGain <= kMinGainDb, scale must be 0, regardless of RendererGain
+  gain.SetRendererGain(-2 * Gain::kMinGainDb);
+  amplitude_scale = gain.GetGainScale(Gain::kMinGainDb);
+  EXPECT_EQ(0, amplitude_scale);
 
-  // if RendererGain <= kMinGain, scale must be 0, regardless of OutputGain
-  gain.SetRendererGain(Gain::kMinGain);
-  amplitude_scale = gain.GetGainScale(Gain::kMaxGain * 1.2);
-  EXPECT_EQ(0u, amplitude_scale);
+  // if RendererGain <= kMinGainDb, scale must be 0, regardless of OutputGain
+  gain.SetRendererGain(Gain::kMinGainDb);
+  amplitude_scale = gain.GetGainScale(Gain::kMaxGainDb * 1.2);
+  EXPECT_EQ(0, amplitude_scale);
 
-  // if sum of RendererGain and OutputGain <= kMinGain, scale should be 0
+  // if sum of RendererGain and OutputGain <= kMinGainDb, scale should be 0
   // Output gain is just slightly above MinGain, and Render takes us below it
   gain.SetRendererGain(-2.0f);
-  amplitude_scale = gain.GetGainScale(Gain::kMinGain + 1.0f);
-  EXPECT_EQ(0u, amplitude_scale);
-}
-
-// Does GetGainScale round appropriately when converting dB into AScale?
-// SetRendererGain just saves the given float; GetGainScale produces a
-// fixed-point uint32 (4.28 format), truncating (not rounding) in the process.
-TEST(Gain, Precision) {
-  Gain gain;
-  gain.SetRendererGain(-159.99f);
-  Gain::AScale amplitude_scale = gain.GetGainScale(0.0f);
-  EXPECT_EQ(0x00000003u, amplitude_scale);  // ...2.68 rounds up to ...3
-
-  gain.SetRendererGain(-157.696f);
-  amplitude_scale = gain.GetGainScale(0.0f);
-  EXPECT_EQ(0x00000003u, amplitude_scale);  // ...3.499 rounds down to ...3
-
-  gain.SetRendererGain(-0.50f);
-  amplitude_scale = gain.GetGainScale(0.0f);
-  EXPECT_EQ(0x0F1ADF94u, amplitude_scale);  // ...F93.8 rounds to ...F94
-
-  gain.SetRendererGain(Gain::kMaxGain);
-  amplitude_scale = gain.GetGainScale(0.0f);
-  EXPECT_EQ(0xFD9539A4u, amplitude_scale);  // ...A4.4 rounds down to ...A4
+  amplitude_scale = gain.GetGainScale(Gain::kMinGainDb + 1.0f);
+  EXPECT_EQ(0, amplitude_scale);
 }
 
 //
@@ -178,101 +156,107 @@ TEST(Gain, Precision) {
 // Verify whether per-stream gain interacts linearly with accumulation buffer.
 TEST(Gain, Scaling_Linearity) {
   int16_t source[] = {0x0CE4, 0x0CCC, 0x23, 4, -0x0E, -0x19, -0x0CCC, -0x0CDB};
-  int32_t accum[8];
+  float accum[8];
   Gain gain;
 
   // Validate that +20.00 dB leads to exactly 10x in value (within limits)
   gain.SetRendererGain(20.0f);
   Gain::AScale stream_scale = gain.GetGainScale(0.0f);
 
-  MixerPtr mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 44100, 1, 44100,
-                               Resampler::SampleAndHold);
+  MixerPtr mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 1,
+                               44100, 1, 44100, Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum),
         stream_scale);
 
-  int32_t expect[] = {0x80E800, 0x7FF800, 0x15E00,   0x2800,
-                      -0x8C00,  -0xFA00,  -0x7FF800, -0x808E00};
-  NormalizeInt24ToPipelineBitwidth(expect, fbl::count_of(expect));
+  float expect[] = {0x080E8000,  0x07FF8000,  0x015E000,   0x00028000,
+                    -0x0008C000, -0x000FA000, -0x07FF8000, -0x0808E000};
+  NormalizeInt28ToPipelineBitwidth(expect, fbl::count_of(expect));
   EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
 
   //
   // How precisely linear are our gain stages, mathematically?
-  // Validate that -20.00 dB leads to exactly 0.10x in value
-  gain.SetRendererGain(-20.0f);
+  // Validate that -12.0411998 dB leads to exactly 0.25x in value
+  gain.SetRendererGain(-12.0411998f);
   stream_scale = gain.GetGainScale(0.0f);
 
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 44100, 1, 44100,
-                      Resampler::SampleAndHold);
+  mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 1, 44100, 1,
+                      44100, Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum),
         stream_scale);
 
-  int32_t expect2[] = {0x14A00, 0x14799, 0x380,    0x66,
-                       -0x166,  -0x280,  -0x14799, -0x14919};
-  NormalizeInt24ToPipelineBitwidth(expect2, fbl::count_of(expect2));
+  float expect2[] = {0x00339000,  0x00333000,  0x00008C00,  0x00001000,
+                     -0x00003800, -0x00006400, -0x00333000, -0x00336C00};
+  NormalizeInt28ToPipelineBitwidth(expect2, fbl::count_of(expect2));
   EXPECT_TRUE(CompareBuffers(accum, expect2, fbl::count_of(accum)));
 }
 
-// How does our Gain respond to very low values? Today during the scaling
-// process, the system should round fractional data values away from 0.
-// By "round away from zero", we mean: 1.5 --> 2; -1.5 --> -2; -1.1 --> -1.
+// How does our gain scaling respond to scale values close to the limits?
+// Using 16-bit inputs, verify the behavior of our Gain object when given the
+// closest-to-Unity and closest-to-Mute scale values.
 TEST(Gain, Scaling_Precision) {
-  int16_t source[] = {0x7FFF, -0x8000, -1, 1};  // max/min values
-  int32_t accum[4];
+  int16_t max_source[] = {0x7FFF, -0x8000};  // max/min 16-bit signed values.
+  float accum[2];
 
-  // Before, even slightly below unity reduced all positive vals. Now we round.
-  // For this reason, at this gain_scale, resulting audio should be unchanged.
-  Gain::AScale gain_scale = AudioResult::kPrevScaleEpsilon + 1;
-  MixerPtr mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
-                               Resampler::SampleAndHold);
-  DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum),
+  // kMinUnityScale is the lowest (furthest-from-Unity) with no observable
+  // attenuation on full-scale (i.e. the smallest indistinguishable from Unity).
+  // At this gain_scale, audio should be unchanged.
+  Gain::AScale gain_scale = AudioResult::kMinUnityScale;
+  MixerPtr mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 1,
+                               48000, 1, 48000, Resampler::SampleAndHold);
+  DoMix(std::move(mixer), max_source, accum, false, fbl::count_of(accum),
         gain_scale);
 
-  int32_t expect[] = {0x7FFF00, -0x800000, -0x100, 0x100};
-  NormalizeInt24ToPipelineBitwidth(expect, fbl::count_of(expect));
-  EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
+  //  At this gain_scale, resulting audio should be unchanged.
+  float max_expect1[] = {0x07FFF000, -0x08000000};  // left-shift source by 12.
+  NormalizeInt28ToPipelineBitwidth(max_expect1, fbl::count_of(max_expect1));
+  EXPECT_TRUE(CompareBuffers(accum, max_expect1, fbl::count_of(accum)));
 
-  // This gain is the first (closest-to-unity) to change a full-scale signal.
+  // This is the highest (closest-to-Unity) AScale with an observable effect on
+  // full-scale (i.e. the largest sub-Unity AScale distinguishable from Unity).
   gain_scale = AudioResult::kPrevScaleEpsilon;
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
-                      Resampler::SampleAndHold);
-  DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum),
+  mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 1, 48000, 1,
+                      48000, Resampler::SampleAndHold);
+  DoMix(std::move(mixer), max_source, accum, false, fbl::count_of(accum),
         gain_scale);
 
-  expect[0]--;
-  expect[1]++;
-  EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
+  // Float32 has 25-bit precision (not 28), hence our min delta is 8 (not 1).
+  float max_expect2[] = {0x07FFEFF8, -0x07FFFFF8};
+  NormalizeInt28ToPipelineBitwidth(max_expect2, fbl::count_of(max_expect2));
+  EXPECT_TRUE(CompareBuffers(accum, max_expect2, fbl::count_of(accum)));
 
-  // This is lowest gain_scale that produces non-zero from full-scale.
-  // Why "+1"? Differences in negative and positive range; see subsequent check.
-  gain_scale = AudioResult::kPrevMinScaleNonZero + 1;
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
-                      Resampler::SampleAndHold);
-  DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum),
+  // kPrevMinScaleNonMute is the lowest (closest-to-zero) at which audio is not
+  // silenced (i.e. the smallest that is distinguishable from Mute).  Although
+  // the results may be smaller than we can represent in our 28-bit test data
+  // representation, they are still non-zero and thus validate our scalar limit.
+  int16_t min_source[] = {1, -1};
+  gain_scale = AudioResult::kPrevMinScaleNonMute;
+  mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 1, 48000, 1,
+                      48000, Resampler::SampleAndHold);
+  DoMix(std::move(mixer), min_source, accum, false, fbl::count_of(accum),
         gain_scale);
 
-  int32_t expect2[] = {1, -1, 0, 0};
-  EXPECT_TRUE(CompareBuffers(accum, expect2, fbl::count_of(accum)));
+  // The method used elsewhere in this file for expected result arrays (28-bit
+  // fixed-point, normalized into float) cannot precisely express these values.
+  // Nonetheless, they are present and non-zero!
+  float min_expect[] = {3.051758065e-13, -3.051758065e-13};
+  EXPECT_TRUE(CompareBuffers(accum, min_expect, fbl::count_of(accum)));
 
-  // This 'special' scale straddles boundaries: 32767 is reduced to _just_ less
-  // than .5 (and rounds in) while -32768 becomes -.50000 (rounding out to -1).
-  gain_scale = AudioResult::kPrevMinScaleNonZero;
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
-                      Resampler::SampleAndHold);
-  DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum),
+  //
+  // kMaxScaleMute is the highest (furthest-from-Mute) scalar that silences full
+  // scale data (i.e. the largest AScale that is indistinguishable from Mute).
+  // Consider an AScale value corresponding to ever-so-slightly above -160dB: if
+  // this increment is small enough, the float32 cannot discern it and treats it
+  // as -160dB, our limit for "automatically mute".  Per a mixer optimization,
+  // if gain is Mute-equivalent, we skip mixing altogether. This is equivalent
+  // to setting the 'accumulate' flag and adding zeroes, so we set that flag
+  // here and expect no change in the accumulator, even with max inputs.
+  gain_scale = AudioResult::kMaxScaleMute;
+  mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 1, 48000, 1,
+                      48000, Resampler::SampleAndHold);
+  DoMix(std::move(mixer), max_source, accum, true, fbl::count_of(accum),
         gain_scale);
 
-  expect2[0] = 0;
-  EXPECT_TRUE(CompareBuffers(accum, expect2, fbl::count_of(accum)));
-
-  // At this gain, even -32768 is reduced to -.49... thus rounds in to 0.
-  // Therefore, nothing should change in the accumulator buffer.
-  gain_scale = AudioResult::kPrevMinScaleNonZero - 1;
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
-                      Resampler::SampleAndHold);
-  DoMix(std::move(mixer), source, accum, true, fbl::count_of(accum),
-        gain_scale);
-
-  EXPECT_TRUE(CompareBuffers(accum, expect2, fbl::count_of(accum)));
+  EXPECT_TRUE(CompareBuffers(accum, min_expect, fbl::count_of(accum)));
 }
 
 //
@@ -283,65 +267,46 @@ TEST(Gain, Scaling_Precision) {
 // Can accumulator result exceed the max range of individual streams?
 TEST(Gain, Accumulator) {
   int16_t source[] = {0x7FFF, -0x8000};
-  int32_t accum[] = {0x7FFF00, -0x800000};
-  int32_t expect[] = {0xFFFE00, -0x1000000};
-  int32_t expect2[] = {0x17FFD00, -0x1800000};
+  float accum[] = {0x07FFF000, -0x08000000};
+  float expect[] = {0x0FFFE000, -0x10000000};
+  float expect2[] = {0x17FFD000, -0x18000000};
 
   // When mixed, these far exceed any int16 range
-  NormalizeInt24ToPipelineBitwidth(accum, fbl::count_of(accum));
-  NormalizeInt24ToPipelineBitwidth(expect, fbl::count_of(expect));
-  NormalizeInt24ToPipelineBitwidth(expect2, fbl::count_of(expect2));
+  NormalizeInt28ToPipelineBitwidth(accum, fbl::count_of(accum));
+  NormalizeInt28ToPipelineBitwidth(expect, fbl::count_of(expect));
+  NormalizeInt28ToPipelineBitwidth(expect2, fbl::count_of(expect2));
 
   // These values exceed the per-stream range of int16
-  MixerPtr mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
-                               Resampler::SampleAndHold);
+  MixerPtr mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 1,
+                               48000, 1, 48000, Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, true, fbl::count_of(accum));
   EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
 
   // these values even exceed uint16
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 2, 48000, 2, 48000,
-                      Resampler::SampleAndHold);
+  mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 2, 48000, 2,
+                      48000, Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, true, 1);
   EXPECT_TRUE(CompareBuffers(accum, expect2, fbl::count_of(accum)));
-}
-
-// How does our accumulator behave at its limits? Does it clamp or rollover?
-TEST(Gain, Accumulator_Clamp) {
-  int16_t source[] = {0x7FFF, -0x8000};
-  // This mix will exceed int32 max and min respectively: accum SHOULD clamp.
-  int32_t accum[] = {std::numeric_limits<int32_t>::max() -
-                         (source[0] << (kAudioPipelineWidth - 16)) + 1,
-                     std::numeric_limits<int32_t>::min() -
-                         (source[1] << (kAudioPipelineWidth - 16)) - 1};
-
-  MixerPtr mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
-                               Resampler::SampleAndHold);
-  DoMix(std::move(mixer), source, accum, true, fbl::count_of(accum));
-
-  // TODO(mpuryear): when MTWN-83 is fixed, expect max and min (not min & max).
-  int32_t expect[] = {std::numeric_limits<int32_t>::min(),
-                      std::numeric_limits<int32_t>::max()};
-  EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
 }
 
 // Our mixer contains an optimization in which it skips mixing operations if it
 // detects that gain is below a certain threshold (regardless of "accumulate").
 TEST(Gain, Accumulator_Clear) {
   int16_t source[] = {-32768, 32767};
-  int32_t accum[] = {-32768, 32767};
-  int32_t expect[] = {-32768, 32767};
+  float accum[] = {-32768, 32767};
+  float expect[] = {-32768, 32767};
 
   // We will test both SampleAndHold and LinearInterpolation interpolators.
-  MixerPtr mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
-                               Resampler::SampleAndHold);
+  MixerPtr mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 1,
+                               48000, 1, 48000, Resampler::SampleAndHold);
   // Use the gain guaranteed to silence all signals: Gain::MuteThreshold.
   DoMix(std::move(mixer), source, accum, true, fbl::count_of(accum),
         Gain::MuteThreshold());
   EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
 
   // Try with the other sampler.
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
-                      Resampler::LinearInterpolation);
+  mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 1, 48000, 1,
+                      48000, Resampler::LinearInterpolation);
   DoMix(std::move(mixer), source, accum, true, fbl::count_of(accum),
         Gain::MuteThreshold());
   EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
@@ -349,15 +314,15 @@ TEST(Gain, Accumulator_Clear) {
   //
   // When accumulate = false, this is overridden: it behaves identically.
   //
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
-                      Resampler::SampleAndHold);
+  mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 1, 48000, 1,
+                      48000, Resampler::SampleAndHold);
   DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum),
         Gain::MuteThreshold());
   EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));
 
   // Ensure that both samplers behave identically in this regard.
-  mixer = SelectMixer(AudioSampleFormat::SIGNED_16, 1, 48000, 1, 48000,
-                      Resampler::LinearInterpolation);
+  mixer = SelectMixer(fuchsia::media::AudioSampleFormat::SIGNED_16, 1, 48000, 1,
+                      48000, Resampler::LinearInterpolation);
   DoMix(std::move(mixer), source, accum, false, fbl::count_of(accum),
         Gain::MuteThreshold());
   EXPECT_TRUE(CompareBuffers(accum, expect, fbl::count_of(accum)));

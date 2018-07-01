@@ -7,6 +7,10 @@
             manifest="manifest/build"
             name="build"
             remotebranch="gzos"/>
+    <import remote="https://fuchsia.googlesource.com/buildtools"
+            manifest="manifest/buildtools"
+            name="buildtools"
+            revision="957289c1db8ecc4a4f03d867f28f166c55f02e16"/>
     <import remote="ssh://review.gerrithub.io:29418/OpenTrustGroup/scripts"
             manifest="manifest/scripts"
             name="scripts"

@@ -11,21 +11,17 @@
 #include "garnet/bin/mdns/service/host_name.h"
 #include "garnet/bin/mdns/service/mdns_fidl_util.h"
 #include "garnet/bin/mdns/service/mdns_names.h"
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fsl/types/type_converters.h"
+#include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/type_converter.h"
 
 namespace mdns {
 
-MdnsServiceImpl::MdnsServiceImpl(
-    component::ApplicationContext* application_context)
-    : application_context_(application_context) {
-  application_context_->outgoing().AddPublicService<MdnsService>(
-      [this](fidl::InterfaceRequest<MdnsService> request) {
-        bindings_.AddBinding(this, std::move(request));
-      });
-
+MdnsServiceImpl::MdnsServiceImpl(fuchsia::sys::StartupContext* startup_context)
+    : startup_context_(startup_context) {
+  startup_context_->outgoing().AddPublicService(bindings_.GetHandler(this));
   Start();
 }
 
@@ -39,8 +35,7 @@ void MdnsServiceImpl::Start() {
     return;
   }
 
-  mdns_.Start(FidlInterfaceMonitor::Create(application_context_),
-              GetHostName());
+  mdns_.Start(FidlInterfaceMonitor::Create(startup_context_), GetHostName());
 }
 
 void MdnsServiceImpl::ResolveHostName(fidl::StringPtr host_name,
@@ -54,9 +49,9 @@ void MdnsServiceImpl::ResolveHostName(fidl::StringPtr host_name,
   mdns_.ResolveHostName(
       host_name,
       fxl::TimePoint::Now() + fxl::TimeDelta::FromMilliseconds(timeout_ms),
-      [this, callback](const std::string& host_name,
-                       const IpAddress& v4_address,
-                       const IpAddress& v6_address) {
+      [this, callback = std::move(callback)](const std::string& host_name,
+                                             const IpAddress& v4_address,
+                                             const IpAddress& v6_address) {
         callback(MdnsFidlUtil::CreateSocketAddressIPv4(v4_address),
                  MdnsFidlUtil::CreateSocketAddressIPv6(v6_address));
       });
@@ -64,7 +59,8 @@ void MdnsServiceImpl::ResolveHostName(fidl::StringPtr host_name,
 
 void MdnsServiceImpl::SubscribeToService(
     fidl::StringPtr service_name,
-    fidl::InterfaceRequest<MdnsServiceSubscription> subscription_request) {
+    fidl::InterfaceRequest<fuchsia::mdns::MdnsServiceSubscription>
+        subscription_request) {
   if (!MdnsNames::IsValidServiceName(service_name)) {
     return;
   }
@@ -80,27 +76,25 @@ void MdnsServiceImpl::SubscribeToService(
 }
 
 void MdnsServiceImpl::PublishServiceInstance(
-    fidl::StringPtr service_name,
-    fidl::StringPtr instance_name,
-    uint16_t port,
+    fidl::StringPtr service_name, fidl::StringPtr instance_name, uint16_t port,
     fidl::VectorPtr<fidl::StringPtr> text,
     PublishServiceInstanceCallback callback) {
   if (!MdnsNames::IsValidServiceName(service_name)) {
-    callback(MdnsResult::INVALID_SERVICE_NAME);
+    callback(fuchsia::mdns::MdnsResult::INVALID_SERVICE_NAME);
     return;
   }
 
   if (!MdnsNames::IsValidInstanceName(instance_name)) {
-    callback(MdnsResult::INVALID_INSTANCE_NAME);
+    callback(fuchsia::mdns::MdnsResult::INVALID_INSTANCE_NAME);
     return;
   }
 
   auto publisher = std::unique_ptr<SimplePublisher>(new SimplePublisher(
-      IpPort::From_uint16_t(port), std::move(text), callback));
+      IpPort::From_uint16_t(port), std::move(text), callback.share()));
 
   if (!mdns_.PublishServiceInstance(service_name, instance_name,
                                     publisher.get())) {
-    callback(MdnsResult::ALREADY_PUBLISHED_LOCALLY);
+    callback(fuchsia::mdns::MdnsResult::ALREADY_PUBLISHED_LOCALLY);
     return;
   }
 
@@ -133,21 +127,22 @@ void MdnsServiceImpl::UnpublishServiceInstance(fidl::StringPtr service_name,
 }
 
 void MdnsServiceImpl::AddResponder(
-    fidl::StringPtr service_name,
-    fidl::StringPtr instance_name,
-    fidl::InterfaceHandle<MdnsResponder> responder_handle) {
+    fidl::StringPtr service_name, fidl::StringPtr instance_name,
+    fidl::InterfaceHandle<fuchsia::mdns::MdnsResponder> responder_handle) {
   FXL_DCHECK(responder_handle);
 
   auto responder_ptr = responder_handle.Bind();
   FXL_DCHECK(responder_ptr);
 
   if (!MdnsNames::IsValidServiceName(service_name)) {
-    responder_ptr->UpdateStatus(MdnsResult::INVALID_SERVICE_NAME);
+    responder_ptr->UpdateStatus(
+        fuchsia::mdns::MdnsResult::INVALID_SERVICE_NAME);
     return;
   }
 
   if (!MdnsNames::IsValidInstanceName(instance_name)) {
-    responder_ptr->UpdateStatus(MdnsResult::INVALID_INSTANCE_NAME);
+    responder_ptr->UpdateStatus(
+        fuchsia::mdns::MdnsResult::INVALID_INSTANCE_NAME);
     return;
   }
 
@@ -161,7 +156,8 @@ void MdnsServiceImpl::AddResponder(
 
   if (!mdns_.PublishServiceInstance(service_name, instance_name,
                                     publisher.get())) {
-    publisher->responder_->UpdateStatus(MdnsResult::ALREADY_PUBLISHED_LOCALLY);
+    publisher->responder_->UpdateStatus(
+        fuchsia::mdns::MdnsResult::ALREADY_PUBLISHED_LOCALLY);
     return;
   }
 
@@ -211,39 +207,36 @@ void MdnsServiceImpl::ReannounceInstance(fidl::StringPtr service_name,
   iter->second->Reannounce();
 }
 
-void MdnsServiceImpl::SetVerbose(bool value) {
-  mdns_.SetVerbose(value);
-}
+void MdnsServiceImpl::SetVerbose(bool value) { mdns_.SetVerbose(value); }
 
 MdnsServiceImpl::Subscriber::Subscriber(
-    fidl::InterfaceRequest<MdnsServiceSubscription> request,
-    const fxl::Closure& deleter)
+    fidl::InterfaceRequest<fuchsia::mdns::MdnsServiceSubscription> request,
+    fit::closure deleter)
     : binding_(this, std::move(request)) {
-  binding_.set_error_handler([this, deleter]() {
+  binding_.set_error_handler([this, deleter = std::move(deleter)]() {
     binding_.set_error_handler(nullptr);
     deleter();
   });
 
-  instances_publisher_.SetCallbackRunner([this](GetInstancesCallback callback,
-                                                uint64_t version) {
-    fidl::VectorPtr<MdnsServiceInstance> instances(instances_by_name_.size());
+  instances_publisher_.SetCallbackRunner(
+      [this](GetInstancesCallback callback, uint64_t version) {
+        fidl::VectorPtr<fuchsia::mdns::MdnsServiceInstance> instances(
+            instances_by_name_.size());
 
-    size_t i = 0;
-    for (auto& pair : instances_by_name_) {
-      pair.second->Clone(&instances->at(i++));
-    }
+        size_t i = 0;
+        for (auto& pair : instances_by_name_) {
+          pair.second->Clone(&instances->at(i++));
+        }
 
-    callback(version, std::move(instances));
-  });
+        callback(version, std::move(instances));
+      });
 }
 
 MdnsServiceImpl::Subscriber::~Subscriber() {}
 
 void MdnsServiceImpl::Subscriber::InstanceDiscovered(
-    const std::string& service,
-    const std::string& instance,
-    const SocketAddress& v4_address,
-    const SocketAddress& v6_address,
+    const std::string& service, const std::string& instance,
+    const SocketAddress& v4_address, const SocketAddress& v6_address,
     const std::vector<std::string>& text) {
   instances_by_name_.emplace(
       instance, MdnsFidlUtil::CreateServiceInstance(
@@ -251,10 +244,8 @@ void MdnsServiceImpl::Subscriber::InstanceDiscovered(
 }
 
 void MdnsServiceImpl::Subscriber::InstanceChanged(
-    const std::string& service,
-    const std::string& instance,
-    const SocketAddress& v4_address,
-    const SocketAddress& v6_address,
+    const std::string& service, const std::string& instance,
+    const SocketAddress& v4_address, const SocketAddress& v6_address,
     const std::vector<std::string>& text) {
   auto iter = instances_by_name_.find(instance);
   if (iter != instances_by_name_.end()) {
@@ -274,35 +265,33 @@ void MdnsServiceImpl::Subscriber::UpdatesComplete() {
 
 void MdnsServiceImpl::Subscriber::GetInstances(uint64_t version_last_seen,
                                                GetInstancesCallback callback) {
-  instances_publisher_.Get(version_last_seen, callback);
+  instances_publisher_.Get(version_last_seen, std::move(callback));
 }
 
 MdnsServiceImpl::SimplePublisher::SimplePublisher(
-    IpPort port,
-    fidl::VectorPtr<fidl::StringPtr> text,
+    IpPort port, fidl::VectorPtr<fidl::StringPtr> text,
     PublishServiceInstanceCallback callback)
     : port_(port),
       text_(fxl::To<std::vector<std::string>>(text)),
-      callback_(callback) {}
+      callback_(std::move(callback)) {}
 
 void MdnsServiceImpl::SimplePublisher::ReportSuccess(bool success) {
-  callback_(success ? MdnsResult::OK : MdnsResult::ALREADY_PUBLISHED_ON_SUBNET);
+  callback_(success ? fuchsia::mdns::MdnsResult::OK
+                    : fuchsia::mdns::MdnsResult::ALREADY_PUBLISHED_ON_SUBNET);
 }
 
 void MdnsServiceImpl::SimplePublisher::GetPublication(
-    bool query,
-    const std::string& subtype,
-    const std::function<void(std::unique_ptr<Mdns::Publication>)>& callback) {
+    bool query, const std::string& subtype,
+    fit::function<void(std::unique_ptr<Mdns::Publication>)> callback) {
   callback(Mdns::Publication::Create(port_, text_));
 }
 
 MdnsServiceImpl::ResponderPublisher::ResponderPublisher(
-    MdnsResponderPtr responder,
-    const fxl::Closure& deleter)
+    fuchsia::mdns::MdnsResponderPtr responder, fit::closure deleter)
     : responder_(std::move(responder)) {
   FXL_DCHECK(responder_);
 
-  responder_.set_error_handler([this, deleter]() {
+  responder_.set_error_handler([this, deleter = std::move(deleter)]() {
     responder_.set_error_handler(nullptr);
     deleter();
   });
@@ -310,19 +299,21 @@ MdnsServiceImpl::ResponderPublisher::ResponderPublisher(
 
 void MdnsServiceImpl::ResponderPublisher::ReportSuccess(bool success) {
   FXL_DCHECK(responder_);
-  responder_->UpdateStatus(success ? MdnsResult::OK
-                                   : MdnsResult::ALREADY_PUBLISHED_ON_SUBNET);
+  responder_->UpdateStatus(
+      success ? fuchsia::mdns::MdnsResult::OK
+              : fuchsia::mdns::MdnsResult::ALREADY_PUBLISHED_ON_SUBNET);
 }
 
 void MdnsServiceImpl::ResponderPublisher::GetPublication(
-    bool query,
-    const std::string& subtype,
-    const std::function<void(std::unique_ptr<Mdns::Publication>)>& callback) {
+    bool query, const std::string& subtype,
+    fit::function<void(std::unique_ptr<Mdns::Publication>)> callback) {
   FXL_DCHECK(responder_);
-  responder_->GetPublication(query, subtype,
-                             [callback](MdnsPublicationPtr publication_ptr) {
-                               callback(MdnsFidlUtil::Convert(publication_ptr));
-                             });
+  responder_->GetPublication(
+      query, subtype,
+      fxl::MakeCopyable([callback = std::move(callback)](
+                            fuchsia::mdns::MdnsPublicationPtr publication_ptr) {
+        callback(MdnsFidlUtil::Convert(publication_ptr));
+      }));
 }
 
 }  // namespace mdns

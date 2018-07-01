@@ -1,0 +1,51 @@
+# Copyright 2016 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+source_set("testing") {
+  testonly = true
+
+  sources = [
+    "startup_context_for_test.cc",
+    "startup_context_for_test.h",
+    "test_with_context.cc",
+    "test_with_context.h",
+  ]
+
+  deps = [
+    "//garnet/public/lib/app/cpp",
+  ]
+
+  public_deps = [
+    ":fake_launcher",
+    ":fake_component",
+    "//garnet/public/lib/gtest",
+  ]
+}
+
+source_set("fake_launcher") {
+  testonly = true
+
+  sources = [
+    "fake_launcher.cc",
+    "fake_launcher.h",
+  ]
+
+  deps = [
+    "//garnet/public/lib/app/cpp",
+  ]
+}
+
+source_set("fake_component") {
+  testonly = true
+
+  sources = [
+    "fake_component.cc",
+    "fake_component.h",
+  ]
+
+  deps = [
+    ":fake_launcher",
+    "//garnet/public/lib/app/cpp",
+  ]
+}

@@ -4,15 +4,21 @@
 
 #include "lib/ui/sketchy/client/canvas.h"
 
+#include "lib/fxl/functional/make_copyable.h"
+
 namespace sketchy_lib {
 
-Canvas::Canvas(component::ApplicationContext* context, async::Loop* loop)
-    : Canvas(context->ConnectToEnvironmentService<::fuchsia::ui::sketchy::Canvas>(), loop) {}
+Canvas::Canvas(fuchsia::sys::StartupContext* context, async::Loop* loop)
+    : Canvas(
+          context
+              ->ConnectToEnvironmentService<::fuchsia::ui::sketchy::Canvas>(),
+          loop) {}
 
 Canvas::Canvas(::fuchsia::ui::sketchy::CanvasPtr canvas, async::Loop* loop)
     : canvas_(std::move(canvas)), loop_(loop), next_resource_id_(1) {
   canvas_.set_error_handler([this] {
-    FXL_LOG(INFO) << "sketchy_lib::Canvas: lost connection to ::fuchsia::ui::sketchy::Canvas.";
+    FXL_LOG(INFO) << "sketchy_lib::Canvas: lost connection to "
+                     "::fuchsia::ui::sketchy::Canvas.";
     loop_->Quit();
   });
 }
@@ -20,7 +26,7 @@ Canvas::Canvas(::fuchsia::ui::sketchy::CanvasPtr canvas, async::Loop* loop)
 ResourceId Canvas::AllocateResourceId() { return next_resource_id_++; }
 
 void Canvas::Present(uint64_t time,
-                     scenic_lib::Session::PresentCallback callback) {
+                     scenic::Session::PresentCallback callback) {
   if (!commands_->empty()) {
     FXL_DCHECK(static_cast<bool>(commands_));
     canvas_->Enqueue(std::move(commands_));
@@ -30,7 +36,7 @@ void Canvas::Present(uint64_t time,
     // it safe to continue using.
     commands_.reset();
   }
-  canvas_->Present(time, std::move(callback));
+  canvas_->Present(time, fxl::MakeCopyable(std::move(callback)));
 }
 
 }  // namespace sketchy_lib

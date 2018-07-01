@@ -9,6 +9,7 @@
 #include <fuchsia/ui/gfx/cpp/fidl.h>
 #include "garnet/lib/ui/gfx/resources/import.h"
 #include "garnet/lib/ui/gfx/resources/nodes/traversal.h"
+#include "garnet/lib/ui/gfx/resources/view.h"
 
 #include "lib/escher/geometry/types.h"
 
@@ -17,12 +18,15 @@ namespace gfx {
 
 namespace {
 
-constexpr ResourceTypeFlags kHasChildren =
-    ResourceType::kEntityNode | ResourceType::kScene;
-constexpr ResourceTypeFlags kHasParts =
-    ResourceType::kEntityNode | ResourceType::kClipNode;
+constexpr ResourceTypeFlags kHasChildren = ResourceType::kEntityNode |
+                                           ResourceType::kOpacityNode |
+                                           ResourceType::kScene;
+constexpr ResourceTypeFlags kHasParts = ResourceType::kEntityNode |
+                                        ResourceType::kOpacityNode |
+                                        ResourceType::kClipNode;
 constexpr ResourceTypeFlags kHasTransform =
-    ResourceType::kClipNode | ResourceType::kEntityNode | ResourceType::kScene |
+    ResourceType::kClipNode | ResourceType::kEntityNode |
+    ResourceType::kOpacityNode | ResourceType::kScene |
     ResourceType::kShapeNode;
 constexpr ResourceTypeFlags kHasClip = ResourceType::kEntityNode;
 
@@ -116,6 +120,12 @@ bool Node::Detach() {
       case ParentRelation::kNone:
         FXL_NOTREACHED();
         break;
+    }
+
+    // If our parent is a View, ensure it's aware that we've been re-parented.
+    if (view_) {
+      view_->DetachChild(this);
+      view_ = nullptr;
     }
 
     parent_relation_ = ParentRelation::kNone;

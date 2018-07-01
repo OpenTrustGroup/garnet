@@ -64,7 +64,7 @@ void HostVsockEndpoint::Connect(
   }
   Connect(src_port, cid, port,
           [this, src_port, callback = std::move(callback)](zx_status_t status,
-                                                           zx::socket socket) {
+                                                           zx::socket socket) mutable {
             ConnectCallback(status, std::move(socket), src_port,
                             std::move(callback));
           });
@@ -86,6 +86,7 @@ void HostVsockEndpoint::ConnectCallback(
     callback(ZX_ERR_CONNECTION_REFUSED, zx::socket());
     return;
   }
+  conn->wait.set_trigger(ZX_SOCKET_PEER_CLOSED);
   conn->wait.set_object(conn->socket.get());
   conn->wait.set_handler(
       [this, conn = conn.get()](...) { OnPeerClosed(conn); });

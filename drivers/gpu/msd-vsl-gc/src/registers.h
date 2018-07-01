@@ -11,6 +11,15 @@
 
 namespace registers {
 
+class ClockControl : public magma::RegisterBase {
+public:
+    DEF_BIT(12, soft_reset);
+    DEF_BIT(16, idle_3d);
+    DEF_BIT(19, isolate_gpu);
+
+    static auto Get() { return magma::RegisterAddr<ClockControl>(0x0); }
+};
+
 class ChipId : public magma::RegisterBase {
 public:
     DEF_FIELD(31, 0, chip_id);
@@ -65,7 +74,9 @@ public:
 
 class MinorFeatures : public magma::RegisterBase {
 public:
-    static constexpr uint32_t kMoreMinorFeatures = 1 << 21;
+    enum MinorFeatures0 { kMoreMinorFeatures = 1 << 21 };
+    enum MinorFeatures1 { kHasMmu = 1 << 28 };
+    enum MinorFeatures5 { kHalti5 = 1 << 29 };
 
     static auto Get(uint32_t index)
     {
@@ -124,11 +135,70 @@ public:
     static auto Get() { return magma::RegisterAddr<Specs4>(0x9C); }
 };
 
+class MmuPageTableArrayConfig : public magma::RegisterBase {
+public:
+    DEF_FIELD(15, 0, index);
+
+    static auto Get() { return magma::RegisterAddr<MmuPageTableArrayConfig>(0x1AC); }
+};
+
 class IdleState : public magma::RegisterBase {
 public:
     bool IsIdle() { return reg_value() == 0x7fffffff; }
 
     static auto Get() { return magma::RegisterAddr<IdleState>(0x4); }
+};
+
+class MmuSecureExceptionAddress : public magma::RegisterBase {
+public:
+    static auto Get() { return magma::RegisterAddr<MmuSecureExceptionAddress>(0x380); }
+};
+
+class MmuSecureStatus : public magma::RegisterBase {
+public:
+    static auto Get() { return magma::RegisterAddr<MmuSecureStatus>(0x384); }
+};
+
+class MmuSecureControl : public magma::RegisterBase {
+public:
+    DEF_BIT(0, enable);
+
+    static auto Get() { return magma::RegisterAddr<MmuSecureControl>(0x388); }
+};
+
+class PageTableArrayAddressLow : public magma::RegisterBase {
+public:
+    static auto Get() { return magma::RegisterAddr<PageTableArrayAddressLow>(0x38C); }
+};
+
+class PageTableArrayAddressHigh : public magma::RegisterBase {
+public:
+    static auto Get() { return magma::RegisterAddr<PageTableArrayAddressHigh>(0x390); }
+};
+
+class PageTableArrayControl : public magma::RegisterBase {
+public:
+    DEF_BIT(0, enable);
+
+    static auto Get() { return magma::RegisterAddr<PageTableArrayControl>(0x394); }
+};
+
+class MmuNonSecuritySafeAddressLow : public magma::RegisterBase {
+public:
+    static auto Get() { return magma::RegisterAddr<MmuNonSecuritySafeAddressLow>(0x398); }
+};
+
+class MmuSecuritySafeAddressLow : public magma::RegisterBase {
+public:
+    static auto Get() { return magma::RegisterAddr<MmuSecuritySafeAddressLow>(0x39C); }
+};
+
+class MmuSafeAddressConfig : public magma::RegisterBase {
+public:
+    DEF_FIELD(7, 0, non_security_safe_address_high);
+    DEF_FIELD(23, 16, security_safe_address_high);
+
+    static auto Get() { return magma::RegisterAddr<MmuSafeAddressConfig>(0x3A0); }
 };
 
 class SecureCommandControl : public magma::RegisterBase {
@@ -141,6 +211,7 @@ public:
 
 class SecureAhbControl : public magma::RegisterBase {
 public:
+    DEF_BIT(0, reset);
     DEF_BIT(1, non_secure_access);
 
     static auto Get() { return magma::RegisterAddr<SecureAhbControl>(0x3A8); }
@@ -159,6 +230,16 @@ public:
     DEF_BIT(16, enable);
 
     static auto Get() { return magma::RegisterAddr<FetchEngineCommandControl>(0x658); }
+};
+
+class DmaStatus : public magma::RegisterBase {
+public:
+    static auto Get() { return magma::RegisterAddr<DmaStatus>(0x65C); }
+};
+
+class DmaDebugState : public magma::RegisterBase {
+public:
+    static auto Get() { return magma::RegisterAddr<DmaDebugState>(0x660); }
 };
 
 class DmaAddress : public magma::RegisterBase {

@@ -14,6 +14,8 @@
 
 namespace wlan {
 
+namespace wlan_mlme = ::fuchsia::wlan::mlme;
+
 InfraBss::InfraBss(DeviceInterface* device, fbl::unique_ptr<BeaconSender> bcn_sender,
                    const common::MacAddr& bssid)
     : bssid_(bssid), device_(device), bcn_sender_(fbl::move(bcn_sender)) {
@@ -29,12 +31,12 @@ InfraBss::~InfraBss() {
     Stop();
 }
 
-void InfraBss::Start(const wlan_mlme::StartRequest& req) {
+void InfraBss::Start(const MlmeMsg<wlan_mlme::StartRequest>& req) {
     if (IsStarted()) { return; }
 
     // Move to requested channel.
     auto chan = wlan_channel_t{
-        .primary = req.channel,
+        .primary = req.body()->channel,
         .cbw = CBW20,
     };
 
@@ -47,12 +49,12 @@ void InfraBss::Start(const wlan_mlme::StartRequest& req) {
     auto status = device_->SetChannel(chan);
     if (status != ZX_OK) {
         errorf("[infra-bss] [%s] requested start on channel %u failed: %d\n",
-               bssid_.ToString().c_str(), req.channel, status);
+               bssid_.ToString().c_str(), req.body()->channel, status);
     }
     chan_ = chan;
 
-    ZX_DEBUG_ASSERT(req.dtim_period > 0);
-    if (req.dtim_period == 0) {
+    ZX_DEBUG_ASSERT(req.body()->dtim_period > 0);
+    if (req.body()->dtim_period == 0) {
         ps_cfg_.SetDtimPeriod(1);
         warnf(
             "[infra-bss] [%s] received start request with reserved DTIM period of "
@@ -60,18 +62,18 @@ void InfraBss::Start(const wlan_mlme::StartRequest& req) {
             "to DTIM period of 1\n",
             bssid_.ToString().c_str());
     } else {
-        ps_cfg_.SetDtimPeriod(req.dtim_period);
+        ps_cfg_.SetDtimPeriod(req.body()->dtim_period);
     }
 
     debugbss("[infra-bss] [%s] starting BSS\n", bssid_.ToString().c_str());
-    debugbss("    SSID: %s\n", req.ssid->data());
-    debugbss("    Beacon Period: %u\n", req.beacon_period);
-    debugbss("    DTIM Period: %u\n", req.dtim_period);
-    debugbss("    Channel: %u\n", req.channel);
+    debugbss("    SSID: %s\n", req.body()->ssid->data());
+    debugbss("    Beacon Period: %u\n", req.body()->beacon_period);
+    debugbss("    DTIM Period: %u\n", req.body()->dtim_period);
+    debugbss("    Channel: %u\n", req.body()->channel);
 
     // Keep track of start request which holds important configuration
     // information.
-    req.Clone(&start_req_);
+    req.body()->Clone(&start_req_);
 
     // Start sending Beacon frames.
     started_at_ = zx_clock_get(ZX_CLOCK_MONOTONIC);
@@ -132,7 +134,7 @@ zx_status_t InfraBss::HandleDataFrame(const DataFrameHeader& hdr) {
     return ZX_OK;
 }
 
-zx_status_t InfraBss::HandleEthFrame(const ImmutableBaseFrame<EthernetII>& frame) {
+zx_status_t InfraBss::HandleEthFrame(const EthFrame& frame) {
     // Lookup client associated with incoming unicast frame.
     auto& dest_addr = frame.hdr()->dest;
     if (dest_addr.IsUcast()) {
@@ -155,8 +157,7 @@ zx_status_t InfraBss::HandleEthFrame(const ImmutableBaseFrame<EthernetII>& frame
     return SendDataFrame(fbl::move(out_frame));
 }
 
-zx_status_t InfraBss::HandleAuthentication(const ImmutableMgmtFrame<Authentication>& frame,
-                                           const wlan_rx_info_t& rxinfo) {
+zx_status_t InfraBss::HandleAuthentication(const MgmtFrame<Authentication>& frame) {
     // If the client is already known, there is no work to be done here.
     auto& client_addr = frame.hdr()->addr2;
     if (clients_.Has(client_addr)) { return ZX_OK; }
@@ -185,8 +186,7 @@ zx_status_t InfraBss::HandleAuthentication(const ImmutableMgmtFrame<Authenticati
     return ZX_OK;
 }
 
-zx_status_t InfraBss::HandlePsPollFrame(const ImmutableCtrlFrame<PsPollFrame>& frame,
-                                        const wlan_rx_info_t& rxinfo) {
+zx_status_t InfraBss::HandlePsPollFrame(const CtrlFrame<PsPollFrame>& frame) {
     auto& client_addr = frame.hdr()->ta;
     if (frame.hdr()->bssid != bssid_) { return ZX_ERR_STOP; }
     if (clients_.GetClientAid(client_addr) != frame.hdr()->aid) { return ZX_ERR_STOP; }
@@ -333,8 +333,7 @@ zx_status_t InfraBss::SendNextBu() {
     return device_->SendWlan(fbl::move(packet));
 }
 
-zx_status_t InfraBss::EthToDataFrame(const ImmutableBaseFrame<EthernetII>& frame,
-                                     fbl::unique_ptr<Packet>* out_packet) {
+zx_status_t InfraBss::EthToDataFrame(const EthFrame& frame, fbl::unique_ptr<Packet>* out_packet) {
     const size_t buf_len = kDataFrameHdrLenMax + sizeof(LlcHeader) + frame.body_len();
     auto buffer = GetBuffer(buf_len);
     if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }

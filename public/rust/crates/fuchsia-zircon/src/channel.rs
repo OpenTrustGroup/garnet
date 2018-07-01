@@ -97,9 +97,9 @@ impl Channel {
         unsafe {
             let status = sys::zx_channel_write(self.raw_handle(), opts, bytes.as_ptr(), n_bytes,
                 handles.as_ptr() as *const sys::zx_handle_t, n_handles);
-            ok(status)?;
-            // Handles were successfully transferred, forget them on sender side
+            // Handles are always consumed, forget them on sender side
             handles.set_len(0);
+            ok(status)?;
             Ok(())
         }
     }
@@ -124,12 +124,12 @@ impl Channel {
     ///
     /// [read]: struct.Channel.html#method.read
     pub fn call(&self, timeout: Time, bytes: &[u8], handles: &mut Vec<Handle>,
-        buf: &mut MessageBuf) -> Result<(), (Status, Status)>
+        buf: &mut MessageBuf) -> Result<(), Status>
     {
         let write_num_bytes = try!(usize_into_u32(bytes.len()).map_err(
-            |_| (Status::OUT_OF_RANGE, Status::OK)));
+            |_| Status::OUT_OF_RANGE));
         let write_num_handles = try!(usize_into_u32(handles.len()).map_err(
-            |_| (Status::OUT_OF_RANGE, Status::OK)));
+            |_| Status::OUT_OF_RANGE));
         buf.clear();
         let read_num_bytes: u32 = size_to_u32_sat(buf.bytes.capacity());
         let read_num_handles: u32 = size_to_u32_sat(buf.handles.capacity());
@@ -145,35 +145,23 @@ impl Channel {
         };
         let mut actual_read_bytes: u32 = 0;
         let mut actual_read_handles: u32 = 0;
-        let mut read_status = Status::OK.into_raw();
         let options = 0;
         let status = unsafe {
             Status::from_raw(
                 sys::zx_channel_call(
                     self.raw_handle(), options, timeout.nanos(), &args, &mut actual_read_bytes,
-                    &mut actual_read_handles, &mut read_status))
+                    &mut actual_read_handles))
         };
-
-        match status {
-            Status::OK |
-            Status::TIMED_OUT |
-            Status::CALL_FAILED => {
-                // Handles were successfully transferred,
-                // even if we didn't get a response, so forget
-                // them on the sender side.
-                unsafe { handles.set_len(0); }
-            }
-            _ => {}
-        }
-
         unsafe {
+            // Handles are always consumed.
+            handles.set_len(0);
             buf.bytes.set_len(actual_read_bytes as usize);
             buf.handles.set_len(actual_read_handles as usize);
         }
         if Status::OK == status {
             Ok(())
         } else {
-            Err((status, Status::from_raw(read_status)))
+            Err(status)
         }
     }
 }
@@ -381,7 +369,7 @@ mod tests {
         let mut handles_to_send: Vec<Handle> = vec![duplicate_vmo_handle];
         let mut buf = MessageBuf::new();
         assert_eq!(p1.call(ten_ms.after_now(), b"0000call", &mut handles_to_send, &mut buf),
-            Err((Status::TIMED_OUT, Status::OK)));
+            Err(Status::TIMED_OUT));
         // Handle should be removed from vector even though we didn't get a response, as it was
         // still sent over the channel.
         assert!(handles_to_send.is_empty());

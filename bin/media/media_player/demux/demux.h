@@ -8,12 +8,15 @@
 #include <memory>
 #include <vector>
 
+#include <lib/fit/function.h>
+
 #include "garnet/bin/media/media_player/demux/reader.h"
 #include "garnet/bin/media/media_player/framework/metadata.h"
 #include "garnet/bin/media/media_player/framework/models/async_node.h"
 #include "garnet/bin/media/media_player/framework/packet.h"
 #include "garnet/bin/media/media_player/framework/result.h"
 #include "garnet/bin/media/media_player/framework/types/stream_type.h"
+#include "lib/app/cpp/startup_context.h"
 
 namespace media_player {
 
@@ -21,8 +24,8 @@ namespace media_player {
 // produce one or more output streams.
 class Demux : public AsyncNode {
  public:
-  using SeekCallback = std::function<void()>;
-  using StatusCallback = std::function<void(
+  using SeekCallback = fit::closure;
+  using StatusCallback = fit::function<void(
       const std::unique_ptr<Metadata>& metadata,
       const std::string& problem_type, const std::string& problem_details)>;
 
@@ -40,9 +43,6 @@ class Demux : public AsyncNode {
     virtual media::TimelineRate pts_rate() const = 0;
   };
 
-  // Creates a Demux object for a given reader.
-  static std::shared_ptr<Demux> Create(std::shared_ptr<Reader> reader);
-
   ~Demux() override {}
 
   // Sets a callback to call when metadata or problem changes occur.
@@ -50,7 +50,7 @@ class Demux : public AsyncNode {
 
   // Calls the callback when the initial streams and metadata have
   // established.
-  virtual void WhenInitialized(std::function<void(Result)> callback) = 0;
+  virtual void WhenInitialized(fit::function<void(Result)> callback) = 0;
 
   // Gets the stream collection. This method should not be called until the
   // WhenInitialized callback has been called.
@@ -59,6 +59,28 @@ class Demux : public AsyncNode {
   // Seeks to the specified position and calls the callback. THE CALLBACK MAY
   // BE CALLED ON AN ARBITRARY THREAD.
   virtual void Seek(int64_t position, SeekCallback callback) = 0;
+};
+
+// Abstract base class for |Demux| factories.
+class DemuxFactory {
+ public:
+  // Creates a demux factory.
+  static std::unique_ptr<DemuxFactory> Create(
+      fuchsia::sys::StartupContext* startup_context);
+
+  virtual ~DemuxFactory() {}
+
+  // Creates a |Demux| object for a given reader.
+  virtual Result CreateDemux(std::shared_ptr<Reader> reader,
+                             std::shared_ptr<Demux>* demux_out) = 0;
+
+ protected:
+  DemuxFactory() {}
+
+ private:
+  // Disallow copy and assign.
+  DemuxFactory(const DemuxFactory&) = delete;
+  DemuxFactory& operator=(const DemuxFactory&) = delete;
 };
 
 }  // namespace media_player

@@ -6,31 +6,31 @@
 
 #include <vector>
 
-#include <netconnector/cpp/fidl.h>
+#include <fuchsia/netconnector/cpp/fidl.h>
 #include <lib/zx/channel.h>
 
 #include "lib/fidl/cpp/clone.h"
 #include "lib/fxl/logging.h"
 #include "lib/media/timeline/timeline.h"
 
-using media::Timeline;
-
 namespace media_player {
 
 // static
 std::shared_ptr<MediaPlayerNetProxy> MediaPlayerNetProxy::Create(
     fidl::StringPtr device_name, fidl::StringPtr service_name,
-    fidl::InterfaceRequest<MediaPlayer> request, NetMediaServiceImpl* owner) {
+    fidl::InterfaceRequest<fuchsia::mediaplayer::MediaPlayer> request,
+    NetMediaServiceImpl* owner) {
   return std::shared_ptr<MediaPlayerNetProxy>(new MediaPlayerNetProxy(
       device_name, service_name, std::move(request), owner));
 }
 
 MediaPlayerNetProxy::MediaPlayerNetProxy(
     fidl::StringPtr device_name, fidl::StringPtr service_name,
-    fidl::InterfaceRequest<MediaPlayer> request, NetMediaServiceImpl* owner)
-    : NetMediaServiceImpl::MultiClientProduct<MediaPlayer>(
-          this, std::move(request), owner),
-      status_(MediaPlayerStatus::New()) {
+    fidl::InterfaceRequest<fuchsia::mediaplayer::MediaPlayer> request,
+    NetMediaServiceImpl* owner)
+    : NetMediaServiceImpl::MultiClientProduct<
+          fuchsia::mediaplayer::MediaPlayer>(this, std::move(request), owner),
+      status_(fuchsia::mediaplayer::MediaPlayerStatus::New()) {
   FXL_DCHECK(owner);
 
   // Fire |StatusChanged| event for the new client.
@@ -42,8 +42,8 @@ MediaPlayerNetProxy::MediaPlayerNetProxy(
   message_relay_.SetChannelClosedCallback(
       [this]() { UnbindAndReleaseFromOwner(); });
 
-  netconnector::NetConnectorPtr connector =
-      owner->ConnectToEnvironmentService<netconnector::NetConnector>();
+  fuchsia::netconnector::NetConnectorPtr connector =
+      owner->ConnectToEnvironmentService<fuchsia::netconnector::NetConnector>();
 
   // Create a pair of channels.
   zx::channel local;
@@ -56,7 +56,7 @@ MediaPlayerNetProxy::MediaPlayerNetProxy(
   message_relay_.SetChannel(std::move(local));
 
   // Pass the remote end to NetConnector.
-  component::ServiceProviderPtr device_service_provider;
+  fuchsia::sys::ServiceProviderPtr device_service_provider;
   connector->GetDeviceServiceProvider(device_name,
                                       device_service_provider.NewRequest());
 
@@ -79,7 +79,7 @@ void MediaPlayerNetProxy::SetFileSource(zx::channel file_channel) {
 }
 
 void MediaPlayerNetProxy::SetReaderSource(
-    fidl::InterfaceHandle<SeekingReader> reader_handle) {
+    fidl::InterfaceHandle<fuchsia::mediaplayer::SeekingReader> reader_handle) {
   FXL_LOG(ERROR)
       << "SetReaderSource called on MediaPlayer proxy - not supported.";
   UnbindAndReleaseFromOwner();
@@ -107,20 +107,21 @@ void MediaPlayerNetProxy::SetGain(float gain) {
 
 void MediaPlayerNetProxy::CreateView(
     fidl::InterfaceHandle<::fuchsia::ui::views_v1::ViewManager> view_manager,
-    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request) {
+    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+        view_owner_request) {
   FXL_LOG(ERROR) << "CreateView called on MediaPlayer proxy - not supported.";
   UnbindAndReleaseFromOwner();
 }
 
 void MediaPlayerNetProxy::SetAudioRenderer(
-    fidl::InterfaceHandle<media::AudioRenderer2> audio_renderer) {
+    fidl::InterfaceHandle<fuchsia::media::AudioRenderer2> audio_renderer) {
   FXL_LOG(ERROR)
       << "SetAudioRenderer called on MediaPlayer proxy - not supported.";
   UnbindAndReleaseFromOwner();
 }
 
 void MediaPlayerNetProxy::AddBinding(
-    fidl::InterfaceRequest<MediaPlayer> request) {
+    fidl::InterfaceRequest<fuchsia::mediaplayer::MediaPlayer> request) {
   MultiClientProduct::AddBinding(std::move(request));
 
   // Fire |StatusChanged| event for the new client.
@@ -129,7 +130,7 @@ void MediaPlayerNetProxy::AddBinding(
 
 void MediaPlayerNetProxy::SendTimeCheckMessage() {
   message_relay_.SendMessage(Serializer::Serialize(
-      MediaPlayerInMessage::TimeCheckRequest(Timeline::local_now())));
+      MediaPlayerInMessage::TimeCheckRequest(media::Timeline::local_now())));
 }
 
 void MediaPlayerNetProxy::HandleReceivedMessage(
@@ -157,7 +158,7 @@ void MediaPlayerNetProxy::HandleReceivedMessage(
       // calculate the average of two values with (a + b) / 2. We use
       // a + (b - a) / 2, because it's less likely to overflow.
       int64_t local_then = message->time_check_response_->requestor_time_ +
-                           (Timeline::local_now() -
+                           (media::Timeline::local_now() -
                             message->time_check_response_->requestor_time_) /
                                2;
 

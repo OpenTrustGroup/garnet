@@ -52,11 +52,10 @@ void MessageRelayBase::CloseChannel() {
   OnChannelClosed();
 }
 
-void MessageRelayBase::ReadChannelMessages(
-    async_t* async,
-    async::WaitBase* wait,
-    zx_status_t status,
-    const zx_packet_signal_t* signal) {
+void MessageRelayBase::ReadChannelMessages(async_t* async,
+                                           async::WaitBase* wait,
+                                           zx_status_t status,
+                                           const zx_packet_signal_t* signal) {
   while (channel_) {
     uint32_t actual_byte_count;
     uint32_t actual_handle_count;
@@ -104,15 +103,17 @@ void MessageRelayBase::ReadChannelMessages(
 
     FXL_DCHECK(actual_byte_count == message.size());
 
-    OnMessageReceived(std::move(message));
+    if (destruction_sentinel_.DestructedWhile(
+            [this, &message] { OnMessageReceived(std::move(message)); })) {
+      return;
+    }
   }
 }
 
-void MessageRelayBase::WriteChannelMessages(
-    async_t* async,
-    async::WaitBase* wait,
-    zx_status_t status,
-    const zx_packet_signal_t* signal) {
+void MessageRelayBase::WriteChannelMessages(async_t* async,
+                                            async::WaitBase* wait,
+                                            zx_status_t status,
+                                            const zx_packet_signal_t* signal) {
   if (!channel_) {
     return;
   }
@@ -153,12 +154,12 @@ MessageRelay::MessageRelay() {}
 MessageRelay::~MessageRelay() {}
 
 void MessageRelay::SetMessageReceivedCallback(
-    std::function<void(std::vector<uint8_t>)> callback) {
-  message_received_callback_ = callback;
+    fit::function<void(std::vector<uint8_t>)> callback) {
+  message_received_callback_ = std::move(callback);
 }
 
-void MessageRelay::SetChannelClosedCallback(std::function<void()> callback) {
-  channel_closed_callback_ = callback;
+void MessageRelay::SetChannelClosedCallback(fit::closure callback) {
+  channel_closed_callback_ = std::move(callback);
 }
 
 void MessageRelay::OnMessageReceived(std::vector<uint8_t> message) {

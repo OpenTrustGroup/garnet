@@ -10,10 +10,12 @@
 #include "garnet/bin/zxdb/client/frame.h"
 #include "garnet/bin/zxdb/client/process.h"
 #include "garnet/bin/zxdb/client/session.h"
+#include "garnet/bin/zxdb/client/symbols/location.h"
 #include "garnet/bin/zxdb/client/thread.h"
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/command_utils.h"
 #include "garnet/bin/zxdb/console/console.h"
+#include "garnet/bin/zxdb/console/format_context.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
 #include "garnet/public/lib/fxl/logging.h"
 #include "garnet/public/lib/fxl/strings/string_printf.h"
@@ -101,9 +103,7 @@ void ConsoleContext::SetActiveTarget(const Target* target) {
   active_target_id_ = found->second;
 }
 
-int ConsoleContext::GetActiveTargetId() const {
-  return active_target_id_;
-}
+int ConsoleContext::GetActiveTargetId() const { return active_target_id_; }
 
 Target* ConsoleContext::GetActiveTarget() const {
   auto found = id_to_target_.find(active_target_id_);
@@ -150,10 +150,11 @@ int ConsoleContext::GetActiveFrameIdForThread(const Thread* thread) {
     return 0;
   }
 
-  // Should be a valid frame index in the thread.
+  // Should be a valid frame index in the thread (or no frames and == 0).
   FXL_DCHECK(
-      record->active_frame_id >= 0 &&
-      record->active_frame_id < static_cast<int>(thread->GetFrames().size()));
+      (thread->GetFrames().empty() && record->active_frame_id == 0) ||
+      (record->active_frame_id >= 0 &&
+       record->active_frame_id < static_cast<int>(thread->GetFrames().size())));
   return record->active_frame_id;
 }
 
@@ -277,8 +278,8 @@ void ConsoleContext::WillDestroyBreakpoint(Breakpoint* breakpoint) {
   breakpoint_to_id_.erase(found_breakpoint);
 }
 
-void ConsoleContext::DidTryToLoadSymbolMapping(
-    bool ids_loaded, const std::string& msg) {
+void ConsoleContext::DidTryToLoadSymbolMapping(bool ids_loaded,
+                                               const std::string& msg) {
   Console* console = Console::get();
   console->Output(msg);
 }
@@ -297,8 +298,8 @@ void ConsoleContext::DidCreateProcess(Target* target, Process* process) {
   record->next_thread_id = 1;
 }
 
-void ConsoleContext::DidDestroyProcess(Target* target, DestroyReason reason,
-                                       int exit_code) {
+void ConsoleContext::WillDestroyProcess(Target* target, Process* process,
+                                        DestroyReason reason, int exit_code) {
   TargetRecord* record = GetTargetRecord(target);
   if (!record) {
     FXL_NOTREACHED();
@@ -411,27 +412,35 @@ void ConsoleContext::OnThreadStopped(Thread* thread,
   OutputBuffer out;
 
   // Only print out the process when there's more than one.
-  if (id_to_target_.size() > 1) {
-    out.Append(DescribeTarget(this, target));
-    out.Append("\n");
-  }
+  if (id_to_target_.size() > 1)
+    out.Append(fxl::StringPrintf("Process %d ", IdForTarget(target)));
+  out.Append(fxl::StringPrintf("Thread %d stopped ", IdForThread(thread)));
 
-  // Only print out the thread when there's more than one.
-  TargetRecord* target_record = GetTargetRecord(target);
-  if (target_record->id_to_thread.size() > 1) {
-    out.Append(DescribeThread(this, thread));
-    out.Append("\n");
+  // Skip the exception reason for the debugger breakpoints because they
+  // mostly add noise.
+  //
+  // TODO(brettw) when we know this was a breakpoint, add "on breakpoint 3".
+  if (type != debug_ipc::NotifyException::Type::kHardware &&
+      type != debug_ipc::NotifyException::Type::kSoftware) {
+    out.Append(fxl::StringPrintf("on %s exception ",
+                                 ExceptionTypeToString(type).c_str()));
   }
-
-  out.Append(fxl::StringPrintf(
-      "Stopped on %s exception\n", ExceptionTypeToString(type).c_str()));
 
   // Frame (current position will always be frame 0).
   const auto& frames = thread->GetFrames();
   FXL_DCHECK(!frames.empty());
-  out.Append(DescribeLocation(frames[0]->GetLocation()));
-
+  const Location& location = frames[0]->GetLocation();
+  out.Append("at ");
+  out.Append(DescribeLocation(location, false));
+  if (location.file_line().file().empty()) {
+    out.Append(" (no symbol info)\n");
+  } else {
+    out.Append("\n");
+  }
   console->Output(std::move(out));
+  Err err = OutputSourceContext(thread->GetProcess(), location);
+  if (err.has_error())
+    console->Output(err);
 }
 
 void ConsoleContext::OnThreadFramesInvalidated(Thread* thread) {
@@ -472,8 +481,8 @@ ConsoleContext::TargetRecord* ConsoleContext::GetTargetRecord(
 
 ConsoleContext::ThreadRecord* ConsoleContext::GetThreadRecord(
     const Thread* thread) {
-  TargetRecord* target_record = GetTargetRecord(
-      thread->GetProcess()->GetTarget());
+  TargetRecord* target_record =
+      GetTargetRecord(thread->GetProcess()->GetTarget());
   if (!target_record) {
     FXL_NOTREACHED();
     return nullptr;
@@ -495,8 +504,7 @@ ConsoleContext::ThreadRecord* ConsoleContext::GetThreadRecord(
 }
 
 Err ConsoleContext::FillOutTarget(
-    Command* cmd,
-    TargetRecord const** out_target_record) const {
+    Command* cmd, TargetRecord const** out_target_record) const {
   int target_id = cmd->GetNounIndex(Noun::kProcess);
   if (target_id == Command::kNoIndex) {
     // No index: use the active one (which should always exist).
@@ -513,8 +521,8 @@ Err ConsoleContext::FillOutTarget(
   // Explicit index given, look it up.
   auto found_target = id_to_target_.find(target_id);
   if (found_target == id_to_target_.end()) {
-    return Err(ErrType::kInput, fxl::StringPrintf(
-        "There is no process %d.", target_id));
+    return Err(ErrType::kInput,
+               fxl::StringPrintf("There is no process %d.", target_id));
   }
   cmd->set_target(found_target->second.target);
   *out_target_record = GetTargetRecord(target_id);
@@ -522,8 +530,7 @@ Err ConsoleContext::FillOutTarget(
 }
 
 Err ConsoleContext::FillOutThread(
-    Command* cmd,
-    const TargetRecord* target_record,
+    Command* cmd, const TargetRecord* target_record,
     ThreadRecord const** out_thread_record) const {
   int thread_id = cmd->GetNounIndex(Noun::kThread);
   const ThreadRecord* thread_record = nullptr;
@@ -549,8 +556,9 @@ Err ConsoleContext::FillOutThread(
     if (target_record->id_to_thread.empty()) {
       return Err(ErrType::kInput, "There are no threads in the process.");
     }
-    return Err(ErrType::kInput, fxl::StringPrintf(
-        "There is no thread %d in the process.", thread_id));
+    return Err(
+        ErrType::kInput,
+        fxl::StringPrintf("There is no thread %d in the process.", thread_id));
   }
 
   thread_record = &found_thread->second;
@@ -605,7 +613,8 @@ Err ConsoleContext::FillOutFrame(Command* cmd,
                "Use \"frame\" to list the frames before selecting one to "
                "populate the frame list.");
   }
-  return Err(ErrType::kInput, "Invalid frame index.\n"
+  return Err(ErrType::kInput,
+             "Invalid frame index.\n"
              "Use \"frame\" to list available ones.");
 }
 

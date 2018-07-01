@@ -8,17 +8,13 @@
 
 namespace tracing {
 
-Command::Command(component::ApplicationContext* context) : context_(context) {}
+Command::Command(fuchsia::sys::StartupContext* context) : context_(context) {}
 
 Command::~Command() = default;
 
-component::ApplicationContext* Command::context() {
-  return context_;
-}
+fuchsia::sys::StartupContext* Command::context() { return context_; }
 
-component::ApplicationContext* Command::context() const {
-  return context_;
-}
+fuchsia::sys::StartupContext* Command::context() const { return context_; }
 
 std::ostream& Command::out() {
   // Returning std::cerr on purpose. std::cout is redirected and consumed
@@ -45,21 +41,21 @@ void Command::Done(int32_t return_code) {
 }
 
 CommandWithTraceController::CommandWithTraceController(
-    component::ApplicationContext* context)
+    fuchsia::sys::StartupContext* context)
     : Command(context),
       trace_controller_(
-          context->ConnectToEnvironmentService<TraceController>()) {
+          context->ConnectToEnvironmentService<fuchsia::tracing::TraceController>()) {
   trace_controller_.set_error_handler([this] {
     FXL_LOG(ERROR) << "Trace controller disconnected unexpectedly";
     Done(1);
   });
 }
 
-TraceControllerPtr& CommandWithTraceController::trace_controller() {
+fuchsia::tracing::TraceControllerPtr& CommandWithTraceController::trace_controller() {
   return trace_controller_;
 }
 
-const TraceControllerPtr& CommandWithTraceController::trace_controller() const {
+const fuchsia::tracing::TraceControllerPtr& CommandWithTraceController::trace_controller() const {
   return trace_controller_;
 }
 

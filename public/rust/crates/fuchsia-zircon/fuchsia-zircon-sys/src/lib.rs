@@ -62,7 +62,7 @@ multiconst!(zx_rights_t, [
     ZX_RIGHT_GET_POLICY   = 1 << 11;
     ZX_RIGHT_SIGNAL       = 1 << 12;
     ZX_RIGHT_SIGNAL_PEER  = 1 << 13;
-    ZX_RIGHT_WAIT         = 0 << 14; // Coming Soon!
+    ZX_RIGHT_WAIT         = 1 << 14;
     ZX_RIGHT_SAME_RIGHTS  = 1 << 31;
 ]);
 
@@ -98,7 +98,6 @@ multiconst!(zx_status_t, [
     ZX_ERR_NOT_SUPPORTED     = -2;
     ZX_ERR_NO_RESOURCES      = -3;
     ZX_ERR_NO_MEMORY         = -4;
-    ZX_ERR_CALL_FAILED       = -5;
     ZX_ERR_INTERRUPTED_RETRY = -6;
     ZX_ERR_INVALID_ARGS      = -10;
     ZX_ERR_BAD_HANDLE        = -11;
@@ -177,8 +176,8 @@ multiconst!(zx_signals_t, [
     ZX_EVENT_SIGNALED           = ZX_OBJECT_SIGNAL_3;
 
     // EventPair
-    ZX_EPAIR_SIGNALED           = ZX_OBJECT_SIGNAL_3;
-    ZX_EPAIR_CLOSED             = ZX_OBJECT_SIGNAL_2;
+    ZX_EVENTPAIR_SIGNALED       = ZX_OBJECT_SIGNAL_3;
+    ZX_EVENTPAIR_CLOSED         = ZX_OBJECT_SIGNAL_2;
 
     // Task signals (process, thread, job)
     ZX_TASK_TERMINATED          = ZX_OBJECT_SIGNAL_3;
@@ -235,7 +234,7 @@ multiconst!(zx_obj_type_t, [
     ZX_OBJ_TYPE_LOG                 = 12;
     ZX_OBJ_TYPE_SOCKET              = 14;
     ZX_OBJ_TYPE_RESOURCE            = 15;
-    ZX_OBJ_TYPE_EVENT_PAIR          = 16;
+    ZX_OBJ_TYPE_EVENTPAIR           = 16;
     ZX_OBJ_TYPE_JOB                 = 17;
     ZX_OBJ_TYPE_VMAR                = 18;
     ZX_OBJ_TYPE_FIFO                = 19;
@@ -266,6 +265,13 @@ pub enum zx_cache_policy_t {
     ZX_CACHE_POLICY_UNCACHED_DEVICE = 2,
     ZX_CACHE_POLICY_WRITE_COMBINING = 3,
 }
+
+// Flag bits for zx_cache_flush.
+multiconst!(u32, [
+    ZX_CACHE_FLUSH_INSN         = 1 << 0;
+    ZX_CACHE_FLUSH_DATA         = 1 << 1;
+    ZX_CACHE_FLUSH_INVALIDATE   = 1 << 2;
+]);
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

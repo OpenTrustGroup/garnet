@@ -5,7 +5,8 @@
 #ifndef GARNET_BIN_APPMGR_NAMESPACE_BUILDER_H_
 #define GARNET_BIN_APPMGR_NAMESPACE_BUILDER_H_
 
-#include <fdio/namespace.h>
+#include <lib/fdio/namespace.h>
+#include <lib/fit/function.h>
 #include <lib/zx/channel.h>
 
 #include <vector>
@@ -14,7 +15,7 @@
 #include "garnet/bin/appmgr/sandbox_metadata.h"
 #include "lib/fxl/macros.h"
 
-#include <component/cpp/fidl.h>
+#include <fuchsia/sys/cpp/fidl.h>
 
 namespace component {
 
@@ -23,13 +24,13 @@ class NamespaceBuilder {
   NamespaceBuilder();
   ~NamespaceBuilder();
 
-  void AddFlatNamespace(FlatNamespacePtr flat_namespace);
+  void AddFlatNamespace(fuchsia::sys::FlatNamespacePtr flat_namespace);
   void AddPackage(zx::channel package);
   void AddDirectoryIfNotPresent(const std::string& path, zx::channel directory);
   void AddServices(zx::channel services);
 
   // A factory function that returns a new directory that /hub points to.
-  using HubDirectoryFactory = std::function<zx::channel()>;
+  using HubDirectoryFactory = fit::function<zx::channel()>;
   void AddSandbox(const SandboxMetadata& sandbox,
                   const HubDirectoryFactory& hub_directory_factory);
 
@@ -52,7 +53,7 @@ class NamespaceBuilder {
 
   // Similar to Build() but returns a FIDL struct with ownership of all
   // zx:channel that are part of this namespace.
-  FlatNamespace BuildForRunner();
+  fuchsia::sys::FlatNamespace BuildForRunner();
 
  private:
   void PushDirectoryFromPath(std::string path);

@@ -8,9 +8,9 @@
 #include <memory>
 
 #include <endian.h>
+#include <fuchsia/media/cpp/fidl.h>
 #include <lib/zx/channel.h>
 
-#include <media/cpp/fidl.h>
 #include "garnet/bin/media/net_media_service/media_player_messages.h"
 #include "lib/fxl/macros.h"
 #include "lib/netconnector/cpp/message_relay.h"
@@ -23,10 +23,10 @@ class MediaPlayerNetStub
     : public std::enable_shared_from_this<MediaPlayerNetStub> {
  public:
   MediaPlayerNetStub(
-      const fidl::InterfacePtr<MediaPlayer>& player,
+      const fidl::InterfacePtr<fuchsia::mediaplayer::MediaPlayer>& player,
       zx::channel channel,
-      netconnector::NetStubResponder<MediaPlayer, MediaPlayerNetStub>*
-          responder);
+      netconnector::NetStubResponder<fuchsia::mediaplayer::MediaPlayer,
+                                     MediaPlayerNetStub>* responder);
 
   ~MediaPlayerNetStub();
 
@@ -35,12 +35,14 @@ class MediaPlayerNetStub
   void HandleReceivedMessage(std::vector<uint8_t> message);
 
   // Handles a status change from the player.
-  void HandleStatusChanged(const MediaPlayerStatus& status);
+  void HandleStatusChanged(
+      const fuchsia::mediaplayer::MediaPlayerStatus& status);
 
-  const fidl::InterfacePtr<MediaPlayer>& player_;
+  const fidl::InterfacePtr<fuchsia::mediaplayer::MediaPlayer>& player_;
   netconnector::MessageRelay message_relay_;
-  netconnector::NetStubResponder<MediaPlayer, MediaPlayerNetStub>* responder_;
-  MediaPlayerStatusPtr cached_status_;
+  netconnector::NetStubResponder<fuchsia::mediaplayer::MediaPlayer,
+                                 MediaPlayerNetStub>* responder_;
+  fuchsia::mediaplayer::MediaPlayerStatusPtr cached_status_;
   bool time_check_received_ = false;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(MediaPlayerNetStub);

@@ -15,7 +15,7 @@ ViewState::ViewState(ViewRegistry* registry,
                      ::fuchsia::ui::views_v1_token::ViewToken view_token,
                      fidl::InterfaceRequest<::fuchsia::ui::views_v1::View> view_request,
                      ::fuchsia::ui::views_v1::ViewListenerPtr view_listener,
-                     scenic_lib::Session* session, const std::string& label)
+                     scenic::Session* session, const std::string& label)
     : view_token_(std::move(view_token)),
       view_listener_(std::move(view_listener)),
       top_node_(session),
@@ -65,7 +65,7 @@ const std::string& ViewState::FormattedLabel() const {
   }
   return formatted_label_cache_;
 }
-component::ServiceProvider* ViewState::GetServiceProviderIfSupports(
+fuchsia::sys::ServiceProvider* ViewState::GetServiceProviderIfSupports(
     std::string service_name) {
   if (service_names_) {
     auto& v = *service_names_;
@@ -77,7 +77,7 @@ component::ServiceProvider* ViewState::GetServiceProviderIfSupports(
 }
 
 void ViewState::SetServiceProvider(
-    fidl::InterfaceHandle<component::ServiceProvider> service_provider,
+    fidl::InterfaceHandle<fuchsia::sys::ServiceProvider> service_provider,
     fidl::VectorPtr<fidl::StringPtr> service_names) {
   if (service_provider) {
     service_provider_ = service_provider.Bind();

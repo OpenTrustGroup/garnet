@@ -17,6 +17,8 @@
 namespace wlan {
 namespace testing {
 
+namespace wlan_device = ::fuchsia::wlan::device;
+
 #define DEV(c) static_cast<PhyDevice*>(c)
 static zx_protocol_device_t wlanphy_test_device_ops = {
     .version = DEVICE_OPS_VERSION,
@@ -97,6 +99,8 @@ wlan_device::PhyInfo get_info() {
     info.supported_phys->push_back(wlan_device::SupportedPhy::CCK);
     info.supported_phys->push_back(wlan_device::SupportedPhy::OFDM);
     info.supported_phys->push_back(wlan_device::SupportedPhy::HT);
+
+    info.driver_features->push_back(wlan_device::DriverFeature::SYNTH);
 
     info.mac_roles->push_back(wlan_device::MacRole::CLIENT);
     info.mac_roles->push_back(wlan_device::MacRole::AP);
@@ -206,7 +210,7 @@ void PhyDevice::CreateIface(wlan_device::CreateIfaceRequest req,
     // Since we successfully used the id, increment the next id counter.
     next_id_ = id + 1;
 
-    resp.info.id = id;
+    resp.iface_id = id;
     resp.status = ZX_OK;
     callback(std::move(resp));
 }

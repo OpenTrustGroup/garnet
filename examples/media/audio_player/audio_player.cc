@@ -7,9 +7,10 @@
 #include <iomanip>
 
 #include <fcntl.h>
-#include <media/cpp/fidl.h>
+#include <fuchsia/media/cpp/fidl.h>
 #include <lib/async-loop/loop.h>
 #include <lib/async/default.h>
+#include <lib/fit/function.h>
 
 #include "garnet/examples/media/audio_player/audio_player_params.h"
 #include "lib/app/cpp/connect.h"
@@ -19,33 +20,30 @@
 #include "lib/media/timeline/timeline.h"
 #include "lib/url/gurl.h"
 
-using media_player::MediaPlayer;
-using media_player::MediaPlayerStatus;
-using media_player::MediaPlayerStatusPtr;
-using media_player::NetMediaService;
-
 namespace examples {
 
 AudioPlayer::AudioPlayer(const AudioPlayerParams& params,
-                         fxl::Closure quit_callback)
-    : quit_callback_(quit_callback), quit_when_done_(!params.stay()) {
+                         fit::closure quit_callback)
+    : quit_callback_(std::move(quit_callback)),
+      quit_when_done_(!params.stay()) {
   FXL_DCHECK(params.is_valid());
   FXL_DCHECK(quit_callback_);
 
-  auto application_context =
-      component::ApplicationContext::CreateFromStartupInfo();
+  auto startup_context = fuchsia::sys::StartupContext::CreateFromStartupInfo();
 
   media_player_ =
-      application_context->ConnectToEnvironmentService<MediaPlayer>();
-  media_player_.events().StatusChanged = [this](MediaPlayerStatus status) {
+      startup_context
+          ->ConnectToEnvironmentService<fuchsia::mediaplayer::MediaPlayer>();
+  media_player_.events().StatusChanged = [this](fuchsia::mediaplayer::MediaPlayerStatus status) {
     HandleStatusChanged(status);
   };
 
   if (!params.service_name().empty()) {
-    auto net_media_service =
-        application_context->ConnectToEnvironmentService<NetMediaService>();
+    auto net_media_service = startup_context->ConnectToEnvironmentService<
+        fuchsia::mediaplayer::NetMediaService>();
 
-    fidl::InterfaceHandle<MediaPlayer> media_player_handle;
+    fidl::InterfaceHandle<fuchsia::mediaplayer::MediaPlayer>
+        media_player_handle;
     media_player_->AddBinding(media_player_handle.NewRequest());
 
     net_media_service->PublishMediaPlayer(params.service_name(),
@@ -69,7 +67,7 @@ AudioPlayer::AudioPlayer(const AudioPlayerParams& params,
 AudioPlayer::~AudioPlayer() {}
 
 void AudioPlayer::HandleStatusChanged(
-    const media_player::MediaPlayerStatus& status) {
+    const fuchsia::mediaplayer::MediaPlayerStatus& status) {
   // Process status received from the player.
   if (status.end_of_stream && quit_when_done_) {
     quit_callback_();

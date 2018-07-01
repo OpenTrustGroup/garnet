@@ -23,17 +23,16 @@ void MdnsTransceiver::EnableInterface(const std::string& name,
   enabled_interfaces_.emplace_back(name, family);
 }
 
-void MdnsTransceiver::Start(
-    std::unique_ptr<InterfaceMonitor> interface_monitor,
-    const LinkChangeCallback& link_change_callback,
-    const InboundMessageCallback& inbound_message_callback) {
+void MdnsTransceiver::Start(std::unique_ptr<InterfaceMonitor> interface_monitor,
+                            LinkChangeCallback link_change_callback,
+                            InboundMessageCallback inbound_message_callback) {
   FXL_DCHECK(interface_monitor);
   FXL_DCHECK(link_change_callback);
   FXL_DCHECK(inbound_message_callback);
 
   interface_monitor_ = std::move(interface_monitor);
-  link_change_callback_ = link_change_callback;
-  inbound_message_callback_ = inbound_message_callback;
+  link_change_callback_ = std::move(link_change_callback);
+  inbound_message_callback_ = std::move(inbound_message_callback);
 
   interface_monitor_->RegisterLinkChangeCallback([this]() { OnLinkChange(); });
 
@@ -181,14 +180,13 @@ void MdnsTransceiver::OnLinkChange() {
 }  // namespace mdns
 
 bool MdnsTransceiver::AddInterfaceTransceiver(
-    size_t index,
-    const InterfaceDescriptor& interface_descr) {
+    size_t index, const InterfaceDescriptor& interface_descr) {
   FXL_DCHECK(GetInterfaceTransceiver(index) == nullptr);
 
   auto interface_transceiver = MdnsInterfaceTransceiver::Create(
       interface_descr.address_, interface_descr.name_, index);
 
-  if (!interface_transceiver->Start(inbound_message_callback_)) {
+  if (!interface_transceiver->Start(inbound_message_callback_.share())) {
     // Couldn't start the transceiver.
     return false;
   }
@@ -206,8 +204,7 @@ bool MdnsTransceiver::AddInterfaceTransceiver(
 }
 
 void MdnsTransceiver::ReplaceInterfaceTransceiver(
-    size_t index,
-    const InterfaceDescriptor& interface_descr) {
+    size_t index, const InterfaceDescriptor& interface_descr) {
   auto interface_transceiver = GetInterfaceTransceiver(index);
   FXL_DCHECK(interface_transceiver);
 

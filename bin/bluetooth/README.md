@@ -5,13 +5,18 @@ The Fuchsia Bluetooth system aims to provide a dual-mode implementation of the
 Bluetooth Host Subsystem (5.0+) supporting a framework for developing Low Energy
 and Traditional profiles.
 
+Source code shortcuts:
 - [Public API](../../public/lib/bluetooth/fidl)
+- [Private API](../../lib/bluetooth/fidl)
 - [Tools](tools/)
-- [System Architecture](../../docs/bluetooth_architecture.md)
 - [Host Library](../../drivers/bluetooth/lib)
 - [Host Bus Driver](../../drivers/bluetooth/host)
 - [HCI Drivers](../../drivers/bluetooth/hci)
 - [HCI Transport Drivers](https://fuchsia.googlesource.com/zircon/+/master/system/dev/bluetooth?autodive=0)
+
+For more orientation, see
+- [System Architecture](../../docs/bluetooth_architecture.md)
+- [Detailed Source Layout](../../docs/bluetooth_source_layout.md)
 
 ## Getting Started
 ### API Examples
@@ -58,10 +63,11 @@ that acts as a Bluetooth system menu based on this API at
 See the [bluetooth/tools](tools/) package for more information on
 available command line tools for testing/debugging.
 
-### Testing
+### Running Tests
 
+#### Unit tests
 The `bluetooth_tests` package contains Bluetooth test binaries. This package is
-defined in the [top level BUILD file](BUILD.gn).
+defined in the [tests BUILD file](tests/BUILD.gn).
 
 Host subsystem tests are compiled into a single [GoogleTest](https://github.com/google/googletest) binary,
 which gets installed at `/system/test/bluetooth_unittests`.
@@ -69,7 +75,7 @@ which gets installed at `/system/test/bluetooth_unittests`.
 To run all tests:
 
 ```
-$ /system/test/bluetooth_unittests
+$ /system/test/bt-host-unittests
 ```
 
 Use the `--gtest_filter`
@@ -88,9 +94,10 @@ Use the `--verbose` flag to set log verbosity:
 $ /system/test/bluetooth_unittests --verbose=2
 ```
 
+#### Integration Tests
 TODO(armansito): Describe integration tests
 
-### Log Verbosity
+### Controlling Log Verbosity
 
 #### bin/bt-gap
 

@@ -14,38 +14,85 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"amber/source"
 )
 
 type BlobRepo struct {
+	Source   source.Source
 	Address  string
 	Interval time.Duration
 }
 
-func FetchBlob(repos []BlobRepo, blob string, muRun *sync.Mutex, outputDir string) error {
-	muRun.Lock()
-	defer muRun.Unlock()
+var muMap = &sync.Mutex{}
+var requestMap = map[string]*fetchJob{}
 
-	httpC := &http.Client{}
+type fetchJob struct {
+	cond *sync.Cond
+	err  error
+}
 
+func FetchBlob(repos []BlobRepo, blob string, outputDir string) error {
+	// if a fetch is already happening, just wait for the result
+	// from that
+	muMap.Lock()
+	job, ok := requestMap[blob]
+	// fetch not already in progress, create a job record
+	if !ok {
+		job = &fetchJob{cond: sync.NewCond(&sync.Mutex{}), err: nil}
+		requestMap[blob] = job
+		defer func() {
+			muMap.Lock()
+			delete(requestMap, blob)
+			job.cond.Broadcast()
+			muMap.Unlock()
+		}()
+	}
+	muMap.Unlock()
+
+	// someone else is already doing a fetch, wait for their result
+	if ok {
+		job.cond.L.Lock()
+		job.cond.Wait()
+		job.cond.L.Unlock()
+		return job.err
+	}
+
+	// if we go this far, the fetch is our job
+	var err error
 	for i := range repos {
-		reader, sz, err := FetchBlobFromRepo(repos[i], blob, httpC)
-		if err != nil {
-			log.Printf("Got error trying to get blob\n")
+		reader, sz, err2 := FetchBlobFromRepo(repos[i], blob)
+		if err2 != nil {
+			log.Printf("got error trying to get blob: %s", err2)
 			continue
 		}
 		err = WriteBlob(filepath.Join(outputDir, blob), sz, reader)
 		reader.Close()
-		if err == nil {
+		// if the blob exists, someone beat us to it
+		if err == nil || os.IsExist(err) {
 			return nil
 		}
 	}
 
-	return fmt.Errorf("couldn't fetch blob %q from any repo", blob)
+	if err != nil {
+		job.err = fmt.Errorf("attempted write of %q failed: %s", blob, err)
+	} else {
+		job.err = fmt.Errorf("couldn't fetch blob %q from any repo", blob)
+	}
+	return job.err
 }
 
-// FetchBlobFromRepo attempts to pull the set of blobs requested from the supplied
-// BlobRepo. FetchBlob returns the list of blobs successfully stored.
-func FetchBlobFromRepo(r BlobRepo, blob string, client *http.Client) (io.ReadCloser, int64, error) {
+// FetchBlobFromRepo starts an IO request to the given repository and returns
+// the io.ReadCloser, size and any error enountered.
+func FetchBlobFromRepo(r BlobRepo, blob string) (io.ReadCloser, int64, error) {
+	var client *http.Client
+	if r.Source != nil {
+		client = r.Source.GetHttpClient()
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+
 	u, err := url.Parse(r.Address)
 	if err != nil {
 		return nil, -1, err
@@ -59,18 +106,21 @@ func FetchBlobFromRepo(r BlobRepo, blob string, client *http.Client) (io.ReadClo
 		return nil, -1, err
 	}
 
-	if r, err := client.Get(srcAddr.String()); err == nil {
-		if r.StatusCode == 200 {
-			return r.Body, r.ContentLength, nil
-		}
-		r.Body.Close()
-		return nil, -1, fmt.Errorf("fetch failed with status %s", r.StatusCode)
+	resp, err := client.Get(srcAddr.String())
+	if err != nil {
+		return nil, -1, err
 	}
-	return nil, -1, err
+
+	if resp.StatusCode == 200 {
+		return resp.Body, resp.ContentLength, nil
+	} else {
+		resp.Body.Close()
+		return nil, -1, fmt.Errorf("fetch failed with status %s", resp.StatusCode)
+	}
 }
 
 func WriteBlob(name string, sz int64, con io.ReadCloser) error {
-	f, err := os.Create(name)
+	f, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY, os.ModePerm)
 	if err != nil {
 		return err
 	}
@@ -81,6 +131,14 @@ func WriteBlob(name string, sz int64, con io.ReadCloser) error {
 		return err
 	}
 
-	_, err = io.Copy(f, con)
-	return err
+	written, err := io.Copy(f, con)
+	if err != nil {
+		return err
+	}
+
+	if written != sz {
+		return fmt.Errorf("blob incomplete, only wrote %d out of %d bytes", written, sz)
+	}
+
+	return nil
 }

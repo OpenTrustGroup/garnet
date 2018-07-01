@@ -1,9 +1,7 @@
 {
     "imports": [
+        "garnet/packages/benchmarks/garnet",
+        "garnet/packages/benchmarks/run",
         "garnet/packages/benchmarks/zircon"
-    ],
-    "packages": {
-        "runbenchmarks": "//garnet/testing/runbenchmarks",
-        "garnet_benchmarks": "//garnet/bin/benchmarks:garnet_benchmarks"
-    }
+    ]
 }

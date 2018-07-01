@@ -23,10 +23,15 @@
 
 //#include <net/cfg80211.h>
 
+#include <netinet/if_ether.h>
+#include <sync/completion.h>
+
+#include <stdatomic.h>
 #include <threads.h>
 
 #include "fweh.h"
 #include "linuxisms.h"
+#include "netbuf.h"
 #include "workqueue.h"
 
 #define TOE_TX_CSUM_OL 0x00000001
@@ -41,7 +46,7 @@
 #define BRCMF_DCMD_MEDLEN 1536
 #define BRCMF_DCMD_MAXLEN 8192
 
-/* IOCTL from host to device are limited in lenght. A device can only handle
+/* IOCTL from host to device are limited in length. A device can only handle
  * ethernet frame size. This limitation is to be applied by protocol layer.
  */
 #define BRCMF_TX_IOCTL_MAX_MSG_SIZE (ETH_FRAME_LEN + ETH_FCS_LEN)
@@ -66,7 +71,7 @@
  * @pend_pkts: number of packets currently in @pktslots.
  */
 struct brcmf_ampdu_rx_reorder {
-    struct sk_buff** pktslots;
+    struct brcmf_netbuf** pktslots;
     uint8_t flow_id;
     uint8_t cur_idx;
     uint8_t exp_idx;
@@ -199,13 +204,13 @@ struct brcmf_if {
     uint8_t mac_addr[ETH_ALEN];
     uint8_t netif_stop;
     //spinlock_t netif_stop_lock;
-    atomic_t pend_8021x_cnt;
-    wait_queue_head_t pend_8021x_wait;
+    atomic_int pend_8021x_cnt;
+    completion_t pend_8021x_wait;
     struct in6_addr ipv6_addr_tbl[NDOL_MAX_ENTRIES];
     uint8_t ipv6addr_idx;
 };
 
-bool brcmf_netdev_wait_pend8021x(struct brcmf_if* ifp);
+void brcmf_netdev_wait_pend8021x(struct brcmf_if* ifp);
 
 /* Return pointer to interface name */
 char* brcmf_ifname(struct brcmf_if* ifp);
@@ -216,8 +221,8 @@ zx_status_t brcmf_add_if(struct brcmf_pub* drvr, int32_t bsscfgidx, int32_t ifid
                          const char* name, uint8_t* mac_addr, struct brcmf_if** if_out);
 void brcmf_remove_interface(struct brcmf_if* ifp, bool rtnl_locked);
 void brcmf_txflowblock_if(struct brcmf_if* ifp, enum brcmf_netif_stop_reason reason, bool state);
-void brcmf_txfinalize(struct brcmf_if* ifp, struct sk_buff* txp, bool success);
-void brcmf_netif_rx(struct brcmf_if* ifp, struct sk_buff* skb);
+void brcmf_txfinalize(struct brcmf_if* ifp, struct brcmf_netbuf* txp, bool success);
+void brcmf_netif_rx(struct brcmf_if* ifp, struct brcmf_netbuf* netbuf);
 void brcmf_net_setcarrier(struct brcmf_if* ifp, bool on);
 zx_status_t brcmf_core_init(zx_device_t* dev);
 void brcmf_core_exit(void);

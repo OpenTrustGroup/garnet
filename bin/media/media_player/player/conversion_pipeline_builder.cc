@@ -97,11 +97,11 @@ const std::unique_ptr<StreamTypeSet>* FindBestLpcm(
 AddResult AddTransformsForCompressedAudio(
     const AudioStreamType& in_type,
     const std::vector<std::unique_ptr<StreamTypeSet>>& out_type_sets,
-    Graph* graph,
-    OutputRef* output,
+    Graph* graph, DecoderFactory* decoder_factory, OutputRef* output,
     std::unique_ptr<StreamType>* out_type) {
   FXL_DCHECK(out_type);
   FXL_DCHECK(graph);
+  FXL_DCHECK(decoder_factory);
 
   // See if we have a matching audio type.
   for (const std::unique_ptr<StreamTypeSet>& out_type_set : out_type_sets) {
@@ -130,7 +130,7 @@ AddResult AddTransformsForCompressedAudio(
 
   // Need to decode. Create a decoder and go from there.
   std::shared_ptr<Decoder> decoder;
-  Result result = Decoder::Create(in_type, &decoder);
+  Result result = decoder_factory->CreateDecoder(in_type, &decoder);
   if (result != Result::kOk) {
     // No decoder found.
     *out_type = nullptr;
@@ -150,17 +150,17 @@ AddResult AddTransformsForCompressedAudio(
 AddResult AddTransformsForCompressedVideo(
     const VideoStreamType& in_type,
     const std::vector<std::unique_ptr<StreamTypeSet>>& out_type_sets,
-    Graph* graph,
-    OutputRef* output,
+    Graph* graph, DecoderFactory* decoder_factory, OutputRef* output,
     std::unique_ptr<StreamType>* out_type) {
   FXL_DCHECK(out_type);
   FXL_DCHECK(graph);
+  FXL_DCHECK(decoder_factory);
 
   // TODO(dalesat): See if we already have a matching video type.
 
   // Need to decode. Create a decoder and go from there.
   std::shared_ptr<Decoder> decoder;
-  Result result = Decoder::Create(in_type, &decoder);
+  Result result = decoder_factory->CreateDecoder(in_type, &decoder);
   if (result != Result::kOk) {
     // No decoder found.
     *out_type = nullptr;
@@ -179,8 +179,7 @@ AddResult AddTransformsForCompressedVideo(
 // output type. Otherwise, *out_type is set to nullptr.
 AddResult AddTransformsForLpcm(const AudioStreamType& in_type,
                                const AudioStreamTypeSet& out_type_set,
-                               Graph* graph,
-                               OutputRef* output,
+                               Graph* graph, OutputRef* output,
                                std::unique_ptr<StreamType>* out_type) {
   FXL_DCHECK(graph);
   FXL_DCHECK(out_type);
@@ -227,9 +226,7 @@ AddResult AddTransformsForLpcm(const AudioStreamType& in_type,
 AddResult AddTransformsForLpcm(
     const AudioStreamType& in_type,
     const std::vector<std::unique_ptr<StreamTypeSet>>& out_type_sets,
-    Graph* graph,
-    OutputRef* output,
-    std::unique_ptr<StreamType>* out_type) {
+    Graph* graph, OutputRef* output, std::unique_ptr<StreamType>* out_type) {
   FXL_DCHECK(graph);
   FXL_DCHECK(out_type);
 
@@ -255,10 +252,10 @@ AddResult AddTransformsForLpcm(
 AddResult AddTransforms(
     const StreamType& in_type,
     const std::vector<std::unique_ptr<StreamTypeSet>>& out_type_sets,
-    Graph* graph,
-    OutputRef* output,
+    Graph* graph, DecoderFactory* decoder_factory, OutputRef* output,
     std::unique_ptr<StreamType>* out_type) {
   FXL_DCHECK(graph);
+  FXL_DCHECK(decoder_factory);
   FXL_DCHECK(out_type);
 
   switch (in_type.medium()) {
@@ -268,7 +265,8 @@ AddResult AddTransforms(
                                     output, out_type);
       } else {
         return AddTransformsForCompressedAudio(*in_type.audio(), out_type_sets,
-                                               graph, output, out_type);
+                                               graph, decoder_factory, output,
+                                               out_type);
       }
     case StreamType::Medium::kVideo:
       if (in_type.encoding() == StreamType::kVideoEncodingUncompressed) {
@@ -276,7 +274,8 @@ AddResult AddTransforms(
         return AddResult::kFinished;
       } else {
         return AddTransformsForCompressedVideo(*in_type.video(), out_type_sets,
-                                               graph, output, out_type);
+                                               graph, decoder_factory, output,
+                                               out_type);
       }
     default:
       FXL_DCHECK(false) << "conversion not supported for medium"
@@ -291,10 +290,10 @@ AddResult AddTransforms(
 bool BuildConversionPipeline(
     const StreamType& in_type,
     const std::vector<std::unique_ptr<StreamTypeSet>>& out_type_sets,
-    Graph* graph,
-    OutputRef* output,
+    Graph* graph, DecoderFactory* decoder_factory, OutputRef* output,
     std::unique_ptr<StreamType>* out_type) {
   FXL_DCHECK(graph);
+  FXL_DCHECK(decoder_factory);
   FXL_DCHECK(output);
   FXL_DCHECK(out_type);
 
@@ -302,8 +301,8 @@ bool BuildConversionPipeline(
   const StreamType* type_to_convert = &in_type;
   std::unique_ptr<StreamType> converted_type;
   while (true) {
-    switch (AddTransforms(*type_to_convert, out_type_sets, graph, &out,
-                          &converted_type)) {
+    switch (AddTransforms(*type_to_convert, out_type_sets, graph,
+                          decoder_factory, &out, &converted_type)) {
       case AddResult::kFailed:
         // Failed to find a suitable conversion. Return the pipeline to its
         // original state.

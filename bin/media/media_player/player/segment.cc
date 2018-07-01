@@ -14,12 +14,11 @@ Segment::Segment() {}
 
 Segment::~Segment() {}
 
-void Segment::Provision(Graph* graph,
-                        async_t* async,
-                        fxl::Closure update_callback) {
+void Segment::Provision(Graph* graph, async_t* async,
+                        fit::closure update_callback) {
   graph_ = graph;
   async_ = async;
-  update_callback_ = update_callback;
+  update_callback_ = std::move(update_callback);
   DidProvision();
 }
 
@@ -43,7 +42,7 @@ void Segment::ReportProblem(const std::string& type,
     return;
   }
 
-  problem_ = Problem::New();
+  problem_ = fuchsia::mediaplayer::Problem::New();
   problem_->type = type;
   problem_->details = details;
   NotifyUpdate();

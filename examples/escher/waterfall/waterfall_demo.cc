@@ -32,14 +32,10 @@ static constexpr size_t kOffscreenBenchmarkFrameCount = 1000;
 WaterfallDemo::WaterfallDemo(DemoHarness* harness, int argc, char** argv)
     : Demo(harness),
       renderer_(escher::PaperRenderer::New(escher())),
-      shadow_renderer_(
-          escher::ShadowMapRenderer::New(escher(),
-                                         renderer_->model_data(),
-                                         renderer_->model_renderer())),
-      moment_shadow_renderer_(
-          escher::MomentShadowMapRenderer::New(escher(),
-                                               renderer_->model_data(),
-                                               renderer_->model_renderer())),
+      shadow_renderer_(escher::ShadowMapRenderer::New(
+          escher(), renderer_->model_data(), renderer_->model_renderer())),
+      moment_shadow_renderer_(escher::MomentShadowMapRenderer::New(
+          escher(), renderer_->model_data(), renderer_->model_renderer())),
       swapchain_helper_(harness->GetVulkanSwapchain(),
                         escher()->vulkan_context().device,
                         escher()->vulkan_context().queue) {
@@ -156,6 +152,9 @@ bool WaterfallDemo::HandleKeyPress(std::string key) {
       case 'D':
         show_debug_info_ = !show_debug_info_;
         return true;
+      case 'M':
+        stop_time_ = !stop_time_;
+        return true;
       case 'P':
         profile_one_frame_ = true;
         return true;
@@ -163,9 +162,6 @@ bool WaterfallDemo::HandleKeyPress(std::string key) {
         sort_by_pipeline_ = !sort_by_pipeline_;
         FXL_LOG(INFO) << "Sort object by pipeline: "
                       << (sort_by_pipeline_ ? "true" : "false");
-        return true;
-      case 'T':
-        stop_time_ = !stop_time_;
         return true;
       case '1':
         current_scene_ = 0;
@@ -300,7 +296,8 @@ void WaterfallDemo::DrawFrame() {
       escher::vec2(light_azimuth_radians_, kLightElevationRadians),
       kLightDispersion, vec3(kLightIntensity)));
 
-  auto frame = escher()->NewFrame("Waterfall Demo", profile_one_frame_);
+  auto frame = escher()->NewFrame(
+      "Waterfall Demo", ++frame_count_, profile_one_frame_);
 
   escher::ShadowMapPtr shadow_map;
   if (shadow_mode_ == kShadowMap || shadow_mode_ == kMomentShadowMap) {
@@ -315,7 +312,7 @@ void WaterfallDemo::DrawFrame() {
   swapchain_helper_.DrawFrame(frame, renderer_.get(), stage_, *model, camera,
                               shadow_map, overlay_model);
 
-  if (++frame_count_ == 1) {
+  if (frame_count_ == 1) {
     first_frame_microseconds_ = stopwatch_.GetElapsedMicroseconds();
     stopwatch_.Reset();
   } else if (frame_count_ % 200 == 0) {

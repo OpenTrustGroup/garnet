@@ -6,9 +6,11 @@
 
 #include "garnet/bin/zxdb/client/breakpoint_impl.h"
 #include "garnet/bin/zxdb/client/process_impl.h"
+#include "garnet/bin/zxdb/client/remote_api.h"
 #include "garnet/bin/zxdb/client/session.h"
 #include "garnet/bin/zxdb/client/system_observer.h"
 #include "garnet/bin/zxdb/client/target_impl.h"
+#include "garnet/lib/debug_ipc/helper/message_loop.h"
 
 namespace zxdb {
 
@@ -48,6 +50,25 @@ ProcessImpl* SystemImpl::ProcessImplFromKoid(uint64_t koid) const {
   return nullptr;
 }
 
+void SystemImpl::NotifyDidCreateProcess(Process* process) {
+  for (auto& observer : observers())
+    observer.GlobalDidCreateProcess(process);
+}
+
+void SystemImpl::NotifyWillDestroyProcess(Process* process) {
+  for (auto& observer : observers())
+    observer.GlobalWillDestroyProcess(process);
+}
+
+std::vector<TargetImpl*> SystemImpl::GetTargetImpls() const {
+  std::vector<TargetImpl*> result;
+  for (const auto& t : targets_)
+    result.push_back(t.get());
+  return result;
+}
+
+SystemSymbols* SystemImpl::GetSymbols() { return &symbols_; }
+
 std::vector<Target*> SystemImpl::GetTargets() const {
   std::vector<Target*> result;
   result.reserve(targets_.size());
@@ -69,8 +90,8 @@ Process* SystemImpl::ProcessFromKoid(uint64_t koid) const {
 }
 
 void SystemImpl::GetProcessTree(ProcessTreeCallback callback) {
-  session()->Send<debug_ipc::ProcessTreeRequest, debug_ipc::ProcessTreeReply>(
-      debug_ipc::ProcessTreeRequest(), std::move(callback));
+  session()->remote_api()->ProcessTree(debug_ipc::ProcessTreeRequest(),
+                                       std::move(callback));
 }
 
 Target* SystemImpl::CreateNewTarget(Target* clone) {
@@ -110,7 +131,7 @@ void SystemImpl::Pause() {
   debug_ipc::PauseRequest request;
   request.process_koid = 0;  // 0 means all processes.
   request.thread_koid = 0;   // 0 means all threads.
-  session()->Send<debug_ipc::PauseRequest, debug_ipc::PauseReply>(
+  session()->remote_api()->Pause(
       request, std::function<void(const Err&, debug_ipc::PauseReply)>());
 }
 
@@ -119,7 +140,7 @@ void SystemImpl::Continue() {
   request.process_koid = 0;  // 0 means all processes.
   request.thread_koid = 0;   // 0 means all threads.
   request.how = debug_ipc::ResumeRequest::How::kContinue;
-  session()->Send<debug_ipc::ResumeRequest, debug_ipc::ResumeReply>(
+  session()->remote_api()->Resume(
       request, std::function<void(const Err&, debug_ipc::ResumeReply)>());
 }
 

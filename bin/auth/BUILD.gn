@@ -19,6 +19,21 @@ package("token_manager") {
   ]
 }
 
+package("token_manager_rust") {
+  deps = [
+    "//garnet/bin/auth/rust/token_manager:token_manager_rust",
+  ]
+
+  binary = "rust_crates/token_manager_rust"
+
+  meta = [
+    {
+      path = rebase_path("rust/meta/token_manager.cmx")
+      dest = "token_manager.cmx"
+    },
+  ]
+}
+
 package("oauth_examples") {
   testonly = true
   deprecated_system_image = true
@@ -39,11 +54,13 @@ package("rust_tests") {
   deprecated_system_image = true
 
   deps = [
-    "rust/cache:cache"
+    "rust/cache:cache",
+    "rust/store:store",
   ]
 
   tests = [
     { name = "auth_cache_lib_test_rustc" },
+    { name = "auth_store_lib_test_rustc" },
   ]
 }
 
@@ -82,6 +99,6 @@ executable("token_manager_unittests") {
     "//garnet/bin/auth/cache:unittests",
     "//garnet/bin/auth/store:unittests",
     "//garnet/public/lib/fxl:fxl_printers",
-    "//garnet/public/lib/test_runner/cpp:gtest_main",
+    "//third_party/googletest:gtest_main",
   ]
 }

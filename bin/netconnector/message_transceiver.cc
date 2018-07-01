@@ -35,9 +35,7 @@ MessageTransceiver::MessageTransceiver(fxl::UniqueFD socket_fd)
   WaitToReceive();
 }
 
-MessageTransceiver::~MessageTransceiver() {
-  CancelWaiters();
-}
+MessageTransceiver::~MessageTransceiver() { CancelWaiters(); }
 
 void MessageTransceiver::SetChannel(zx::channel channel) {
   FXL_DCHECK(channel);
@@ -104,9 +102,9 @@ void MessageTransceiver::SendVersionPacket() {
   });
 }
 
-void MessageTransceiver::PostSendTask(std::function<void()> task) {
+void MessageTransceiver::PostSendTask(fit::closure task) {
   FXL_DCHECK(socket_fd_.is_valid()) << "PostSendTask with invalid socket.";
-  send_tasks_.push(task);
+  send_tasks_.push(std::move(task));
   if (send_tasks_.size() == 1) {
     MaybeWaitToSend();
   }
@@ -120,7 +118,7 @@ void MessageTransceiver::MaybeWaitToSend() {
   if (!fd_send_waiter_.Wait(
           [this](zx_status_t status, uint32_t events) {
             FXL_DCHECK(!send_tasks_.empty());
-            auto task = send_tasks_.front();
+            auto task = std::move(send_tasks_.front());
             send_tasks_.pop();
             task();
           },
@@ -128,14 +126,13 @@ void MessageTransceiver::MaybeWaitToSend() {
     // Wait failed because the fd is no longer valid. We need to clear
     // |send_tasks_| before we proceeed, because a non-empty send_tasks_
     // implies the need to cancel the wait.
-    std::queue<std::function<void()>> doomed;
+    std::queue<fit::closure> doomed;
     send_tasks_.swap(doomed);
     CloseConnection();
   }
 }
 
-void MessageTransceiver::SendPacket(PacketType type,
-                                    const void* payload,
+void MessageTransceiver::SendPacket(PacketType type, const void* payload,
                                     size_t payload_size) {
   FXL_DCHECK(payload_size == 0 || payload != nullptr);
 
@@ -276,10 +273,8 @@ void MessageTransceiver::ParseReceivedBytes(size_t byte_count) {
   }
 }
 
-bool MessageTransceiver::CopyReceivedBytes(uint8_t** bytes,
-                                           size_t* byte_count,
-                                           uint8_t* dest,
-                                           size_t dest_size,
+bool MessageTransceiver::CopyReceivedBytes(uint8_t** bytes, size_t* byte_count,
+                                           uint8_t* dest, size_t dest_size,
                                            size_t dest_packet_offset) {
   FXL_DCHECK(bytes != nullptr);
   FXL_DCHECK(*bytes != nullptr);
@@ -328,7 +323,7 @@ void MessageTransceiver::OnReceivedPacketComplete() {
         return;
       }
 
-      async::PostTask(async_,[this, version = version_]() {
+      async::PostTask(async_, [this, version = version_]() {
         OnVersionReceived(version);
         if (socket_fd_.is_valid() && channel_) {
           // We've postponed setting the channel on the relay until now, because
@@ -359,7 +354,7 @@ void MessageTransceiver::OnReceivedPacketComplete() {
         return;
       }
 
-      async::PostTask(async_,[this, service_name = ParsePayloadString()]() {
+      async::PostTask(async_, [this, service_name = ParsePayloadString()]() {
         OnServiceNameReceived(service_name);
       });
       break;
@@ -372,7 +367,8 @@ void MessageTransceiver::OnReceivedPacketComplete() {
         return;
       }
 
-      async::PostTask(async_,
+      async::PostTask(
+          async_,
           [this, payload = std::move(receive_packet_payload_)]() mutable {
             OnMessageReceived(std::move(payload));
           });
@@ -400,7 +396,7 @@ std::string MessageTransceiver::ParsePayloadString() {
 void MessageTransceiver::CancelWaiters() {
   if (!send_tasks_.empty()) {
     fd_send_waiter_.Cancel();
-    std::queue<std::function<void()>> doomed;
+    std::queue<fit::closure> doomed;
     send_tasks_.swap(doomed);
   }
 

@@ -10,8 +10,8 @@ rustc_binary("bin") {
   with_unit_tests = true
 
   deps = [
-    "//garnet/public/lib/fidl/rust/fidl",
     "//garnet/public/lib/device_settings/fidl:fidl-rustc",
+    "//garnet/public/lib/fidl/rust/fidl",
     "//garnet/public/rust/crates/fdio",
     "//garnet/public/rust/crates/fuchsia-app",
     "//garnet/public/rust/crates/fuchsia-async",
@@ -38,10 +38,6 @@ package("device_settings_manager") {
     {
       path = rebase_path("meta/device_settings_manager.cmx")
       dest = "device_settings_manager.cmx"
-    },
-    {
-      path = rebase_path("//garnet/bin/appmgr/legacy_flat_exported_dir")
-      dest = "legacy_flat_exported_dir"
     },
   ]
 }

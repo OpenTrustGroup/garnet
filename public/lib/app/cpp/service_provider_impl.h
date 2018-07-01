@@ -5,18 +5,19 @@
 #ifndef LIB_APP_CPP_SERVICE_PROVIDER_IMPL_H_
 #define LIB_APP_CPP_SERVICE_PROVIDER_IMPL_H_
 
+#include <lib/fit/function.h>
 #include <lib/zx/channel.h>
 
-#include <functional>
 #include <string>
 #include <unordered_map>
 #include <utility>
 
-#include <component/cpp/fidl.h>
+#include <fuchsia/sys/cpp/fidl.h>
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
 
-namespace component {
+namespace fuchsia {
+namespace sys {
 
 // An implementation of |ServiceProvider|, which can be customized appropriately
 // (to select what services it provides).
@@ -25,22 +26,13 @@ class ServiceProviderImpl : public ServiceProvider {
   // |ServiceConnector| is the generic, type-unsafe interface for objects used
   // by |ServiceProviderImpl| to connect generic "interface requests" (i.e.,
   // just channels) specified by service name to service implementations.
-  using ServiceConnector = std::function<void(zx::channel)>;
+  using ServiceConnector = fit::function<void(zx::channel)>;
 
   // |DefaultServiceConnector| is the default last resort service connector
   // which is called when the service provider does not recognize a particular
   // service name.  This may be used to implement service provider delegation
   // or more complex name-based service resolution strategies.
-  using DefaultServiceConnector = std::function<void(std::string, zx::channel)>;
-
-  // A |InterfaceRequestHandler<Interface>| is simply a function that
-  // handles an interface request for |Interface|. If it determines that the
-  // request should be "accepted", then it should "connect" ("take ownership
-  // of") request. Otherwise, it can simply drop |interface_request| (as implied
-  // by the interface).
-  template <typename Interface>
-  using InterfaceRequestHandler =
-      std::function<void(fidl::InterfaceRequest<Interface> interface_request)>;
+  using DefaultServiceConnector = fit::function<void(std::string, zx::channel)>;
 
   // Constructs this service provider implementation in an unbound state.
   ServiceProviderImpl();
@@ -68,21 +60,17 @@ class ServiceProviderImpl : public ServiceProvider {
                          const std::string& service_name);
 
   // Adds a supported service with the given |service_name|, using the given
-  // |interface_request_handler| (see above for information about
-  // |InterfaceRequestHandler<Interface>|). |interface_request_handler| should
-  // remain valid for the lifetime of this object.
+  // |interface_request_handler|, which should remain valid for the lifetime of
+  // this object.
   //
   // A typical usage may be:
   //
-  //   service_provider_impl_->AddService<Foobar>(
-  //       [](InterfaceRequest<FooBar> foobar_request) {
-  //         foobar_binding_.AddBinding(this, std::move(foobar_request));
-  //       });
+  //   AddService(foobar_bindings_.GetHandler(this));
   template <typename Interface>
-  void AddService(InterfaceRequestHandler<Interface> handler,
+  void AddService(fidl::InterfaceRequestHandler<Interface> handler,
                   const std::string& service_name = Interface::Name_) {
     AddServiceForName(
-        [handler](zx::channel channel) {
+        [handler = std::move(handler)](zx::channel channel) {
           handler(fidl::InterfaceRequest<Interface>(std::move(channel)));
         },
         service_name);
@@ -129,6 +117,7 @@ class ServiceProviderImpl : public ServiceProvider {
   FXL_DISALLOW_COPY_AND_ASSIGN(ServiceProviderImpl);
 };
 
-}  // namespace component
+}  // namespace sys
+}  // namespace fuchsia
 
 #endif  // LIB_APP_CPP_SERVICE_PROVIDER_IMPL_H_

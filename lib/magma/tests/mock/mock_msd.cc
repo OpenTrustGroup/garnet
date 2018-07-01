@@ -56,12 +56,6 @@ msd_context_t* msd_connection_create_context(msd_connection_t* dev)
     return MsdMockConnection::cast(dev)->CreateContext();
 }
 
-magma_status_t msd_connection_wait_rendering(struct msd_connection_t* connection,
-                                             struct msd_buffer_t* buf)
-{
-    return MAGMA_STATUS_OK;
-}
-
 void msd_context_destroy(msd_context_t* ctx) { delete MsdMockContext::cast(ctx); }
 
 msd_buffer_t* msd_buffer_import(uint32_t handle)
@@ -145,8 +139,8 @@ magma_status_t msd_connection_commit_buffer(struct msd_connection_t* connection,
     return MAGMA_STATUS_OK;
 }
 
-void msd_connection_set_notification_channel(msd_connection_t* abi_connection,
-                                             msd_channel_send_callback_t callback,
-                                             msd_channel_t channel)
+void msd_connection_set_notification_callback(struct msd_connection_t* connection,
+                                              msd_connection_notification_callback_t callback,
+                                              void* token)
 {
 }

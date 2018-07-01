@@ -9,6 +9,7 @@ use self::authenticator::Authenticator;
 use self::supplicant::Supplicant;
 use Error;
 use akm::Akm;
+use bytes::BytesMut;
 use cipher::{Cipher, GROUP_CIPHER_SUITE, TKIP};
 use eapol;
 use failure;
@@ -35,33 +36,30 @@ pub enum MessageNumber {
 #[derive(Debug)]
 pub struct Config {
     pub role: Role,
-    pub sta_addr: [u8; 6],
-    pub sta_rsne: Rsne,
-    pub peer_addr: [u8; 6],
-    pub peer_rsne: Rsne,
+    pub s_addr: [u8; 6],
+    pub s_rsne: Rsne,
+    pub a_addr: [u8; 6],
+    pub a_rsne: Rsne,
 }
 
 impl Config {
     pub fn new(
-        role: Role, sta_addr: [u8; 6], sta_rsne: Rsne, peer_addr: [u8; 6], peer_rsne: Rsne
+        role: Role,
+        s_addr: [u8; 6],
+        s_rsne: Rsne,
+        a_addr: [u8; 6],
+        a_rsne: Rsne,
     ) -> Result<Config, failure::Error> {
         // TODO(hahnr): Validate configuration for:
         // (1) Correct RSNE subset
         // (2) Correct AKM and Cipher Suite configuration
         Ok(Config {
             role,
-            sta_addr,
-            sta_rsne,
-            peer_addr,
-            peer_rsne,
+            s_addr,
+            s_rsne,
+            a_addr,
+            a_rsne,
         })
-    }
-
-    pub fn negotiated_rsne(&self) -> &Rsne {
-        match self.role {
-            Role::Authenticator => &self.peer_rsne,
-            Role::Supplicant => &self.sta_rsne,
-        }
     }
 }
 
@@ -102,7 +100,7 @@ impl Fourway {
         // (2) Decrypt key data.
         let mut plaintext = None;
         if frame.key_info.encrypted_key_data() {
-            let rsne = self.cfg.negotiated_rsne();
+            let rsne = &self.cfg.s_rsne;
             let akm = &rsne.akm_suites[0];
             plaintext = match self.ptk.as_ref() {
                 // Return error if key data is encrypted but the PTK was not yet derived.
@@ -144,7 +142,7 @@ impl Fourway {
         }.map_err(|e| failure::Error::from(e))?;
 
         // IEEE Std 802.11-2016, 12.7.2 b.1)
-        let rsne = self.cfg.negotiated_rsne();
+        let rsne = &self.cfg.s_rsne;
         let expected_version = derive_key_descriptor_version(rsne, key_descriptor);
         if frame.key_info.key_descriptor_version() != expected_version {
             return Err(Error::UnsupportedKeyDescriptorVersion(
@@ -184,7 +182,7 @@ impl Fourway {
         // IEEE Std 802.11-2016, 12.7.2 c)
         match msg_no {
             MessageNumber::Message1 | MessageNumber::Message3 => {
-                let rsne = self.cfg.negotiated_rsne();
+                let rsne = &self.cfg.s_rsne;
                 let pairwise = &rsne.pairwise_cipher_suites[0];
                 let tk_bits = pairwise
                     .tk_bits()
@@ -224,7 +222,7 @@ impl Fourway {
 
         // IEEE Std 802.11-2016, 12.7.2, f)
         // IV is not used.
-        if is_zero(&frame.key_iv[..]) {
+        if !is_zero(&frame.key_iv[..]) {
             return Err(Error::InvalidIv.into());
         }
 
@@ -233,7 +231,7 @@ impl Fourway {
         // Optional in the 3rd message. Must be zero in others.
 
         // IEEE Std 802.11-2016, 12.7.2 h)
-        let rsne = self.cfg.negotiated_rsne();
+        let rsne = &self.cfg.s_rsne;
         let akm = &rsne.akm_suites[0];
         let mic_bytes = akm.mic_bytes()
             .ok_or(Error::UnsupportedAkmSuite)
@@ -247,10 +245,13 @@ impl Fourway {
             match self.ptk.as_ref() {
                 None => Err(Error::UnexpectedMic.into()),
                 Some(ptk) => {
-                    let frame_bytes = frame.to_bytes(true);
+                    let mut buf = BytesMut::with_capacity(frame.len());
+                    frame.as_bytes(true, &mut buf)?;
+                    let written = buf.len();
+                    buf.truncate(written);
                     let valid_mic = akm.integrity_algorithm()
                         .ok_or(Error::UnsupportedAkmSuite)?
-                        .verify(ptk.kck(), &frame_bytes[..], &frame.key_mic[..]);
+                        .verify(ptk.kck(), &buf[..], &frame.key_mic[..]);
                     if !valid_mic {
                         Err(Error::InvalidMic)
                     } else {
@@ -272,7 +273,7 @@ impl Fourway {
         // completed successfully. Report all other updates.
         updates
             .drain_filter(|update| match update {
-                SecAssocUpdate::Key(key) => true,
+                SecAssocUpdate::Key(_) => true,
                 _ => false,
             })
             .for_each(|update| {
@@ -324,6 +325,14 @@ fn validate_message_1(frame: &eapol::KeyFrame) -> Result<(), failure::Error> {
     } else {
         Ok(())
     }
+
+    // The first message of the Handshake is also required to carry a zeroed MIC.
+    // Some routers however send messages without zeroing out the MIC beforehand.
+    // To ensure compatibility with such routers, the MIC of the first message is
+    // allowed to be set.
+    // This assumption faces no security risk because the message's MIC is only
+    // validated in the Handshake and not in the Supplicant or Authenticator
+    // implementation.
 }
 
 fn validate_message_2(frame: &eapol::KeyFrame) -> Result<(), failure::Error> {
@@ -497,4 +506,40 @@ fn is_zero(slice: &[u8]) -> bool {
     slice.iter().all(|&x| x == 0)
 }
 
-// TODO(hahnr): Add tests.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rsna::test_util;
+    use bytes::Bytes;
+
+    #[test]
+    fn test_nonzero_mic_in_first_msg() {
+        // Create a new instance of the 4-Way Handshake in Supplicant role.
+        msg1.key_mic = Bytes::from(vec![0xAA; 16]);
+        let pmk = test_util::get_pmk();
+        let cfg = Config{
+            s_rsne: test_util::get_s_rsne(),
+            a_rsne: test_util::get_a_rsne(),
+            s_addr: test_util::S_ADDR,
+            a_addr: test_util::A_ADDR,
+            role: Role::Supplicant
+        };
+        let mut handshake = Fourway::new(cfg, pmk)
+            .expect("error while creating 4-Way Handshake");
+
+        // Send first message of Handshake to Supplicant and verify result.
+        let a_nonce = test_util::get_nonce();
+        let mut msg1 = test_util::get_4whs_msg1(&a_nonce[..], 1);
+        let updates = handshake.on_eapol_key_frame(&msg1)
+            .expect("error processing first message");
+        assert_eq!(updates.len(), 1);
+        let update = updates.get(0).expect("expected at least one update");
+        match update {
+            SecAssocUpdate::TxEapolKeyFrame(_) => {},
+            _ => assert!(false),
+        }
+    }
+
+    // TODO(hahnr): Add additional tests.
+}

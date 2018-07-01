@@ -86,7 +86,7 @@ Examples
       if no index is specified).
 )";
 Err DoContinue(ConsoleContext* context, const Command& cmd) {
-  Err err = cmd.ValidateNouns({ Noun::kProcess, Noun::kThread });
+  Err err = cmd.ValidateNouns({Noun::kProcess, Noun::kThread});
   if (err.has_error())
     return err;
 
@@ -155,7 +155,7 @@ Examples
       if no index is specified).
 )";
 Err DoPause(ConsoleContext* context, const Command& cmd) {
-  Err err = cmd.ValidateNouns({ Noun::kProcess, Noun::kThread });
+  Err err = cmd.ValidateNouns({Noun::kProcess, Noun::kThread});
   if (err.has_error())
     return err;
 
@@ -173,6 +173,42 @@ Err DoPause(ConsoleContext* context, const Command& cmd) {
   }
 
   return Err();
+}
+
+// step ------------------------------------------------------------------------
+
+const char kStepShortHelp[] =
+    "step / s: Step one source line, going into subroutines.";
+const char kStepHelp[] =
+    R"(step
+
+  When a thread is stopped, "step" will execute one source line and stop the
+  thread again. This will follow execution into subroutines. If the thread is
+  running it will issue an error.
+
+  By default, "step" will single-step the current thread. If a thread context
+  is given, the specified thread will be stepped. You can't step a process.
+  Other threads in the process will be unchanged so will remain running or
+  stopped.
+
+  See also "stepi".
+
+Examples
+
+  s
+  step
+      Step the current thread.
+
+  t 2 s
+  thread 2 step
+      Steps thread 2 in the current process.
+)";
+Err DoStep(ConsoleContext* context, const Command& cmd) {
+  Err err = AssertStoppedThreadCommand(context, cmd, "stepi");
+  if (err.has_error())
+    return err;
+
+  return cmd.thread()->Step();
 }
 
 // stepi -----------------------------------------------------------------------
@@ -209,27 +245,69 @@ Examples
       Steps thread 2 in process 3.
 )";
 Err DoStepi(ConsoleContext* context, const Command& cmd) {
-  Err err = cmd.ValidateNouns({ Noun::kProcess, Noun::kThread });
+  Err err = AssertStoppedThreadCommand(context, cmd, "stepi");
   if (err.has_error())
     return err;
 
-  if (!cmd.thread() ||
-      (cmd.thread()->GetState() != debug_ipc::ThreadRecord::State::kBlocked &&
-       cmd.thread()->GetState() != debug_ipc::ThreadRecord::State::kSuspended))
-    return Err("\"stepi\" requires a suspended or blocked thread to step.");
-
   cmd.thread()->StepInstruction();
+  return Err();
+}
+
+// regs ------------------------------------------------------------------------
+
+const char kRegsShortHelp[] = "regs / rg: Show the current registers for a thread.";
+const char kRegsHelp[] =
+    R"(regs
+
+  Shows the current registers for  thread.
+  Alias: "rg"
+
+Examples
+
+  regs
+  thread 4 regs
+  process 2 thread 1 regs
+)";
+
+void OnRegsComplete(const Err& err,
+                    std::vector<debug_ipc::Register> registers) {
+  Console* console = Console::get();
+  if (err.has_error()) {
+    console->Output(err);
+    return;
+  }
+
+  OutputBuffer out = OutputBuffer::WithContents("REGISTERS:\n");
+
+  out.Append("General Registers:\n");
+  out.Append("-------------------------------------------------\n");
+  for (auto&& reg : registers) {
+    out.Append(
+        fxl::StringPrintf("%4s: 0x%016lx\n", reg.name.c_str(), reg.value));
+  }
+  console->Output(std::move(out));
+}
+
+Err DoRegs(ConsoleContext* context, const Command& cmd) {
+  Err err = AssertStoppedThreadCommand(context, cmd, "regs");
+  if (err.has_error())
+    return err;
+
+  cmd.thread()->GetRegisters(&OnRegsComplete);
   return Err();
 }
 
 }  // namespace
 
 void AppendThreadVerbs(std::map<Verb, VerbRecord>* verbs) {
-  (*verbs)[Verb::kContinue] =
-      VerbRecord(&DoContinue, {"continue", "c"}, kContinueShortHelp,
-                 kContinueHelp);
+  (*verbs)[Verb::kContinue] = VerbRecord(&DoContinue, {"continue", "c"},
+                                         kContinueShortHelp, kContinueHelp);
   (*verbs)[Verb::kPause] =
       VerbRecord(&DoPause, {"pause", "pa"}, kPauseShortHelp, kPauseHelp);
+  (*verbs)[Verb::kRegs] =
+      VerbRecord(&DoRegs, {"regs", "rg"}, kRegsShortHelp, kRegsHelp);
+  (*verbs)[Verb::kStep] =
+      VerbRecord(&DoStep, {"step", "s"}, kStepShortHelp, kStepHelp);
   (*verbs)[Verb::kStepi] =
       VerbRecord(&DoStepi, {"stepi", "si"}, kStepiShortHelp, kStepiHelp);
 }

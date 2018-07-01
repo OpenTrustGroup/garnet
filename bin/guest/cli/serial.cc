@@ -7,7 +7,7 @@
 #include <poll.h>
 #include <iostream>
 
-#include <fdio/util.h>
+#include <lib/fdio/util.h>
 #include <fuchsia/guest/cpp/fidl.h>
 #include <lib/async/cpp/wait.h>
 #include <lib/fit/function.h>
@@ -124,12 +124,12 @@ void handle_serial(uint32_t env_id, uint32_t cid) {
   async::Loop loop(&kAsyncLoopConfigMakeDefault);
 
   // Connect to environment.
-  fuchsia::guest::GuestManagerSyncPtr guestmgr;
-  component::ConnectToEnvironmentService(guestmgr.NewRequest());
-  fuchsia::guest::GuestEnvironmentSyncPtr env_ptr;
+  fuchsia::guest::GuestManagerSync2Ptr guestmgr;
+  fuchsia::sys::ConnectToEnvironmentService(guestmgr.NewRequest());
+  fuchsia::guest::GuestEnvironmentSync2Ptr env_ptr;
   guestmgr->ConnectToEnvironment(env_id, env_ptr.NewRequest());
 
-  fuchsia::guest::GuestControllerSyncPtr guest_controller;
+  fuchsia::guest::GuestControllerSync2Ptr guest_controller;
   env_ptr->ConnectToGuest(cid, guest_controller.NewRequest());
 
   // Open the serial service of the guest and process IO.

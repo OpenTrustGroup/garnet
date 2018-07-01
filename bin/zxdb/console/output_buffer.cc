@@ -5,16 +5,18 @@
 #include "garnet/bin/zxdb/console/output_buffer.h"
 
 #include "garnet/bin/zxdb/client/err.h"
+#include "garnet/bin/zxdb/console/string_util.h"
 #include "garnet/public/lib/fxl/strings/split_string.h"
 
 namespace zxdb {
 
 namespace {
 
-const char kNormalEscapeCode[] = "\x1b[0m";   // "[0m" = Normal.
-const char kBoldEscapeCode[] = "\x1b[1m";     // "[1m" = Bold.
-const char kCommentEscapeCode[] = "\x1b[2m";  // "[2m" = Faint.
-const char kErrorEscapeCode[] = "\x1b[31m";   // "[31m" = Red.
+const char kNormalEscapeCode[] = "\x1b[0m";    // "[0m" = Normal.
+const char kBoldEscapeCode[] = "\x1b[1m";      // "[1m" = Bold.
+const char kCommentEscapeCode[] = "\x1b[2m";   // "[2m" = Faint.
+const char kErrorEscapeCode[] = "\x1b[31m";    // "[31m" = Red.
+const char kWarningEscapeCode[] = "\x1b[33m";  // "[33m" = Yellow.
 
 }  // namespace
 
@@ -23,12 +25,31 @@ OutputBuffer::Span::Span(Syntax s, std::string t) : syntax(s), text(t) {}
 OutputBuffer::OutputBuffer() = default;
 OutputBuffer::~OutputBuffer() = default;
 
+// static
+OutputBuffer OutputBuffer::WithContents(std::string str) {
+  OutputBuffer result;
+  result.Append(str);
+  return result;
+}
+
+// static
+OutputBuffer OutputBuffer::WithContents(Syntax syntax, std::string str) {
+  OutputBuffer result;
+  result.Append(syntax, str);
+  return result;
+}
+
 void OutputBuffer::Append(std::string str) {
   spans_.push_back(Span(Syntax::kNormal, std::move(str)));
 }
 
 void OutputBuffer::Append(Syntax syntax, std::string str) {
   spans_.push_back(Span(syntax, std::move(str)));
+}
+
+void OutputBuffer::Append(OutputBuffer buf) {
+  for (Span& span : buf.spans_)
+    spans_.push_back(std::move(span));
 }
 
 void OutputBuffer::FormatHelp(const std::string& str) {
@@ -60,6 +81,8 @@ void OutputBuffer::WriteToStdout() const {
       fwrite(kCommentEscapeCode, 1, strlen(kCommentEscapeCode), stdout);
     else if (span.syntax == Syntax::kError)
       fwrite(kErrorEscapeCode, 1, strlen(kErrorEscapeCode), stdout);
+    else if (span.syntax == Syntax::kWarning)
+      fwrite(kWarningEscapeCode, 1, strlen(kWarningEscapeCode), stdout);
 
     fwrite(span.text.data(), 1, span.text.size(), stdout);
 
@@ -78,6 +101,13 @@ std::string OutputBuffer::AsString() const {
   std::string result;
   for (const Span& span : spans_)
     result.append(span.text);
+  return result;
+}
+
+size_t OutputBuffer::UnicodeCharWidth() const {
+  size_t result = 0;
+  for (const Span& span : spans_)
+    result += ::zxdb::UnicodeCharWidth(span.text);
   return result;
 }
 

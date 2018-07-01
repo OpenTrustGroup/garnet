@@ -7,10 +7,8 @@
 
 #include <vulkan/vulkan.hpp>
 
-#include "lib/escher/util/debug_print.h"
-#include "lib/escher/vk/descriptor_set_layout.h"
+#include "lib/escher/third_party/granite/vk/shader_module_resource_layout.h"
 #include "lib/escher/vk/shader_stage.h"
-#include "lib/escher/vk/vulkan_limits.h"
 #include "lib/fxl/memory/ref_counted.h"
 
 namespace escher {
@@ -24,15 +22,6 @@ class ShaderModuleListener {
  public:
   virtual void OnShaderModuleUpdated(ShaderModule* shader_module) = 0;
 };
-
-struct ShaderModuleResourceLayout {
-  uint32_t attribute_mask = 0;
-  uint32_t render_target_mask = 0;
-  uint32_t push_constant_offset = 0;
-  uint32_t push_constant_range = 0;
-  DescriptorSetLayout sets[VulkanLimits::kNumDescriptorSets];
-};
-ESCHER_DEBUG_PRINTABLE(ShaderModuleResourceLayout);
 
 // Base class that knows hows to wrap SPIR-V code into a vk::ShaderModule and
 // notify listeners so that e.g. vk::Pipelines can be invalidated/regenerated.
@@ -61,12 +50,6 @@ class ShaderModule : public fxl::RefCountedThreadSafe<ShaderModule> {
     return module_;
   }
 
-  // Return the module's resource layout.
-  const ShaderModuleResourceLayout& shader_module_resource_layout() const {
-    FXL_DCHECK(is_valid());
-    return layout_;
-  }
-
   // Add a listener. If is_valid(), then listener->OnShaderModuleUpdated() will
   // be called immediately.
   void AddShaderModuleListener(ShaderModuleListener* listener);
@@ -75,21 +58,24 @@ class ShaderModule : public fxl::RefCountedThreadSafe<ShaderModule> {
   // is destroyed.
   void RemoveShaderModuleListener(ShaderModuleListener* listener);
 
+  // Return the module's resource layout. Escher clients never need to call
+  // this; it is used internally by ShaderProgram.
+  const impl::ShaderModuleResourceLayout& shader_module_resource_layout()
+      const {
+    FXL_DCHECK(is_valid());
+    return layout_;
+  }
+
  protected:
   // Subclasses should call this when new SPIR-V is available.
   void RecreateModuleFromSpirvAndNotifyListeners(std::vector<uint32_t> spirv);
-
-  // Reflect on the provided SPIR-V to generate a ShaderModuleResourceLayout,
-  // which can be used by clients to automate some aspects of pipeline
-  // generation.
-  void GenerateShaderModuleResourceLayoutFromSpirv(std::vector<uint32_t> spirv);
 
  private:
   vk::Device device_;
   ShaderStage stage_;
   vk::ShaderModule module_;
   std::vector<ShaderModuleListener*> listeners_;
-  ShaderModuleResourceLayout layout_;
+  impl::ShaderModuleResourceLayout layout_;
 };
 
 }  // namespace escher

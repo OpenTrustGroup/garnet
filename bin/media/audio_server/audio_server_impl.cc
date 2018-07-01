@@ -17,14 +17,6 @@ namespace media {
 namespace audio {
 
 AudioServerImpl::AudioServerImpl() : device_manager_(this) {
-  auto service =
-      fbl::AdoptRef(new fs::Service([this](zx::channel ch) -> zx_status_t {
-        bindings_.AddBinding(
-            this, fidl::InterfaceRequest<AudioServer>(std::move(ch)));
-        return ZX_OK;
-      }));
-  outgoing_.public_dir()->AddEntry(AudioServer::Name_, std::move(service));
-
   // Stash a pointer to our async object.
   async_ = async_get_default();
   FXL_DCHECK(async_);
@@ -44,9 +36,9 @@ AudioServerImpl::AudioServerImpl() : device_manager_(this) {
       async_, []() { zx_thread_set_priority(24 /* HIGH_PRIORITY in LK */); });
 
   // Set up our output manager.
-  MediaResult res = device_manager_.Init();
+  zx_status_t res = device_manager_.Init();
   // TODO(johngro): Do better at error handling than this weak check.
-  FXL_DCHECK(res == MediaResult::OK);
+  FXL_DCHECK(res == ZX_OK);
 
   // Wait for 50 mSec before we export our services and start to process client
   // requests.  This will give the device manager layer time to discover the
@@ -56,14 +48,37 @@ AudioServerImpl::AudioServerImpl() : device_manager_(this) {
   // manager so that we wait until we are certain that we have discovered and
   // probed the capabilities of all of the pre-existing inputs and outputs
   // before proceeding.  See MTWN-118
-  async::PostDelayedTask(async_, [this]() { outgoing_.ServeFromStartupInfo(); },
-                         zx::msec(50));
+  async::PostDelayedTask(async_, [this]() { PublishServices(); }, zx::msec(50));
 }
 
 AudioServerImpl::~AudioServerImpl() {
   Shutdown();
   FXL_DCHECK(packet_cleanup_queue_.is_empty());
   FXL_DCHECK(flush_cleanup_queue_.is_empty());
+}
+
+void AudioServerImpl::PublishServices() {
+  auto audio_service =
+      fbl::AdoptRef(new fs::Service([this](zx::channel ch) -> zx_status_t {
+        bindings_.AddBinding(
+            this, fidl::InterfaceRequest<fuchsia::media::Audio>(std::move(ch)));
+        bindings_.bindings().back()->events().SystemGainMuteChanged(
+            system_gain_db_, system_muted_);
+        return ZX_OK;
+      }));
+  outgoing_.public_dir()->AddEntry(fuchsia::media::Audio::Name_,
+                                   std::move(audio_service));
+  // TODO(dalesat): Load the gain/mute values.
+
+  auto audio_device_enumerator_service =
+      fbl::AdoptRef(new fs::Service([this](zx::channel ch) -> zx_status_t {
+        device_manager_.AddDeviceEnumeratorClient(std::move(ch));
+        return ZX_OK;
+      }));
+  outgoing_.public_dir()->AddEntry(fuchsia::media::AudioDeviceEnumerator::Name_,
+                                   std::move(audio_device_enumerator_service));
+
+  outgoing_.ServeFromStartupInfo();
 }
 
 void AudioServerImpl::Shutdown() {
@@ -73,31 +88,77 @@ void AudioServerImpl::Shutdown() {
 }
 
 void AudioServerImpl::CreateRenderer(
-    fidl::InterfaceRequest<AudioRenderer> audio_renderer,
-    fidl::InterfaceRequest<MediaRenderer> media_renderer) {
+    fidl::InterfaceRequest<fuchsia::media::AudioRenderer> audio_renderer,
+    fidl::InterfaceRequest<fuchsia::media::MediaRenderer> media_renderer) {
   device_manager_.AddRenderer(AudioRenderer1Impl::Create(
       std::move(audio_renderer), std::move(media_renderer), this));
 }
 
 void AudioServerImpl::CreateRendererV2(
-    fidl::InterfaceRequest<AudioRenderer2> audio_renderer) {
+    fidl::InterfaceRequest<fuchsia::media::AudioRenderer2> audio_renderer) {
   device_manager_.AddRenderer(
       AudioRenderer2Impl::Create(std::move(audio_renderer), this));
 }
 
 void AudioServerImpl::CreateCapturer(
-    fidl::InterfaceRequest<AudioCapturer> audio_capturer_request,
+    fidl::InterfaceRequest<fuchsia::media::AudioCapturer>
+        audio_capturer_request,
     bool loopback) {
   device_manager_.AddCapturer(AudioCapturerImpl::Create(
       std::move(audio_capturer_request), this, loopback));
 }
 
-void AudioServerImpl::SetMasterGain(float db_gain) {
-  device_manager_.SetMasterGain(db_gain);
+void AudioServerImpl::SetSystemGain(float db_gain) {
+  db_gain = std::max(std::min(db_gain, kMaxSystemAudioGain),
+                     fuchsia::media::kMutedGain);
+
+  if (system_gain_db_ == db_gain) {
+    return;
+  }
+
+  if (db_gain == fuchsia::media::kMutedGain) {
+    // System audio gain is being set to |kMutedGain|. This implicitly mutes
+    // system audio.
+    system_muted_ = true;
+  } else if (system_gain_db_ == fuchsia::media::kMutedGain) {
+    // System audio was muted, because gain was set to |kMutedGain|. We're
+    // raising the gain now, so we unmute.
+    system_muted_ = false;
+  }
+
+  system_gain_db_ = db_gain;
+
+  device_manager_.OnSystemGainChanged();
+  NotifyGainMuteChanged();
 }
 
-void AudioServerImpl::GetMasterGain(GetMasterGainCallback cbk) {
-  cbk(device_manager_.master_gain());
+void AudioServerImpl::SetSystemMute(bool muted) {
+  if (system_gain_db_ == fuchsia::media::kMutedGain) {
+    // Keep audio muted if system audio gain is set to |kMutedGain|.
+    muted = true;
+  }
+
+  if (system_muted_ == muted) {
+    return;
+  }
+
+  system_muted_ = muted;
+
+  device_manager_.OnSystemGainChanged();
+  NotifyGainMuteChanged();
+}
+
+void AudioServerImpl::NotifyGainMuteChanged() {
+  for (auto& binding : bindings_.bindings()) {
+    binding->events().SystemGainMuteChanged(system_gain_db_, system_muted_);
+  }
+
+  // TODO(dalesat): Save the gain/mute values.
+}
+
+void AudioServerImpl::SetRoutingPolicy(
+    fuchsia::media::AudioOutputRoutingPolicy policy) {
+  device_manager_.SetRoutingPolicy(policy);
 }
 
 void AudioServerImpl::DoPacketCleanup() {

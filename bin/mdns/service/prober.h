@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MDNS_SERVICE_PROBER_H_
+#define GARNET_BIN_MDNS_SERVICE_PROBER_H_
 
-#include <functional>
 #include <memory>
 #include <string>
+
+#include <lib/fit/function.h>
 
 #include "garnet/bin/mdns/service/mdns_agent.h"
 #include "lib/fxl/time/time_delta.h"
@@ -31,13 +33,11 @@ namespace mdns {
 // there's a conflict. If not, the probe has completed successfully.
 class Prober : public MdnsAgent {
  public:
-  using CompletionCallback = std::function<void(bool)>;
+  using CompletionCallback = fit::function<void(bool)>;
 
   // Creates a |Prober|. |type| is the resource type for which we're probing.
   // Use |kA| for address types (A and AAAA).
-  Prober(MdnsAgent::Host* host,
-         DnsType type,
-         const CompletionCallback& callback);
+  Prober(MdnsAgent::Host* host, DnsType type, CompletionCallback callback);
 
   ~Prober() override;
 
@@ -75,3 +75,5 @@ class Prober : public MdnsAgent {
 };
 
 }  // namespace mdns
+
+#endif  // GARNET_BIN_MDNS_SERVICE_PROBER_H_

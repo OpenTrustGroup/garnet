@@ -17,26 +17,27 @@
 #define BRCMFMAC_PROTO_H
 
 #include "core.h"
+#include "netbuf.h"
 
 enum proto_addr_mode { ADDR_INDIRECT = 0, ADDR_DIRECT };
 
-struct brcmf_skb_reorder_data {
+struct brcmf_netbuf_reorder_data {
     uint8_t* reorder;
 };
 
 struct brcmf_proto {
-    zx_status_t (*hdrpull)(struct brcmf_pub* drvr, bool do_fws, struct sk_buff* skb,
+    zx_status_t (*hdrpull)(struct brcmf_pub* drvr, bool do_fws, struct brcmf_netbuf* netbuf,
                            struct brcmf_if** ifp);
     zx_status_t (*query_dcmd)(struct brcmf_pub* drvr, int ifidx, uint cmd, void* buf, uint len,
                               zx_status_t* fwerr);
     zx_status_t (*set_dcmd)(struct brcmf_pub* drvr, int ifidx, uint cmd, void* buf, uint len,
                             zx_status_t* fwerr);
-    zx_status_t (*tx_queue_data)(struct brcmf_pub* drvr, int ifidx, struct sk_buff* skb);
-    int (*txdata)(struct brcmf_pub* drvr, int ifidx, uint8_t offset, struct sk_buff* skb);
+    zx_status_t (*tx_queue_data)(struct brcmf_pub* drvr, int ifidx, struct brcmf_netbuf* netbuf);
+    int (*txdata)(struct brcmf_pub* drvr, int ifidx, uint8_t offset, struct brcmf_netbuf* netbuf);
     void (*configure_addr_mode)(struct brcmf_pub* drvr, int ifidx, enum proto_addr_mode addr_mode);
     void (*delete_peer)(struct brcmf_pub* drvr, int ifidx, uint8_t peer[ETH_ALEN]);
     void (*add_tdls_peer)(struct brcmf_pub* drvr, int ifidx, uint8_t peer[ETH_ALEN]);
-    void (*rxreorder)(struct brcmf_if* ifp, struct sk_buff* skb);
+    void (*rxreorder)(struct brcmf_if* ifp, struct brcmf_netbuf* netbuf);
     void (*add_if)(struct brcmf_if* ifp);
     void (*del_if)(struct brcmf_if* ifp);
     void (*reset_if)(struct brcmf_if* ifp);
@@ -47,8 +48,8 @@ struct brcmf_proto {
 zx_status_t brcmf_proto_attach(struct brcmf_pub* drvr);
 void brcmf_proto_detach(struct brcmf_pub* drvr);
 
-static inline int brcmf_proto_hdrpull(struct brcmf_pub* drvr, bool do_fws, struct sk_buff* skb,
-                                      struct brcmf_if** ifp) {
+static inline int brcmf_proto_hdrpull(struct brcmf_pub* drvr, bool do_fws,
+                                      struct brcmf_netbuf* netbuf, struct brcmf_if** ifp) {
     struct brcmf_if* tmp = NULL;
 
     /* assure protocol is always called with
@@ -59,7 +60,7 @@ static inline int brcmf_proto_hdrpull(struct brcmf_pub* drvr, bool do_fws, struc
     } else {
         ifp = &tmp;
     }
-    return drvr->proto->hdrpull(drvr, do_fws, skb, ifp);
+    return drvr->proto->hdrpull(drvr, do_fws, netbuf, ifp);
 }
 static inline zx_status_t brcmf_proto_query_dcmd(struct brcmf_pub* drvr, int ifidx, uint cmd,
                                                  void* buf, uint len, zx_status_t* fwerr) {
@@ -71,13 +72,13 @@ static inline zx_status_t brcmf_proto_set_dcmd(struct brcmf_pub* drvr, int ifidx
 }
 
 static inline zx_status_t brcmf_proto_tx_queue_data(struct brcmf_pub* drvr, int ifidx,
-                                                    struct sk_buff* skb) {
-    return drvr->proto->tx_queue_data(drvr, ifidx, skb);
+                                                    struct brcmf_netbuf* netbuf) {
+    return drvr->proto->tx_queue_data(drvr, ifidx, netbuf);
 }
 
 static inline zx_status_t brcmf_proto_txdata(struct brcmf_pub* drvr, int ifidx, uint8_t offset,
-                                             struct sk_buff* skb) {
-    return drvr->proto->txdata(drvr, ifidx, offset, skb);
+                                             struct brcmf_netbuf* netbuf) {
+    return drvr->proto->txdata(drvr, ifidx, offset, netbuf);
 }
 static inline void brcmf_proto_configure_addr_mode(struct brcmf_pub* drvr, int ifidx,
                                                    enum proto_addr_mode addr_mode) {
@@ -91,15 +92,15 @@ static inline void brcmf_proto_add_tdls_peer(struct brcmf_pub* drvr, int ifidx,
                                              uint8_t peer[ETH_ALEN]) {
     drvr->proto->add_tdls_peer(drvr, ifidx, peer);
 }
-static inline bool brcmf_proto_is_reorder_skb(struct sk_buff* skb) {
-    struct brcmf_skb_reorder_data* rd;
+static inline bool brcmf_proto_is_reorder_netbuf(struct brcmf_netbuf* netbuf) {
+    struct brcmf_netbuf_reorder_data* rd;
 
-    rd = (struct brcmf_skb_reorder_data*)skb->cb;
+    rd = (struct brcmf_netbuf_reorder_data*)netbuf->workspace;
     return !!rd->reorder;
 }
 
-static inline void brcmf_proto_rxreorder(struct brcmf_if* ifp, struct sk_buff* skb) {
-    ifp->drvr->proto->rxreorder(ifp, skb);
+static inline void brcmf_proto_rxreorder(struct brcmf_if* ifp, struct brcmf_netbuf* netbuf) {
+    ifp->drvr->proto->rxreorder(ifp, netbuf);
 }
 
 static inline void brcmf_proto_add_if(struct brcmf_pub* drvr, struct brcmf_if* ifp) {

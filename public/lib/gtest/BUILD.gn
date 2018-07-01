@@ -6,10 +6,15 @@ source_set("gtest") {
   testonly = true
 
   sources = [
-    "test_with_loop.h",
-    "test_with_loop.cc",
-    "test_with_message_loop.cc",
-    "test_with_message_loop.h",
+    "real_loop_fixture.h",
+    "real_loop_fixture.cc",
+    "test_loop_fixture.h",
+    "test_loop_fixture.cc",
+    "test_loop_fixture.h",
+  ]
+
+  deps = [
+    "//zircon/public/lib/async-cpp",
   ]
 
   public_deps = [
@@ -17,6 +22,8 @@ source_set("gtest") {
     "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
     "//third_party/googletest:gtest",
+    "//zircon/public/lib/fit",
+    "//zircon/public/lib/async-loop-cpp",
     "//zircon/public/lib/async-testutils",
   ]
 }
@@ -25,11 +32,12 @@ source_set("unittests") {
   testonly = true
 
   sources = [
-    "test_with_loop_unittest.cc",
-    "test_with_message_loop_unittest.cc",
+    "real_loop_fixture_unittest.cc",
+    "test_loop_fixture_unittest.cc",
   ]
 
   deps = [
     ":gtest",
+    "//zircon/public/lib/async-cpp",
   ]
 }

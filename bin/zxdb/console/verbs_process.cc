@@ -4,8 +4,8 @@
 
 #include "garnet/bin/zxdb/console/verbs.h"
 
-#include <algorithm>
 #include <inttypes.h>
+#include <algorithm>
 #include <vector>
 
 #include "garnet/bin/zxdb/client/err.h"
@@ -15,6 +15,7 @@
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/command_utils.h"
 #include "garnet/bin/zxdb/console/console.h"
+#include "garnet/bin/zxdb/console/format_table.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
 #include "garnet/public/lib/fxl/strings/string_printf.h"
 
@@ -22,13 +23,12 @@ namespace zxdb {
 
 namespace {
 
-// Checks that the given target can be run or attached and returns Er().
-// Otherwise returns an error describing the problem.
+// Verifies that the given target can be run or attached.
 Err AssertRunnableTarget(Target* target) {
   Target::State state = target->GetState();
-  if (state == Target::State::kStarting) {
+  if (state == Target::State::kStarting || state == Target::State::kAttaching) {
     return Err(
-        "The current process is in the process of starting.\n"
+        "The current process is in the process of starting or attaching.\n"
         "Either \"kill\" it or create a \"new\" process context.");
   }
   if (state == Target::State::kRunning) {
@@ -41,10 +41,8 @@ Err AssertRunnableTarget(Target* target) {
 
 // Callback for "run", "attach", "detach" and "stop". The verb affects the
 // message printed to the screen.
-void ProcessCommandCallback(const char* verb,
-                            fxl::WeakPtr<Target> target,
-                            bool display_message_on_success,
-                            const Err& err) {
+void ProcessCommandCallback(const char* verb, fxl::WeakPtr<Target> target,
+                            bool display_message_on_success, const Err& err) {
   if (!display_message_on_success && !err.has_error())
     return;
 
@@ -322,9 +320,9 @@ void OnLibsComplete(const Err& err, std::vector<debug_ipc::Module> modules) {
   }
 
   OutputBuffer out;
-  FormatColumns({ColSpec(Align::kRight, 0, "Load address", 2),
-                 ColSpec(Align::kLeft, 0, "Name", 1)},
-                rows, &out);
+  FormatTable({ColSpec(Align::kRight, 0, "Load address", 2),
+               ColSpec(Align::kLeft, 0, "Name", 1)},
+              rows, &out);
   console->Output(std::move(out));
 }
 
@@ -412,11 +410,11 @@ void OnAspaceComplete(const Err& err,
   }
 
   OutputBuffer out;
-  FormatColumns({ColSpec(Align::kRight, 0, "Start", 2),
-                 ColSpec(Align::kRight, 0, "End", 2),
-                 ColSpec(Align::kRight, 0, "Size", 2),
-                 ColSpec(Align::kLeft, 0, "Name", 1)},
-                rows, &out);
+  FormatTable({ColSpec(Align::kRight, 0, "Start", 2),
+               ColSpec(Align::kRight, 0, "End", 2),
+               ColSpec(Align::kRight, 0, "Size", 2),
+               ColSpec(Align::kLeft, 0, "Name", 1)},
+              rows, &out);
 
   console->Output(std::move(out));
 }

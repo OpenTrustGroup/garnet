@@ -55,10 +55,10 @@ void ShadertoyState::SetPaused(bool paused) {
 
 void ShadertoyState::SetShaderCode(
     fidl::StringPtr glsl,
-    ::fuchsia::ui::shadertoy::Shadertoy::SetShaderCodeCallback callback) {
+    fuchsia::examples::shadertoy::Shadertoy::SetShaderCodeCallback callback) {
   compiler_->Compile(std::string(glsl),
                      [weak = weak_ptr_factory_.GetWeakPtr(),
-                      callback = callback](Compiler::Result result) {
+                      callback = std::move(callback)](Compiler::Result result) {
                        if (weak) {
                          if (result.pipeline) {
                            // Notify client that the code was successfully

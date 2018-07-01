@@ -5,17 +5,16 @@
 #ifndef GARNET_BIN_TRACE_COMMAND_H_
 #define GARNET_BIN_TRACE_COMMAND_H_
 
-#include <functional>
 #include <iosfwd>
 #include <map>
 #include <memory>
 #include <string>
 
-#include <tracing/cpp/fidl.h>
+#include <lib/fit/function.h>
+#include <fuchsia/tracing/cpp/fidl.h>
 
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fxl/command_line.h"
-#include "lib/fxl/functional/closure.h"
 #include "lib/fxl/macros.h"
 
 namespace tracing {
@@ -24,10 +23,10 @@ class Command {
  public:
   // OnDoneCallback is the callback type invoked when a command finished
   // running. It takes as argument the return code to exit the process with.
-  using OnDoneCallback = std::function<void(int32_t)>;
+  using OnDoneCallback = fit::function<void(int32_t)>;
   struct Info {
     using CommandFactory =
-        std::function<std::unique_ptr<Command>(component::ApplicationContext*)>;
+        fit::function<std::unique_ptr<Command>(fuchsia::sys::StartupContext*)>;
 
     CommandFactory factory;
     std::string name;
@@ -42,10 +41,10 @@ class Command {
  protected:
   static std::ostream& out();
 
-  explicit Command(component::ApplicationContext* context);
+  explicit Command(fuchsia::sys::StartupContext* context);
 
-  component::ApplicationContext* context();
-  component::ApplicationContext* context() const;
+  fuchsia::sys::StartupContext* context();
+  fuchsia::sys::StartupContext* context() const;
 
   // Starts running the command.
   // The command must invoke Done() when finished.
@@ -53,7 +52,7 @@ class Command {
   void Done(int32_t return_code);
 
  private:
-  component::ApplicationContext* context_;
+  fuchsia::sys::StartupContext* context_;
   OnDoneCallback on_done_;
   int32_t return_code_ = -1;
 
@@ -62,14 +61,14 @@ class Command {
 
 class CommandWithTraceController : public Command {
  protected:
-  explicit CommandWithTraceController(component::ApplicationContext* context);
+  explicit CommandWithTraceController(fuchsia::sys::StartupContext* context);
 
-  TraceControllerPtr& trace_controller();
-  const TraceControllerPtr& trace_controller() const;
+  fuchsia::tracing::TraceControllerPtr& trace_controller();
+  const fuchsia::tracing::TraceControllerPtr& trace_controller() const;
 
  private:
-  std::unique_ptr<component::ApplicationContext> context_;
-  TraceControllerPtr trace_controller_;
+  std::unique_ptr<fuchsia::sys::StartupContext> context_;
+  fuchsia::tracing::TraceControllerPtr trace_controller_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(CommandWithTraceController);
 };

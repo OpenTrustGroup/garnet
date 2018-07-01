@@ -9,7 +9,7 @@
 #include <fuchsia/ui/views_v1/cpp/fidl.h>
 
 #include "garnet/lib/machina/phys_mem.h"
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 
 namespace machina {
@@ -18,7 +18,7 @@ namespace machina {
 // This exposes some guest services over FIDL.
 class GuestControllerImpl : public fuchsia::guest::GuestController {
  public:
-  GuestControllerImpl(component::ApplicationContext* application_context,
+  GuestControllerImpl(fuchsia::sys::StartupContext* startup_context,
                       const PhysMem& phys_mem);
 
   void set_view_provider(::fuchsia::ui::views_v1::ViewProvider* view_provider) {
@@ -33,12 +33,12 @@ class GuestControllerImpl : public fuchsia::guest::GuestController {
   // |fuchsia::guest::GuestController|
   void GetPhysicalMemory(GetPhysicalMemoryCallback callback) override;
   void GetSerial(GetSerialCallback callback) override;
-  void GetViewProvider(
-      fidl::InterfaceRequest<::fuchsia::ui::views_v1::ViewProvider> view_provider) override;
+  void GetViewProvider(GetViewProviderCallback callback) override;
 
  private:
   fidl::BindingSet<fuchsia::guest::GuestController> bindings_;
-  fidl::BindingSet<::fuchsia::ui::views_v1::ViewProvider> view_provider_bindings_;
+  fidl::BindingSet<::fuchsia::ui::views_v1::ViewProvider>
+      view_provider_bindings_;
 
   const zx::vmo vmo_;
   zx::socket server_socket_;

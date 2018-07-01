@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <fdio/spawn.h>
+#include <lib/fdio/spawn.h>
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
 #include <zx/time.h>
@@ -201,7 +201,7 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
 
 Command::Info Record::Describe() {
   return Command::Info{
-      [](component::ApplicationContext* context) {
+      [](fuchsia::sys::StartupContext* context) {
         return std::make_unique<Record>(context);
       },
       "record",
@@ -230,7 +230,7 @@ Command::Info Record::Describe() {
         "tracing ends unless --detach is specified"}}};
 }
 
-Record::Record(component::ApplicationContext* context)
+Record::Record(fuchsia::sys::StartupContext* context)
     : CommandWithTraceController(context), weak_ptr_factory_(this) {}
 
 void Record::Start(const fxl::CommandLine& command_line) {
@@ -269,7 +269,7 @@ void Record::Start(const fxl::CommandLine& command_line) {
 
   tracing_ = true;
 
-  TraceOptions trace_options;
+  fuchsia::tracing::TraceOptions trace_options;
   trace_options.categories =
       fxl::To<fidl::VectorPtr<fidl::StringPtr>>(options_.categories);
   trace_options.buffer_size_megabytes_hint =
@@ -386,14 +386,14 @@ void Record::DoneTrace() {
 }
 
 void Record::LaunchApp() {
-  component::LaunchInfo launch_info;
+  fuchsia::sys::LaunchInfo launch_info;
   launch_info.url = fidl::StringPtr(options_.app);
   launch_info.arguments =
       fxl::To<fidl::VectorPtr<fidl::StringPtr>>(options_.args);
 
   out() << "Launching " << launch_info.url << std::endl;
-  context()->launcher()->CreateApplication(std::move(launch_info),
-                                           component_controller_.NewRequest());
+  context()->launcher()->CreateComponent(std::move(launch_info),
+                                         component_controller_.NewRequest());
   component_controller_.set_error_handler([this] {
     out() << "Application terminated" << std::endl;
     if (!options_.decouple)

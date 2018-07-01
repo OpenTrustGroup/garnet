@@ -24,7 +24,6 @@
 #include "lib/escher/impl/vulkan_utils.h"
 #include "lib/escher/renderer/paper_renderer.h"
 #include "lib/escher/renderer/shadow_map_renderer.h"
-#include "lib/fxl/functional/make_copyable.h"
 
 namespace scenic {
 namespace gfx {
@@ -115,13 +114,13 @@ void Engine::ScheduleUpdate(uint64_t presentation_time) {
     // Apply update immediately.  This is done for tests.
     FXL_LOG(WARNING)
         << "No FrameScheduler available; applying update immediately";
-    RenderFrame(FrameTimingsPtr(), presentation_time, 0);
+    RenderFrame(FrameTimingsPtr(), presentation_time, 0, false);
   }
 }
 
 std::unique_ptr<Swapchain> Engine::CreateDisplaySwapchain(Display* display) {
   FXL_DCHECK(!display->is_claimed());
-#if SCENE_MANAGER_VULKAN_SWAPCHAIN
+#if SCENIC_VULKAN_SWAPCHAIN
   return std::make_unique<VulkanDisplaySwapchain>(display, event_timestamper(),
                                                   escher());
 #else
@@ -132,13 +131,15 @@ std::unique_ptr<Swapchain> Engine::CreateDisplaySwapchain(Display* display) {
 
 bool Engine::RenderFrame(const FrameTimingsPtr& timings,
                          uint64_t presentation_time,
-                         uint64_t presentation_interval) {
+                         uint64_t presentation_interval, bool force_render) {
   TRACE_DURATION("gfx", "RenderFrame", "frame_number", timings->frame_number(),
                  "time", presentation_time, "interval", presentation_interval);
 
   if (!session_manager_->ApplyScheduledSessionUpdates(presentation_time,
-                                                      presentation_interval))
+                                                      presentation_interval) &&
+      !force_render) {
     return false;
+  }
 
   UpdateAndDeliverMetrics(presentation_time);
 

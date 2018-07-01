@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <bluetooth_gatt/cpp/fidl.h>
+#include <fuchsia/bluetooth/gatt/cpp/fidl.h>
 
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/macros.h"
@@ -17,12 +17,14 @@
 namespace bthost {
 
 // Implements the gatt::Server FIDL interface.
-class GattServerServer : public GattServerBase<bluetooth_gatt::Server> {
+class GattServerServer
+    : public GattServerBase<fuchsia::bluetooth::gatt::Server> {
  public:
   // |adapter_manager| is used to lazily request a handle to the corresponding
   // adapter. It MUST out-live this GattServerServer instance.
-  GattServerServer(fbl::RefPtr<btlib::gatt::GATT> gatt,
-                   fidl::InterfaceRequest<bluetooth_gatt::Server> request);
+  GattServerServer(
+      fbl::RefPtr<btlib::gatt::GATT> gatt,
+      fidl::InterfaceRequest<fuchsia::bluetooth::gatt::Server> request);
 
   ~GattServerServer() override;
 
@@ -34,25 +36,27 @@ class GattServerServer : public GattServerBase<bluetooth_gatt::Server> {
  private:
   class LocalServiceImpl;
 
-  // ::bluetooth_gatt::Server overrides:
+  // ::fuchsia::bluetooth::gatt::Server overrides:
   void PublishService(
-      bluetooth_gatt::ServiceInfo service_info,
-      fidl::InterfaceHandle<bluetooth_gatt::LocalServiceDelegate> delegate,
-      fidl::InterfaceRequest<bluetooth_gatt::LocalService> service_iface,
+      fuchsia::bluetooth::gatt::ServiceInfo service_info,
+      fidl::InterfaceHandle<fuchsia::bluetooth::gatt::LocalServiceDelegate>
+          delegate,
+      fidl::InterfaceRequest<fuchsia::bluetooth::gatt::LocalService>
+          service_iface,
       PublishServiceCallback callback) override;
 
   // Called when a remote device issues a read request to one of our services.
   void OnReadRequest(::btlib::gatt::IdType service_id,
                      ::btlib::gatt::IdType id,
                      uint16_t offset,
-                     const ::btlib::gatt::ReadResponder& responder);
+                     ::btlib::gatt::ReadResponder responder);
 
   // Called when a remote device issues a write request to one of our services.
   void OnWriteRequest(::btlib::gatt::IdType service_id,
                       ::btlib::gatt::IdType id,
                       uint16_t offset,
                       const ::btlib::common::ByteBuffer& value,
-                      const ::btlib::gatt::WriteResponder& responder);
+                      ::btlib::gatt::WriteResponder responder);
 
   // Called when a remote device has configured notifications or indications on
   // a local characteristic.

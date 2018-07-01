@@ -9,8 +9,6 @@
 #include <lib/async/cpp/task.h>
 #include <lib/zx/channel.h>
 
-#include "gtest/gtest.h"
-
 #include "garnet/drivers/bluetooth/lib/gatt/fake_layer.h"
 #include "garnet/drivers/bluetooth/lib/l2cap/fake_layer.h"
 #include "garnet/drivers/bluetooth/lib/testing/fake_controller.h"
@@ -50,8 +48,8 @@ class AdapterTest : public TestingBase {
     TestingBase::TearDown();
   }
 
-  void InitializeAdapter(const Adapter::InitializeCallback& callback) {
-    adapter_->Initialize(callback, [this] {
+  void InitializeAdapter(Adapter::InitializeCallback callback) {
+    adapter_->Initialize(std::move(callback), [this] {
       transport_closed_called_ = true;
     });
   }
@@ -79,8 +77,8 @@ TEST_F(GAP_AdapterTest, InitializeFailureNoFeaturesSupported) {
   };
 
   // The controller supports nothing.
-  InitializeAdapter(init_cb);
-  RunUntilIdle();
+  InitializeAdapter(std::move(init_cb));
+  RunLoopUntilIdle();
 
   EXPECT_FALSE(success);
   EXPECT_EQ(1, init_cb_count);
@@ -101,8 +99,8 @@ TEST_F(GAP_AdapterTest, InitializeFailureNoBufferInfo) {
       static_cast<uint64_t>(hci::LMPFeature::kLESupported);
   test_device()->set_settings(settings);
 
-  InitializeAdapter(init_cb);
-  RunUntilIdle();
+  InitializeAdapter(std::move(init_cb));
+  RunLoopUntilIdle();
 
   EXPECT_FALSE(success);
   EXPECT_EQ(1, init_cb_count);
@@ -126,8 +124,8 @@ TEST_F(GAP_AdapterTest, InitializeSuccess) {
   settings.le_total_num_acl_data_packets = 1;
   test_device()->set_settings(settings);
 
-  InitializeAdapter(init_cb);
-  RunUntilIdle();
+  InitializeAdapter(std::move(init_cb));
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(success);
   EXPECT_EQ(1, init_cb_count);
@@ -150,8 +148,8 @@ TEST_F(GAP_AdapterTest, InitializeFailureHCICommandError) {
   test_device()->SetDefaultResponseStatus(hci::kLEReadLocalSupportedFeatures,
                                           hci::StatusCode::kHardwareFailure);
 
-  InitializeAdapter(init_cb);
-  RunUntilIdle();
+  InitializeAdapter(std::move(init_cb));
+  RunLoopUntilIdle();
 
   EXPECT_FALSE(success);
   EXPECT_EQ(1, init_cb_count);
@@ -171,8 +169,8 @@ TEST_F(GAP_AdapterTest, TransportClosedCallback) {
   settings.ApplyLEOnlyDefaults();
   test_device()->set_settings(settings);
 
-  InitializeAdapter(init_cb);
-  RunUntilIdle();
+  InitializeAdapter(std::move(init_cb));
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(success);
   EXPECT_EQ(1, init_cb_count);
@@ -182,7 +180,7 @@ TEST_F(GAP_AdapterTest, TransportClosedCallback) {
   // Deleting the FakeController should cause the transport closed callback to
   // get called.
   async::PostTask(dispatcher(), [this] { DeleteTestDevice(); });
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(transport_closed_called());
 }
@@ -204,8 +202,8 @@ TEST_F(GAP_AdapterTest, SetNameError) {
   test_device()->SetDefaultResponseStatus(hci::kWriteLocalName,
                                           hci::StatusCode::kHardwareFailure);
 
-  InitializeAdapter(init_cb);
-  RunUntilIdle();
+  InitializeAdapter(std::move(init_cb));
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(success);
   EXPECT_EQ(1, init_cb_count);
@@ -214,7 +212,7 @@ TEST_F(GAP_AdapterTest, SetNameError) {
 
   adapter()->SetLocalName(kNewName, name_cb);
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_FALSE(result);
   EXPECT_EQ(hci::StatusCode::kHardwareFailure, result.protocol_error());
@@ -234,8 +232,8 @@ TEST_F(GAP_AdapterTest, SetNameSuccess) {
   settings.ApplyDualModeDefaults();
   test_device()->set_settings(settings);
 
-  InitializeAdapter(init_cb);
-  RunUntilIdle();
+  InitializeAdapter(std::move(init_cb));
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(success);
   EXPECT_EQ(1, init_cb_count);
@@ -244,13 +242,17 @@ TEST_F(GAP_AdapterTest, SetNameSuccess) {
 
   adapter()->SetLocalName(kNewName, name_cb);
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(result);
   // Local name is only valid up to the first zero
   for (size_t i = 0; i < kNewName.size(); i++) {
     EXPECT_EQ(kNewName[i], test_device()->local_name()[i]);
   }
+}
+
+TEST_F(GAP_AdapterTest, RemoteDeviceCacheReturnsNonNull) {
+  EXPECT_TRUE(adapter()->remote_device_cache());
 }
 
 }  // namespace

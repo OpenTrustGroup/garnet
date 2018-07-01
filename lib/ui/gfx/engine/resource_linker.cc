@@ -7,12 +7,11 @@
 #include <lib/async/default.h>
 
 #include "garnet/lib/ui/gfx/resources/import.h"
-#include "lib/fsl/tasks/message_loop.h"
 
 namespace scenic {
 namespace gfx {
 
-static zx_signals_t kEventPairDeathSignals = ZX_EPAIR_PEER_CLOSED;
+static zx_signals_t kEventPairDeathSignals = ZX_EVENTPAIR_PEER_CLOSED;
 
 #define ASSERT_INTERNAL_EXPORTS_CONSISTENCY                \
   FXL_DCHECK(exported_resources_to_import_koids_.size() == \
@@ -239,12 +238,12 @@ size_t ResourceLinker::NumUnresolvedImports() const {
 }
 
 void ResourceLinker::SetOnExpiredCallback(OnExpiredCallback callback) {
-  expiration_callback_ = callback;
+  expiration_callback_ = std::move(callback);
 }
 
 void ResourceLinker::SetOnImportResolvedCallback(
     OnImportResolvedCallback callback) {
-  import_resolved_callback_ = callback;
+  import_resolved_callback_ = std::move(callback);
 }
 
 size_t ResourceLinker::NumExportsForSession(Session* session) {

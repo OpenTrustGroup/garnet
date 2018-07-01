@@ -6,7 +6,7 @@
 #define GARNET_EXAMPLES_UI_SHAPES_SHAPES_VIEW_H_
 
 #include "lib/fxl/macros.h"
-#include "lib/ui/scenic/client/resources.h"
+#include "lib/ui/scenic/cpp/resources.h"
 #include "lib/ui/view_framework/base_view.h"
 
 class SkCanvas;
@@ -25,9 +25,9 @@ class ShapesView : public mozart::BaseView {
   // |BaseView|:
   void OnSceneInvalidated(fuchsia::images::PresentationInfo presentation_info) override;
 
-  scenic_lib::ShapeNode background_node_;
-  scenic_lib::ShapeNode card_node_;
-  scenic_lib::ShapeNode circle_node_;
+  scenic::ShapeNode background_node_;
+  scenic::ShapeNode card_node_;
+  scenic::ShapeNode circle_node_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(ShapesView);
 };

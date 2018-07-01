@@ -2,30 +2,29 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <inttypes.h>
-#include <stdio.h>
-
 #include <audio-utils/audio-input.h>
 #include <fbl/algorithm.h>
 #include <fbl/auto_call.h>
 #include <fbl/limits.h>
 #include <fbl/unique_ptr.h>
-#include <fbl/vmo_mapper.h>
-#include <media/cpp/fidl.h>
+#include <fuchsia/media/cpp/fidl.h>
+#include <inttypes.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
+#include <lib/fit/function.h>
+#include <lib/vmo-utils/vmo_mapper.h>
 #include <lib/zx/time.h>
 #include <lib/zx/vmar.h>
 #include <lib/zx/vmo.h>
+#include <stdio.h>
 #include <zircon/compiler.h>
 #include <zircon/errors.h>
 #include <zircon/types.h>
 
-#include "lib/app/cpp/application_context.h"
 #include "lib/app/cpp/connect.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fsl/tasks/fd_waiter.h"
-#include "lib/fxl/functional/closure.h"
 #include "lib/media/timeline/timeline_function.h"
 
 #include "garnet/lib/media/wav_writer/wav_writer.h"
@@ -78,16 +77,15 @@ using audio::utils::AudioInput;
 
 class FxProcessor {
  public:
-  FxProcessor(fbl::unique_ptr<AudioInput> input, fxl::Closure quit_callback)
-      : input_(fbl::move(input)), quit_callback_(quit_callback) {
+  FxProcessor(fbl::unique_ptr<AudioInput> input, fit::closure quit_callback)
+      : input_(fbl::move(input)), quit_callback_(std::move(quit_callback)) {
     FXL_DCHECK(quit_callback_);
   }
 
-  void Startup(media::AudioServerPtr audio_server);
+  void Startup(fuchsia::media::AudioPtr audio);
 
  private:
-  using EffectFn = void (FxProcessor::*)(int16_t* src,
-                                         int16_t* dst,
+  using EffectFn = void (FxProcessor::*)(int16_t* src, int16_t* dst,
                                          uint32_t frames);
 
   static inline float Norm(int16_t value) {
@@ -106,16 +104,11 @@ class FxProcessor {
   void HandleKeystroke(zx_status_t status, uint32_t events);
   void Shutdown(const char* reason = "unknown");
   void ProcessInput();
-  void ProduceOutputPackets(::media::AudioPacket* out_pkt1,
-                            ::media::AudioPacket* out_pkt2);
-  void ApplyEffect(int16_t* src,
-                   uint32_t src_offset,
-                   uint32_t src_rb_size,
-                   int16_t* dst,
-                   uint32_t dst_offset,
-                   uint32_t dst_rb_size,
-                   uint32_t frames,
-                   EffectFn effect);
+  void ProduceOutputPackets(fuchsia::media::AudioPacket* out_pkt1,
+                            fuchsia::media::AudioPacket* out_pkt2);
+  void ApplyEffect(int16_t* src, uint32_t src_offset, uint32_t src_rb_size,
+                   int16_t* dst, uint32_t dst_offset, uint32_t dst_rb_size,
+                   uint32_t frames, EffectFn effect);
 
   void CopyInputEffect(int16_t* src, int16_t* dst, uint32_t frames);
   void PreampInputEffect(int16_t* src, int16_t* dst, uint32_t frames);
@@ -128,15 +121,13 @@ class FxProcessor {
     HandleKeystroke(status, event);
   };
 
-  void UpdateReverb(bool enabled,
-                    int32_t depth_delta = 0,
+  void UpdateReverb(bool enabled, int32_t depth_delta = 0,
                     float gain_delta = 0.0f);
-  void UpdateFuzz(bool enabled,
-                  float gain_delta = 0.0f,
+  void UpdateFuzz(bool enabled, float gain_delta = 0.0f,
                   float mix_delta = 0.0f);
   void UpdatePreampGain(float delta);
 
-  fbl::VmoMapper output_buf_;
+  vmo_utils::VmoMapper output_buf_;
   size_t output_buf_sz_ = 0;
   uint32_t output_buf_frames_ = 0;
   uint64_t output_buf_wp_ = 0;
@@ -158,9 +149,9 @@ class FxProcessor {
   uint16_t preamp_gain_fixed_;
 
   fbl::unique_ptr<AudioInput> input_;
-  fxl::Closure quit_callback_;
+  fit::closure quit_callback_;
   uint32_t input_buffer_frames_ = 0;
-  media::AudioRenderer2Ptr audio_renderer_;
+  fuchsia::media::AudioRenderer2Ptr audio_renderer_;
   media::TimelineFunction clock_mono_to_input_wr_ptr_;
   fsl::FDWaiter keystroke_waiter_;
   media::audio::WavWriter<kWavWriterEnabled> wav_writer_;
@@ -169,7 +160,7 @@ class FxProcessor {
   bool lead_time_frames_known_ = false;
 };
 
-void FxProcessor::Startup(media::AudioServerPtr audio_server) {
+void FxProcessor::Startup(fuchsia::media::AudioPtr audio) {
   auto cleanup = fbl::MakeAutoCall([this] { Shutdown("Startup failure"); });
 
   zx_thread_set_priority(24 /* HIGH_PRIORITY in LK */);
@@ -183,21 +174,22 @@ void FxProcessor::Startup(media::AudioServerPtr audio_server) {
   input_buffer_frames_ = input_->ring_buffer_bytes() / input_->frame_sz();
 
   if (!wav_writer_.Initialize(
-          "/tmp/fx.wav", media::AudioSampleFormat::SIGNED_16,
+          "/tmp/fx.wav", fuchsia::media::AudioSampleFormat::SIGNED_16,
           input_->channel_cnt(), input_->frame_rate(), 16)) {
     printf("Unable to initialize WAV file for recording.\n");
     return;
   }
 
   // Create a renderer.  Setup connection error handlers.
-  audio_server->CreateRendererV2(audio_renderer_.NewRequest());
+  audio->CreateRendererV2(audio_renderer_.NewRequest());
 
-  audio_renderer_.set_error_handler(
-      [this]() { Shutdown("AudioRenderer connection closed"); });
+  audio_renderer_.set_error_handler([this]() {
+    Shutdown("fuchsia::media::AudioRenderer connection closed");
+  });
 
   // Set the format.
-  media::AudioPcmFormat format;
-  format.sample_format = media::AudioSampleFormat::SIGNED_16;
+  fuchsia::media::AudioPcmFormat format;
+  format.sample_format = fuchsia::media::AudioSampleFormat::SIGNED_16;
   format.channels = input_->channel_cnt();
   format.frames_per_second = input_->frame_rate();
   audio_renderer_->SetPcmFormat(std::move(format));
@@ -451,7 +443,7 @@ void FxProcessor::Shutdown(const char* reason) {
 }
 
 void FxProcessor::ProcessInput() {
-  media::AudioPacket pkt1, pkt2;
+  fuchsia::media::AudioPacket pkt1, pkt2;
 
   pkt1.payload_size = 0;
   pkt2.payload_size = 0;
@@ -490,8 +482,8 @@ void FxProcessor::ProcessInput() {
                          zx::nsec(PROCESS_CHUNK_TIME));
 }
 
-void FxProcessor::ProduceOutputPackets(::media::AudioPacket* out_pkt1,
-                                       ::media::AudioPacket* out_pkt2) {
+void FxProcessor::ProduceOutputPackets(fuchsia::media::AudioPacket* out_pkt1,
+                                       fuchsia::media::AudioPacket* out_pkt2) {
   // Figure out how much input data we have to process.
   zx_time_t now = zx_clock_get(ZX_CLOCK_MONOTONIC);
   int64_t input_wp = clock_mono_to_input_wr_ptr_.Apply(now);
@@ -533,7 +525,7 @@ void FxProcessor::ProduceOutputPackets(::media::AudioPacket* out_pkt1,
     out_pkt2->payload_offset = 0;
     out_pkt2->payload_size = (todo - pkt1_frames) * input_->frame_sz();
   } else {
-    out_pkt2->timestamp = ::media::kNoTimestamp;
+    out_pkt2->timestamp = fuchsia::media::kNoTimestamp;
     out_pkt2->payload_offset = 0;
     out_pkt2->payload_size = 0;
   }
@@ -572,14 +564,10 @@ void FxProcessor::ProduceOutputPackets(::media::AudioPacket* out_pkt1,
   output_buf_wp_ += todo;
 }
 
-void FxProcessor::ApplyEffect(int16_t* src,
-                              uint32_t src_offset,
-                              uint32_t src_rb_size,
-                              int16_t* dst,
-                              uint32_t dst_offset,
-                              uint32_t dst_rb_size,
-                              uint32_t frames,
-                              EffectFn effect) {
+void FxProcessor::ApplyEffect(int16_t* src, uint32_t src_offset,
+                              uint32_t src_rb_size, int16_t* dst,
+                              uint32_t dst_offset, uint32_t dst_rb_size,
+                              uint32_t frames, EffectFn effect) {
   while (frames) {
     ZX_DEBUG_ASSERT(src_offset < src_rb_size);
     ZX_DEBUG_ASSERT(dst_offset < dst_rb_size);
@@ -605,8 +593,7 @@ void FxProcessor::CopyInputEffect(int16_t* src, int16_t* dst, uint32_t frames) {
   ::memcpy(dst, src, frames * sizeof(*dst) * NUM_CHANNELS);
 }
 
-void FxProcessor::PreampInputEffect(int16_t* src,
-                                    int16_t* dst,
+void FxProcessor::PreampInputEffect(int16_t* src, int16_t* dst,
                                     uint32_t frames) {
   for (uint32_t i = 0; i < frames * NUM_CHANNELS; ++i) {
     int32_t tmp = src[i];
@@ -656,8 +643,7 @@ void FxProcessor::MixedFuzzEffect(int16_t* src, int16_t* dst, uint32_t frames) {
   }
 }
 
-void FxProcessor::UpdateReverb(bool enabled,
-                               int32_t depth_delta,
+void FxProcessor::UpdateReverb(bool enabled, int32_t depth_delta,
                                float gain_delta) {
   reverb_enabled_ = enabled;
 
@@ -744,16 +730,16 @@ int main(int argc, char** argv) {
 
   async::Loop loop(&kAsyncLoopConfigMakeDefault);
 
-  std::unique_ptr<component::ApplicationContext> application_context =
-      component::ApplicationContext::CreateFromStartupInfo();
+  std::unique_ptr<fuchsia::sys::StartupContext> startup_context =
+      fuchsia::sys::StartupContext::CreateFromStartupInfo();
 
-  media::AudioServerPtr audio_server =
-      application_context->ConnectToEnvironmentService<media::AudioServer>();
+  fuchsia::media::AudioPtr audio =
+      startup_context->ConnectToEnvironmentService<fuchsia::media::Audio>();
 
   FxProcessor fx(fbl::move(input), [&loop]() {
     async::PostTask(loop.async(), [&loop]() { loop.Quit(); });
   });
-  fx.Startup(std::move(audio_server));
+  fx.Startup(std::move(audio));
 
   loop.Run();
   return 0;

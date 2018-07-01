@@ -2,14 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library component;
+library fuchsia.sys;
 
 using fuchsia.mem;
 
 // Information given to components at startup.
 //
 // For ELF binaries, this information is provided in the initialization message
-// given to libc by launchpad.
+// given to libc by fuchsia.process.Launcher.
 struct StartupInfo {
   // The launch info for the to start.
   LaunchInfo launch_info;
@@ -55,7 +55,7 @@ interface Runner {
   // information is up to the component runner.
   //
   // The |controller| interface request typically originates from the
-  // |ApplicationLauncher.CreateApplication| message that caused this
+  // |Launcher.CreateComponent| message that caused this
   // component to be started.
   1: StartComponent(Package package,
                     StartupInfo startup_info,

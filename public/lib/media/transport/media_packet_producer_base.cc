@@ -4,6 +4,7 @@
 
 #include "lib/media/transport/media_packet_producer_base.h"
 
+#include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 
 namespace media {
@@ -27,8 +28,8 @@ void MediaPacketProducerBase::SetFixedBufferSize(uint64_t size) {
 }
 
 void MediaPacketProducerBase::Connect(
-    MediaPacketConsumerPtr consumer,
-    const MediaPacketProducer::ConnectCallback& callback) {
+    fuchsia::media::MediaPacketConsumerPtr consumer,
+    const fuchsia::media::MediaPacketProducer::ConnectCallback& callback) {
   FXL_DCHECK_CREATION_THREAD_IS_CURRENT(thread_checker_);
   FXL_DCHECK(consumer);
 
@@ -57,7 +58,7 @@ void MediaPacketProducerBase::Reset() {
 
 void MediaPacketProducerBase::FlushConsumer(
     bool hold_frame,
-    const MediaPacketConsumer::FlushCallback& callback) {
+    fuchsia::media::MediaPacketConsumer::FlushCallback callback) {
   FXL_DCHECK_CREATION_THREAD_IS_CURRENT(thread_checker_);
   FXL_DCHECK(consumer_.is_bound());
 
@@ -66,13 +67,13 @@ void MediaPacketProducerBase::FlushConsumer(
     end_of_stream_ = false;
   }
 
-  MediaPacketDemand demand;
+  fuchsia::media::MediaPacketDemand demand;
   demand.min_packets_outstanding = 0;
-  demand.min_pts = kNoTimestamp;
+  demand.min_pts = fuchsia::media::kNoTimestamp;
   UpdateDemand(demand);
 
   flush_in_progress_ = true;
-  consumer_->Flush(hold_frame, [this, callback]() {
+  consumer_->Flush(hold_frame, [this, callback = std::move(callback)]() {
     flush_in_progress_ = false;
     callback();
   });
@@ -87,14 +88,10 @@ void MediaPacketProducerBase::ReleasePayloadBuffer(void* buffer) {
 }
 
 void MediaPacketProducerBase::ProducePacket(
-    void* payload,
-    size_t size,
-    int64_t pts,
-    TimelineRate pts_rate,
-    bool keyframe,
-    bool end_of_stream,
-    MediaTypePtr revised_media_type,
-    const ProducePacketCallback& callback) {
+    void* payload, size_t size, int64_t pts, TimelineRate pts_rate,
+    bool keyframe, bool end_of_stream,
+    fuchsia::media::MediaTypePtr revised_media_type,
+    ProducePacketCallback callback) {
   FXL_DCHECK_CREATION_THREAD_IS_CURRENT(thread_checker_);
   FXL_DCHECK(size == 0 || payload != nullptr);
 
@@ -105,12 +102,12 @@ void MediaPacketProducerBase::ProducePacket(
 
   SharedBufferSet::Locator locator = allocator_.LocatorFromPtr(payload);
 
-  MediaPacket media_packet;
+  fuchsia::media::MediaPacket media_packet;
   media_packet.pts = pts;
   media_packet.pts_rate_ticks = pts_rate.subject_delta();
   media_packet.pts_rate_seconds = pts_rate.reference_delta();
-  media_packet.flags =
-      (keyframe ? kFlagKeyframe : 0) | (end_of_stream ? kFlagEos : 0);
+  media_packet.flags = (keyframe ? fuchsia::media::kFlagKeyframe : 0) |
+                       (end_of_stream ? fuchsia::media::kFlagEos : 0);
   media_packet.revised_media_type = std::move(revised_media_type);
   media_packet.payload_buffer_id = locator.buffer_id();
   media_packet.payload_offset = locator.offset();
@@ -135,7 +132,9 @@ void MediaPacketProducerBase::ProducePacket(
   }
 
   consumer_->SupplyPacket(
-      std::move(media_packet), [this, callback](MediaPacketDemandPtr demand) {
+      std::move(media_packet),
+      fxl::MakeCopyable([this, callback = std::move(callback)](
+                            fuchsia::media::MediaPacketDemandPtr demand) {
         FXL_DCHECK_CREATION_THREAD_IS_CURRENT(thread_checker_);
 
         {
@@ -148,7 +147,7 @@ void MediaPacketProducerBase::ProducePacket(
         }
 
         callback();
-      });
+      }));
 }
 
 bool MediaPacketProducerBase::ShouldProducePacket(
@@ -167,7 +166,7 @@ bool MediaPacketProducerBase::ShouldProducePacket(
   }
 
   // See if a higher PTS is demanded.
-  return demand_.min_pts != kNoTimestamp &&
+  return demand_.min_pts != fuchsia::media::kNoTimestamp &&
          demand_.min_pts > pts_last_produced_;
 }
 
@@ -179,24 +178,27 @@ void MediaPacketProducerBase::ResetDemand() {
   std::lock_guard<std::mutex> locker(mutex_);
   packets_outstanding_ = 0;
   demand_.min_packets_outstanding = 0;
-  demand_.min_pts = kNoTimestamp;
+  demand_.min_pts = fuchsia::media::kNoTimestamp;
 }
 
-void MediaPacketProducerBase::HandleDemandUpdate(MediaPacketDemandPtr demand) {
+void MediaPacketProducerBase::HandleDemandUpdate(
+    fuchsia::media::MediaPacketDemandPtr demand) {
   FXL_DCHECK_CREATION_THREAD_IS_CURRENT(thread_checker_);
   if (demand) {
     UpdateDemand(*demand);
   }
 
   if (consumer_.is_bound()) {
-    consumer_->PullDemandUpdate([this](MediaPacketDemandPtr demand) {
-      FXL_DCHECK_CREATION_THREAD_IS_CURRENT(thread_checker_);
-      HandleDemandUpdate(std::move(demand));
-    });
+    consumer_->PullDemandUpdate(
+        [this](fuchsia::media::MediaPacketDemandPtr demand) {
+          FXL_DCHECK_CREATION_THREAD_IS_CURRENT(thread_checker_);
+          HandleDemandUpdate(std::move(demand));
+        });
   }
 }
 
-void MediaPacketProducerBase::UpdateDemand(const MediaPacketDemand& demand) {
+void MediaPacketProducerBase::UpdateDemand(
+    const fuchsia::media::MediaPacketDemand& demand) {
   FXL_DCHECK_CREATION_THREAD_IS_CURRENT(thread_checker_);
 
   if (flush_in_progress_) {

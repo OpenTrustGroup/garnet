@@ -22,7 +22,7 @@ constexpr size_t kReadBufferSize = trace::RecordFields::kMaxRecordSizeBytes * 4;
 
 }  // namespace
 
-Tracer::Tracer(TraceController* controller)
+Tracer::Tracer(fuchsia::tracing::TraceController* controller)
     : controller_(controller), async_(nullptr), wait_(this) {
   FXL_DCHECK(controller_);
   wait_.set_trigger(ZX_SOCKET_READABLE | ZX_SOCKET_PEER_CLOSED);
@@ -32,11 +32,11 @@ Tracer::~Tracer() {
   CloseSocket();
 }
 
-void Tracer::Start(TraceOptions options,
+void Tracer::Start(fuchsia::tracing::TraceOptions options,
                    RecordConsumer record_consumer,
                    ErrorHandler error_handler,
-                   fxl::Closure start_callback,
-                   fxl::Closure done_callback) {
+                   fit::closure start_callback,
+                   fit::closure done_callback) {
   FXL_DCHECK(state_ == State::kStopped);
 
   state_ = State::kStarted;

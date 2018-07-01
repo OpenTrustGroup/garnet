@@ -5,39 +5,33 @@
 #include "garnet/bin/appmgr/component_controller_impl.h"
 
 #include <fbl/string_printf.h>
-#include <fdio/util.h>
 #include <fs/pseudo-file.h>
 #include <fs/remote-dir.h>
 #include <lib/async/default.h>
+#include <lib/fdio/util.h>
+#include <lib/fit/function.h>
 
 #include <cinttypes>
 #include <utility>
 
+#include "garnet/bin/appmgr/component_container.h"
 #include "garnet/bin/appmgr/namespace.h"
-#include "garnet/bin/appmgr/realm.h"
 #include "lib/fsl/handles/object_info.h"
-#include "lib/fxl/functional/closure.h"
 
 namespace component {
 
-ComponentControllerImpl::ComponentControllerImpl(
-    fidl::InterfaceRequest<ComponentController> request, Realm* realm,
-    std::unique_ptr<archive::FileSystem> fs, zx::process process,
+ComponentControllerBase::ComponentControllerBase(
+    fidl::InterfaceRequest<fuchsia::sys::ComponentController> request,
     std::string url, std::string args, std::string label,
-    fxl::RefPtr<Namespace> ns, ExportedDirType export_dir_type,
-    zx::channel exported_dir, zx::channel client_request)
+    std::string hub_instance_id, fxl::RefPtr<Namespace> ns,
+    ExportedDirType export_dir_type, zx::channel exported_dir,
+    zx::channel client_request)
     : binding_(this),
-      realm_(realm),
-      fs_(std::move(fs)),
-      process_(std::move(process)),
       label_(std::move(label)),
-      koid_(std::to_string(fsl::GetKoid(process_.get()))),
+      hub_instance_id_(std::move(hub_instance_id)),
       hub_(fbl::AdoptRef(new fs::PseudoDir())),
       exported_dir_(std::move(exported_dir)),
-      ns_(std::move(ns)),
-      wait_(this, process_.get(), ZX_TASK_TERMINATED) {
-  zx_status_t status = wait_.Begin(async_get_default());
-  FXL_DCHECK(status == ZX_OK);
+      ns_(std::move(ns)) {
   if (request.is_valid()) {
     binding_.Bind(std::move(request));
     binding_.set_error_handler([this] { Kill(); });
@@ -55,9 +49,8 @@ ComponentControllerImpl::ComponentControllerImpl(
       fdio_service_clone_to(exported_dir_.get(), client_request.release());
     }
   }
+
   hub_.SetName(label_);
-  hub_.SetJobId(realm_->koid());
-  hub_.SetProcessId(koid_);
   hub_.AddEntry("url", fbl::move(url));
   hub_.AddEntry("args", fbl::move(args));
   if (export_dir_type == ExportedDirType::kPublicDebugCtrlLayout) {
@@ -71,6 +64,36 @@ ComponentControllerImpl::ComponentControllerImpl(
   }
 }
 
+ComponentControllerBase::~ComponentControllerBase() {}
+
+HubInfo ComponentControllerBase::HubInfo() {
+  return component::HubInfo(label_, hub_instance_id_, hub_.dir());
+}
+
+void ComponentControllerBase::Detach() { binding_.set_error_handler(nullptr); }
+
+ComponentControllerImpl::ComponentControllerImpl(
+    fidl::InterfaceRequest<fuchsia::sys::ComponentController> request,
+    ComponentContainer<ComponentControllerImpl>* container, std::string job_id,
+    zx::process process, std::string url, std::string args, std::string label,
+    fxl::RefPtr<Namespace> ns, ExportedDirType export_dir_type,
+    zx::channel exported_dir, zx::channel client_request)
+    : ComponentControllerBase(
+          std::move(request), std::move(url), std::move(args), std::move(label),
+          std::to_string(fsl::GetKoid(process.get())), std::move(ns),
+          std::move(export_dir_type), std::move(exported_dir),
+          std::move(client_request)),
+      container_(container),
+      process_(std::move(process)),
+      koid_(std::to_string(fsl::GetKoid(process_.get()))),
+      wait_(this, process_.get(), ZX_TASK_TERMINATED) {
+  zx_status_t status = wait_.Begin(async_get_default());
+  FXL_DCHECK(status == ZX_OK);
+
+  hub()->SetJobId(job_id);
+  hub()->SetProcessId(koid_);
+}
+
 ComponentControllerImpl::~ComponentControllerImpl() {
   // Two ways we end up here:
   // 1) OnHandleReady() destroys this object; in which case, process is dead.
@@ -80,15 +103,7 @@ ComponentControllerImpl::~ComponentControllerImpl() {
     process_.kill();
 }
 
-HubInfo ComponentControllerImpl::HubInfo() {
-  return component::HubInfo(label_, koid_, hub_.dir());
-}
-
 void ComponentControllerImpl::Kill() { process_.kill(); }
-
-void ComponentControllerImpl::Detach() {
-  binding_.set_error_handler(fxl::Closure());
-}
 
 bool ComponentControllerImpl::SendReturnCodeIfTerminated() {
   // Get process info.
@@ -109,8 +124,19 @@ bool ComponentControllerImpl::SendReturnCodeIfTerminated() {
 }
 
 void ComponentControllerImpl::Wait(WaitCallback callback) {
-  wait_callbacks_.push_back(callback);
+  wait_callbacks_.push_back(std::move(callback));
   SendReturnCodeIfTerminated();
+}
+
+zx_status_t ComponentControllerImpl::AddSubComponentHub(
+    const component::HubInfo& hub_info) {
+  hub()->EnsureComponentDir();
+  return hub()->AddComponent(hub_info);
+}
+
+zx_status_t ComponentControllerImpl::RemoveSubComponentHub(
+    const component::HubInfo& hub_info) {
+  return hub()->RemoveComponent(hub_info);
 }
 
 // Called when process terminates, regardless of if Kill() was invoked.
@@ -126,9 +152,40 @@ void ComponentControllerImpl::Handler(async_t* async, async::WaitBase* wait,
 
   process_.reset();
 
-  realm_->ExtractApplication(this);
-  // The destructor of the temporary returned by ExtractApplication destroys
+  container_->ExtractComponent(this);
+  // The destructor of the temporary returned by ExtractComponent destroys
   // |this| at the end of the previous statement.
+}
+
+ComponentBridge::ComponentBridge(
+    fidl::InterfaceRequest<fuchsia::sys::ComponentController> request,
+    fuchsia::sys::ComponentControllerPtr remote_controller,
+    ComponentContainer<ComponentBridge>* container, std::string url,
+    std::string args, std::string label, std::string hub_instance_id,
+    fxl::RefPtr<Namespace> ns, ExportedDirType export_dir_type,
+    zx::channel exported_dir, zx::channel client_request)
+    : ComponentControllerBase(
+          std::move(request), std::move(url), std::move(args), std::move(label),
+          hub_instance_id, std::move(ns), std::move(export_dir_type),
+          std::move(exported_dir), std::move(client_request)),
+      remote_controller_(std::move(remote_controller)),
+      container_(std::move(container)) {
+  remote_controller_.set_error_handler(
+      [this] { container_->ExtractComponent(this); });
+  // The destructor of the temporary returned by ExtractComponent destroys
+  // |this| at the end of the previous statement.
+}
+
+ComponentBridge::~ComponentBridge() {}
+
+void ComponentBridge::SetParentJobId(const std::string& id) {
+  hub()->SetJobId(id);
+}
+
+void ComponentBridge::Kill() { remote_controller_->Kill(); }
+
+void ComponentBridge::Wait(WaitCallback callback) {
+  remote_controller_->Wait(std::move(callback));
 }
 
 }  // namespace component

@@ -10,9 +10,8 @@
 #include "garnet/lib/ui/gfx/util/vulkan_utils.h"
 #include "garnet/lib/ui/scenic/scenic.h"
 #include "garnet/public/lib/escher/util/check_vulkan_support.h"
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/escher/escher_process_init.h"
-#include "lib/fxl/functional/make_copyable.h"
 #include "public/lib/syslog/cpp/logger.h"
 
 namespace scenic {
@@ -38,8 +37,10 @@ GfxSystem::~GfxSystem() {
     // escher::GlslangInitializeProcess() was never called).
     escher::GlslangFinalizeProcess();
   }
-  vulkan_instance_->proc_addrs().DestroyDebugReportCallbackEXT(
-      vulkan_instance_->vk_instance(), debug_report_callback_, nullptr);
+  if (vulkan_instance_) {
+    vulkan_instance_->proc_addrs().DestroyDebugReportCallbackEXT(
+        vulkan_instance_->vk_instance(), debug_report_callback_, nullptr);
+  }
 }
 
 std::unique_ptr<CommandDispatcher> GfxSystem::CreateCommandDispatcher(
@@ -156,10 +157,10 @@ void GfxSystem::GetDisplayInfoImmediately(
 void GfxSystem::GetDisplayInfo(
     fuchsia::ui::scenic::Scenic::GetDisplayInfoCallback callback) {
   if (initialized_) {
-    GetDisplayInfoImmediately(callback);
+    GetDisplayInfoImmediately(std::move(callback));
   } else {
     run_after_initialized_.push_back(
-        [this, callback]() { GetDisplayInfoImmediately(callback); });
+        [this, callback = std::move(callback)]() mutable { GetDisplayInfoImmediately(std::move(callback)); });
   }
 };
 
@@ -167,11 +168,11 @@ void GfxSystem::TakeScreenshot(
     fuchsia::ui::scenic::Scenic::TakeScreenshotCallback callback) {
   FXL_CHECK(initialized_);
   Screenshotter screenshotter(engine_.get());
-  screenshotter.TakeScreenshot(callback);
+  screenshotter.TakeScreenshot(std::move(callback));
 }
 
-void GfxSystem::GetOwnershipEventImmediately(
-    fuchsia::ui::scenic::Scenic::GetOwnershipEventCallback callback) {
+void GfxSystem::GetDisplayOwnershipEventImmediately(
+    fuchsia::ui::scenic::Scenic::GetDisplayOwnershipEventCallback callback) {
   FXL_DCHECK(initialized_);
   Display* display = engine_->display_manager()->default_display();
   FXL_CHECK(display) << "There must be a default display.";
@@ -186,13 +187,13 @@ void GfxSystem::GetOwnershipEventImmediately(
   callback(std::move(dup));
 }
 
-void GfxSystem::GetOwnershipEvent(
-    fuchsia::ui::scenic::Scenic::GetOwnershipEventCallback callback) {
+void GfxSystem::GetDisplayOwnershipEvent(
+    fuchsia::ui::scenic::Scenic::GetDisplayOwnershipEventCallback callback) {
   if (initialized_) {
-    GetOwnershipEventImmediately(callback);
+    GetDisplayOwnershipEventImmediately(std::move(callback));
   } else {
     run_after_initialized_.push_back(
-        [this, callback]() { GetOwnershipEventImmediately(callback); });
+        [this, callback = std::move(callback)]() mutable { GetDisplayOwnershipEventImmediately(std::move(callback)); });
   }
 }
 

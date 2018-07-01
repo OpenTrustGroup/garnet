@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <string>
 
-#include "garnet/bin/zxdb/client/symbols/file_line.h"
+#include "garnet/bin/zxdb/client/input_location.h"
 
 namespace zxdb {
 
@@ -27,14 +27,6 @@ struct BreakpointSettings {
     kThread
   };
 
-  // How this breakpoint's location was specified.
-  enum class LocationType {
-    kNone,
-    kLine,
-    kSymbol,
-    kAddress
-  };
-
   // What to stop when this breakpoint is hit.
   enum class StopMode {
     kNone,     // Don't stop anything. Hit counts will still accumulate.
@@ -52,10 +44,7 @@ struct BreakpointSettings {
   Thread* scope_thread = nullptr;  // Valid when scope == kThread.
 
   // Where the breakpoint is set.
-  LocationType location_type = LocationType::kAddress;
-  FileLine location_line;         // Valid when location_type_ == kLine.
-  std::string location_symbol;    // Valid when location_type_ == kSymbol.
-  uint64_t location_address = 0;  // Valid when location_type_ == kAddress.
+  InputLocation location;
 
   StopMode stop_mode = StopMode::kAll;
 };

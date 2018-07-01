@@ -5,18 +5,19 @@
 #ifndef GARNET_LIB_UI_SCENIC_SYSTEM_H_
 #define GARNET_LIB_UI_SCENIC_SYSTEM_H_
 
-#include "garnet/lib/ui/scenic/command_dispatcher.h"
-
-#include <lib/fit/function.h>
-
-#include "lib/fxl/macros.h"
-#include "lib/fxl/memory/ref_counted.h"
 // TODO(MZ-453): Don't support GetDisplayInfo in scenic fidl API.
 #include <fuchsia/ui/scenic/cpp/fidl.h>
+#include <lib/fit/function.h>
 
-namespace component {
-class ApplicationContext;
-}  // namespace component
+#include "garnet/lib/ui/scenic/command_dispatcher.h"
+#include "lib/fxl/macros.h"
+#include "lib/fxl/memory/ref_counted.h"
+
+namespace fuchsia {
+namespace sys {
+class StartupContext;
+}  // namespace sys
+}  // namespace fuchsia
 
 namespace scenic {
 
@@ -27,17 +28,17 @@ class Session;
 // exposing the system's host (typically a Scenic, except for testing).
 class SystemContext final {
  public:
-  explicit SystemContext(component::ApplicationContext* app_context,
+  explicit SystemContext(fuchsia::sys::StartupContext* app_context,
                          fit::closure quit_callback);
   SystemContext(SystemContext&& context);
 
-  component::ApplicationContext* app_context() const { return app_context_; }
+  fuchsia::sys::StartupContext* app_context() const { return app_context_; }
 
   // Calls quit on the associated message loop.
   void Quit() { quit_callback_(); }
 
  private:
-  component::ApplicationContext* const app_context_;
+  fuchsia::sys::StartupContext* const app_context_;
   fit::closure quit_callback_;
 };
 
@@ -60,7 +61,7 @@ class System {
     kInvalid = kMaxSystems,
   };
 
-  using OnInitializedCallback = std::function<void(System* system)>;
+  using OnInitializedCallback = fit::function<void(System* system)>;
 
   // If |initialized_after_construction| is false, the System must call
   // SetToInitialized() after initialization is complete.
@@ -77,7 +78,7 @@ class System {
 
   void set_on_initialized_callback(OnInitializedCallback callback) {
     FXL_DCHECK(!on_initialized_callback_);
-    on_initialized_callback_ = callback;
+    on_initialized_callback_ = std::move(callback);
   }
 
  protected:
@@ -103,13 +104,13 @@ class TempSystemDelegate : public System {
       fuchsia::ui::scenic::Scenic::GetDisplayInfoCallback callback) = 0;
   virtual void TakeScreenshot(
       fuchsia::ui::scenic::Scenic::TakeScreenshotCallback callback) = 0;
-  virtual void GetOwnershipEvent(
-      fuchsia::ui::scenic::Scenic::GetOwnershipEventCallback callback) = 0;
+  virtual void GetDisplayOwnershipEvent(
+      fuchsia::ui::scenic::Scenic::GetDisplayOwnershipEventCallback callback) = 0;
 };
 
 // Return the system type that knows how to handle the specified command.
 // Used by Session to choose a CommandDispatcher.
-inline System::TypeId SystemTypeForCommand(
+inline System::TypeId SystemTypeForCmd(
     const fuchsia::ui::scenic::Command& command) {
   switch (command.Which()) {
     case fuchsia::ui::scenic::Command::Tag::kGfx:

@@ -7,7 +7,7 @@
 #include <limits>
 #include <string>
 
-#include <media/cpp/fidl.h>
+#include <fuchsia/media/cpp/fidl.h>
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
 
@@ -16,14 +16,17 @@
 
 namespace media_player {
 
-FidlReader::FidlReader(fidl::InterfaceHandle<SeekingReader> seeking_reader)
-    : seeking_reader_(seeking_reader.Bind()), async_(async_get_default()) {
+FidlReader::FidlReader(
+    fidl::InterfaceHandle<fuchsia::mediaplayer::SeekingReader> seeking_reader)
+    : seeking_reader_(seeking_reader.Bind()),
+      async_(async_get_default()),
+      ready_(async_) {
   FXL_DCHECK(async_);
 
   read_in_progress_ = false;
 
   seeking_reader_->Describe(
-      [this](media::MediaResult result, uint64_t size, bool can_seek) {
+      [this](fuchsia::media::MediaResult result, uint64_t size, bool can_seek) {
         result_ = fxl::To<Result>(result);
         if (result_ == Result::kOk) {
           size_ = size;
@@ -36,12 +39,12 @@ FidlReader::FidlReader(fidl::InterfaceHandle<SeekingReader> seeking_reader)
 FidlReader::~FidlReader() {}
 
 void FidlReader::Describe(DescribeCallback callback) {
-  ready_.When([this, callback]() { callback(result_, size_, can_seek_); });
+  ready_.When([this, callback = std::move(callback)]() {
+    callback(result_, size_, can_seek_);
+  });
 }
 
-void FidlReader::ReadAt(size_t position,
-                        uint8_t* buffer,
-                        size_t bytes_to_read,
+void FidlReader::ReadAt(size_t position, uint8_t* buffer, size_t bytes_to_read,
                         ReadAtCallback callback) {
   FXL_DCHECK(buffer);
   FXL_DCHECK(bytes_to_read);
@@ -52,7 +55,7 @@ void FidlReader::ReadAt(size_t position,
   read_at_position_ = position;
   read_at_buffer_ = buffer;
   read_at_bytes_to_read_ = bytes_to_read;
-  read_at_callback_ = callback;
+  read_at_callback_ = std::move(callback);
 
   // ReadAt may be called on non-fidl threads, so we use the runner.
   async::PostTask(
@@ -93,18 +96,19 @@ void FidlReader::ContinueReadAt() {
       return;
     }
 
-    seeking_reader_->ReadAt(read_at_position_, [this](media::MediaResult result,
-                                                      zx::socket socket) {
-      result_ = fxl::To<Result>(result);
-      if (result_ != Result::kOk) {
-        CompleteReadAt(result_);
-        return;
-      }
+    seeking_reader_->ReadAt(
+        read_at_position_,
+        [this](fuchsia::media::MediaResult result, zx::socket socket) {
+          result_ = fxl::To<Result>(result);
+          if (result_ != Result::kOk) {
+            CompleteReadAt(result_);
+            return;
+          }
 
-      socket_ = std::move(socket);
-      socket_position_ = read_at_position_;
-      ReadFromSocket();
-    });
+          socket_ = std::move(socket);
+          socket_position_ = read_at_position_;
+          ReadFromSocket();
+        });
   });
 }
 

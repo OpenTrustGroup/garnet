@@ -1,8 +1,5 @@
 {
-    "imports": [
-        "garnet/packages/prod/icu_data"
-    ],
-    "packages": {
-        "timezone": "//garnet/bin/timezone"
-    }
+    "packages": [
+        "//garnet/bin/timezone"
+    ]
 }

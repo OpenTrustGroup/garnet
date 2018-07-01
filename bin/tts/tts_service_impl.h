@@ -8,9 +8,9 @@
 #include <memory>
 #include <set>
 
-#include <tts/cpp/fidl.h>
+#include <fuchsia/tts/cpp/fidl.h>
 
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 
 namespace tts {
 
@@ -18,16 +18,16 @@ class TtsSpeaker;
 
 class TtsServiceImpl {
  public:
-  TtsServiceImpl(
-      std::unique_ptr<component::ApplicationContext> application_context);
+  TtsServiceImpl(std::unique_ptr<fuchsia::sys::StartupContext> startup_context);
   ~TtsServiceImpl();
 
   zx_status_t Init();
 
  private:
-  class Client : public TtsService {
+  class Client : public fuchsia::tts::TtsService {
    public:
-    Client(TtsServiceImpl* owner, fidl::InterfaceRequest<TtsService> request);
+    Client(TtsServiceImpl* owner,
+           fidl::InterfaceRequest<fuchsia::tts::TtsService> request);
     ~Client();
 
     void Shutdown();
@@ -36,8 +36,7 @@ class TtsServiceImpl {
     void Say(fidl::StringPtr words, uint64_t token, SayCallback cbk) override;
 
    private:
-    void OnSpeakComplete(std::shared_ptr<TtsSpeaker> speaker,
-                         uint64_t token,
+    void OnSpeakComplete(std::shared_ptr<TtsSpeaker> speaker, uint64_t token,
                          SayCallback cbk);
 
     TtsServiceImpl* const owner_;
@@ -47,7 +46,7 @@ class TtsServiceImpl {
 
   friend class Client;
 
-  std::unique_ptr<component::ApplicationContext> application_context_;
+  std::unique_ptr<fuchsia::sys::StartupContext> startup_context_;
   std::set<Client*> clients_;
   async_t* async_;
   FXL_DISALLOW_COPY_AND_ASSIGN(TtsServiceImpl);

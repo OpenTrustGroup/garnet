@@ -5,13 +5,17 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 
 #include "garnet/drivers/bluetooth/lib/common/byte_buffer.h"
 #include "garnet/drivers/bluetooth/lib/common/device_address.h"
 #include "garnet/drivers/bluetooth/lib/common/optional.h"
 #include "garnet/drivers/bluetooth/lib/gap/gap.h"
 #include "garnet/drivers/bluetooth/lib/hci/connection.h"
+#include "garnet/drivers/bluetooth/lib/hci/lmp_feature_set.h"
 #include "lib/fxl/macros.h"
+
+#include "remote_device_cache.h"
 
 namespace btlib {
 namespace gap {
@@ -24,6 +28,8 @@ namespace gap {
 // RemoteDeviceCache.
 class RemoteDevice final {
  public:
+  using UpdatedCallback = fit::function<void(RemoteDevice*)>;
+
   // TODO(armansito): Probably keep separate states for LE and BR/EDR.
   enum class ConnectionState {
     // No link exists between the local adapter and this device.
@@ -154,10 +160,28 @@ class RemoteDevice final {
   }
 
   // Returns the clock offset reported by the device, if known and valid.
-  // Otherwise, the returned clock offset will have the highest-order bit
-  // set, and the rest represent bits 16-2 of CLKNslave-CLK.
+  // The clock offset will have the highest-order bit set, and the rest
+  // represent bits 16-2 of CLKNslave-CLK.
   const common::Optional<uint16_t>& clock_offset() const {
     return clock_offset_;
+  }
+
+  // Returns the set of features of this device.
+  const hci::LMPFeatureSet& features() const { return lmp_features_; }
+
+  void SetFeaturePage(size_t page, uint64_t features) {
+    lmp_features_.SetPage(page, features);
+  }
+
+  void set_version(hci::HCIVersion version, uint16_t manufacturer,
+                   uint16_t subversion) {
+    lmp_version_ = version;
+    lmp_manufacturer_ = manufacturer;
+    lmp_subversion_ = subversion;
+  }
+
+  const common::Optional<hci::HCIVersion>& version() const {
+    return lmp_version_;
   }
 
  private:
@@ -165,15 +189,16 @@ class RemoteDevice final {
 
   // TODO(armansito): Add constructor from persistent storage format.
 
-  RemoteDevice(const std::string& identifier,
-               const common::DeviceAddress& address,
-               bool connectable);
+  // Caller must ensure that |callback| is non-emtpy, and outlives |this|.
+  RemoteDevice(UpdatedCallback callback, const std::string& identifier,
+               const common::DeviceAddress& address, bool connectable);
 
-  std::string identifier_;
-  TechnologyType technology_;
+  UpdatedCallback updated_callback_;
+  const std::string identifier_;
+  const common::DeviceAddress address_;
+  const TechnologyType technology_;
   ConnectionState le_connection_state_;
   ConnectionState bredr_connection_state_;
-  common::DeviceAddress address_;
   common::Optional<std::string> name_;
   bool connectable_;
   bool temporary_;
@@ -182,6 +207,10 @@ class RemoteDevice final {
   common::Optional<common::DeviceClass> device_class_;
   common::Optional<hci::PageScanRepetitionMode> page_scan_repetition_mode_;
   common::Optional<uint16_t> clock_offset_;
+  common::Optional<hci::HCIVersion> lmp_version_;
+  uint16_t lmp_manufacturer_;
+  uint16_t lmp_subversion_;
+  hci::LMPFeatureSet lmp_features_;
 
   // TODO(armansito): Store device name and remote features.
   // TODO(armansito): Store discovered service UUIDs.

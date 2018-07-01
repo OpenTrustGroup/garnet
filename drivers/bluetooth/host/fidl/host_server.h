@@ -7,15 +7,20 @@
 #include <memory>
 #include <unordered_map>
 
+#include <fuchsia/bluetooth/control/cpp/fidl.h>
+#include <fuchsia/bluetooth/host/cpp/fidl.h>
 #include <lib/zx/channel.h>
 
 #include "lib/fidl/cpp/binding.h"
+#include "lib/fidl/cpp/interface_request.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
 
 #include "garnet/drivers/bluetooth/host/fidl/server_base.h"
 #include "garnet/drivers/bluetooth/lib/gap/adapter.h"
-#include <bluetooth_host/cpp/fidl.h>
+#include "garnet/drivers/bluetooth/lib/gap/bredr_connection_manager.h"
+#include "garnet/drivers/bluetooth/lib/gap/bredr_discovery_manager.h"
+#include "garnet/drivers/bluetooth/lib/gap/low_energy_discovery_manager.h"
 
 namespace bthost {
 
@@ -23,26 +28,37 @@ class GattHost;
 
 // Implements the Host FIDL interface. Owns all FIDL connections that have been
 // opened through it.
-class HostServer : public AdapterServerBase<::bluetooth_host::Host> {
+class HostServer : public AdapterServerBase<fuchsia::bluetooth::host::Host> {
  public:
-  HostServer(zx::channel channel,
-             fxl::WeakPtr<btlib::gap::Adapter> adapter,
+  HostServer(zx::channel channel, fxl::WeakPtr<btlib::gap::Adapter> adapter,
              fbl::RefPtr<GattHost> gatt_host);
   ~HostServer() override = default;
 
  private:
-  // ::bluetooth_host::Host overrides:
+  // ::fuchsia::bluetooth::Host overrides:
   void GetInfo(GetInfoCallback callback) override;
-  void RequestAdapter(
-      ::fidl::InterfaceRequest<bluetooth_host::Adapter> adapter) override;
+  void SetLocalName(::fidl::StringPtr local_name,
+                    SetLocalNameCallback callback) override;
+
+  void StartDiscovery(StartDiscoveryCallback callback) override;
+  void StopDiscovery(StopDiscoveryCallback callback) override;
+  void SetConnectable(bool connectable,
+                      SetConnectableCallback callback) override;
+  void SetDiscoverable(bool discoverable,
+                       SetDiscoverableCallback callback) override;
+
+  // Called by |adapter()->remote_device_cache()| when a remote device is updated.
+  void OnRemoteDeviceUpdated(const ::btlib::gap::RemoteDevice& remote_device);
+
   void RequestLowEnergyCentral(
-      ::fidl::InterfaceRequest<bluetooth_low_energy::Central> central)
+      ::fidl::InterfaceRequest<fuchsia::bluetooth::le::Central> central)
       override;
   void RequestLowEnergyPeripheral(
-      ::fidl::InterfaceRequest<bluetooth_low_energy::Peripheral> peripheral)
+      ::fidl::InterfaceRequest<fuchsia::bluetooth::le::Peripheral> peripheral)
       override;
   void RequestGattServer(
-      ::fidl::InterfaceRequest<bluetooth_gatt::Server> server) override;
+      ::fidl::InterfaceRequest<fuchsia::bluetooth::gatt::Server> server)
+      override;
   void Close() override;
 
   // Called when |server| receives a channel connection error.
@@ -62,11 +78,24 @@ class HostServer : public AdapterServerBase<::bluetooth_host::Host> {
   // We hold a reference to GattHost for dispatching GATT FIDL requests.
   fbl::RefPtr<GattHost> gatt_host_;
 
+  bool requesting_discovery_;
+  std::unique_ptr<::btlib::gap::LowEnergyDiscoverySession>
+      le_discovery_session_;
+  std::unique_ptr<::btlib::gap::BrEdrDiscoverySession> bredr_discovery_session_;
+
+  bool requesting_discoverable_;
+  std::unique_ptr<::btlib::gap::BrEdrDiscoverableSession>
+      bredr_discoverable_session_;
+
   // All active FIDL interface servers.
   // NOTE: Each key is a raw pointer that is owned by the corresponding value.
   // This allows us to create a set of managed objects that can be looked up via
   // raw pointer.
   std::unordered_map<Server*, std::unique_ptr<Server>> servers_;
+
+  // Keep this as the last member to make sure that all weak pointers are
+  // invalidated before other members get destroyed.
+  fxl::WeakPtrFactory<HostServer> weak_ptr_factory_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(HostServer);
 };

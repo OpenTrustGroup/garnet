@@ -5,13 +5,16 @@
 #include "wlantap-mac.h"
 #include <ddk/debug.h>
 #include <ddk/driver.h>
-#include <wlan_device/cpp/fidl.h>
+#include <fuchsia/wlan/device/cpp/fidl.h>
 #include <lib/fxl/arraysize.h>
 #include <wlan/common/channel.h>
 #include <wlan/wlanmac-ifc-proxy.h>
 
 namespace wlan {
-namespace wlantap {
+
+namespace wlantap = ::fuchsia::wlan::tap;
+namespace wlan_device = ::fuchsia::wlan::device;
+
 namespace {
 
 uint16_t ConvertSupportedPhys(const ::fidl::VectorPtr<wlan_device::SupportedPhy>& phys) {
@@ -37,6 +40,9 @@ uint32_t ConvertDriverFeatures(const ::fidl::VectorPtr<wlan_device::DriverFeatur
                 break;
             case wlan_device::DriverFeature::RATE_SELECTION:
                 ret |= WLAN_DRIVER_FEATURE_RATE_SELECTION;
+                break;
+            case wlan_device::DriverFeature::SYNTH:
+                ret |= WLAN_DRIVER_FEATURE_SYNTH;
                 break;
         }
     }
@@ -102,7 +108,7 @@ void ConvertBandInfo(const wlan_device::BandInfo& in, wlan_band_info_t* out) {
 
 struct WlantapMacImpl : WlantapMac {
     WlantapMacImpl(zx_device_t* phy_device, uint16_t id, wlan_device::MacRole role,
-                   const ::wlantap::WlantapPhyConfig* phy_config, Listener* listener)
+                   const wlantap::WlantapPhyConfig* phy_config, Listener* listener)
         : id_(id), role_(role), phy_config_(phy_config), listener_(listener)
     { }
 
@@ -119,10 +125,8 @@ struct WlantapMacImpl : WlantapMac {
 
     static zx_status_t WlanmacQuery(void* ctx, uint32_t options, wlanmac_info_t* info) {
         auto& self = *static_cast<WlantapMacImpl*>(ctx);
-        info->eth_info.mtu = 1500;
         std::copy_n(self.phy_config_->phy_info.hw_mac_address.begin(), ETH_MAC_SIZE,
-                    info->eth_info.mac);
-        info->eth_info.features = ETHMAC_FEATURE_WLAN;
+                    info->mac_addr);
 
         info->supported_phys = ConvertSupportedPhys(self.phy_config_->phy_info.supported_phys);
         info->driver_features = ConvertDriverFeatures(
@@ -215,7 +219,7 @@ struct WlantapMacImpl : WlantapMac {
     // WlantapMac impl
 
     virtual void Rx(const std::vector<uint8_t>& data,
-                    const ::wlantap::WlanRxInfo& rx_info) override {
+                    const wlantap::WlanRxInfo& rx_info) override {
         std::lock_guard<std::mutex> guard(lock_);
         if (ifc_) {
             wlan_rx_info_t converted_info = {
@@ -257,7 +261,7 @@ struct WlantapMacImpl : WlantapMac {
     wlan_device::MacRole role_;
     std::mutex lock_;
     WlanmacIfcProxy ifc_ __TA_GUARDED(lock_);
-    const ::wlantap::WlantapPhyConfig* phy_config_;
+    const wlantap::WlantapPhyConfig* phy_config_;
     Listener* listener_;
 };
 
@@ -266,7 +270,7 @@ struct WlantapMacImpl : WlantapMac {
 
 zx_status_t CreateWlantapMac(zx_device_t* parent_phy,
                              const wlan_device::CreateIfaceRequest& request,
-                             const ::wlantap::WlantapPhyConfig* phy_config,
+                             const wlantap::WlantapPhyConfig* phy_config,
                              uint16_t id, WlantapMac::Listener* listener, WlantapMac** ret) {
     char name[ZX_MAX_NAME_LEN + 1];
     snprintf(name, sizeof(name), "%s-mac%u", device_get_name(parent_phy), id);
@@ -305,5 +309,4 @@ zx_status_t CreateWlantapMac(zx_device_t* parent_phy,
     return ZX_OK;
 }
 
-} // namespace wlantap
 } // namespace wlan

@@ -12,12 +12,12 @@
 #include "garnet/lib/machina/gpu_scanout.h"
 #include "garnet/lib/machina/input_dispatcher.h"
 #include "garnet/lib/machina/virtio_gpu.h"
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/tasks/task_runner.h"
-#include "lib/ui/scenic/client/host_memory.h"
-#include "lib/ui/scenic/client/resources.h"
+#include "lib/ui/scenic/cpp/host_memory.h"
+#include "lib/ui/scenic/cpp/resources.h"
 #include "lib/ui/view_framework/base_view.h"
 
 // For now we expose a fixed size display to the guest. Scenic will scale this
@@ -32,11 +32,11 @@ class GuestView;
 class ScenicScanout : public machina::GpuScanout,
                       public ::fuchsia::ui::views_v1::ViewProvider {
  public:
-  static zx_status_t Create(component::ApplicationContext* application_context,
+  static zx_status_t Create(fuchsia::sys::StartupContext* startup_context,
                             machina::InputDispatcher* input_dispatcher,
                             fbl::unique_ptr<ScenicScanout>* out);
 
-  ScenicScanout(component::ApplicationContext* application_context,
+  ScenicScanout(fuchsia::sys::StartupContext* startup_context,
                 machina::InputDispatcher* input_dispatcher);
 
   // |GpuScanout|
@@ -44,35 +44,38 @@ class ScenicScanout : public machina::GpuScanout,
 
   // |ViewProvider|
   void CreateView(
-      fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request,
-      fidl::InterfaceRequest<component::ServiceProvider> view_services)
+      fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+          view_owner_request,
+      fidl::InterfaceRequest<fuchsia::sys::ServiceProvider> view_services)
       override;
 
  private:
   machina::InputDispatcher* input_dispatcher_;
-  component::ApplicationContext* application_context_;
+  fuchsia::sys::StartupContext* startup_context_;
   fidl::BindingSet<ViewProvider> bindings_;
   fbl::unique_ptr<GuestView> view_;
 };
 
 class GuestView : public mozart::BaseView {
  public:
-  GuestView(
-      machina::GpuScanout* scanout, machina::InputDispatcher* input_dispatcher,
-      ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-      fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request);
+  GuestView(machina::GpuScanout* scanout,
+            machina::InputDispatcher* input_dispatcher,
+            ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
+            fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+                view_owner_request);
 
   ~GuestView() override;
 
  private:
   // |BaseView|:
-  void OnSceneInvalidated(fuchsia::images::PresentationInfo presentation_info) override;
+  void OnSceneInvalidated(
+      fuchsia::images::PresentationInfo presentation_info) override;
   bool OnInputEvent(fuchsia::ui::input::InputEvent event) override;
 
-  scenic_lib::ShapeNode background_node_;
-  scenic_lib::Material material_;
+  scenic::ShapeNode background_node_;
+  scenic::Material material_;
   fuchsia::images::ImageInfo image_info_;
-  fbl::unique_ptr<scenic_lib::HostMemory> memory_;
+  fbl::unique_ptr<scenic::HostMemory> memory_;
 
   machina::InputDispatcher* input_dispatcher_;
 

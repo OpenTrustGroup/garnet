@@ -2,18 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MEDIA_AUDIO_SERVER_AUDIO_DRIVER_H_
+#define GARNET_BIN_MEDIA_AUDIO_SERVER_AUDIO_DRIVER_H_
+
+#include <mutex>
+#include <string>
 
 #include <dispatcher-pool/dispatcher-channel.h>
 #include <dispatcher-pool/dispatcher-timer.h>
 #include <fbl/auto_lock.h>
 #include <fbl/mutex.h>
+#include <fuchsia/media/cpp/fidl.h>
 #include <lib/zx/channel.h>
 #include <lib/zx/vmo.h>
 #include <zircon/device/audio.h>
-
-#include <mutex>
-#include <string>
 
 #include "garnet/bin/media/audio_server/audio_device.h"
 #include "garnet/bin/media/audio_server/driver_ring_buffer.h"
@@ -28,6 +30,7 @@ class AudioDriver {
  public:
   enum class State {
     Uninitialized,
+    MissingDriverInfo,
     Unconfigured,
     Configuring_SettingFormat,
     Configuring_GettingFifoDepth,
@@ -47,13 +50,27 @@ class AudioDriver {
     uint32_t gen_id;
   };
 
+  struct HwGainState {
+    // TODO(johngro): when driver interfaces move to FIDL, just change this to
+    // match the fidl structure returned from a GetGain request by the driver.
+    bool cur_mute;
+    bool cur_agc;
+    float cur_gain;
+
+    bool can_mute;
+    bool can_agc;
+    float min_gain;
+    float max_gain;
+    float gain_step;
+  };
+
   AudioDriver(AudioDevice* owner);
   virtual ~AudioDriver() {}
 
   zx_status_t Init(zx::channel stream_channel);
   void Cleanup();
   void SnapshotRingBuffer(RingBufferSnapshot* snapshot) const;
-  AudioMediaTypeDetailsPtr GetSourceFormat() const;
+  fuchsia::media::AudioMediaTypeDetailsPtr GetSourceFormat() const;
 
   bool plugged() const {
     fbl::AutoLock lock(&plugged_lock_);
@@ -81,22 +98,46 @@ class AudioDriver {
   uint32_t bytes_per_frame() const { return bytes_per_frame_; }
   uint32_t fifo_depth_bytes() const { return fifo_depth_bytes_; }
   uint32_t fifo_depth_frames() const { return fifo_depth_frames_; }
+  zx_koid_t stream_channel_koid() const { return stream_channel_koid_; }
+  const HwGainState& hw_gain_state() const { return hw_gain_state_; }
+
+  // The following properties are only safe to access after the driver has made
+  // it past the MissingDriverInfo state.  After the MissingDriverInfo
+  // state, these members must be treated as immutable and the driver class may
+  // no longer changed them.
+  const audio_stream_unique_id_t& persistent_unique_id() const {
+    return persistent_unique_id_;
+  }
+  const std::string& manufacturer_name() const { return manufacturer_name_; }
+  const std::string& product_name() const { return product_name_; }
 
   void SetEndFenceToStartFenceFrames(uint32_t dist) {
     std::lock_guard<std::mutex> lock(ring_buffer_state_lock_);
     end_fence_to_start_fence_frames_ = dist;
   }
 
-  zx_status_t GetSupportedFormats();
+  zx_status_t GetDriverInfo();
   zx_status_t Configure(uint32_t frames_per_second, uint32_t channels,
-                        AudioSampleFormat fmt,
+                        fuchsia::media::AudioSampleFormat fmt,
                         zx_duration_t min_ring_buffer_duration);
   zx_status_t Start();
   zx_status_t Stop();
   zx_status_t SetPlugDetectEnabled(bool enabled);
+  zx_status_t SendSetGain(const AudioDevice::GainState& gain_state,
+                          audio_set_gain_flags_t set_flags);
 
  private:
   friend class AudioDevice;
+  friend class AudioInput;
+
+  static constexpr uint32_t kDriverInfoHasUniqueId = (1u << 0);
+  static constexpr uint32_t kDriverInfoHasMfrStr = (1u << 1);
+  static constexpr uint32_t kDriverInfoHasProdStr = (1u << 2);
+  static constexpr uint32_t kDriverInfoHasGainState = (1u << 3);
+  static constexpr uint32_t kDriverInfoHasFormats = (1u << 4);
+  static constexpr uint32_t kDriverInfoHasAll =
+      kDriverInfoHasUniqueId | kDriverInfoHasMfrStr | kDriverInfoHasProdStr |
+      kDriverInfoHasGainState | kDriverInfoHasFormats;
 
   // Dispatchers for messages received over stream and ring buffer channels.
   zx_status_t ReadMessage(const fbl::RefPtr<::dispatcher::Channel>& channel,
@@ -109,6 +150,10 @@ class AudioDriver {
       FXL_EXCLUSIVE_LOCKS_REQUIRED(owner_->mix_domain_->token());
 
   // Stream channel message handlers.
+  zx_status_t ProcessGetStringResponse(audio_stream_cmd_get_string_resp_t& resp)
+      FXL_EXCLUSIVE_LOCKS_REQUIRED(owner_->mix_domain_->token());
+  zx_status_t ProcessGetGainResponse(audio_stream_cmd_get_gain_resp_t& resp)
+      FXL_EXCLUSIVE_LOCKS_REQUIRED(owner_->mix_domain_->token());
   zx_status_t ProcessGetFormatsResponse(
       const audio_stream_cmd_get_formats_resp_t& resp)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(owner_->mix_domain_->token());
@@ -143,15 +188,19 @@ class AudioDriver {
   void ReportPlugStateChange(bool plugged, zx_time_t plug_time)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(owner_->mix_domain_->token());
 
+  // Handle a new piece of driver info being fetched.
+  zx_status_t OnDriverInfoFetched(uint32_t info)
+      FXL_EXCLUSIVE_LOCKS_REQUIRED(owner_->mix_domain_->token());
+
   // Simple accessors
   bool operational() const
       FXL_EXCLUSIVE_LOCKS_REQUIRED(owner_->mix_domain_->token()) {
     return (state_ != State::Uninitialized) && (state_ != State::Shutdown);
   }
 
-  bool fetching_formats() const
+  bool fetching_driver_info() const
       FXL_EXCLUSIVE_LOCKS_REQUIRED(owner_->mix_domain_->token()) {
-    return (fetch_formats_timeout_ != ZX_TIME_INFINITE);
+    return (fetch_driver_info_timeout_ != ZX_TIME_INFINITE);
   }
 
   // Accessors for the ring buffer pointer and the current output clock
@@ -187,10 +236,17 @@ class AudioDriver {
   fbl::RefPtr<::dispatcher::Channel> rb_channel_;
   fbl::RefPtr<::dispatcher::Timer> cmd_timeout_;
   zx_time_t last_set_timeout_ = ZX_TIME_INFINITE;
+  zx_koid_t stream_channel_koid_ = ZX_KOID_INVALID;
+  zx_time_t fetch_driver_info_timeout_ = ZX_TIME_INFINITE;
+  uint32_t fetched_driver_info_ FXL_GUARDED_BY(owner_->mix_domain_->token()) =
+      0;
 
-  // State for configured format ranges
+  // State fetched at driver startup time.
+  audio_stream_unique_id_t persistent_unique_id_ = {0};
+  std::string manufacturer_name_;
+  std::string product_name_;
+  HwGainState hw_gain_state_;
   std::vector<audio_stream_format_range_t> format_ranges_;
-  zx_time_t fetch_formats_timeout_ = ZX_TIME_INFINITE;
 
   // Configuration state.
   uint32_t frames_per_sec_;
@@ -207,7 +263,7 @@ class AudioDriver {
   // destintions (either outputs or capturers) when determining what mixer to
   // use.
   mutable std::mutex configured_format_lock_;
-  AudioMediaTypeDetailsPtr configured_format_
+  fuchsia::media::AudioMediaTypeDetailsPtr configured_format_
       FXL_GUARDED_BY(configured_format_lock_);
 
   // Ring buffer state.  Note, the details of the ring buffer state are
@@ -234,3 +290,5 @@ class AudioDriver {
 
 }  // namespace audio
 }  // namespace media
+
+#endif  // GARNET_BIN_MEDIA_AUDIO_SERVER_AUDIO_DRIVER_H_

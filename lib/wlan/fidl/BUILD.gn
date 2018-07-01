@@ -5,28 +5,37 @@
 import("//build/fidl/fidl.gni")
 
 fidl("fidl") {
-  name = "wlan_device"
+  name = "fuchsia.wlan.device"
 
   sources = [
-    "iface.fidl",
     "phy.fidl",
   ]
 }
 
-fidl("service") {
-  name = "wlan_device_service"
+fidl("sme") {
+  name = "fuchsia.wlan.sme"
 
   sources = [
-    "service.fidl",
+    "sme.fidl"
+  ]
+}
+
+fidl("service") {
+  name = "fuchsia.wlan.device.service"
+
+  sources = [
+    "service.fidl"
   ]
 
   public_deps = [
     ":fidl",
+    ":sme",
+    "//garnet/public/lib/wlan/fidl:stats"
   ]
 }
 
 fidl("wlantap") {
-  name = "wlantap"
+  name = "fuchsia.wlan.tap"
 
   sources = [
     "wlantap.fidl"

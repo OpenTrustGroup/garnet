@@ -6,7 +6,11 @@ declare_args() {
   # 0 - use normal swapchain
   # 1 - use vulkan swapchain, but wait for real display
   # 2 - use vulkan swapchain with fixed-size fake display
-  scene_manager_vulkan_swapchain = 0
+  if (target_cpu == "arm64") {
+    scenic_vulkan_swapchain = 1
+  } else {
+    scenic_vulkan_swapchain = 0
+  }
 }
 
 config("common_include_dirs") {
@@ -14,6 +18,10 @@ config("common_include_dirs") {
     "//garnet",
     "//third_party/glm",
   ]
+}
+
+config("swapchain") {
+  defines = [ "SCENIC_VULKAN_SWAPCHAIN=$scenic_vulkan_swapchain" ]
 }
 
 source_set("gfx") {
@@ -33,6 +41,8 @@ source_set("gfx") {
     "engine/hit.h",
     "engine/hit_tester.cc",
     "engine/hit_tester.h",
+    "engine/object_linker.cc",
+    "engine/object_linker.h",
     "engine/resource_linker.cc",
     "engine/resource_linker.h",
     "engine/resource_map.cc",
@@ -94,6 +104,8 @@ source_set("gfx") {
     "resources/nodes/entity_node.h",
     "resources/nodes/node.cc",
     "resources/nodes/node.h",
+    "resources/nodes/opacity_node.cc",
+    "resources/nodes/opacity_node.h",
     "resources/nodes/scene.cc",
     "resources/nodes/scene.h",
     "resources/nodes/shape_node.cc",
@@ -124,6 +136,10 @@ source_set("gfx") {
     "resources/stereo_camera.h",
     "resources/variable.cc",
     "resources/variable.h",
+    "resources/view.cc",
+    "resources/view.h",
+    "resources/view_holder.cc",
+    "resources/view_holder.h",
     "screenshotter.cc",
     "screenshotter.h",
     "swapchain/display_swapchain.cc",
@@ -141,9 +157,9 @@ source_set("gfx") {
     "util/wrap.h",
   ]
 
-  defines = [ "SCENE_MANAGER_VULKAN_SWAPCHAIN=$scene_manager_vulkan_swapchain" ]
-
   public_configs = [ ":common_include_dirs" ]
+
+  configs += [ ":swapchain" ]
 
   public_deps = [
     "//garnet/lib/ui/scenic",
@@ -156,12 +172,13 @@ source_set("gfx") {
     "//garnet/public/lib/ui/geometry/fidl",
     "//garnet/public/lib/ui/gfx/fidl",
     "//garnet/public/lib/vulkan",
+    "//zircon/public/lib/fit",
   ]
 
   deps = [
-    "//garnet/lib/magma:libmagma",
+    "//garnet/lib/magma/src/libmagma",
     "//garnet/public/lib/escher/util:check_vulkan_support",
-    "//garnet/public/lib/ui/scenic:fidl_helpers",
+    "//garnet/public/lib/ui/scenic/cpp:fidl_helpers",
     "//zircon/public/fidl/display:display",
     "//zircon/public/lib/trace",
   ]

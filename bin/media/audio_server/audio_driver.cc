@@ -5,6 +5,7 @@
 #include "garnet/bin/media/audio_server/audio_driver.h"
 
 #include <audio-proto-utils/format-utils.h>
+#include <stdio.h>
 
 #include "garnet/bin/media/audio_server/driver_utils.h"
 #include "lib/fidl/cpp/clone.h"
@@ -32,24 +33,34 @@ zx_status_t AudioDriver::Init(zx::channel stream_channel) {
     return ZX_ERR_NO_RESOURCES;
   }
 
+  // Fetch the KOID of our stream channel.  We will end up using this unique ID
+  // as our device's device token.
+  zx_status_t res;
+  zx_info_handle_basic_t sc_info;
+  res = zx_object_get_info(stream_channel.get(), ZX_INFO_HANDLE_BASIC, &sc_info,
+                           sizeof(sc_info), nullptr, nullptr);
+  if (res != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to to fetch stream channel KOID (res " << res
+                   << ")";
+    return res;
+  }
+  stream_channel_koid_ = sc_info.koid;
+
   // Activate the stream channel.
-  // clang-format off
   ::dispatcher::Channel::ProcessHandler process_handler(
-    [ this ](::dispatcher::Channel* channel) -> zx_status_t {
-      OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
-      FXL_DCHECK(stream_channel_.get() == channel);
-      return ProcessStreamChannelMessage();
-    });
+      [this](::dispatcher::Channel* channel) -> zx_status_t {
+        OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
+        FXL_DCHECK(stream_channel_.get() == channel);
+        return ProcessStreamChannelMessage();
+      });
 
   ::dispatcher::Channel::ChannelClosedHandler channel_closed_handler(
-    [ this ](const ::dispatcher::Channel* channel) {
-      OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
-      FXL_DCHECK(stream_channel_.get() == channel);
-      ShutdownSelf("Stream channel closed unexpectedly");
-    });
-  // clang-format on
+      [this](const ::dispatcher::Channel* channel) {
+        OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
+        FXL_DCHECK(stream_channel_.get() == channel);
+        ShutdownSelf("Stream channel closed unexpectedly");
+      });
 
-  zx_status_t res;
   res = stream_channel_->Activate(
       fbl::move(stream_channel), owner_->mix_domain_,
       fbl::move(process_handler), fbl::move(channel_closed_handler));
@@ -60,15 +71,13 @@ zx_status_t AudioDriver::Init(zx::channel stream_channel) {
   }
 
   // Activate the command timeout timer.
-  // clang-format off
   ::dispatcher::Timer::ProcessHandler cmd_timeout_handler(
-    [ this ](::dispatcher::Timer* timer) -> zx_status_t {
-      OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
-      FXL_DCHECK(cmd_timeout_.get() == timer);
-      ShutdownSelf("Unexpected command timeout");
-      return ZX_OK;
-    });
-  // clang-format on
+      [this](::dispatcher::Timer* timer) -> zx_status_t {
+        OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
+        FXL_DCHECK(cmd_timeout_.get() == timer);
+        ShutdownSelf("Unexpected command timeout");
+        return ZX_OK;
+      });
 
   res = cmd_timeout_->Activate(owner_->mix_domain_,
                                fbl::move(cmd_timeout_handler));
@@ -79,8 +88,13 @@ zx_status_t AudioDriver::Init(zx::channel stream_channel) {
     return res;
   }
 
-  // We are now initialized, but unconfigured.
-  state_ = State::Unconfigured;
+  // We are now initialized, but we don't know any of our fundamental driver
+  // level info.  Things like...
+  //
+  // 1) This device's persistent unique ID.
+  // 2) The list of formats supported by this device.
+  // 3) The user visible strings for this device (manufacturer, product, etc...)
+  state_ = State::MissingDriverInfo;
   return ZX_OK;
 }
 
@@ -111,17 +125,18 @@ void AudioDriver::SnapshotRingBuffer(RingBufferSnapshot* snapshot) const {
   snapshot->gen_id = ring_buffer_state_gen_.get();
 }
 
-AudioMediaTypeDetailsPtr AudioDriver::GetSourceFormat() const {
+fuchsia::media::AudioMediaTypeDetailsPtr AudioDriver::GetSourceFormat() const {
   std::lock_guard<std::mutex> lock(configured_format_lock_);
 
-  if (!configured_format_) return nullptr;
+  if (!configured_format_)
+    return nullptr;
 
-  AudioMediaTypeDetailsPtr result;
+  fuchsia::media::AudioMediaTypeDetailsPtr result;
   fidl::Clone(configured_format_, &result);
   return result;
 }
 
-zx_status_t AudioDriver::GetSupportedFormats() {
+zx_status_t AudioDriver::GetDriverInfo() {
   // TODO(johngro) : Figure out a better way to assert this!
   OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
 
@@ -133,34 +148,89 @@ zx_status_t AudioDriver::GetSupportedFormats() {
     return ZX_ERR_BAD_STATE;
   }
 
-  // If we are already in the process of fetching our formats, just get out now.
-  // We will inform our owner when the process completes.
-  if (fetching_formats()) {
+  // If we are already in the process of fetching our initial driver info, just
+  // get out now.  We will inform our owner when the process completes.
+  if (fetching_driver_info()) {
     return ZX_OK;
   }
 
-  // Reset any format ranges we had before.
-  format_ranges_.clear();
+  // Send the commands to do the following.
+  //
+  // 1) Fetch our persistent unique ID.
+  // 2) Fetch our manufacturer string.
+  // 3) Fetch our product string.
+  // 4) Fetch our current gain state/caps
+  // 5) Fetch our supported format list.
 
-  // Actually send the request to the driver.
-  audio_stream_cmd_get_formats_req_t req;
-  req.hdr.cmd = AUDIO_STREAM_CMD_GET_FORMATS;
-  req.hdr.transaction_id = TXID;
+  // Step #1, fetch unique IDs.
+  {
+    audio_stream_cmd_get_formats_req_t req;
+    req.hdr.cmd = AUDIO_STREAM_CMD_GET_UNIQUE_ID;
+    req.hdr.transaction_id = TXID;
 
-  zx_status_t res = stream_channel_->Write(&req, sizeof(req));
-  if (res != ZX_OK) {
-    ShutdownSelf("Failed to request supported format list.", res);
-    return res;
+    zx_status_t res = stream_channel_->Write(&req, sizeof(req));
+    if (res != ZX_OK) {
+      ShutdownSelf("Failed to request unique ID.", res);
+      return res;
+    }
+  }
+
+  // Steps #2-3, fetch strings.
+  static const audio_stream_string_id_t kStringsToFetch[] = {
+      AUDIO_STREAM_STR_ID_MANUFACTURER,
+      AUDIO_STREAM_STR_ID_PRODUCT,
+  };
+  for (const auto string_id : kStringsToFetch) {
+    audio_stream_cmd_get_string_req_t req;
+    req.hdr.cmd = AUDIO_STREAM_CMD_GET_STRING;
+    req.hdr.transaction_id = TXID;
+    req.id = string_id;
+
+    zx_status_t res = stream_channel_->Write(&req, sizeof(req));
+    if (res != ZX_OK) {
+      ShutdownSelf("Failed to request unique ID.", res);
+      return res;
+    }
+  }
+
+  // Step #4.  Fetch our current gain state.
+  {
+    audio_stream_cmd_get_gain_req_t req;
+    req.hdr.cmd = AUDIO_STREAM_CMD_GET_GAIN;
+    req.hdr.transaction_id = TXID;
+
+    zx_status_t res = stream_channel_->Write(&req, sizeof(req));
+    if (res != ZX_OK) {
+      ShutdownSelf("Failed to request gain state.", res);
+      return res;
+    }
+  }
+
+  // Step #5.  Fetch our gain state.
+  {
+    FXL_DCHECK(format_ranges_.empty());
+
+    // Actually send the request to the driver.
+    audio_stream_cmd_get_formats_req_t req;
+    req.hdr.cmd = AUDIO_STREAM_CMD_GET_FORMATS;
+    req.hdr.transaction_id = TXID;
+
+    zx_status_t res = stream_channel_->Write(&req, sizeof(req));
+    if (res != ZX_OK) {
+      ShutdownSelf("Failed to request supported format list.", res);
+      return res;
+    }
   }
 
   // Setup our command timeout.
-  fetch_formats_timeout_ = zx_deadline_after(kDefaultShortCmdTimeout);
+  fetch_driver_info_timeout_ = zx_deadline_after(kDefaultShortCmdTimeout);
   SetupCommandTimeout();
   return ZX_OK;
 }
 
 zx_status_t AudioDriver::Configure(uint32_t frames_per_second,
-                                   uint32_t channels, AudioSampleFormat fmt,
+                                   uint32_t channels,
+                                   fuchsia::media::AudioSampleFormat fmt,
                                    zx_duration_t min_ring_buffer_duration) {
   // TODO(johngro) : Figure out a better way to assert this!
   OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
@@ -229,7 +299,7 @@ zx_status_t AudioDriver::Configure(uint32_t frames_per_second,
 
   {
     std::lock_guard<std::mutex> lock(configured_format_lock_);
-    configured_format_ = AudioMediaTypeDetails::New();
+    configured_format_ = fuchsia::media::AudioMediaTypeDetails::New();
     configured_format_->sample_format = fmt;
     configured_format_->channels = channels;
     configured_format_->frames_per_second = frames_per_second;
@@ -419,6 +489,9 @@ zx_status_t AudioDriver::ProcessStreamChannelMessage() {
   uint32_t bytes_read;
   union {
     audio_cmd_hdr_t hdr;
+    audio_stream_cmd_get_unique_id_resp_t get_unique_id;
+    audio_stream_cmd_get_string_resp_t get_string;
+    audio_stream_cmd_get_gain_resp_t get_gain;
     audio_stream_cmd_get_formats_resp_t get_formats;
     audio_stream_cmd_set_format_resp_t set_format;
     audio_stream_cmd_plug_detect_resp_t pd_resp;
@@ -435,6 +508,22 @@ zx_status_t AudioDriver::ProcessStreamChannelMessage() {
 
   bool plug_state;
   switch (msg.hdr.cmd) {
+    case AUDIO_STREAM_CMD_GET_UNIQUE_ID:
+      CHECK_RESP(AUDIO_STREAM_CMD_GET_UNIQUE_ID, get_unique_id, false, false);
+      persistent_unique_id_ = msg.get_unique_id.unique_id;
+      res = OnDriverInfoFetched(kDriverInfoHasUniqueId);
+      break;
+
+    case AUDIO_STREAM_CMD_GET_STRING:
+      CHECK_RESP(AUDIO_STREAM_CMD_GET_STRING, get_string, false, false);
+      res = ProcessGetStringResponse(msg.get_string);
+      break;
+
+    case AUDIO_STREAM_CMD_GET_GAIN:
+      CHECK_RESP(AUDIO_STREAM_CMD_GET_GAIN, get_gain, false, false);
+      res = ProcessGetGainResponse(msg.get_gain);
+      break;
+
     case AUDIO_STREAM_CMD_GET_FORMATS:
       CHECK_RESP(AUDIO_STREAM_CMD_GET_FORMATS, get_formats, false, false);
       res = ProcessGetFormatsResponse(msg.get_formats);
@@ -468,7 +557,6 @@ zx_status_t AudioDriver::ProcessStreamChannelMessage() {
 
       pd_enable_timeout_ = ZX_TIME_INFINITE;
       SetupCommandTimeout();
-
       break;
 
     case AUDIO_STREAM_PLUG_DETECT_NOTIFY:
@@ -545,9 +633,71 @@ zx_status_t AudioDriver::ProcessRingBufferChannelMessage() {
 }
 #undef CHECK_RESP
 
+zx_status_t AudioDriver::ProcessGetStringResponse(
+    audio_stream_cmd_get_string_resp_t& resp) {
+  std::string* tgt_string;
+  uint32_t info_bit;
+
+  if (state_ != State::MissingDriverInfo) {
+    FXL_LOG(ERROR) << "Bad state (" << static_cast<uint32_t>(state_)
+                   << ") while handling get string response.";
+    return ZX_ERR_BAD_STATE;
+  }
+
+  if (resp.result != ZX_OK) {
+    FXL_LOG(WARNING) << "Error ( " << resp.result
+                     << ") attempting to fetch string id " << resp.id
+                     << ".  Replacing with <unknown>.";
+    resp.strlen = static_cast<uint32_t>(snprintf(
+        reinterpret_cast<char*>(resp.str), sizeof(resp.str), "<unknown>"));
+  }
+
+  switch (resp.id) {
+    case AUDIO_STREAM_STR_ID_MANUFACTURER:
+      info_bit = kDriverInfoHasMfrStr;
+      tgt_string = &manufacturer_name_;
+      break;
+
+    case AUDIO_STREAM_STR_ID_PRODUCT:
+      info_bit = kDriverInfoHasProdStr;
+      tgt_string = &product_name_;
+      break;
+
+    default:
+      FXL_LOG(ERROR) << "Unrecognized string id (" << resp.id << ").";
+      return ZX_ERR_INVALID_ARGS;
+  }
+
+  if (resp.strlen > sizeof(resp.str)) {
+    FXL_LOG(ERROR) << "Bad string length " << resp.strlen
+                   << " attempting to fetch string id " << resp.id << ".";
+    return ZX_ERR_INTERNAL;
+  }
+
+  // Stash the string we just received and update our progress in fetching our
+  // initial driver info.
+  FXL_DCHECK(tgt_string != nullptr);
+  tgt_string->assign(reinterpret_cast<char*>(resp.str), resp.strlen);
+  return OnDriverInfoFetched(info_bit);
+}
+
+zx_status_t AudioDriver::ProcessGetGainResponse(
+    audio_stream_cmd_get_gain_resp_t& resp) {
+  hw_gain_state_.cur_mute = resp.cur_mute;
+  hw_gain_state_.cur_agc = resp.cur_agc;
+  hw_gain_state_.cur_gain = resp.cur_gain;
+  hw_gain_state_.can_mute = resp.can_mute;
+  hw_gain_state_.can_agc = resp.can_agc;
+  hw_gain_state_.min_gain = resp.min_gain;
+  hw_gain_state_.max_gain = resp.max_gain;
+  hw_gain_state_.gain_step = resp.gain_step;
+
+  return OnDriverInfoFetched(kDriverInfoHasGainState);
+}
+
 zx_status_t AudioDriver::ProcessGetFormatsResponse(
     const audio_stream_cmd_get_formats_resp_t& resp) {
-  if (!fetching_formats()) {
+  if (!fetching_driver_info()) {
     FXL_LOG(ERROR) << "Received unsolicited get formats response.";
     return ZX_ERR_BAD_STATE;
   }
@@ -581,14 +731,10 @@ zx_status_t AudioDriver::ProcessGetFormatsResponse(
     format_ranges_.emplace_back(resp.format_ranges[i]);
   }
 
-  if (format_ranges_.size() == resp.format_range_count) {
-    // We are done.  Clear the fetch formats timeout and let our owner know.
-    fetch_formats_timeout_ = ZX_TIME_INFINITE;
-    SetupCommandTimeout();
-    owner_->OnDriverGetFormatsComplete();
-  }
-
-  return ZX_OK;
+  // Record the fact that we have now fetched our format list.  This will handle
+  // transitioning to the Unconfigured state and letting our owner know if we
+  // have managed to fetch all of the initial driver info we need to operate.
+  return OnDriverInfoFetched(kDriverInfoHasFormats);
 }
 
 zx_status_t AudioDriver::ProcessSetFormatResponse(
@@ -612,21 +758,19 @@ zx_status_t AudioDriver::ProcessSetFormatResponse(
   external_delay_nsec_ = resp.external_delay_nsec;
 
   // Activate out ring buffer channel in our execution domain.
-  // clang-format off
   ::dispatcher::Channel::ProcessHandler process_handler(
-    [ this ](::dispatcher::Channel * channel) -> zx_status_t {
-      OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
-      FXL_DCHECK(rb_channel_.get() == channel);
-      return ProcessRingBufferChannelMessage();
-    });
+      [this](::dispatcher::Channel* channel) -> zx_status_t {
+        OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
+        FXL_DCHECK(rb_channel_.get() == channel);
+        return ProcessRingBufferChannelMessage();
+      });
 
   ::dispatcher::Channel::ChannelClosedHandler channel_closed_handler(
-    [ this ](const ::dispatcher::Channel* channel) {
-      OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
-      FXL_DCHECK(rb_channel_.get() == channel);
-      ShutdownSelf("Ring buffer channel closed unexpectedly");
-    });
-  // clang-format on
+      [this](const ::dispatcher::Channel* channel) {
+        OBTAIN_EXECUTION_DOMAIN_TOKEN(token, owner_->mix_domain_);
+        FXL_DCHECK(rb_channel_.get() == channel);
+        ShutdownSelf("Ring buffer channel closed unexpectedly");
+      });
 
   zx_status_t res;
   res = rb_channel_->Activate(fbl::move(rb_channel), owner_->mix_domain_,
@@ -837,7 +981,7 @@ void AudioDriver::ShutdownSelf(const char* debug_reason,
 void AudioDriver::SetupCommandTimeout() {
   zx_time_t timeout;
 
-  timeout = fetch_formats_timeout_;
+  timeout = fetch_driver_info_timeout_;
   timeout = fbl::min(timeout, configuration_timeout_);
   timeout = fbl::min(timeout, pd_enable_timeout_);
 
@@ -861,6 +1005,49 @@ void AudioDriver::ReportPlugStateChange(bool plugged, zx_time_t plug_time) {
   if (pd_enabled_) {
     owner_->OnDriverPlugStateChange(plugged, plug_time);
   }
+}
+
+zx_status_t AudioDriver::OnDriverInfoFetched(uint32_t info) {
+  // We should never fetch the same info twice.
+  if (fetched_driver_info_ & info) {
+    ShutdownSelf("Duplicate driver info fetch\n");
+    return ZX_ERR_BAD_STATE;
+  }
+
+  // Record the new piece of info we just fetched.
+  FXL_DCHECK(state_ == State::MissingDriverInfo);
+  fetched_driver_info_ |= info;
+
+  // Have we finished fetching our initial driver info?  If so, cancel the
+  // timeout, transition to the unconfigured state, and let our owner know that
+  // we have finished.
+  if ((fetched_driver_info_ & kDriverInfoHasAll) == kDriverInfoHasAll) {
+    // We are done.  Clear the fetch driver info timeout and let our owner know.
+    fetch_driver_info_timeout_ = ZX_TIME_INFINITE;
+    state_ = State::Unconfigured;
+    SetupCommandTimeout();
+    owner_->OnDriverInfoFetched();
+  }
+
+  return ZX_OK;
+}
+
+zx_status_t AudioDriver::SendSetGain(const AudioDevice::GainState& gain_state,
+                                     audio_set_gain_flags_t set_flags) {
+  audio_stream_cmd_set_gain_req_t req;
+  req.hdr.cmd =
+      static_cast<audio_cmd_t>(AUDIO_STREAM_CMD_SET_GAIN | AUDIO_FLAG_NO_ACK);
+  req.hdr.transaction_id = TXID;
+
+  // clang-format off
+  req.flags = static_cast<audio_set_gain_flags_t>(
+      set_flags |
+      (gain_state.muted ? AUDIO_SGF_MUTE : 0) |
+      (gain_state.agc_enabled ? AUDIO_SGF_AGC : 0));
+  // clang-format on
+  req.gain = gain_state.db_gain;
+
+  return stream_channel_->Write(&req, sizeof(req));
 }
 
 }  // namespace audio

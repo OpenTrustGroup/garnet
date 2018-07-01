@@ -5,6 +5,7 @@
 #include "platform_connection.h"
 #include "gtest/gtest.h"
 #include <chrono>
+#include <poll.h>
 #include <thread>
 
 class TestPlatformConnection {
@@ -84,11 +85,6 @@ public:
         ipc_connection_->ExecuteCommandBuffer(handle, test_context_id);
         EXPECT_EQ(ipc_connection_->GetError(), 0);
     }
-    void TestWaitRendering()
-    {
-        ipc_connection_->WaitRendering(test_buffer_id);
-        EXPECT_EQ(ipc_connection_->GetError(), 0);
-    }
 
     void TestGetError()
     {
@@ -109,6 +105,11 @@ public:
 
     void TestNotificationChannel()
     {
+        pollfd pfd = {.fd = ipc_connection_->GetNotificationChannelFd(), .events = POLLIN};
+
+        int poll_status = poll(&pfd, 1, 5000);
+        EXPECT_EQ(1, poll_status);
+
         uint32_t out_data;
         uint64_t out_data_size;
         // Data was written when the channel was created, so it should be
@@ -218,12 +219,6 @@ public:
         TestPlatformConnection::test_complete = true;
         return MAGMA_STATUS_OK;
     }
-    magma::Status WaitRendering(uint64_t buffer_id) override
-    {
-        EXPECT_EQ(buffer_id, TestPlatformConnection::test_buffer_id);
-        TestPlatformConnection::test_complete = true;
-        return MAGMA_STATUS_OK;
-    }
 
     bool MapBufferGpu(uint64_t buffer_id, uint64_t gpu_va, uint64_t page_offset,
                       uint64_t page_count, uint64_t flags) override
@@ -251,14 +246,17 @@ public:
         return true;
     }
 
-    void SetNotificationChannel(msd_channel_send_callback_t callback,
-                                msd_channel_t channel) override
+    void SetNotificationCallback(msd_connection_notification_callback_t callback,
+                                 void* token) override
     {
-        if (!channel) {
+        if (!token) {
             TestPlatformConnection::test_complete = true;
         } else {
             uint32_t data = 5;
-            callback(channel, &data, sizeof(data));
+            msd_notification_t n = {.type = MSD_CONNECTION_NOTIFICATION_CHANNEL_SEND};
+            *reinterpret_cast<uint32_t*>(n.u.channel_send.data) = data;
+            n.u.channel_send.size = sizeof(data);
+            callback(token, &n);
         }
     }
 
@@ -364,13 +362,6 @@ TEST(PlatformConnection, ExecuteCommandBuffer)
     auto Test = TestPlatformConnection::Create();
     ASSERT_NE(Test, nullptr);
     Test->TestExecuteCommandBuffer();
-}
-
-TEST(PlatformConnection, WaitRendering)
-{
-    auto Test = TestPlatformConnection::Create();
-    ASSERT_NE(Test, nullptr);
-    Test->TestWaitRendering();
 }
 
 TEST(PlatformConnection, MapUnmapBuffer)

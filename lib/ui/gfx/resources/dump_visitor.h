@@ -15,6 +15,7 @@
 namespace scenic {
 namespace gfx {
 
+class Node;
 class Resource;
 
 // Dumps information about resources to an output stream.
@@ -29,7 +30,10 @@ class DumpVisitor : public ResourceVisitor {
   void Visit(Image* r) override;
   void Visit(ImagePipe* r) override;
   void Visit(Buffer* r) override;
+  void Visit(View* r) override;
+  void Visit(ViewHolder* r) override;
   void Visit(EntityNode* r) override;
+  void Visit(OpacityNode* r) override;
   void Visit(ShapeNode* r) override;
   void Visit(Scene* r) override;
   void Visit(CircleShape* r) override;

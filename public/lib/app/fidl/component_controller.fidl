@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library component;
+library fuchsia.sys;
 
 // An interface for controlling components.
 //
@@ -11,7 +11,7 @@ library component;
 //
 // If the component exits, this interface will be closed.
 //
-// Typically obtained via |ApplicationLauncher.CreateApplication|.
+// Typically obtained via |Launcher.CreateComponent|.
 interface ComponentController {
   // Terminates the component.
   //
@@ -30,5 +30,5 @@ interface ComponentController {
   // This call will return just before the component terminates and the
   // interface is closed. If the interface closes without this call returning
   // the caller may assume that the component terminated unexpectedly.
-  3: Wait() -> (int32 return_code);
+  3: Wait() -> (int64 return_code);
 };

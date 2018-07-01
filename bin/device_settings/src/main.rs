@@ -7,7 +7,7 @@
 extern crate failure;
 extern crate fdio;
 extern crate fidl;
-extern crate fidl_device_settings;
+extern crate fidl_fuchsia_devicesettings;
 extern crate fuchsia_app as app;
 extern crate fuchsia_async as async;
 #[macro_use]
@@ -32,7 +32,7 @@ use std::io::prelude::*;
 use std::sync::Arc;
 
 // Include the generated FIDL bindings for the `DeviceSetting` service.
-use fidl_device_settings::{
+use fidl_fuchsia_devicesettings::{
     DeviceSettingsManager,
     DeviceSettingsManagerImpl,
     DeviceSettingsManagerMarker,
@@ -220,7 +220,8 @@ fn main_ds() -> Result<(), Error> {
                 watchers: watchers.clone(),
             };
 
-            d.initialize_keys(DATA_DIR, &["DeviceName", "TestSetting"]);
+            d.initialize_keys(DATA_DIR, &["DeviceName", "TestSetting",
+                "Display.Brightness", "FactoryReset"]);
 
             async::spawn(device_settings_server(d, channel))
         }))
@@ -238,7 +239,7 @@ mod tests {
     use futures::prelude::*;
     use super::*;
 
-    use fidl_device_settings::DeviceSettingsManagerProxy;
+    use fidl_fuchsia_devicesettings::DeviceSettingsManagerProxy;
 
     fn async_test<F, Fut>(keys: &[&str], f: F)
     where

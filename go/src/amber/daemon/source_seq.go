@@ -7,12 +7,15 @@ package daemon
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"sync"
 	"time"
 
 	"amber/pkg"
 	"amber/source"
+
+	"fidl/fuchsia/amber"
 )
 
 // SourceKeeper wraps a Source and performs admission control for operations on
@@ -33,6 +36,22 @@ func NewSourceKeeper(src source.Source) *SourceKeeper {
 		mu:   &sync.Mutex{},
 		hist: []time.Time{},
 	}
+}
+
+func (k *SourceKeeper) GetId() string {
+	return k.src.GetId()
+}
+
+func (k *SourceKeeper) GetConfig() *amber.SourceConfig {
+	return k.src.GetConfig()
+}
+
+func (k *SourceKeeper) GetHttpClient() *http.Client {
+	return k.src.GetHttpClient()
+}
+
+func (k *SourceKeeper) Login() (*amber.DeviceCode, error) {
+	return k.src.Login()
 }
 
 func (k *SourceKeeper) AvailableUpdates(pkgs []*pkg.Package) (map[pkg.Package]pkg.Package, error) {
@@ -81,4 +100,12 @@ func (k *SourceKeeper) Equals(s source.Source) bool {
 
 func (k *SourceKeeper) CheckLimit() uint64 {
 	return k.src.CheckLimit()
+}
+
+func (k *SourceKeeper) Save() error {
+	return k.src.Save()
+}
+
+func (k *SourceKeeper) Close() {
+	k.src.Close()
 }

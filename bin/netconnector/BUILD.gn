@@ -48,6 +48,8 @@ executable("bin") {
     "//garnet/public/lib/netstack/fidl",
     "//garnet/public/lib/svc/cpp",
     "//third_party/rapidjson",
+    "//zircon/public/lib/async-loop-cpp",
+    "//zircon/public/lib/fit",
   ]
 }
 
@@ -58,8 +60,10 @@ package("netconnector") {
 
   binary = "netconnector"
 
-  resources = [ {
-        path = rebase_path("netconnector.config")
-        dest = "netconnector.config"
-      } ]
+  resources = [
+    {
+      path = rebase_path("netconnector.config")
+      dest = "netconnector.config"
+    },
+  ]
 }

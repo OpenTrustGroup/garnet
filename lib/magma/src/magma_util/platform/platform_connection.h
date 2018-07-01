@@ -48,10 +48,6 @@ public:
 
     virtual void ExecuteCommandBuffer(uint32_t command_buffer_handle, uint32_t context_id) = 0;
 
-    // Blocks until all gpu work currently queued that references the buffer
-    // with |buffer_id| has completed.
-    virtual void WaitRendering(uint64_t buffer_id) = 0;
-
     virtual magma_status_t MapBufferGpu(uint64_t buffer_id, uint64_t gpu_va, uint64_t page_offset,
                                         uint64_t page_count, uint64_t flags) = 0;
 
@@ -96,21 +92,20 @@ public:
 
         virtual magma::Status ExecuteCommandBuffer(uint32_t command_buffer_handle,
                                                    uint32_t context_id) = 0;
-        virtual magma::Status WaitRendering(uint64_t buffer_id) = 0;
 
         virtual bool MapBufferGpu(uint64_t buffer_id, uint64_t gpu_va, uint64_t page_offset,
                                   uint64_t page_count, uint64_t flags) = 0;
         virtual bool UnmapBufferGpu(uint64_t buffer_id, uint64_t gpu_va) = 0;
         virtual bool CommitBuffer(uint64_t buffer_id, uint64_t page_offset,
                                   uint64_t page_count) = 0;
-        virtual void SetNotificationChannel(msd_channel_send_callback_t callback,
-                                            msd_channel_t channel) = 0;
+        virtual void SetNotificationCallback(msd_connection_notification_callback_t callback,
+                                             void* token) = 0;
         virtual magma::Status ExecuteImmediateCommands(uint32_t context_id, uint64_t commands_size,
                                                        void* commands, uint64_t semaphore_count,
                                                        uint64_t* semaphore_ids) = 0;
     };
 
-    PlatformConnection(std::unique_ptr<magma::PlatformEvent> shutdown_event)
+    PlatformConnection(std::shared_ptr<magma::PlatformEvent> shutdown_event)
         : shutdown_event_(std::move(shutdown_event))
     {
     }

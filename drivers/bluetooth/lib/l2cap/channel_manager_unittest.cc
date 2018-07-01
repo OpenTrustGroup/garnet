@@ -6,8 +6,6 @@
 
 #include <memory>
 
-#include "gtest/gtest.h"
-
 #include "garnet/drivers/bluetooth/lib/common/test_helpers.h"
 #include "garnet/drivers/bluetooth/lib/hci/connection.h"
 #include "garnet/drivers/bluetooth/lib/testing/fake_controller_test.h"
@@ -99,8 +97,8 @@ TEST_F(L2CAP_ChannelManagerTest, OpenFixedChannelErrorDisallowedId) {
   chanmgr()->RegisterACL(kTestHandle2, hci::Connection::Role::kMaster,
                          DoNothing, dispatcher());
 
-  // This should fail as kSMChannelId is ACL-U only.
-  EXPECT_EQ(nullptr, ActivateNewFixedChannel(kSMChannelId, kTestHandle1));
+  // This should fail as kSMPChannelId is ACL-U only.
+  EXPECT_EQ(nullptr, ActivateNewFixedChannel(kSMPChannelId, kTestHandle1));
 
   // This should fail as kATTChannelId is LE-U only.
   EXPECT_EQ(nullptr, ActivateNewFixedChannel(kATTChannelId, kTestHandle2));
@@ -132,7 +130,7 @@ TEST_F(L2CAP_ChannelManagerTest, OpenFixedChannelAndUnregisterLink) {
   // This should notify the channel.
   chanmgr()->Unregister(kTestHandle1);
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   // |closed_cb| will be called synchronously since it was registered using the
   // current thread's task runner.
@@ -155,7 +153,7 @@ TEST_F(L2CAP_ChannelManagerTest, OpenFixedChannelAndCloseChannel) {
   chan->Deactivate();
   chanmgr()->Unregister(kTestHandle1);
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_FALSE(closed_called);
 }
@@ -176,13 +174,13 @@ TEST_F(L2CAP_ChannelManagerTest, OpenAndCloseMultipleFixedChannels) {
   ASSERT_TRUE(att_chan);
 
   auto smp_chan =
-      ActivateNewFixedChannel(kSMPChannelId, kTestHandle1, smp_closed_cb);
+      ActivateNewFixedChannel(kLESMPChannelId, kTestHandle1, smp_closed_cb);
   ASSERT_TRUE(smp_chan);
 
   smp_chan->Deactivate();
   chanmgr()->Unregister(kTestHandle1);
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(att_closed);
   EXPECT_FALSE(smp_closed);
@@ -212,7 +210,7 @@ TEST_F(L2CAP_ChannelManagerTest, ReceiveData) {
   auto att_chan =
       ActivateNewFixedChannel(kATTChannelId, kTestHandle1, [] {}, att_rx_cb);
   auto smp_chan =
-      ActivateNewFixedChannel(kSMPChannelId, kTestHandle1, [] {}, smp_rx_cb);
+      ActivateNewFixedChannel(kLESMPChannelId, kTestHandle1, [] {}, smp_rx_cb);
   ASSERT_TRUE(att_chan);
   ASSERT_TRUE(smp_chan);
 
@@ -244,7 +242,7 @@ TEST_F(L2CAP_ChannelManagerTest, ReceiveData) {
       // L2CAP B-frame (empty)
       0x00, 0x00, 0x06, 0x00));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(smp_cb_called);
   ASSERT_EQ(2u, sdus.size());
@@ -289,7 +287,7 @@ TEST_F(L2CAP_ChannelManagerTest, ReceiveDataBeforeRegisteringLink) {
   fbl::RefPtr<Channel> att_chan, smp_chan;
 
   // Run the loop so all packets are received.
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   chanmgr()->RegisterLE(kTestHandle1, hci::Connection::Role::kMaster,
                         [](auto) {}, DoNothing, dispatcher());
@@ -299,10 +297,10 @@ TEST_F(L2CAP_ChannelManagerTest, ReceiveDataBeforeRegisteringLink) {
   FXL_DCHECK(att_chan);
 
   smp_chan =
-      ActivateNewFixedChannel(kSMPChannelId, kTestHandle1, [] {}, smp_rx_cb);
+      ActivateNewFixedChannel(kLESMPChannelId, kTestHandle1, [] {}, smp_rx_cb);
   FXL_DCHECK(smp_chan);
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
   EXPECT_TRUE(smp_cb_called);
   EXPECT_EQ(kPacketCount, packet_count);
 }
@@ -348,17 +346,17 @@ TEST_F(L2CAP_ChannelManagerTest, ReceiveDataBeforeCreatingChannel) {
   fbl::RefPtr<Channel> att_chan, smp_chan;
 
   // Run the loop so all packets are received.
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   att_chan =
       ActivateNewFixedChannel(kATTChannelId, kTestHandle1, [] {}, att_rx_cb);
   FXL_DCHECK(att_chan);
 
   smp_chan =
-      ActivateNewFixedChannel(kSMPChannelId, kTestHandle1, [] {}, smp_rx_cb);
+      ActivateNewFixedChannel(kLESMPChannelId, kTestHandle1, [] {}, smp_rx_cb);
   FXL_DCHECK(smp_chan);
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(smp_cb_called);
   EXPECT_EQ(kPacketCount, packet_count);
@@ -374,7 +372,7 @@ TEST_F(L2CAP_ChannelManagerTest, ReceiveDataBeforeSettingRxHandler) {
   auto att_chan = chanmgr()->OpenFixedChannel(kTestHandle1, kATTChannelId);
   FXL_DCHECK(att_chan);
 
-  auto smp_chan = chanmgr()->OpenFixedChannel(kTestHandle1, kSMPChannelId);
+  auto smp_chan = chanmgr()->OpenFixedChannel(kTestHandle1, kLESMPChannelId);
   FXL_DCHECK(smp_chan);
 
   common::StaticByteBuffer<255> buffer;
@@ -409,12 +407,12 @@ TEST_F(L2CAP_ChannelManagerTest, ReceiveDataBeforeSettingRxHandler) {
       0x00, 0x00, 0x06, 0x00));
 
   // Run the loop so all packets are received.
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   att_chan->Activate(att_rx_cb, DoNothing, dispatcher());
   smp_chan->Activate(smp_rx_cb, DoNothing, dispatcher());
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(smp_cb_called);
   EXPECT_EQ(kPacketCount, packet_count);
@@ -445,7 +443,7 @@ TEST_F(L2CAP_ChannelManagerTest, SendBasicSdu) {
 
   EXPECT_TRUE(att_chan->Send(common::NewBuffer('T', 'e', 's', 't')));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
   ASSERT_TRUE(received);
 
   auto expected = common::CreateStaticByteBuffer(
@@ -497,7 +495,7 @@ TEST_F(L2CAP_ChannelManagerTest, SendFragmentedSdus) {
 
   // We use the ATT fixed-channel for LE and the SM fixed-channel for ACL.
   auto att_chan = ActivateNewFixedChannel(kATTChannelId, kTestHandle1);
-  auto sm_chan = ActivateNewFixedChannel(kSMChannelId, kTestHandle2);
+  auto sm_chan = ActivateNewFixedChannel(kSMPChannelId, kTestHandle2);
   ASSERT_TRUE(att_chan);
   ASSERT_TRUE(sm_chan);
 
@@ -510,7 +508,7 @@ TEST_F(L2CAP_ChannelManagerTest, SendFragmentedSdus) {
   EXPECT_TRUE(
       sm_chan->Send(common::NewBuffer('G', 'o', 'o', 'd', 'b', 'y', 'e')));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(2u, le_fragments.size());
   ASSERT_EQ(3u, acl_fragments.size());
@@ -597,7 +595,7 @@ TEST_F(L2CAP_ChannelManagerTest, SendFragmentedSdusDifferentBuffers) {
 
   // We use the ATT fixed-channel for LE and the SM fixed-channel for ACL.
   auto att_chan = ActivateNewFixedChannel(kATTChannelId, kTestHandle1);
-  auto sm_chan = ActivateNewFixedChannel(kSMChannelId, kTestHandle2);
+  auto sm_chan = ActivateNewFixedChannel(kSMPChannelId, kTestHandle2);
   ASSERT_TRUE(att_chan);
   ASSERT_TRUE(sm_chan);
 
@@ -610,7 +608,7 @@ TEST_F(L2CAP_ChannelManagerTest, SendFragmentedSdusDifferentBuffers) {
   EXPECT_TRUE(
       sm_chan->Send(common::NewBuffer('G', 'o', 'o', 'd', 'b', 'y', 'e')));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(1u, le_fragments.size());
   ASSERT_EQ(2u, acl_fragments.size());
@@ -657,7 +655,7 @@ TEST_F(L2CAP_ChannelManagerTest, LEChannelSignalLinkError) {
   // The event will run asynchronously.
   EXPECT_FALSE(link_error);
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
   EXPECT_TRUE(link_error);
 }
 
@@ -670,13 +668,13 @@ TEST_F(L2CAP_ChannelManagerTest, ACLChannelSignalLinkError) {
                          link_error_cb, dispatcher());
 
   // Activate a new Security Manager channel to signal the error.
-  auto chan = ActivateNewFixedChannel(kSMChannelId, kTestHandle1);
+  auto chan = ActivateNewFixedChannel(kSMPChannelId, kTestHandle1);
   chan->SignalLinkError();
 
   // The event will run asynchronously.
   EXPECT_FALSE(link_error);
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
   EXPECT_TRUE(link_error);
 }
 
@@ -714,7 +712,7 @@ TEST_F(L2CAP_ChannelManagerTest, LEConnectionParameterUpdateRequest) {
       0x80, 0x0C));
   // clang-format on
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
   EXPECT_TRUE(conn_param_cb_called);
 }
 

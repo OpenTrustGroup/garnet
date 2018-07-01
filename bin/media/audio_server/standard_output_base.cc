@@ -4,9 +4,10 @@
 
 #include "garnet/bin/media/audio_server/standard_output_base.h"
 
+#include <limits>
+
 #include <fbl/auto_call.h>
 #include <fbl/auto_lock.h>
-#include <limits>
 
 #include "garnet/bin/media/audio_server/audio_link.h"
 #include "garnet/bin/media/audio_server/audio_renderer_format_info.h"
@@ -34,35 +35,31 @@ StandardOutputBase::StandardOutputBase(AudioDeviceManager* manager)
 
 StandardOutputBase::~StandardOutputBase() {}
 
-MediaResult StandardOutputBase::Init() {
-  MediaResult res = AudioOutput::Init();
-  if (res != MediaResult::OK) {
+zx_status_t StandardOutputBase::Init() {
+  zx_status_t res = AudioOutput::Init();
+  if (res != ZX_OK) {
     return res;
   }
 
   mix_timer_ = ::dispatcher::Timer::Create();
   if (mix_timer_ == nullptr) {
-    return MediaResult::INSUFFICIENT_RESOURCES;
+    return ZX_ERR_NO_MEMORY;
   }
 
-  // clang-format off
   ::dispatcher::Timer::ProcessHandler process_handler(
-    [ output = fbl::WrapRefPtr(this) ]
-    (::dispatcher::Timer * timer) -> zx_status_t {
-      OBTAIN_EXECUTION_DOMAIN_TOKEN(token, output->mix_domain_);
-      output->Process();
-      return ZX_OK;
-    });
-  // clang-format on
+      [output =
+           fbl::WrapRefPtr(this)](::dispatcher::Timer* timer) -> zx_status_t {
+        OBTAIN_EXECUTION_DOMAIN_TOKEN(token, output->mix_domain_);
+        output->Process();
+        return ZX_OK;
+      });
 
-  zx_status_t zx_res =
-      mix_timer_->Activate(mix_domain_, fbl::move(process_handler));
-  if (zx_res != ZX_OK) {
+  res = mix_timer_->Activate(mix_domain_, fbl::move(process_handler));
+  if (res != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to activate mix_timer_ (res " << res << ")";
-    return MediaResult::INTERNAL_ERROR;
   }
 
-  return MediaResult::OK;
+  return res;
 }
 
 void StandardOutputBase::Process() {
@@ -98,18 +95,27 @@ void StandardOutputBase::Process() {
       FXL_DCHECK(output_formatter_);
       FXL_DCHECK(cur_mix_job_.buf_frames <= mix_buf_frames_);
 
-      // Fill the intermediate buffer with silence.
-      size_t bytes_to_zero = sizeof(int32_t) * cur_mix_job_.buf_frames *
-                             output_formatter_->channels();
-      ::memset(mix_buf_.get(), 0, bytes_to_zero);
+      // If we are not muted, actually do the mix.  Otherwise, just fill the
+      // final buffer with silence.  Do not set the 'mixed' flag if we are
+      // muted.  This is our signal that we still need to trim our sources
+      // (something that happens automatically if we mix).
+      if (!cur_mix_job_.sw_output_muted) {
+        // Fill the intermediate buffer with silence.
+        size_t bytes_to_zero = sizeof(mix_buf_[0]) * cur_mix_job_.buf_frames *
+                               output_formatter_->channels();
+        ::memset(mix_buf_.get(), 0, bytes_to_zero);
 
-      // Mix each renderer into the intermediate buffer, then clip/format into
-      // the final buffer.
-      ForeachLink(TaskType::Mix);
-      output_formatter_->ProduceOutput(mix_buf_.get(), cur_mix_job_.buf,
-                                       cur_mix_job_.buf_frames);
+        // Mix each renderer into the intermediate buffer, then clip/format into
+        // the final buffer.
+        ForeachLink(TaskType::Mix);
+        output_formatter_->ProduceOutput(mix_buf_.get(), cur_mix_job_.buf,
+                                         cur_mix_job_.buf_frames);
+        mixed = true;
+      } else {
+        output_formatter_->FillWithSilence(cur_mix_job_.buf,
+                                           cur_mix_job_.buf_frames);
+      }
 
-      mixed = true;
     } while (FinishMixJob(cur_mix_job_));
   }
 
@@ -193,7 +199,7 @@ void StandardOutputBase::SetupMixBuffer(uint32_t max_mix_frames) {
                                    output_formatter_->channels());
 
   mix_buf_frames_ = max_mix_frames;
-  mix_buf_.reset(new int32_t[mix_buf_frames_ * output_formatter_->channels()]);
+  mix_buf_.reset(new float[mix_buf_frames_ * output_formatter_->channels()]);
 }
 
 void StandardOutputBase::ForeachLink(TaskType task_type) {
@@ -276,7 +282,10 @@ void StandardOutputBase::ForeachLink(TaskType task_type) {
 
       // Capture the amplitude to apply for the next bit of audio, recomputing
       // as needed.
-      info->amplitude_scale = packet_link->gain().GetGainScale(db_gain());
+      if (task_type == TaskType::Mix) {
+        info->amplitude_scale =
+            packet_link->gain().GetGainScale(cur_mix_job_.sw_output_db_gain);
+      }
 
       // Now process the packet which is at the front of the renderer's queue.
       // If the packet has been entirely consumed, pop it off the front and
@@ -355,8 +364,8 @@ bool StandardOutputBase::ProcessMix(
   }
 
   uint32_t frames_left = cur_mix_job_.buf_frames - cur_mix_job_.frames_produced;
-  int32_t* buf = mix_buf_.get() +
-                 (cur_mix_job_.frames_produced * output_formatter_->channels());
+  float* buf = mix_buf_.get() +
+               (cur_mix_job_.frames_produced * output_formatter_->channels());
 
   // Figure out where the first and last sampling points of this job are,
   // expressed in fractional renderer frames.

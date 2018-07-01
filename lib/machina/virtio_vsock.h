@@ -15,7 +15,7 @@
 
 #include "garnet/lib/machina/virtio_device.h"
 #include "garnet/lib/machina/virtio_queue_waiter.h"
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 
 namespace machina {
@@ -28,7 +28,7 @@ class VirtioVsock
       public fuchsia::guest::SocketEndpoint,
       public fuchsia::guest::SocketAcceptor {
  public:
-  VirtioVsock(component::ApplicationContext* context, const PhysMem&,
+  VirtioVsock(fuchsia::sys::StartupContext* context, const PhysMem&,
               async_t* async);
 
   uint32_t guest_cid() const;
@@ -72,10 +72,18 @@ class VirtioVsock
              (key.remote_port << 16);
     }
   };
-  struct Connection {
+  class Connection {
+   public:
     ~Connection();
 
-    uint16_t op = 0;
+    // The number of bytes the guest expects us to have in our socket buffer.
+    // This is the last credit_update sent minus any bytes we've received since
+    // that update was sent.
+    //
+    // When this is 0 we'll need to send a CREDIT_UPDATE once buffer space has
+    // been free'd so that the guest knows it can resume transmitting.
+    size_t reported_buf_avail = 0;
+
     uint32_t flags = 0;
     uint32_t rx_cnt = 0;
     uint32_t tx_cnt = 0;
@@ -87,9 +95,15 @@ class VirtioVsock
     async::Wait tx_wait;
     fuchsia::guest::SocketAcceptor::AcceptCallback acceptor;
 
+    uint16_t op() const { return op_; }
+    void UpdateOp(uint16_t op);
+
     uint32_t peer_free() const {
       return peer_buf_alloc - (tx_cnt - peer_fwd_cnt);
     }
+
+   private:
+    uint16_t op_ = VIRTIO_VSOCK_OP_REQUEST;
   };
   using ConnectionMap =
       std::unordered_map<ConnectionKey, fbl::unique_ptr<Connection>,
@@ -143,7 +157,6 @@ class VirtioVsock
   mutable fbl::Mutex mutex_;
   ConnectionMap connections_ __TA_GUARDED(mutex_);
   ConnectionSet readable_ __TA_GUARDED(mutex_);
-  ConnectionSet writable_ __TA_GUARDED(mutex_);
   // NOTE(abdulla): We ignore the event queue, as we don't support VM migration.
 
   fidl::BindingSet<fuchsia::guest::SocketAcceptor> acceptor_bindings_;

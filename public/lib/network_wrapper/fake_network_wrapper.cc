@@ -15,24 +15,26 @@
 
 namespace network_wrapper {
 
+namespace http = ::fuchsia::net::oldhttp;
+
 FakeNetworkWrapper::FakeNetworkWrapper(async_t* async) : async_(async) {}
 
 FakeNetworkWrapper::~FakeNetworkWrapper() {}
 
-network::URLRequest* FakeNetworkWrapper::GetRequest() {
+http::URLRequest* FakeNetworkWrapper::GetRequest() {
   return request_received_.get();
 }
 
 void FakeNetworkWrapper::ResetRequest() { request_received_.reset(); }
 
-void FakeNetworkWrapper::SetResponse(network::URLResponse response) {
+void FakeNetworkWrapper::SetResponse(http::URLResponse response) {
   response_to_return_ = fidl::MakeOptional(std::move(response));
 }
 
 void FakeNetworkWrapper::SetSocketResponse(zx::socket body,
                                            uint32_t status_code) {
-  network::URLResponse server_response;
-  server_response.body = network::URLBody::New();
+  http::URLResponse server_response;
+  server_response.body = http::URLBody::New();
   server_response.body->set_stream(std::move(body));
   server_response.status_code = status_code;
   SetResponse(std::move(server_response));
@@ -44,8 +46,8 @@ void FakeNetworkWrapper::SetStringResponse(const std::string& body,
 }
 
 fxl::RefPtr<callback::Cancellable> FakeNetworkWrapper::Request(
-    std::function<network::URLRequest()> request_factory,
-    std::function<void(network::URLResponse)> callback) {
+    fit::function<http::URLRequest()> request_factory,
+    fit::function<void(http::URLResponse)> callback) {
   std::unique_ptr<bool> cancelled = std::make_unique<bool>(false);
 
   bool* cancelled_ptr = cancelled.get();
@@ -55,15 +57,16 @@ fxl::RefPtr<callback::Cancellable> FakeNetworkWrapper::Request(
     return cancellable;
   }
 
-  async::PostTask(async_, [this, cancelled_ptr,
-                           callback = cancellable->WrapCallback(callback),
-                           request_factory = std::move(request_factory)] {
-    if (!*cancelled_ptr) {
-      request_received_ = fidl::MakeOptional(request_factory());
-      callback(std::move(*response_to_return_));
-      response_to_return_.reset();
-    }
-  });
+  async::PostTask(async_,
+                  [this, cancelled_ptr,
+                   callback = cancellable->WrapCallback(std::move(callback)),
+                   request_factory = std::move(request_factory)] {
+                    if (!*cancelled_ptr) {
+                      request_received_ = fidl::MakeOptional(request_factory());
+                      callback(std::move(*response_to_return_));
+                      response_to_return_.reset();
+                    }
+                  });
   return cancellable;
 }
 

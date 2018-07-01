@@ -19,7 +19,7 @@
 #include "garnet/lib/debug_ipc/helper/stream_buffer.h"
 #include "garnet/lib/debug_ipc/message_reader.h"
 #include "garnet/lib/debug_ipc/message_writer.h"
-#include "garnet/public/lib/fxl/logging.h"
+#include "lib/fxl/logging.h"
 
 namespace debug_agent {
 
@@ -29,7 +29,8 @@ DebuggedThread::DebuggedThread(DebuggedProcess* process, zx::thread thread,
       process_(process),
       thread_(std::move(thread)),
       koid_(koid) {
-  if (starting) thread_.resume(ZX_RESUME_EXCEPTION);
+  if (starting)
+    thread_.resume(ZX_RESUME_EXCEPTION);
 }
 
 DebuggedThread::~DebuggedThread() {}
@@ -48,11 +49,12 @@ void DebuggedThread::OnException(uint32_t type) {
         current_breakpoint_->BreakpointStepHasException(koid_, type);
     current_breakpoint_ = nullptr;
     if (completes_bp_step &&
-        after_breakpoint_step_ == AfterBreakpointStep::kContinue) {
+        run_mode_ == debug_ipc::ResumeRequest::How::kContinue) {
       // This step was an internal thing to step over the breakpoint in service
       // of continuing from a breakpoint. Transparently resume the thread since
-      // the client didn't request the step.
-      Resume(debug_ipc::ResumeRequest::How::kContinue);
+      // the client didn't request the step. The step (non-continue) cases will
+      // be handled below in the normal flow since we just finished a step.
+      ResumeForRunMode();
       return;
     }
     // Something else went wrong while stepping (the instruction with the
@@ -68,9 +70,34 @@ void DebuggedThread::OnException(uint32_t type) {
   switch (type) {
     case ZX_EXCP_SW_BREAKPOINT:
       notify.type = debug_ipc::NotifyException::Type::kSoftware;
-      UpdateForSoftwareBreakpoint(&regs);
+      UpdateForSoftwareBreakpoint(&regs, &notify.hit_breakpoints);
       break;
     case ZX_EXCP_HW_BREAKPOINT:
+      if (run_mode_ == debug_ipc::ResumeRequest::How::kContinue) {
+        // This hardware breakpoint has no known source. There's no breakpoint
+        // that corresponds to it and we're not trying to single step. The
+        // CPU doesn't create hardware debug breakpoints without being asked
+        // so something weird is going on.
+        //
+        // This could be due to a race where the user was previously single
+        // stepping and then requested a continue before the single stepping
+        // completed. It could also be a breakpoint that was deleted while in
+        // the process of single-stepping over it. In both cases, the least
+        // confusing thing is to resume automatically.
+        ResumeForRunMode();
+        return;
+      }
+
+      // When stepping in a range, automatically continue as long as we're
+      // still in range.
+      if (run_mode_ == debug_ipc::ResumeRequest::How::kStepInRange &&
+          *arch::IPInRegs(&regs) >= step_in_range_begin_ &&
+          *arch::IPInRegs(&regs) < step_in_range_end_) {
+        ResumeForRunMode();
+        return;
+      }
+
+      // Non-internal single-step, notify client.
       notify.type = debug_ipc::NotifyException::Type::kHardware;
       break;
     default:
@@ -96,36 +123,17 @@ void DebuggedThread::OnException(uint32_t type) {
 
 void DebuggedThread::Pause() {
   if (suspend_reason_ == SuspendReason::kNone) {
-    if (thread_.suspend() == ZX_OK) suspend_reason_ = SuspendReason::kOther;
+    if (thread_.suspend() == ZX_OK)
+      suspend_reason_ = SuspendReason::kOther;
   }
 }
 
-void DebuggedThread::Resume(debug_ipc::ResumeRequest::How how) {
-  if (suspend_reason_ == SuspendReason::kException) {
-    if (current_breakpoint_) {
-      // Going over a breakpoint always requires a single-step first. Then we
-      // either continue or break.
-      SetSingleStep(true);
-      if (how == debug_ipc::ResumeRequest::How::kStepInstruction)
-        after_breakpoint_step_ = AfterBreakpointStep::kBreak;
-      else
-        after_breakpoint_step_ = AfterBreakpointStep::kContinue;
+void DebuggedThread::Resume(const debug_ipc::ResumeRequest& request) {
+  run_mode_ = request.how;
+  step_in_range_begin_ = request.range_begin;
+  step_in_range_end_ = request.range_end;
 
-      current_breakpoint_->BeginStepOver(koid_);
-    } else {
-      SetSingleStep(how == debug_ipc::ResumeRequest::How::kStepInstruction);
-    }
-    suspend_reason_ = SuspendReason::kNone;
-    thread_.resume(ZX_RESUME_EXCEPTION);
-  } else if (suspend_reason_ == SuspendReason::kOther) {
-    // A breakpoint should only be current when it was hit which will be
-    // caused by an exception.
-    FXL_DCHECK(!current_breakpoint_);
-
-    SetSingleStep(how == debug_ipc::ResumeRequest::How::kStepInstruction);
-    suspend_reason_ = SuspendReason::kNone;
-    thread_.resume(0);
-  }
+  ResumeForRunMode();
 }
 
 void DebuggedThread::GetBacktrace(
@@ -134,11 +142,17 @@ void DebuggedThread::GetBacktrace(
   zx_thread_state_general_regs regs;
   zx_status_t status =
       thread_.read_state(ZX_THREAD_STATE_GENERAL_REGS, &regs, sizeof(regs));
-  if (status != ZX_OK) return;
+  if (status != ZX_OK)
+    return;
 
   constexpr size_t kMaxStackDepth = 256;
   UnwindStack(process_->process(), thread_, *arch::IPInRegs(&regs),
               *arch::SPInRegs(&regs), kMaxStackDepth, frames);
+}
+
+void DebuggedThread::GetRegisters(
+    std::vector<debug_ipc::Register>* registers) const {
+  arch::GetRegisterStateFromCPU(thread_, registers);
 }
 
 void DebuggedThread::SendThreadNotification() const {
@@ -155,27 +169,26 @@ void DebuggedThread::SendThreadNotification() const {
   debug_agent_->stream()->Write(writer.MessageComplete());
 }
 
+void DebuggedThread::WillDeleteProcessBreakpoint(ProcessBreakpoint* bp) {
+  if (current_breakpoint_ == bp)
+    current_breakpoint_ = nullptr;
+}
+
 void DebuggedThread::UpdateForSoftwareBreakpoint(
-    zx_thread_state_general_regs* regs) {
+    zx_thread_state_general_regs* regs,
+    std::vector<debug_ipc::BreakpointStats>* hit_breakpoints) {
   uint64_t breakpoint_address =
       arch::BreakpointInstructionForExceptionAddress(*arch::IPInRegs(regs));
 
-  current_breakpoint_ =
+  ProcessBreakpoint* found_bp =
       process_->FindProcessBreakpointForAddr(breakpoint_address);
-  if (current_breakpoint_) {
-    // When the program hits one of our breakpoints, set the IP back to
-    // the exact address that triggered the breakpoint. When the thread
-    // resumes, this is the address that it will resume from (after
-    // putting back the original instruction), and will be what the client
-    // wants to display to the user.
-    *arch::IPInRegs(regs) = breakpoint_address;
-    zx_status_t status =
-        thread_.write_state(ZX_THREAD_STATE_GENERAL_REGS, regs,
-                            sizeof(zx_thread_state_general_regs));
-    if (status != ZX_OK) {
-      fprintf(stderr, "Warning: could not update IP on thread, error = %d.",
-              static_cast<int>(status));
-    }
+  if (found_bp) {
+    // Our software breakpoint.
+    UpdateForHitProcessBreakpoint(found_bp, regs, hit_breakpoints);
+
+    // The found_bp could have been deleted if it was a one-shot, so must
+    // not be dereferenced below this.
+    found_bp = nullptr;
   } else {
     // Hit a software breakpoint that doesn't correspond to any current
     // breakpoint.
@@ -204,6 +217,61 @@ void DebuggedThread::UpdateForSoftwareBreakpoint(
       // we're not set up to handle. Err on the side of telling the user about
       // the exception.
     }
+  }
+}
+
+void DebuggedThread::UpdateForHitProcessBreakpoint(
+    ProcessBreakpoint* process_breakpoint, zx_thread_state_general_regs* regs,
+    std::vector<debug_ipc::BreakpointStats>* hit_breakpoints) {
+  current_breakpoint_ = process_breakpoint;
+
+  process_breakpoint->OnHit(hit_breakpoints);
+
+  // When the program hits one of our breakpoints, set the IP back to
+  // the exact address that triggered the breakpoint. When the thread
+  // resumes, this is the address that it will resume from (after
+  // putting back the original instruction), and will be what the client
+  // wants to display to the user.
+  *arch::IPInRegs(regs) = process_breakpoint->address();
+  zx_status_t status = thread_.write_state(
+      ZX_THREAD_STATE_GENERAL_REGS, regs, sizeof(zx_thread_state_general_regs));
+  if (status != ZX_OK) {
+    fprintf(stderr, "Warning: could not update IP on thread, error = %d.",
+            static_cast<int>(status));
+  }
+
+  // Delete any one-shot breakpoints. Since there can be multiple Breakpoints
+  // (some one-shot, some not) referring to the current ProcessBreakpoint, this
+  // operation could delete the ProcessBreakpoint or it could not. If it does,
+  // our observer will be told and current_breakpoint_ will be cleared.
+  for (const auto& stats : *hit_breakpoints) {
+    if (stats.should_delete)
+      process_->debug_agent()->RemoveBreakpoint(stats.breakpoint_id);
+  }
+}
+
+void DebuggedThread::ResumeForRunMode() {
+  if (suspend_reason_ == SuspendReason::kException) {
+    if (current_breakpoint_) {
+      // Going over a breakpoint always requires a single-step first. Then we
+      // continue according to run_mode_.
+      SetSingleStep(true);
+      current_breakpoint_->BeginStepOver(koid_);
+    } else {
+      // All non-continue resumptions require single stepping.
+      SetSingleStep(run_mode_ != debug_ipc::ResumeRequest::How::kContinue);
+    }
+    suspend_reason_ = SuspendReason::kNone;
+    thread_.resume(ZX_RESUME_EXCEPTION);
+  } else if (suspend_reason_ == SuspendReason::kOther) {
+    // A breakpoint should only be current when it was hit which will be
+    // caused by an exception.
+    FXL_DCHECK(!current_breakpoint_);
+
+    // All non-continue resumptions require single stepping.
+    SetSingleStep(run_mode_ != debug_ipc::ResumeRequest::How::kContinue);
+    suspend_reason_ = SuspendReason::kNone;
+    thread_.resume(0);
   }
 }
 

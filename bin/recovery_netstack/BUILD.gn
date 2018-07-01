@@ -10,7 +10,10 @@ rustc_binary("bin") {
   with_unit_tests = true
 
   deps = [
-    "//third_party/rust-crates/rustc_deps:byteorder"
+    "//garnet/public/rust/crates/zerocopy",
+    "//third_party/rust-crates/rustc_deps:byteorder",
+    "//third_party/rust-crates/rustc_deps:failure",
+    "//third_party/rust-crates/rustc_deps:rand"
   ]
 }
 
@@ -20,9 +23,4 @@ package("recovery_netstack") {
   ]
 
   binary = "rust_crates/recovery_netstack"
-
-  meta = [{
-    path = rebase_path("//garnet/bin/appmgr/legacy_flat_exported_dir")
-    dest = "legacy_flat_exported_dir"
-  }]
 }

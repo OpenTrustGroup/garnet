@@ -5,12 +5,12 @@
 #ifndef LIB_UI_SKETCHY_CLIENT_CANVAS_H_
 #define LIB_UI_SKETCHY_CLIENT_CANVAS_H_
 
-#include <lib/async-loop/cpp/loop.h>
 #include <fuchsia/ui/sketchy/cpp/fidl.h>
+#include <lib/async-loop/cpp/loop.h>
 
-#include "lib/app/cpp/application_context.h"
-#include "lib/ui/scenic/client/resources.h"
-#include "lib/ui/scenic/client/session.h"
+#include "lib/app/cpp/startup_context.h"
+#include "lib/ui/scenic/cpp/resources.h"
+#include "lib/ui/scenic/cpp/session.h"
 #include "lib/ui/sketchy/client/resources.h"
 
 namespace sketchy_lib {
@@ -18,9 +18,9 @@ namespace sketchy_lib {
 // Convenient C++ wrapper for ::fuchsia::ui::sketchy::Canvas service.
 class Canvas final {
  public:
-  Canvas(component::ApplicationContext* context, async::Loop* loop);
+  Canvas(fuchsia::sys::StartupContext* context, async::Loop* loop);
   Canvas(::fuchsia::ui::sketchy::CanvasPtr canvas, async::Loop* loop);
-  void Present(uint64_t time, scenic_lib::Session::PresentCallback callback);
+  void Present(uint64_t time, scenic::Session::PresentCallback callback);
 
  private:
   friend class Resource;

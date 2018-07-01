@@ -38,6 +38,7 @@ executable("media_player_bin") {
     "//garnet/public/lib/media/timeline",
     "//garnet/public/lib/ui/view_framework",
     "//garnet/public/lib/ui/views/fidl:v1",
+    "//zircon/public/lib/async-loop-cpp",
     "//zircon/public/lib/trace-provider",
   ]
 }
@@ -48,15 +49,25 @@ executable("tests") {
   testonly = true
 
   sources = [
-    "test/fake_audio_renderer.cc",
-    "test/fake_audio_renderer.h",
-    "test/fake_wav_reader.cc",
-    "test/fake_wav_reader.h",
+    "test/fakes/fake_audio_renderer.cc",
+    "test/fakes/fake_audio_renderer.h",
+    "test/fakes/fake_scenic.cc",
+    "test/fakes/fake_scenic.h",
+    "test/fakes/fake_session.cc",
+    "test/fakes/fake_session.h",
+    "test/fakes/fake_view.cc",
+    "test/fakes/fake_view.h",
+    "test/fakes/fake_view_manager.cc",
+    "test/fakes/fake_view_manager.h",
+    "test/fakes/fake_wav_reader.cc",
+    "test/fakes/fake_wav_reader.h",
+    "test/fakes/packet_info.cc",
+    "test/fakes/packet_info.h",
     "test/main.cc",
-    "test/media_player_test_unattended.cc",
-    "test/media_player_test_unattended.h",
     "test/media_player_test_params.cc",
     "test/media_player_test_params.h",
+    "test/media_player_test_unattended.cc",
+    "test/media_player_test_unattended.h",
     "test/media_player_test_view.cc",
     "test/media_player_test_view.h",
   ]
@@ -74,6 +85,7 @@ executable("tests") {
     "//garnet/public/lib/media/transport",
     "//garnet/public/lib/ui/view_framework:view_provider",
     "//garnet/public/lib/url",
+    "//zircon/public/lib/async-loop-cpp",
     "//zircon/public/lib/hid",
   ]
 }

@@ -21,6 +21,7 @@
 #include <sync/completion.h>
 
 #include "core.h"
+#include "device.h"
 #include "fwil_types.h"
 #include "linuxisms.h"
 #include "workqueue.h"
@@ -134,11 +135,11 @@ struct afx_hdl {
  */
 struct brcmf_p2p_info {
     struct brcmf_cfg80211_info* cfg;
-    unsigned long status;
+    atomic_ulong status;
     uint8_t dev_addr[ETH_ALEN];
     uint8_t int_addr[ETH_ALEN];
     struct p2p_bss bss_idx[P2PAPI_BSSCFG_MAX];
-    struct timer_list listen_timer;
+    brcmf_timer_info_t listen_timer;
     uint8_t listen_channel;
     struct ieee80211_channel remain_on_channel;
     uint32_t remain_on_channel_cookie;
@@ -155,11 +156,11 @@ struct brcmf_p2p_info {
 
 zx_status_t brcmf_p2p_attach(struct brcmf_cfg80211_info* cfg, bool p2pdev_forced);
 void brcmf_p2p_detach(struct brcmf_p2p_info* p2p);
-zx_status_t brcmf_p2p_add_vif(struct wiphy* wiphy, const char* name,
-                              unsigned char name_assign_type, enum nl80211_iftype type,
+zx_status_t brcmf_p2p_add_vif(struct wiphy* wiphy, const char* name, enum nl80211_iftype type,
                               struct vif_params* params, struct wireless_dev** vif_out);
 zx_status_t brcmf_p2p_del_vif(struct wiphy* wiphy, struct wireless_dev* wdev);
-zx_status_t brcmf_p2p_ifchange(struct brcmf_cfg80211_info* cfg, enum brcmf_fil_p2p_if_types if_type);
+zx_status_t brcmf_p2p_ifchange(struct brcmf_cfg80211_info* cfg,
+                               enum brcmf_fil_p2p_if_types if_type);
 void brcmf_p2p_ifp_removed(struct brcmf_if* ifp, bool rtnl_locked);
 zx_status_t brcmf_p2p_start_device(struct wiphy* wiphy, struct wireless_dev* wdev);
 void brcmf_p2p_stop_device(struct wiphy* wiphy, struct wireless_dev* wdev);

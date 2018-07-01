@@ -2,14 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_DEBUG_AGENT_PROCESS_BREAKPOINT_H_
+#define GARNET_BIN_DEBUG_AGENT_PROCESS_BREAKPOINT_H_
 
 #include <map>
 
 #include "garnet/bin/debug_agent/arch.h"
 #include "garnet/bin/debug_agent/process_memory_accessor.h"
 #include "garnet/lib/debug_ipc/records.h"
-#include "garnet/public/lib/fxl/macros.h"
+#include "lib/fxl/macros.h"
 
 namespace debug_agent {
 
@@ -29,8 +30,7 @@ class ProcessBreakpoint {
   // can report errors.
   explicit ProcessBreakpoint(Breakpoint* breakpoint,
                              ProcessMemoryAccessor* memory_accessor,
-                             zx_koid_t process_koid,
-                             uint64_t address);
+                             zx_koid_t process_koid, uint64_t address);
   ~ProcessBreakpoint();
 
   // Call immediately after construction. If it returns failure, the breakpoint
@@ -51,6 +51,15 @@ class ProcessBreakpoint {
   // replacement from this breakpoint if it appears in the given block.
   // Otherwise does nothing.
   void FixupMemoryBlock(debug_ipc::MemoryBlock* block);
+
+  // Notification that this breakpoint was just hit. All affected Breakpoints
+  // will have their stats updated and placed in the *stats param.
+  //
+  // IMPORTANT: The caller should check the stats and for any breakpoint
+  // with "should_delete" set, remove the breakpoints. This can't conveniently
+  // be done within this call because it will cause this ProcessBreakpoint
+  // object to be deleted from within itself.
+  void OnHit(std::vector<debug_ipc::BreakpointStats>* hit_breakpoints);
 
   // Call before single-stepping over a breakpoint. This will remove the
   // breakpoint such that it will be put back when the exception is hit and
@@ -128,3 +137,5 @@ class ProcessBreakpoint {
 };
 
 }  // namespace debug_agent
+
+#endif  // GARNET_BIN_DEBUG_AGENT_PROCESS_BREAKPOINT_H_

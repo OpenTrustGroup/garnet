@@ -7,7 +7,7 @@
 
 #include <memory>
 
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fxl/macros.h"
 #include "lib/ui/view_framework/view_provider_service.h"
 
@@ -19,10 +19,13 @@ namespace mozart {
 class ViewProviderApp {
  public:
   explicit ViewProviderApp(ViewFactory factory);
+  // Does not take ownership of |startup_context|.
+  ViewProviderApp(fuchsia::sys::StartupContext* startup_context,
+                  ViewFactory factory);
   ~ViewProviderApp();
 
  private:
-  std::unique_ptr<component::ApplicationContext> application_context_;
+  std::unique_ptr<fuchsia::sys::StartupContext> startup_context_;
   ViewProviderService service_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(ViewProviderApp);

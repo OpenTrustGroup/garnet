@@ -11,26 +11,20 @@
 
 #include "garnet/bin/zxdb/client/err.h"
 #include "garnet/bin/zxdb/client/system_impl.h"
-#include "garnet/lib/debug_ipc/client_protocol.h"
-#include "garnet/lib/debug_ipc/helper/buffered_fd.h"
-#include "garnet/lib/debug_ipc/helper/message_loop.h"
-#include "garnet/lib/debug_ipc/helper/stream_buffer.h"
-#include "garnet/lib/debug_ipc/message_reader.h"
-#include "garnet/lib/debug_ipc/message_writer.h"
-#include "garnet/lib/debug_ipc/protocol.h"
-#include "garnet/public/lib/fxl/files/unique_fd.h"
 #include "garnet/public/lib/fxl/memory/ref_ptr.h"
 #include "garnet/public/lib/fxl/memory/weak_ptr.h"
-#include "garnet/public/lib/fxl/strings/string_printf.h"
 
 namespace debug_ipc {
 class BufferedFD;
+class StreamBuffer;
 }
 
 namespace zxdb {
 
 class ArchInfo;
 class ProcessImpl;
+class RemoteAPI;
+class RemoteAPIImpl;
 class ThreadImpl;
 
 // The session object manages the connection with the remote debug agent.
@@ -40,11 +34,18 @@ class Session {
   // the callback associated with a Connect() call is issued.
   Session();
 
+  // Creates a session using a custom RemoteAPI implementation. Use for tests
+  // to mock out sending IPC messages.
+  explicit Session(std::unique_ptr<RemoteAPI> remote_api);
+
   // Creates with a previously-allocated connection. The pointer must outlive
   // this class. In this mode, the stream can not be disconnected.
   explicit Session(debug_ipc::StreamBuffer* stream);
 
   ~Session();
+
+  // The RempteAPI for sending messages to the debug_agent.
+  RemoteAPI* remote_api() { return remote_api_.get(); }
 
   // Notification that data is available to be read on the StreamBuffer.
   void OnStreamReadable();
@@ -54,8 +55,7 @@ class Session {
 
   // Connects to a remote system. Calling when there is already a connection
   // will issue the callback with an error.
-  void Connect(const std::string& host,
-               uint16_t port,
+  void Connect(const std::string& host, uint16_t port,
                std::function<void(const Err&)> callback);
 
   // Disconnects from the remote system. Calling when there is no connection
@@ -70,6 +70,15 @@ class Session {
   // Access to the singleton corresponding to the debugged system.
   System& system() { return system_; }
 
+  // Provide access to the underlying system implementation. This is needed
+  // for some client tests, but should not be used outside of the client
+  // directory.
+  //
+  // TODO(brettw) probably this class needs to be separated into Session and
+  // SessionImpl and which one of those you have controls which System object
+  // you can get.
+  SystemImpl& system_impl() { return system_; }
+
   // Architecture of the attached system. Will be "kUnknown" when not
   // connected.
   debug_ipc::Arch arch() const { return arch_; }
@@ -78,21 +87,10 @@ class Session {
   // connected.
   const ArchInfo* arch_info() const { return arch_info_.get(); }
 
-  // Sends a message with an asynchronous reply.
-  //
-  // The callback will be issued with an Err struct. If the Err object
-  // indicates an error, the request has failed and the reply data will not be
-  // set (it will contain the default-constructed data).
-  //
-  // The callback will always be issued asynchronously (not from withing the
-  // Send() function itself).
-  template <typename SendMsgType, typename RecvMsgType>
-  void Send(const SendMsgType& send_msg,
-            std::function<void(const Err&, RecvMsgType)> callback);
-
  private:
   class PendingConnection;
   friend PendingConnection;
+  friend RemoteAPIImpl;
 
   // Nonspecific callback type. Implemented by SessionDispatchCallback (with
   // the type-specific parameter pre-bound). The uint32_t is the transaction
@@ -109,8 +107,7 @@ class Session {
 
   // Callback when a connection has been successful or failed.
   void ConnectionResolved(fxl::RefPtr<PendingConnection> pending,
-                          const Err& err,
-                          const debug_ipc::HelloReply& reply,
+                          const Err& err, const debug_ipc::HelloReply& reply,
                           std::unique_ptr<debug_ipc::BufferedFD> buffer,
                           std::function<void(const Err&)> callback);
 
@@ -121,6 +118,8 @@ class Session {
   // This could be null when the connection_storage_ isn't when we're waiting
   // for the initial connection.
   debug_ipc::StreamBuffer* stream_ = nullptr;
+
+  std::unique_ptr<RemoteAPI> remote_api_;
 
   // When using non-persistent connections (no connection passed in via the
   // constructor), this will hold the underlying OS connection that is used
@@ -143,62 +142,5 @@ class Session {
 
   fxl::WeakPtrFactory<Session> weak_factory_;
 };
-
-template <typename SendMsgType, typename RecvMsgType>
-void Session::Send(const SendMsgType& send_msg,
-                   std::function<void(const Err&, RecvMsgType)> callback) {
-  uint32_t transaction_id = next_transaction_id_;
-  next_transaction_id_++;
-
-  if (!stream_) {
-    // No connection, asynchronously issue the error.
-    if (callback) {
-      debug_ipc::MessageLoop::Current()->PostTask([callback]() {
-        callback(
-            Err(ErrType::kNoConnection, "No connection to debugged system."),
-            RecvMsgType());
-      });
-    }
-    return;
-  }
-
-  debug_ipc::MessageWriter writer(sizeof(SendMsgType));
-  debug_ipc::WriteRequest(send_msg, transaction_id, &writer);
-
-  std::vector<char> serialized = writer.MessageComplete();
-  stream_->Write(std::move(serialized));
-
-  // This is the reply callback that unpacks the data in a vector, converts it
-  // to the requested RecvMsgType struct, and issues the callback.
-  Callback dispatch_callback = [callback = std::move(callback)](
-      const Err& err, std::vector<char> data) {
-    RecvMsgType reply;
-    if (err.has_error()) {
-      // Forward the error and ignore all data.
-      if (callback)
-        callback(err, std::move(reply));
-      return;
-    }
-
-    debug_ipc::MessageReader reader(std::move(data));
-
-    uint32_t transaction_id = 0;
-    Err deserialization_err;
-    if (!debug_ipc::ReadReply(&reader, &reply, &transaction_id)) {
-      reply = RecvMsgType();  // Could be in a half-read state.
-      deserialization_err =
-          Err(ErrType::kCorruptMessage,
-              fxl::StringPrintf("Corrupt reply message for transaction %u.",
-                                transaction_id));
-    }
-
-    if (callback)
-      callback(deserialization_err, std::move(reply));
-  };
-
-  pending_.emplace(std::piecewise_construct,
-                   std::forward_as_tuple(transaction_id),
-                   std::forward_as_tuple(std::move(dispatch_callback)));
-}
 
 }  // namespace zxdb

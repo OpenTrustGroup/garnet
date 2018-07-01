@@ -21,7 +21,7 @@ static constexpr uint32_t kMaxBufferSizeMegabytes = 64;
 
 }  // namespace
 
-TraceManager::TraceManager(component::ApplicationContext* context,
+TraceManager::TraceManager(fuchsia::sys::StartupContext* context,
                            const Config& config)
     : context_(context), config_(config) {
   // TODO(jeffbrown): We should do this in StartTracing() and take care
@@ -33,7 +33,8 @@ TraceManager::TraceManager(component::ApplicationContext* context,
 
 TraceManager::~TraceManager() = default;
 
-void TraceManager::StartTracing(TraceOptions options, zx::socket output,
+void TraceManager::StartTracing(fuchsia::tracing::TraceOptions options,
+                                zx::socket output,
                                 StartTracingCallback start_callback) {
   if (session_) {
     FXL_LOG(ERROR) << "Trace already in progress";
@@ -55,7 +56,7 @@ void TraceManager::StartTracing(TraceOptions options, zx::socket output,
   }
 
   session_->WaitForProvidersToStart(
-      start_callback, zx::msec(options.start_timeout_milliseconds));
+      std::move(start_callback), zx::msec(options.start_timeout_milliseconds));
 }
 
 void TraceManager::StopTracing() {
@@ -72,9 +73,10 @@ void TraceManager::StopTracing() {
 }
 
 void TraceManager::GetKnownCategories(GetKnownCategoriesCallback callback) {
-  fidl::VectorPtr<KnownCategory> known_categories;
+  fidl::VectorPtr<fuchsia::tracing::KnownCategory> known_categories;
   for (const auto& it : config_.known_categories()) {
-    known_categories.push_back(KnownCategory{it.first, it.second});
+    known_categories.push_back(
+        fuchsia::tracing::KnownCategory{it.first, it.second});
   }
   callback(std::move(known_categories));
 }
@@ -119,10 +121,10 @@ void TraceManager::LaunchConfiguredProviders() {
       }
       FXL_VLOG(2) << "Args:" << args;
     }
-    component::LaunchInfo launch_info;
+    fuchsia::sys::LaunchInfo launch_info;
     launch_info.url = pair.second->url;
     fidl::Clone(pair.second->arguments, &launch_info.arguments);
-    context_->launcher()->CreateApplication(std::move(launch_info), nullptr);
+    context_->launcher()->CreateComponent(std::move(launch_info), nullptr);
   }
 }
 

@@ -44,6 +44,8 @@ std::ostream& operator<<(std::ostream& stream,
       return stream << "Detach";
     case Command::Tag::kDetachChildren:
       return stream << "DetachChildren";
+    case Command::Tag::kSetOpacity:
+      return stream << "SetOpacity";
     case Command::Tag::kSetShape:
       return stream << "SetShape";
     case Command::Tag::kSetMaterial:
@@ -52,8 +54,8 @@ std::ostream& operator<<(std::ostream& stream,
       return stream << "SetClip";
     case Command::Tag::kSetHitTestBehavior:
       return stream << "SetHitTestBehavior";
-    case Command::Tag::kSetSpaceProperties:
-      return stream << "SetSpaceProperties";
+    case Command::Tag::kSetViewProperties:
+      return stream << "SetViewProperties";
     case Command::Tag::kSetCamera:
       return stream << "SetCamera";
     case Command::Tag::kSetCameraTransform:
@@ -103,10 +105,9 @@ std::ostream& operator<<(std::ostream& stream,
   }
 }
 
-std::ostream& operator<<(
-    std::ostream& stream,
-    const fuchsia::ui::gfx::CreateResourceCommand& command) {
-  stream << "CreateResourceCommand(id:" << command.id << " ";
+std::ostream& operator<<(std::ostream& stream,
+                         const fuchsia::ui::gfx::CreateResourceCmd& command) {
+  stream << "CreateResourceCmd(id:" << command.id << " ";
   switch (command.resource.Which()) {
     case ResourceArgs::Tag::kMemory:
       stream << "Memory";
@@ -153,20 +154,23 @@ std::ostream& operator<<(
     case ResourceArgs::Tag::kMaterial:
       stream << "Material";
       break;
+    case ResourceArgs::Tag::kView:
+      stream << "View";
+      break;
+    case ResourceArgs::Tag::kViewHolder:
+      stream << "ViewHolder";
+      break;
     case ResourceArgs::Tag::kClipNode:
       stream << "ClipNode";
       break;
     case ResourceArgs::Tag::kEntityNode:
       stream << "EntityNode";
       break;
+    case ResourceArgs::Tag::kOpacityNode:
+      stream << "OpacityNode";
+      break;
     case ResourceArgs::Tag::kShapeNode:
       stream << "ShapeNode";
-      break;
-    case ResourceArgs::Tag::kSpaceNode:
-      stream << "SpaceNode";
-      break;
-    case ResourceArgs::Tag::kSpaceHolderNode:
-      stream << "SpaceHolderNode";
       break;
     case ResourceArgs::Tag::kDisplayCompositor:
       stream << "DisplayCompositor";
@@ -190,10 +194,9 @@ std::ostream& operator<<(
   return stream << ")";
 }
 
-std::ostream& operator<<(
-    std::ostream& stream,
-    const fuchsia::ui::gfx::SetRendererParamCommand& command) {
-  stream << "SetRendererParamCommand(id=" << command.renderer_id << " ";
+std::ostream& operator<<(std::ostream& stream,
+                         const fuchsia::ui::gfx::SetRendererParamCmd& command) {
+  stream << "SetRendererParamCmd(id=" << command.renderer_id << " ";
   switch (command.param.Which()) {
     case RendererParam::Tag::kShadowTechnique:
       stream << "shadow_technique=";
@@ -230,15 +233,15 @@ std::ostream& operator<<(
 }
 
 std::ostream& operator<<(std::ostream& stream,
-                         const fuchsia::ui::gfx::SetTextureCommand& command) {
-  stream << "SetTextureCommand(id:" << command.material_id
+                         const fuchsia::ui::gfx::SetTextureCmd& command) {
+  stream << "SetTextureCmd(id:" << command.material_id
          << " texture: " << command.texture_id;
   return stream << ")";
 }
 
 std::ostream& operator<<(std::ostream& stream,
-                         const fuchsia::ui::gfx::SetColorCommand& command) {
-  stream << "SetColorCommand(id:" << command.material_id;
+                         const fuchsia::ui::gfx::SetColorCmd& command) {
+  stream << "SetColorCmd(id:" << command.material_id;
   return stream << ")";
 }
 

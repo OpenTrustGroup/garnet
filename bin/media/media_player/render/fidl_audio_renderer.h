@@ -5,7 +5,7 @@
 #ifndef GARNET_BIN_MEDIA_MEDIA_PLAYER_RENDER_FIDL_AUDIO_RENDERER_H_
 #define GARNET_BIN_MEDIA_MEDIA_PLAYER_RENDER_FIDL_AUDIO_RENDERER_H_
 
-#include <media/cpp/fidl.h>
+#include <fuchsia/media/cpp/fidl.h>
 #include <lib/async/cpp/task.h>
 
 #include "garnet/bin/media/media_player/metrics/packet_timing_tracker.h"
@@ -26,9 +26,9 @@ class FidlAudioRenderer
       public std::enable_shared_from_this<FidlAudioRenderer> {
  public:
   static std::shared_ptr<FidlAudioRenderer> Create(
-      media::AudioRenderer2Ptr audio_renderer);
+      fuchsia::media::AudioRenderer2Ptr audio_renderer);
 
-  FidlAudioRenderer(media::AudioRenderer2Ptr audio_renderer);
+  FidlAudioRenderer(fuchsia::media::AudioRenderer2Ptr audio_renderer);
 
   ~FidlAudioRenderer() override;
 
@@ -38,7 +38,7 @@ class FidlAudioRenderer
   void Dump(std::ostream& os) const override;
 
   void FlushInput(bool hold_frame, size_t input_index,
-                  fxl::Closure callback) override;
+                  fit::closure callback) override;
 
   std::shared_ptr<PayloadAllocator> allocator_for_input(
       size_t input_index) override {
@@ -55,10 +55,10 @@ class FidlAudioRenderer
 
   void SetStreamType(const StreamType& stream_type) override;
 
-  void Prime(fxl::Closure callback) override;
+  void Prime(fit::closure callback) override;
 
   void SetTimelineFunction(media::TimelineFunction timeline_function,
-                           fxl::Closure callback) override;
+                           fit::closure callback) override;
 
   void SetGain(float gain) override;
 
@@ -90,11 +90,11 @@ class FidlAudioRenderer
   }
 
   std::vector<std::unique_ptr<StreamTypeSet>> supported_stream_types_;
-  media::AudioRenderer2Ptr audio_renderer_;
+  fuchsia::media::AudioRenderer2Ptr audio_renderer_;
   media::TimelineRate pts_rate_;
   int64_t last_supplied_pts_ns_ = 0;
   int64_t last_departed_pts_ns_ = 0;
-  fxl::Closure prime_callback_;
+  fit::closure prime_callback_;
   uint32_t bytes_per_frame_;
   bool flushed_ = true;
   int64_t min_lead_time_ns_ = ZX_MSEC(100);

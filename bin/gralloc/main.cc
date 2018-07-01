@@ -2,16 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <memory>
 #include <lib/async-loop/cpp/loop.h>
+#include <memory>
 
-#include "lib/app/cpp/application_context.h"
+#include <fuchsia/gralloc/cpp/fidl.h>
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fxl/logging.h"
-#include <gralloc/cpp/fidl.h>
 
-class GrallocImpl : public gralloc::Gralloc {
+class GrallocImpl : public fuchsia::gralloc::Gralloc {
  public:
-  // |gralloc::Gralloc|
+  // |fuchsia::gralloc::Gralloc|
   void Allocate(uint64_t size, AllocateCallback callback) override {
     zx::vmo vmo;
     zx_status_t status = zx::vmo::create(size, 0, &vmo);
@@ -27,18 +27,14 @@ class GrallocImpl : public gralloc::Gralloc {
 
 int main(int argc, const char** argv) {
   async::Loop loop(&kAsyncLoopConfigMakeDefault);
-  std::unique_ptr<component::ApplicationContext> app_context(
-      component::ApplicationContext::CreateFromStartupInfo());
+  std::unique_ptr<fuchsia::sys::StartupContext> app_context(
+      fuchsia::sys::StartupContext::CreateFromStartupInfo());
 
   GrallocImpl grallocator;
 
-  fidl::BindingSet<gralloc::Gralloc> bindings;
+  fidl::BindingSet<fuchsia::gralloc::Gralloc> bindings;
 
-  app_context->outgoing().AddPublicService<gralloc::Gralloc>(
-      [&grallocator,
-       &bindings](fidl::InterfaceRequest<gralloc::Gralloc> request) {
-        bindings.AddBinding(&grallocator, std::move(request));
-      });
+  app_context->outgoing().AddPublicService(bindings.GetHandler(&grallocator));
 
   loop.Run();
 

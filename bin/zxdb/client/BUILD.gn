@@ -8,25 +8,20 @@ static_library("client") {
   public = [
     "arch_info.h",
     "breakpoint.h",
+    "breakpoint_location.h",
     "breakpoint_observer.h",
     "breakpoint_settings.h",
-    "client_object.h",
     "disassembler.h",
-    "err.h",
     "frame.h",
-    "host_utils.h",
+    "input_location.h",
     "memory_dump.h",
     "process.h",
     "process_observer.h",
-    "process_symbols.h",
     "session.h",
-    "symbols/file_line.h",
-    "symbols/location.h",
     "system.h",
     "system_observer.h",
     "target.h",
     "target_observer.h",
-    "target_symbols.h",
     "thread.h",
     "thread_observer.h",
   ]
@@ -36,48 +31,36 @@ static_library("client") {
     "breakpoint.cc",
     "breakpoint_impl.cc",
     "breakpoint_impl.h",
-    "client_object.cc",
+    "breakpoint_location.cc",
+    "breakpoint_location_impl.cc",
+    "breakpoint_location_impl.h",
     "disassembler.cc",
-    "err.cc",
     "frame.cc",
     "frame_impl.cc",
     "frame_impl.h",
-    "host_utils.cc",
     "memory_dump.cc",
     "process.cc",
     "process_impl.cc",
     "process_impl.h",
-    "process_symbols.cc",
-    "process_symbols_impl.cc",
-    "process_symbols_impl.h",
+    "remote_api.cc",
+    "remote_api.h",
+    "remote_api_impl.cc",
+    "remote_api_impl.h",
     "session.cc",
-    "symbols/dwarf_die_decoder.cc",
-    "symbols/dwarf_die_decoder.h",
-    "symbols/file_line.cc",
-    "symbols/location.cc",
-    "symbols/module_symbol_index.cc",
-    "symbols/module_symbol_index.h",
-    "symbols/module_symbol_index_node.cc",
-    "symbols/module_symbol_index_node.h",
-    "symbols/module_symbols.cc",
-    "symbols/module_symbols.h",
     "system.cc",
     "system_impl.cc",
     "system_impl.h",
-    "system_symbols.cc",
-    "system_symbols.h",
     "target.cc",
     "target_impl.cc",
     "target_impl.h",
-    "target_symbols.cc",
-    "target_symbols_impl.cc",
-    "target_symbols_impl.h",
     "thread.cc",
     "thread_impl.cc",
     "thread_impl.h",
   ]
 
   public_deps = [
+    ":common",
+    "symbols",
     "//garnet/lib/debug_ipc:client",
     "//garnet/lib/debug_ipc/helper",
     "//garnet/public/lib/fxl",
@@ -91,26 +74,45 @@ static_library("client") {
   ]
 }
 
+# Shared low-level stuff between "client" and "symbols".
+static_library("common") {
+  public = [
+    "address_range.h",
+    "client_object.h",
+    "err.h",
+    "file_util.h",
+    "host_util.h",
+    "string_util.h",
+  ]
+  sources = [
+    "address_range.cc",
+    "client_object.cc",
+    "err.cc",
+    "file_util.cc",
+    "host_util.cc",
+    "string_util.cc",
+  ]
+
+  public_deps = [
+    "//garnet/public/lib/fxl",
+  ]
+}
+
 source_set("tests") {
   testonly = true
   sources = [
+    "breakpoint_impl_unittest.cc",
     "disassembler_unittest.cc",
+    "file_util_unittest.cc",
     "memory_dump_unittest.cc",
-    "symbols/module_symbol_index_unittest.cc",
-    "symbols/module_symbol_index_node_unittest.cc",
-    "symbols/module_symbols_unittest.cc",
-    "symbols/test_symbol_module.cc",
-    "system_symbols_unittest.cc",
+    "string_util_unittest.cc",
+    "target_impl_unittest.cc",
   ]
 
   deps = [
     ":client",
+    "symbols:test_support",
+    "symbols:tests",
     "//third_party/googletest:gtest",
-    "//third_party/llvm/lib/MC",
-    "//third_party/llvm/lib/Object",
-  ]
-
-  data_deps = [
-    "//garnet/bin/zxdb/client/test_data:copy_test_so(${default_toolchain}-shared)",
   ]
 }

@@ -38,13 +38,12 @@ TEST_F(GfxSystemTest, DISABLED_ScheduleUpdateInOrder) {
   RunLoopUntilIdle();
   EXPECT_EQ(1U, scenic()->num_sessions());
   // Present on the session with presentation_time = 1.
-  fuchsia::ui::scenic::Session::PresentCallback callback = [](auto) {};
-  session->Present(1, CreateEventArray(1), CreateEventArray(1), callback);
+  session->Present(1, CreateEventArray(1), CreateEventArray(1), [](auto) {});
   // Briefly pump the message loop. Expect that the session is not destroyed.
   RunLoopUntilIdle();
   EXPECT_EQ(1U, scenic()->num_sessions());
   // Present with the same presentation time.
-  session->Present(1, CreateEventArray(1), CreateEventArray(1), callback);
+  session->Present(1, CreateEventArray(1), CreateEventArray(1), [](auto) {});
   // Briefly pump the message loop. Expect that the session is not destroyed.
   RunLoopUntilIdle();
   EXPECT_EQ(1U, scenic()->num_sessions());
@@ -71,9 +70,9 @@ TEST_F(GfxSystemTest, DISABLED_ReleaseFences) {
   {
     ::fidl::VectorPtr<fuchsia::ui::scenic::Command> commands;
     commands.push_back(
-        scenic_lib::NewCommand(scenic_lib::NewCreateCircleCommand(1, 50.f)));
+        scenic::NewCommand(scenic::NewCreateCircleCmd(1, 50.f)));
     commands.push_back(
-        scenic_lib::NewCommand(scenic_lib::NewCreateCircleCommand(2, 25.f)));
+        scenic::NewCommand(scenic::NewCreateCircleCmd(2, 25.f)));
 
     session->Enqueue(std::move(commands));
   }
@@ -116,9 +115,9 @@ TEST_F(GfxSystemTest, DISABLED_AcquireAndReleaseFences) {
   {
     ::fidl::VectorPtr<fuchsia::ui::scenic::Command> commands;
     commands.push_back(
-        scenic_lib::NewCommand(scenic_lib::NewCreateCircleCommand(1, 50.f)));
+        scenic::NewCommand(scenic::NewCreateCircleCmd(1, 50.f)));
     commands.push_back(
-        scenic_lib::NewCommand(scenic_lib::NewCreateCircleCommand(2, 25.f)));
+        scenic::NewCommand(scenic::NewCreateCircleCmd(2, 25.f)));
 
     session->Enqueue(std::move(commands));
   }

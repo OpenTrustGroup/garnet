@@ -6,9 +6,8 @@
 
 #include <utility>
 
-#include "lib/fxl/functional/make_copyable.h"
-
-namespace component {
+namespace fuchsia {
+namespace sys {
 
 ServiceProviderImpl::ServiceProviderImpl() {}
 
@@ -49,7 +48,7 @@ void ServiceProviderImpl::ConnectToService(fidl::StringPtr service_name,
 
 void ServiceProviderImpl::SetDefaultServiceConnector(
     DefaultServiceConnector connector) {
-  default_service_connector_ = connector;
+  default_service_connector_ = std::move(connector);
 }
 
 void ServiceProviderImpl::SetDefaultServiceProvider(
@@ -59,11 +58,12 @@ void ServiceProviderImpl::SetDefaultServiceProvider(
     return;
   }
 
-  default_service_connector_ = fxl::MakeCopyable(
+  default_service_connector_ =
       [provider = std::move(provider)](std::string service_name,
                                        zx::channel client_handle) {
         provider->ConnectToService(service_name, std::move(client_handle));
-      });
+      };
 }
 
-}  // namespace component
+}  // namespace sys
+}  // namespace fuchsia

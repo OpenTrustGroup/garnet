@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MEDIA_AUDIO_SERVER_TIMELINE_CONTROL_POINT_H_
+#define GARNET_BIN_MEDIA_AUDIO_SERVER_TIMELINE_CONTROL_POINT_H_
 
 #include <mutex>
 
-#include <media/cpp/fidl.h>
+#include <fuchsia/media/cpp/fidl.h>
+#include <lib/fit/function.h>
 
 #include "garnet/bin/media/util/fidl_publisher.h"
 #include "lib/fidl/cpp/binding.h"
@@ -16,20 +18,21 @@
 namespace media {
 
 // MediaTimelineControlPoint implementation.
-class TimelineControlPoint : public MediaTimelineControlPoint,
-                             public TimelineConsumer {
+class TimelineControlPoint : public fuchsia::media::MediaTimelineControlPoint,
+                             public fuchsia::media::TimelineConsumer {
  public:
   using ProgramRangeSetCallback =
-      std::function<void(uint64_t, int64_t, int64_t)>;
-  using PrimeRequestedCallback = std::function<void(PrimeCallback)>;
-  using ProgressStartedCallback = std::function<void()>;
+      fit::function<void(uint64_t, int64_t, int64_t)>;
+  using PrimeRequestedCallback = fit::function<void(PrimeCallback)>;
+  using ProgressStartedCallback = fit::closure;
 
   TimelineControlPoint();
 
   ~TimelineControlPoint() override;
 
   // Binds to the control point. If a binding exists already, it is closed.
-  void Bind(fidl::InterfaceRequest<MediaTimelineControlPoint> request);
+  void Bind(fidl::InterfaceRequest<fuchsia::media::MediaTimelineControlPoint>
+                request);
 
   // Determines whether the control point is currently bound.
   bool is_bound() { return control_point_binding_.is_bound(); }
@@ -39,17 +42,17 @@ class TimelineControlPoint : public MediaTimelineControlPoint,
 
   // Sets a callback to be called when priming is requested.
   void SetProgramRangeSetCallback(ProgramRangeSetCallback callback) {
-    program_range_set_callback_ = callback;
+    program_range_set_callback_ = std::move(callback);
   }
 
   // Sets a callback to be called when priming is requested.
   void SetPrimeRequestedCallback(PrimeRequestedCallback callback) {
-    prime_requested_callback_ = callback;
+    prime_requested_callback_ = std::move(callback);
   }
 
   // Sets a callback to be called when priming is requested.
   void SetProgressStartedCallback(ProgressStartedCallback callback) {
-    progress_started_callback_ = callback;
+    progress_started_callback_ = std::move(callback);
   }
 
   // Determines if presentation time is progressing or a pending change will
@@ -76,7 +79,8 @@ class TimelineControlPoint : public MediaTimelineControlPoint,
                  GetStatusCallback callback) override;
 
   void GetTimelineConsumer(
-      fidl::InterfaceRequest<TimelineConsumer> timeline_consumer) override;
+      fidl::InterfaceRequest<fuchsia::media::TimelineConsumer>
+          timeline_consumer) override;
 
   void SetProgramRange(uint64_t program, int64_t min_pts,
                        int64_t max_pts) override;
@@ -84,11 +88,12 @@ class TimelineControlPoint : public MediaTimelineControlPoint,
   void Prime(PrimeCallback callback) override;
 
   // TimelineConsumer implementation.
-  void SetTimelineTransform(TimelineTransform timeline_transform,
-                            SetTimelineTransformCallback callback) override;
+  void SetTimelineTransform(
+      fuchsia::media::TimelineTransform timeline_transform,
+      SetTimelineTransformCallback callback) override;
 
   void SetTimelineTransformNoReply(
-      TimelineTransform timeline_transform) override;
+      fuchsia::media::TimelineTransform timeline_transform) override;
 
  private:
   // Applies pending_timeline_function_ if it's time to do so based on the
@@ -103,7 +108,8 @@ class TimelineControlPoint : public MediaTimelineControlPoint,
 
   // Determines if an unrealized timeline function is currently pending.
   bool TimelineFunctionPending() FXL_EXCLUSIVE_LOCKS_REQUIRED(mutex_) {
-    return pending_timeline_function_.reference_time() != kUnspecifiedTime;
+    return pending_timeline_function_.reference_time() !=
+           fuchsia::media::kUnspecifiedTime;
   }
 
   // Determines whether end-of-stream has been reached.
@@ -116,11 +122,13 @@ class TimelineControlPoint : public MediaTimelineControlPoint,
   // cause it to progress.
   bool ProgressingInternal() FXL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  void SetTimelineTransformLocked(TimelineTransform timeline_transform)
+  void SetTimelineTransformLocked(
+      fuchsia::media::TimelineTransform timeline_transform)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mutex_);
 
-  fidl::Binding<MediaTimelineControlPoint> control_point_binding_;
-  fidl::Binding<TimelineConsumer> consumer_binding_;
+  fidl::Binding<fuchsia::media::MediaTimelineControlPoint>
+      control_point_binding_;
+  fidl::Binding<fuchsia::media::TimelineConsumer> consumer_binding_;
   media::FidlPublisher<GetStatusCallback> status_publisher_;
   ProgramRangeSetCallback program_range_set_callback_;
   PrimeRequestedCallback prime_requested_callback_;
@@ -133,8 +141,11 @@ class TimelineControlPoint : public MediaTimelineControlPoint,
   SetTimelineTransformCallback set_timeline_transform_callback_
       FXL_GUARDED_BY(mutex_);
   uint32_t generation_ FXL_GUARDED_BY(mutex_) = 1;
-  int64_t end_of_stream_pts_ FXL_GUARDED_BY(mutex_) = kUnspecifiedTime;
+  int64_t end_of_stream_pts_ FXL_GUARDED_BY(mutex_) =
+      fuchsia::media::kUnspecifiedTime;
   bool end_of_stream_published_ FXL_GUARDED_BY(mutex_) = false;
 };
 
 }  // namespace media
+
+#endif  // GARNET_BIN_MEDIA_AUDIO_SERVER_TIMELINE_CONTROL_POINT_H_

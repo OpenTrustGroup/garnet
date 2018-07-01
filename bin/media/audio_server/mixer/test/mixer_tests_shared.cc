@@ -9,7 +9,7 @@ namespace audio {
 namespace test {
 
 // Convenience abbreviations within this source file to shorten names
-using Resampler = media::audio::Mixer::Resampler;
+using Resampler = ::media::audio::Mixer::Resampler;
 
 //
 // Subtest utility functions -- used by test functions; can ASSERT on their own.
@@ -20,16 +20,17 @@ using Resampler = media::audio::Mixer::Resampler;
 // our accumulation format (not the destination format), so we need not specify
 // a dst_format. Actual frame rate values are unimportant, but inter-rate RATIO
 // is VERY important: required SRC is the primary factor in Mix selection.
-MixerPtr SelectMixer(AudioSampleFormat src_format, uint32_t src_channels,
-                     uint32_t src_frame_rate, uint32_t dst_channels,
-                     uint32_t dst_frame_rate, Resampler resampler) {
-  AudioMediaTypeDetails src_details;
+MixerPtr SelectMixer(fuchsia::media::AudioSampleFormat src_format,
+                     uint32_t src_channels, uint32_t src_frame_rate,
+                     uint32_t dst_channels, uint32_t dst_frame_rate,
+                     Resampler resampler) {
+  fuchsia::media::AudioMediaTypeDetails src_details;
   src_details.sample_format = src_format;
   src_details.channels = src_channels;
   src_details.frames_per_second = src_frame_rate;
 
-  AudioMediaTypeDetails dst_details;
-  dst_details.sample_format = AudioSampleFormat::FLOAT;
+  fuchsia::media::AudioMediaTypeDetails dst_details;
+  dst_details.sample_format = fuchsia::media::AudioSampleFormat::FLOAT;
   dst_details.channels = dst_channels;
   dst_details.frames_per_second = dst_frame_rate;
 
@@ -43,9 +44,10 @@ MixerPtr SelectMixer(AudioSampleFormat src_format, uint32_t src_channels,
 // destination format. They perform no SRC, gain scaling or rechannelization, so
 // frames_per_second is unimportant and num_channels is only needed so that they
 // can calculate the size of a (multi-channel) audio frame.
-OutputFormatterPtr SelectOutputFormatter(AudioSampleFormat dst_format,
-                                         uint32_t num_channels) {
-  AudioMediaTypeDetailsPtr dst_details = AudioMediaTypeDetails::New();
+OutputFormatterPtr SelectOutputFormatter(
+    fuchsia::media::AudioSampleFormat dst_format, uint32_t num_channels) {
+  fuchsia::media::AudioMediaTypeDetailsPtr dst_details =
+      fuchsia::media::AudioMediaTypeDetails::New();
   dst_details->sample_format = dst_format;
   dst_details->channels = num_channels;
   dst_details->frames_per_second = 48000;
@@ -55,28 +57,21 @@ OutputFormatterPtr SelectOutputFormatter(AudioSampleFormat dst_format,
   return output_formatter;
 }
 
-// This converts a higher-resolution-than-needed "int24" data into our internal
-// (accum) representation, depending on the width of our processing pipeline.
-void NormalizeInt24ToPipelineBitwidth(int32_t* source, uint32_t source_len) {
-  static_assert(kAudioPipelineWidth <= 24, "kAudioPipelineWidth too wide");
-
-  if (kAudioPipelineWidth < 24) {
-    for (uint32_t idx = 0; idx < source_len; ++idx) {
-      // Before right-shift, add "0.5" to convert truncation into rounding.
-      // 1<<(24-kAudioPipelineWidth) is the LSB. 1<<(23-k..Width) is LSB/2.
-      // -0.5 rounds *away from* zero; if negative make round_val slightly less.
-      int32_t rounding_val =
-          (1 << (23 - kAudioPipelineWidth)) - (source[idx] < 0 ? 1 : 0);
-      source[idx] += rounding_val;
-      source[idx] >>= (24 - kAudioPipelineWidth);
-    }
+// This shared function normalizes data arrays into our float32 pipeline.
+// Because inputs must be in the range of [-2^27 , 2^27 ], for all practical
+// purposes it wants "int28" inputs, hence this function's unexpected name. The
+// test-data-width of 28 bits was chosen to accomodate float32 precision.
+constexpr float kInt28ToFloat = 1.0 / (1 << 27);  // Why 27? Remember sign bit.
+void NormalizeInt28ToPipelineBitwidth(float* source, uint32_t source_len) {
+  for (uint32_t idx = 0; idx < source_len; ++idx) {
+    source[idx] *= kInt28ToFloat;
   }
 }
 
 // Use the supplied mixer to scale from src into accum buffers.  Assumes a
 // specific buffer size, with no SRC, starting at the beginning of each buffer.
 // By default, does not gain-scale or accumulate (both can be overridden).
-void DoMix(MixerPtr mixer, const void* src_buf, int32_t* accum_buf,
+void DoMix(MixerPtr mixer, const void* src_buf, float* accum_buf,
            bool accumulate, int32_t num_frames, Gain::AScale mix_scale) {
   uint32_t dst_offset = 0;
   int32_t frac_src_offset = 0;

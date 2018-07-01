@@ -6,15 +6,16 @@
 
 #include <limits>
 
+#include "garnet/bin/zxdb/client/file_util.h"
+#include "garnet/bin/zxdb/client/string_util.h"
 #include "garnet/bin/zxdb/client/symbols/dwarf_die_decoder.h"
 #include "garnet/bin/zxdb/client/symbols/module_symbol_index_node.h"
 #include "garnet/public/lib/fxl/logging.h"
 #include "llvm/DebugInfo/DWARF/DWARFCompileUnit.h"
+#include "llvm/DebugInfo/DWARF/DWARFContext.h"
+#include "llvm/DebugInfo/DWARF/DWARFDebugLine.h"
 
 namespace zxdb {
-
-// Note: interesting file name extraction in dumpAttribute implementation in
-// DWARFDIE.cpp.
 
 namespace {
 
@@ -88,8 +89,7 @@ bool AbbrevHasCode(const llvm::DWARFAbbreviationDeclaration* abbrev) {
 // unit (it will be exactly unit->getNumDIEs() long). The root node will have
 // kNoParent set.
 void ExtractUnitFunctionImplsAndParents(
-    llvm::DWARFContext* context,
-    llvm::DWARFCompileUnit* unit,
+    llvm::DWARFContext* context, llvm::DWARFCompileUnit* unit,
     std::vector<FunctionImpl>* function_impls,
     std::vector<unsigned>* parent_indices) {
   DwarfDieDecoder decoder(context, unit);
@@ -102,8 +102,8 @@ void ExtractUnitFunctionImplsAndParents(
   // since probably we won't do any optimized lookups.
   llvm::Optional<uint64_t> decl_unit_offset;
   llvm::Optional<uint64_t> decl_global_offset;
-  decoder.AddReference(llvm::dwarf::DW_AT_specification,
-                       &decl_unit_offset, &decl_global_offset);
+  decoder.AddReference(llvm::dwarf::DW_AT_specification, &decl_unit_offset,
+                       &decl_global_offset);
 
   // Stores the index of the parent DIE for each one we encounter. The root
   // DIE with no parent will be set to kNoParent.
@@ -148,7 +148,8 @@ void ExtractUnitFunctionImplsAndParents(
       // Found a function implementation.
       if (decl_unit_offset) {
         // Save the declaration for indexing.
-        function_impls->emplace_back(die, unit->getOffset() + *decl_unit_offset);
+        function_impls->emplace_back(die,
+                                     unit->getOffset() + *decl_unit_offset);
       } else if (decl_global_offset) {
         FXL_NOTREACHED() << "Implement DW_FORM_ref_addr for references.";
       } else {
@@ -185,11 +186,12 @@ void ExtractUnitFunctionImplsAndParents(
 // ExtractUnitFunctionImplsAndParents for quickly finding parents.
 class FunctionImplIndexer {
  public:
-  FunctionImplIndexer(llvm::DWARFContext* context,
-                      llvm::DWARFCompileUnit* unit,
+  FunctionImplIndexer(llvm::DWARFContext* context, llvm::DWARFCompileUnit* unit,
                       const std::vector<unsigned>& parent_indices,
                       ModuleSymbolIndexNode* root)
-      : unit_(unit), parent_indices_(parent_indices), root_(root),
+      : unit_(unit),
+        parent_indices_(parent_indices),
+        root_(root),
         decoder_(context, unit) {
     decoder_.AddCString(llvm::dwarf::DW_AT_name, &name_);
   }
@@ -246,7 +248,7 @@ class FunctionImplIndexer {
     ModuleSymbolIndexNode* cur = root_;
     for (int i = static_cast<int>(components.size()) - 1; i >= 0; i--)
       cur = cur->AddChild(std::move(components[i]));
-    cur->AddFunctionDie(llvm::DWARFDie(unit_, impl.entry));
+    cur->AddFunctionDie(ModuleSymbolIndexNode::DieRef(impl.entry->getOffset()));
   }
 
  private:
@@ -272,15 +274,28 @@ class FunctionImplIndexer {
 ModuleSymbolIndex::ModuleSymbolIndex() = default;
 ModuleSymbolIndex::~ModuleSymbolIndex() = default;
 
-void ModuleSymbolIndex::CreateIndex(
-    llvm::DWARFContext* context,
-    llvm::DWARFUnitSection<llvm::DWARFCompileUnit>& units) {
-  for (const std::unique_ptr<llvm::DWARFCompileUnit>& unit : units)
-    IndexCompileUnit(context, unit.get());
+void ModuleSymbolIndex::CreateIndex(llvm::object::ObjectFile* object_file) {
+  std::unique_ptr<llvm::DWARFContext> context =
+      llvm::DWARFContext::create(
+      *object_file, nullptr, llvm::DWARFContext::defaultErrorHandler);
+
+  llvm::DWARFUnitSection<llvm::DWARFCompileUnit> compile_units;
+  compile_units.parse(*context, context->getDWARFObj().getInfoSection());
+
+  for (unsigned i = 0; i < compile_units.size(); i++) {
+    IndexCompileUnit(context.get(), compile_units[i].get(), i);
+
+    // Free all compilation units as we process them. They will hold all of
+    // the parsed DIE data that we don't need any more which can be mutliple
+    // GB's for large programs.
+    compile_units[i].reset();
+  }
+
+  IndexFileNames();
 }
 
-const std::vector<llvm::DWARFDie>& ModuleSymbolIndex::FindFunctionExact(
-    const std::string& input) const {
+const std::vector<ModuleSymbolIndexNode::DieRef>&
+ModuleSymbolIndex::FindFunctionExact(const std::string& input) const {
   // Split the input on "::" which we'll traverse the tree with.
   //
   // TODO(brettw) this doesn't handle a lot of things like templates. By
@@ -305,7 +320,7 @@ const std::vector<llvm::DWARFDie>& ModuleSymbolIndex::FindFunctionExact(
 
     auto found = cur->sub().find(cur_name);
     if (found == cur->sub().end()) {
-      static std::vector<llvm::DWARFDie> empty_vector;
+      static std::vector<ModuleSymbolIndexNode::DieRef> empty_vector;
       return empty_vector;
     }
 
@@ -315,19 +330,109 @@ const std::vector<llvm::DWARFDie>& ModuleSymbolIndex::FindFunctionExact(
   return cur->function_dies();
 }
 
+std::vector<std::string> ModuleSymbolIndex::FindFileMatches(
+    const std::string& name) const {
+  fxl::StringView name_last_comp = ExtractLastFileComponent(name);
+
+  std::vector<std::string> result;
+
+  // Search all files whose last component matches (the input may contain more
+  // than one component).
+  FileNameIndex::const_iterator iter =
+      file_name_index_.lower_bound(name_last_comp);
+  while (iter != file_name_index_.end() && iter->first == name_last_comp) {
+    const auto& pair = *iter->second;
+    if (StringEndsWith(pair.first, name) &&
+        (pair.first.size() == name.size() ||
+         pair.first[pair.first.size() - name.size() - 1] == '/')) {
+      result.push_back(pair.first);
+    }
+    ++iter;
+  }
+
+  return result;
+}
+
+const std::vector<unsigned>* ModuleSymbolIndex::FindFileUnitIndices(
+    const std::string& name) const {
+  auto found = files_.find(name);
+  if (found == files_.end())
+    return nullptr;
+  return &found->second;
+}
+
+void ModuleSymbolIndex::DumpFileIndex(std::ostream& out) {
+  for (const auto& name_pair : file_name_index_) {
+    const auto& full_pair = *name_pair.second;
+    out << name_pair.first << " -> " << full_pair.first << " -> "
+        << full_pair.second.size() << " units\n";
+  }
+}
+
 void ModuleSymbolIndex::IndexCompileUnit(llvm::DWARFContext* context,
-                                         llvm::DWARFCompileUnit* unit) {
+                                         llvm::DWARFCompileUnit* unit,
+                                         unsigned unit_index) {
   // Find the things to index.
   std::vector<FunctionImpl> function_impls;
   function_impls.reserve(256);
   std::vector<unsigned> parent_indices;
-  ExtractUnitFunctionImplsAndParents(
-      context, unit, &function_impls, &parent_indices);
+  ExtractUnitFunctionImplsAndParents(context, unit, &function_impls,
+                                     &parent_indices);
 
   // Index each one.
   FunctionImplIndexer indexer(context, unit, parent_indices, &root_);
   for (const FunctionImpl& impl : function_impls)
     indexer.AddFunction(impl);
+
+  IndexCompileUnitSourceFiles(context, unit, unit_index);
+}
+
+void ModuleSymbolIndex::IndexCompileUnitSourceFiles(
+    llvm::DWARFContext* context, llvm::DWARFCompileUnit* unit, unsigned unit_index) {
+  const llvm::DWARFDebugLine::LineTable* line_table =
+      context->getLineTableForUnit(unit);
+  const char* compilation_dir = unit->getCompilationDir();
+
+  // This table is the size of the file name table. Entries are set to 1 when
+  // we've added them to the index already.
+  std::vector<int> added_file;
+  added_file.resize(line_table->Prologue.FileNames.size(), 0);
+
+  // We don't want to just add all the files from the line table to the index.
+  // The line table will contain entries for every file referenced by the
+  // compilation unit, which includes declarations. We want only files that
+  // contribute code, which in practice is a tiny fraction of the total.
+  //
+  // To get this, iterate through the unit's row table and collect all
+  // referenced file names.
+  std::string file_name;
+  for (size_t i = 0; i < line_table->Rows.size(); i++) {
+    auto file_id = line_table->Rows[i].File;  // 1-based!
+    FXL_DCHECK(file_id >= 1 && file_id <= added_file.size());
+    auto file_index = file_id - 1;
+
+    if (!added_file[file_index]) {
+      added_file[file_index] = 1;
+      if (line_table->getFileNameByIndex(
+              file_id, compilation_dir,
+              llvm::DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath,
+              file_name)) {
+        // The files here can contain relative components like
+        // "/foo/bar/../baz". This is OK because we want it to match other
+        // places in the symbol code that do a similar computation to get a
+        // file name.
+        files_[file_name].push_back(unit_index);
+      }
+    }
+  }
+}
+
+void ModuleSymbolIndex::IndexFileNames() {
+  for (FileIndex::const_iterator iter = files_.begin(); iter != files_.end();
+       ++iter) {
+    fxl::StringView name = ExtractLastFileComponent(iter->first);
+    file_name_index_.insert(std::make_pair(name, iter));
+  }
 }
 
 }  // namespace zxdb

@@ -9,7 +9,7 @@
 #include <string>
 
 #include "garnet/public/lib/fidl/compatibility_test/echo_client_app.h"
-#include "lib/app/cpp/application_context.h"
+#include "lib/app/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fidl/cpp/interface_request.h"
 
@@ -19,41 +19,71 @@ namespace compatibility {
 
 class EchoServerApp : public Echo {
  public:
-  EchoServerApp()
-      : context_(component::ApplicationContext::CreateFromStartupInfo()) {
-    context_->outgoing().AddPublicService<Echo>(
-        [this](fidl::InterfaceRequest<Echo> request) {
-          bindings_.AddBinding(
-              this, fidl::InterfaceRequest<Echo>(std::move(request)));
-        });
+  explicit EchoServerApp(async::Loop* loop)
+      : loop_(loop),
+        context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
+    context_->outgoing().AddPublicService(bindings_.GetHandler(this));
   }
 
   ~EchoServerApp() {}
 
-  void EchoStruct(Struct value, EchoStructCallback callback) override {
-    fprintf(stderr, "Server received EchoStruct()\n");
-    if (!value.forward_to_server.get().empty()) {
-      const std::string forward_to_server = value.forward_to_server;
-      value.forward_to_server.reset();  // Prevent recursion.
+  void EchoStruct(Struct value, fidl::StringPtr forward_to_server,
+                  EchoStructCallback callback) override {
+    if (!forward_to_server->empty()) {
       EchoClientApp app;
-      app.Start(forward_to_server);
-      app.echo()->EchoStruct(std::move(value), callback);
-      const zx_status_t wait_status = app.echo().WaitForResponse();
-      if (wait_status != ZX_OK) {
-        fprintf(stderr, "Proxy Got error %d waiting for response from %s\n",
-                wait_status, forward_to_server.c_str());
+      app.Start(forward_to_server.get());
+      bool called_back = false;
+      app.echo()->EchoStruct(std::move(value), "",
+                             [this, &called_back, &callback](Struct resp) {
+                               called_back = true;
+                               callback(std::move(resp));
+                               loop_->Quit();
+                             });
+      while (!called_back) {
+        loop_->Run();
       }
+      loop_->ResetQuit();
     } else {
       callback(std::move(value));
     }
   }
 
+  void EchoStructNoRetVal(Struct value,
+                          fidl::StringPtr forward_to_server) override {
+    if (!forward_to_server->empty()) {
+      std::unique_ptr<EchoClientApp> app(new EchoClientApp);
+      app->Start(forward_to_server.get());
+      app->echo().events().EchoEvent = [this](Struct resp) {
+        this->HandleEchoEvent(std::move(resp));
+      };
+      app->echo()->EchoStructNoRetVal(std::move(value), "");
+      client_apps_.push_back(std::move(app));
+    } else {
+      for (const auto& binding : bindings_.bindings()) {
+        Struct to_send;
+        value.Clone(&to_send);
+        binding->events().EchoEvent(std::move(to_send));
+      }
+    }
+  }
+
  private:
+  void HandleEchoEvent(Struct value) {
+    for (const auto& binding : bindings_.bindings()) {
+      Struct to_send;
+      value.Clone(&to_send);
+      binding->events().EchoEvent(std::move(to_send));
+    }
+  }
+
+  EchoPtr server_ptr;
   EchoServerApp(const EchoServerApp&) = delete;
   EchoServerApp& operator=(const EchoServerApp&) = delete;
 
-  std::unique_ptr<component::ApplicationContext> context_;
+  async::Loop* loop_;
+  std::unique_ptr<fuchsia::sys::StartupContext> context_;
   fidl::BindingSet<Echo> bindings_;
+  std::vector<std::unique_ptr<EchoClientApp>> client_apps_;
 };
 
 }  // namespace compatibility
@@ -64,7 +94,7 @@ int main(int argc, const char** argv) {
   // The FIDL support lib requires async_get_default() to return non-null.
   async::Loop loop(&kAsyncLoopConfigMakeDefault);
 
-  fidl::test::compatibility::EchoServerApp app;
+  fidl::test::compatibility::EchoServerApp app(&loop);
   loop.Run();
   return EXIT_SUCCESS;
 }

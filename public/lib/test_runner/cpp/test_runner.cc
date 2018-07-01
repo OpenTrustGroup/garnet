@@ -117,17 +117,16 @@ void TestRunnerImpl::WillTerminate(const double withinSeconds) {
     return;
   }
   termination_task_.set_handler(
-    [this, withinSeconds](async_t*, async::Task*, zx_status_t status) {
-         FXL_LOG(ERROR) << program_name_
-                        << " termination timed out after "
-                        << withinSeconds << "s.";
-         binding_.set_error_handler(nullptr);
-         Fail("Termination timed out.");
-         if (teardown_after_termination_) {
-           Teardown([] {});
-         }
-         test_run_context_->StopTrackingClient(this, false);
-  });
+      [this, withinSeconds](async_t*, async::Task*, zx_status_t status) {
+        FXL_LOG(ERROR) << program_name_ << " termination timed out after "
+                       << withinSeconds << "s.";
+        binding_.set_error_handler(nullptr);
+        Fail("Termination timed out.");
+        if (teardown_after_termination_) {
+          Teardown([] {});
+        }
+        test_run_context_->StopTrackingClient(this, false);
+      });
   termination_task_.PostDelayed(async_get_default(), zx::sec(withinSeconds));
 }
 
@@ -154,7 +153,7 @@ void TestRunnerImpl::PassTestPoint() {
 }
 
 TestRunContext::TestRunContext(
-    std::shared_ptr<component::ApplicationContext> app_context,
+    std::shared_ptr<fuchsia::sys::StartupContext> app_context,
     TestRunObserver* connection, const std::string& test_id,
     const std::string& url, const std::vector<std::string>& args)
     : test_runner_connection_(connection), test_id_(test_id), success_(true) {
@@ -174,14 +173,13 @@ TestRunContext::TestRunContext(
       });
 
   // 2. Launch the test command.
-  component::ApplicationLauncherPtr launcher;
-  child_env_scope_->environment()->GetApplicationLauncher(
-      launcher.NewRequest());
+  fuchsia::sys::LauncherPtr launcher;
+  child_env_scope_->environment()->GetLauncher(launcher.NewRequest());
 
-  component::LaunchInfo info;
+  fuchsia::sys::LaunchInfo info;
   info.url = url;
   info.arguments = fxl::To<fidl::VectorPtr<fidl::StringPtr>>(args);
-  launcher->CreateApplication(std::move(info), child_controller_.NewRequest());
+  launcher->CreateComponent(std::move(info), child_controller_.NewRequest());
 
   // If the child app closes, the test is reported as a failure.
   child_controller_.set_error_handler([this] {

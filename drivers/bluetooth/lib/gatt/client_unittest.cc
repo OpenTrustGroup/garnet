@@ -15,6 +15,9 @@ namespace {
 using common::ByteBuffer;
 using common::HostError;
 
+using common::UpperBits;
+using common::LowerBits;
+
 constexpr common::UUID kTestUuid1((uint16_t)0xDEAD);
 constexpr common::UUID kTestUuid2((uint16_t)0xBEEF);
 constexpr common::UUID kTestUuid3({0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
@@ -32,14 +35,6 @@ const auto kDiscoverAllPrimaryRequest = common::CreateStaticByteBuffer(
 void NopSvcCallback(const gatt::ServiceData&) {}
 void NopChrcCallback(const gatt::CharacteristicData&) {}
 void NopDescCallback(const gatt::DescriptorData&) {}
-
-constexpr uint8_t UpperBits(uint16_t val) {
-  return val >> 8;
-}
-
-constexpr uint8_t LowerBits(uint16_t val) {
-  return val & 0x00FF;
-}
 
 class GATT_ClientTest : public l2cap::testing::FakeChannelTest {
  public:
@@ -64,7 +59,7 @@ class GATT_ClientTest : public l2cap::testing::FakeChannelTest {
                                Client::DescriptorCallback desc_callback,
                                att::Handle range_start = 0x0001,
                                att::Handle range_end = 0xFFFF) {
-    async::PostTask(dispatcher(), [=] {
+    async::PostTask(dispatcher(), [=, desc_callback = std::move(desc_callback)]() mutable {
       client()->DiscoverDescriptors(
           range_start, range_end, std::move(desc_callback),
           [out_status](att::Status val) { *out_status = val; });
@@ -125,7 +120,7 @@ TEST_F(GATT_ClientTest, ExchangeMTUMalformedResponse) {
       30     // server rx mtu is one octet too short
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
   EXPECT_EQ(0, final_mtu);
@@ -168,7 +163,7 @@ TEST_F(GATT_ClientTest, ExchangeMTUErrorNotSupported) {
       0x06         // error: Request Not Supported
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_FALSE(status);
   EXPECT_EQ(att::ErrorCode::kRequestNotSupported, status.protocol_error());
@@ -207,7 +202,7 @@ TEST_F(GATT_ClientTest, ExchangeMTUErrorOther) {
       0x0E         // error: Unlikely Error
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(att::ErrorCode::kUnlikelyError, status.protocol_error());
   EXPECT_EQ(0, final_mtu);
@@ -246,7 +241,7 @@ TEST_F(GATT_ClientTest, ExchangeMTUSelectLocal) {
       kServerRxMTU, 0x00       // server rx mtu
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
   EXPECT_EQ(kPreferredMTU, final_mtu);
@@ -285,7 +280,7 @@ TEST_F(GATT_ClientTest, ExchangeMTUSelectRemote) {
       kServerRxMTU, 0x00       // server rx mtu
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
   EXPECT_EQ(kServerRxMTU, final_mtu);
@@ -324,7 +319,7 @@ TEST_F(GATT_ClientTest, ExchangeMTUSelectDefault) {
       kServerRxMTU, 0x00       // server rx mtu
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
   EXPECT_EQ(att::kLEMinMTU, final_mtu);
@@ -345,7 +340,7 @@ TEST_F(GATT_ClientTest, DiscoverAllPrimaryResponseTooShort) {
   // Respond back with a malformed payload.
   fake_chan()->Receive(common::CreateStaticByteBuffer(0x11));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -370,7 +365,7 @@ TEST_F(GATT_ClientTest, DiscoverAllPrimaryMalformedDataLength) {
       0, 1, 2, 3, 4, 5, 6  // one entry of length 7, which will be ignored
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -393,7 +388,7 @@ TEST_F(GATT_ClientTest, DiscoverAllPrimaryMalformedAttrDataList) {
       0, 1, 2, 3, 4      // entry 2: incorrect size
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -418,7 +413,7 @@ TEST_F(GATT_ClientTest, DiscoverAllPrimaryEmptyDataList) {
              // data list is empty
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
   EXPECT_TRUE(status);
 }
 
@@ -441,7 +436,7 @@ TEST_F(GATT_ClientTest, DiscoverAllPrimaryAttributeNotFound) {
       0x0A         // error: Attribute Not Found
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   // The procedure succeeds with no services.
   EXPECT_TRUE(status);
@@ -466,7 +461,7 @@ TEST_F(GATT_ClientTest, DiscoverAllPrimaryError) {
       0x06         // error: Request Not Supported
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status.is_protocol_error());
   EXPECT_EQ(att::ErrorCode::kRequestNotSupported, status.protocol_error());
@@ -491,7 +486,7 @@ TEST_F(GATT_ClientTest, DiscoverAllPrimaryMalformedServiceRange) {
       0x01, 0x00   // svc 1 end: 0x0001
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   // The procedure should be over since the last service in the payload has
   // end handle 0xFFFF.
@@ -526,7 +521,7 @@ TEST_F(GATT_ClientTest, DiscoverAllPrimary16BitResultsSingleRequest) {
       0xEF, 0xBE   // svc 2 uuid: 0xBEEF
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   // The procedure should be over since the last service in the payload has
   // end handle 0xFFFF.
@@ -565,7 +560,7 @@ TEST_F(GATT_ClientTest, DiscoverAllPrimary128BitResultSingleRequest) {
       // UUID matches |kTestUuid3| declared above.
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   // The procedure should be over since the last service in the payload has
   // end handle 0xFFFF.
@@ -649,7 +644,7 @@ TEST_F(GATT_ClientTest, DiscoverAllPrimaryMultipleRequests) {
       0x0A         // error: Attribute Not Found
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   // The procedure should be over since the last service in the payload has
   // end handle 0xFFFF.
@@ -705,7 +700,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscoveryResponseTooShort) {
   // Respond back with a malformed payload.
   fake_chan()->Receive(common::CreateStaticByteBuffer(0x09));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -740,7 +735,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscoveryMalformedDataLength) {
       0, 1, 2, 3, 4, 5, 6, 7  // one entry of length 8, which will be ignored
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -776,7 +771,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscoveryMalformedAttrDataList) {
       0, 1, 2, 3, 4, 5      // entry 2: incorrect size
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -808,7 +803,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscoveryEmptyDataList) {
              // data list empty
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
 }
@@ -841,7 +836,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscoveryAttributeNotFound) {
       0x0A         // error: Attribute Not Found
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   // Attribute Not Found error means the procedure is over.
   EXPECT_TRUE(status);
@@ -875,7 +870,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscoveryError) {
       0x06         // error: Request Not Supported
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status.is_protocol_error());
   EXPECT_EQ(att::ErrorCode::kRequestNotSupported, status.protocol_error());
@@ -920,7 +915,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscovery16BitResultsSingleRequest) {
       0xEF, 0xBE   // chrc 2 uuid: 0xBEEF
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
   ASSERT_EQ(2u, chrcs.size());
@@ -970,7 +965,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscovery128BitResultsSingleRequest) {
       // UUID matches |kTestUuid3| declared above.
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
   EXPECT_EQ(1u, chrcs.size());
@@ -1059,7 +1054,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscoveryMultipleRequests) {
       0x0A         // error: Attribute Not Found
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
   EXPECT_EQ(3u, chrcs.size());
@@ -1117,7 +1112,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscoveryResultsBeforeRange) {
       0xAD, 0xDE   // chrc 1 uuid: 0xDEAD
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
   EXPECT_TRUE(chrcs.empty());
@@ -1160,7 +1155,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscoveryResultsBeyondRange) {
       0xAD, 0xDE   // chrc 1 uuid: 0xDEAD
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
   EXPECT_TRUE(chrcs.empty());
@@ -1203,7 +1198,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscoveryValueNotContiguous) {
       0xAD, 0xDE   // chrc 1 uuid: 0xDEAD
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
   EXPECT_TRUE(chrcs.empty());
@@ -1248,7 +1243,7 @@ TEST_F(GATT_ClientTest, CharacteristicDiscoveryHandlesNotIncreasing) {
       0xEF, 0xBE   // chrc 1 uuid: 0xBEEF
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 
@@ -1274,7 +1269,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryResponseTooShort) {
   // Respond back with a malformed payload.
   fake_chan()->Receive(common::CreateStaticByteBuffer(0x05));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -1289,7 +1284,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryMalformedDataLength) {
       0x03   // format (must be 1 or 2)
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -1304,7 +1299,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryMalformedAttrDataList16) {
       0x01,  // format: 16-bit. Data length must be 4
       1, 2, 3, 4, 5));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -1319,7 +1314,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryMalformedAttrDataList128) {
       0x02,  // format: 128-bit. Data length must be 18
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -1335,7 +1330,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryEmptyDataList) {
              // data list empty
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
 }
@@ -1352,7 +1347,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryAttributeNotFound) {
       0x0A         // error: Attribute Not Found
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
 }
@@ -1369,7 +1364,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryError) {
       0x06         // error: Request Not Supported
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status.is_protocol_error());
   EXPECT_EQ(att::ErrorCode::kRequestNotSupported, status.protocol_error());
@@ -1399,7 +1394,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscovery16BitResultsSingleRequest) {
       0xFE, 0xFE   // desc 3 uuid
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
   ASSERT_EQ(3u, descrs.size());
@@ -1436,7 +1431,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscovery128BitResultsSingleRequest) {
       0xAD, 0xDE, 0x00, 0x00  // desc 2 uuid
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
   ASSERT_EQ(2u, descrs.size());
@@ -1471,7 +1466,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryMultipleRequests) {
       0x02, 0x00,  // desc 2 handle
       0xAD, 0xDE   // desc 2 uuid
       ));
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   // Batch 2
   ASSERT_TRUE(ExpectFindInformation(kStart2, kEnd));
@@ -1482,7 +1477,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryMultipleRequests) {
       0xFB, 0x34, 0x9B, 0x5F, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00,
       0xFE, 0xFE, 0x00, 0x00  // desc 3 uuid
       ));
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   // Batch 3
   ASSERT_TRUE(ExpectFindInformation(kStart3, kEnd));
@@ -1492,7 +1487,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryMultipleRequests) {
       0x04, 0x00,  // handle: kStart3 (0x0004)
       0x0A         // error: Attribute Not Found
       ));
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
   ASSERT_EQ(3u, descrs.size());
@@ -1518,7 +1513,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryResultsBeforeRange) {
       0xEF, 0xBE   // uuid
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -1538,7 +1533,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryResultsBeyondRange) {
       0xEF, 0xBE   // uuid
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -1557,7 +1552,7 @@ TEST_F(GATT_ClientTest, DescriptorDiscoveryHandlesNotIncreasing) {
       0xAD, 0xDE   // uuid
       ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -1591,7 +1586,7 @@ TEST_F(GATT_ClientTest, WriteRequestMalformedResponse) {
       0       // One byte payload. The write request has no parameters.
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
   EXPECT_FALSE(status);
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
   EXPECT_TRUE(fake_chan()->link_error());
@@ -1617,7 +1612,7 @@ TEST_F(GATT_ClientTest, WriteRequestExceedsMtu) {
 
   client()->WriteRequest(kHandle, kValue, cb);
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_EQ(HostError::kPacketMalformed, status.error());
 }
@@ -1650,7 +1645,7 @@ TEST_F(GATT_ClientTest, WriteRequestError) {
       0x06         // error: Request Not Supported
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
   EXPECT_TRUE(status.is_protocol_error());
   EXPECT_EQ(att::ErrorCode::kRequestNotSupported, status.protocol_error());
   EXPECT_FALSE(fake_chan()->link_error());
@@ -1681,7 +1676,7 @@ TEST_F(GATT_ClientTest, WriteRequestSuccess) {
       0x13  // opcode: write response
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
   EXPECT_TRUE(status);
   EXPECT_FALSE(fake_chan()->link_error());
 }
@@ -1710,7 +1705,7 @@ TEST_F(GATT_ClientTest, ReadRequestEmptyResponse) {
   // ATT Read Response with no payload.
   fake_chan()->Receive(common::CreateStaticByteBuffer(0x0B));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
   EXPECT_FALSE(fake_chan()->link_error());
@@ -1742,7 +1737,7 @@ TEST_F(GATT_ClientTest, ReadRequestSuccess) {
 
   fake_chan()->Receive(kExpectedResponse);
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status);
   EXPECT_FALSE(fake_chan()->link_error());
@@ -1781,7 +1776,7 @@ TEST_F(GATT_ClientTest, ReadRequestError) {
       0x06         // error: Request Not Supported
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
 
   EXPECT_TRUE(status.is_protocol_error());
   EXPECT_EQ(att::ErrorCode::kRequestNotSupported, status.protocol_error());
@@ -1805,7 +1800,7 @@ TEST_F(GATT_ClientTest, EmptyNotification) {
     0x01, 0x00  // handle: 1
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
   EXPECT_TRUE(called);
 }
 
@@ -1827,7 +1822,7 @@ TEST_F(GATT_ClientTest, Notification) {
     't', 'e', 's', 't'  // value: "test"
   ));
 
-  RunUntilIdle();
+  RunLoopUntilIdle();
   EXPECT_TRUE(called);
 }
 

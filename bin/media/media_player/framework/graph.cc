@@ -218,15 +218,15 @@ void Graph::UnprepareInput(const InputRef& input) {
 }
 
 void Graph::FlushOutput(const OutputRef& output, bool hold_frame,
-                        fxl::Closure callback) {
+                        fit::closure callback) {
   FXL_DCHECK(output);
   std::queue<Output*> backlog;
   backlog.push(output.actual());
-  FlushOutputs(&backlog, hold_frame, callback);
+  FlushOutputs(&backlog, hold_frame, std::move(callback));
 }
 
 void Graph::FlushAllOutputs(NodeRef node, bool hold_frame,
-                            fxl::Closure callback) {
+                            fit::closure callback) {
   FXL_DCHECK(node);
 
   std::queue<Output*> backlog;
@@ -235,11 +235,10 @@ void Graph::FlushAllOutputs(NodeRef node, bool hold_frame,
     backlog.push(node.output(output_index).actual());
   }
 
-  FlushOutputs(&backlog, hold_frame, callback);
+  FlushOutputs(&backlog, hold_frame, std::move(callback));
 }
 
-void Graph::PostTask(const fxl::Closure& task,
-                     std::initializer_list<NodeRef> nodes) {
+void Graph::PostTask(fit::closure task, std::initializer_list<NodeRef> nodes) {
   auto joiner = ThreadsafeCallbackJoiner::Create();
 
   std::vector<StageImpl*> stages;
@@ -248,12 +247,13 @@ void Graph::PostTask(const fxl::Closure& task,
     stages.push_back(node.stage_);
   }
 
-  joiner->WhenJoined(async_, [task, stages = std::move(stages)]() {
-    task();
-    for (auto stage : stages) {
-      stage->Release();
-    }
-  });
+  joiner->WhenJoined(async_,
+                     [task = std::move(task), stages = std::move(stages)]() {
+                       task();
+                       for (auto stage : stages) {
+                         stage->Release();
+                       }
+                     });
 }
 
 NodeRef Graph::AddStage(std::shared_ptr<StageImpl> stage) {
@@ -275,7 +275,7 @@ NodeRef Graph::AddStage(std::shared_ptr<StageImpl> stage) {
 }
 
 void Graph::FlushOutputs(std::queue<Output*>* backlog, bool hold_frame,
-                         fxl::Closure callback) {
+                         fit::closure callback) {
   FXL_DCHECK(backlog);
 
   auto callback_joiner = CallbackJoiner::Create();
@@ -313,7 +313,7 @@ void Graph::FlushOutputs(std::queue<Output*>* backlog, bool hold_frame,
     }
   }
 
-  callback_joiner->WhenJoined(callback);
+  callback_joiner->WhenJoined(std::move(callback));
 }
 
 void Graph::PrepareInput(Input* input) {

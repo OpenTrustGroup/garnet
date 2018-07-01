@@ -26,12 +26,12 @@ namespace btlib {
 namespace gap {
 
 Adapter::Adapter(fxl::RefPtr<hci::Transport> hci,
-                 fbl::RefPtr<l2cap::L2CAP> l2cap,
-                 fbl::RefPtr<gatt::GATT> gatt)
+                 fbl::RefPtr<l2cap::L2CAP> l2cap, fbl::RefPtr<gatt::GATT> gatt)
     : identifier_(fxl::GenerateUUID()),
       dispatcher_(async_get_default()),
       hci_(hci),
       init_state_(State::kNotInitialized),
+      max_lmp_feature_page_index_(0),
       l2cap_(l2cap),
       gatt_(gatt),
       weak_ptr_factory_(this) {
@@ -59,8 +59,8 @@ Adapter::~Adapter() {
     ShutDown();
 }
 
-bool Adapter::Initialize(const InitializeCallback& callback,
-                         const fxl::Closure& transport_closed_cb) {
+bool Adapter::Initialize(InitializeCallback callback,
+                         fit::closure transport_closed_cb) {
   FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   FXL_DCHECK(callback);
   FXL_DCHECK(transport_closed_cb);
@@ -77,7 +77,7 @@ bool Adapter::Initialize(const InitializeCallback& callback,
   FXL_DCHECK(init_seq_runner_->IsReady());
   FXL_DCHECK(!init_seq_runner_->HasQueuedCommands());
 
-  transport_closed_cb_ = transport_closed_cb;
+  transport_closed_cb_ = std::move(transport_closed_cb);
 
   // Start by resetting the controller to a clean state and then send
   // informational parameter commands that are not specific to LE or BR/EDR. The
@@ -94,6 +94,12 @@ bool Adapter::Initialize(const InitializeCallback& callback,
   init_seq_runner_->QueueCommand(
       hci::CommandPacket::New(hci::kReadLocalVersionInfo),
       [this](const hci::EventPacket& cmd_complete) {
+        auto status = cmd_complete.ToStatus();
+        if (!status) {
+          FXL_LOG(WARNING) << "gap: Adapter: read local version info failure: "
+                           << status.ToString();
+          return;
+        }
         auto params =
             cmd_complete.return_params<hci::ReadLocalVersionInfoReturnParams>();
         state_.hci_version_ = params->hci_version;
@@ -103,6 +109,13 @@ bool Adapter::Initialize(const InitializeCallback& callback,
   init_seq_runner_->QueueCommand(
       hci::CommandPacket::New(hci::kReadLocalSupportedCommands),
       [this](const hci::EventPacket& cmd_complete) {
+        auto status = cmd_complete.ToStatus();
+        if (!status) {
+          FXL_LOG(WARNING)
+              << "gap: Adapter: read local supported commands failure: "
+              << status.ToString();
+          return;
+        }
         auto params =
             cmd_complete
                 .return_params<hci::ReadLocalSupportedCommandsReturnParams>();
@@ -114,21 +127,34 @@ bool Adapter::Initialize(const InitializeCallback& callback,
   init_seq_runner_->QueueCommand(
       hci::CommandPacket::New(hci::kReadLocalSupportedFeatures),
       [this](const hci::EventPacket& cmd_complete) {
+        auto status = cmd_complete.ToStatus();
+        if (!status) {
+          FXL_LOG(WARNING)
+              << "gap: Adapter: read local supported features failure: "
+              << status.ToString();
+          return;
+        }
         auto params =
             cmd_complete
                 .return_params<hci::ReadLocalSupportedFeaturesReturnParams>();
-        state_.lmp_features_[0] = le64toh(params->lmp_features);
+        state_.features_.SetPage(0, le64toh(params->lmp_features));
       });
 
   // HCI_Read_BD_ADDR
   init_seq_runner_->QueueCommand(
       hci::CommandPacket::New(hci::kReadBDADDR),
       [this](const hci::EventPacket& cmd_complete) {
+        auto status = cmd_complete.ToStatus();
+        if (!status) {
+          FXL_LOG(WARNING) << "gap: Adapter: read BD_ADDR failure: "
+                           << status.ToString();
+          return;
+        }
         auto params = cmd_complete.return_params<hci::ReadBDADDRReturnParams>();
         state_.controller_address_ = params->bd_addr;
       });
 
-  init_seq_runner_->RunCommands([callback, this](hci::Status status) {
+  init_seq_runner_->RunCommands([callback = std::move(callback), this](hci::Status status) mutable {
     if (!status) {
       FXL_LOG(ERROR)
           << "gap: Adapter: Failed to obtain initial controller information: "
@@ -138,7 +164,7 @@ bool Adapter::Initialize(const InitializeCallback& callback,
       return;
     }
 
-    InitializeStep2(callback);
+    InitializeStep2(std::move(callback));
   });
 
   return true;
@@ -164,8 +190,8 @@ bool Adapter::IsDiscovering() const {
 void Adapter::SetLocalName(std::string name, hci::StatusCallback callback) {
   // TODO(jamuraa): set the public LE advertisement name from |name|
   bool null_term = true;
-  if (name.size() >= hci::kMaxLocalNameLength) {
-    name.resize(hci::kMaxLocalNameLength);
+  if (name.size() >= hci::kMaxNameLength) {
+    name.resize(hci::kMaxNameLength);
     null_term = false;
   }
   auto write_name = hci::CommandPacket::New(
@@ -174,7 +200,7 @@ void Adapter::SetLocalName(std::string name, hci::StatusCallback callback) {
       write_name->mutable_view()
           ->mutable_payload<hci::WriteLocalNameCommandParams>()
           ->local_name,
-      hci::kMaxLocalNameLength);
+      hci::kMaxNameLength);
   name_buf.Write(reinterpret_cast<const uint8_t*>(name.data()), name.size());
   if (null_term) {
     name_buf[name.size()] = 0;
@@ -191,7 +217,7 @@ void Adapter::SetLocalName(std::string name, hci::StatusCallback callback) {
       });
 }
 
-void Adapter::InitializeStep2(const InitializeCallback& callback) {
+void Adapter::InitializeStep2(InitializeCallback callback) {
   FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   FXL_DCHECK(IsInitializing());
 
@@ -220,6 +246,12 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
     init_seq_runner_->QueueCommand(
         hci::CommandPacket::New(hci::kReadBufferSize),
         [this](const hci::EventPacket& cmd_complete) {
+          auto status = cmd_complete.ToStatus();
+          if (!status) {
+            FXL_LOG(WARNING) << "gap: Adapter: read buffer size failure: "
+                             << status.ToString();
+            return;
+          }
           auto params =
               cmd_complete.return_params<hci::ReadBufferSizeReturnParams>();
           uint16_t mtu = le16toh(params->hc_acl_data_packet_length);
@@ -235,6 +267,13 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
   init_seq_runner_->QueueCommand(
       hci::CommandPacket::New(hci::kLEReadLocalSupportedFeatures),
       [this](const hci::EventPacket& cmd_complete) {
+        auto status = cmd_complete.ToStatus();
+        if (!status) {
+          FXL_LOG(WARNING)
+              << "gap: Adapter: LE read local supported features failure: "
+              << status.ToString();
+          return;
+        }
         auto params =
             cmd_complete
                 .return_params<hci::LEReadLocalSupportedFeaturesReturnParams>();
@@ -245,6 +284,12 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
   init_seq_runner_->QueueCommand(
       hci::CommandPacket::New(hci::kLEReadSupportedStates),
       [this](const hci::EventPacket& cmd_complete) {
+        auto status = cmd_complete.ToStatus();
+        if (!status) {
+          FXL_LOG(WARNING) << "gap: Adapter: LE read supported states failure: "
+                           << status.ToString();
+          return;
+        }
         auto params =
             cmd_complete
                 .return_params<hci::LEReadSupportedStatesReturnParams>();
@@ -255,6 +300,12 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
   init_seq_runner_->QueueCommand(
       hci::CommandPacket::New(hci::kLEReadBufferSize),
       [this](const hci::EventPacket& cmd_complete) {
+        auto status = cmd_complete.ToStatus();
+        if (!status) {
+          FXL_LOG(WARNING) << "gap: Adapter: LE read buffer size failure: "
+                           << status.ToString();
+          return;
+        }
         auto params =
             cmd_complete.return_params<hci::LEReadBufferSizeReturnParams>();
         uint16_t mtu = le16toh(params->hc_le_acl_data_packet_length);
@@ -265,7 +316,7 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
         }
       });
 
-  if (state_.HasLMPFeatureBit(0u, hci::LMPFeature::kSecureSimplePairing)) {
+  if (state_.features().HasBit(0u, hci::LMPFeature::kSecureSimplePairing)) {
     // HCI_Write_Simple_Pairing_Mode
     auto write_ssp = hci::CommandPacket::New(
         hci::kWriteSimplePairingMode,
@@ -284,9 +335,9 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
 
   // If there are extended features then try to read the first page of the
   // extended features.
-  if (state_.HasLMPFeatureBit(0u, hci::LMPFeature::kExtendedFeatures)) {
+  if (state_.features().HasBit(0u, hci::LMPFeature::kExtendedFeatures)) {
     // Page index 1 must be available.
-    state_.max_lmp_feature_page_index_ = 1;
+    max_lmp_feature_page_index_ = 1;
 
     // HCI_Read_Local_Extended_Features
     auto cmd_packet = hci::CommandPacket::New(
@@ -300,15 +351,21 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
 
     init_seq_runner_->QueueCommand(
         std::move(cmd_packet), [this](const hci::EventPacket& cmd_complete) {
+          auto status = cmd_complete.ToStatus();
+          if (!status) {
+            FXL_LOG(WARNING) << "gap: Adapter: read extended features failure: "
+                             << status.ToString();
+            return;
+          }
           auto params =
               cmd_complete
                   .return_params<hci::ReadLocalExtendedFeaturesReturnParams>();
-          state_.lmp_features_[1] = le64toh(params->extended_lmp_features);
-          state_.max_lmp_feature_page_index_ = params->maximum_page_number;
+          state_.features_.SetPage(1, le64toh(params->extended_lmp_features));
+          max_lmp_feature_page_index_ = params->maximum_page_number;
         });
   }
 
-  init_seq_runner_->RunCommands([callback, this](hci::Status status) {
+  init_seq_runner_->RunCommands([callback = std::move(callback), this](hci::Status status) mutable {
     if (!status) {
       FXL_LOG(ERROR) << "gap: Adapter: Failed to obtain initial controller "
                         "information (step 2): "
@@ -318,11 +375,11 @@ void Adapter::InitializeStep2(const InitializeCallback& callback) {
       return;
     }
 
-    InitializeStep3(callback);
+    InitializeStep3(std::move(callback));
   });
 }
 
-void Adapter::InitializeStep3(const InitializeCallback& callback) {
+void Adapter::InitializeStep3(InitializeCallback callback) {
   FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
   FXL_DCHECK(IsInitializing());
 
@@ -358,7 +415,14 @@ void Adapter::InitializeStep3(const InitializeCallback& callback) {
     cmd_packet->mutable_view()
         ->mutable_payload<hci::SetEventMaskCommandParams>()
         ->event_mask = htole64(event_mask);
-    init_seq_runner_->QueueCommand(std::move(cmd_packet));
+    init_seq_runner_->QueueCommand(
+        std::move(cmd_packet), [](const auto& event) {
+          auto status = event.ToStatus();
+          if (!status) {
+            FXL_LOG(WARNING) << "gap: Adapter: set event mask failure: "
+                             << status.ToString();
+          }
+        });
   }
 
   // HCI_LE_Set_Event_Mask
@@ -369,12 +433,19 @@ void Adapter::InitializeStep3(const InitializeCallback& callback) {
     cmd_packet->mutable_view()
         ->mutable_payload<hci::LESetEventMaskCommandParams>()
         ->le_event_mask = htole64(event_mask);
-    init_seq_runner_->QueueCommand(std::move(cmd_packet));
+    init_seq_runner_->QueueCommand(
+        std::move(cmd_packet), [](const auto& event) {
+          auto status = event.ToStatus();
+          if (!status) {
+            FXL_LOG(WARNING) << "gap: Adapter: set LE event mask failure: "
+                             << status.ToString();
+          }
+        });
   }
 
   // HCI_Write_LE_Host_Support if the appropriate feature bit is not set AND if
   // the controller supports this command.
-  if (!state_.HasLMPFeatureBit(1, hci::LMPFeature::kLESupportedHost) &&
+  if (!state_.features().HasBit(1, hci::LMPFeature::kLESupportedHost) &&
       state_.IsCommandSupported(24,
                                 hci::SupportedCommand::kWriteLEHostSupport)) {
     auto cmd_packet = hci::CommandPacket::New(
@@ -383,12 +454,19 @@ void Adapter::InitializeStep3(const InitializeCallback& callback) {
                       ->mutable_payload<hci::WriteLEHostSupportCommandParams>();
     params->le_supported_host = hci::GenericEnableParam::kEnable;
     params->simultaneous_le_host = 0x00;
-    init_seq_runner_->QueueCommand(std::move(cmd_packet));
+    init_seq_runner_->QueueCommand(
+        std::move(cmd_packet), [](const auto& event) {
+          auto status = event.ToStatus();
+          if (!status) {
+            FXL_LOG(WARNING) << "gap: Adapter: write LE host support failure: "
+                             << status.ToString();
+          }
+        });
   }
 
   // If we know that Page 2 of the extended features bitfield is available, then
   // request it.
-  if (state_.max_lmp_feature_page_index_ > 1) {
+  if (max_lmp_feature_page_index_ > 1) {
     auto cmd_packet = hci::CommandPacket::New(
         hci::kReadLocalExtendedFeatures,
         sizeof(hci::ReadLocalExtendedFeaturesCommandParams));
@@ -401,15 +479,21 @@ void Adapter::InitializeStep3(const InitializeCallback& callback) {
     // HCI_Read_Local_Extended_Features
     init_seq_runner_->QueueCommand(
         std::move(cmd_packet), [this](const hci::EventPacket& cmd_complete) {
+          auto status = cmd_complete.ToStatus();
+          if (!status) {
+            FXL_LOG(WARNING) << "gap: Adapter: read extended features failure: "
+                             << status.ToString();
+            return;
+          }
           auto params =
               cmd_complete
                   .return_params<hci::ReadLocalExtendedFeaturesReturnParams>();
-          state_.lmp_features_[2] = le64toh(params->extended_lmp_features);
-          state_.max_lmp_feature_page_index_ = params->maximum_page_number;
+          state_.features_.SetPage(2, le64toh(params->extended_lmp_features));
+          max_lmp_feature_page_index_ = params->maximum_page_number;
         });
   }
 
-  init_seq_runner_->RunCommands([callback, this](hci::Status status) {
+  init_seq_runner_->RunCommands([callback = std::move(callback), this](hci::Status status) mutable {
     if (!status) {
       FXL_LOG(ERROR) << "gap: Adapter: Failed to obtain initial controller "
                         "information (step 3): "
@@ -419,11 +503,11 @@ void Adapter::InitializeStep3(const InitializeCallback& callback) {
       return;
     }
 
-    InitializeStep4(callback);
+    InitializeStep4(std::move(callback));
   });
 }
 
-void Adapter::InitializeStep4(const InitializeCallback& callback) {
+void Adapter::InitializeStep4(InitializeCallback callback) {
   FXL_DCHECK(IsInitializing());
 
   // Initialize the scan manager based on current feature support.
@@ -461,7 +545,7 @@ void Adapter::InitializeStep4(const InitializeCallback& callback) {
 
   bredr_connection_manager_ = std::make_unique<BrEdrConnectionManager>(
       hci_, &device_cache_,
-      state_.HasLMPFeatureBit(0, hci::LMPFeature::kInterlacedPageScan));
+      state_.features().HasBit(0, hci::LMPFeature::kInterlacedPageScan));
   bredr_discovery_manager_ =
       std::make_unique<BrEdrDiscoveryManager>(hci_, &device_cache_);
 

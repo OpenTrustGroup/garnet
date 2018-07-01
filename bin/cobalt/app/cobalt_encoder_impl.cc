@@ -45,7 +45,7 @@ void CobaltEncoderImpl::AddStringObservation(
     uint32_t metric_id, uint32_t encoding_id, fidl::StringPtr observation,
     AddStringObservationCallback callback) {
   auto result = encoder_.EncodeString(metric_id, encoding_id, observation);
-  AddEncodedObservation(&result, callback);
+  AddEncodedObservation(&result, std::move(callback));
 }
 
 void CobaltEncoderImpl::AddIntObservation(uint32_t metric_id,
@@ -53,51 +53,51 @@ void CobaltEncoderImpl::AddIntObservation(uint32_t metric_id,
                                           const int64_t observation,
                                           AddIntObservationCallback callback) {
   auto result = encoder_.EncodeInt(metric_id, encoding_id, observation);
-  AddEncodedObservation(&result, callback);
+  AddEncodedObservation(&result, std::move(callback));
 }
 
 void CobaltEncoderImpl::AddDoubleObservation(
     uint32_t metric_id, uint32_t encoding_id, const double observation,
     AddDoubleObservationCallback callback) {
   auto result = encoder_.EncodeDouble(metric_id, encoding_id, observation);
-  AddEncodedObservation(&result, callback);
+  AddEncodedObservation(&result, std::move(callback));
 }
 
 void CobaltEncoderImpl::AddIndexObservation(
     uint32_t metric_id, uint32_t encoding_id, uint32_t index,
     AddIndexObservationCallback callback) {
   auto result = encoder_.EncodeIndex(metric_id, encoding_id, index);
-  AddEncodedObservation(&result, callback);
+  AddEncodedObservation(&result, std::move(callback));
 }
 
 void CobaltEncoderImpl::AddObservation(uint32_t metric_id, uint32_t encoding_id,
-                                       Value observation,
+                                       fuchsia::cobalt::Value observation,
                                        AddObservationCallback callback) {
   switch (observation.Which()) {
-    case Value::Tag::kStringValue: {
+    case fuchsia::cobalt::Value::Tag::kStringValue: {
       AddStringObservation(metric_id, encoding_id, observation.string_value(),
-                           callback);
+                           std::move(callback));
       break;
     }
-    case Value::Tag::kIntValue: {
+    case fuchsia::cobalt::Value::Tag::kIntValue: {
       AddIntObservation(metric_id, encoding_id, observation.int_value(),
-                        callback);
+                        std::move(callback));
       break;
     }
-    case Value::Tag::kDoubleValue: {
+    case fuchsia::cobalt::Value::Tag::kDoubleValue: {
       AddDoubleObservation(metric_id, encoding_id, observation.double_value(),
-                           callback);
+                           std::move(callback));
       break;
     }
-    case Value::Tag::kIndexValue: {
+    case fuchsia::cobalt::Value::Tag::kIndexValue: {
       AddIndexObservation(metric_id, encoding_id, observation.index_value(),
-                          callback);
+                          std::move(callback));
       break;
     }
-    case Value::Tag::kIntBucketDistribution: {
+    case fuchsia::cobalt::Value::Tag::kIntBucketDistribution: {
       AddIntBucketDistribution(metric_id, encoding_id,
                                std::move(observation.int_bucket_distribution()),
-                               callback);
+                               std::move(callback));
       break;
     }
     default:
@@ -108,32 +108,33 @@ void CobaltEncoderImpl::AddObservation(uint32_t metric_id, uint32_t encoding_id,
 }
 
 void CobaltEncoderImpl::AddMultipartObservation(
-    uint32_t metric_id, fidl::VectorPtr<ObservationValue> observation,
+    uint32_t metric_id,
+    fidl::VectorPtr<fuchsia::cobalt::ObservationValue> observation,
     AddMultipartObservationCallback callback) {
   Encoder::Value value;
   for (const auto& obs_val : *observation) {
     switch (obs_val.value.Which()) {
-      case Value::Tag::kStringValue: {
+      case fuchsia::cobalt::Value::Tag::kStringValue: {
         value.AddStringPart(obs_val.encoding_id, obs_val.name,
                             obs_val.value.string_value());
         break;
       }
-      case Value::Tag::kIntValue: {
+      case fuchsia::cobalt::Value::Tag::kIntValue: {
         value.AddIntPart(obs_val.encoding_id, obs_val.name,
                          obs_val.value.int_value());
         break;
       }
-      case Value::Tag::kDoubleValue: {
+      case fuchsia::cobalt::Value::Tag::kDoubleValue: {
         value.AddDoublePart(obs_val.encoding_id, obs_val.name,
                             obs_val.value.double_value());
         break;
       }
-      case Value::Tag::kIndexValue: {
+      case fuchsia::cobalt::Value::Tag::kIndexValue: {
         value.AddIndexPart(obs_val.encoding_id, obs_val.name,
                            obs_val.value.index_value());
         break;
       }
-      case Value::Tag::kIntBucketDistribution: {
+      case fuchsia::cobalt::Value::Tag::kIntBucketDistribution: {
         std::map<uint32_t, uint64_t> distribution_map;
         for (auto it = obs_val.value.int_bucket_distribution()->begin();
              obs_val.value.int_bucket_distribution()->end() != it; it++) {
@@ -152,12 +153,12 @@ void CobaltEncoderImpl::AddMultipartObservation(
     }
   }
   auto result = encoder_.Encode(metric_id, value);
-  AddEncodedObservation(&result, callback);
+  AddEncodedObservation(&result, std::move(callback));
 }
 
 void CobaltEncoderImpl::AddIntBucketDistribution(
     uint32_t metric_id, uint32_t encoding_id,
-    fidl::VectorPtr<BucketDistributionEntry> distribution,
+    fidl::VectorPtr<fuchsia::cobalt::BucketDistributionEntry> distribution,
     AddIntBucketDistributionCallback callback) {
   std::map<uint32_t, uint64_t> distribution_map;
   for (auto it = distribution->begin(); distribution->end() != it; it++) {
@@ -165,7 +166,7 @@ void CobaltEncoderImpl::AddIntBucketDistribution(
   }
   auto result = encoder_.EncodeIntBucketDistribution(metric_id, encoding_id,
                                                      distribution_map);
-  AddEncodedObservation(&result, callback);
+  AddEncodedObservation(&result, std::move(callback));
 }
 
 template <class CB>
@@ -179,7 +180,7 @@ void CobaltEncoderImpl::AddTimerObservationIfReady(
   }
 
   if (TimerManager::isMultipart(timer_val_ptr)) {
-    ObservationValue value;
+    fuchsia::cobalt::ObservationValue value;
     value.name = std::move(timer_val_ptr->part_name);
     value.encoding_id = timer_val_ptr->encoding_id;
     value.value.set_int_value(timer_val_ptr->end_timestamp -
@@ -187,12 +188,12 @@ void CobaltEncoderImpl::AddTimerObservationIfReady(
 
     timer_val_ptr->observation.push_back(std::move(value));
     AddMultipartObservation(timer_val_ptr->metric_id,
-                            std::move(timer_val_ptr->observation), callback);
+                            std::move(timer_val_ptr->observation), std::move(callback));
   } else {
     AddIntObservation(
         timer_val_ptr->metric_id, timer_val_ptr->encoding_id,
         timer_val_ptr->end_timestamp - timer_val_ptr->start_timestamp,
-        callback);
+        std::move(callback));
   }
 }
 
@@ -210,7 +211,7 @@ void CobaltEncoderImpl::StartTimer(uint32_t metric_id, uint32_t encoding_id,
     return;
   }
 
-  AddTimerObservationIfReady(std::move(timer_val_ptr), callback);
+  AddTimerObservationIfReady(std::move(timer_val_ptr), std::move(callback));
 }
 
 void CobaltEncoderImpl::EndTimer(fidl::StringPtr timer_id, uint64_t timestamp,
@@ -225,13 +226,13 @@ void CobaltEncoderImpl::EndTimer(fidl::StringPtr timer_id, uint64_t timestamp,
     return;
   }
 
-  AddTimerObservationIfReady(std::move(timer_val_ptr), callback);
+  AddTimerObservationIfReady(std::move(timer_val_ptr), std::move(callback));
 }
 
 void CobaltEncoderImpl::EndTimerMultiPart(
     fidl::StringPtr timer_id, uint64_t timestamp, fidl::StringPtr part_name,
-    fidl::VectorPtr<ObservationValue> observation, uint32_t timeout_s,
-    EndTimerMultiPartCallback callback) {
+    fidl::VectorPtr<fuchsia::cobalt::ObservationValue> observation,
+    uint32_t timeout_s, EndTimerMultiPartCallback callback) {
   std::unique_ptr<TimerVal> timer_val_ptr;
   auto status = timer_manager_->GetTimerValWithEnd(
       timer_id.get(), timestamp, timeout_s, part_name.get(),
@@ -242,7 +243,7 @@ void CobaltEncoderImpl::EndTimerMultiPart(
     return;
   }
 
-  AddTimerObservationIfReady(std::move(timer_val_ptr), callback);
+  AddTimerObservationIfReady(std::move(timer_val_ptr), std::move(callback));
 }
 
 void CobaltEncoderImpl::SendObservations(SendObservationsCallback callback) {

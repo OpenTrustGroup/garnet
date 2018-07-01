@@ -1,0 +1,69 @@
+// Copyright 2018 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library fuchsia.wlan.sme;
+
+struct BssInfo {
+    array<uint8>:6 bssid;
+    vector<uint8>:32 ssid;
+    int8 rx_dbm;
+    uint8 channel;
+    bool protected;
+    bool compatible;
+};
+
+struct EssInfo {
+    BssInfo best_bss;
+};
+
+enum ScanErrorCode {
+    NOT_SUPPORTED = 1;
+};
+
+struct ScanError {
+    ScanErrorCode code;
+    string message;
+};
+
+interface ScanTransaction {
+    // Can be called several times to deliver incremental scan results
+    1: -> OnResult(vector<EssInfo> aps);
+    2: -> OnFinished();
+    3: -> OnError(ScanError error);
+};
+
+struct ScanRequest {
+    uint8 timeout; // seconds
+};
+
+enum ConnectResultCode {
+    // Connected successfully
+    SUCCESS = 0;
+    // The request was superseded by another connect or disconnect command
+    CANCELED = 1;
+    // Failed to join for some reason
+    FAILED = 2;
+    // TODO(gbonik): possibly add more granular error codes, e.g. "BAD_CREDENTIALS"
+};
+
+interface ConnectTransaction {
+    // Could add more events here to notify the client of the progress
+    1: -> OnFinished(ConnectResultCode code);
+};
+
+struct ConnectRequest {
+    vector<uint8>:32 ssid;
+};
+
+struct ClientStatusResponse {
+    BssInfo? connected_to;
+    // If non-empty, this is the SSID we are currently trying to connect to
+    vector<uint8>:32 connecting_to_ssid;
+};
+
+interface ClientSme {
+    1: Scan(ScanRequest req, request<ScanTransaction> txn);
+    2: Connect(ConnectRequest req, request<ConnectTransaction>? txn);
+    3: Status() -> (ClientStatusResponse resp);
+};

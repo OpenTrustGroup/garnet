@@ -8,17 +8,13 @@ namespace sketchy_service {
 
 App::App(async::Loop* loop, escher::Escher* escher)
     : loop_(loop),
-      context_(component::ApplicationContext::CreateFromStartupInfo()),
+      context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()),
       scenic_(
           context_->ConnectToEnvironmentService<fuchsia::ui::scenic::Scenic>()),
-      session_(std::make_unique<scenic_lib::Session>(scenic_.get())),
+      session_(std::make_unique<scenic::Session>(scenic_.get())),
       canvas_(std::make_unique<CanvasImpl>(loop_, session_.get(), escher)) {
-  context_->outgoing().AddPublicService<::fuchsia::ui::sketchy::Canvas>(
-      [this](fidl::InterfaceRequest<::fuchsia::ui::sketchy::Canvas> request) {
-        FXL_LOG(INFO) << "Sketchy service: accepting connection to Canvas.";
-        // TODO(MZ-270): Support multiple simultaneous Canvas clients.
-        bindings_.AddBinding(canvas_.get(), std::move(request));
-      });
+  context_->outgoing().AddPublicService(bindings_.GetHandler(canvas_.get()));
+
   session_->set_error_handler([this] {
     FXL_LOG(INFO) << "Sketchy service lost connection to Session.";
     loop_->Quit();

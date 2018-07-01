@@ -145,10 +145,11 @@ void BrEdrDiscoveryManager::MaybeStartInquiry() {
         FXL_DCHECK(event.event_code() == hci::kInquiryCompleteEventCode);
 
         if (!status) {
-          FXL_VLOG(1) << "gap: inquiry command failed";
+          FXL_VLOG(1) << "gap: inquiry complete failure: " << status.ToString();
           return;
         }
 
+        FXL_VLOG(1) << "gap: BrEdrDiscoveryManager: inquiry complete, restart";
         // We've stopped scanning because we timed out.
         self->MaybeStartInquiry();
       },
@@ -209,7 +210,7 @@ void BrEdrDiscoveryManager::RequestDiscoverable(DiscoverableCallback callback) {
   FXL_LOG(INFO) << "gap: BrEdrDiscoveryManager: RequestDiscoverable";
 
   auto self = weak_ptr_factory_.GetWeakPtr();
-  auto status_cb = [self, cb = std::move(callback)](const auto& status) {
+  auto status_cb = [self, cb = callback.share()](const auto& status) {
     cb(status, (status ? self->AddDiscoverableSession() : nullptr));
   };
 

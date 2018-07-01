@@ -35,7 +35,6 @@
 #include "msg_buf.h"
 #include "targaddrs.h"
 #include "wmi.h"
-#include "../ath.h"
 #include "thermal.h"
 #include "wow.h"
 #include "swap.h"
@@ -714,7 +713,6 @@ struct ath10k_vif {
 };
 
 struct ath10k {
-    struct ath_common ath_common;
     zx_device_t* zxdev;
     uint8_t mac_addr[ETH_ALEN];
 
@@ -905,6 +903,10 @@ struct ath10k {
 #if DEBUG_MSG_BUF
     thrd_t monitor_thread;
 #endif
+
+    mtx_t assoc_lock;
+    completion_t assoc_complete;
+    struct ath10k_msg_buf* assoc_frame;
 
 #if 0 // NEEDS PORTING
     /* cycle count is reported twice for each visited channel during scan.

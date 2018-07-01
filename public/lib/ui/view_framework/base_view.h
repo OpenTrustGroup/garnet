@@ -5,9 +5,10 @@
 #ifndef LIB_UI_VIEW_FRAMEWORK_BASE_VIEW_H_
 #define LIB_UI_VIEW_FRAMEWORK_BASE_VIEW_H_
 
-#include <component/cpp/fidl.h>
+#include <fuchsia/sys/cpp/fidl.h>
 #include <fuchsia/ui/input/cpp/fidl.h>
 #include <fuchsia/ui/views_v1/cpp/fidl.h>
+#include <lib/fit/function.h>
 
 #include <memory>
 #include <string>
@@ -16,8 +17,8 @@
 #include "lib/fidl/cpp/interface_handle.h"
 #include "lib/fxl/functional/closure.h"
 #include "lib/fxl/macros.h"
-#include "lib/ui/scenic/client/resources.h"
-#include "lib/ui/scenic/client/session.h"
+#include "lib/ui/scenic/cpp/resources.h"
+#include "lib/ui/scenic/cpp/session.h"
 
 namespace mozart {
 
@@ -47,17 +48,17 @@ class BaseView : private ::fuchsia::ui::views_v1::ViewListener,
   ::fuchsia::ui::views_v1::View* view() { return view_.get(); }
 
   // Gets the service provider for the view.
-  component::ServiceProvider* GetViewServiceProvider();
+  fuchsia::sys::ServiceProvider* GetViewServiceProvider();
 
   // Gets the underlying view container interface.
   ::fuchsia::ui::views_v1::ViewContainer* GetViewContainer();
 
   // Gets a wrapper for the view's session.
-  scenic_lib::Session* session() { return &session_; }
+  scenic::Session* session() { return &session_; }
 
   // Gets the imported parent node to which the session's tree of nodes
   // should be attached.
-  scenic_lib::ImportNode& parent_node() { return parent_node_; }
+  scenic::ImportNode& parent_node() { return parent_node_; }
 
   // Gets the current view properties.
   // Returns nullptr if unknown.
@@ -110,7 +111,7 @@ class BaseView : private ::fuchsia::ui::views_v1::ViewListener,
   //
   // This should be used to implement cleanup policies to release resources
   // associated with the view (including the object itself).
-  void SetReleaseHandler(fxl::Closure callback);
+  void SetReleaseHandler(fit::closure callback);
 
   // Invalidates the scene, causing |OnSceneInvalidated()| to be invoked
   // during the next frame.
@@ -184,7 +185,7 @@ class BaseView : private ::fuchsia::ui::views_v1::ViewListener,
   fidl::Binding<fuchsia::ui::input::InputListener> input_listener_binding_;
 
   ::fuchsia::ui::views_v1::ViewPtr view_;
-  component::ServiceProviderPtr view_service_provider_;
+  fuchsia::sys::ServiceProviderPtr view_service_provider_;
   ::fuchsia::ui::views_v1::ViewContainerPtr view_container_;
   fuchsia::ui::input::InputConnectionPtr input_connection_;
   ::fuchsia::ui::views_v1::ViewProperties properties_;
@@ -193,8 +194,8 @@ class BaseView : private ::fuchsia::ui::views_v1::ViewListener,
   bool need_square_metrics_ = false;
   fuchsia::ui::gfx::Metrics original_metrics_;
   fuchsia::ui::gfx::Metrics adjusted_metrics_;
-  scenic_lib::Session session_;
-  scenic_lib::ImportNode parent_node_;
+  scenic::Session session_;
+  scenic::ImportNode parent_node_;
 
   bool invalidate_pending_ = false;
   bool present_pending_ = false;

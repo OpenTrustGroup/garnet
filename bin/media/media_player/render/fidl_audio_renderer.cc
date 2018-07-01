@@ -7,11 +7,11 @@
 #include <lib/async/default.h>
 
 #include "garnet/bin/media/media_player/fidl/fidl_type_conversions.h"
+#include "garnet/bin/media/media_player/framework/formatting.h"
+#include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 #include "lib/media/timeline/timeline.h"
 #include "lib/media/timeline/timeline_rate.h"
-
-#include "garnet/bin/media/media_player/framework/formatting.h"
 
 namespace media_player {
 namespace {
@@ -22,11 +22,12 @@ constexpr int64_t kWarnThresholdNs = ZX_MSEC(500);
 
 // static
 std::shared_ptr<FidlAudioRenderer> FidlAudioRenderer::Create(
-    media::AudioRenderer2Ptr audio_renderer) {
+    fuchsia::media::AudioRenderer2Ptr audio_renderer) {
   return std::make_shared<FidlAudioRenderer>(std::move(audio_renderer));
 }
 
-FidlAudioRenderer::FidlAudioRenderer(media::AudioRenderer2Ptr audio_renderer)
+FidlAudioRenderer::FidlAudioRenderer(
+    fuchsia::media::AudioRenderer2Ptr audio_renderer)
     : audio_renderer_(std::move(audio_renderer)),
       allocator_(0),
       arrivals_(true),
@@ -52,19 +53,25 @@ FidlAudioRenderer::FidlAudioRenderer(media::AudioRenderer2Ptr audio_renderer)
   supported_stream_types_.push_back(AudioStreamTypeSet::Create(
       {StreamType::kAudioEncodingLpcm},
       AudioStreamType::SampleFormat::kUnsigned8,
-      Range<uint32_t>(media::kMinChannelCount, media::kMaxChannelCount),
-      Range<uint32_t>(media::kMinFramesPerSecond, media::kMaxFramesPerSecond)));
+      Range<uint32_t>(fuchsia::media::kMinChannelCount,
+                      fuchsia::media::kMaxChannelCount),
+      Range<uint32_t>(fuchsia::media::kMinFramesPerSecond,
+                      fuchsia::media::kMaxFramesPerSecond)));
 
   supported_stream_types_.push_back(AudioStreamTypeSet::Create(
       {StreamType::kAudioEncodingLpcm},
       AudioStreamType::SampleFormat::kSigned16,
-      Range<uint32_t>(media::kMinChannelCount, media::kMaxChannelCount),
-      Range<uint32_t>(media::kMinFramesPerSecond, media::kMaxFramesPerSecond)));
+      Range<uint32_t>(fuchsia::media::kMinChannelCount,
+                      fuchsia::media::kMaxChannelCount),
+      Range<uint32_t>(fuchsia::media::kMinFramesPerSecond,
+                      fuchsia::media::kMaxFramesPerSecond)));
 
   supported_stream_types_.push_back(AudioStreamTypeSet::Create(
       {StreamType::kAudioEncodingLpcm}, AudioStreamType::SampleFormat::kFloat,
-      Range<uint32_t>(media::kMinChannelCount, media::kMaxChannelCount),
-      Range<uint32_t>(media::kMinFramesPerSecond, media::kMaxFramesPerSecond)));
+      Range<uint32_t>(fuchsia::media::kMinChannelCount,
+                      fuchsia::media::kMaxChannelCount),
+      Range<uint32_t>(fuchsia::media::kMinFramesPerSecond,
+                      fuchsia::media::kMaxFramesPerSecond)));
 }
 
 FidlAudioRenderer::~FidlAudioRenderer() {
@@ -100,19 +107,20 @@ void FidlAudioRenderer::Dump(std::ostream& os) const {
 }
 
 void FidlAudioRenderer::FlushInput(bool hold_frame_not_used, size_t input_index,
-                                   fxl::Closure callback) {
+                                   fit::closure callback) {
   FXL_DCHECK(async_get_default() == async());
   FXL_DCHECK(input_index == 0);
   FXL_DCHECK(callback);
 
   flushed_ = true;
-  SetEndOfStreamPts(media::kUnspecifiedTime);
+  SetEndOfStreamPts(fuchsia::media::kUnspecifiedTime);
 
-  audio_renderer_->Flush([this, callback]() {
-    last_supplied_pts_ns_ = 0;
-    last_departed_pts_ns_ = media::kUnspecifiedTime;
-    callback();
-  });
+  audio_renderer_->Flush(
+      fxl::MakeCopyable([this, callback = std::move(callback)]() {
+        last_supplied_pts_ns_ = 0;
+        last_departed_pts_ns_ = fuchsia::media::kUnspecifiedTime;
+        callback();
+      }));
 }
 
 void FidlAudioRenderer::PutInputPacket(PacketPtr packet, size_t input_index) {
@@ -138,7 +146,7 @@ void FidlAudioRenderer::PutInputPacket(PacketPtr packet, size_t input_index) {
                       Progressing());
 
   last_supplied_pts_ns_ = end_pts_ns;
-  if (last_departed_pts_ns_ == media::kUnspecifiedTime) {
+  if (last_departed_pts_ns_ == fuchsia::media::kUnspecifiedTime) {
     last_departed_pts_ns_ = start_pts_ns;
   }
 
@@ -161,7 +169,7 @@ void FidlAudioRenderer::PutInputPacket(PacketPtr packet, size_t input_index) {
     packet.reset();
     UpdateTimeline(media::Timeline::local_now());
   } else {
-    media::AudioPacket audioPacket;
+    fuchsia::media::AudioPacket audioPacket;
     audioPacket.timestamp = start_pts;
     audioPacket.payload_size = packet->size();
 
@@ -201,9 +209,9 @@ void FidlAudioRenderer::SetStreamType(const StreamType& stream_type) {
   FXL_DCHECK(async_get_default() == async());
   FXL_DCHECK(stream_type.audio());
 
-  media::AudioPcmFormat format;
-  format.sample_format =
-      fxl::To<media::AudioSampleFormat>(stream_type.audio()->sample_format());
+  fuchsia::media::AudioPcmFormat format;
+  format.sample_format = fxl::To<fuchsia::media::AudioSampleFormat>(
+      stream_type.audio()->sample_format());
   format.channels = stream_type.audio()->channels();
   format.frames_per_second = stream_type.audio()->frames_per_second();
 
@@ -232,7 +240,7 @@ void FidlAudioRenderer::SetStreamType(const StreamType& stream_type) {
   bytes_per_frame_ = stream_type.audio()->bytes_per_frame();
 }
 
-void FidlAudioRenderer::Prime(fxl::Closure callback) {
+void FidlAudioRenderer::Prime(fit::closure callback) {
   FXL_DCHECK(async_get_default() == async());
 
   if (prime_callback_) {
@@ -248,12 +256,12 @@ void FidlAudioRenderer::Prime(fxl::Closure callback) {
     return;
   }
 
-  prime_callback_ = callback;
+  prime_callback_ = std::move(callback);
   SignalCurrentDemand();
 }
 
 void FidlAudioRenderer::SetTimelineFunction(
-    media::TimelineFunction timeline_function, fxl::Closure callback) {
+    media::TimelineFunction timeline_function, fit::closure callback) {
   FXL_DCHECK(async_get_default() == async());
   // AudioRenderer2 only supports 0/1 (paused) or 1/1 (normal playback rate).
   // TODO(dalesat): Remove this DCHECK when AudioRenderer2 supports other rates,
@@ -262,7 +270,7 @@ void FidlAudioRenderer::SetTimelineFunction(
              (timeline_function.subject_delta() == 1 &&
               timeline_function.reference_delta() == 1));
 
-  Renderer::SetTimelineFunction(timeline_function, callback);
+  Renderer::SetTimelineFunction(timeline_function, std::move(callback));
 
   if (timeline_function.subject_delta() == 0) {
     audio_renderer_->PauseNoReply();
@@ -318,7 +326,7 @@ bool FidlAudioRenderer::NeedMorePackets() {
 
   if (presentation_time_ns + min_lead_time_ns_ > last_supplied_pts_ns_) {
     // We need more packets to meet lead time commitments.
-    if (last_departed_pts_ns_ != media::kUnspecifiedTime &&
+    if (last_departed_pts_ns_ != fuchsia::media::kUnspecifiedTime &&
         last_supplied_pts_ns_ - last_departed_pts_ns_ > kWarnThresholdNs) {
       FXL_LOG(WARNING) << "Audio renderer holding too much content:";
       FXL_LOG(WARNING) << "    total content "

@@ -6,6 +6,7 @@
 #include "address_space.h"
 #include "engine_command_streamer.h"
 #include "instructions.h"
+#include "msd_intel_connection.h"
 #include "msd_intel_context.h"
 #include "msd_intel_semaphore.h"
 #include "platform_trace.h"
@@ -57,10 +58,6 @@ CommandBuffer::CommandBuffer(std::shared_ptr<MsdIntelBuffer> abi_cmd_buf,
 
 CommandBuffer::~CommandBuffer()
 {
-    for (auto res : exec_resources_) {
-        res.buffer->DecrementInflightCounter();
-    }
-
     if (!prepared_to_execute_)
         return;
 
@@ -75,6 +72,13 @@ CommandBuffer::~CommandBuffer()
     for (auto& semaphore : signal_semaphores_) {
         semaphore->Signal();
     }
+
+    std::shared_ptr<MsdIntelConnection> connection = locked_context_->connection().lock();
+    uint64_t batch_buffer_id = GetBatchBufferId();
+    if (connection && batch_buffer_id) {
+        connection->SendNotification(batch_buffer_id);
+    }
+
     TRACE_ASYNC_END("magma-exec", "CommandBuffer Exec", nonce_);
 }
 
@@ -109,7 +113,6 @@ bool CommandBuffer::InitializeResources(
     for (uint32_t i = 0; i < num_resources(); i++) {
         exec_resources_.emplace_back(
             ExecResource{buffers[i], resource(i).offset(), resource(i).length()});
-        buffers[i]->IncrementInflightCounter();
         {
             TRACE_DURATION("magma", "CommitPages");
             uint64_t num_pages = AddressSpace::GetMappedSize(resource(i).length()) >> PAGE_SHIFT;
@@ -218,7 +221,7 @@ bool CommandBuffer::MapResourcesGpu(std::shared_ptr<AddressSpace> address_space,
 
     for (auto res : exec_resources_) {
         std::shared_ptr<GpuMapping> mapping = AddressSpace::GetSharedGpuMapping(
-            address_space, res.buffer, res.offset, res.length, PAGE_SIZE);
+            address_space, res.buffer, res.offset, res.length);
         if (!mapping)
             return DRETF(false, "failed to map resource into GPU address space");
         DLOG("MapResourcesGpu aspace %p buffer 0x%" PRIx64 " offset 0x%" PRIx64 " length 0x%" PRIx64

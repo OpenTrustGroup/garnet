@@ -42,7 +42,7 @@
  * @data: event specific data part of the firmware event.
  */
 struct brcmf_fweh_queue_item {
-    struct list_head q;
+    struct list_node q;
     enum brcmf_fweh_event_code code;
     uint8_t ifidx;
     uint8_t ifaddr[ETH_ALEN];
@@ -235,13 +235,13 @@ static void brcmf_fweh_event_worker(struct work_struct* work) {
 
         /* convert event message */
         emsg_be = &event->emsg;
-        emsg.version = be16_to_cpu(emsg_be->version);
-        emsg.flags = be16_to_cpu(emsg_be->flags);
+        emsg.version = be16toh(emsg_be->version);
+        emsg.flags = be16toh(emsg_be->flags);
         emsg.event_code = event->code;
-        emsg.status = be32_to_cpu(emsg_be->status);
-        emsg.reason = be32_to_cpu(emsg_be->reason);
-        emsg.auth_type = be32_to_cpu(emsg_be->auth_type);
-        emsg.datalen = be32_to_cpu(emsg_be->datalen);
+        emsg.status = be32toh(emsg_be->status);
+        emsg.reason = be32toh(emsg_be->reason);
+        emsg.auth_type = be32toh(emsg_be->auth_type);
+        emsg.datalen = be32toh(emsg_be->datalen);
         memcpy(emsg.addr, emsg_be->addr, ETH_ALEN);
         memcpy(emsg.ifname, emsg_be->ifname, sizeof(emsg.ifname));
         emsg.ifidx = emsg_be->ifidx;
@@ -326,11 +326,11 @@ void brcmf_fweh_detach(struct brcmf_pub* drvr) {
 zx_status_t brcmf_fweh_register(struct brcmf_pub* drvr, enum brcmf_fweh_event_code code,
                                 brcmf_fweh_handler_t handler) {
     if (drvr->fweh.evt_handler[code]) {
-        brcmf_err("event code %d already registered\n", code);
+        brcmf_err("Exit: event code %d already registered\n", code);
         return ZX_ERR_ALREADY_EXISTS;
     }
     drvr->fweh.evt_handler[code] = handler;
-    brcmf_dbg(TRACE, "event handler registered for %s\n", brcmf_fweh_event_name(code));
+    brcmf_dbg(TRACE, "Exit: event handler registered for %s\n", brcmf_fweh_event_name(code));
     return ZX_OK;
 }
 
@@ -376,7 +376,7 @@ zx_status_t brcmf_fweh_activate_events(struct brcmf_if* ifp) {
 }
 
 /**
- * brcmf_fweh_process_event() - process skb as firmware event.
+ * brcmf_fweh_process_event() - process netbuf as firmware event.
  *
  * @drvr: driver information object.
  * @event_packet: event packet to process.
@@ -389,13 +389,13 @@ void brcmf_fweh_process_event(struct brcmf_pub* drvr, struct brcmf_event* event_
     enum brcmf_fweh_event_code code;
     struct brcmf_fweh_info* fweh = &drvr->fweh;
     struct brcmf_fweh_queue_item* event;
-    gfp_t alloc_flag = GFP_KERNEL;
     void* data;
     uint32_t datalen;
 
+    brcmf_dbg(TEMP, "Enter");
     /* get event info */
-    code = get_unaligned_be32(&event_packet->msg.event_type);
-    datalen = get_unaligned_be32(&event_packet->msg.datalen);
+    code = be32toh(event_packet->msg.event_type);
+    datalen = be32toh(event_packet->msg.datalen);
     data = &event_packet[1];
 
     if (code >= BRCMF_E_LAST) {
@@ -403,18 +403,17 @@ void brcmf_fweh_process_event(struct brcmf_pub* drvr, struct brcmf_event* event_
     }
 
     if (code != BRCMF_E_IF && !fweh->evt_handler[code]) {
+        brcmf_dbg(TEMP, "Event not found");
         return;
     }
 
     if (datalen > BRCMF_DCMD_MAXLEN || datalen + sizeof(*event_packet) > packet_len) {
+        brcmf_dbg(TEMP, "Len, datalen %d, event_packet size %ld, packet_len %d", datalen,
+                  sizeof(*event_packet), packet_len);
         return;
     }
 
-    if (in_interrupt()) {
-        alloc_flag = GFP_ATOMIC;
-    }
-
-    event = kzalloc(sizeof(*event) + datalen, alloc_flag);
+    event = calloc(1, sizeof(*event) + datalen);
     if (!event) {
         return;
     }
@@ -428,5 +427,6 @@ void brcmf_fweh_process_event(struct brcmf_pub* drvr, struct brcmf_event* event_
     event->datalen = datalen;
     memcpy(event->ifaddr, event_packet->eth.h_dest, ETH_ALEN);
 
+    brcmf_dbg(TEMP, "Queueing event!");
     brcmf_fweh_queue_event(fweh, event);
 }

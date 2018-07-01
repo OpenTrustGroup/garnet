@@ -11,18 +11,18 @@ import (
 	"app/context"
 	"svc/services"
 
-	"fidl/component"
-	"fidl/echo2"
+	echo2 "fidl/fidl/examples/echo"
+	"fidl/fuchsia/sys"
 )
 
 type echoClientApp struct {
 	ctx          *context.Context
 	echoProvider *services.Provider
-	controller   *component.ComponentControllerInterface
+	controller   *sys.ComponentControllerInterface
 	echo         *echo2.EchoInterface
 }
 
-func (a *echoClientApp) startApplication(serverURL string) (li *component.ComponentControllerInterface, err error) {
+func (a *echoClientApp) startApplication(serverURL string) (li *sys.ComponentControllerInterface, err error) {
 	pr, err := a.echoProvider.NewRequest()
 	if err != nil {
 		return nil, fmt.Errorf("NewRequest failed: %v", err)
@@ -33,12 +33,12 @@ func (a *echoClientApp) startApplication(serverURL string) (li *component.Compon
 		}
 	}()
 
-	launchInfo := component.LaunchInfo{
+	launchInfo := sys.LaunchInfo{
 		Url:              serverURL,
 		DirectoryRequest: pr,
 	}
 
-	cr, cp, err := component.NewComponentControllerInterfaceRequest()
+	cr, cp, err := sys.NewComponentControllerInterfaceRequest()
 	if err != nil {
 		return nil, fmt.Errorf("NewComponentControllerInterfaceRequest failed: %v", err)
 	}
@@ -49,9 +49,9 @@ func (a *echoClientApp) startApplication(serverURL string) (li *component.Compon
 		}
 	}()
 
-	err = a.ctx.Launcher.CreateApplication(launchInfo, cr)
+	err = a.ctx.Launcher.CreateComponent(launchInfo, cr)
 	if err != nil {
-		return nil, fmt.Errorf("CreateApplication failed: %v", err)
+		return nil, fmt.Errorf("CreateComponent failed: %v", err)
 	}
 	return cp, nil
 }

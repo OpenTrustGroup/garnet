@@ -3,14 +3,18 @@
 // found in the LICENSE file.
 
 #include "garnet/bin/zxdb/console/verbs.h"
-
 #include "garnet/bin/zxdb/client/breakpoint.h"
+#include "garnet/bin/zxdb/client/breakpoint_location.h"
 #include "garnet/bin/zxdb/client/breakpoint_settings.h"
+#include "garnet/bin/zxdb/client/frame.h"
 #include "garnet/bin/zxdb/client/session.h"
+#include "garnet/bin/zxdb/client/symbols/location.h"
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/command_utils.h"
 #include "garnet/bin/zxdb/console/console.h"
 #include "garnet/bin/zxdb/console/console_context.h"
+#include "garnet/bin/zxdb/console/format_context.h"
+#include "garnet/bin/zxdb/console/input_location_parser.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
 
 namespace zxdb {
@@ -20,11 +24,60 @@ namespace {
 constexpr int kStopSwitch = 1;
 constexpr int kEnableSwitch = 2;
 
+// Callback for when updating a breakpoint is done.
+void CreateOrEditBreakpointComplete(fxl::WeakPtr<Breakpoint> breakpoint,
+                                    const Err& err) {
+  if (!breakpoint)
+    return;  // Do nothing if the breakpoint is gone.
+
+  Console* console = Console::get();
+  if (err.has_error()) {
+    OutputBuffer out;
+    out.Append("Error setting breakpoint: ");
+    out.OutputErr(err);
+    console->Output(std::move(out));
+    return;
+  }
+
+  auto locs = breakpoint->GetLocations();
+  if (locs.empty()) {
+    // When the breakpoint resolved to nothing, warn the user, they may have
+    // made a typo.
+    OutputBuffer out;
+    out.Append(DescribeBreakpoint(&console->context(), breakpoint.get()));
+    out.Append(Syntax::kWarning, "\nPending");
+    out.Append(": No matches for location, it will be pending library loads.");
+    console->Output(std::move(out));
+    return;
+  }
+
+  // Successfully wrote the breakpoint.
+  OutputBuffer out;
+  out.Append(DescribeBreakpoint(&console->context(), breakpoint.get()));
+  out.Append("\n");
+
+  // There is a question of what to show the breakpoint enabled state. The
+  // breakpoint has a main enabled bit and each location (it can apply to more
+  // than one address -- think templates and inlined functions) within that
+  // breakpoint has its own. But each location normally resolves to the same
+  // source code location so we can't practically show the individual
+  // location's enabled state separately.
+  //
+  // For simplicity, just base it on the main enabled bit. Most people won't
+  // use location-specific enabling anyway.
+  //
+  // Ignore errors from printing the source, it doesn't matter that much.
+  FormatBreakpointContext(
+      locs[0]->GetLocation(),
+      breakpoint->session()->system().GetSymbols()->build_dir(),
+      breakpoint->GetSettings().enabled, &out);
+  console->Output(std::move(out));
+}
+
 // Backend for setting attributes on a breakpoint from both creation and
 // editing. The given breakpoint is specified if this is an edit, or is null
 // if this is a creation.
-Err CreateOrEditBreakpoint(ConsoleContext* context,
-                           const Command& cmd,
+Err CreateOrEditBreakpoint(ConsoleContext* context, const Command& cmd,
                            Breakpoint* breakpoint) {
   // Get existing settings (or defaults for new one).
   BreakpointSettings settings;
@@ -64,15 +117,34 @@ Err CreateOrEditBreakpoint(ConsoleContext* context,
 
   // Location.
   if (cmd.args().empty()) {
-    if (!breakpoint)
-      return Err(ErrType::kInput, "New breakpoints must specify a location.");
+    if (!breakpoint) {
+      // Creating a breakpoint with no location implicitly uses the current
+      // frame's current location.
+      if (!cmd.frame()) {
+        return Err(ErrType::kInput,
+                   "There isn't a current frame to take the breakpoint "
+                   "location from.");
+      }
+
+      // Use the file/line of the frame if available. This is what a user will
+      // generally want to see in the breakpoint list, and will persist across
+      // restarts. Fall back to an address otherwise. Sometimes the file/line
+      // might not be what they want, though.
+      const Location& frame_loc = cmd.frame()->GetLocation();
+      if (frame_loc.has_symbols())
+        settings.location = InputLocation(frame_loc.file_line());
+      else
+        settings.location = InputLocation(cmd.frame()->GetAddress());
+    }
   } else if (cmd.args().size() == 1u) {
-    Err err = StringToUint64(cmd.args()[0], &settings.location_address);
+    Err err =
+        ParseInputLocation(cmd.frame(), cmd.args()[0], &settings.location);
     if (err.has_error())
       return err;
-    settings.location_type = BreakpointSettings::LocationType::kAddress;
   } else {
-    return Err(ErrType::kInput, "Expecting only one arg for the location.");
+    return Err(ErrType::kInput,
+               "Expecting only one arg for the location.\n"
+               "Formats: <function>, <file>:<line#>, <line#>, or *<address>");
   }
 
   // Scope.
@@ -80,7 +152,8 @@ Err CreateOrEditBreakpoint(ConsoleContext* context,
     settings.scope = BreakpointSettings::Scope::kThread;
     settings.scope_thread = cmd.thread();
     settings.scope_target = cmd.target();
-  } else if (cmd.HasNoun(Noun::kProcess)) {
+  } else if (cmd.HasNoun(Noun::kProcess) ||
+             settings.location.type == InputLocation::Type::kAddress) {
     settings.scope = BreakpointSettings::Scope::kTarget;
     settings.scope_thread = nullptr;
     settings.scope_target = cmd.target();
@@ -96,16 +169,11 @@ Err CreateOrEditBreakpoint(ConsoleContext* context,
     breakpoint = context->session()->system().CreateNewBreakpoint();
     context->SetActiveBreakpoint(breakpoint);
   }
-  breakpoint->SetSettings(settings, [](const Err& err) {
-    if (err.has_error()) {
-      OutputBuffer out;
-      out.Append("Error setting breakpoint: ");
-      out.OutputErr(err);
-      Console::get()->Output(std::move(out));
-    }
-  });
+  breakpoint->SetSettings(
+      settings, [breakpoint = breakpoint->GetWeakPtr()](const Err& err) {
+        CreateOrEditBreakpointComplete(std::move(breakpoint), err);
+      });
 
-  Console::get()->Output(DescribeBreakpoint(context, breakpoint));
   return Err();
 }
 
@@ -113,7 +181,7 @@ Err CreateOrEditBreakpoint(ConsoleContext* context,
 
 const char kBreakShortHelp[] = "break / br: Create a breakpoint.";
 const char kBreakHelp[] =
-    R"("break [ <address> ]
+    R"(break <location>
 
   Alias: "b"
 
@@ -124,6 +192,13 @@ const char kBreakHelp[] =
   The new breakpoint will become the active breakpoint so future breakpoint
   commands will apply to it by default.
 
+Location arguments
+
+  Current frame's address (no input)
+    break
+
+)" LOCATION_ARG_HELP("break")
+        R"(
 Options
 
   --enable=[ true | false ]
@@ -151,26 +226,18 @@ Scoping to processes and threads
   or a single thread. To do this, provide that process or thread as context
   before the break command:
 
-    t 1 b 0x614a19837
-    thread 1 break 0x614a19837
+    t 1 b *0x614a19837
+    thread 1 break *0x614a19837
         Breaks on only this thread in the current process.
 
-    pr 2 b 0x614a19837
-    process 2 break 0x614a19837
+    pr 2 b *0x614a19837
+    process 2 break *0x614a19837
         Breaks on all threads in the given process.
 
   When the thread of a thread-scoped breakpoint is destroyed, the breakpoint
   will be converted to a disabled process-scoped breakpoint. When the process
   context of a process-scoped breakpoint is destroyed, the breakpoint will be
   converted to a disabled global breakpoint.
-
-Address breakpoints
-
-  Currently only process-specific breakpoints on absolute addresses are
-  supported. These are breakpoints at an explicit code address. Since
-  addresses don't translate between processes, address breakpoints can only
-  be set on running processes and will be automatically disabled when that
-  process exits.
 
 See also
 
@@ -179,13 +246,35 @@ See also
 
 Examples
 
-  break 0x123c9df
-  process 3 break 0x6123fd2937
-  thread 1 break 0x67a82346
+  break
+      Set a breakpoint at the current frame's address.
+
+  frame 1 break
+      Set a breakpoint at the specified frame's address. Since frame 1 is
+      always the current function's calling frame, this command will set a
+      breakpoint at the current function's return.
+
+  break MyClass::MyFunc
+      Breakpoint in all processes that have a function with this name.
+
+  break *0x123c9df
+      Process-specific breakpoint at the given address.
+
+  process 3 break MyClass::MyFunc
+      Process-specific breakpoint at the given function.
+
+  thread 1 break foo.cpp:34
+      Thread-specific breakpoint at the give file/line.
+
+  break 23
+      Break at line 23 of the file referenced by the current frame.
+
+  frame 3 break 23
+      Break at line 23 of the file referenced by frame 3.
 )";
 Err DoBreak(ConsoleContext* context, const Command& cmd) {
-  Err err =
-      cmd.ValidateNouns({Noun::kProcess, Noun::kThread, Noun::kBreakpoint});
+  Err err = cmd.ValidateNouns(
+      {Noun::kProcess, Noun::kThread, Noun::kFrame, Noun::kBreakpoint});
   if (err.has_error())
     return err;
   return CreateOrEditBreakpoint(context, cmd, nullptr);

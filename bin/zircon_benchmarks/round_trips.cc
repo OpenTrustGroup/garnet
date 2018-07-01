@@ -6,8 +6,9 @@
 #include <thread>
 #include <vector>
 
+#include <fuchsia/zircon/benchmarks/cpp/fidl.h>
 #include <lib/async-loop/cpp/loop.h>
-#include <launchpad/launchpad.h>
+#include <lib/fdio/spawn.h>
 #include <zircon/process.h>
 #include <zircon/processargs.h>
 #include <zircon/syscalls.h>
@@ -16,7 +17,6 @@
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/logging.h"
 
-#include <zircon_benchmarks/cpp/fidl.h>
 #include "channels.h"
 #include "round_trips.h"
 #include "test_runner.h"
@@ -124,19 +124,22 @@ class ThreadOrProcess {
               uint32_t handle_count,
               MultiProc multiproc) {
     if (multiproc == MultiProcess) {
-      const char* args[] = {HELPER_PATH, "--subprocess", func_name};
-      launchpad_t* lp;
-      launchpad_create(0, "test-process", &lp);
-      launchpad_load_from_file(lp, args[0]);
-      launchpad_set_args(lp, countof(args), args);
-      launchpad_clone(lp, LP_CLONE_ALL);
-      uint32_t handle_types[handle_count];
-      for (uint32_t i = 0; i < handle_count; ++i)
-        handle_types[i] = PA_HND(PA_USER0, i);
-      launchpad_add_handles(lp, handle_count, handles, handle_types);
-      const char* errmsg;
-      if (launchpad_go(lp, &subprocess_, &errmsg) != ZX_OK)
-        FXL_LOG(FATAL) << "Subprocess launch failed: " << errmsg;
+      const char* args[] = {HELPER_PATH, "--subprocess", func_name, nullptr};
+      fdio_spawn_action_t actions[handle_count + 1];
+      for (uint32_t i = 0; i < handle_count; ++i) {
+        actions[i].action = FDIO_SPAWN_ACTION_ADD_HANDLE;
+        actions[i].h.id = PA_HND(PA_USER0, i);
+        actions[i].h.handle = handles[i];
+      }
+      actions[handle_count].action = FDIO_SPAWN_ACTION_SET_NAME;
+      actions[handle_count].name.data = "test-process";
+
+      char err_msg[FDIO_SPAWN_ERR_MSG_MAX_LENGTH];
+      if (fdio_spawn_etc(ZX_HANDLE_INVALID, FDIO_SPAWN_CLONE_ALL, HELPER_PATH,
+                         args, nullptr, handle_count + 1, actions, &subprocess_,
+                         err_msg) != ZX_OK) {
+        FXL_LOG(FATAL) << "Subprocess launch failed: " << err_msg;
+      }
     } else {
       std::vector<zx_handle_t> handle_vector(handles, handles + handle_count);
       thread_ = std::thread(GetThreadFunc(func_name), handle_vector);
@@ -307,10 +310,9 @@ class ChannelCallTest {
   void Run() {
     uint32_t bytes_read;
     uint32_t handles_read;
-    zx_status_t read_status;
     zx_status_t status =
         zx_channel_call(client_, 0, ZX_TIME_INFINITE, &args_, &bytes_read,
-                        &handles_read, &read_status);
+                        &handles_read);
     FXL_CHECK(status == ZX_OK);
   }
 
@@ -393,11 +395,11 @@ class EventPortSignaler {
   // by Signal() and false if the peer event object was closed.
   bool Wait() {
     FXL_CHECK(event_.wait_async(port_, 0,
-                                ZX_USER_SIGNAL_0 | ZX_EPAIR_PEER_CLOSED,
+                                ZX_USER_SIGNAL_0 | ZX_EVENTPAIR_PEER_CLOSED,
                                 ZX_WAIT_ASYNC_ONCE) == ZX_OK);
     zx_port_packet_t packet;
     FXL_CHECK(port_.wait(zx::time::infinite(), &packet) == ZX_OK);
-    if (packet.signal.observed & ZX_EPAIR_PEER_CLOSED)
+    if (packet.signal.observed & ZX_EVENTPAIR_PEER_CLOSED)
       return false;
     // Clear the signal bit.
     FXL_CHECK(event_.signal(ZX_USER_SIGNAL_0, 0) == ZX_OK);
@@ -531,7 +533,7 @@ class SocketPortTest {
 };
 
 // Implementation of FIDL interface for testing round trip IPCs.
-class RoundTripServiceImpl : public zircon_benchmarks::RoundTripService {
+class RoundTripServiceImpl : public fuchsia::zircon::benchmarks::RoundTripService {
  public:
   void RoundTripTest(uint32_t arg, RoundTripTestCallback callback) override {
     FXL_CHECK(arg == 123);
@@ -554,7 +556,7 @@ class FidlTest {
 
     async::Loop loop (&kAsyncLoopConfigMakeDefault);
     RoundTripServiceImpl service_impl;
-    fidl::Binding<zircon_benchmarks::RoundTripService> binding(
+    fidl::Binding<fuchsia::zircon::benchmarks::RoundTripService> binding(
         &service_impl, std::move(channel));
     binding.set_error_handler([&loop] { loop.Quit(); });
     loop.Run();
@@ -562,13 +564,13 @@ class FidlTest {
 
   void Run() {
     uint32_t result;
-    FXL_CHECK(service_ptr_->RoundTripTest(123, &result));
+    FXL_CHECK(service_ptr_->RoundTripTest(123, &result).statvs == ZX_OK);
     FXL_CHECK(result == 456);
   }
 
  private:
   ThreadOrProcess thread_or_process_;
-  zircon_benchmarks::RoundTripServiceSyncPtr service_ptr_;
+  fuchsia::zircon::benchmarks::RoundTripServiceSync2Ptr service_ptr_;
 };
 
 // Test the round trip time for waking up threads using Zircon futexes.
@@ -760,7 +762,7 @@ void RunSubprocess(const char* func_name) {
   std::vector<zx_handle_t> handles;
   for (;;) {
     zx_handle_t handle =
-        zx_get_startup_handle(PA_HND(PA_USER0, handles.size()));
+        zx_take_startup_handle(PA_HND(PA_USER0, handles.size()));
     if (handle == ZX_HANDLE_INVALID)
       break;
     handles.push_back(handle);

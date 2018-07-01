@@ -10,12 +10,15 @@
 #include <wlan/mlme/packet.h>
 #include <zircon/fidl.h>
 
-#include <wlan_mlme/cpp/fidl.h>
+#include <fuchsia/wlan/mlme/cpp/fidl.h>
 
 #include <lib/fidl/cpp/decoder.h>
 #include <lib/fidl/cpp/message.h>
+#include <zircon/fidl.h>
 
 namespace wlan {
+
+namespace wlan_mlme = ::fuchsia::wlan::mlme;
 
 class DeviceInterface;
 
@@ -76,6 +79,61 @@ template <typename T> zx_status_t SerializeServiceMsg(Packet* packet, uint32_t o
     }
     return status;
 }
+
+template <typename M> class MlmeMsg;
+
+class BaseMlmeMsg {
+   public:
+    BaseMlmeMsg() = default;
+    virtual ~BaseMlmeMsg() = default;
+
+    template <typename M> const MlmeMsg<M>* As() const {
+        return get_type_id() == MlmeMsg<M>::type_id() ? static_cast<const MlmeMsg<M>*>(this)
+                                                      : nullptr;
+    }
+
+   protected:
+    virtual const void* get_type_id() const = 0;
+
+   private:
+    BaseMlmeMsg(BaseMlmeMsg const&) = delete;
+    BaseMlmeMsg& operator=(BaseMlmeMsg const&) = delete;
+};
+
+template <typename M> class MlmeMsg : public BaseMlmeMsg {
+   public:
+    static const uint8_t kTypeId = 0;
+    ~MlmeMsg() override = default;
+
+    static zx_status_t FromPacket(fbl::unique_ptr<Packet> pkt, MlmeMsg<M>* out_msg) {
+        ZX_DEBUG_ASSERT(pkt != nullptr);
+
+        auto hdr = FromBytes<fidl_message_header_t>(pkt->data(), pkt->len());
+        if (hdr == nullptr) { return ZX_ERR_NOT_SUPPORTED; }
+
+        out_msg->ordinal_ = hdr->ordinal;
+
+        auto status = DeserializeServiceMsg(*pkt, hdr->ordinal, &out_msg->msg_);
+        if (status != ZX_OK) { return status; }
+
+        return ZX_OK;
+    }
+
+    // TODO(hahnr): ordinal() is only exposed while we transition to Frame Handling 2.0.
+    // Once transition landed, MlmeMsg has no need even own the ordinal.
+    uint32_t ordinal() const { return ordinal_; }
+
+    const M* body() const { return &msg_; }
+
+    static const void* type_id() { return &MlmeMsg<M>::kTypeId; }
+    const void* get_type_id() const override { return type_id(); }
+
+   private:
+    uint32_t ordinal_;
+    M msg_;
+};
+
+template <typename T> const uint8_t MlmeMsg<T>::kTypeId;
 
 namespace service {
 

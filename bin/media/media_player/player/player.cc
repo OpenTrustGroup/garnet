@@ -21,7 +21,7 @@ Player::Player(async_t* async) : graph_(async), async_(async) {}
 Player::~Player() {}
 
 void Player::SetSourceSegment(std::unique_ptr<SourceSegment> source_segment,
-                              fxl::Closure callback) {
+                              fit::closure callback) {
   if (source_segment_) {
     while (!streams_.empty()) {
       OnStreamRemoval(streams_.size() - 1);
@@ -39,7 +39,7 @@ void Player::SetSourceSegment(std::unique_ptr<SourceSegment> source_segment,
     return;
   }
 
-  set_source_segment_callback_ = callback;
+  set_source_segment_callback_ = std::move(callback);
   set_source_segment_countdown_ = 1;
 
   source_segment_->Provision(&graph_, async_,
@@ -80,8 +80,9 @@ void Player::SetSinkSegment(std::unique_ptr<SinkSegment> sink_segment,
   }
 
   sink_segment->Provision(&graph_, async_, [this]() {
-    // This callback notifies the player of changes to source_segment_'s
-    // problem() and/or end_of_stream() values.
+    // This callback notifies the player of changes to
+    // source_segment_'s problem() and/or
+    // end_of_stream() values.
     NotifyUpdate();
   });
 
@@ -97,7 +98,7 @@ void Player::SetSinkSegment(std::unique_ptr<SinkSegment> sink_segment,
   parked_sink_segments_[medium] = std::move(sink_segment);
 }
 
-void Player::Prime(fxl::Closure callback) {
+void Player::Prime(fit::closure callback) {
   auto callback_joiner = CallbackJoiner::Create();
 
   for (auto& stream : streams_) {
@@ -106,30 +107,33 @@ void Player::Prime(fxl::Closure callback) {
     }
   }
 
-  callback_joiner->WhenJoined(
-      [this, callback]() { async::PostTask(async_, callback); });
+  callback_joiner->WhenJoined([this, callback = std::move(callback)]() mutable {
+    async::PostTask(async_, std::move(callback));
+  });
 }
 
-void Player::Flush(bool hold_frame, fxl::Closure callback) {
+void Player::Flush(bool hold_frame, fit::closure callback) {
   if (source_segment_) {
-    source_segment_->Flush(
-        hold_frame, [this, callback]() { async::PostTask(async_, callback); });
+    source_segment_->Flush(hold_frame,
+                           [this, callback = std::move(callback)]() mutable {
+                             async::PostTask(async_, std::move(callback));
+                           });
   } else {
-    async::PostTask(async_, callback);
+    async::PostTask(async_, std::move(callback));
   }
 }
 
 void Player::SetTimelineFunction(media::TimelineFunction timeline_function,
-                                 fxl::Closure callback) {
+                                 fit::closure callback) {
   FXL_DCHECK(timeline_function.reference_delta() != 0);
 
   int64_t reference_time = timeline_function.reference_time();
-  if (reference_time == media::kUnspecifiedTime) {
+  if (reference_time == fuchsia::media::kUnspecifiedTime) {
     reference_time = media::Timeline::local_now() + kMinimumLeadTime;
   }
 
   int64_t subject_time = timeline_function.subject_time();
-  if (subject_time == media::kUnspecifiedTime) {
+  if (subject_time == fuchsia::media::kUnspecifiedTime) {
     subject_time = timeline_function_(reference_time);
   }
 
@@ -145,8 +149,9 @@ void Player::SetTimelineFunction(media::TimelineFunction timeline_function,
     }
   }
 
-  callback_joiner->WhenJoined(
-      [this, callback]() { async::PostTask(async_, callback); });
+  callback_joiner->WhenJoined([this, callback = std::move(callback)]() mutable {
+    async::PostTask(async_, std::move(callback));
+  });
 }
 
 void Player::SetProgramRange(uint64_t program, int64_t min_pts,
@@ -158,12 +163,14 @@ void Player::SetProgramRange(uint64_t program, int64_t min_pts,
   }
 }
 
-void Player::Seek(int64_t position, fxl::Closure callback) {
+void Player::Seek(int64_t position, fit::closure callback) {
   if (source_segment_) {
-    source_segment_->Seek(
-        position, [this, callback]() { async::PostTask(async_, callback); });
+    source_segment_->Seek(position,
+                          [this, callback = std::move(callback)]() mutable {
+                            async::PostTask(async_, std::move(callback));
+                          });
   } else {
-    async::PostTask(async_, callback);
+    async::PostTask(async_, std::move(callback));
   }
 }
 
@@ -191,7 +198,7 @@ const Metadata* Player::metadata() const {
   return nullptr;
 }
 
-const Problem* Player::problem() const {
+const fuchsia::mediaplayer::Problem* Player::problem() const {
   // First, see if the source segment has a problem to report.
   if (source_segment_ && source_segment_->problem()) {
     return source_segment_->problem();
@@ -303,8 +310,7 @@ void Player::MaybeCompleteSetSourceSegment() {
   }
 
   if (--set_source_segment_countdown_ == 0) {
-    fxl::Closure callback = set_source_segment_callback_;
-    set_source_segment_callback_ = nullptr;
+    fit::closure callback = std::move(set_source_segment_callback_);
     callback();
   }
 }

@@ -10,12 +10,15 @@
 extern crate bytes;
 extern crate crossbeam;
 #[macro_use]
-extern crate futures;
+pub extern crate futures;
 extern crate fuchsia_zircon as zx;
 extern crate libc;
 extern crate net2;
 extern crate parking_lot;
 extern crate slab;
+
+// Set the system allocator for anything using this crate
+extern crate fuchsia_system_alloc;
 
 /// A future which can be used by multiple threads at once.
 pub mod atomic_future;
@@ -33,7 +36,7 @@ pub use timer::{Interval, Timer, TimeoutExt, OnTimeout};
 mod executor;
 pub use executor::{Executor, EHandle, spawn};
 mod fifo;
-pub use fifo::{Fifo, FifoEntry};
+pub use fifo::{Fifo, FifoEntry, FifoReadable, FifoWritable, ReadEntry, WriteEntry};
 pub mod net;
 
 #[macro_export]
@@ -47,20 +50,20 @@ macro_rules! many_futures {
             )*
         }
 
-        impl<$first, $($subfuture,)*> Future for $future<$first, $($subfuture,)*>
+        impl<$first, $($subfuture,)*> $crate::futures::Future for $future<$first, $($subfuture,)*>
         where
-            $first: Future,
+            $first: $crate::futures::Future,
             $(
-                $subfuture: Future<Item = $first::Item, Error = $first::Error>,
+                $subfuture: $crate::futures::Future<Item = $first::Item, Error = $first::Error>,
             )*
         {
             type Item = $first::Item;
             type Error = $first::Error;
-            fn poll(&mut self, cx: &mut task::Context) -> Poll<Self::Item, Self::Error> {
+            fn poll(&mut self, cx: &mut $crate::futures::task::Context) -> $crate::futures::Poll<Self::Item, Self::Error> {
                 match self {
-                    $future::$first(x) => x.poll(cx),
+                    $future::$first(x) => $crate::futures::Future::poll(x, cx),
                     $(
-                        $future::$subfuture(x) => x.poll(cx),
+                        $future::$subfuture(x) => $crate::futures::Future::poll(x, cx),
                     )*
                 }
             }

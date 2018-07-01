@@ -4,21 +4,16 @@
 
 #include "garnet/lib/ui/scenic/scenic.h"
 
-#include "lib/app/cpp/application_context.h"
-#include "lib/fxl/functional/make_copyable.h"
+#include "lib/app/cpp/startup_context.h"
 
 namespace scenic {
 
-Scenic::Scenic(component::ApplicationContext* app_context,
+Scenic::Scenic(fuchsia::sys::StartupContext* app_context,
                fit::closure quit_callback)
     : app_context_(app_context), quit_callback_(std::move(quit_callback)) {
   FXL_DCHECK(app_context_);
 
-  app_context->outgoing().AddPublicService<fuchsia::ui::scenic::Scenic>(
-      [this](fidl::InterfaceRequest<fuchsia::ui::scenic::Scenic> request) {
-        FXL_VLOG(1) << "Accepting connection to Scenic";
-        scenic_bindings_.AddBinding(this, std::move(request));
-      });
+  app_context->outgoing().AddPublicService(scenic_bindings_.GetHandler(this));
 }
 
 Scenic::~Scenic() = default;
@@ -53,11 +48,11 @@ void Scenic::CreateSession(
     CreateSessionImmediately(std::move(session_request), std::move(listener));
   } else {
     run_after_all_systems_initialized_.push_back(
-        fxl::MakeCopyable([this, session_request = std::move(session_request),
-                           listener = std::move(listener)]() mutable {
+        [this, session_request = std::move(session_request),
+         listener = std::move(listener)]() mutable {
           CreateSessionImmediately(std::move(session_request),
                                    std::move(listener));
-        }));
+        });
   }
 }
 
@@ -87,7 +82,7 @@ void Scenic::GetDisplayInfo(
   FXL_DCHECK(systems_[System::kGfx]);
   TempSystemDelegate* delegate =
       reinterpret_cast<TempSystemDelegate*>(systems_[System::kGfx].get());
-  delegate->GetDisplayInfo(callback);
+  delegate->GetDisplayInfo(std::move(callback));
 }
 
 void Scenic::TakeScreenshot(
@@ -95,15 +90,15 @@ void Scenic::TakeScreenshot(
   FXL_DCHECK(systems_[System::kGfx]);
   TempSystemDelegate* delegate =
       reinterpret_cast<TempSystemDelegate*>(systems_[System::kGfx].get());
-  delegate->TakeScreenshot(callback);
+  delegate->TakeScreenshot(std::move(callback));
 }
 
-void Scenic::GetOwnershipEvent(
-    fuchsia::ui::scenic::Scenic::GetOwnershipEventCallback callback) {
+void Scenic::GetDisplayOwnershipEvent(
+    fuchsia::ui::scenic::Scenic::GetDisplayOwnershipEventCallback callback) {
   FXL_DCHECK(systems_[System::kGfx]);
   TempSystemDelegate* delegate =
       reinterpret_cast<TempSystemDelegate*>(systems_[System::kGfx].get());
-  delegate->GetOwnershipEvent(callback);
+  delegate->GetDisplayOwnershipEvent(std::move(callback));
 }
 
 }  // namespace scenic

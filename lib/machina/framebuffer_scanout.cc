@@ -36,8 +36,8 @@ zx_status_t FramebufferScanout::Create(fbl::unique_ptr<GpuScanout>* out) {
   // Map framebuffer VMO.
   uintptr_t fbo;
   size_t size = stride * ZX_PIXEL_FORMAT_BYTES(format) * height;
-  status = zx_vmar_map(zx_vmar_root_self(), 0, fb_get_single_buffer(), 0, size,
-                       ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE, &fbo);
+  status = zx_vmar_map_old(zx_vmar_root_self(), 0, fb_get_single_buffer(), 0, size,
+                           ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE, &fbo);
   if (status != ZX_OK) {
     return status;
   }
@@ -68,12 +68,12 @@ FramebufferScanout::~FramebufferScanout() { fb_release(); }
 
 void FramebufferScanout::SetResource(GpuResource* res,
                                      const virtio_gpu_set_scanout_t* request) {
-    if (res == nullptr) {
-      uint32_t size = height() * stride() * pixelsize();
-      memset(buf_, 0, size);
-      zx_cache_flush(buf_, size, ZX_CACHE_FLUSH_DATA);
-    }
-    GpuScanout::SetResource(res, request);
+  if (res == nullptr) {
+    uint32_t size = height() * stride() * pixelsize();
+    memset(buf_, 0, size);
+    zx_cache_flush(buf_, size, ZX_CACHE_FLUSH_DATA);
+  }
+  GpuScanout::SetResource(res, request);
 }
 
 void FramebufferScanout::InvalidateRegion(const GpuRect& rect) {

@@ -15,10 +15,8 @@ namespace mdns {
 constexpr fxl::TimeDelta Prober::kMaxProbeInterval =
     fxl::TimeDelta::FromMilliseconds(250);
 
-Prober::Prober(MdnsAgent::Host* host,
-               DnsType type,
-               const CompletionCallback& callback)
-    : MdnsAgent(host), type_(type), callback_(callback) {
+Prober::Prober(MdnsAgent::Host* host, DnsType type, CompletionCallback callback)
+    : MdnsAgent(host), type_(type), callback_(std::move(callback)) {
   FXL_DCHECK(callback_);
 }
 
@@ -46,7 +44,7 @@ void Prober::ReceiveResource(const DnsResource& resource,
     // so we aren't calling |RemoveSelf| from |ReceiveResource|.
     PostTaskForTime(
         [this]() {
-          CompletionCallback callback = callback_;
+          CompletionCallback callback = std::move(callback_);
           RemoveSelf();
           // This |Prober| has probably been deleted at this point, so we avoid
           // referencing any members.
@@ -69,7 +67,7 @@ void Prober::Probe(fxl::TimeDelta delay) {
       [this]() {
         if (++probe_attempt_count_ > kMaxProbeAttemptCount) {
           // No conflict detected.
-          CompletionCallback callback = callback_;
+          CompletionCallback callback = std::move(callback_);
           RemoveSelf();
           // This |Prober| has probably been deleted at this point, so
           // we avoid referencing any members.

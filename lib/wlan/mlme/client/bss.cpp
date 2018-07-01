@@ -10,6 +10,8 @@
 
 namespace wlan {
 
+namespace wlan_mlme = ::fuchsia::wlan::mlme;
+
 // TODO(NET-500): This file needs some clean-up.
 
 zx_status_t Bss::ProcessBeacon(const Beacon& beacon, size_t frame_len,
@@ -118,6 +120,8 @@ zx_status_t Bss::ParseIE(const uint8_t* ie_chains, size_t ie_chains_len) {
     uint8_t ie_cnt = 0;
     uint8_t ie_unparsed_cnt = 0;
 
+    has_dsss_param_set_chan_ = false;
+
     char dbgmsghdr[128];
     while (reader.is_valid()) {
         ie_cnt++;
@@ -162,6 +166,7 @@ zx_status_t Bss::ParseIE(const uint8_t* ie_chains, size_t ie_chains_len) {
                 return ZX_ERR_INTERNAL;
             }
 
+            has_dsss_param_set_chan_ = true;
             dsss_param_set_chan_ = ie->current_chan;
             debugbcn("%s Current channel: %u\n", dbgmsghdr, ie->current_chan);
             break;
@@ -242,7 +247,13 @@ wlan_mlme::BSSDescription Bss::ToFidl() {
     fidl.beacon_period = bcn_interval_;  // TODO(porce): consistent naming.
     fidl.timestamp = timestamp_;
 
-    fidl.chan.primary = bcn_rx_chan_.primary;
+    if (has_dsss_param_set_chan_ == true) {
+        // Channel was explicitly announced by the AP
+        fidl.chan.primary = dsss_param_set_chan_;
+    } else {
+        // Fallback to the inference
+        fidl.chan.primary = bcn_rx_chan_.primary;
+    }
     fidl.chan.cbw = static_cast<wlan_mlme::CBW>(bcn_rx_chan_.cbw);
 
     // Stats

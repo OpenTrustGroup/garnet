@@ -5,8 +5,8 @@
 package wlan
 
 import (
-	mlme "fidl/wlan_mlme"
-	"fidl/wlan_service"
+	"fidl/fuchsia/wlan/mlme"
+	wlan_service "fidl/fuchsia/wlan/service"
 	"wlan/eapol"
 	"wlan/eapol/handshake"
 	"wlan/wlan/elements"
@@ -35,6 +35,7 @@ const (
 	CmdDisconnect
 	CmdStartBSS
 	CmdStopBSS
+	CmdStats
 )
 
 const InfiniteTimeout = 0 * time.Second
@@ -890,6 +891,7 @@ func (s *associatedState) handleMLMEMsg(msg interface{}, c *Client) (state, erro
 		// TODO(hahnr): Evaluate response code.
 		if c.eapolC.KeyExchange().IsComplete() {
 			log.Printf("WLAN connected (EAPOL)")
+			c.cfg.SaveConfigUser()
 		}
 		return s, nil
 	default:

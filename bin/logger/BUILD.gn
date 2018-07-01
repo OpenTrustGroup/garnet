@@ -24,32 +24,12 @@ rustc_binary("bin") {
   ]
 }
 
-executable("logger_integration_cpp_tests") {
-  testonly = true
-
-  sources = [
-    "test/logger_tests.cc",
-    "test/run_all_tests.cc",
-  ]
-  deps = [
-    "//third_party/gtest",
-    "//zircon/public/lib/syslog",
-  ]
-}
-
 package("logger") {
   deps = [
     ":bin",
   ]
 
   binary = "rust_crates/logger"
-
-  meta = [
-    {
-      path = rebase_path("//garnet/bin/appmgr/legacy_flat_exported_dir")
-      dest = "legacy_flat_exported_dir"
-    },
-  ]
 }
 
 package("logger_tests") {
@@ -58,13 +38,15 @@ package("logger_tests") {
 
   deps = [
     ":bin",
-    ":logger_integration_cpp_tests",
-    "test/go/src/logger_integration_test:logger_integration_go_tests",
+    "tests",
   ]
 
   tests = [
     {
       name = "logger_bin_test_rustc"
+    },
+    {
+      name = "logger_integration_bin_test_rustc"
     },
     {
       name = "logger_integration_cpp_tests"

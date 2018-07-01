@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include <component/cpp/fidl.h>
+#include <fuchsia/sys/cpp/fidl.h>
 #include "lib/fxl/macros.h"
 
 namespace sysmgr {
@@ -20,10 +20,15 @@ namespace sysmgr {
 class Config {
  public:
   using ServiceMap =
-      std::unordered_map<std::string, component::LaunchInfoPtr>;
-  using AppVector = std::vector<component::LaunchInfoPtr>;
+      std::unordered_map<std::string, fuchsia::sys::LaunchInfoPtr>;
+  using StartupServiceVector = std::vector<std::string>;
+  using AppVector = std::vector<fuchsia::sys::LaunchInfoPtr>;
 
   Config();
+
+  Config(Config&& other);
+  Config& operator=(Config&& other);
+
   ~Config();
 
   bool ReadFrom(const std::string& config_file);
@@ -31,11 +36,15 @@ class Config {
   bool Parse(const std::string& data, const std::string& config_file);
 
   ServiceMap TakeServices() { return std::move(services_); }
+  StartupServiceVector TakeStartupServices() {
+    return std::move(startup_services_);
+  }
   ServiceMap TakeAppLoaders() { return std::move(app_loaders_); }
   AppVector TakeApps() { return std::move(apps_); }
 
  private:
   ServiceMap services_;
+  StartupServiceVector startup_services_;
   ServiceMap app_loaders_;
   AppVector apps_;
 

@@ -4,8 +4,8 @@
 
 #include "garnet/bin/zxdb/console/nouns.h"
 
-#include <algorithm>
 #include <inttypes.h>
+#include <algorithm>
 #include <utility>
 
 #include "garnet/bin/zxdb/client/breakpoint.h"
@@ -18,7 +18,9 @@
 #include "garnet/bin/zxdb/console/command_utils.h"
 #include "garnet/bin/zxdb/console/console.h"
 #include "garnet/bin/zxdb/console/console_context.h"
+#include "garnet/bin/zxdb/console/format_table.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
+#include "garnet/bin/zxdb/console/string_util.h"
 #include "garnet/public/lib/fxl/logging.h"
 #include "garnet/public/lib/fxl/strings/string_printf.h"
 
@@ -31,14 +33,20 @@ void ListFrames(ConsoleContext* context, Thread* thread) {
 
   OutputBuffer out;
 
+  // This doesn't use table output since the format of the stack frames is
+  // usually so unpredictable.
   const auto& frames = thread->GetFrames();
-  for (int i = 0; i < static_cast<int>(frames.size()); i++) {
-    if (i == active_frame_id)
-      out.Append(">");
-    else
-      out.Append(" ");
-    out.Append(DescribeFrame(frames[i], i));
-    out.Append("\n");
+  if (frames.empty()) {
+    out.Append("No stack frames.\n");
+  } else {
+    for (int i = 0; i < static_cast<int>(frames.size()); i++) {
+      if (i == active_frame_id)
+        out.Append(GetRightArrow() + " ");
+      else
+        out.Append("  ");
+      out.Append(DescribeFrame(frames[i], i));
+      out.Append("\n");
+    }
   }
   Console::get()->Output(std::move(out));
 }
@@ -100,7 +108,7 @@ void ListThreads(ConsoleContext* context, Process* process) {
 
     // "Current thread" marker.
     if (pair.first == active_thread_id)
-      row.push_back(">");
+      row.push_back(GetRightArrow());
     else
       row.emplace_back();
 
@@ -111,11 +119,11 @@ void ListThreads(ConsoleContext* context, Process* process) {
   }
 
   OutputBuffer out;
-  FormatColumns({ColSpec(Align::kLeft),
-                 ColSpec(Align::kRight, 0, "#"),
-                 ColSpec(Align::kLeft, 0, "State"),
-                 ColSpec(Align::kRight, 0, "Koid"),
-                 ColSpec(Align::kLeft, 0, "Name")}, rows, &out);
+  FormatTable(
+      {ColSpec(Align::kLeft), ColSpec(Align::kRight, 0, "#"),
+       ColSpec(Align::kLeft, 0, "State"), ColSpec(Align::kRight, 0, "Koid"),
+       ColSpec(Align::kLeft, 0, "Name")},
+      rows, &out);
   Console::get()->Output(std::move(out));
 }
 
@@ -178,7 +186,7 @@ void ListProcesses(ConsoleContext* context) {
 
     // "Current process" marker (or nothing).
     if (pair.first == active_target_id)
-      row.emplace_back(">");
+      row.emplace_back(GetRightArrow());
     else
       row.emplace_back();
 
@@ -198,11 +206,11 @@ void ListProcesses(ConsoleContext* context) {
   }
 
   OutputBuffer out;
-  FormatColumns({ColSpec(Align::kLeft),
-                 ColSpec(Align::kRight, 0, "#"),
-                 ColSpec(Align::kLeft, 0, "State"),
-                 ColSpec(Align::kRight, 0, "Koid"),
-                 ColSpec(Align::kLeft, 0, "Name")}, rows, &out);
+  FormatTable(
+      {ColSpec(Align::kLeft), ColSpec(Align::kRight, 0, "#"),
+       ColSpec(Align::kLeft, 0, "State"), ColSpec(Align::kRight, 0, "Koid"),
+       ColSpec(Align::kLeft, 0, "Name")},
+      rows, &out);
   Console::get()->Output(std::move(out));
 }
 
@@ -250,7 +258,7 @@ void ListBreakpoints(ConsoleContext* context) {
 
     // "Current breakpoint" marker.
     if (pair.first == active_breakpoint_id)
-      row.emplace_back(">");
+      row.emplace_back(GetRightArrow());
     else
       row.emplace_back();
 
@@ -259,16 +267,16 @@ void ListBreakpoints(ConsoleContext* context) {
     row.push_back(BreakpointScopeToString(context, settings));
     row.push_back(BreakpointStopToString(settings.stop_mode));
     row.push_back(BreakpointEnabledToString(settings.enabled));
-    row.push_back(fxl::StringPrintf("0x%" PRIx64, settings.location_address));
+    row.push_back(DescribeInputLocation(settings.location));
   }
 
   OutputBuffer out;
-  FormatColumns({ColSpec(Align::kLeft),
-                 ColSpec(Align::kRight, 0, "#"),
-                 ColSpec(Align::kLeft, 0, "Scope"),
-                 ColSpec(Align::kLeft, 0, "Stop"),
-                 ColSpec(Align::kLeft, 0, "Enabled"),
-                 ColSpec(Align::kLeft, 0, "Location")}, rows, &out);
+  FormatTable(
+      {ColSpec(Align::kLeft), ColSpec(Align::kRight, 0, "#"),
+       ColSpec(Align::kLeft, 0, "Scope"), ColSpec(Align::kLeft, 0, "Stop"),
+       ColSpec(Align::kLeft, 0, "Enabled"),
+       ColSpec(Align::kLeft, 0, "Location")},
+      rows, &out);
   Console::get()->Output(std::move(out));
 }
 

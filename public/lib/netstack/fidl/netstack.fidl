@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library netstack;
+library fuchsia.netstack;
 
 enum Protocol {
   UNSPECIFIED = 0;
@@ -142,7 +142,7 @@ interface Netstack {
   // Returns the list of registered network interfaces.
   4: GetInterfaces() -> (vector<NetInterface> interfaces);
 
-  // DEPRECATED: see device_settings.fidl
+  // DEPRECATED: see devicesettings.fidl
   // Returns the netstack's node name.
   // 5: GetNodeName() -> (string node_name);
 
@@ -168,6 +168,12 @@ interface Netstack {
   11: SetDhcpClientStatus(uint32 nicid, bool enabled) -> (NetErr result);
 
   12: BridgeInterfaces(vector<uint32> nicids) -> (NetErr result);
+
+  // Sets the status of the packet filter.
+  13: SetFilterStatus(bool enabled) -> (NetErr result);
+
+  // Gets the status of the packet filter.
+  14: GetFilterStatus() -> (bool enabled);
 
   0x1000: -> InterfacesChanged(vector<NetInterface> interfaces);
 };

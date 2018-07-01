@@ -9,6 +9,7 @@
 #include <zx/time.h>
 
 #include "garnet/examples/escher/common/demo.h"
+#include "lib/escher/util/trace_macros.h"
 
 // When running on Fuchsia, New() instantiates a DemoHarnessFuchsia.
 std::unique_ptr<DemoHarness> DemoHarness::New(
@@ -19,14 +20,12 @@ std::unique_ptr<DemoHarness> DemoHarness::New(
   return std::unique_ptr<DemoHarness>(harness);
 }
 
-DemoHarnessFuchsia::DemoHarnessFuchsia(
-    async::Loop* loop, WindowParams window_params)
+DemoHarnessFuchsia::DemoHarnessFuchsia(async::Loop* loop,
+                                       WindowParams window_params)
     : DemoHarness(window_params),
       loop_(loop),
       owned_loop_(loop_ ? nullptr : new async::Loop()),
-      application_context_(
-          component::ApplicationContext::CreateFromStartupInfo()),
-      escher_demo_binding_(this) {
+      startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
   if (!loop_) {
     loop_ = owned_loop_.get();
   }
@@ -68,30 +67,11 @@ void DemoHarnessFuchsia::RenderFrameOrQuit() {
     loop_->Quit();
     device().waitIdle();
   } else {
-    demo_->DrawFrame();
+    {
+      TRACE_DURATION("gfx", "escher::DemoHarness::DrawFrame");
+      demo_->DrawFrame();
+    }
     async::PostDelayedTask(loop_->async(),
                            [this] { this->RenderFrameOrQuit(); }, zx::msec(1));
   }
-}
-
-void DemoHarnessFuchsia::HandleKeyPress(uint8_t key) {
-  demo_->HandleKeyPress(std::string(1, static_cast<char>(key)));
-}
-
-void DemoHarnessFuchsia::HandleTouchBegin(uint64_t touch_id,
-                                          double xpos,
-                                          double ypos) {
-  demo_->BeginTouch(touch_id, xpos, ypos);
-}
-
-void DemoHarnessFuchsia::HandleTouchContinue(uint64_t touch_id,
-                                             double xpos,
-                                             double ypos) {
-  demo_->ContinueTouch(touch_id, &xpos, &ypos, 1);
-}
-
-void DemoHarnessFuchsia::HandleTouchEnd(uint64_t touch_id,
-                                        double xpos,
-                                        double ypos) {
-  demo_->EndTouch(touch_id, xpos, ypos);
 }

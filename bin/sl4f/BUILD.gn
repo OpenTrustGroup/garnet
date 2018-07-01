@@ -1,0 +1,39 @@
+# Copyright 2018 The  Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/rust/rustc_binary.gni")
+import("//build/package.gni")
+
+rustc_binary("bin") {
+  name = "sl4f"
+
+  deps = [
+    "//garnet/lib/rust/crates/fuchsia-bluetooth",
+    "//garnet/public/lib/bluetooth/fidl/common:common-rustc",
+    "//garnet/public/lib/bluetooth/fidl/gatt:gatt-rustc",
+    "//garnet/public/lib/bluetooth/fidl/le:le-rustc",
+    "//garnet/public/lib/fidl/rust/fidl",
+    "//garnet/public/rust/crates/fdio",
+    "//garnet/public/rust/crates/fuchsia-app",
+    "//garnet/public/rust/crates/fuchsia-async",
+    "//garnet/public/rust/crates/fuchsia-vfs/fuchsia-vfs-watcher",
+    "//garnet/public/rust/crates/fuchsia-zircon",
+    "//third_party/rust-crates/rustc_deps:failure",
+    "//third_party/rust-crates/rustc_deps:futures",
+    "//third_party/rust-crates/rustc_deps:parking_lot",
+    "//third_party/rust-crates/rustc_deps:rand",
+    "//third_party/rust-crates/rustc_deps:rouille",
+    "//third_party/rust-crates/rustc_deps:serde",
+    "//third_party/rust-crates/rustc_deps:serde_derive",
+    "//third_party/rust-crates/rustc_deps:serde_json",
+  ]
+}
+
+package("sl4f") {
+  deps = [
+    ":bin",
+  ]
+
+  binary = "rust_crates/sl4f"
+}

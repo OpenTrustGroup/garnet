@@ -7,6 +7,8 @@
 #include "msd.h"
 #include "platform_mmio.h"
 #include "registers.h"
+#include <chrono>
+#include <thread>
 
 std::unique_ptr<MsdVslDevice> MsdVslDevice::Create(void* device_handle)
 {
@@ -43,6 +45,8 @@ bool MsdVslDevice::Init(void* device_handle)
          gpu_features_->minor_features(1), gpu_features_->minor_features(2),
          gpu_features_->minor_features(3), gpu_features_->minor_features(4),
          gpu_features_->minor_features(5));
+    DLOG("halti5: %d mmu: %d", gpu_features_->halti5(), gpu_features_->has_mmu());
+
     DLOG("stream count %u register_max %u thread_count %u vertex_cache_size %u shader_core_count "
          "%u pixel_pipes %u vertex_output_buffer_size %u\n",
          gpu_features_->stream_count(), gpu_features_->register_max(),
@@ -61,6 +65,11 @@ bool MsdVslDevice::Init(void* device_handle)
     if (!bus_mapper_)
         return DRETF(false, "failed to create bus mapper");
 
+    page_table_arrays_ = PageTableArrays::Create(bus_mapper_.get());
+    if (!page_table_arrays_)
+        return DRETF(false, "failed to create page table arrays");
+
+    Reset();
     HardwareInit();
 
     return true;
@@ -68,9 +77,44 @@ bool MsdVslDevice::Init(void* device_handle)
 
 void MsdVslDevice::HardwareInit()
 {
-    auto reg = registers::SecureAhbControl::Get().ReadFrom(register_io_.get());
-    reg.non_secure_access().set(1);
-    reg.WriteTo(register_io_.get());
+    {
+        auto reg = registers::SecureAhbControl::Get().ReadFrom(register_io_.get());
+        reg.non_secure_access().set(1);
+        reg.WriteTo(register_io_.get());
+    }
+
+    page_table_arrays_->HardwareInit(register_io_.get());
+}
+
+void MsdVslDevice::Reset()
+{
+    DLOG("Reset start");
+
+    auto clock_control = registers::ClockControl::Get().FromValue(0);
+    clock_control.isolate_gpu().set(1);
+    clock_control.WriteTo(register_io());
+
+    {
+        auto reg = registers::SecureAhbControl::Get().FromValue(0);
+        reg.reset().set(1);
+        reg.WriteTo(register_io_.get());
+    }
+
+    std::this_thread::sleep_for(std::chrono::microseconds(100));
+
+    clock_control.soft_reset().set(0);
+    clock_control.WriteTo(register_io());
+
+    clock_control.isolate_gpu().set(0);
+    clock_control.WriteTo(register_io());
+
+    clock_control = registers::ClockControl::Get().ReadFrom(register_io_.get());
+
+    if (!IsIdle() || !clock_control.idle_3d().get()) {
+        magma::log(magma::LOG_WARNING, "Gpu reset: failed to idle");
+    }
+
+    DLOG("Reset complete");
 }
 
 bool MsdVslDevice::IsIdle()
@@ -94,6 +138,34 @@ bool MsdVslDevice::SubmitCommandBufferNoMmu(uint64_t bus_addr, uint32_t length,
 
     auto reg_cmd_addr = registers::FetchEngineCommandAddress::Get().FromValue(0);
     reg_cmd_addr.addr().set(bus_addr & 0xFFFFFFFF);
+
+    auto reg_cmd_ctrl = registers::FetchEngineCommandControl::Get().FromValue(0);
+    reg_cmd_ctrl.enable().set(1);
+    reg_cmd_ctrl.prefetch().set(*prefetch_out);
+
+    auto reg_sec_cmd_ctrl = registers::SecureCommandControl::Get().FromValue(0);
+    reg_sec_cmd_ctrl.enable().set(1);
+    reg_sec_cmd_ctrl.prefetch().set(*prefetch_out);
+
+    reg_cmd_addr.WriteTo(register_io_.get());
+    reg_cmd_ctrl.WriteTo(register_io_.get());
+    reg_sec_cmd_ctrl.WriteTo(register_io_.get());
+
+    return true;
+}
+
+bool MsdVslDevice::SubmitCommandBuffer(uint32_t gpu_addr, uint32_t length, uint16_t* prefetch_out)
+{
+    uint32_t prefetch = magma::round_up(length, sizeof(uint64_t)) / sizeof(uint64_t);
+    if (prefetch & 0xFFFF0000)
+        return DRETF(false, "Can't submit length %u (prefetch 0x%x)", length, prefetch);
+
+    *prefetch_out = prefetch & 0xFFFF;
+
+    DLOG("Submitting buffer at gpu addr 0x%x", gpu_addr);
+
+    auto reg_cmd_addr = registers::FetchEngineCommandAddress::Get().FromValue(0);
+    reg_cmd_addr.addr().set(gpu_addr);
 
     auto reg_cmd_ctrl = registers::FetchEngineCommandControl::Get().FromValue(0);
     reg_cmd_ctrl.enable().set(1);

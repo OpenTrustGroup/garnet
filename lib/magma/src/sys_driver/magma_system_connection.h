@@ -57,14 +57,12 @@ public:
     bool DestroyContext(uint32_t context_id) override;
     MagmaSystemContext* LookupContext(uint32_t context_id);
 
-    magma::Status WaitRendering(uint64_t buffer_id) override;
-
     bool MapBufferGpu(uint64_t buffer_id, uint64_t gpu_va, uint64_t page_offset,
                       uint64_t page_count, uint64_t flags) override;
     bool UnmapBufferGpu(uint64_t buffer_id, uint64_t gpu_va) override;
     bool CommitBuffer(uint64_t buffer_id, uint64_t page_offset, uint64_t page_count) override;
-    void SetNotificationChannel(msd_channel_send_callback_t callback,
-                                msd_channel_t channel) override;
+    void SetNotificationCallback(msd_connection_notification_callback_t callback,
+                                 void* token) override;
 
     uint32_t GetDeviceId();
 

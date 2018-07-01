@@ -4,10 +4,11 @@
 
 #pragma once
 
+#include <lib/fit/function.h>
+
 #include "garnet/drivers/bluetooth/lib/common/device_address.h"
 #include "garnet/drivers/bluetooth/lib/hci/connection_parameters.h"
 #include "garnet/drivers/bluetooth/lib/hci/hci.h"
-#include "lib/fxl/functional/closure.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/ref_ptr.h"
@@ -49,6 +50,11 @@ class Connection final {
              Role role,
              const common::DeviceAddress& peer_address,
              const LEConnectionParameters& params,
+             fxl::RefPtr<Transport> hci);
+
+  // Initializes this as a BR/EDR ACL connection.
+  Connection(ConnectionHandle handle, Role role,
+             const common::DeviceAddress& peer_address,
              fxl::RefPtr<Transport> hci);
 
   // The destructor closes this connection.

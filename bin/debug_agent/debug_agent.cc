@@ -19,8 +19,8 @@
 #include "garnet/lib/debug_ipc/helper/stream_buffer.h"
 #include "garnet/lib/debug_ipc/message_reader.h"
 #include "garnet/lib/debug_ipc/message_writer.h"
-#include "garnet/public/lib/fxl/logging.h"
-#include "garnet/public/lib/fxl/strings/string_printf.h"
+#include "lib/fxl/logging.h"
+#include "lib/fxl/strings/string_printf.h"
 
 namespace debug_agent {
 
@@ -34,6 +34,12 @@ void DebugAgent::RemoveDebuggedProcess(zx_koid_t process_koid) {
     FXL_NOTREACHED();
   else
     procs_.erase(found);
+}
+
+void DebugAgent::RemoveBreakpoint(uint32_t breakpoint_id) {
+  auto found = breakpoints_.find(breakpoint_id);
+  if (found != breakpoints_.end())
+    breakpoints_.erase(found);
 }
 
 void DebugAgent::OnHello(const debug_ipc::HelloRequest& request,
@@ -177,6 +183,15 @@ void DebugAgent::OnReadMemory(const debug_ipc::ReadMemoryRequest& request,
     proc->OnReadMemory(request, reply);
 }
 
+void DebugAgent::OnRegisters(
+    const debug_ipc::RegistersRequest& request,
+    debug_ipc::RegistersReply* reply) {
+  DebuggedThread *thread = GetDebuggedThread(request.process_koid,
+                                             request.thread_koid);
+  if (thread)
+    thread->GetRegisters(&reply->registers);
+}
+
 void DebugAgent::OnAddOrChangeBreakpoint(
     const debug_ipc::AddOrChangeBreakpointRequest& request,
     debug_ipc::AddOrChangeBreakpointReply* reply) {
@@ -195,9 +210,7 @@ void DebugAgent::OnAddOrChangeBreakpoint(
 void DebugAgent::OnRemoveBreakpoint(
     const debug_ipc::RemoveBreakpointRequest& request,
     debug_ipc::RemoveBreakpointReply* reply) {
-  auto found = breakpoints_.find(request.breakpoint_id);
-  if (found != breakpoints_.end())
-    breakpoints_.erase(found);
+  RemoveBreakpoint(request.breakpoint_id);
 }
 
 void DebugAgent::OnBacktrace(const debug_ipc::BacktraceRequest& request,

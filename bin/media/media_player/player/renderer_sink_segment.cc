@@ -13,13 +13,15 @@ namespace media_player {
 
 // static
 std::unique_ptr<RendererSinkSegment> RendererSinkSegment::Create(
-    std::shared_ptr<Renderer> renderer) {
-  return std::make_unique<RendererSinkSegment>(renderer);
+    std::shared_ptr<Renderer> renderer, DecoderFactory* decoder_factory) {
+  return std::make_unique<RendererSinkSegment>(renderer, decoder_factory);
 }
 
-RendererSinkSegment::RendererSinkSegment(std::shared_ptr<Renderer> renderer)
-    : renderer_(renderer) {
+RendererSinkSegment::RendererSinkSegment(std::shared_ptr<Renderer> renderer,
+                                         DecoderFactory* decoder_factory)
+    : renderer_(renderer), decoder_factory_(decoder_factory) {
   FXL_DCHECK(renderer_);
+  FXL_DCHECK(decoder_factory_);
 }
 
 RendererSinkSegment::~RendererSinkSegment() {}
@@ -50,10 +52,10 @@ void RendererSinkSegment::Connect(const StreamType& type, OutputRef output,
   std::unique_ptr<StreamType> out_type;
   OutputRef output_in_out = output;
   if (!BuildConversionPipeline(type, supported_stream_types, &graph(),
-                               &output_in_out, &out_type)) {
+                               decoder_factory_, &output_in_out, &out_type)) {
     ReportProblem(type.medium() == StreamType::Medium::kAudio
-                      ? kProblemAudioEncodingNotSupported
-                      : kProblemVideoEncodingNotSupported,
+                      ? fuchsia::mediaplayer::kProblemAudioEncodingNotSupported
+                      : fuchsia::mediaplayer::kProblemVideoEncodingNotSupported,
                   "");
     callback(Result::kUnsupportedOperation);
     return;
@@ -98,20 +100,18 @@ void RendererSinkSegment::Unprepare() {
   }
 }
 
-void RendererSinkSegment::Prime(fxl::Closure callback) {
+void RendererSinkSegment::Prime(fit::closure callback) {
   FXL_DCHECK(renderer_);
-  renderer_->Prime(callback);
+  renderer_->Prime(std::move(callback));
 }
 
 void RendererSinkSegment::SetTimelineFunction(
-    media::TimelineFunction timeline_function,
-    fxl::Closure callback) {
+    media::TimelineFunction timeline_function, fit::closure callback) {
   FXL_DCHECK(renderer_);
-  renderer_->SetTimelineFunction(timeline_function, callback);
+  renderer_->SetTimelineFunction(timeline_function, std::move(callback));
 }
 
-void RendererSinkSegment::SetProgramRange(uint64_t program,
-                                          int64_t min_pts,
+void RendererSinkSegment::SetProgramRange(uint64_t program, int64_t min_pts,
                                           int64_t max_pts) {
   FXL_DCHECK(renderer_);
   renderer_->SetProgramRange(program, min_pts, max_pts);

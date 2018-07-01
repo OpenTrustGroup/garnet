@@ -4,9 +4,9 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
-#include <fdio/io.h>
-#include <fdio/spawn.h>
-#include <fdio/util.h>
+#include <lib/fdio/io.h>
+#include <lib/fdio/spawn.h>
+#include <lib/fdio/util.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/wait.h>
 #include <lib/async/default.h>
@@ -34,7 +34,7 @@
 #include "lib/fxl/strings/string_printf.h"
 
 constexpr zx_rights_t kChildJobRights =
-    ZX_RIGHTS_BASIC | ZX_RIGHTS_IO | ZX_RIGHT_DESTROY;
+    ZX_RIGHTS_BASIC | ZX_RIGHTS_IO | ZX_RIGHT_DESTROY | ZX_RIGHT_MANAGE_JOB;
 
 class Service {
  public:
@@ -134,8 +134,8 @@ class Service {
     char err_msg[FDIO_SPAWN_ERR_MSG_MAX_LENGTH];
 
     zx_status_t status =
-        fdio_spawn_etc(job_.get(),
-                       FDIO_SPAWN_SHARE_JOB | FDIO_SPAWN_CLONE_LDSVC |
+        fdio_spawn_etc(child_job.get(),
+                       FDIO_SPAWN_CLONE_JOB | FDIO_SPAWN_CLONE_LDSVC |
                            FDIO_SPAWN_CLONE_NAMESPACE,
                        argv_[0], argv_, nullptr, kActionCount, actions,
                        process.reset_and_get_address(), err_msg);
@@ -196,7 +196,7 @@ int main(int argc, const char** argv) {
   //
   // TODO(abarth): Instead of closing this handle, we should offer some
   // introspection services for debugging.
-  zx_handle_close(zx_get_startup_handle(PA_DIRECTORY_REQUEST));
+  zx_handle_close(zx_take_startup_handle(PA_DIRECTORY_REQUEST));
 
   async::Loop loop;
   async_set_default(loop.async());

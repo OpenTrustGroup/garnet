@@ -10,16 +10,16 @@ namespace test {
 namespace compatibility {
 
 EchoClientApp::EchoClientApp()
-    : context_(component::ApplicationContext::CreateFromStartupInfo()) {}
+    : context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {}
 
 EchoPtr& EchoClientApp::echo() { return echo_; }
 
 void EchoClientApp::Start(std::string server_url) {
-  component::LaunchInfo launch_info;
+  fuchsia::sys::LaunchInfo launch_info;
   launch_info.url = server_url;
   launch_info.directory_request = echo_provider_.NewRequest();
-  context_->launcher()->CreateApplication(std::move(launch_info),
-                                          controller_.NewRequest());
+  context_->launcher()->CreateComponent(std::move(launch_info),
+                                        controller_.NewRequest());
 
   echo_provider_.ConnectToService(echo_.NewRequest().TakeChannel(),
                                   Echo::Name_);

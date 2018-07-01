@@ -46,24 +46,7 @@ bool RandBytes(void* output, size_t output_length) {
   FXL_DCHECK(output);
 
 #if defined(OS_FUCHSIA)
-  size_t remaining = output_length;
-  unsigned char* offset = static_cast<unsigned char*>(output);
-  size_t actual;
-  size_t read_len;
-  do {
-    // We can only read a limited number of bytes via the syscall at a time.
-    read_len =
-        remaining > ZX_CPRNG_DRAW_MAX_LEN ? ZX_CPRNG_DRAW_MAX_LEN : remaining;
-
-    zx_status_t status = zx_cprng_draw(offset, read_len, &actual);
-    FXL_CHECK(status == ZX_OK);
-
-    // decrement the remainder and update the pointer offset in the buffer
-    remaining -= actual;
-    offset += actual;
-
-  } while (remaining > 0);
-
+  zx_cprng_draw(output, output_length);
   return true;
 #elif defined(OS_WIN)
   unsigned char* offset = static_cast<unsigned char*>(output);

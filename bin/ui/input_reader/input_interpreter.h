@@ -36,8 +36,6 @@ class InputInterpreter {
     kTouchscreen,
   };
 
-  using OnReportCallback = std::function<void(ReportType type)>;
-
   static std::unique_ptr<InputInterpreter> Open(
       int dirfd, std::string filename,
       fuchsia::ui::input::InputDeviceRegistry* registry);
@@ -58,6 +56,7 @@ class InputInterpreter {
     ACER12,
     PARADISEv1,
     PARADISEv2,
+    PARADISEv3,
     SAMSUNG,
     EGALAX
   };

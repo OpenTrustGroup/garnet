@@ -10,8 +10,8 @@
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/sequence.h>
 
-#include <wlan_mlme/cpp/fidl.h>
-#include <wlan_stats/c/fidl.h>
+#include <fuchsia/wlan/mlme/cpp/fidl.h>
+#include <fuchsia/wlan/stats/cpp/fidl.h>
 
 #include <fbl/unique_ptr.h>
 #include <wlan/common/macaddr.h>
@@ -76,48 +76,45 @@ class Station : public FrameHandler {
     zx_status_t SendKeepAliveResponse();
 
     zx_status_t HandleMlmeMessage(uint32_t ordinal) override;
-    zx_status_t HandleMlmeJoinReq(const wlan_mlme::JoinRequest& req) override;
-    zx_status_t HandleMlmeAuthReq(const wlan_mlme::AuthenticateRequest& req) override;
-    zx_status_t HandleMlmeDeauthReq(const wlan_mlme::DeauthenticateRequest& req) override;
-    zx_status_t HandleMlmeAssocReq(const wlan_mlme::AssociateRequest& req) override;
-    zx_status_t HandleMlmeEapolReq(const wlan_mlme::EapolRequest& req) override;
-    zx_status_t HandleMlmeSetKeysReq(const wlan_mlme::SetKeysRequest& req) override;
+    zx_status_t HandleMlmeJoinReq(const MlmeMsg<::fuchsia::wlan::mlme::JoinRequest>& req) override;
+    zx_status_t HandleMlmeAuthReq(
+        const MlmeMsg<::fuchsia::wlan::mlme::AuthenticateRequest>& req) override;
+    zx_status_t HandleMlmeDeauthReq(
+        const MlmeMsg<::fuchsia::wlan::mlme::DeauthenticateRequest>& req) override;
+    zx_status_t HandleMlmeAssocReq(
+        const MlmeMsg<::fuchsia::wlan::mlme::AssociateRequest>& req) override;
+    zx_status_t HandleMlmeEapolReq(
+        const MlmeMsg<::fuchsia::wlan::mlme::EapolRequest>& req) override;
+    zx_status_t HandleMlmeSetKeysReq(
+        const MlmeMsg<::fuchsia::wlan::mlme::SetKeysRequest>& req) override;
 
     zx_status_t HandleDataFrame(const DataFrameHeader& hdr) override;
-    zx_status_t HandleBeacon(const ImmutableMgmtFrame<Beacon>& frame,
-                             const wlan_rx_info_t& rxinfo) override;
-    zx_status_t HandleAuthentication(const ImmutableMgmtFrame<Authentication>& frame,
-                                     const wlan_rx_info_t& rxinfo) override;
-    zx_status_t HandleDeauthentication(const ImmutableMgmtFrame<Deauthentication>& frame,
-                                       const wlan_rx_info_t& rxinfo) override;
-    zx_status_t HandleAssociationResponse(const ImmutableMgmtFrame<AssociationResponse>& frame,
-                                          const wlan_rx_info_t& rxinfo) override;
-    zx_status_t HandleDisassociation(const ImmutableMgmtFrame<Disassociation>& frame,
-                                     const wlan_rx_info_t& rxinfo) override;
-    zx_status_t HandleAddBaRequestFrame(const ImmutableMgmtFrame<AddBaRequestFrame>& frame,
-                                        const wlan_rx_info_t& rxinfo) override;
-    zx_status_t HandleAddBaResponseFrame(const ImmutableMgmtFrame<AddBaResponseFrame>& frame,
-                                         const wlan_rx_info& rxinfo) override;
+    zx_status_t HandleBeacon(const MgmtFrame<Beacon>& frame) override;
+    zx_status_t HandleAuthentication(const MgmtFrame<Authentication>& frame) override;
+    zx_status_t HandleDeauthentication(const MgmtFrame<Deauthentication>& frame) override;
+    zx_status_t HandleAssociationResponse(const MgmtFrame<AssociationResponse>& frame) override;
+    zx_status_t HandleDisassociation(const MgmtFrame<Disassociation>& frame) override;
+    zx_status_t HandleAddBaRequestFrame(const MgmtFrame<AddBaRequestFrame>& frame) override;
+    zx_status_t HandleAddBaResponseFrame(const MgmtFrame<AddBaResponseFrame>& frame) override;
 
     zx_status_t HandleMgmtFrame(const MgmtFrameHeader& hdr) override;
-    zx_status_t HandleNullDataFrame(const ImmutableDataFrame<NilHeader>& frame,
-                                    const wlan_rx_info_t& rxinfo) override;
-    zx_status_t HandleDataFrame(const ImmutableDataFrame<LlcHeader>& frame,
-                                const wlan_rx_info_t& rxinfo) override;
+    zx_status_t HandleNullDataFrame(const DataFrame<NilHeader>& frame) override;
+    zx_status_t HandleDataFrame(const DataFrame<LlcHeader>& frame) override;
     zx_status_t HandleLlcFrame(const LlcHeader& llc_frame, size_t llc_frame_len,
                                const common::MacAddr& dest, const common::MacAddr& src);
-    zx_status_t HandleAmsduFrame(const ImmutableDataFrame<LlcHeader>& frame,
-                                 const wlan_rx_info_t& rxinfo);
+    zx_status_t HandleAmsduFrame(const DataFrame<LlcHeader>& frame);
 
-    zx_status_t HandleEthFrame(const ImmutableBaseFrame<EthernetII>& frame) override;
+    zx_status_t HandleEthFrame(const EthFrame& frame) override;
     zx_status_t HandleTimeout();
 
     zx_status_t PreChannelChange(wlan_channel_t chan);
     zx_status_t PostChannelChange();
 
-    void DumpDataFrame(const ImmutableDataFrame<LlcHeader>& frame);
+    void DumpDataFrame(const DataFrame<LlcHeader>& frame);
 
     const Timer& timer() const { return *timer_; }
+
+    ::fuchsia::wlan::stats::ClientMlmeStats stats() const;
 
    private:
     zx_status_t SendAddBaRequestFrame();
@@ -134,11 +131,11 @@ class Station : public FrameHandler {
     bool IsAmsduRxReady() const;
     HtCapabilities BuildHtCapabilities() const;
     uint8_t GetTid();
-    uint8_t GetTid(const ImmutableBaseFrame<EthernetII>& frame);
+    uint8_t GetTid(const EthFrame& frame);
 
     DeviceInterface* device_;
     fbl::unique_ptr<Timer> timer_;
-    wlan_mlme::BSSDescriptionPtr bss_;
+    ::fuchsia::wlan::mlme::BSSDescriptionPtr bss_;
     common::MacAddr bssid_;
     Sequence seq_;
 
@@ -149,12 +146,12 @@ class Station : public FrameHandler {
     zx::time signal_report_timeout_;
     zx::time last_seen_;
     uint16_t aid_ = 0;
-    common::MovingAverage<int8_t, int16_t, 20> avg_rssi_dbm_;
+    common::MovingAverageDbm<20> avg_rssi_dbm_;
     AuthAlgorithm auth_alg_ = AuthAlgorithm::kOpenSystem;
     eapol::PortState controlled_port_ = eapol::PortState::kBlocked;
 
     wlan_channel_t join_chan_;
-    common::WlanStats<common::ClientMlmeStats, wlan_stats_ClientMlmeStats> stats_;
+    common::WlanStats<common::ClientMlmeStats, ::fuchsia::wlan::stats::ClientMlmeStats> stats_;
 };
 
 }  // namespace wlan

@@ -4,9 +4,14 @@
 
 #include "garnet/bin/zxdb/client/thread_impl.h"
 
+#include <inttypes.h>  // ERSASEMME(brettw)
+#include <iostream>
+
 #include "garnet/bin/zxdb/client/frame_impl.h"
 #include "garnet/bin/zxdb/client/process_impl.h"
+#include "garnet/bin/zxdb/client/remote_api.h"
 #include "garnet/bin/zxdb/client/session.h"
+#include "garnet/bin/zxdb/client/symbols/line_details.h"
 #include "garnet/public/lib/fxl/logging.h"
 
 namespace zxdb {
@@ -34,8 +39,8 @@ void ThreadImpl::Pause() {
   debug_ipc::PauseRequest request;
   request.process_koid = process_->GetKoid();
   request.thread_koid = koid_;
-  session()->Send<debug_ipc::PauseRequest, debug_ipc::PauseReply>(
-      request, [](const Err& err, debug_ipc::PauseReply) {});
+  session()->remote_api()->Pause(request,
+                                 [](const Err& err, debug_ipc::PauseReply) {});
 }
 
 void ThreadImpl::Continue() {
@@ -43,8 +48,33 @@ void ThreadImpl::Continue() {
   request.process_koid = process_->GetKoid();
   request.thread_koid = koid_;
   request.how = debug_ipc::ResumeRequest::How::kContinue;
-  session()->Send<debug_ipc::ResumeRequest, debug_ipc::ResumeReply>(
+  session()->remote_api()->Resume(
       request, [](const Err& err, debug_ipc::ResumeReply) {});
+}
+
+Err ThreadImpl::Step() {
+  if (frames_.empty())
+    return Err("Thread has no current address to step.");
+
+  debug_ipc::ResumeRequest request;
+  request.process_koid = process_->GetKoid();
+  request.thread_koid = koid_;
+  request.how = debug_ipc::ResumeRequest::How::kStepInRange;
+
+  LineDetails line_details =
+      process_->GetSymbols()->LineDetailsForAddress(frames_[0]->GetAddress());
+  if (line_details.entries().empty()) {
+    // When there are no symbols, fall back to step instruction.
+    StepInstruction();
+    return Err();
+  }
+
+  request.range_begin = line_details.entries()[0].range.begin();
+  request.range_end = line_details.entries().back().range.end();
+
+  session()->remote_api()->Resume(
+      request, [](const Err& err, debug_ipc::ResumeReply) {});
+  return Err();
 }
 
 void ThreadImpl::StepInstruction() {
@@ -52,17 +82,15 @@ void ThreadImpl::StepInstruction() {
   request.process_koid = process_->GetKoid();
   request.thread_koid = koid_;
   request.how = debug_ipc::ResumeRequest::How::kStepInstruction;
-  session()->Send<debug_ipc::ResumeRequest, debug_ipc::ResumeReply>(
+  session()->remote_api()->Resume(
       request, [](const Err& err, debug_ipc::ResumeReply) {});
 }
 
 std::vector<Frame*> ThreadImpl::GetFrames() const {
   std::vector<Frame*> frames;
   frames.reserve(frames_.size());
-  for (const auto& cur : frames_) {
-    cur->EnsureSymbolized();
+  for (const auto& cur : frames_)
     frames.push_back(cur.get());
-  }
   return frames;
 }
 
@@ -75,8 +103,8 @@ void ThreadImpl::SyncFrames(std::function<void()> callback) {
 
   ClearFrames();
 
-  session()->Send<debug_ipc::BacktraceRequest, debug_ipc::BacktraceReply>(
-      request, [ callback, thread = weak_factory_.GetWeakPtr() ](
+  session()->remote_api()->Backtrace(
+      request, [callback, thread = weak_factory_.GetWeakPtr()](
                    const Err& err, debug_ipc::BacktraceReply reply) {
         if (!thread)
           return;
@@ -114,7 +142,7 @@ void ThreadImpl::OnException(const debug_ipc::NotifyException& notify) {
   frame.push_back(notify.frame);
   // HaveFrames will only issue the callback if the ThreadImpl is still in
   // scope so we don't need a weak pointer here.
-  HaveFrames(frame, [ notify, thread = this ]() {
+  HaveFrames(frame, [notify, thread = this]() {
     thread->SetMetadata(notify.thread);
 
     // After an exception the thread should be blocked.
@@ -153,6 +181,21 @@ void ThreadImpl::ClearFrames() {
   frames_.clear();
   for (auto& observer : observers())
     observer.OnThreadFramesInvalidated(this);
+}
+
+void ThreadImpl::GetRegisters(
+    std::function<void(const Err&, std::vector<debug_ipc::Register>)>
+        callback) {
+  debug_ipc::RegistersRequest request;
+  request.process_koid = process_->GetKoid();
+  request.thread_koid = koid_;
+
+  session()->remote_api()->Registers(
+      request, [process = weak_factory_.GetWeakPtr(), callback](
+                   const Err& err, debug_ipc::RegistersReply reply) {
+        if (callback)
+          callback(err, std::move(reply.registers));
+      });
 }
 
 }  // namespace zxdb

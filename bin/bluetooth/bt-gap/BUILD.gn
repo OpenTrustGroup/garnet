@@ -11,10 +11,10 @@ rustc_binary("bin") {
   deps = [
     "//garnet/lib/bluetooth/fidl:bluetooth_host-rustc",
     "//garnet/lib/rust/crates/fuchsia-bluetooth",
-    "//garnet/public/lib/bluetooth/fidl:bluetooth-rustc",
-    "//garnet/public/lib/bluetooth/fidl:bluetooth_control-rustc",
-    "//garnet/public/lib/bluetooth/fidl:bluetooth_gatt-rustc",
-    "//garnet/public/lib/bluetooth/fidl:bluetooth_low_energy-rustc",
+    "//garnet/public/lib/bluetooth/fidl/common:common-rustc",
+    "//garnet/public/lib/bluetooth/fidl/control:control-rustc",
+    "//garnet/public/lib/bluetooth/fidl/gatt:gatt-rustc",
+    "//garnet/public/lib/bluetooth/fidl/le:le-rustc",
     "//garnet/public/lib/fidl/rust/fidl",
     "//garnet/public/rust/crates/fdio",
     "//garnet/public/rust/crates/fuchsia-app",
@@ -25,6 +25,7 @@ rustc_binary("bin") {
     "//third_party/rust-crates/rustc_deps:futures",
     "//third_party/rust-crates/rustc_deps:log",
     "//third_party/rust-crates/rustc_deps:parking_lot",
+    "//third_party/rust-crates/rustc_deps:slab",
   ]
 }
 
@@ -36,10 +37,6 @@ package("bt-gap") {
   binary = "rust_crates/bt_gap"
 
   meta = [
-    {
-      path = rebase_path("//garnet/bin/appmgr/legacy_flat_exported_dir")
-      dest = "legacy_flat_exported_dir"
-    },
     {
       path = rebase_path("meta/bt-gap.cmx")
       dest = "bt-gap.cmx"

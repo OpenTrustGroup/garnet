@@ -5,11 +5,10 @@
 #pragma once
 
 #include <wlan/mlme/mac_frame.h>
+#include <wlan/mlme/service.h>
 
-#include <wlan_mlme/cpp/fidl.h>
+#include <fuchsia/wlan/mlme/cpp/fidl.h>
 
-#include <fbl/ref_counted.h>
-#include <fbl/ref_ptr.h>
 #include <wlan/protocol/mac.h>
 #include <zircon/types.h>
 
@@ -17,41 +16,35 @@
     virtual zx_status_t methodName(args) { return ZX_OK; }
 
 #define WLAN_DECL_FUNC_HANDLE_MLME(methodName, mlmeMsgType) \
-    WLAN_DECL_VIRT_FUNC_HANDLE(methodName, const wlan_mlme::mlmeMsgType&)
+    WLAN_DECL_VIRT_FUNC_HANDLE(methodName, const MlmeMsg<::fuchsia::wlan::mlme::mlmeMsgType>&)
 
-#define WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(methodName, mlmeMsgType)                    \
-    zx_status_t HandleMlmeFrameInternal(uint32_t ordinal, const wlan_mlme::mlmeMsgType& msg) { \
-        return methodName(msg);                                                         \
+#define WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(methodName, mlmeMsgType)                              \
+    zx_status_t HandleMlmeFrameInternal(const MlmeMsg<::fuchsia::wlan::mlme::mlmeMsgType>& msg) { \
+        return methodName(msg);                                                                   \
     }
 
-#define WLAN_DECL_FUNC_HANDLE_MGMT(mgmtFrameType)                                               \
-    WLAN_DECL_VIRT_FUNC_HANDLE(Handle##mgmtFrameType, const ImmutableMgmtFrame<mgmtFrameType>&, \
-                               const wlan_rx_info_t&)
+#define WLAN_DECL_FUNC_HANDLE_MGMT(mgmtFrameType) \
+    WLAN_DECL_VIRT_FUNC_HANDLE(Handle##mgmtFrameType, const MgmtFrame<mgmtFrameType>&)
 
-#define WLAN_DECL_FUNC_INTERNAL_HANDLE_MGMT(mgmtFrameType)                              \
-    zx_status_t HandleMgmtFrameInternal(const ImmutableMgmtFrame<mgmtFrameType>& frame, \
-                                        const wlan_rx_info_t& info) {                   \
-        return Handle##mgmtFrameType(frame, info);                                      \
+#define WLAN_DECL_FUNC_INTERNAL_HANDLE_MGMT(mgmtFrameType)                       \
+    zx_status_t HandleMgmtFrameInternal(const MgmtFrame<mgmtFrameType>& frame) { \
+        return Handle##mgmtFrameType(frame);                                     \
     }
 
-#define WLAN_DECL_FUNC_HANDLE_CTRL(ctrlFrameType)                                               \
-    WLAN_DECL_VIRT_FUNC_HANDLE(Handle##ctrlFrameType, const ImmutableCtrlFrame<ctrlFrameType>&, \
-                               const wlan_rx_info_t&)
+#define WLAN_DECL_FUNC_HANDLE_CTRL(ctrlFrameType) \
+    WLAN_DECL_VIRT_FUNC_HANDLE(Handle##ctrlFrameType, const CtrlFrame<ctrlFrameType>&)
 
-#define WLAN_DECL_FUNC_INTERNAL_HANDLE_CTRL(ctrlFrameType)                              \
-    zx_status_t HandleCtrlFrameInternal(const ImmutableCtrlFrame<ctrlFrameType>& frame, \
-                                        const wlan_rx_info_t& info) {                   \
-        return Handle##ctrlFrameType(frame, info);                                      \
+#define WLAN_DECL_FUNC_INTERNAL_HANDLE_CTRL(ctrlFrameType)                       \
+    zx_status_t HandleCtrlFrameInternal(const CtrlFrame<ctrlFrameType>& frame) { \
+        return Handle##ctrlFrameType(frame);                                     \
     }
 
-#define WLAN_DECL_VIRT_FUNC_HANDLE_DATA(methodName, BodyType)                           \
-    WLAN_DECL_VIRT_FUNC_HANDLE(Handle##methodName, const ImmutableDataFrame<BodyType>&, \
-                               const wlan_rx_info_t&)
+#define WLAN_DECL_VIRT_FUNC_HANDLE_DATA(methodName, BodyType) \
+    WLAN_DECL_VIRT_FUNC_HANDLE(Handle##methodName, const DataFrame<BodyType>&)
 
-#define WLAN_DECL_FUNC_INTERNAL_HANDLE_DATA(methodName, BodyType)                  \
-    zx_status_t HandleDataFrameInternal(const ImmutableDataFrame<BodyType>& frame, \
-                                        const wlan_rx_info_t& rxinfo) {            \
-        return Handle##methodName(frame, rxinfo);                                  \
+#define WLAN_DECL_FUNC_INTERNAL_HANDLE_DATA(methodName, BodyType)           \
+    zx_status_t HandleDataFrameInternal(const DataFrame<BodyType>& frame) { \
+        return Handle##methodName(frame);                                   \
     }
 
 namespace wlan {
@@ -79,7 +72,7 @@ namespace wlan {
 // Use the latter option when dealing with dynamic frame targets, such as a forwarding the current
 // frame to a specific client. Use the first option when the frame targets are fixed and the amount
 // of targets is rather small.
-class FrameHandler : public fbl::RefCounted<FrameHandler> {
+class FrameHandler {
    public:
     FrameHandler() {}
     virtual ~FrameHandler() = default;
@@ -94,17 +87,6 @@ class FrameHandler : public fbl::RefCounted<FrameHandler> {
         status = HandleFrameInternal(std::forward<Args>(args)...);
         if (status == ZX_ERR_STOP) { return ZX_OK; }
         if (status != ZX_OK) { return status; }
-
-        // Forward frame to all children.
-        uint16_t i = 0;
-        for (auto& handler : children_) {
-            status = handler->HandleFrame(std::forward<Args>(args)...);
-            // Log when a child failed processing a frame, but proceed.
-            if (status != ZX_OK) {
-                debugfhandler("child %u failed handling frame: %d\n", i, status);
-            }
-            i++;
-        }
 
         // If there is a dynamic target registered, forward frame.
         if (dynamic_target_ != nullptr) {
@@ -123,22 +105,11 @@ class FrameHandler : public fbl::RefCounted<FrameHandler> {
         dynamic_target_ = handler;
     }
 
-    void AddChildHandler(fbl::RefPtr<FrameHandler> ptr) { children_.push_back(ptr); }
-
-    void RemoveChildHandler(fbl::RefPtr<FrameHandler> ptr) {
-        children_.erase(
-            std::remove_if(children_.begin(), children_.end(),
-                           [ptr](fbl::RefPtr<FrameHandler>& entry) { return entry == ptr; }),
-            children_.end());
-    }
-
    protected:
     virtual zx_status_t HandleAnyFrame() { return ZX_OK; }
 
     // Ethernet frame handlers.
-    virtual zx_status_t HandleEthFrame(const ImmutableBaseFrame<EthernetII>& frame) {
-        return ZX_OK;
-    }
+    virtual zx_status_t HandleEthFrame(const EthFrame& frame) { return ZX_OK; }
 
     // Service Message handlers.
     virtual zx_status_t HandleMlmeMessage(uint32_t ordinal) { return ZX_OK; }
@@ -181,12 +152,11 @@ class FrameHandler : public fbl::RefCounted<FrameHandler> {
 
    private:
     // Internal Service Message handlers.
-    template <typename Message>
-    zx_status_t HandleFrameInternal(uint32_t ordinal, const Message& msg) {
-        auto status = HandleMlmeMessage(ordinal);
+    template <typename Message> zx_status_t HandleFrameInternal(const MlmeMsg<Message>& msg) {
+        auto status = HandleMlmeMessage(msg.ordinal());
         if (status != ZX_OK) { return status; }
 
-        return HandleMlmeFrameInternal(ordinal, msg);
+        return HandleMlmeFrameInternal(msg);
     }
     WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeResetReq, ResetRequest)
     WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeScanReq, ScanRequest)
@@ -202,13 +172,11 @@ class FrameHandler : public fbl::RefCounted<FrameHandler> {
     WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeStopReq, StopRequest)
 
     // Internal Management frame handlers.
-    template <typename Body>
-    zx_status_t HandleFrameInternal(const ImmutableMgmtFrame<Body>& frame,
-                                    const wlan_rx_info_t& info) {
+    template <typename Body> zx_status_t HandleFrameInternal(const MgmtFrame<Body>& frame) {
         auto status = HandleMgmtFrame(*frame.hdr());
         if (status != ZX_OK) { return status; }
 
-        return HandleMgmtFrameInternal(frame, info);
+        return HandleMgmtFrameInternal(frame);
     }
     WLAN_DECL_FUNC_INTERNAL_HANDLE_MGMT(Beacon)
     WLAN_DECL_FUNC_INTERNAL_HANDLE_MGMT(ProbeResponse)
@@ -222,18 +190,14 @@ class FrameHandler : public fbl::RefCounted<FrameHandler> {
     WLAN_DECL_FUNC_INTERNAL_HANDLE_MGMT(AddBaResponseFrame)
 
     // Internal Ethernet frame handlers.
-    zx_status_t HandleFrameInternal(const ImmutableFrame<EthernetII, NilHeader>& frame) {
-        return HandleEthFrame(frame);
-    }
+    zx_status_t HandleFrameInternal(const EthFrame& frame) { return HandleEthFrame(frame); }
 
     // Internal Data frame handlers.
-    template <typename Body>
-    zx_status_t HandleFrameInternal(const ImmutableFrame<DataFrameHeader, Body>& frame,
-                                    const wlan_rx_info_t& info) {
+    template <typename Body> zx_status_t HandleFrameInternal(const DataFrame<Body>& frame) {
         auto status = HandleDataFrame(*frame.hdr());
         if (status != ZX_OK) { return status; }
 
-        return HandleDataFrameInternal(frame, info);
+        return HandleDataFrameInternal(frame);
     }
     WLAN_DECL_FUNC_INTERNAL_HANDLE_DATA(NullDataFrame, NilHeader)
     WLAN_DECL_FUNC_INTERNAL_HANDLE_DATA(DataFrame, LlcHeader)
@@ -243,11 +207,11 @@ class FrameHandler : public fbl::RefCounted<FrameHandler> {
     // is caught.
     template <typename Header>
     typename std::enable_if<!std::is_same<Header, DataFrameHeader>::value, zx_status_t>::type
-    HandleFrameInternal(const ImmutableCtrlFrame<Header>& frame, const wlan_rx_info_t& info) {
+    HandleFrameInternal(const CtrlFrame<Header>& frame) {
         auto status = HandleCtrlFrame(frame.hdr()->fc);
         if (status != ZX_OK) { return status; }
 
-        return HandleCtrlFrameInternal(frame, info);
+        return HandleCtrlFrameInternal(frame);
     }
     WLAN_DECL_FUNC_INTERNAL_HANDLE_CTRL(PsPollFrame)
 
@@ -256,8 +220,6 @@ class FrameHandler : public fbl::RefCounted<FrameHandler> {
     // Ideally, this will turn into its own component which is also better testable and replaceable.
     // However, most of my prototyping hit compiler limitations.
     FrameHandler* dynamic_target_ = nullptr;
-    // List of all children which all incoming frames should get forwarded to.
-    std::vector<fbl::RefPtr<FrameHandler>> children_;
 };
 
 }  // namespace wlan

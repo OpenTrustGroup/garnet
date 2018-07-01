@@ -8,14 +8,14 @@
 #include <deque>
 #include <unordered_map>
 
-#include <media/cpp/fidl.h>
+#include <fuchsia/media/cpp/fidl.h>
 
 #include "garnet/bin/media/media_player/metrics/packet_timing_tracker.h"
 #include "garnet/bin/media/media_player/metrics/rate_tracker.h"
 #include "garnet/bin/media/media_player/metrics/value_tracker.h"
 #include "garnet/bin/media/media_player/render/video_converter.h"
 #include "garnet/bin/media/media_player/render/video_renderer.h"
-#include "lib/ui/scenic/client/host_image_cycler.h"
+#include "lib/ui/scenic/cpp/host_image_cycler.h"
 #include "lib/ui/view_framework/base_view.h"
 
 namespace media_player {
@@ -37,7 +37,7 @@ class FidlVideoRenderer
   void Dump(std::ostream& os) const override;
 
   void FlushInput(bool hold_frame, size_t input_index,
-                  fxl::Closure callback) override;
+                  fit::closure callback) override;
 
   void PutInputPacket(PacketPtr packet, size_t input_index) override;
 
@@ -48,7 +48,7 @@ class FidlVideoRenderer
 
   void SetStreamType(const StreamType& stream_type) override;
 
-  void Prime(fxl::Closure callback) override;
+  void Prime(fit::closure callback) override;
 
   fuchsia::math::Size video_size() const override;
 
@@ -56,12 +56,13 @@ class FidlVideoRenderer
 
   // Registers a callback that's called when the values returned by |video_size|
   // or |pixel_aspect_ratio| change.
-  void SetGeometryUpdateCallback(fxl::Closure callback);
+  void SetGeometryUpdateCallback(fit::closure callback);
 
   // Creates a view.
   void CreateView(
       fidl::InterfacePtr<::fuchsia::ui::views_v1::ViewManager> view_manager,
-      fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request);
+      fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+          view_owner_request);
 
  protected:
   void OnProgressStarted() override;
@@ -72,7 +73,8 @@ class FidlVideoRenderer
   class View : public mozart::BaseView {
    public:
     View(::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-         fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request,
+         fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+             view_owner_request,
          std::shared_ptr<FidlVideoRenderer> renderer);
 
     ~View() override;
@@ -83,7 +85,7 @@ class FidlVideoRenderer
         fuchsia::images::PresentationInfo presentation_info) override;
 
     std::shared_ptr<FidlVideoRenderer> renderer_;
-    scenic_lib::HostImageCycler image_cycler_;
+    scenic::HostImageCycler image_cycler_;
 
     FXL_DISALLOW_COPY_AND_ASSIGN(View);
   };
@@ -121,8 +123,8 @@ class FidlVideoRenderer
   int64_t pts_ns_ = Packet::kUnknownPts;
   VideoConverter converter_;
   std::unordered_map<View*, std::unique_ptr<View>> views_;
-  fxl::Closure prime_callback_;
-  fxl::Closure geometry_update_callback_;
+  fit::closure prime_callback_;
+  fit::closure geometry_update_callback_;
 
   PacketTimingTracker arrivals_;
   PacketTimingTracker draws_;

@@ -7,7 +7,7 @@
 #include <memory>
 #include <unordered_map>
 
-#include <bluetooth_low_energy/cpp/fidl.h>
+#include <fuchsia/bluetooth/le/cpp/fidl.h>
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
@@ -20,31 +20,30 @@ namespace bthost {
 
 // Implements the low_energy::Central FIDL interface.
 class LowEnergyPeripheralServer
-    : public AdapterServerBase<bluetooth_low_energy::Peripheral> {
+    : public AdapterServerBase<fuchsia::bluetooth::le::Peripheral> {
  public:
   LowEnergyPeripheralServer(
       fxl::WeakPtr<::btlib::gap::Adapter> adapter,
-      fidl::InterfaceRequest<bluetooth_low_energy::Peripheral> request);
+      fidl::InterfaceRequest<fuchsia::bluetooth::le::Peripheral> request);
   ~LowEnergyPeripheralServer() override;
 
  private:
-  using DelegatePtr = bluetooth_low_energy::PeripheralDelegatePtr;
   using ConnectionRefPtr = ::btlib::gap::LowEnergyConnectionRefPtr;
 
   class InstanceData final {
    public:
     InstanceData() = default;
-    InstanceData(const std::string& id, DelegatePtr delegate);
+    InstanceData(const std::string& id, fxl::WeakPtr<LowEnergyPeripheralServer> owner);
 
     InstanceData(InstanceData&& other) = default;
     InstanceData& operator=(InstanceData&& other) = default;
 
-    bool connectable() const { return static_cast<bool>(delegate_); }
+    bool connectable() const { return static_cast<bool>(owner_->binding()); }
 
     // Takes ownership of |conn_ref| and notifies the delegate of the new
     // connection.
     void RetainConnection(ConnectionRefPtr conn_ref,
-                          bluetooth_low_energy::RemoteDevice central);
+                          fuchsia::bluetooth::le::RemoteDevice central);
 
     // Deletes the connetion reference and notifies the delegate of
     // disconnection.
@@ -52,20 +51,19 @@ class LowEnergyPeripheralServer
 
    private:
     std::string id_;
-    DelegatePtr delegate_;
     ConnectionRefPtr conn_ref_;
+    // The object that created and owns this InstanceData.
+    // |owner_| must outlive the InstanceData.
+    fxl::WeakPtr<LowEnergyPeripheralServer> owner_; // weak
 
     FXL_DISALLOW_COPY_AND_ASSIGN(InstanceData);
   };
 
-  // bluetooth_low_energy::Peripheral overrides:
+  // fuchsia::bluetooth::le::Peripheral overrides:
   void StartAdvertising(
-      bluetooth_low_energy::AdvertisingData advertising_data,
-      bluetooth_low_energy::AdvertisingDataPtr scan_result,
-      ::fidl::InterfaceHandle<bluetooth_low_energy::PeripheralDelegate>
-          delegate,
-      uint32_t interval,
-      bool anonymous,
+      fuchsia::bluetooth::le::AdvertisingData advertising_data,
+      fuchsia::bluetooth::le::AdvertisingDataPtr scan_result,
+      uint32_t interval, bool anonymous,
       StartAdvertisingCallback callback) override;
 
   void StopAdvertising(::fidl::StringPtr advertisement_id,

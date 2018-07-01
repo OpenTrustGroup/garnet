@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_BIN_MDNS_STANDALONE_IOCTL_INTERFACE_MONITOR_H_
+#define GARNET_BIN_MDNS_STANDALONE_IOCTL_INTERFACE_MONITOR_H_
 
 #include <memory>
 
@@ -21,7 +22,7 @@ class IoctlInterfaceMonitor : public InterfaceMonitor {
   ~IoctlInterfaceMonitor();
 
   // InterfaceMonitor implementation.
-  void RegisterLinkChangeCallback(const fxl::Closure& callback) override;
+  void RegisterLinkChangeCallback(fit::closure callback) override;
 
   const std::vector<std::unique_ptr<InterfaceDescriptor>>& GetInterfaces()
       override;
@@ -35,9 +36,11 @@ class IoctlInterfaceMonitor : public InterfaceMonitor {
   // interfaces should be checked again soon.
   bool CheckInterfaces();
 
-  fxl::Closure link_change_callback_;
+  fit::closure link_change_callback_;
   std::vector<std::unique_ptr<InterfaceDescriptor>> interfaces_;
   fxl::CancelableClosure poll_closure_;
 };
 
 }  // namespace mdns
+
+#endif  // GARNET_BIN_MDNS_STANDALONE_IOCTL_INTERFACE_MONITOR_H_

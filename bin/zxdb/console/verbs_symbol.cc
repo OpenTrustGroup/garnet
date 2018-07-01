@@ -10,8 +10,8 @@
 
 #include "garnet/bin/zxdb/client/err.h"
 #include "garnet/bin/zxdb/client/process.h"
-#include "garnet/bin/zxdb/client/process_symbols.h"
 #include "garnet/bin/zxdb/client/symbols/location.h"
+#include "garnet/bin/zxdb/client/symbols/process_symbols.h"
 #include "garnet/bin/zxdb/client/target.h"
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/command_utils.h"
@@ -123,8 +123,8 @@ Err DoSymNear(ConsoleContext* context, const Command& cmd) {
     return err;
 
   Location loc =
-      cmd.target()->GetProcess()->GetSymbols()->GetLocationForAddress(address);
-  Console::get()->Output(DescribeLocation(loc));
+      cmd.target()->GetProcess()->GetSymbols()->LocationForAddress(address);
+  Console::get()->Output(DescribeLocation(loc, true));
   return Err();
 }
 

@@ -17,8 +17,6 @@
 #include "garnet/lib/gzos/trusty_virtio/trusty_virtio_device.h"
 #include "gtest/gtest.h"
 
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
-
 namespace trusty_virtio {
 
 const trusty_vdev_descr kVdevDescriptors[] = {
@@ -63,7 +61,7 @@ class ResourceTableTest : public ::testing::Test {
     ASSERT_TRUE(remote_ != nullptr);
 
     // Create some devices on the bus
-    for (uint32_t i = 0; i < ARRAY_SIZE(kVdevDescriptors); i++) {
+    for (uint32_t i = 0; i < fbl::count_of(kVdevDescriptors); i++) {
       zx::channel h0, h1;
       ASSERT_EQ(zx::channel::create(0, &h0, &h1), ZX_OK);
       fbl::RefPtr<TrustyVirtioDevice> dev =
@@ -76,7 +74,7 @@ class ResourceTableTest : public ::testing::Test {
   }
 
   size_t ResourceTableSize(void) {
-    size_t num_devices = ARRAY_SIZE(kVdevDescriptors);
+    size_t num_devices = fbl::count_of(kVdevDescriptors);
     return sizeof(resource_table) +
            (sizeof(uint32_t) + sizeof(trusty_vdev_descr)) * num_devices;
   }
@@ -95,7 +93,7 @@ TEST_F(ResourceTableTest, GetResourceTable) {
 
   resource_table* table = reinterpret_cast<resource_table*>(buf);
   EXPECT_EQ(table->ver, kVirtioResourceTableVersion);
-  EXPECT_EQ(table->num, ARRAY_SIZE(kVdevDescriptors));
+  EXPECT_EQ(table->num, fbl::count_of(kVdevDescriptors));
   for (uint32_t i = 0; i < table->num; i++) {
     auto expected_desc = &kVdevDescriptors[i];
     auto expected_tx_num = expected_desc->vrings[kTxQueue].num;

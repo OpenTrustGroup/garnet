@@ -7,7 +7,8 @@
 
 namespace trusty_ipc {
 
-TipcObject::TipcObject() : handle_id_(kInvalidHandle), tipc_event_state_(0) {
+TipcObject::TipcObject()
+    : handle_id_(kInvalidHandle), cookie_(nullptr), tipc_event_state_(0) {
   zx_status_t err = zx::event::create(0, &event_);
   FXL_CHECK(err == ZX_OK);
 }

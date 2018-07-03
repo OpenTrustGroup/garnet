@@ -25,7 +25,7 @@ class TipcChannelImpl
       public TipcObject,
       public fbl::DoublyLinkedListable<fbl::RefPtr<TipcChannelImpl>> {
  public:
-  using ReadyCallback = std::function<void()>;
+  using Callback = std::function<void()>;
 
   static zx_status_t Create(uint32_t num_items, size_t item_size,
                             fbl::RefPtr<TipcChannelImpl>* out);
@@ -40,8 +40,11 @@ class TipcChannelImpl
     peer_.Bind(std::move(handle));
   }
 
-  void SetReadyCallback(ReadyCallback callback) {
+  void SetReadyCallback(Callback callback) {
     ready_callback_ = std::move(callback);
+  }
+  void SetCloseCallback(Callback callback) {
+    close_callback_ = std::move(callback);
   }
   void NotifyReady() { peer_->Ready(); }
 
@@ -50,6 +53,7 @@ class TipcChannelImpl
   zx_status_t ReadMessage(uint32_t msg_id, uint32_t offset, void* buf,
                           size_t* buf_size);
   zx_status_t PutMessage(uint32_t msg_id);
+  void Shutdown();
 
   bool is_bound() { return peer_.is_bound(); }
 
@@ -86,7 +90,8 @@ class TipcChannelImpl
   zx_status_t PopulatePeerSharedItemsLocked()
       FXL_EXCLUSIVE_LOCKS_REQUIRED(request_shared_items_lock_);
 
-  ReadyCallback ready_callback_;
+  Callback ready_callback_;
+  Callback close_callback_;
 };
 
 }  // namespace trusty_ipc

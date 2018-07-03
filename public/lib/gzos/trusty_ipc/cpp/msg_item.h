@@ -14,6 +14,8 @@ class MessageItem
   MessageItem() = delete;
   MessageItem(uint32_t msg_id) : msg_id_(msg_id) {}
 
+  ~MessageItem() { Reset(); }
+
   zx_status_t InitNew(size_t size) {
     zx::vmo vmo;
     zx_status_t status = zx::vmo::create(size, 0, &vmo);

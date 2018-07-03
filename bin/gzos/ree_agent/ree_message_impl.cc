@@ -27,10 +27,18 @@ void ReeMessageImpl::AddMessageChannel(
 
     ReeAgent* agent = nullptr;
     switch (info.type) {
-      case MessageType::Tipc:
+      case MessageType::Tipc: {
+        TipcEndpointTable* ep_table = new TipcEndpointTable();
+        if (ep_table == nullptr) {
+          cb(ZX_ERR_NO_MEMORY);
+          return;
+        }
+
         agent = new TipcAgent(info.id, std::move(info.channel),
-                              info.max_message_size, ta_service_provider_);
+                              info.max_message_size, ta_service_provider_,
+                              ep_table);
         break;
+      }
       default:
         cb(ZX_ERR_NOT_SUPPORTED);
         return;

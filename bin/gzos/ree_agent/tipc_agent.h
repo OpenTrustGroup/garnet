@@ -28,10 +28,35 @@ struct TipcEndpoint {
   fbl::RefPtr<TipcChannelImpl> channel;
 };
 
+// TipcEndpointTable is not thread-safe. User should have a lock
+// to guarantee the atomicity of the table operations.
+class TipcEndpointTable {
+ public:
+  TipcEndpointTable() = default;
+
+  zx_status_t AllocateSlot(uint32_t src_addr,
+                           fbl::RefPtr<TipcChannelImpl> channel,
+                           uint32_t* dst_addr);
+  TipcEndpoint* LookupByAddr(uint32_t dst_addr);
+  TipcEndpoint* FindInUseSlot(uint32_t& start_slot);
+  void FreeSlotByAddr(uint32_t dst_addr);
+
+  uint32_t to_addr(uint32_t slot_id) { return kTipcAddrBase + slot_id; }
+  uint32_t to_slot_id(uint32_t addr) { return addr - kTipcAddrBase; }
+
+ private:
+  void FreeSlotInternal(uint32_t slot_id);
+
+  IdAllocator<kTipcAddrMaxNum> id_allocator_;
+  TipcEndpoint table_[kTipcAddrMaxNum];
+
+  FXL_DISALLOW_COPY_AND_ASSIGN(TipcEndpointTable);
+};
+
 class TipcAgent : public ReeAgent {
  public:
   TipcAgent(uint32_t id, zx::channel ch, size_t max_msg_size,
-            TaServices& service_provider);
+            TaServices& service_provider, TipcEndpointTable* ep_table);
   ~TipcAgent();
 
   zx_status_t Start() override;
@@ -39,11 +64,10 @@ class TipcAgent : public ReeAgent {
   zx_status_t HandleMessage(void* buf, size_t size) override;
 
  private:
-  zx_status_t AllocateEndpointSlot(uint32_t src_addr,
-                                   fbl::RefPtr<TipcChannelImpl> channel,
-                                   uint32_t* dst_addr);
-  zx_status_t SendMessage(uint32_t local, uint32_t remote, void* data,
-                          size_t data_len);
+  zx_status_t SendMessageToRee(uint32_t local, uint32_t remote, void* data,
+                               size_t data_len);
+  void ShutdownTipcChannelLocked(TipcEndpoint* ep, uint32_t dst_addr)
+      FXL_EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   zx_status_t HandleCtrlMessage(tipc_hdr* hdr);
   zx_status_t HandleConnectRequest(uint32_t src, void* req);
@@ -51,9 +75,10 @@ class TipcAgent : public ReeAgent {
 
   zx_status_t HandleTipcMessage(tipc_hdr* hdr);
 
-  fbl::Mutex ep_table_lock_;
-  TipcEndpoint ep_table_[kTipcAddrMaxNum] FXL_GUARDED_BY(ep_table_lock_);
   TaServices& ta_service_provider_;
+
+  fbl::Mutex lock_;
+  fbl::unique_ptr<TipcEndpointTable> ep_table_ FXL_GUARDED_BY(lock_);
 };
 
 }  // namespace ree_agent

@@ -1,0 +1,29 @@
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/cpp/prebuilt_shared_library.gni")
+
+source_set("sources") {
+  sources = [
+    "trusty_ipc.h",
+    "trusty_ipc.cc",
+    "trusty_std.h",
+    "trusty_syscalls.h",
+    "trusty_unittest.h",
+    "trusty_uuid.h",
+  ]
+
+  public_deps = [
+    "//garnet/public/lib/gzos/trusty_ipc/cpp",
+  ]
+}
+
+prebuilt_shared_library("trusty_app") {
+  category = "partner"
+  no_headers = true
+
+  public_deps = [
+    ":sources"
+  ]
+}

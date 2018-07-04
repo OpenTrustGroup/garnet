@@ -1,0 +1,29 @@
+# Copyright 2018 Open Trust Group. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/gzos/trusty_app.gni")
+
+config("include_dirs") {
+  include_dirs = [ "./include" ]
+}
+
+trusty_app("ipc-unittest-main") {
+  sources = [
+    "main/main.c"
+  ]
+
+  public_configs = [
+    ":include_dirs"
+  ]
+}
+
+trusty_app("ipc-unittest-srv") {
+  sources = [
+    "srv/srv.c"
+  ]
+
+  public_configs = [
+    ":include_dirs"
+  ]
+}

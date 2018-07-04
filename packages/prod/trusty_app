@@ -1,0 +1,6 @@
+{
+    "packages": [
+        "//garnet/bin/gzos/trusty_app/ipc-unittest:ipc-unittest-main",
+        "//garnet/bin/gzos/trusty_app/ipc-unittest:ipc-unittest-srv"
+    ]
+}

@@ -39,7 +39,10 @@ zx_status_t TipcChannelImpl::Create(uint32_t num_items, size_t item_size,
 
 zx_status_t TipcChannelImpl::PopulatePeerSharedItemsLocked() {
   fidl::VectorPtr<SharedMessageItem> shared_items;
-  peer_->RequestSharedMessageItems(&shared_items);
+  bool ret = peer_->RequestSharedMessageItems(&shared_items);
+  if (!ret) {
+    return ZX_ERR_PEER_CLOSED;
+  }
 
   if (!shared_items) {
     return ZX_ERR_NO_MEMORY;
@@ -65,11 +68,11 @@ zx_status_t TipcChannelImpl::PopulatePeerSharedItemsLocked() {
 }
 
 void TipcChannelImpl::Close() {
+  fbl::AutoLock lock(&ready_lock_);
+  ready_ = false;
+
   // Notify user that peer is going to shutdown channel
   SignalEvent(TipcEvent::HUP);
-
-  // Unbind peer interface to prevent from notifying peer again
-  peer_.Unbind();
 
   if (close_callback_) {
     close_callback_();
@@ -125,15 +128,43 @@ void TipcChannelImpl::NotifyMessageItemIsFilled(
 
   SignalEvent(TipcEvent::MSG);
 
+  if (message_in_callback_) {
+    message_in_callback_();
+  }
+
   callback(ZX_OK);
 }
 
 void TipcChannelImpl::Shutdown() {
+  fbl::AutoLock lock(&ready_lock_);
+  ready_ = false;
+
   // Notify peer that channel is going to be shutdown
   if (is_bound()) {
     peer_->Close();
     peer_.Unbind();
   }
+
+  // The reference count held by object manager should be released
+  if (handle_id() != TipcObject::kInvalidHandle) {
+    TipcObjectManager::Instance()->RemoveObject(handle_id());
+  }
+
+  // The reference count held by callbacks should be released
+  SetReadyCallback(nullptr);
+  SetCloseCallback(nullptr);
+  SetMessageInCallback(nullptr);
+}
+
+void TipcChannelImpl::NotifyReady() {
+  bool ret = peer_->Ready();
+  if (!ret) {
+    FXL_LOG(ERROR) << "failed to notify peer ready";
+    return;
+  }
+
+  fbl::AutoLock lock(&ready_lock_);
+  ready_ = true;
 }
 
 zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
@@ -148,6 +179,10 @@ zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
     return ZX_ERR_PEER_CLOSED;
   }
 
+  if (!is_ready()) {
+    return ZX_ERR_SHOULD_WAIT;
+  }
+
   {
     fbl::AutoLock lock(&request_shared_items_lock_);
     if (!peer_shared_items_ready_) {
@@ -160,7 +195,12 @@ zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
     }
   }
 
-  peer_->GetFreeMessageItem(&status, &msg_id);
+  bool ret = peer_->GetFreeMessageItem(&status, &msg_id);
+  if (!ret) {
+    SignalEvent(TipcEvent::HUP);
+    return ZX_ERR_PEER_CLOSED;
+  }
+
   if (status != ZX_OK) {
     return status;
   }
@@ -173,13 +213,23 @@ zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
   void* buffer_ptr = item->PtrFromOffset(0);
   memcpy(buffer_ptr, msg, msg_size);
 
-  peer_->NotifyMessageItemIsFilled(msg_id, msg_size, &status);
+  ret = peer_->NotifyMessageItemIsFilled(msg_id, msg_size, &status);
+  if (!ret) {
+    SignalEvent(TipcEvent::HUP);
+    return ZX_ERR_PEER_CLOSED;
+  }
+
   return status;
 }
 
 zx_status_t TipcChannelImpl::GetMessage(uint32_t* msg_id, size_t* len) {
   FXL_DCHECK(msg_id);
   FXL_DCHECK(len);
+
+  if (!is_ready()) {
+    return ZX_ERR_SHOULD_WAIT;
+  }
+
   fbl::AutoLock lock(&msg_list_lock_);
 
   if (filled_list_.is_empty()) {
@@ -199,6 +249,11 @@ zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
                                          void* buf, size_t* buf_size) {
   FXL_DCHECK(buf);
   FXL_DCHECK(buf_size);
+
+  if (!is_ready()) {
+    return ZX_ERR_SHOULD_WAIT;
+  }
+
   fbl::AutoLock lock(&msg_list_lock_);
 
   auto it = read_list_.find_if(
@@ -225,6 +280,10 @@ zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
 }
 
 zx_status_t TipcChannelImpl::PutMessage(uint32_t msg_id) {
+  if (!is_ready()) {
+    return ZX_ERR_SHOULD_WAIT;
+  }
+
   fbl::AutoLock lock(&msg_list_lock_);
 
   auto it = read_list_.find_if(
@@ -241,6 +300,9 @@ zx_status_t TipcChannelImpl::PutMessage(uint32_t msg_id) {
 }
 
 void TipcChannelImpl::Ready() {
+  fbl::AutoLock lock(&ready_lock_);
+  ready_ = true;
+
   if (ready_callback_) {
     ready_callback_();
   }

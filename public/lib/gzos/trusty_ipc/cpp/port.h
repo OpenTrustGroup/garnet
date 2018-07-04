@@ -48,6 +48,7 @@ class TipcPortImpl : public TipcPort, public TipcObject {
       FXL_GUARDED_BY(mutex_);
 
   void AddPendingRequest(fbl::RefPtr<TipcChannelImpl> channel);
+  void RemoveFromPendingRequest(fbl::RefPtr<TipcChannelImpl> channel);
   fbl::RefPtr<TipcChannelImpl> GetPendingRequest();
   bool HasPendingRequests();
 };

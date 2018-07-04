@@ -14,6 +14,7 @@
 #include "lib/fxl/synchronization/thread_annotations.h"
 #include "lib/gzos/trusty_ipc/cpp/msg_item.h"
 #include "lib/gzos/trusty_ipc/cpp/object.h"
+#include "lib/gzos/trusty_ipc/cpp/object_manager.h"
 
 namespace trusty_ipc {
 
@@ -46,7 +47,9 @@ class TipcChannelImpl
   void SetCloseCallback(Callback callback) {
     close_callback_ = std::move(callback);
   }
-  void NotifyReady() { peer_->Ready(); }
+  void SetMessageInCallback(Callback callback) {
+    message_in_callback_ = std::move(callback);
+  }
 
   zx_status_t SendMessage(void* msg, size_t msg_size);
   zx_status_t GetMessage(uint32_t* msg_id, size_t* len);
@@ -54,8 +57,13 @@ class TipcChannelImpl
                           size_t* buf_size);
   zx_status_t PutMessage(uint32_t msg_id);
   void Shutdown();
+  void NotifyReady();
 
   bool is_bound() { return peer_.is_bound(); }
+  bool is_ready() {
+    fbl::AutoLock lock(&ready_lock_);
+    return ready_;
+  }
 
  protected:
   ObjectType get_type() override { return ObjectType::CHANNEL; }
@@ -70,7 +78,8 @@ class TipcChannelImpl
       NotifyMessageItemIsFilledCallback callback) override;
 
  private:
-  TipcChannelImpl() : binding_(this), peer_shared_items_ready_(false) {}
+  TipcChannelImpl() : binding_(this), ready_(false),
+                      peer_shared_items_ready_(false) {}
 
   using MsgList = fbl::DoublyLinkedList<fbl::unique_ptr<MessageItem>>;
   fbl::Mutex msg_list_lock_;
@@ -85,6 +94,9 @@ class TipcChannelImpl
   TipcChannelSyncPtr peer_;
   std::vector<fbl::unique_ptr<MessageItem>> peer_shared_items_;
 
+  fbl::Mutex ready_lock_;
+  bool ready_ FXL_GUARDED_BY(ready_lock_);
+
   fbl::Mutex request_shared_items_lock_;
   bool peer_shared_items_ready_ FXL_GUARDED_BY(request_shared_items_lock_);
   zx_status_t PopulatePeerSharedItemsLocked()
@@ -92,6 +104,7 @@ class TipcChannelImpl
 
   Callback ready_callback_;
   Callback close_callback_;
+  Callback message_in_callback_;
 };
 
 }  // namespace trusty_ipc

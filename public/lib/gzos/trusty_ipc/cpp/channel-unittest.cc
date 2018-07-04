@@ -44,6 +44,8 @@ class TipcChannelTest : public ::testing::Test {
     local_channel_->BindPeerInterfaceHandle(std::move(handle));
     handle = local_channel_->GetInterfaceHandle();
     remote_channel_->BindPeerInterfaceHandle(std::move(handle));
+
+    local_channel_->NotifyReady();
   }
 
   virtual void TeadDown() {

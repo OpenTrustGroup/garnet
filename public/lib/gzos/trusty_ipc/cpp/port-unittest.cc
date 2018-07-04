@@ -61,6 +61,10 @@ TEST_F(TipcPortTest, PortConnect) {
 
   EXPECT_EQ(channel->Wait(&result, zx::time::infinite()), ZX_OK);
   EXPECT_EQ(result.event, TipcEvent::READY);
+
+  // port wait again and should have no event
+  EXPECT_EQ(port_.Wait(&result, zx::deadline_after(zx::msec(1))),
+            ZX_ERR_TIMED_OUT);
 }
 
 }  // namespace trusty_ipc

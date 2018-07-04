@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include <fbl/auto_call.h>
+#include <lib/async/cpp/task.h>
 
 #include "garnet/bin/gzos/ree_agent/ta_service.h"
 #include "garnet/bin/gzos/ree_agent/tipc_agent.h"
@@ -129,6 +130,13 @@ void TipcAgent::ShutdownTipcChannelLocked(TipcEndpoint* ep, uint32_t dst_addr) {
 zx_status_t TipcAgent::Start() {
   tipc_ctrl_msg_hdr ctrl_msg{CtrlMessage::GO_ONLINE, 0};
 
+  fbl::AutoLock lock(&lock_);
+  write_buffer_.reset(new char[max_message_size()]);
+  if (write_buffer_ == nullptr) {
+    FXL_LOG(ERROR) << "Failed to allocate write buffer";
+    return ZX_ERR_NO_MEMORY;
+  }
+
   zx_status_t status = SendMessageToRee(kTipcCtrlAddress, kTipcCtrlAddress,
                                         &ctrl_msg, sizeof(ctrl_msg));
   if (status != ZX_OK) {
@@ -148,6 +156,8 @@ zx_status_t TipcAgent::Stop() {
   }
 
   fbl::AutoLock lock(&lock_);
+
+  write_buffer_.reset();
 
   uint32_t slot_id = 0;
   TipcEndpoint* ep;
@@ -268,28 +278,80 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
     return status;
   }
 
-  channel->SetReadyCallback([&]() {
+  channel->SetReadyCallback([this, src_addr, dst_addr] {
     zx_status_t st;
     conn_rsp_msg res{ {CONNECT_RESPONSE, sizeof(tipc_conn_rsp_body)},
                       {src_addr, ZX_OK, dst_addr, kTipcChanMaxBufSize, 1} };
     st = SendMessageToRee(kTipcCtrlAddress, kTipcCtrlAddress,
                           &res, sizeof(res));
     if (st != ZX_OK) {
-      FXL_LOG(ERROR) << "failed to send connect response, status=" << status;
+      FXL_LOG(ERROR) << "failed to send connect response, status=" << st;
     }
   });
 
-  channel->SetCloseCallback([&]() {
+  auto handle_hup = [this, channel, src_addr, dst_addr] {
+    channel->Shutdown();
+
     zx_status_t st;
     disc_req_msg req{ {DISCONNECT_REQUEST, sizeof(tipc_disc_req_body)},
                       {src_addr} };
     st = SendMessageToRee(dst_addr, kTipcCtrlAddress, &req, sizeof(req));
     if (st != ZX_OK) {
-      FXL_LOG(ERROR) << "failed to send disconnect request, status=" << status;
+      FXL_LOG(ERROR) << "failed to send disconnect request, status=" << st;
     }
 
     fbl::AutoLock lock(&lock_);
     ep_table_->FreeSlotByAddr(dst_addr);
+  };
+
+  channel->SetCloseCallback([handle_hup] {
+    async::PostTask(async_get_default(), [handle_hup] {
+      handle_hup();
+    });
+  });
+
+  auto handle_rx_msg = [this, channel, dst_addr] {
+    fbl::AutoLock lock(&lock_);
+
+    uint32_t msg_id;
+    size_t msg_len;
+    zx_status_t st = channel->GetMessage(&msg_id, &msg_len);
+    if (st != ZX_OK) {
+      FXL_LOG(ERROR) << "no message come in";
+      return;
+    }
+
+    void* buf = static_cast<void*>(write_buffer_.get());
+    size_t buf_size = max_message_size();
+    st = channel->ReadMessage(msg_id, 0, buf, &buf_size);
+    if (st != ZX_OK) {
+      FXL_LOG(ERROR) << "failed to read message, status=" << st;
+      return;
+    }
+
+    FXL_DCHECK(msg_len == buf_size);
+
+    st = channel->PutMessage(msg_id);
+    if (st != ZX_OK) {
+      FXL_LOG(WARNING) << "failed to put message, status=" << st;
+    }
+
+    auto ep = static_cast<TipcEndpoint*>(channel->cookie());
+    if (!ep) {
+      FXL_LOG(ERROR) << "cannot get tipc endpoint from channel cookie";
+      return;
+    }
+
+    st = SendMessageToRee(dst_addr, ep->src_addr, buf, buf_size);
+    if (st != ZX_OK) {
+      FXL_LOG(ERROR) << "failed to send message to ree, status=" << st;
+    }
+  };
+
+  channel->SetMessageInCallback([handle_rx_msg] {
+    async::PostTask(async_get_default(), [handle_rx_msg] {
+      handle_rx_msg();
+    });
   });
 
   channel->BindPeerInterfaceHandle(std::move(peer_handle));
@@ -307,7 +369,7 @@ zx_status_t TipcAgent::HandleDisconnectRequest(uint32_t src_addr, void* req) {
 
   TipcEndpoint* ep = ep_table_->LookupByAddr(dst_addr);
   if (!ep) {
-    FXL_LOG(ERROR) << "invalid target address, addr=%u" << dst_addr;
+    FXL_LOG(ERROR) << "invalid target address, addr:" << dst_addr;
     return ZX_ERR_INVALID_ARGS;
   }
 
@@ -317,7 +379,21 @@ zx_status_t TipcAgent::HandleDisconnectRequest(uint32_t src_addr, void* req) {
 
 zx_status_t TipcAgent::HandleTipcMessage(tipc_hdr* hdr) {
   FXL_DCHECK(hdr);
-  return ZX_ERR_NOT_SUPPORTED;
+
+  fbl::AutoLock lock(&lock_);
+
+  TipcEndpoint* ep = ep_table_->LookupByAddr(hdr->dst);
+  if (ep && (ep->src_addr == hdr->src)) {
+    void* msg = reinterpret_cast<void*>(hdr->data);
+    zx_status_t status = ep->channel->SendMessage(msg, hdr->len);
+    if (status == ZX_ERR_PEER_CLOSED) {
+      ShutdownTipcChannelLocked(ep, hdr->dst);
+    }
+
+    return status;
+  }
+
+  return ZX_ERR_NOT_FOUND;
 }
 
 }  // namespace ree_agent

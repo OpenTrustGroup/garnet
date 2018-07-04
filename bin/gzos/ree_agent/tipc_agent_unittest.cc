@@ -162,6 +162,8 @@ class TipcAgentTest : public ::testing::Test {
 
   virtual void TearDown() override {
     ASSERT_EQ(agent_->Stop(), ZX_OK);
+    loop_.RunUntilIdle();
+
     loop_.Quit();
     loop_.JoinThreads();
   }
@@ -269,6 +271,39 @@ class TipcAgentTest : public ::testing::Test {
     }
   }
 
+  zx_status_t SendMsgByRee(uint32_t src, uint32_t dst,
+                             const char* msg, size_t len) {
+    void* buf = static_cast<void*>(buf_ptr_.get());
+    auto hdr = reinterpret_cast<tipc_hdr*>(buf);
+    auto data = reinterpret_cast<void*>(hdr->data);
+
+    uint32_t write_size = sizeof(*hdr) + len;
+
+    hdr->src = src;
+    hdr->dst = dst;
+    hdr->len = len;
+    memcpy(data, msg, len);
+
+    return msg_cli_.write(0, buf, write_size, nullptr, 0);
+  }
+
+  void VerifyReplyMsg(uint32_t src, uint32_t dst,
+                      const char* msg, size_t len) {
+    void* buf = static_cast<void*>(buf_ptr_.get());
+    uint32_t actual;
+    EXPECT_EQ(msg_cli_.read(0, buf, PAGE_SIZE, &actual, nullptr, 0, nullptr),
+              ZX_OK);
+
+    EXPECT_EQ(actual, len + sizeof(tipc_hdr));
+
+    auto hdr = reinterpret_cast<tipc_hdr*>(buf);
+    auto data = reinterpret_cast<void*>(hdr->data);
+    EXPECT_EQ(hdr->src, src);
+    EXPECT_EQ(hdr->dst, dst);
+    EXPECT_EQ(hdr->len, len);
+    EXPECT_EQ(memcmp(data, msg, len), 0);
+  }
+
   fbl::unique_ptr<char> buf_ptr_;
   async::Loop loop_;
   zx::channel msg_cli_, msg_srv_;
@@ -343,7 +378,7 @@ TEST_F(TipcAgentTest, DisconnectRequest) {
 
   // Second tipc channel still in endpoint table
   ep = ep_table_->LookupByAddr(dst2);
-  EXPECT_TRUE(ep != nullptr);
+  ASSERT_TRUE(ep != nullptr);
   EXPECT_EQ(ep->src_addr, src2);
 }
 
@@ -377,10 +412,12 @@ TEST_F(TipcAgentTest, DisconnectAll) {
   ASSERT_EQ(remote_channel1->Wait(&result, zx::deadline_after(zx::sec(1))),
             ZX_OK);
   ASSERT_EQ(result.event, TipcEvent::HUP);
+  remote_channel1->Shutdown();
 
   ASSERT_EQ(remote_channel2->Wait(&result, zx::deadline_after(zx::sec(1))),
             ZX_OK);
   ASSERT_EQ(result.event, TipcEvent::HUP);
+  remote_channel2->Shutdown();
 
   // First tipc channel is gone
   ep = ep_table_->LookupByAddr(dst1);
@@ -431,6 +468,59 @@ TEST_F(TipcAgentTest, RemoteChannelClose) {
   EXPECT_EQ(ctrl_msg->type, CtrlMessage::DISCONNECT_REQUEST);
   EXPECT_EQ(ctrl_msg->body_len, sizeof(*disc_req));
   EXPECT_EQ(disc_req->target, src);
+}
+
+TEST_F(TipcAgentTest, EchoMsg) {
+  // Build tipc channel
+  uint32_t src = 3;
+  uint32_t dst = 0;
+  fbl::RefPtr<TipcChannelImpl> remote_channel;
+  PortConnect(src, &dst, &remote_channel);
+
+  constexpr const char* expect_msg = "echo test";
+  uint32_t expect_len = strlen(expect_msg);
+  ASSERT_EQ(SendMsgByRee(src, dst, expect_msg, expect_len), ZX_OK);
+  loop_.RunUntilIdle();
+
+  WaitResult result;
+  ASSERT_EQ(remote_channel->Wait(&result, zx::deadline_after(zx::sec(1))),
+            ZX_OK);
+  ASSERT_EQ(result.event, TipcEvent::MSG);
+
+  char* buf = buf_ptr_.get();
+  size_t buf_size = PAGE_SIZE;
+  uint32_t msg_id;
+  size_t msg_len;
+  ASSERT_EQ(remote_channel->GetMessage(&msg_id, &msg_len), ZX_OK);
+  ASSERT_EQ(remote_channel->ReadMessage(msg_id, 0, buf, &buf_size), ZX_OK);
+  ASSERT_EQ(remote_channel->PutMessage(msg_id), ZX_OK);
+
+  EXPECT_EQ(msg_len, expect_len);
+  EXPECT_EQ(buf_size, expect_len);
+  EXPECT_EQ(memcmp(buf, expect_msg, expect_len), 0);
+
+  // Echo to Ree
+  remote_channel->SendMessage(buf, buf_size);
+  loop_.RunUntilIdle();
+
+  VerifyReplyMsg(dst, src, expect_msg, expect_len);
+}
+
+TEST_F(TipcAgentTest, SendMsgWithRemoteChannelNotAccepted) {
+  uint32_t src = 3;
+  uint32_t dst = kTipcAddrBase;
+
+  ASSERT_EQ(SendConnectRequest(src, TaServiceFake::port_name), ZX_OK);
+  loop_.RunUntilIdle();
+
+  char msg[] = "echo test";
+  uint32_t len = strlen(msg);
+  void* buf = static_cast<void*>(msg);
+
+  TipcEndpoint* ep = ep_table_->LookupByAddr(dst);
+  ASSERT_TRUE(ep != nullptr);
+  ASSERT_FALSE(ep->channel->is_ready());
+  ASSERT_EQ(ep->channel->SendMessage(buf, len), ZX_ERR_SHOULD_WAIT);
 }
 
 }  // ree_agent

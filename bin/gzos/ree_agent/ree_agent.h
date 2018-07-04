@@ -27,6 +27,7 @@ class ReeAgent {
   virtual zx_status_t Stop();
 
   uint32_t message_channel_id() { return message_channel_id_; }
+  size_t max_message_size() { return max_message_size_; }
 
  protected:
   zx_status_t WriteMessage(void* buf, size_t size);

@@ -87,7 +87,7 @@ class TipcObject : public fbl::RefCounted<TipcObject> {
 
   uint32_t handle_id() const { return handle_id_; }
   uint32_t tipc_event_state();
-  void* cookie() { return cookie_; }
+  void* cookie() const { return cookie_; }
   void set_cookie(void* cookie) { cookie_ = cookie; }
 
  protected:

@@ -108,10 +108,10 @@ TEST_F(ResourceTableTest, GetResourceTable) {
     EXPECT_EQ(descr->vdev.notifyid, bus_->devices()[i]->notify_id());
     EXPECT_EQ(descr->vrings[kTxQueue].align, (uint32_t)PAGE_SIZE);
     EXPECT_EQ(descr->vrings[kTxQueue].num, expected_tx_num);
-    EXPECT_EQ(descr->vrings[kTxQueue].notifyid, 1u);
+    EXPECT_EQ(descr->vrings[kTxQueue].notifyid, kTxQueue);
     EXPECT_EQ(descr->vrings[kRxQueue].align, (uint32_t)PAGE_SIZE);
     EXPECT_EQ(descr->vrings[kRxQueue].num, expected_rx_num);
-    EXPECT_EQ(descr->vrings[kRxQueue].notifyid, 2u);
+    EXPECT_EQ(descr->vrings[kRxQueue].notifyid, kRxQueue);
     EXPECT_EQ(descr->config.msg_buf_max_size, (uint32_t)PAGE_SIZE);
     EXPECT_EQ(descr->config.msg_buf_alignment, (uint32_t)PAGE_SIZE);
     EXPECT_STREQ(descr->config.dev_name, expected_dev_name);
@@ -207,6 +207,7 @@ TEST_F(VirtioBusStateTest, KickVqueueTest) {
 
   ASSERT_EQ(bus_->Start(rsc_table_, rsc_table_size_), ZX_OK);
   ASSERT_EQ(bus_->KickVqueue(trusty_vdev_->notify_id(), 0), ZX_OK);
+  ASSERT_EQ(bus_->KickVqueue(trusty_vdev_->notify_id(), 1), ZX_OK);
 
   // Kick vqueue with invalid device id
   ASSERT_EQ(bus_->KickVqueue(trusty_vdev_->notify_id() + 1, 0),

@@ -187,9 +187,9 @@ TEST_F(TrustySmcTest, VirtioGetDescriptorTest) {
   EXPECT_EQ(descr->vdev.num_of_vrings, trusty_virtio::kNumQueues);
   EXPECT_EQ(descr->vdev.id, trusty_virtio::kTipcDeviceId);
   EXPECT_EQ(descr->vrings[trusty_virtio::kTxQueue].num, 32u);
-  EXPECT_EQ(descr->vrings[trusty_virtio::kTxQueue].notifyid, 1u);
+  EXPECT_EQ(descr->vrings[trusty_virtio::kTxQueue].notifyid, trusty_virtio::kTxQueue);
   EXPECT_EQ(descr->vrings[trusty_virtio::kRxQueue].num, 32u);
-  EXPECT_EQ(descr->vrings[trusty_virtio::kRxQueue].notifyid, 2u);
+  EXPECT_EQ(descr->vrings[trusty_virtio::kRxQueue].notifyid, trusty_virtio::kRxQueue);
   EXPECT_STREQ(descr->config.dev_name, "dev0");
 }
 

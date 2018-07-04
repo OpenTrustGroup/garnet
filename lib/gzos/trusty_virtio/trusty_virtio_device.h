@@ -60,13 +60,13 @@ struct trusty_vdev_descr {
                 {                                                             \
                     .align = PAGE_SIZE,                                       \
                     .num = (_txvq_sz),                                        \
-                    .notifyid = 1,                                            \
+                    .notifyid = kTxQueue,                                     \
                 },                                                            \
             [kRxQueue] =                                                      \
                 {                                                             \
                     .align = PAGE_SIZE,                                       \
                     .num = (_rxvq_sz),                                        \
-                    .notifyid = 2,                                            \
+                    .notifyid = kRxQueue,                                     \
                 },                                                            \
         },                                                                    \
     .config = {                                                               \

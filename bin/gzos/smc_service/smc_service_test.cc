@@ -57,21 +57,6 @@ class ReeMessageFake : public ReeMessage {
 
 namespace smc_service {
 
-class SmcServiceTest : public testing::Test {
- protected:
-  virtual void SetUp() {
-    smc_service_ = SmcService::GetInstance();
-    ASSERT_TRUE(smc_service_ != nullptr);
-  }
-
-  virtual void TearDown() {
-    loop_.Shutdown();
-  }
-
-  async::Loop loop_;
-  SmcService* smc_service_;
-};
-
 class SmcTestEntity : public SmcEntity {
  public:
   SmcTestEntity(smc32_args_t* args) : smc_args_(args) {}
@@ -85,15 +70,33 @@ class SmcTestEntity : public SmcEntity {
   smc32_args_t* smc_args_;
 };
 
+class SmcServiceTest : public testing::Test {
+ public:
+  SmcServiceTest()
+      : loop_(&kAsyncLoopConfigMakeDefault),
+        smc_service_(SmcService::GetInstance()) {}
+
+ protected:
+  virtual void SetUp() {
+    ASSERT_TRUE(smc_service_ != nullptr);
+
+    zx_status_t st = smc_service_->AddSmcEntity(SMC_ENTITY_TRUSTED_OS,
+                                                new SmcTestEntity(&smc_args));
+    ASSERT_EQ(st, ZX_OK);
+    smc_service_->Start(loop_.async());
+  }
+
+  virtual void TearDown() { smc_service_->Stop(); }
+
+  async::Loop loop_;
+  SmcService* smc_service_;
+  smc32_args_t smc_args{};
+};
+
 TEST_F(SmcServiceTest, SmcEntityTest) {
-  smc32_args_t smc_args = {};
-  zx_status_t status = smc_service_->AddSmcEntity(SMC_ENTITY_TRUSTED_OS,
-                                                  new SmcTestEntity(&smc_args));
-  ASSERT_EQ(status, ZX_OK);
-  smc_service_->Start(loop_.async());
 
   /* issue a test smc call */
-  fxl::Thread smc_test_thread([&] {
+  fxl::Thread smc_test_thread([this] {
     long smc_ret = -1;
     smc32_args_t expect_smc_args = {
         .smc_nr = SMC_SC_VIRTIO_START,
@@ -111,8 +114,30 @@ TEST_F(SmcServiceTest, SmcEntityTest) {
   });
   EXPECT_TRUE(smc_test_thread.Run());
 
-  /* receive smc call once and leave the loop */
-  loop_.Run(zx::time::infinite(), true);
+  loop_.RunUntilIdle();
+
+  EXPECT_TRUE(smc_test_thread.Join());
+}
+
+TEST_F(SmcServiceTest, NopTest) {
+  /* issue a test nop call */
+  fxl::Thread smc_test_thread([this] {
+    smc32_args_t expect_smc_args = {
+        .smc_nr = SMC_SC_NOP,
+        .params = {SMC_NC_VDEV_KICK_VQ, 0x0u, 0x0u},
+    };
+
+    zx_status_t st =
+        zx_smc_nop_call_test(smc_service_->GetHandle(), &expect_smc_args);
+    ASSERT_EQ(st, ZX_OK);
+    EXPECT_EQ(smc_args.smc_nr, expect_smc_args.smc_nr);
+    EXPECT_EQ(smc_args.params[0], expect_smc_args.params[0]);
+    EXPECT_EQ(smc_args.params[1], expect_smc_args.params[1]);
+    EXPECT_EQ(smc_args.params[2], expect_smc_args.params[2]);
+  });
+  EXPECT_TRUE(smc_test_thread.Run());
+
+  loop_.RunUntilIdle();
 
   EXPECT_TRUE(smc_test_thread.Join());
 }
@@ -130,18 +155,18 @@ class TrustySmcTest : public SmcServiceTest {
     ree_message_fake_.Bind(fbl::move(ch2));
     loop_.StartThread();
 
-    fbl::RefPtr<SharedMem> shm = smc_service_->GetSharedMem();
-    fbl::AllocChecker ac;
-    entity_ = fbl::make_unique_checked<TrustySmcEntity>(&ac, loop_.async(),
-                                                        fbl::move(ch1), shm);
-    ASSERT_TRUE(ac.check());
+    entity_ = fbl::make_unique<TrustySmcEntity>(loop_.async(), fbl::move(ch1));
+    ASSERT_TRUE(entity_ != nullptr);
 
     ASSERT_EQ(entity_->Init(), ZX_OK);
 
+    fbl::RefPtr<SharedMem> shm = smc_service_->GetSharedMem();
     ns_buf_size_ = PAGE_SIZE;
     ns_buf_ = shm->ptr(0, ns_buf_size_);
     ns_buf_pa_ = shm->VirtToPhys(ns_buf_, ns_buf_size_);
   }
+
+  virtual void TearDown() override { SmcServiceTest::TearDown(); }
 
   uint64_t MemAttr(uint64_t mair,
                    uint64_t shareable,

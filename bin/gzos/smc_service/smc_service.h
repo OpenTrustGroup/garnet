@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <fbl/array.h>
+#include <fbl/atomic.h>
 #include <fbl/auto_lock.h>
 #include <fbl/function.h>
 
@@ -13,13 +13,15 @@
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/smc_service.h>
 
-#include <array>
+#include <threads.h>
 #include <unordered_map>
 
 #include "garnet/lib/gzos/trusty_virtio/shared_mem.h"
 #include "lib/fxl/logging.h"
 
 namespace smc_service {
+
+static constexpr const uint32_t kMaxCpuNumbers = 4;
 
 using trusty_virtio::SharedMem;
 using SmcFunction = fbl::Function<long(smc32_args_t* args)>;
@@ -40,35 +42,47 @@ class SmcService {
  public:
   static SmcService* GetInstance();
 
-  SmcService(zx_handle_t smc, fbl::RefPtr<SharedMem> shm)
-      : smc_handle_(smc), shared_mem_(shm) {
-    smc_entities_.reset(new fbl::unique_ptr<SmcEntity>[SMC_NUM_ENTITIES],
-                        SMC_NUM_ENTITIES);
-  }
+  SmcService()
+      : smc_handle_(ZX_HANDLE_INVALID), shared_mem_(nullptr),
+        nop_threads_stop_(true) {}
 
-  ~SmcService() {
-    zx_handle_close(smc_handle_);
-    smc_entities_.reset();
-  }
+  ~SmcService() { Stop(); }
 
-  void Init();
   zx_status_t AddSmcEntity(uint32_t entity_nr, SmcEntity* e);
   zx_status_t Start(async_t* async);
-  fbl::RefPtr<SharedMem> GetSharedMem() { return shared_mem_; };
-  zx_handle_t GetHandle() { return smc_handle_; };
+  void Stop();
+  fbl::RefPtr<SharedMem> GetSharedMem() {
+    fbl::AutoLock lock(&lock_);
+    return shared_mem_;
+  };
+  zx_handle_t GetHandle() {
+    fbl::AutoLock lock(&lock_);
+    return smc_handle_;
+  };
+
+  bool nop_threads_stop() { return nop_threads_stop_.load(); }
 
  private:
+  struct ThreadArgs;
+
   SmcEntity* GetSmcEntity(uint32_t entity_nr);
+  zx_status_t InitSmcEntities();
   zx_status_t WaitOnSmc(async_t* async);
   void OnSmcReady(async_t* async, async::WaitBase* wait, zx_status_t status,
                   const zx_packet_signal_t* signal);
   void OnSmcClosed(zx_status_t status, const char* action);
+  zx_status_t CreateSmcKernelObject();
+  zx_status_t CreateNopThreads();
+  void JoinNopThreads();
 
   mutable fbl::Mutex lock_;
-  zx_handle_t smc_handle_;
+  zx_handle_t smc_handle_ __TA_GUARDED(lock_);
   async::WaitMethod<SmcService, &SmcService::OnSmcReady> smc_wait_{this};
-  fbl::RefPtr<SharedMem> shared_mem_;
-  fbl::Array<fbl::unique_ptr<SmcEntity>> smc_entities_ __TA_GUARDED(lock_);
+  fbl::RefPtr<SharedMem> shared_mem_ __TA_GUARDED(lock_);
+  fbl::unique_ptr<SmcEntity> smc_entities_[SMC_NUM_ENTITIES] __TA_GUARDED(lock_);
+  fbl::Mutex nop_threads_lock_;
+  thrd_t nop_threads_[kMaxCpuNumbers] __TA_GUARDED(nop_threads_lock_);
+  fbl::atomic<bool> nop_threads_stop_;
 };
 
 }  // namespace smc_service

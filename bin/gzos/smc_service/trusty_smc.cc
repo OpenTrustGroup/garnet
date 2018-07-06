@@ -87,15 +87,15 @@ using trusty_virtio::TrustyVirtioDevice;
 using trusty_virtio::VirtioBus;
 using trusty_virtio::VirtioDevice;
 
-TrustySmcEntity::TrustySmcEntity(async_t* async, zx::channel ch,
-                                 fbl::RefPtr<SharedMem> shm)
-    : async_(async), shared_mem_(shm), vbus_(nullptr) {
+TrustySmcEntity::TrustySmcEntity(async_t* async, zx::channel ch)
+    : async_(async), vbus_(nullptr) {
   ree_message_.Bind(fbl::move(ch));
 }
 
 zx_status_t TrustySmcEntity::Init() {
+  fbl::RefPtr<SharedMem> shm = SmcService::GetInstance()->GetSharedMem();
   // Create VirtioBus
-  vbus_ = fbl::make_unique<trusty_virtio::VirtioBus>(shared_mem_);
+  vbus_ = fbl::make_unique<trusty_virtio::VirtioBus>(fbl::move(shm));
   if (vbus_ == nullptr) {
     FXL_LOG(ERROR) << "Failed to create virtio bus object";
     return ZX_ERR_NO_MEMORY;
@@ -211,7 +211,8 @@ zx_status_t TrustySmcEntity::GetNsBuf(smc32_args_t* args, void** buf,
       .attr = (static_cast<uint64_t>(args->params[1]) << 32) | args->params[0],
   };
 
-  zx_status_t status = check_mem_attr(pi, shared_mem_->use_cache());
+  fbl::RefPtr<SharedMem> shm = SmcService::GetInstance()->GetSharedMem();
+  zx_status_t status = check_mem_attr(pi, shm->use_cache());
   if (status != ZX_OK) {
     return status;
   }
@@ -219,7 +220,7 @@ zx_status_t TrustySmcEntity::GetNsBuf(smc32_args_t* args, void** buf,
   ns_buf_pa = pi.pa();
   ns_buf_sz = static_cast<ns_size_t>(args->params[2]);
 
-  void* tmp_buf = shared_mem_->PhysToVirt<void*>(ns_buf_pa, ns_buf_sz);
+  void* tmp_buf = shm->PhysToVirt<void*>(ns_buf_pa, ns_buf_sz);
   if (tmp_buf == nullptr) {
     return ZX_ERR_OUT_OF_RANGE;
   }
@@ -349,6 +350,8 @@ long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
       break;
   }
 
+  FXL_VLOG(1) << "smc_nr: 0x" << std::hex << args->smc_nr << " params[0]: 0x"
+              << args->params[0] << " status: " << std::dec << status;
   return to_smc_error(status);
 }
 

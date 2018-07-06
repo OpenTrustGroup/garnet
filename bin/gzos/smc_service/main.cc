@@ -36,10 +36,9 @@ int main(int argc, const char** argv) {
   if (s == nullptr)
     return 1;
 
-  status = s->AddSmcEntity(SMC_ENTITY_TRUSTED_OS,
-                           new TrustySmcEntity(loop.async(),
-                           fbl::move(ree_agent_cli),
-                           s->GetSharedMem()));
+  status = s->AddSmcEntity(
+      SMC_ENTITY_TRUSTED_OS,
+      new TrustySmcEntity(loop.async(), fbl::move(ree_agent_cli)));
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to add Trusty smc entity, status=" << status;
     return 1;

@@ -4,7 +4,7 @@
 
 import("//build/package.gni")
 
-shared_library("trusty_virtio") {
+source_set("trusty_virtio") {
   sources = [
     "shared_mem.cc",
     "shared_mem.h",
@@ -19,19 +19,13 @@ shared_library("trusty_virtio") {
   ]
 
   public_deps = [
-    "//garnet/public/lib/app/cpp",
+    "//zircon/public/lib/async-cpp",
     "//zircon/public/lib/virtio",
     "//zircon/public/lib/zx",
+    "//garnet/public/lib/fxl",
   ]
 
   defines = [ "_ALL_SOURCE=1" ]
-
-  deps = [
-    "//garnet/public/lib/fsl",
-    "//garnet/public/lib/fxl",
-    "//zircon/public/lib/async-cpp",
-    "//zircon/public/lib/zxcpp",
-  ]
 
   # TODO(ZX-1411): Add visibility annotations to code and remove this.
   configs -= [ "//build/config:symbol_visibility_hidden" ]
@@ -52,6 +46,9 @@ source_set("unittests") {
     ":trusty_virtio",
     "//third_party/googletest:gtest",
     "//garnet/lib/magma/src/magma_util",
+  ]
+
+  public_deps = [
     "//zircon/public/lib/async-loop-cpp",
     "//zircon/public/lib/fbl",
   ]

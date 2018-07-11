@@ -11,12 +11,12 @@
 namespace ree_agent {
 
 struct conn_rsp_msg {
-  struct tipc_ctrl_msg_hdr  ctrl_msg;
+  struct tipc_ctrl_msg_hdr ctrl_msg;
   struct tipc_conn_rsp_body body;
 };
 
 struct disc_req_msg {
-  struct tipc_ctrl_msg_hdr  ctrl_msg;
+  struct tipc_ctrl_msg_hdr ctrl_msg;
   struct tipc_disc_req_body body;
 };
 
@@ -116,8 +116,8 @@ void TipcAgent::ShutdownTipcChannelLocked(TipcEndpoint* ep, uint32_t dst_addr) {
   FXL_DCHECK(ep);
 
   zx_status_t st;
-  disc_req_msg req{ {DISCONNECT_REQUEST, sizeof(tipc_disc_req_body)},
-                    {ep->src_addr} };
+  disc_req_msg req{{DISCONNECT_REQUEST, sizeof(tipc_disc_req_body)},
+                   {ep->src_addr}};
   st = SendMessageToRee(dst_addr, kTipcCtrlAddress, &req, sizeof(req));
   if (st != ZX_OK) {
     FXL_LOG(WARNING) << "failed to send disconnect request, status=" << st;
@@ -185,8 +185,8 @@ zx_status_t TipcAgent::HandleMessage(void* buf, size_t size) {
     return ZX_ERR_INVALID_ARGS;
   }
 
-  return (hdr->dst == kTipcCtrlAddress) ?
-      HandleCtrlMessage(hdr) : HandleTipcMessage(hdr);
+  return (hdr->dst == kTipcCtrlAddress) ? HandleCtrlMessage(hdr)
+                                        : HandleTipcMessage(hdr);
 }
 
 zx_status_t TipcAgent::HandleCtrlMessage(tipc_hdr* hdr) {
@@ -223,13 +223,13 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
   auto conn_req = reinterpret_cast<tipc_conn_req_body*>(req);
   uint32_t dst_addr = 0;
 
-  auto send_err_conn_resp = fbl::MakeAutoCall([&](){
+  auto send_err_conn_resp = fbl::MakeAutoCall([&]() {
     zx_status_t st;
     uint32_t err = static_cast<uint32_t>(ZX_ERR_NO_RESOURCES);
-    conn_rsp_msg res{ {CONNECT_RESPONSE, sizeof(tipc_conn_rsp_body)},
-                      {src_addr, err, dst_addr, 0, 0} };
-    st = SendMessageToRee(kTipcCtrlAddress, kTipcCtrlAddress,
-                          &res, sizeof(res));
+    conn_rsp_msg res{{CONNECT_RESPONSE, sizeof(tipc_conn_rsp_body)},
+                     {src_addr, err, dst_addr, 0, 0}};
+    st =
+        SendMessageToRee(kTipcCtrlAddress, kTipcCtrlAddress, &res, sizeof(res));
     if (st != ZX_OK) {
       FXL_LOG(ERROR) << "failed to send connect response, status=" << st;
     }
@@ -259,7 +259,8 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
   }
 
   auto local_handle = channel->GetInterfaceHandle();
-  ret = port_client->Connect(std::move(local_handle), &status, &peer_handle);
+  ret = port_client->Connect(std::move(local_handle), nullptr, &status,
+                             &peer_handle);
   if (!ret) {
     FXL_LOG(ERROR) << "internal error on calling port->Connect()";
     return ZX_ERR_INTERNAL;
@@ -280,10 +281,10 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
 
   channel->SetReadyCallback([this, src_addr, dst_addr] {
     zx_status_t st;
-    conn_rsp_msg res{ {CONNECT_RESPONSE, sizeof(tipc_conn_rsp_body)},
-                      {src_addr, ZX_OK, dst_addr, kTipcChanMaxBufSize, 1} };
-    st = SendMessageToRee(kTipcCtrlAddress, kTipcCtrlAddress,
-                          &res, sizeof(res));
+    conn_rsp_msg res{{CONNECT_RESPONSE, sizeof(tipc_conn_rsp_body)},
+                     {src_addr, ZX_OK, dst_addr, kTipcChanMaxBufSize, 1}};
+    st =
+        SendMessageToRee(kTipcCtrlAddress, kTipcCtrlAddress, &res, sizeof(res));
     if (st != ZX_OK) {
       FXL_LOG(ERROR) << "failed to send connect response, status=" << st;
     }
@@ -293,8 +294,8 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
     channel->Shutdown();
 
     zx_status_t st;
-    disc_req_msg req{ {DISCONNECT_REQUEST, sizeof(tipc_disc_req_body)},
-                      {src_addr} };
+    disc_req_msg req{{DISCONNECT_REQUEST, sizeof(tipc_disc_req_body)},
+                     {src_addr}};
     st = SendMessageToRee(dst_addr, kTipcCtrlAddress, &req, sizeof(req));
     if (st != ZX_OK) {
       FXL_LOG(ERROR) << "failed to send disconnect request, status=" << st;
@@ -305,9 +306,7 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
   };
 
   channel->SetCloseCallback([handle_hup] {
-    async::PostTask(async_get_default(), [handle_hup] {
-      handle_hup();
-    });
+    async::PostTask(async_get_default(), [handle_hup] { handle_hup(); });
   });
 
   auto handle_rx_msg = [this, channel, dst_addr] {
@@ -349,9 +348,7 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
   };
 
   channel->SetMessageInCallback([handle_rx_msg] {
-    async::PostTask(async_get_default(), [handle_rx_msg] {
-      handle_rx_msg();
-    });
+    async::PostTask(async_get_default(), [handle_rx_msg] { handle_rx_msg(); });
   });
 
   channel->BindPeerInterfaceHandle(std::move(peer_handle));

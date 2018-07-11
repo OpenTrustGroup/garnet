@@ -195,7 +195,7 @@ class TipcAgentTest : public ::testing::Test {
               ZX_OK);
     ASSERT_EQ(result.event, TipcEvent::READY);
 
-    ASSERT_EQ(port_service.Accept(chan_out), ZX_OK);
+    ASSERT_EQ(port_service.Accept(nullptr, chan_out), ZX_OK);
 
     VerifyConnectResponse(src, ZX_OK, 1, kTipcChanMaxBufSize, dst_out);
   }

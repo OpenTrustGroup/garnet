@@ -7,5 +7,5 @@ library trusty_ipc;
 interface TipcPort {
   1: GetInfo() -> (uint32 num_items, uint64 item_size);
 
-  2: Connect(TipcChannel local_handle) -> (status s, TipcChannel? peer_handle);
+  2: Connect(TipcChannel local_handle, string? uuid) -> (status s, TipcChannel? peer_handle);
 };

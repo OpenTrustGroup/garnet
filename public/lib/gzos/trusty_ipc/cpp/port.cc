@@ -6,6 +6,7 @@
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
 
+#include "lib/fxl/random/uuid.h"
 #include "lib/gzos/trusty_ipc/cpp/channel.h"
 #include "lib/gzos/trusty_ipc/cpp/object_manager.h"
 #include "lib/gzos/trusty_ipc/cpp/port.h"
@@ -20,9 +21,8 @@ void TipcPortImpl::AddPendingRequest(fbl::RefPtr<TipcChannelImpl> channel) {
 void TipcPortImpl::RemoveFromPendingRequest(fbl::RefPtr<TipcChannelImpl> ch) {
   fbl::AutoLock lock(&mutex_);
 
-  pending_requests_.erase_if([ch](const TipcChannelImpl& ref) {
-    return ref.cookie() == ch->cookie();
-  });
+  pending_requests_.erase_if(
+      [ch](const TipcChannelImpl& ref) { return (ch.get() == &ref); });
 }
 
 fbl::RefPtr<TipcChannelImpl> TipcPortImpl::GetPendingRequest() {
@@ -36,7 +36,7 @@ bool TipcPortImpl::HasPendingRequests() {
 }
 
 void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
-                           ConnectCallback callback) {
+                           fidl::StringPtr uuid, ConnectCallback callback) {
   fbl::RefPtr<TipcChannelImpl> channel;
   zx_status_t err = TipcChannelImpl::Create(num_items_, item_size_, &channel);
   if (err != ZX_OK) {
@@ -44,10 +44,17 @@ void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
     callback(err, nullptr);
   }
 
-  // tipc channel object should be destroyed when client try to close channel
-  // and the channel is still not accepted by service program
-  void* cookie = reinterpret_cast<void*>(channel.get());
-  channel->set_cookie(cookie);
+  if (uuid) {
+    if (!fxl::IsValidUUID(uuid.get())) {
+      callback(ZX_ERR_INVALID_ARGS, nullptr);
+    }
+
+    void* cookie = new std::string(uuid.get());
+    if (!cookie) {
+      callback(ZX_ERR_NO_MEMORY, nullptr);
+    }
+    channel->set_cookie(cookie);
+  }
 
   auto handle_hup = [this, channel] {
     channel->Shutdown();
@@ -55,9 +62,7 @@ void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
   };
 
   channel->SetCloseCallback([handle_hup] {
-    async::PostTask(async_get_default(), [handle_hup] {
-      handle_hup();
-    });
+    async::PostTask(async_get_default(), [handle_hup] { handle_hup(); });
   });
 
   channel->BindPeerInterfaceHandle(std::move(peer_handle));
@@ -74,7 +79,8 @@ void TipcPortImpl::GetInfo(GetInfoCallback callback) {
   callback(num_items_, item_size_);
 }
 
-zx_status_t TipcPortImpl::Accept(fbl::RefPtr<TipcChannelImpl>* channel_out) {
+zx_status_t TipcPortImpl::Accept(std::string* uuid_out,
+                                 fbl::RefPtr<TipcChannelImpl>* channel_out) {
   FXL_DCHECK(channel_out);
   auto channel = GetPendingRequest();
   if (channel == nullptr) {
@@ -83,6 +89,16 @@ zx_status_t TipcPortImpl::Accept(fbl::RefPtr<TipcChannelImpl>* channel_out) {
 
   if (!HasPendingRequests()) {
     ClearEvent(TipcEvent::READY);
+  }
+
+  void* cookie = channel->cookie();
+  if (cookie) {
+    auto uuid = reinterpret_cast<std::string*>(cookie);
+
+    if (uuid_out) {
+      uuid_out->assign(uuid->c_str());
+    }
+    delete uuid;
   }
 
   // remove channel close callback and user should take care of

@@ -7,6 +7,7 @@
 #include <zircon/compiler.h>
 
 #include "gtest/gtest.h"
+#include "lib/fxl/random/uuid.h"
 #include "lib/gzos/trusty_ipc/cpp/channel.h"
 #include "lib/gzos/trusty_ipc/cpp/port.h"
 
@@ -40,8 +41,9 @@ TEST_F(TipcPortTest, PortConnect) {
       [&channel]() { channel->SignalEvent(TipcEvent::READY); });
 
   auto local_handle = channel->GetInterfaceHandle();
+  auto uuid = fidl::StringPtr(fxl::GenerateUUID());
   port_client->Connect(
-      std::move(local_handle),
+      std::move(local_handle), uuid,
       [&channel](zx_status_t status,
                  fidl::InterfaceHandle<TipcChannel> peer_handle) {
         ASSERT_EQ(status, ZX_OK);
@@ -55,7 +57,9 @@ TEST_F(TipcPortTest, PortConnect) {
   EXPECT_EQ(result.event, TipcEvent::READY);
 
   fbl::RefPtr<TipcChannelImpl> remote_channel;
-  EXPECT_EQ(port_.Accept(&remote_channel), ZX_OK);
+  std::string remote_uuid;
+  EXPECT_EQ(port_.Accept(&remote_uuid, &remote_channel), ZX_OK);
+  EXPECT_STREQ(uuid->c_str(), remote_uuid.c_str());
 
   loop_.RunUntilIdle();
 

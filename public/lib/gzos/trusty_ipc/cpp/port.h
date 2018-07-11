@@ -23,7 +23,8 @@ class TipcPortImpl : public TipcPort, public TipcObject {
       : binding_(this), num_items_(num_items), item_size_(item_size) {}
   TipcPortImpl() = delete;
 
-  zx_status_t Accept(fbl::RefPtr<TipcChannelImpl>* channel_out);
+  zx_status_t Accept(std::string* uuid_out,
+                     fbl::RefPtr<TipcChannelImpl>* channel_out);
 
   void Bind(fidl::InterfaceRequest<TipcPort> request) {
     binding_.Bind(std::move(request));
@@ -33,7 +34,7 @@ class TipcPortImpl : public TipcPort, public TipcObject {
   ObjectType get_type() override { return ObjectType::PORT; }
 
   void Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
-               ConnectCallback callback) override;
+               fidl::StringPtr uuid, ConnectCallback callback) override;
   void GetInfo(GetInfoCallback callback) override;
 
  private:

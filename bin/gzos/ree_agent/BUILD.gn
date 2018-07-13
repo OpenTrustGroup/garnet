@@ -51,19 +51,32 @@ package("ree_agent") {
   ]
 }
 
-executable("ree_agent_unittests") {
-  visibility = [ ":*" ]
+source_set("test") {
   testonly = true
 
   sources = [
-    "run_all_unittests.cc",
     "ree_message-unittest.cc",
     "tipc_agent_unittest.cc",
   ]
 
   deps = [
     ":lib",
+  ]
+
+  public_deps = [
     "//third_party/googletest:gtest",
+  ]
+}
+
+executable("ree_agent_unittests") {
+  testonly = true
+
+  sources = [
+    "run_all_unittests.cc",
+  ]
+
+  deps = [
+    ":test",
   ]
 }
 

@@ -1,0 +1,59 @@
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/package.gni")
+
+executable("bin") {
+  output_name = "rpc_agent"
+
+  sources = [
+    "main.cc",
+  ]
+
+  deps = [
+    "//garnet/bin/gzos/smc_service:lib",
+    "//garnet/bin/gzos/ree_agent:lib",
+  ]
+}
+
+package("rpc_agent") {
+  deprecated_system_image = true
+
+  deps = [
+    ":bin",
+  ]
+  binaries = [
+    {
+      name = "rpc_agent"
+    },
+  ]
+}
+
+executable("rpc_agent_unittests") {
+  testonly = true
+
+  sources = [
+    "run_all_unittests.cc",
+  ]
+
+  deps = [
+    "//garnet/bin/gzos/smc_service:test",
+    "//garnet/bin/gzos/ree_agent:test",
+  ]
+}
+
+package("rpc_agent_tests") {
+  testonly = true
+  deprecated_system_image = true
+
+  deps = [
+    ":rpc_agent_unittests",
+  ]
+
+  tests = [
+    {
+      name = "rpc_agent_unittests"
+    },
+  ]
+}

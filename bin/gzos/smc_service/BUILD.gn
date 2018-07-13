@@ -47,17 +47,31 @@ package("smc_service") {
   ]
 }
 
-executable("smc_service_test") {
+source_set("test") {
   testonly = true
 
   sources = [
     "smc_service_test.cc",
-    "run_all_unittests.cc",
   ]
 
   deps = [
     ":lib",
+  ]
+
+  public_deps = [
     "//third_party/googletest:gtest",
+  ]
+}
+
+executable("smc_service_test") {
+  testonly = true
+
+  sources = [
+    "run_all_unittests.cc",
+  ]
+
+  deps = [
+    ":test",
   ]
 }
 

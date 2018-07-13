@@ -4,8 +4,7 @@
         "garnet/packages/prod/trusty_app"
     ],
     "packages": [
-        "//garnet/bin/gzos/smc_service",
-        "//garnet/bin/gzos/ree_agent",
+        "//garnet/bin/gzos/rpc_agent",
         "//garnet/bin/gzos/sysmgr"
     ]
 }

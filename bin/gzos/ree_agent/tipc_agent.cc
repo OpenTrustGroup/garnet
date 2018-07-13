@@ -250,34 +250,26 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
   }
 
   fbl::RefPtr<TipcChannelImpl> channel;
-  fidl::InterfaceHandle<TipcChannel> peer_handle;
-
   zx_status_t status = TipcChannelImpl::Create(num_items, item_size, &channel);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "failed to create tipc channel, status=" << status;
     return status;
   }
 
-  auto local_handle = channel->GetInterfaceHandle();
-  ret = port_client->Connect(std::move(local_handle), nullptr, &status,
-                             &peer_handle);
-  if (!ret) {
-    FXL_LOG(ERROR) << "internal error on calling port->Connect()";
-    return ZX_ERR_INTERNAL;
+  {
+    fbl::AutoLock lock(&lock_);
+
+    status = ep_table_->AllocateSlot(src_addr, channel, &dst_addr);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "failed to allocate endpoint slot, status=" << status;
+      return status;
+    }
   }
 
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "failed to do port->Connect(), status=" << status;
-    return status;
-  }
-
-  fbl::AutoLock lock(&lock_);
-
-  status = ep_table_->AllocateSlot(src_addr, channel, &dst_addr);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "failed to allocate endpoint slot, status=" << status;
-    return status;
-  }
+  auto free_endpoint_slot = fbl::MakeAutoCall([this, &dst_addr]() {
+    fbl::AutoLock lock(&lock_);
+    ep_table_->FreeSlotByAddr(dst_addr);
+  });
 
   channel->SetReadyCallback([this, src_addr, dst_addr] {
     zx_status_t st;
@@ -351,8 +343,24 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
     async::PostTask(async_get_default(), [handle_rx_msg] { handle_rx_msg(); });
   });
 
+  fidl::InterfaceHandle<TipcChannel> peer_handle;
+  auto local_handle = channel->GetInterfaceHandle();
+  ret = port_client->Connect(std::move(local_handle), nullptr, &status,
+                             &peer_handle);
+  if (!ret) {
+    FXL_LOG(ERROR) << "internal error on calling port->Connect()";
+    return ZX_ERR_INTERNAL;
+  }
+
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "failed to do port->Connect(), status=" << status;
+    return status;
+  }
+
   channel->BindPeerInterfaceHandle(std::move(peer_handle));
+
   send_err_conn_resp.cancel();
+  free_endpoint_slot.cancel();
   return ZX_OK;
 }
 

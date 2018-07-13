@@ -13,6 +13,8 @@ trusty_app("ipc-unittest-main") {
     "main/main.c"
   ]
 
+  manifest = "main/manifest.json"
+
   public_configs = [
     ":include_dirs"
   ]
@@ -22,6 +24,8 @@ trusty_app("ipc-unittest-srv") {
   sources = [
     "srv/srv.c"
   ]
+
+  manifest = "srv/manifest.json"
 
   public_configs = [
     ":include_dirs"

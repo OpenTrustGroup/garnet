@@ -16,6 +16,7 @@ executable("gzos_unittests") {
     "//third_party/googletest:gtest",
     "//garnet/lib/gzos/trusty_virtio:unittests",
     "//garnet/public/lib/gzos/trusty_ipc/cpp:unittests",
+    "//garnet/public/lib/gzos/trusty_app:unittests",
   ]
 }
 

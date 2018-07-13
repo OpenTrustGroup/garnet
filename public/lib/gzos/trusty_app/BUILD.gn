@@ -6,6 +6,8 @@ import("//build/cpp/prebuilt_shared_library.gni")
 
 source_set("sources") {
   sources = [
+    "manifest.h",
+    "manifest.cc",
     "trusty_ipc.h",
     "trusty_ipc.cc",
     "trusty_std.h",
@@ -14,8 +16,24 @@ source_set("sources") {
     "trusty_uuid.h",
   ]
 
+  deps = [
+    "//third_party/rapidjson",
+  ]
+
   public_deps = [
     "//garnet/public/lib/gzos/trusty_ipc/cpp",
+  ]
+}
+
+source_set("unittests") {
+  testonly = true
+  sources = [
+    "manifest_unittest.cc"
+  ]
+
+  deps = [
+    ":sources",
+    "//third_party/googletest:gtest",
   ]
 }
 

@@ -1,3 +1,7 @@
 {
-  "uuid": "766072e8-414e-48fc-9f8f-fb9a6f144124"
+  "uuid": "766072e8-414e-48fc-9f8f-fb9a6f144124",
+
+  "public_services" : [
+    "com.android.ipc-unittest.ctrl"
+  ]
 }

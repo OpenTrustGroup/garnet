@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "garnet/bin/sysmgr/app.h"
+#include "garnet/bin/gzos/sysmgr/app.h"
 
+#include <dirent.h>
+#include <fcntl.h>
 #include <zircon/process.h>
 #include <zircon/processargs.h>
 
@@ -12,12 +14,109 @@
 #include <lib/fdio/util.h>
 #include "lib/app/cpp/connect.h"
 #include "lib/fidl/cpp/clone.h"
+#include "lib/fsl/io/fd.h"
+#include "lib/fxl/files/file.h"
+#include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
+#include "lib/fxl/strings/concatenate.h"
+#include "lib/fxl/strings/string_view.h"
+
+#include "third_party/rapidjson/rapidjson/document.h"
 
 namespace sysmgr {
 
 constexpr char kDefaultLabel[] = "sys";
+constexpr char kTrustedAppDataPath[] = "/system/data";
+
+void SafeCloseDir(DIR* dir) {
+  if (dir)
+    closedir(dir);
+}
+
+using ManifestCallback = std::function<void(const std::string& app_name,
+                                            const std::string& manifest_path)>;
+
+void ForEachManifest(ManifestCallback callback) {
+  std::unique_ptr<DIR, decltype(&SafeCloseDir)> dir(
+      opendir(kTrustedAppDataPath), SafeCloseDir);
+
+  if (dir != NULL) {
+    while (dirent* ta_entry = readdir(dir.get())) {
+      // skip "." and ".."
+      if (strcmp(".", ta_entry->d_name) == 0 ||
+          strcmp("..", ta_entry->d_name) == 0) {
+        continue;
+      }
+
+      std::string manifest_path = fxl::Concatenate(
+          {kTrustedAppDataPath, "/", ta_entry->d_name, "/manifest.json"});
+
+      if (files::IsFile(manifest_path)) {
+        callback(std::string(ta_entry->d_name), manifest_path);
+      }
+    }
+  } else {
+    FXL_LOG(WARNING) << "Could not open directory " << kTrustedAppDataPath;
+  }
+}
+
+void ParsePublicServices(
+    rapidjson::Document& document,
+    std::function<void(const std::string& service)> callback) {
+  auto it = document.FindMember("public_services");
+  if (it == document.MemberEnd()) {
+    return;
+  }
+
+  const auto& value = it->value;
+  if (!value.IsArray()) {
+    return;
+  }
+
+  for (rapidjson::SizeType i = 0; i < value.Size(); i++) {
+    callback(value[i].GetString());
+  }
+}
+
+void App::ScanPublicServices() {
+  ForEachManifest([this](const std::string& app_name,
+                         const std::string& manifest_path) {
+    fxl::UniqueFD fd(open(manifest_path.c_str(), O_RDONLY));
+    if (!fd.is_valid()) {
+      FXL_LOG(WARNING) << "Failed to open " << manifest_path;
+      return;
+    }
+
+    std::string data;
+    if (!files::ReadFileDescriptorToString(fd.get(), &data)) {
+      FXL_LOG(WARNING) << "Failed to read " << manifest_path;
+      return;
+    }
+
+    rapidjson::Document document;
+    document.Parse(data);
+    if (document.HasParseError()) {
+      FXL_LOG(WARNING) << "Failed to parse " << manifest_path;
+      return;
+    }
+
+    ParsePublicServices(document, [this, &app_name,
+                                   &manifest_path](const std::string& service) {
+      fbl::RefPtr<fs::Vnode> dummy;
+      if (svc_root_->Lookup(&dummy, service) == ZX_OK) {
+        FXL_LOG(WARNING) << "Ignore duplicated service '" << service
+                         << "' which comes from " << manifest_path;
+        return;
+      }
+
+      auto launch_info = fuchsia::sys::LaunchInfo::New();
+      launch_info->url = app_name;
+
+      RegisterSingleton(service, std::move(launch_info));
+    });
+  });
+}
 
 App::App(Config config)
     : startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()),
@@ -30,6 +129,8 @@ App::App(Config config)
       OpenAsDirectory(), env_.NewRequest(), env_controller_.NewRequest(),
       kDefaultLabel);
   env_->GetLauncher(env_launcher_.NewRequest());
+
+  ScanPublicServices();
 
   // Register services.
   for (auto& pair : config.TakeServices())
@@ -75,6 +176,20 @@ void App::ConnectToService(const std::string& service_name,
   }
 }
 
+void App::MountPackageData(fuchsia::sys::LaunchInfo& launch_info) {
+  std::string package_data_path = fxl::Concatenate(
+      {fxl::StringView(kTrustedAppDataPath), "/", launch_info.url.get()});
+  fxl::UniqueFD fd(open(package_data_path.c_str(), O_RDONLY));
+  if (fd.is_valid()) {
+    auto flat_namespace = fuchsia::sys::FlatNamespace::New();
+    flat_namespace->paths.push_back("pkg/data");
+    flat_namespace->directories.push_back(
+        fsl::CloneChannelFromFileDescriptor(fd.get()));
+
+    launch_info.flat_namespace = std::move(flat_namespace);
+  }
+}
+
 void App::RegisterSingleton(std::string service_name,
                             fuchsia::sys::LaunchInfoPtr launch_info) {
   auto child = fbl::AdoptRef(
@@ -92,6 +207,11 @@ void App::RegisterSingleton(std::string service_name,
           dup_launch_info.url = launch_info->url;
           fidl::Clone(launch_info->arguments, &dup_launch_info.arguments);
           dup_launch_info.directory_request = services.NewRequest();
+
+          // Mount TA's "/pkg/data" to our "/system/data/<app_name>/", thus
+          // TA can read and parse manifest file by itself.
+          MountPackageData(dup_launch_info);
+
           env_launcher_->CreateComponent(std::move(dup_launch_info),
                                          controller.NewRequest());
           controller.set_error_handler(

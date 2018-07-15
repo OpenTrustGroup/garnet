@@ -1,3 +1,15 @@
 {
-  "uuid": "fee67f9f-e1b1-4e3d-8455-047f6001afef"
+  "uuid": "fee67f9f-e1b1-4e3d-8455-047f6001afef",
+
+  "public_services" : [
+    "com.android.ipc-unittest.srv.closer1",
+    "com.android.ipc-unittest.srv.closer2",
+    "com.android.ipc-unittest.srv.closer3",
+    "com.android.ipc-unittest.srv.connect",
+    "com.android.ipc-unittest.srv.datasink",
+    "com.android.ipc-unittest.srv.ns_only",
+    "com.android.ipc-unittest.srv.ta_only",
+    "com.android.ipc-unittest.srv.echo",
+    "com.android.ipc-unittest.srv.uuid"
+  ]
 }

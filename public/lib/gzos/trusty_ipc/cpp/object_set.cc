@@ -38,6 +38,8 @@ zx_status_t TipcObjectSet::AddObject(fbl::RefPtr<TipcObject> obj) {
     AppendToPendingList(child_ref);
   }
 
+  AppendToChildList(child_ref);
+
   fbl::AutoLock lock(&mutex_);
   children_count_++;
 
@@ -51,6 +53,7 @@ void TipcObjectSet::RemoveObject(fbl::RefPtr<TipcObject> obj) {
 
 void TipcObjectSet::OnChildRemoved(fbl::RefPtr<TipcObjectRef> child_ref) {
   RemoveFromPendingList(child_ref);
+  RemoveFromChildList(child_ref);
 
   fbl::AutoLock lock(&mutex_);
   children_count_--;
@@ -63,12 +66,10 @@ void TipcObjectSet::OnEvent(fbl::RefPtr<TipcObjectRef> child_ref) {
 void TipcObjectSet::AppendToPendingList(fbl::RefPtr<TipcObjectRef> child_ref) {
   fbl::AutoLock lock(&mutex_);
 
-  if (child_ref->InPendingList()) {
-    return;
+  if (!child_ref->InPendingList()) {
+    pending_list_.push_back(child_ref);
+    SignalEvent(TipcEvent::READY);
   }
-
-  pending_list_.push_back(child_ref);
-  SignalEvent(TipcEvent::READY);
 }
 
 void TipcObjectSet::RemoveFromPendingList(
@@ -85,6 +86,24 @@ void TipcObjectSet::RemoveFromPendingList(
 
   if (pending_list_.is_empty()) {
     ClearEvent(TipcEvent::READY);
+  }
+}
+
+void TipcObjectSet::AppendToChildList(fbl::RefPtr<TipcObjectRef> child_ref) {
+  fbl::AutoLock lock(&mutex_);
+
+  if (!child_ref->InChildList()) {
+    child_list_.push_back(child_ref);
+  }
+}
+
+void TipcObjectSet::RemoveFromChildList(fbl::RefPtr<TipcObjectRef> child_ref) {
+  fbl::AutoLock lock(&mutex_);
+
+  if (child_ref->InChildList()) {
+    child_list_.erase_if([&child_ref](const TipcObjectRef& ref) {
+      return ref.obj == child_ref->obj;
+    });
   }
 }
 
@@ -135,6 +154,25 @@ zx_status_t TipcObjectSet::Wait(WaitResult* result, zx::time deadline) {
   }
 
   return ZX_OK;
+}
+
+void TipcObjectSet::Shutdown() {
+  for (;;) {
+    fbl::RefPtr<TipcObjectRef> ref;
+    {
+      fbl::AutoLock lock(&mutex_);
+      ref = child_list_.pop_front();
+    }
+
+    if (ref == nullptr) {
+      break;
+    }
+
+    FXL_LOG(INFO) << "remove child from object set, child handle: " << ref->obj->handle_id();
+    ref->obj->RemoveParent(this);
+  }
+
+  TipcObject::Shutdown();
 }
 
 }  // namespace trusty_ipc

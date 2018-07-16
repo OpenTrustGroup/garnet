@@ -22,7 +22,7 @@ class IdAllocator {
     bool all_set = id_bitmap_.Get(0, ID_MAX, &first_unset);
 
     if (all_set) {
-      return ZX_ERR_NO_MEMORY;
+      return ZX_ERR_NO_RESOURCES;
     }
 
     zx_status_t status = id_bitmap_.SetOne(first_unset);

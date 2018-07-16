@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "lib/gzos/trusty_ipc/cpp/object.h"
+#include "lib/gzos/trusty_ipc/cpp/object_manager.h"
 #include "lib/gzos/trusty_ipc/cpp/object_set.h"
 
 namespace trusty_ipc {
@@ -126,6 +127,13 @@ zx_status_t TipcObject::Wait(WaitResult* result, zx::time deadline) {
   result->handle_id = handle_id_;
 
   return ZX_OK;
+}
+
+void TipcObject::Shutdown() {
+  // The reference count held by object manager should be released
+  if (handle_id() != TipcObject::kInvalidHandle) {
+    TipcObjectManager::Instance()->RemoveObject(handle_id());
+  }
 }
 
 }  // namespace trusty_ipc

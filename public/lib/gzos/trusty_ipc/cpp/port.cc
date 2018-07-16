@@ -134,4 +134,11 @@ zx_status_t TipcPortImpl::Accept(std::string* uuid_out,
   return ZX_OK;
 }
 
+void TipcPortImpl::Shutdown() {
+  fbl::AutoLock lock(&mutex_);
+  pending_requests_.clear();
+
+  TipcObject::Shutdown();
+}
+
 }  // namespace trusty_ipc

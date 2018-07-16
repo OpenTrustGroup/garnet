@@ -74,7 +74,7 @@ zx_status_t TipcObjectManager::GetObject(uint32_t handle_id,
   }
 
   if (!object_table_[handle_id]) {
-    return ZX_ERR_BAD_HANDLE;
+    return ZX_ERR_NOT_FOUND;
   }
 
   *obj_out = object_table_[handle_id];

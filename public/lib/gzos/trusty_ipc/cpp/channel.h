@@ -56,7 +56,7 @@ class TipcChannelImpl
   zx_status_t ReadMessage(uint32_t msg_id, uint32_t offset, void* buf,
                           size_t* buf_size);
   zx_status_t PutMessage(uint32_t msg_id);
-  void Shutdown();
+  virtual void Shutdown() override;
   void NotifyReady();
 
   bool is_bound() { return peer_.is_bound(); }

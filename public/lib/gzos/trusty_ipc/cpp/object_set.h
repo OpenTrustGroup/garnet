@@ -24,6 +24,7 @@ class TipcObjectSet : public TipcObject, public TipcObjectObserver {
   void RemoveObject(fbl::RefPtr<TipcObject> obj);
 
   virtual zx_status_t Wait(WaitResult* result, zx::time deadline) override;
+  virtual void Shutdown() override;
 
  protected:
   ObjectType get_type() override { return ObjectType::OBJECT_SET; }
@@ -35,6 +36,9 @@ class TipcObjectSet : public TipcObject, public TipcObjectObserver {
 
   void AppendToPendingList(fbl::RefPtr<TipcObjectRef> child_ref);
   void RemoveFromPendingList(fbl::RefPtr<TipcObjectRef> child_ref);
+
+  void AppendToChildList(fbl::RefPtr<TipcObjectRef> child_ref);
+  void RemoveFromChildList(fbl::RefPtr<TipcObjectRef> child_ref);
 
   bool PollPendingEvents(WaitResult* result);
 
@@ -48,7 +52,16 @@ class TipcObjectSet : public TipcObject, public TipcObjectObserver {
   using PendingList =
       fbl::DoublyLinkedList<fbl::RefPtr<TipcObjectRef>, PendingListTraits>;
 
+  struct ChildListTraits {
+    static TipcObjectRef::NodeState& node_state(TipcObjectRef& ref) {
+      return ref.child_list_node;
+    }
+  };
+  using ChildList =
+      fbl::DoublyLinkedList<fbl::RefPtr<TipcObjectRef>, ChildListTraits>;
+
   PendingList pending_list_ FXL_GUARDED_BY(mutex_);
+  ChildList child_list_ FXL_GUARDED_BY(mutex_);
   uint32_t children_count_ FXL_GUARDED_BY(mutex_);
   fbl::Mutex mutex_;
 };

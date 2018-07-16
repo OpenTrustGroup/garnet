@@ -39,7 +39,11 @@ class TipcPortImpl : public TipcPort, public TipcObject {
     binding_.Bind(std::move(request));
   }
 
+  virtual void Shutdown() override;
+
   uint32_t flags() { return flags_; }
+  std::string& name() { return name_; }
+  void set_name(const char* c_str) { name_ = c_str; }
 
  protected:
   ObjectType get_type() override { return ObjectType::PORT; }
@@ -50,7 +54,7 @@ class TipcPortImpl : public TipcPort, public TipcObject {
 
  private:
   fidl::Binding<TipcPort> binding_;
-  fidl::StringPtr path_;
+  std::string name_;
 
   uint32_t num_items_;
   size_t item_size_;

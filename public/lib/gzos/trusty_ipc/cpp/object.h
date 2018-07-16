@@ -43,6 +43,7 @@ struct TipcObjectRef
   TipcObjectRef() = delete;
 
   bool InPendingList() { return pending_list_node.InContainer(); }
+  bool InChildList() { return child_list_node.InContainer(); }
 
   TipcObjectRef(TipcObject* o) : obj(o) {}
 
@@ -52,6 +53,7 @@ struct TipcObjectRef
 
   using NodeState = fbl::DoublyLinkedListNodeState<fbl::RefPtr<TipcObjectRef>>;
   NodeState pending_list_node;
+  NodeState child_list_node;
 };
 
 class TipcObjectObserver {
@@ -72,6 +74,7 @@ class TipcObject : public fbl::RefCounted<TipcObject> {
   virtual ~TipcObject();
 
   virtual zx_status_t Wait(WaitResult* result, zx::time deadline);
+  virtual void Shutdown();
 
   void SignalEvent(uint32_t set_mask);
 

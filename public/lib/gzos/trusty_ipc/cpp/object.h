@@ -65,7 +65,7 @@ class TipcObject : public fbl::RefCounted<TipcObject> {
  public:
   static constexpr zx_signals_t EVENT_PENDING = ZX_USER_SIGNAL_0;
 
-  enum ObjectType { PORT, CHANNEL, OBJECT_SET };
+  enum ObjectType { PORT, CHANNEL, OBJECT_SET, ANY };
   static constexpr uint32_t kInvalidHandle = UINT_MAX;
 
   TipcObject();
@@ -85,6 +85,7 @@ class TipcObject : public fbl::RefCounted<TipcObject> {
   bool is_channel() { return (get_type() == ObjectType::CHANNEL); }
   bool is_object_set() { return (get_type() == ObjectType::OBJECT_SET); }
 
+  ObjectType type() { return get_type(); }
   uint32_t handle_id() const { return handle_id_; }
   uint32_t tipc_event_state();
   void* cookie() const { return cookie_; }

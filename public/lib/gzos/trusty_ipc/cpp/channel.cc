@@ -232,11 +232,16 @@ zx_status_t TipcChannelImpl::GetMessage(uint32_t* msg_id, size_t* len) {
 
   fbl::AutoLock lock(&msg_list_lock_);
 
-  if (filled_list_.is_empty()) {
+  auto item = filled_list_.pop_front();
+  if (item == nullptr) {
+    FXL_DLOG(INFO) << "no message item found";
+    ClearEvent(TipcEvent::MSG);
     return ZX_ERR_SHOULD_WAIT;
   }
 
-  auto item = filled_list_.pop_front();
+  if (filled_list_.is_empty()) {
+    ClearEvent(TipcEvent::MSG);
+  }
 
   *msg_id = item->msg_id();
   *len = item->filled_size();

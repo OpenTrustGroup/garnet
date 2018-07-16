@@ -16,19 +16,22 @@ namespace trusty_ipc {
 class TipcPortTest : public ::testing::Test {
  public:
   TipcPortTest()
-      : loop_(&kAsyncLoopConfigMakeDefault), port_(kNumItems, kItemSize) {}
+      : loop_(&kAsyncLoopConfigMakeDefault),
+        s_port_(kNumItems, kItemSize, IPC_PORT_ALLOW_TA_CONNECT),
+        ns_port_(kNumItems, kItemSize, IPC_PORT_ALLOW_NS_CONNECT) {}
 
  protected:
   static constexpr uint32_t kNumItems = 3u;
   static constexpr size_t kItemSize = 1024u;
 
   async::Loop loop_;
-  TipcPortImpl port_;
+  TipcPortImpl s_port_;
+  TipcPortImpl ns_port_;
 };
 
-TEST_F(TipcPortTest, PortConnect) {
+TEST_F(TipcPortTest, SecurePortConnect) {
   TipcPortPtr port_client;
-  port_.Bind(port_client.NewRequest());
+  s_port_.Bind(port_client.NewRequest());
 
   fbl::RefPtr<TipcChannelImpl> channel;
   port_client->GetInfo([&channel](uint32_t num_items, uint64_t item_size) {
@@ -53,12 +56,12 @@ TEST_F(TipcPortTest, PortConnect) {
   loop_.RunUntilIdle();
 
   WaitResult result;
-  EXPECT_EQ(port_.Wait(&result, zx::time::infinite()), ZX_OK);
+  EXPECT_EQ(s_port_.Wait(&result, zx::time::infinite()), ZX_OK);
   EXPECT_EQ(result.event, TipcEvent::READY);
 
   fbl::RefPtr<TipcChannelImpl> remote_channel;
   std::string remote_uuid;
-  EXPECT_EQ(port_.Accept(&remote_uuid, &remote_channel), ZX_OK);
+  EXPECT_EQ(s_port_.Accept(&remote_uuid, &remote_channel), ZX_OK);
   EXPECT_STREQ(uuid->c_str(), remote_uuid.c_str());
 
   loop_.RunUntilIdle();
@@ -67,8 +70,53 @@ TEST_F(TipcPortTest, PortConnect) {
   EXPECT_EQ(result.event, TipcEvent::READY);
 
   // port wait again and should have no event
-  EXPECT_EQ(port_.Wait(&result, zx::deadline_after(zx::msec(1))),
+  EXPECT_EQ(s_port_.Wait(&result, zx::deadline_after(zx::msec(1))),
             ZX_ERR_TIMED_OUT);
+}
+
+TEST_F(TipcPortTest, SecurePortConnectFromNonSecureClient) {
+  TipcPortPtr port_client;
+  s_port_.Bind(port_client.NewRequest());
+
+  fbl::RefPtr<TipcChannelImpl> channel;
+  port_client->GetInfo([&channel](uint32_t num_items, uint64_t item_size) {
+    ASSERT_EQ(TipcChannelImpl::Create(num_items, item_size, &channel), ZX_OK);
+  });
+
+  loop_.RunUntilIdle();
+
+  auto local_handle = channel->GetInterfaceHandle();
+  port_client->Connect(
+      std::move(local_handle), nullptr,
+      [&channel](zx_status_t status,
+                 fidl::InterfaceHandle<TipcChannel> peer_handle) {
+        ASSERT_EQ(status, ZX_ERR_ACCESS_DENIED);
+      });
+
+  loop_.RunUntilIdle();
+}
+
+TEST_F(TipcPortTest, NonSecurePortConnectFromSecureClient) {
+  TipcPortPtr port_client;
+  ns_port_.Bind(port_client.NewRequest());
+
+  fbl::RefPtr<TipcChannelImpl> channel;
+  port_client->GetInfo([&channel](uint32_t num_items, uint64_t item_size) {
+    ASSERT_EQ(TipcChannelImpl::Create(num_items, item_size, &channel), ZX_OK);
+  });
+
+  loop_.RunUntilIdle();
+
+  auto local_handle = channel->GetInterfaceHandle();
+  auto uuid = fidl::StringPtr(fxl::GenerateUUID());
+  port_client->Connect(
+      std::move(local_handle), uuid,
+      [&channel](zx_status_t status,
+                 fidl::InterfaceHandle<TipcChannel> peer_handle) {
+        ASSERT_EQ(status, ZX_ERR_ACCESS_DENIED);
+      });
+
+  loop_.RunUntilIdle();
 }
 
 }  // namespace trusty_ipc

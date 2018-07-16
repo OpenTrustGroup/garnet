@@ -122,7 +122,7 @@ class TaServiceFake : public TaServices {
   static constexpr size_t kItemSize = 1024u;
   static constexpr const char* port_name = "test.svc1";
 
-  TaServiceFake() : port_(kNumItems, kItemSize) {}
+  TaServiceFake() : port_(kNumItems, kItemSize, IPC_PORT_ALLOW_NS_CONNECT) {}
 
   void ConnectToService(zx::channel ch, const std::string& service_name) {
     if (service_name.compare(port_name) == 0) {
@@ -319,7 +319,7 @@ TEST_F(TipcAgentTest, ConnectRequest) {
   PortConnect(src1, &dst1, &remote_channel1);
 
   TipcEndpoint* ep = ep_table_->LookupByAddr(dst1);
-  EXPECT_TRUE(ep != nullptr);
+  ASSERT_TRUE(ep != nullptr);
   EXPECT_EQ(ep->src_addr, src1);
 
   uint32_t src2 = 5;
@@ -328,7 +328,7 @@ TEST_F(TipcAgentTest, ConnectRequest) {
   PortConnect(src2, &dst2, &remote_channel2);
 
   ep = ep_table_->LookupByAddr(dst2);
-  EXPECT_TRUE(ep != nullptr);
+  ASSERT_TRUE(ep != nullptr);
   EXPECT_EQ(ep->src_addr, src2);
 }
 
@@ -348,7 +348,7 @@ TEST_F(TipcAgentTest, DisconnectRequest) {
   PortConnect(src1, &dst1, &remote_channel1);
 
   TipcEndpoint* ep = ep_table_->LookupByAddr(dst1);
-  EXPECT_TRUE(ep != nullptr);
+  ASSERT_TRUE(ep != nullptr);
   EXPECT_EQ(ep->src_addr, src1);
 
   // Build second tipc channel
@@ -358,7 +358,7 @@ TEST_F(TipcAgentTest, DisconnectRequest) {
   PortConnect(src2, &dst2, &remote_channel2);
 
   ep = ep_table_->LookupByAddr(dst2);
-  EXPECT_TRUE(ep != nullptr);
+  ASSERT_TRUE(ep != nullptr);
   EXPECT_EQ(ep->src_addr, src2);
 
   // Disconnect first tipc channel
@@ -390,7 +390,7 @@ TEST_F(TipcAgentTest, DisconnectAll) {
   PortConnect(src1, &dst1, &remote_channel1);
 
   TipcEndpoint* ep = ep_table_->LookupByAddr(dst1);
-  EXPECT_TRUE(ep != nullptr);
+  ASSERT_TRUE(ep != nullptr);
   EXPECT_EQ(ep->src_addr, src1);
 
   // Build second tipc channel
@@ -400,7 +400,7 @@ TEST_F(TipcAgentTest, DisconnectAll) {
   PortConnect(src2, &dst2, &remote_channel2);
 
   ep = ep_table_->LookupByAddr(dst2);
-  EXPECT_TRUE(ep != nullptr);
+  ASSERT_TRUE(ep != nullptr);
   EXPECT_EQ(ep->src_addr, src2);
 
   // Stop tipc agent and all tipc channels should be shutdown
@@ -440,7 +440,7 @@ TEST_F(TipcAgentTest, RemoteChannelClose) {
   PortConnect(src, &dst, &remote_channel);
 
   TipcEndpoint* ep = ep_table_->LookupByAddr(dst);
-  EXPECT_TRUE(ep != nullptr);
+  ASSERT_TRUE(ep != nullptr);
   EXPECT_EQ(ep->src_addr, src);
 
   // Close remote channel

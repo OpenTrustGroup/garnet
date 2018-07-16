@@ -15,12 +15,21 @@
 
 namespace trusty_ipc {
 
+enum {
+  /* allow Trusted Apps to connect to this port */
+  IPC_PORT_ALLOW_TA_CONNECT = 0x1,
+  /* allow non-secure clients to connect to this port */
+  IPC_PORT_ALLOW_NS_CONNECT = 0x2,
+};
+
 class TipcChannelImpl;
 
 class TipcPortImpl : public TipcPort, public TipcObject {
  public:
-  TipcPortImpl(uint32_t num_items, size_t item_size)
-      : binding_(this), num_items_(num_items), item_size_(item_size) {}
+  TipcPortImpl(uint32_t num_items, size_t item_size, uint32_t flags)
+      : binding_(this), num_items_(num_items), item_size_(item_size),
+        flags_(flags) {}
+
   TipcPortImpl() = delete;
 
   zx_status_t Accept(std::string* uuid_out,
@@ -29,6 +38,8 @@ class TipcPortImpl : public TipcPort, public TipcObject {
   void Bind(fidl::InterfaceRequest<TipcPort> request) {
     binding_.Bind(std::move(request));
   }
+
+  uint32_t flags() { return flags_; }
 
  protected:
   ObjectType get_type() override { return ObjectType::PORT; }
@@ -43,6 +54,7 @@ class TipcPortImpl : public TipcPort, public TipcObject {
 
   uint32_t num_items_;
   size_t item_size_;
+  uint32_t flags_;
 
   fbl::Mutex mutex_;
   fbl::DoublyLinkedList<fbl::RefPtr<TipcChannelImpl>> pending_requests_

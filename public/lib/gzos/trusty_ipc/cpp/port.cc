@@ -11,6 +11,7 @@
 #include "lib/gzos/trusty_ipc/cpp/object_manager.h"
 #include "lib/gzos/trusty_ipc/cpp/port.h"
 
+
 namespace trusty_ipc {
 
 void TipcPortImpl::AddPendingRequest(fbl::RefPtr<TipcChannelImpl> channel) {
@@ -42,16 +43,31 @@ void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
   if (err != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to create channel object " << err;
     callback(err, nullptr);
+    return;
   }
 
-  if (uuid) {
+  if (uuid.is_null()) {
+    // check access for non-secure client
+    if (!(flags_ & IPC_PORT_ALLOW_NS_CONNECT)) {
+      callback(ZX_ERR_ACCESS_DENIED, nullptr);
+      return;
+    }
+  } else {
+    // check access for secure client
+    if (!(flags_ & IPC_PORT_ALLOW_TA_CONNECT)) {
+      callback(ZX_ERR_ACCESS_DENIED, nullptr);
+      return;
+    }
+
     if (!fxl::IsValidUUID(uuid.get())) {
       callback(ZX_ERR_INVALID_ARGS, nullptr);
+      return;
     }
 
     void* cookie = new std::string(uuid.get());
     if (!cookie) {
       callback(ZX_ERR_NO_MEMORY, nullptr);
+      return;
     }
     channel->set_cookie(cookie);
   }
@@ -94,6 +110,7 @@ zx_status_t TipcPortImpl::Accept(std::string* uuid_out,
   void* cookie = channel->cookie();
   if (cookie) {
     auto uuid = reinterpret_cast<std::string*>(cookie);
+    FXL_DCHECK(fxl::IsValidUUID(*uuid));
 
     if (uuid_out) {
       uuid_out->assign(uuid->c_str());

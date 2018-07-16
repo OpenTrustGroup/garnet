@@ -226,7 +226,7 @@ static void _destroy_service(struct tipc_srv_state *state)
 
 	/* close port */
 	if (state->port != INVALID_IPC_HANDLE) {
-		int rc = close(state->port);
+		int rc = trusty_close(state->port);
 		if (rc != NO_ERROR) {
 			TLOGI("Failed (%d) to close port %d\n",
 			       rc, state->port);
@@ -387,7 +387,7 @@ int sync_connect(const char *path, uint timeout)
 					rc = ERR_CHANNEL_CLOSED;
 			}
 		}
-		close(chan);
+		trusty_close(chan);
 	}
 	return rc;
 }
@@ -409,14 +409,14 @@ static void connect_handle_port(const uevent_t *ev)
 			return;
 		}
 		if (rc >= 0) {
-			close ((handle_t)rc);
+			trusty_close((handle_t)rc);
 		}
 
 		/* but then issue a series of connect requests */
 		for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 			sprintf(path, "%s.port.accept%d", SRV_PATH_BASE, i);
 			rc = sync_connect(path, 1000);
-			close(rc);
+			trusty_close(rc);
 		}
 	}
 }
@@ -445,10 +445,10 @@ static void closer1_handle_port(const uevent_t *ev)
 
 		if (st->conn_cnt & 1) {
 			/* sleep a bit */
-			nanosleep (0, 0, 100 * MSEC);
+			trusty_nanosleep(0, 0, 100 * MSEC);
 		}
 		/* and close it */
-		rc = close(chan);
+		rc = trusty_close(chan);
 		if (rc != NO_ERROR) {
 			TLOGI("Failed (%d) to close chan %d\n", rc, chan);
 		}
@@ -467,7 +467,7 @@ static void closer2_handle_port(const uevent_t *ev)
 		st->conn_cnt++;
 		if (st->conn_cnt & 1) {
 			/* sleep a bit */
-			nanosleep (0, 0, 100 * MSEC);
+			trusty_nanosleep(0, 0, 100 * MSEC);
 		}
 
 		/*
@@ -502,11 +502,11 @@ static void closer3_handle_port(const uevent_t *ev)
 		/* when max number of connection reached */
 		if (st->chan_cnt == countof(st->chans)) {
 			/* wait a bit */
-			nanosleep (0, 0, 100 * MSEC);
+			trusty_nanosleep(0, 0, 100 * MSEC);
 
 			/* and close them all */
 			for (uint i = 0; i < st->chan_cnt; i++ )
-				close(st->chans[i]);
+				trusty_close(st->chans[i]);
 			st->chan_cnt = 0;
 		}
 		return;
@@ -556,20 +556,20 @@ static void datasink_handle_chan(const uevent_t *ev)
 		/* close it as it is in an error state */
 		TLOGI("error event (0x%x) for chan (%d)\n",
 		       ev->event, ev->handle);
-		close(ev->handle);
+		trusty_close(ev->handle);
 		return;
 	}
 
 	if (ev->event & IPC_HANDLE_POLL_MSG) {
 		if (datasink_handle_msg(ev) != 0) {
-			close(ev->handle);
+			trusty_close(ev->handle);
 			return;
 		}
 	}
 
 	if (ev->event & IPC_HANDLE_POLL_HUP) {
 		/* closed by peer */
-		close(ev->handle);
+		trusty_close(ev->handle);
 		return;
 	}
 }
@@ -655,7 +655,7 @@ static int _echo_handle_msg(const uevent_t *ev, int delay)
 
 		/* optionally sleep a bit an send it back */
 		if (delay) {
-			nanosleep (0, 0, 1000);
+			trusty_nanosleep(0, 0, 1000);
 		}
 
 		/* and send it back */
@@ -663,7 +663,7 @@ static int _echo_handle_msg(const uevent_t *ev, int delay)
 
 		/* close all received handles */
 		for (uint i = 0; i < msg.num_handles; i++) {
-			close(handles[i]);
+			trusty_close(handles[i]);
 		}
 
 		if (rc == ERR_NOT_ENOUGH_BUFFER)
@@ -726,7 +726,7 @@ static void echo_handle_chan(const uevent_t *ev)
 
 close_it:
 	free(ev->cookie);
-	close(ev->handle);
+	trusty_close(ev->handle);
 }
 
 /*
@@ -758,7 +758,7 @@ static void echo_handle_port(const uevent_t *ev)
 		if (!chan_st) {
 			TLOGI("failed (%d) to callocate state for chan %d\n",
 			       rc, chan);
-			close(chan);
+			trusty_close(chan);
 			return;
 		}
 
@@ -773,7 +773,7 @@ static void echo_handle_port(const uevent_t *ev)
 			TLOGI("failed (%d) to set_cookie on chan %d\n",
 			       rc, chan);
 			free(chan_st);
-			close(chan);
+			trusty_close(chan);
 			return;
 		}
 	}
@@ -820,7 +820,7 @@ static void uuid_handle_port(const uevent_t *ev)
 		}
 
 		/* and close channel */
-		close(chan);
+		trusty_close(chan);
 	}
 }
 
@@ -857,7 +857,7 @@ static void dispatch_event(const uevent_t *ev)
 	/* no handler? close it */
 	TLOGI("no handler for event (0x%x) with handle %d\n",
 	       ev->event, ev->handle);
-	close(ev->handle);
+	trusty_close(ev->handle);
 
 	return;
 }

@@ -33,7 +33,6 @@
 // clang-format off
 #include "trusty_ipc.h"
 #include "trusty_uuid.h"
-#include <uapi/mm.h>
 #include "trusty_syscalls.h"
 // clang-format on
 

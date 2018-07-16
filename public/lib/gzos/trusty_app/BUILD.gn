@@ -17,6 +17,7 @@ source_set("sources") {
   ]
 
   deps = [
+    "//garnet/public/lib/app/cpp",
     "//third_party/rapidjson",
   ]
 

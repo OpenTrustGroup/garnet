@@ -156,7 +156,7 @@ int sync_connect(const char *path, uint timeout)
 					rc = ERR_CHANNEL_CLOSED;
 			}
 		}
-		close(chan);
+		trusty_close(chan);
 	}
 	return rc;
 }
@@ -217,7 +217,7 @@ static void run_close_handle_negative_test(void)
 	TEST_BEGIN(__func__);
 
 	/* closing an invalid (negative value) handle. */
-	rc = close(INVALID_IPC_HANDLE);
+	rc = trusty_close(INVALID_IPC_HANDLE);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "closing invalid handle");
 
 	/*
@@ -230,18 +230,18 @@ static void run_close_handle_negative_test(void)
 	 *
 	 *   in all cases, the expected result is ERR_BAD_HANDLE error.
 	 */
-	rc = close(handle_base + MAX_USER_HANDLES);
+	rc = trusty_close(handle_base + MAX_USER_HANDLES);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "closing invalid handle");
 
-	rc = close(handle_base + MAX_USER_HANDLES + 1);
+	rc = trusty_close(handle_base + MAX_USER_HANDLES + 1);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "closing invalid handle");
 
-	rc = close(handle_base - 1);
+	rc = trusty_close(handle_base - 1);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "closing invalid handle");
 
 	/* closing non-existing handle that is in valid range. */
 	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
-		rc = close(handle_base + i);
+		rc = trusty_close(handle_base + i);
 		EXPECT_EQ (ERR_NOT_FOUND, rc, "closing invalid handle");
 	}
 
@@ -333,7 +333,7 @@ static void run_port_create_negative_test(void)
 	path[sizeof(path)-1] = '\0';
 	rc = port_create(path, 2, MAX_PORT_BUF_SIZE, 0);
 	EXPECT_EQ (ERR_INVALID_ARGS, rc, "path is too long");
-	rc = close (rc);
+	rc = trusty_close(rc);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "close port");
 
 	TEST_END
@@ -379,11 +379,11 @@ static void run_port_create_test (void)
 	/* close them all  */
 	for (i = 2; i < MAX_USER_HANDLES; i++) {
 		/* close a valid port  */
-		rc = close(ports[i]);
+		rc = trusty_close(ports[i]);
 		EXPECT_EQ (NO_ERROR, rc, "closing port");
 
 		/* close previously closed port. It should fail! */
-		rc = close(ports[i]);
+		rc = trusty_close(ports[i]);
 		EXPECT_EQ (ERR_NOT_FOUND, rc, "closing closed port");
 
 		ports[i] = INVALID_IPC_HANDLE;
@@ -439,7 +439,7 @@ static void run_wait_on_port_test (void)
 	/* close them all */
 	for (uint i = 2; i < MAX_USER_HANDLES; i++) {
 		/* close a valid port  */
-		rc = close(ports[i]);
+		rc = trusty_close(ports[i]);
 		EXPECT_EQ (NO_ERROR, rc, "closing closed port");
 		ports[i] = INVALID_IPC_HANDLE;
 	}
@@ -481,7 +481,7 @@ static void run_connect_negative_test (void)
 	rc = sync_connect (path, connect_timeout);
 	EXPECT_EQ (ERR_INVALID_ARGS, rc, "long path");
 
-	rc = close (rc);
+	rc = trusty_close(rc);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "close channel");
 
 	TEST_END
@@ -508,7 +508,7 @@ static void run_connect_close_test(void)
 		}
 
 		for (uint i = 0; i < countof(chans); i++) {
-			rc = close(chans[i]);
+			rc = trusty_close(chans[i]);
 			EXPECT_EQ (NO_ERROR, rc, "connect/close");
 		}
 	}
@@ -541,7 +541,7 @@ static void run_connect_close_by_peer_test(const char *test)
 			if (rc == ERR_NOT_FOUND) {
 				/* wait a bit and retry */
 				--retry_cnt;
-				nanosleep (0, 0, 100 * MSEC);
+				trusty_nanosleep(0, 0, 100 * MSEC);
 			} else {
 				break;
 			}
@@ -576,7 +576,7 @@ static void run_connect_close_by_peer_test(const char *test)
 			EXPECT_EQ (chans[idx], event.handle, test);
 			EXPECT_GT (countof(chans), idx, test);
 			if (idx < countof(chans)) {
-				rc = close(chans[idx]);
+				rc = trusty_close(chans[idx]);
 				EXPECT_EQ (NO_ERROR, rc, test);
 				chans[idx] = INVALID_IPC_HANDLE;
 			}
@@ -594,7 +594,7 @@ static void run_connect_close_by_peer_test(const char *test)
 		EXPECT_GT (countof(chans), idx, test);
 		EXPECT_EQ (chans[idx], event.handle, test);
 		if (idx < countof(chans)) {
-			rc = close(chans[idx]);
+			rc = trusty_close(chans[idx]);
 			EXPECT_EQ (NO_ERROR, rc, test);
 			chans[idx] = INVALID_IPC_HANDLE;
 		}
@@ -621,13 +621,13 @@ static void run_async_connect_test (void)
 	/* connect to non existing port synchronously without wait_for_port */
 	rc = connect (path, 0);
 	EXPECT_EQ (ERR_NOT_FOUND, rc, "async");
-	rc = close ((handle_t)rc);
+	rc = trusty_close((handle_t)rc);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "async");
 
 	/* connect to non existing port asynchronously without wait_for_port */
 	rc = connect (path, IPC_CONNECT_ASYNC);
 	EXPECT_EQ (ERR_NOT_FOUND, rc, "async");
-	rc = close ((handle_t)rc);
+	rc = trusty_close((handle_t)rc);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "async");
 
 	/* connect to non existing port asynchronously with wait_for_port */
@@ -641,7 +641,7 @@ static void run_async_connect_test (void)
 		EXPECT_EQ (ERR_TIMED_OUT, rc, "async");
 
 		/* and close it */
-		rc = close (chan);
+		rc = trusty_close(chan);
 		EXPECT_EQ (NO_ERROR, rc, "async");
 	}
 
@@ -679,7 +679,7 @@ static void run_async_connect_test (void)
 				srv_chan = (handle_t) rc;
 
 				/* and close it */
-				close (srv_chan);
+				trusty_close(srv_chan);
 
 				/* now wait on original chan:
 				 * there should be READY and HUP events
@@ -690,9 +690,9 @@ static void run_async_connect_test (void)
 				EXPECT_EQ (NO_ERROR, rc, "async");
 				EXPECT_EQ (exp_event, event.event, "async");
 			}
-			close(port);
+			trusty_close(port);
 		}
-		close(chan);
+		trusty_close(chan);
 	}
 
 	TEST_END
@@ -777,7 +777,7 @@ static void run_connect_selfie_test (void)
 		EXPECT_EQ (ERR_TIMED_OUT, rc, "selfie");
 
 		/* close selfie port  */
-		rc = close (test_port);
+		rc = trusty_close(test_port);
 		EXPECT_EQ (NO_ERROR, rc, "close selfie");
 	}
 
@@ -799,7 +799,7 @@ static void run_connect_access_test(void)
 	EXPECT_EQ(ERR_ACCESS_DENIED, rc, "connect to ns_only");
 
 	if (rc >= 0)
-		close((handle_t)rc);
+		trusty_close((handle_t)rc);
 
 	/* open connection to TA only accessible service */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "ta_only");
@@ -809,7 +809,7 @@ static void run_connect_access_test(void)
 	EXPECT_GT_ZERO(rc, "connect to ta_only");
 
 	if (rc >= 0)
-		close((handle_t)rc);
+		trusty_close((handle_t)rc);
 
 	TEST_END
 }
@@ -880,7 +880,7 @@ static void run_accept_negative_test(void)
 	rc1 = memcmp(&peer_uuid, &zero_uuid, sizeof(zero_uuid));
 	EXPECT_EQ (0, rc1, "accept")
 
-	rc = close(chan);
+	rc = trusty_close(chan);
 	EXPECT_EQ (NO_ERROR, rc, "close channnel")
 
 	TEST_END
@@ -915,7 +915,7 @@ static void run_accept_test (void)
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, "connect");
 	rc = sync_connect (path, 1000);
 	if (rc >= 0)
-		close((handle_t)rc);
+		trusty_close((handle_t)rc);
 
 	/* handle incoming connections */
 	for (uint i = 2; i < MAX_USER_HANDLES; i++ ) {
@@ -939,7 +939,7 @@ static void run_accept_test (void)
 	}
 
 	/* free 1 handle  so we have room and repeat test */
-	rc = close(ports[2]);
+	rc = trusty_close(ports[2]);
 	EXPECT_EQ(NO_ERROR, 0, "close accept test");
 	ports[2] = INVALID_IPC_HANDLE;
 
@@ -948,7 +948,7 @@ static void run_accept_test (void)
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE, "connect");
 	rc = sync_connect (path, 1000);
 	if (rc >= 0)
-		close((handle_t)rc);
+		trusty_close((handle_t)rc);
 
 	/* handle incoming connections */
 	for (uint i = 2; i < MAX_USER_HANDLES-1; i++ ) {
@@ -968,14 +968,14 @@ static void run_accept_test (void)
 		rc1 = memcmp(&peer_uuid, &srv_app_uuid, sizeof(srv_app_uuid));
 		EXPECT_EQ (0, rc1, "accept test")
 
-		rc = close (rc);
+		rc = trusty_close(rc);
 		EXPECT_EQ (NO_ERROR, rc, "accept test");
 	}
 
 	/* close them all */
 	for (uint i = 3; i < MAX_USER_HANDLES; i++) {
 		/* close a valid port  */
-		rc = close(ports[i]);
+		rc = trusty_close(ports[i]);
 		EXPECT_EQ (NO_ERROR, rc, "close port");
 		ports[i] = INVALID_IPC_HANDLE;
 	}
@@ -1034,7 +1034,7 @@ static void run_get_msg_negative_test(void)
 
 	rc = get_msg(port, &inf);
 	EXPECT_EQ (ERR_INVALID_ARGS, rc, "get_msg on port");
-	close(port);
+	trusty_close(port);
 
 	/* call get_msg on channel that do not have any pending messages */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "datasink");
@@ -1045,7 +1045,7 @@ static void run_get_msg_negative_test(void)
 	rc = get_msg(chan, &inf);
 	EXPECT_EQ (ERR_NO_MSG, rc, "get_msg on empty channel");
 
-	rc = close(chan);
+	rc = trusty_close(chan);
 	EXPECT_EQ (NO_ERROR, rc, "close channnel");
 
 	TEST_END
@@ -1100,7 +1100,7 @@ static void run_put_msg_negative_test(void)
 
 	rc = put_msg(port, 0);
 	EXPECT_EQ (ERR_INVALID_ARGS, rc, "put_msg on port");
-	rc = close(port);
+	rc = trusty_close(port);
 	EXPECT_EQ (NO_ERROR, rc, "close port");
 
 	/* call put_msg on channel that do not have any pending messages */
@@ -1111,7 +1111,7 @@ static void run_put_msg_negative_test(void)
 
 	rc = put_msg(chan, 0);
 	EXPECT_EQ (ERR_INVALID_ARGS, rc, "put_msg on empty channel");
-	rc = close(chan);
+	rc = trusty_close(chan);
 	EXPECT_EQ (NO_ERROR, rc, "close channel");
 
 	TEST_END
@@ -1170,7 +1170,7 @@ static void run_send_msg_test(void)
 				break;
 			}
 		}
-		rc = close (chan);
+		rc = trusty_close(chan);
 		EXPECT_EQ (NO_ERROR, rc, "close channel");
 	}
 
@@ -1244,7 +1244,7 @@ static void run_send_msg_negative_test(void)
 
 	rc = send_msg(port, &msg);
 	EXPECT_EQ (ERR_INVALID_ARGS, rc, "send_msg on port");
-	close(port);
+	trusty_close(port);
 
 	/* open connection to datasink service */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "datasink");
@@ -1288,7 +1288,7 @@ static void run_send_msg_negative_test(void)
 	rc = send_msg(chan, &msg);
 	EXPECT_EQ (ERR_FAULT, rc, "sending bad iovec");
 
-	rc = close(chan);
+	rc = trusty_close(chan);
 	EXPECT_EQ (NO_ERROR, rc, "close channel");
 
 	TEST_END
@@ -1365,7 +1365,7 @@ static void run_read_msg_negative_test(void)
 
 	rc = read_msg(port, 0, 0, &rx_msg);
 	EXPECT_EQ (ERR_INVALID_ARGS, rc, "read_msg on port");
-	close(port);
+	trusty_close(port);
 
 	/* open connection to echo service */
 	sprintf(path, "%s.srv.%s", SRV_PATH_BASE,  "echo");
@@ -1439,7 +1439,7 @@ static void run_read_msg_negative_test(void)
 	rc = put_msg(chan, inf.id);
 	EXPECT_EQ (NO_ERROR, rc, "putting echo msg");
 
-	rc = close(chan);
+	rc = trusty_close(chan);
 	EXPECT_EQ (NO_ERROR, rc, "close channel");
 
 	TEST_END
@@ -1565,7 +1565,7 @@ abort_test:
 		EXPECT_EQ (0, tx_cnt, "tx_cnt");
 		EXPECT_EQ (0, rx_cnt, "rx_cnt");
 
-		rc = close(chan);
+		rc = trusty_close(chan);
 		EXPECT_EQ (NO_ERROR, rc, "close channel");
 	}
 
@@ -1588,8 +1588,8 @@ static void run_hset_create_test(void)
 	hset2 = handle_set_create();
 	EXPECT_GE_ZERO((int)hset2, "create handle set2");
 
-	close(hset1);
-	close(hset2);
+	trusty_close(hset1);
+	trusty_close(hset2);
 
 	TEST_END
 }
@@ -1629,8 +1629,8 @@ static void run_hset_add_mod_del_test(void)
 	EXPECT_EQ(0, rc, "hset del");
 
 abort_test:
-	close(hset1);
-	close(hset2);
+	trusty_close(hset1);
+	trusty_close(hset2);
 
 	TEST_END
 }
@@ -1658,7 +1658,7 @@ static void run_hset_add_self_test(void)
 	EXPECT_EQ(ERR_INVALID_ARGS, rc, "hset add self");
 
 abort_test:
-	close(hset1);
+	trusty_close(hset1);
 
 	TEST_END
 }
@@ -1704,9 +1704,9 @@ static void run_hset_add_loop_test(void)
 	EXPECT_EQ(ERR_INVALID_ARGS, rc, "add hset1 to hset3");
 
 abort_test:
-	close(hset2);
-	close(hset1);
-	close(hset3);
+	trusty_close(hset2);
+	trusty_close(hset1);
+	trusty_close(hset3);
 
 	TEST_END
 }
@@ -1742,8 +1742,8 @@ static void run_hset_add_duplicate_test(void)
 	EXPECT_EQ(ERR_ALREADY_EXISTS, rc, "add hset2 to hset1");
 
 abort_test:
-	close(hset1);
-	close(hset2);
+	trusty_close(hset1);
+	trusty_close(hset2);
 
 	TEST_END
 }
@@ -1769,7 +1769,7 @@ static void run_hset_wait_on_empty_set_test(void)
 	rc = wait(hset1, &evt, 100);
 	EXPECT_EQ(ERR_NOT_FOUND, rc, "wait on empty hset");
 
-	close(hset1);
+	trusty_close(hset1);
 
 abort_test:
 	TEST_END
@@ -1812,8 +1812,8 @@ static void run_hset_wait_on_non_empty_set_test(void)
 	EXPECT_EQ(ERR_TIMED_OUT, rc, "wait on empty hset");
 
 abort_test:
-	close(hset1);
-	close(hset2);
+	trusty_close(hset1);
+	trusty_close(hset2);
 
 	TEST_END
 }
@@ -1967,10 +1967,10 @@ static void run_hset_add_chan_test(void)
 	EXPECT_EQ(cookie12, evt.cookie, "event.cookie");
 
 abort_test:
-	close(chan1);
-	close(chan2);
-	close(hset1);
-	close(hset2);
+	trusty_close(chan1);
+	trusty_close(chan2);
+	trusty_close(hset1);
+	trusty_close(hset2);
 
 	TEST_END
 }
@@ -2059,8 +2059,8 @@ static void run_hset_event_mask_test(void)
 	EXPECT_EQ(cookie11, evt.cookie, "event.cookie");
 
 abort_test:
-	close(chan1);
-	close(hset1);
+	trusty_close(chan1);
+	trusty_close(hset1);
 	TEST_END
 }
 
@@ -2105,16 +2105,16 @@ static void run_send_handle_test(void)
 	/* send and wait a bit */
 	rc = send_msg(hchan1, &msg);
 	EXPECT_EQ (64, rc, "send handle");
-	nanosleep (0, 0, 100 * MSEC);
+	trusty_nanosleep(0, 0, 100 * MSEC);
 
 	/* send it again and close it */
 	rc = send_msg(hchan1, &msg);
 	EXPECT_EQ (64, rc, "send handle");
-	rc = close(hchan2);
+	rc = trusty_close(hchan2);
 	EXPECT_EQ (NO_ERROR, rc, "close chan2");
 
 err_connect2:
-	rc = close(hchan1);
+	rc = trusty_close(hchan1);
 	EXPECT_EQ (NO_ERROR, rc, "close chan1");
 err_connect1:
 	TEST_END
@@ -2169,7 +2169,7 @@ static void run_send_handle_negative_test(void)
 	rc = send_msg(hchan, &msg);
 	EXPECT_EQ (ERR_TOO_BIG, rc, "send handle");
 
-	rc = close(hchan);
+	rc = trusty_close(hchan);
 	EXPECT_EQ (NO_ERROR, rc, "close chan");
 err_connect:
 	TEST_END
@@ -2237,10 +2237,10 @@ static void run_recv_handle_test(void)
 	rc = read_msg(hchan1, inf.id, 0, &msg);
 	EXPECT_EQ (64, rc, "reading echo reply");
 
-	rc = close(hrecv[0]);
+	rc = trusty_close(hrecv[0]);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "close reply handle");
 
-	rc = close(hrecv[1]);
+	rc = trusty_close(hrecv[1]);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "close reply handle");
 
 	/* read reply data and 1 handle */
@@ -2251,10 +2251,10 @@ static void run_recv_handle_test(void)
 	rc = read_msg(hchan1, inf.id, 0, &msg);
 	EXPECT_EQ (64, rc, "reading echo reply");
 
-	rc = close(hrecv[0]);
+	rc = trusty_close(hrecv[0]);
 	EXPECT_EQ (0, rc, "close reply handle");
 
-	rc = close(hrecv[1]);
+	rc = trusty_close(hrecv[1]);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "close reply handle");
 
 	/* read reply data and 2 handles (second one should be invalid) */
@@ -2265,10 +2265,10 @@ static void run_recv_handle_test(void)
 	rc = read_msg(hchan1, inf.id, 0, &msg);
 	EXPECT_EQ (64, rc, "reading echo reply");
 
-	rc = close(hrecv[0]);
+	rc = trusty_close(hrecv[0]);
 	EXPECT_EQ (0, rc, "close reply handle");
 
-	rc = close(hrecv[1]);
+	rc = trusty_close(hrecv[1]);
 	EXPECT_EQ (ERR_BAD_HANDLE, rc, "close reply handle");
 
 	/* read 1 handle with no data */
@@ -2288,20 +2288,20 @@ static void run_recv_handle_test(void)
 	rc = read_msg(hchan1, inf.id, 0, &msg);
 	EXPECT_EQ (0, rc, "reading echo reply");
 
-	rc = close(hrecv[0]);
+	rc = trusty_close(hrecv[0]);
 	EXPECT_EQ (0, rc, "close reply handle");
 
-	rc = close(hrecv[1]);
+	rc = trusty_close(hrecv[1]);
 	EXPECT_EQ (0, rc, "close reply handle");
 
 	/* discard reply */
 	rc = put_msg(hchan1, inf.id);
 	EXPECT_EQ (NO_ERROR, rc, "putting echo reply");
 
-	close(hchan2);
+	trusty_close(hchan2);
 	EXPECT_EQ (NO_ERROR, rc, "close chan2");
 err_connect2:
-	close(hchan1);
+	trusty_close(hchan1);
 	EXPECT_EQ (NO_ERROR, rc, "close chan1");
 err_connect1:
 	TEST_END
@@ -2362,7 +2362,7 @@ static void run_recv_handle_negative_test(void)
 	rc = put_msg(hchan1, inf.id);
 	EXPECT_EQ (NO_ERROR, rc, "putting echo reply");
 
-	rc = close(hchan1);
+	rc = trusty_close(hchan1);
 	EXPECT_EQ (NO_ERROR, rc, "close chan1");
 err_connect1:
 	TEST_END
@@ -2420,7 +2420,7 @@ static void run_send_handle_bulk_test(void)
 			}
 		}
 	}
-	rc = close(hchan2);
+	rc = trusty_close(hchan2);
 	EXPECT_EQ (NO_ERROR, rc, "close chan2");
 
 	/* repeate the same while closing handle after sending it */
@@ -2453,12 +2453,12 @@ static void run_send_handle_bulk_test(void)
 				break;
 			}
 		}
-		rc = close(hchan2);
+		rc = trusty_close(hchan2);
 		EXPECT_EQ (NO_ERROR, rc, "close chan2");
 	}
 
 err_connect2:
-	rc = close(hchan1);
+	rc = trusty_close(hchan1);
 	EXPECT_EQ (NO_ERROR, rc, "close chan1");
 err_connect1:
 	TEST_END
@@ -2546,14 +2546,14 @@ static void run_echo_handle_bulk_test(void)
 		EXPECT_EQ (NO_ERROR, rc, "putting echo reply");
 
 		/* close received handle */
-		rc = close(hrecv);
+		rc = trusty_close(hrecv);
 		EXPECT_EQ (0, rc, "close reply handle");
 	}
 
-	rc = close(hchan2);
+	rc = trusty_close(hchan2);
 	EXPECT_EQ (NO_ERROR, rc, "close chan2");
 err_connect2:
-	rc = close(hchan1);
+	rc = trusty_close(hchan1);
 	EXPECT_EQ (NO_ERROR, rc, "close chan1");
 err_connect1:
 	TEST_END
@@ -2666,7 +2666,7 @@ int main(void)
 					run_all_tests();
 
 					/* and close it */
-					close(rc);
+					trusty_close(rc);
 				}
 			}
 		}

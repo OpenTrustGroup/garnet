@@ -189,6 +189,11 @@ TEST_F(TipcObjectSetTest, AddRemoveObject) {
             ZX_ERR_TIMED_OUT);
 }
 
+TEST_F(TipcObjectSetTest, AddRemoveObjectSet) {
+  ASSERT_EQ(object_set1_->AddObject(object_set2_), ZX_OK);
+  object_set1_->RemoveObject(object_set2_);
+}
+
 TEST_F(TipcObjectSetTest, NestedAddRemoveObject) {
   ASSERT_EQ(object_set1_->AddObject(object1_), ZX_OK);
   ASSERT_EQ(object_set2_->AddObject(object_set1_), ZX_OK);

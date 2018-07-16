@@ -48,8 +48,8 @@ void TipcObject::RemoveParent(TipcObjectSet* parent) {
       [&parent](const TipcObjectRef& ref) { return ref.parent == parent; });
 
   if (it != ref_list_.end()) {
-    ref_list_.erase(it);
-    it->parent->OnChildRemoved(it.CopyPointer());
+    auto ref = ref_list_.erase(it);
+    it->parent->OnChildRemoved(ref);
   }
 }
 

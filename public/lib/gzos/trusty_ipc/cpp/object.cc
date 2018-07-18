@@ -129,7 +129,7 @@ zx_status_t TipcObject::Wait(WaitResult* result, zx::time deadline) {
   return ZX_OK;
 }
 
-void TipcObject::Shutdown() {
+void TipcObject::Close() {
   // The reference count held by object manager should be released
   if (handle_id() != TipcObject::kInvalidHandle) {
     TipcObjectManager::Instance()->RemoveObject(handle_id());

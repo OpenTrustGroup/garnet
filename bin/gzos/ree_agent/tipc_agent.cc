@@ -112,7 +112,7 @@ zx_status_t TipcAgent::SendMessageToRee(uint32_t local, uint32_t remote,
   return WriteMessage(buf.get(), msg_size);
 }
 
-void TipcAgent::ShutdownTipcChannelLocked(TipcEndpoint* ep, uint32_t dst_addr) {
+void TipcAgent::CloseTipcChannelLocked(TipcEndpoint* ep, uint32_t dst_addr) {
   FXL_DCHECK(ep);
 
   zx_status_t st;
@@ -123,7 +123,7 @@ void TipcAgent::ShutdownTipcChannelLocked(TipcEndpoint* ep, uint32_t dst_addr) {
     FXL_LOG(WARNING) << "failed to send disconnect request, status=" << st;
   }
 
-  ep->channel->Shutdown();
+  ep->channel->Close();
   ep_table_->FreeSlotByAddr(dst_addr);
 }
 
@@ -162,7 +162,7 @@ zx_status_t TipcAgent::Stop() {
   uint32_t slot_id = 0;
   TipcEndpoint* ep;
   while ((ep = ep_table_->FindInUseSlot(slot_id)) != nullptr) {
-    ShutdownTipcChannelLocked(ep, ep_table_->to_addr(slot_id));
+    CloseTipcChannelLocked(ep, ep_table_->to_addr(slot_id));
     // Find in-use slot again start from next slot_id
     slot_id++;
   }
@@ -269,7 +269,7 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
   });
 
   auto handle_hup = [this, channel, src_addr, dst_addr] {
-    channel->Shutdown();
+    channel->Close();
 
     zx_status_t st;
     disc_req_msg req{{DISCONNECT_REQUEST, sizeof(tipc_disc_req_body)},
@@ -283,7 +283,7 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
     ep_table_->FreeSlotByAddr(dst_addr);
   };
 
-  channel->SetCloseCallback([handle_hup] {
+  channel->SetHupCallback([handle_hup] {
     async::PostTask(async_get_default(), [handle_hup] { handle_hup(); });
   });
 
@@ -362,7 +362,7 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
     return status;
   }
 
-  channel->BindPeerInterfaceHandle(std::move(peer_handle));
+  channel->Bind(std::move(peer_handle));
 
   send_err_conn_resp.cancel();
   free_endpoint_slot.cancel();
@@ -383,7 +383,7 @@ zx_status_t TipcAgent::HandleDisconnectRequest(uint32_t src_addr, void* req) {
     return ZX_ERR_INVALID_ARGS;
   }
 
-  ShutdownTipcChannelLocked(ep, dst_addr);
+  CloseTipcChannelLocked(ep, dst_addr);
   return ZX_OK;
 }
 
@@ -397,7 +397,7 @@ zx_status_t TipcAgent::HandleTipcMessage(tipc_hdr* hdr) {
     void* msg = reinterpret_cast<void*>(hdr->data);
     zx_status_t status = ep->channel->SendMessage(msg, hdr->len);
     if (status == ZX_ERR_PEER_CLOSED) {
-      ShutdownTipcChannelLocked(ep, hdr->dst);
+      CloseTipcChannelLocked(ep, hdr->dst);
     }
 
     return status;

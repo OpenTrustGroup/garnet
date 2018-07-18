@@ -30,9 +30,9 @@ class TipcChannelImpl
 
   TipcChannelImpl()
       : initialized_(false),
+        peer_shared_items_ready_(false),
         binding_(this),
-        ready_(false),
-        peer_shared_items_ready_(false) {}
+        ready_(false) {}
 
   zx_status_t Init(uint32_t num_items, size_t item_size);
 
@@ -42,17 +42,19 @@ class TipcChannelImpl
     return handle;
   }
 
-  void BindPeerInterfaceHandle(fidl::InterfaceHandle<TipcChannel> handle) {
-    peer_.Bind(std::move(handle));
-  }
+  void Bind(fidl::InterfaceHandle<TipcChannel> handle);
+  void UnBind();
 
   void SetReadyCallback(Callback callback) {
+    fbl::AutoLock lock(&lock_);
     ready_callback_ = std::move(callback);
   }
-  void SetCloseCallback(Callback callback) {
-    close_callback_ = std::move(callback);
+  void SetHupCallback(Callback callback) {
+    fbl::AutoLock lock(&lock_);
+    hup_callback_ = std::move(callback);
   }
   void SetMessageInCallback(Callback callback) {
+    fbl::AutoLock lock(&lock_);
     message_in_callback_ = std::move(callback);
   }
 
@@ -61,19 +63,19 @@ class TipcChannelImpl
   zx_status_t ReadMessage(uint32_t msg_id, uint32_t offset, void* buf,
                           size_t* buf_size);
   zx_status_t PutMessage(uint32_t msg_id);
-  virtual void Shutdown() override;
   void NotifyReady();
+  void Close() override;
 
   bool is_bound() { return peer_.is_bound(); }
   bool is_ready() {
-    fbl::AutoLock lock(&ready_lock_);
+    fbl::AutoLock lock(&lock_);
     return ready_;
   }
 
  protected:
   ObjectType get_type() override { return ObjectType::CHANNEL; }
 
-  void Close() override;
+  void Hup() override;
   void Ready() override;
   void RequestSharedMessageItems(
       RequestSharedMessageItemsCallback callback) override;
@@ -84,29 +86,27 @@ class TipcChannelImpl
 
  private:
   using MsgList = fbl::DoublyLinkedList<fbl::unique_ptr<MessageItem>>;
-  fbl::Mutex msg_list_lock_;
-  MsgList free_list_ FXL_GUARDED_BY(msg_list_lock_);
-  MsgList outgoing_list_ FXL_GUARDED_BY(msg_list_lock_);
-  MsgList filled_list_ FXL_GUARDED_BY(msg_list_lock_);
-  MsgList read_list_ FXL_GUARDED_BY(msg_list_lock_);
-  bool initialized_ FXL_GUARDED_BY(msg_list_lock_);
+  fbl::Mutex lock_;
+  MsgList free_list_ FXL_GUARDED_BY(lock_);
+  MsgList outgoing_list_ FXL_GUARDED_BY(lock_);
+  MsgList filled_list_ FXL_GUARDED_BY(lock_);
+  MsgList read_list_ FXL_GUARDED_BY(lock_);
+  bool initialized_ FXL_GUARDED_BY(lock_);
+  bool peer_shared_items_ready_ FXL_GUARDED_BY(lock_);
 
   fidl::Binding<TipcChannel> binding_;
 
   TipcChannelSyncPtr peer_;
   std::vector<fbl::unique_ptr<MessageItem>> peer_shared_items_;
 
-  fbl::Mutex ready_lock_;
-  bool ready_ FXL_GUARDED_BY(ready_lock_);
+  bool ready_ FXL_GUARDED_BY(lock_);
 
-  fbl::Mutex request_shared_items_lock_;
-  bool peer_shared_items_ready_ FXL_GUARDED_BY(request_shared_items_lock_);
   zx_status_t PopulatePeerSharedItemsLocked()
-      FXL_EXCLUSIVE_LOCKS_REQUIRED(request_shared_items_lock_);
+      FXL_EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
-  Callback ready_callback_;
-  Callback close_callback_;
-  Callback message_in_callback_;
+  Callback ready_callback_ FXL_GUARDED_BY(lock_);
+  Callback hup_callback_ FXL_GUARDED_BY(lock_);
+  Callback message_in_callback_ FXL_GUARDED_BY(lock_);
 };
 
 }  // namespace trusty_ipc

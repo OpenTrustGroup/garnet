@@ -12,7 +12,7 @@
 namespace trusty_ipc {
 
 zx_status_t TipcChannelImpl::Init(uint32_t num_items, size_t item_size) {
-  fbl::AutoLock lock(&msg_list_lock_);
+  fbl::AutoLock lock(&lock_);
 
   for (uint32_t i = 0; i < num_items; i++) {
     auto item = fbl::make_unique<MessageItem>(i);
@@ -35,7 +35,8 @@ zx_status_t TipcChannelImpl::PopulatePeerSharedItemsLocked() {
   fidl::VectorPtr<SharedMessageItem> shared_items;
   bool ret = peer_->RequestSharedMessageItems(&shared_items);
   if (!ret) {
-    return ZX_ERR_PEER_CLOSED;
+    UnBind();
+    return ZX_ERR_INTERNAL;
   }
 
   if (!shared_items) {
@@ -61,21 +62,21 @@ zx_status_t TipcChannelImpl::PopulatePeerSharedItemsLocked() {
   return ZX_OK;
 }
 
-void TipcChannelImpl::Close() {
-  fbl::AutoLock lock(&ready_lock_);
+void TipcChannelImpl::Hup() {
+  fbl::AutoLock lock(&lock_);
   ready_ = false;
 
-  // Notify user that peer is going to shutdown channel
+  // Notify user that peer is going to close channel
   SignalEvent(TipcEvent::HUP);
 
-  if (close_callback_) {
-    close_callback_();
+  if (hup_callback_) {
+    hup_callback_();
   }
 }
 
 void TipcChannelImpl::RequestSharedMessageItems(
     RequestSharedMessageItemsCallback callback) {
-  fbl::AutoLock lock(&msg_list_lock_);
+  fbl::AutoLock lock(&lock_);
   FXL_CHECK(initialized_);
 
   fidl::VectorPtr<SharedMessageItem> shared_items;
@@ -92,7 +93,7 @@ void TipcChannelImpl::RequestSharedMessageItems(
 }
 
 void TipcChannelImpl::GetFreeMessageItem(GetFreeMessageItemCallback callback) {
-  fbl::AutoLock lock(&msg_list_lock_);
+  fbl::AutoLock lock(&lock_);
 
   if (free_list_.is_empty()) {
     callback(ZX_ERR_NO_MEMORY, 0);
@@ -109,7 +110,7 @@ void TipcChannelImpl::GetFreeMessageItem(GetFreeMessageItemCallback callback) {
 void TipcChannelImpl::NotifyMessageItemIsFilled(
     uint32_t msg_id, uint64_t filled_size,
     NotifyMessageItemIsFilledCallback callback) {
-  fbl::AutoLock lock(&msg_list_lock_);
+  fbl::AutoLock lock(&lock_);
 
   auto iter = outgoing_list_.find_if(
       [&msg_id](const MessageItem& item) { return item.msg_id() == msg_id; });
@@ -131,22 +132,29 @@ void TipcChannelImpl::NotifyMessageItemIsFilled(
   callback(ZX_OK);
 }
 
-void TipcChannelImpl::Shutdown() {
-  fbl::AutoLock lock(&ready_lock_);
+void TipcChannelImpl::Bind(fidl::InterfaceHandle<TipcChannel> handle) {
+  peer_.Bind(std::move(handle));
+}
+
+void TipcChannelImpl::UnBind() {
+  fbl::AutoLock lock(&lock_);
   ready_ = false;
+
+  // The reference count held by callbacks should be released
+  ready_callback_ = nullptr;
+  hup_callback_ = nullptr;
+  message_in_callback_ = nullptr;
 
   // Notify peer that channel is going to be shutdown
   if (peer_.is_bound()) {
-    peer_->Close();
+    peer_->Hup();
     peer_.Unbind();
   }
+}
 
-  // The reference count held by callbacks should be released
-  SetReadyCallback(nullptr);
-  SetCloseCallback(nullptr);
-  SetMessageInCallback(nullptr);
-
-  TipcObject::Shutdown();
+void TipcChannelImpl::Close() {
+  UnBind();
+  TipcObject::Close();
 }
 
 void TipcChannelImpl::NotifyReady() {
@@ -156,42 +164,38 @@ void TipcChannelImpl::NotifyReady() {
     return;
   }
 
-  fbl::AutoLock lock(&ready_lock_);
+  fbl::AutoLock lock(&lock_);
   ready_ = true;
 }
 
 zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
   FXL_DCHECK(msg);
-  fbl::AutoLock lock(&msg_list_lock_);
+  fbl::AutoLock lock(&lock_);
 
   uint32_t msg_id;
   zx_status_t status;
 
   if (!is_bound()) {
-    SignalEvent(TipcEvent::HUP);
     return ZX_ERR_PEER_CLOSED;
   }
 
-  if (!is_ready()) {
+  if (!ready_) {
     return ZX_ERR_SHOULD_WAIT;
   }
 
-  {
-    fbl::AutoLock lock(&request_shared_items_lock_);
-    if (!peer_shared_items_ready_) {
-      zx_status_t err = PopulatePeerSharedItemsLocked();
-      if (err != ZX_OK) {
-        FXL_LOG(ERROR) << "failed to populate peer shared items " << err;
-        return err;
-      }
-      peer_shared_items_ready_ = true;
+  if (!peer_shared_items_ready_) {
+    zx_status_t err = PopulatePeerSharedItemsLocked();
+    if (err != ZX_OK) {
+      FXL_LOG(ERROR) << "failed to populate peer shared items " << err;
+      return err;
     }
+    peer_shared_items_ready_ = true;
   }
 
   bool ret = peer_->GetFreeMessageItem(&status, &msg_id);
   if (!ret) {
-    SignalEvent(TipcEvent::HUP);
-    return ZX_ERR_PEER_CLOSED;
+    UnBind();
+    return ZX_ERR_INTERNAL;
   }
 
   if (status != ZX_OK) {
@@ -208,8 +212,8 @@ zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
 
   ret = peer_->NotifyMessageItemIsFilled(msg_id, msg_size, &status);
   if (!ret) {
-    SignalEvent(TipcEvent::HUP);
-    return ZX_ERR_PEER_CLOSED;
+    UnBind();
+    return ZX_ERR_INTERNAL;
   }
 
   return status;
@@ -219,7 +223,7 @@ zx_status_t TipcChannelImpl::GetMessage(uint32_t* msg_id, size_t* len) {
   FXL_DCHECK(msg_id);
   FXL_DCHECK(len);
 
-  fbl::AutoLock lock(&msg_list_lock_);
+  fbl::AutoLock lock(&lock_);
 
   auto item = filled_list_.pop_front();
   if (item == nullptr) {
@@ -244,7 +248,7 @@ zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
   FXL_DCHECK(buf);
   FXL_DCHECK(buf_size);
 
-  fbl::AutoLock lock(&msg_list_lock_);
+  fbl::AutoLock lock(&lock_);
 
   auto it = read_list_.find_if(
       [&msg_id](const MessageItem& item) { return msg_id == item.msg_id(); });
@@ -270,7 +274,7 @@ zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
 }
 
 zx_status_t TipcChannelImpl::PutMessage(uint32_t msg_id) {
-  fbl::AutoLock lock(&msg_list_lock_);
+  fbl::AutoLock lock(&lock_);
 
   auto it = read_list_.find_if(
       [&msg_id](const MessageItem& item) { return msg_id == item.msg_id(); });
@@ -286,7 +290,7 @@ zx_status_t TipcChannelImpl::PutMessage(uint32_t msg_id) {
 }
 
 void TipcChannelImpl::Ready() {
-  fbl::AutoLock lock(&ready_lock_);
+  fbl::AutoLock lock(&lock_);
   ready_ = true;
 
   if (ready_callback_) {

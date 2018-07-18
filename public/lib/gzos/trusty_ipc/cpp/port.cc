@@ -72,11 +72,11 @@ void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
   }
 
   auto handle_hup = [this, channel] {
-    channel->Shutdown();
+    channel->Close();
     RemoveFromPendingRequest(channel);
   };
 
-  channel->SetCloseCallback([handle_hup] {
+  channel->SetHupCallback([handle_hup] {
     async::PostTask(async_get_default(), [handle_hup] { handle_hup(); });
   });
 
@@ -86,7 +86,7 @@ void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
     callback(status, nullptr);
     return;
   }
-  channel->BindPeerInterfaceHandle(std::move(peer_handle));
+  channel->Bind(std::move(peer_handle));
 
   auto local_handle = channel->GetInterfaceHandle();
   AddPendingRequest(fbl::move(channel));
@@ -121,10 +121,10 @@ zx_status_t TipcPortImpl::Accept(std::string* uuid_out,
     delete uuid;
   }
 
-  // remove channel close callback and user should take care of
+  // remove channel hup callback and user should take care of
   // channel HUP event by itself
   channel->set_cookie(nullptr);
-  channel->SetCloseCallback(nullptr);
+  channel->SetHupCallback(nullptr);
 
   zx_status_t err = TipcObjectManager::Instance()->InstallObject(channel);
   if (err != ZX_OK) {
@@ -137,11 +137,11 @@ zx_status_t TipcPortImpl::Accept(std::string* uuid_out,
   return ZX_OK;
 }
 
-void TipcPortImpl::Shutdown() {
+void TipcPortImpl::Close() {
   fbl::AutoLock lock(&mutex_);
   pending_requests_.clear();
 
-  TipcObject::Shutdown();
+  TipcObject::Close();
 }
 
 }  // namespace trusty_ipc

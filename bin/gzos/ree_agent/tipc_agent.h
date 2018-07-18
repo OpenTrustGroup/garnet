@@ -6,7 +6,6 @@
 
 #include <fbl/auto_lock.h>
 #include <fbl/unique_ptr.h>
-#include <lib/async/cpp/wait.h>
 #include <lib/async-loop/cpp/loop.h>
 
 #include <ree_agent/cpp/fidl.h>
@@ -66,7 +65,7 @@ class TipcAgent : public ReeAgent {
  private:
   zx_status_t SendMessageToRee(uint32_t local, uint32_t remote, void* data,
                                size_t data_len);
-  void ShutdownTipcChannelLocked(TipcEndpoint* ep, uint32_t dst_addr)
+  void CloseTipcChannelLocked(TipcEndpoint* ep, uint32_t dst_addr)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   zx_status_t HandleCtrlMessage(tipc_hdr* hdr);

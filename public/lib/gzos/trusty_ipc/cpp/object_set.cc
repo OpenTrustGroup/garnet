@@ -156,7 +156,7 @@ zx_status_t TipcObjectSet::Wait(WaitResult* result, zx::time deadline) {
   return ZX_OK;
 }
 
-void TipcObjectSet::Shutdown() {
+void TipcObjectSet::Close() {
   for (;;) {
     fbl::RefPtr<TipcObjectRef> ref;
     {
@@ -172,7 +172,7 @@ void TipcObjectSet::Shutdown() {
     ref->obj->RemoveParent(this);
   }
 
-  TipcObject::Shutdown();
+  TipcObject::Close();
 }
 
 }  // namespace trusty_ipc

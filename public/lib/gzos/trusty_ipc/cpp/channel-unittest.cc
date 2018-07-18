@@ -44,9 +44,9 @@ class TipcChannelTest : public ::testing::Test {
 
     // Bind the channel with each other
     auto handle = remote_channel_->GetInterfaceHandle();
-    local_channel_->BindPeerInterfaceHandle(std::move(handle));
+    local_channel_->Bind(std::move(handle));
     handle = local_channel_->GetInterfaceHandle();
-    remote_channel_->BindPeerInterfaceHandle(std::move(handle));
+    remote_channel_->Bind(std::move(handle));
 
     local_channel_->NotifyReady();
   }
@@ -54,6 +54,9 @@ class TipcChannelTest : public ::testing::Test {
   virtual void TeadDown() {
     loop_.Quit();
     loop_.JoinThreads();
+
+    local_channel_->Close();
+    remote_channel_->Close();
   }
 
   void TestSendAndReceive(TipcChannelImpl* sender, TipcChannelImpl* receiver) {

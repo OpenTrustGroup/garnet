@@ -24,7 +24,7 @@ class TipcObjectSet : public TipcObject, public TipcObjectObserver {
   void RemoveObject(fbl::RefPtr<TipcObject> obj);
 
   virtual zx_status_t Wait(WaitResult* result, zx::time deadline) override;
-  virtual void Shutdown() override;
+  virtual void Close() override;
 
  protected:
   ObjectType get_type() override { return ObjectType::OBJECT_SET; }

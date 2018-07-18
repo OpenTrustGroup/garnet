@@ -221,7 +221,7 @@ long connect(const char *path, uint32_t flags) {
     FXL_DLOG(ERROR) << "Failed to do port->Connect(), status=" << status;
     return zx_status_to_lk_err(status);
   }
-  channel->BindPeerInterfaceHandle(std::move(peer_handle));
+  channel->Bind(std::move(peer_handle));
 
   auto obj_mgr = TipcObjectManager::Instance();
   status = obj_mgr->InstallObject(channel);
@@ -234,8 +234,8 @@ long connect(const char *path, uint32_t flags) {
     return channel->handle_id();
   }
 
-  auto shutdown_channel =
-      fbl::MakeAutoCall([&channel]() { channel->Shutdown(); });
+  auto close_channel =
+      fbl::MakeAutoCall([&channel]() { channel->Close(); });
 
   WaitResult result;
   status = channel->Wait(&result, zx::time::infinite());
@@ -252,8 +252,7 @@ long connect(const char *path, uint32_t flags) {
     return ERR_NOT_READY;
   }
 
-  shutdown_channel.cancel();
-  channel->ClearEvent(TipcEvent::READY);
+  close_channel.cancel();
   return channel->handle_id();
 }
 
@@ -296,7 +295,7 @@ long trusty_close(uint32_t handle_id) {
     return zx_status_to_lk_err(status);
   }
 
-  obj->Shutdown();
+  obj->Close();
 
   if (obj->is_port()) {
     fbl::AutoLock lock(&context_lock);
@@ -411,6 +410,10 @@ long wait(uint32_t handle_id, uevent_t *event, uint32_t timeout_ms) {
     FXL_DLOG(ERROR) << "Failed to wait event, handle_id: " << handle_id
                     << " status: " << status;
     return zx_status_to_lk_err(status);
+  }
+
+  if (obj->is_channel() && (result.event & TipcEvent::READY)) {
+    obj->ClearEvent(TipcEvent::READY);
   }
 
   event->handle = result.handle_id;

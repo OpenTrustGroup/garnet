@@ -366,7 +366,7 @@ TEST_F(TipcAgentTest, DisconnectRequest) {
   ASSERT_EQ(remote_channel1->Wait(&result, zx::deadline_after(zx::sec(1))),
             ZX_OK);
   ASSERT_EQ(result.event, TipcEvent::HUP);
-  remote_channel1->Shutdown();
+  remote_channel1->Close();
   loop_.RunUntilIdle();
 
   // First tipc channel is gone
@@ -409,12 +409,12 @@ TEST_F(TipcAgentTest, DisconnectAll) {
   ASSERT_EQ(remote_channel1->Wait(&result, zx::deadline_after(zx::sec(1))),
             ZX_OK);
   ASSERT_EQ(result.event, TipcEvent::HUP);
-  remote_channel1->Shutdown();
+  remote_channel1->Close();
 
   ASSERT_EQ(remote_channel2->Wait(&result, zx::deadline_after(zx::sec(1))),
             ZX_OK);
   ASSERT_EQ(result.event, TipcEvent::HUP);
-  remote_channel2->Shutdown();
+  remote_channel2->Close();
 
   // First tipc channel is gone
   ep = ep_table_->LookupByAddr(dst1);
@@ -441,7 +441,7 @@ TEST_F(TipcAgentTest, RemoteChannelClose) {
   EXPECT_EQ(ep->src_addr, src);
 
   // Close remote channel
-  remote_channel->Shutdown();
+  remote_channel->Close();
   loop_.RunUntilIdle();
 
   // Tipc channel should be removed from tipc endpoint table

@@ -11,7 +11,6 @@
 #include "lib/gzos/trusty_ipc/cpp/object_manager.h"
 #include "lib/gzos/trusty_ipc/cpp/port.h"
 
-
 namespace trusty_ipc {
 
 void TipcPortImpl::AddPendingRequest(fbl::RefPtr<TipcChannelImpl> channel) {
@@ -39,10 +38,10 @@ bool TipcPortImpl::HasPendingRequests() {
 void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
                            fidl::StringPtr uuid, ConnectCallback callback) {
   fbl::RefPtr<TipcChannelImpl> channel;
-  zx_status_t err = TipcChannelImpl::Create(num_items_, item_size_, &channel);
-  if (err != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to create channel object " << err;
-    callback(err, nullptr);
+  channel = fbl::MakeRefCounted<TipcChannelImpl>();
+  if (!channel) {
+    FXL_LOG(ERROR) << "Failed to create channel object";
+    callback(ZX_ERR_NO_MEMORY, nullptr);
     return;
   }
 
@@ -81,13 +80,17 @@ void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
     async::PostTask(async_get_default(), [handle_hup] { handle_hup(); });
   });
 
+  zx_status_t status = channel->Init(num_items_, item_size_);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to init channel " << status;
+    callback(status, nullptr);
+    return;
+  }
   channel->BindPeerInterfaceHandle(std::move(peer_handle));
+
   auto local_handle = channel->GetInterfaceHandle();
-
   AddPendingRequest(fbl::move(channel));
-
   SignalEvent(TipcEvent::READY);
-
   callback(ZX_OK, std::move(local_handle));
 }
 

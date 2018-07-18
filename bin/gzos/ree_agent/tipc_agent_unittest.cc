@@ -25,14 +25,11 @@ class TipcEndpointTableTest : public ::testing::Test {
     ep_table_ = new TipcEndpointTable();
     ASSERT_TRUE(ep_table_ != nullptr);
 
-    uint32_t num_items = 1;
-    uint64_t item_size = 16;
-    uint32_t i;
-
-    for (i = 0; i < NUM_TEST_CHANNEL; i++) {
+    for (uint32_t i = 0; i < NUM_TEST_CHANNEL; i++) {
       src[i] = i;
       dst[i] = 0;
-      ASSERT_EQ(TipcChannelImpl::Create(num_items, item_size, &ch_[i]), ZX_OK);
+      ch_[i] = fbl::MakeRefCounted<TipcChannelImpl>();
+      ASSERT_TRUE(ch_[i] != nullptr);
 
       ASSERT_EQ(ep_table_->AllocateSlot(src[i], ch_[i], &dst[i]), ZX_OK);
       EXPECT_EQ(dst[i], kTipcAddrBase + i);

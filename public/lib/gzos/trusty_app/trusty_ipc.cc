@@ -184,32 +184,37 @@ long connect(const char *path, uint32_t flags) {
   TipcPortSyncPtr port;
   fuchsia::sys::ConnectToEnvironmentService<TipcPort>(port.NewRequest(), path);
 
-  uint32_t num_items;
-  size_t item_size;
-  bool ret = port->GetInfo(&num_items, &item_size);
-  if (!ret) {
-    FXL_DLOG(ERROR) << "Failed to connect port, path=" << path;
-    return ERR_NOT_FOUND;
-  }
-
   fbl::RefPtr<TipcChannelImpl> channel;
-  zx_status_t status = TipcChannelImpl::Create(num_items, item_size, &channel);
-  if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to create tipc channel, status=" << status;
-    return zx_status_to_lk_err(status);
+  channel = fbl::MakeRefCounted<TipcChannelImpl>();
+  if (!channel) {
+    FXL_LOG(ERROR) << "Failed to create tipc channel";
+    return ERR_NO_MEMORY;
   }
 
   channel->SetReadyCallback(
       [&channel] { channel->SignalEvent(TipcEvent::READY); });
 
+  uint32_t num_items;
+  size_t item_size;
+  bool ret = port->GetInfo(&num_items, &item_size);
+  if (!ret) {
+    FXL_DLOG(ERROR) << "Internal error on calling port->GetInfo()";
+    return ERR_GENERIC;
+  }
+
+  zx_status_t status = channel->Init(num_items, item_size);
+  if (status != ZX_OK) {
+    FXL_DLOG(ERROR) << "Failed to init channel: " << status;
+    return zx_status_to_lk_err(status);
+  }
+
   fidl::InterfaceHandle<TipcChannel> peer_handle;
   auto local_handle = channel->GetInterfaceHandle();
   std::string uuid = trusty_app::Manifest::Instance()->GetUuid();
-
   ret = port->Connect(std::move(local_handle), uuid, &status, &peer_handle);
   if (!ret) {
-    FXL_DLOG(ERROR) << "Internal error on calling port->Connect()";
-    return ERR_GENERIC;
+    FXL_DLOG(ERROR) << "Failed to connect port, path=" << path;
+    return ERR_NOT_FOUND;
   }
 
   if (status != ZX_OK) {

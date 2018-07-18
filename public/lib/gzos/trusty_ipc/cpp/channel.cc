@@ -11,14 +11,9 @@
 
 namespace trusty_ipc {
 
-zx_status_t TipcChannelImpl::Create(uint32_t num_items, size_t item_size,
-                                    fbl::RefPtr<TipcChannelImpl>* out) {
-  auto chan = fbl::AdoptRef(new TipcChannelImpl());
-  if (!chan) {
-    return ZX_ERR_NO_MEMORY;
-  }
+zx_status_t TipcChannelImpl::Init(uint32_t num_items, size_t item_size) {
+  fbl::AutoLock lock(&msg_list_lock_);
 
-  fbl::AutoLock lock(&chan->msg_list_lock_);
   for (uint32_t i = 0; i < num_items; i++) {
     auto item = fbl::make_unique<MessageItem>(i);
     if (!item) {
@@ -29,11 +24,10 @@ zx_status_t TipcChannelImpl::Create(uint32_t num_items, size_t item_size,
     if (status != ZX_OK) {
       return status;
     }
-    chan->free_list_.push_back(fbl::move(item));
+    free_list_.push_back(fbl::move(item));
   }
+  initialized_ = true;
 
-  chan->num_items_ = num_items;
-  *out = fbl::move(chan);
   return ZX_OK;
 }
 
@@ -82,6 +76,8 @@ void TipcChannelImpl::Close() {
 void TipcChannelImpl::RequestSharedMessageItems(
     RequestSharedMessageItemsCallback callback) {
   fbl::AutoLock lock(&msg_list_lock_);
+  FXL_CHECK(initialized_);
+
   fidl::VectorPtr<SharedMessageItem> shared_items;
 
   for (const auto& item : free_list_) {
@@ -223,10 +219,6 @@ zx_status_t TipcChannelImpl::GetMessage(uint32_t* msg_id, size_t* len) {
   FXL_DCHECK(msg_id);
   FXL_DCHECK(len);
 
-  if (!is_ready()) {
-    return ZX_ERR_SHOULD_WAIT;
-  }
-
   fbl::AutoLock lock(&msg_list_lock_);
 
   auto item = filled_list_.pop_front();
@@ -251,10 +243,6 @@ zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
                                          void* buf, size_t* buf_size) {
   FXL_DCHECK(buf);
   FXL_DCHECK(buf_size);
-
-  if (!is_ready()) {
-    return ZX_ERR_SHOULD_WAIT;
-  }
 
   fbl::AutoLock lock(&msg_list_lock_);
 
@@ -282,10 +270,6 @@ zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
 }
 
 zx_status_t TipcChannelImpl::PutMessage(uint32_t msg_id) {
-  if (!is_ready()) {
-    return ZX_ERR_SHOULD_WAIT;
-  }
-
   fbl::AutoLock lock(&msg_list_lock_);
 
   auto it = read_list_.find_if(

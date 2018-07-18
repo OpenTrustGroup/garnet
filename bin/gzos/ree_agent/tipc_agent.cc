@@ -221,13 +221,11 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
   FXL_DCHECK(req);
 
   auto conn_req = reinterpret_cast<tipc_conn_req_body*>(req);
-  uint32_t dst_addr = 0;
-
   auto send_err_conn_resp = fbl::MakeAutoCall([&]() {
     zx_status_t st;
     uint32_t err = static_cast<uint32_t>(ZX_ERR_NO_RESOURCES);
     conn_rsp_msg res{{CONNECT_RESPONSE, sizeof(tipc_conn_rsp_body)},
-                     {src_addr, err, dst_addr, 0, 0}};
+                     {src_addr, err, 0, 0, 0}};
     st =
         SendMessageToRee(kTipcCtrlAddress, kTipcCtrlAddress, &res, sizeof(res));
     if (st != ZX_OK) {
@@ -235,27 +233,15 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
     }
   });
 
-  TipcPortSyncPtr port_client;
-  uint32_t num_items;
-  uint64_t item_size;
-  std::string port_name(conn_req->name);
-
-  ta_service_provider_.ConnectToService(port_client.NewRequest().TakeChannel(),
-                                        port_name);
-
-  bool ret = port_client->GetInfo(&num_items, &item_size);
-  if (!ret) {
-    FXL_LOG(ERROR) << "internal error on calling port->GetInfo()";
-    return ZX_ERR_INTERNAL;
-  }
-
   fbl::RefPtr<TipcChannelImpl> channel;
-  zx_status_t status = TipcChannelImpl::Create(num_items, item_size, &channel);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "failed to create tipc channel, status=" << status;
-    return status;
+  channel = fbl::MakeRefCounted<TipcChannelImpl>();
+  if (!channel) {
+    FXL_LOG(ERROR) << "failed to create tipc channel";
+    return ZX_ERR_NO_MEMORY;
   }
 
+  uint32_t dst_addr;
+  zx_status_t status;
   {
     fbl::AutoLock lock(&lock_);
 
@@ -342,6 +328,25 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
   channel->SetMessageInCallback([handle_rx_msg] {
     async::PostTask(async_get_default(), [handle_rx_msg] { handle_rx_msg(); });
   });
+
+  TipcPortSyncPtr port_client;
+  std::string port_name(conn_req->name);
+  ta_service_provider_.ConnectToService(port_client.NewRequest().TakeChannel(),
+                                        port_name);
+
+  uint32_t num_items;
+  uint64_t item_size;
+  bool ret = port_client->GetInfo(&num_items, &item_size);
+  if (!ret) {
+    FXL_LOG(ERROR) << "internal error on calling port->GetInfo()";
+    return ZX_ERR_INTERNAL;
+  }
+
+  status = channel->Init(num_items, item_size);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "failed to init channel, status=" << status;
+    return status;
+  }
 
   fidl::InterfaceHandle<TipcChannel> peer_handle;
   auto local_handle = channel->GetInterfaceHandle();

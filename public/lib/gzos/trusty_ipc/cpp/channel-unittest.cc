@@ -34,10 +34,13 @@ class TipcChannelTest : public ::testing::Test {
     ASSERT_EQ(loop_.StartThread(), ZX_OK);
 
     // Create pair of channel
-    ASSERT_EQ(TipcChannelImpl::Create(kNumItems, kItemSize, &local_channel_),
-              ZX_OK);
-    ASSERT_EQ(TipcChannelImpl::Create(kNumItems, kItemSize, &remote_channel_),
-              ZX_OK);
+    local_channel_ = fbl::MakeRefCounted<TipcChannelImpl>();
+    ASSERT_TRUE(local_channel_ != nullptr);
+    ASSERT_EQ(local_channel_->Init(kNumItems, kItemSize), ZX_OK);
+
+    remote_channel_ = fbl::MakeRefCounted<TipcChannelImpl>();
+    ASSERT_TRUE(remote_channel_ != nullptr);
+    ASSERT_EQ(remote_channel_->Init(kNumItems, kItemSize), ZX_OK);
 
     // Bind the channel with each other
     auto handle = remote_channel_->GetInterfaceHandle();

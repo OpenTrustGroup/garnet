@@ -10,7 +10,7 @@ struct SharedMessageItem {
 };
 
 interface TipcChannel {
-  // Close the channel
+  // Notify peer the channel is going to be closed
   1: Close();
 
   // Notify peer the channel is accepted and ready to use

@@ -33,11 +33,13 @@ TEST_F(TipcPortTest, SecurePortConnect) {
   TipcPortPtr port_client;
   s_port_.Bind(port_client.NewRequest());
 
-  fbl::RefPtr<TipcChannelImpl> channel;
-  port_client->GetInfo([&channel](uint32_t num_items, uint64_t item_size) {
-    ASSERT_EQ(TipcChannelImpl::Create(num_items, item_size, &channel), ZX_OK);
-  });
+  fbl::RefPtr<TipcChannelImpl> channel = fbl::MakeRefCounted<TipcChannelImpl>();
+  ASSERT_TRUE(channel != nullptr);
 
+  port_client->GetInfo([&channel](uint32_t num_items, uint64_t item_size) {
+    FXL_LOG(ERROR) << "num_items:" << num_items;
+    ASSERT_EQ(channel->Init(num_items, item_size), ZX_OK);
+  });
   loop_.RunUntilIdle();
 
   channel->SetReadyCallback(
@@ -47,12 +49,9 @@ TEST_F(TipcPortTest, SecurePortConnect) {
   auto uuid = fidl::StringPtr(fxl::GenerateUUID());
   port_client->Connect(
       std::move(local_handle), uuid,
-      [&channel](zx_status_t status,
-                 fidl::InterfaceHandle<TipcChannel> peer_handle) {
+      [](zx_status_t status, fidl::InterfaceHandle<TipcChannel> handle) {
         ASSERT_EQ(status, ZX_OK);
-        channel->BindPeerInterfaceHandle(std::move(peer_handle));
       });
-
   loop_.RunUntilIdle();
 
   WaitResult result;
@@ -78,12 +77,8 @@ TEST_F(TipcPortTest, SecurePortConnectFromNonSecureClient) {
   TipcPortPtr port_client;
   s_port_.Bind(port_client.NewRequest());
 
-  fbl::RefPtr<TipcChannelImpl> channel;
-  port_client->GetInfo([&channel](uint32_t num_items, uint64_t item_size) {
-    ASSERT_EQ(TipcChannelImpl::Create(num_items, item_size, &channel), ZX_OK);
-  });
-
-  loop_.RunUntilIdle();
+  fbl::RefPtr<TipcChannelImpl> channel = fbl::MakeRefCounted<TipcChannelImpl>();
+  ASSERT_TRUE(channel != nullptr);
 
   auto local_handle = channel->GetInterfaceHandle();
   port_client->Connect(
@@ -100,12 +95,8 @@ TEST_F(TipcPortTest, NonSecurePortConnectFromSecureClient) {
   TipcPortPtr port_client;
   ns_port_.Bind(port_client.NewRequest());
 
-  fbl::RefPtr<TipcChannelImpl> channel;
-  port_client->GetInfo([&channel](uint32_t num_items, uint64_t item_size) {
-    ASSERT_EQ(TipcChannelImpl::Create(num_items, item_size, &channel), ZX_OK);
-  });
-
-  loop_.RunUntilIdle();
+  fbl::RefPtr<TipcChannelImpl> channel = fbl::MakeRefCounted<TipcChannelImpl>();
+  ASSERT_TRUE(channel != nullptr);
 
   auto local_handle = channel->GetInterfaceHandle();
   auto uuid = fidl::StringPtr(fxl::GenerateUUID());

@@ -28,8 +28,13 @@ class TipcChannelImpl
  public:
   using Callback = std::function<void()>;
 
-  static zx_status_t Create(uint32_t num_items, size_t item_size,
-                            fbl::RefPtr<TipcChannelImpl>* out);
+  TipcChannelImpl()
+      : initialized_(false),
+        binding_(this),
+        ready_(false),
+        peer_shared_items_ready_(false) {}
+
+  zx_status_t Init(uint32_t num_items, size_t item_size);
 
   auto GetInterfaceHandle() {
     fidl::InterfaceHandle<TipcChannel> handle;
@@ -78,18 +83,15 @@ class TipcChannelImpl
       NotifyMessageItemIsFilledCallback callback) override;
 
  private:
-  TipcChannelImpl() : binding_(this), ready_(false),
-                      peer_shared_items_ready_(false) {}
-
   using MsgList = fbl::DoublyLinkedList<fbl::unique_ptr<MessageItem>>;
   fbl::Mutex msg_list_lock_;
   MsgList free_list_ FXL_GUARDED_BY(msg_list_lock_);
   MsgList outgoing_list_ FXL_GUARDED_BY(msg_list_lock_);
   MsgList filled_list_ FXL_GUARDED_BY(msg_list_lock_);
   MsgList read_list_ FXL_GUARDED_BY(msg_list_lock_);
+  bool initialized_ FXL_GUARDED_BY(msg_list_lock_);
 
   fidl::Binding<TipcChannel> binding_;
-  size_t num_items_;
 
   TipcChannelSyncPtr peer_;
   std::vector<fbl::unique_ptr<MessageItem>> peer_shared_items_;

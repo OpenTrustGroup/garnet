@@ -39,10 +39,6 @@ zx_status_t TipcObjectSet::AddObject(fbl::RefPtr<TipcObject> obj) {
   }
 
   AppendToChildList(child_ref);
-
-  fbl::AutoLock lock(&mutex_);
-  children_count_++;
-
   return ZX_OK;
 }
 
@@ -54,9 +50,6 @@ void TipcObjectSet::RemoveObject(fbl::RefPtr<TipcObject> obj) {
 void TipcObjectSet::OnChildRemoved(fbl::RefPtr<TipcObjectRef> child_ref) {
   RemoveFromPendingList(child_ref);
   RemoveFromChildList(child_ref);
-
-  fbl::AutoLock lock(&mutex_);
-  children_count_--;
 }
 
 void TipcObjectSet::OnEvent(fbl::RefPtr<TipcObjectRef> child_ref) {
@@ -129,16 +122,14 @@ bool TipcObjectSet::PollPendingEvents(WaitResult* result) {
   return false;
 }
 
-uint32_t TipcObjectSet::children_count() {
-  fbl::AutoLock lock(&mutex_);
-  return children_count_;
-}
-
 zx_status_t TipcObjectSet::Wait(WaitResult* result, zx::time deadline) {
   FXL_DCHECK(result);
 
-  if (children_count() == 0) {
-    return ZX_ERR_NOT_FOUND;
+  {
+    fbl::AutoLock lock(&mutex_);
+    if (child_list_.is_empty()) {
+      return ZX_ERR_NOT_FOUND;
+    }
   }
 
   while (true) {
@@ -168,7 +159,8 @@ void TipcObjectSet::Close() {
       break;
     }
 
-    FXL_LOG(INFO) << "remove child from object set, child handle: " << ref->obj->handle_id();
+    FXL_LOG(INFO) << "remove child from object set, child handle: "
+                  << ref->obj->handle_id();
     ref->obj->RemoveParent(this);
   }
 

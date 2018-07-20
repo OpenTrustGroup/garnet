@@ -42,8 +42,6 @@ class TipcObjectSet : public TipcObject, public TipcObjectObserver {
 
   bool PollPendingEvents(WaitResult* result);
 
-  uint32_t children_count();
-
   struct PendingListTraits {
     static TipcObjectRef::NodeState& node_state(TipcObjectRef& ref) {
       return ref.pending_list_node;
@@ -62,7 +60,6 @@ class TipcObjectSet : public TipcObject, public TipcObjectObserver {
 
   PendingList pending_list_ FXL_GUARDED_BY(mutex_);
   ChildList child_list_ FXL_GUARDED_BY(mutex_);
-  uint32_t children_count_ FXL_GUARDED_BY(mutex_);
   fbl::Mutex mutex_;
 };
 

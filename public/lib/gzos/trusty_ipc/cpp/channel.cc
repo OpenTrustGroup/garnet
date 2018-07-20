@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include <fbl/auto_lock.h>
+#include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
 #include <lib/zx/vmar.h>
 #include <lib/zx/vmo.h>
 #include <zircon/types.h>
@@ -13,6 +15,7 @@ namespace trusty_ipc {
 
 zx_status_t TipcChannelImpl::Init(uint32_t num_items, size_t item_size) {
   fbl::AutoLock lock(&lock_);
+  FXL_DCHECK(!initialized_);
 
   for (uint32_t i = 0; i < num_items; i++) {
     auto item = fbl::make_unique<MessageItem>(i);
@@ -124,12 +127,11 @@ void TipcChannelImpl::NotifyMessageItemIsFilled(
   filled_list_.push_back(fbl::move(item));
 
   SignalEvent(TipcEvent::MSG);
-
-  if (message_in_callback_) {
-    message_in_callback_();
-  }
-
   callback(ZX_OK);
+
+  if (message_callback_) {
+    message_callback_();
+  }
 }
 
 void TipcChannelImpl::Bind(fidl::InterfaceHandle<TipcChannel> handle) {
@@ -143,7 +145,7 @@ void TipcChannelImpl::UnBind() {
   // The reference count held by callbacks should be released
   ready_callback_ = nullptr;
   hup_callback_ = nullptr;
-  message_in_callback_ = nullptr;
+  message_callback_ = nullptr;
 
   // Notify peer that channel is going to be shutdown
   if (peer_.is_bound()) {

@@ -144,4 +144,42 @@ void TipcPortImpl::Close() {
   TipcObject::Close();
 }
 
+zx_status_t PortConnectFacade::Connect(std::string path) {
+  FXL_DCHECK(port_service_connector_);
+
+  TipcPortSyncPtr port_client;
+  port_service_connector_(port_client, path);
+
+  uint32_t num_items;
+  uint64_t item_size;
+  bool ret = port_client->GetInfo(&num_items, &item_size);
+  if (!ret) {
+    FXL_LOG(ERROR) << "internal error on calling port->GetInfo()";
+    return ZX_ERR_INTERNAL;
+  }
+
+  zx_status_t status = channel_->Init(num_items, item_size);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "failed to init channel, status=" << status;
+    return status;
+  }
+
+  fidl::InterfaceHandle<TipcChannel> peer_handle;
+  auto local_handle = channel_->GetInterfaceHandle();
+  ret = port_client->Connect(std::move(local_handle), nullptr, &status,
+                             &peer_handle);
+  if (!ret) {
+    FXL_LOG(ERROR) << "internal error on calling port->Connect()";
+    return ZX_ERR_INTERNAL;
+  }
+
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "failed to do port->Connect(), status=" << status;
+    return status;
+  }
+
+  channel_->Bind(std::move(peer_handle));
+  return ZX_OK;
+}
+
 }  // namespace trusty_ipc

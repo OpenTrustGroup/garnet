@@ -179,11 +179,6 @@ long port_create(const char *path, uint32_t num_recv_bufs,
 }
 
 long connect(const char *path, uint32_t flags) {
-  std::string service_name(path);
-
-  TipcPortSyncPtr port;
-  fuchsia::sys::ConnectToEnvironmentService<TipcPort>(port.NewRequest(), path);
-
   fbl::RefPtr<TipcChannelImpl> channel;
   channel = fbl::MakeRefCounted<TipcChannelImpl>();
   if (!channel) {
@@ -194,34 +189,18 @@ long connect(const char *path, uint32_t flags) {
   channel->SetReadyCallback(
       [&channel] { channel->SignalEvent(TipcEvent::READY); });
 
-  uint32_t num_items;
-  size_t item_size;
-  bool ret = port->GetInfo(&num_items, &item_size);
-  if (!ret) {
-    FXL_DLOG(ERROR) << "Internal error on calling port->GetInfo()";
-    return ERR_GENERIC;
-  }
+  PortConnectFacade facade;
+  facade.SetChannel(channel);
+  facade.SetPortServiceConnector([](TipcPortSyncPtr &port, std::string path) {
+    std::string service_name(path);
+    fuchsia::sys::ConnectToEnvironmentService<TipcPort>(port.NewRequest(),
+                                                        path);
+  });
 
-  zx_status_t status = channel->Init(num_items, item_size);
+  zx_status_t status = facade.Connect(path);
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to init channel: " << status;
-    return zx_status_to_lk_err(status);
+    return status;
   }
-
-  fidl::InterfaceHandle<TipcChannel> peer_handle;
-  auto local_handle = channel->GetInterfaceHandle();
-  std::string uuid = trusty_app::Manifest::Instance()->GetUuid();
-  ret = port->Connect(std::move(local_handle), uuid, &status, &peer_handle);
-  if (!ret) {
-    FXL_DLOG(ERROR) << "Failed to connect port, path=" << path;
-    return ERR_NOT_FOUND;
-  }
-
-  if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to do port->Connect(), status=" << status;
-    return zx_status_to_lk_err(status);
-  }
-  channel->Bind(std::move(peer_handle));
 
   auto obj_mgr = TipcObjectManager::Instance();
   status = obj_mgr->InstallObject(channel);
@@ -234,8 +213,7 @@ long connect(const char *path, uint32_t flags) {
     return channel->handle_id();
   }
 
-  auto close_channel =
-      fbl::MakeAutoCall([&channel]() { channel->Close(); });
+  auto close_channel = fbl::MakeAutoCall([&channel]() { channel->Close(); });
 
   WaitResult result;
   status = channel->Wait(&result, zx::time::infinite());

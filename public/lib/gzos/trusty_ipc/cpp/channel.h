@@ -53,9 +53,9 @@ class TipcChannelImpl
     fbl::AutoLock lock(&lock_);
     hup_callback_ = std::move(callback);
   }
-  void SetMessageInCallback(Callback callback) {
+  void SetMessageCallback(Callback callback) {
     fbl::AutoLock lock(&lock_);
-    message_in_callback_ = std::move(callback);
+    message_callback_ = std::move(callback);
   }
 
   zx_status_t SendMessage(void* msg, size_t msg_size);
@@ -106,7 +106,7 @@ class TipcChannelImpl
 
   Callback ready_callback_ FXL_GUARDED_BY(lock_);
   Callback hup_callback_ FXL_GUARDED_BY(lock_);
-  Callback message_in_callback_ FXL_GUARDED_BY(lock_);
+  Callback message_callback_ FXL_GUARDED_BY(lock_);
 };
 
 }  // namespace trusty_ipc

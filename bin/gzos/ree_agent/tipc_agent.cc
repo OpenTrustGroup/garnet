@@ -20,6 +20,77 @@ struct disc_req_msg {
   struct tipc_disc_req_body body;
 };
 
+void TipcAgent::OnChannelReady(uint32_t dst_addr) {
+  fbl::AutoLock lock(&lock_);
+  auto ep = ep_table_->LookupByAddr(dst_addr);
+  FXL_DCHECK(ep);
+
+  zx_status_t status;
+  conn_rsp_msg res{{CONNECT_RESPONSE, sizeof(tipc_conn_rsp_body)},
+                   {ep->src_addr, ZX_OK, dst_addr, kTipcChanMaxBufSize, 1}};
+  status =
+      SendMessageToRee(kTipcCtrlAddress, kTipcCtrlAddress, &res, sizeof(res));
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "failed to send connect response, status=" << status;
+  }
+}
+
+void TipcAgent::OnChannelHup(uint32_t dst_addr) {
+  async::PostTask(async_get_default(), [this, dst_addr] {
+    fbl::AutoLock lock(&lock_);
+    auto ep = ep_table_->LookupByAddr(dst_addr);
+    FXL_DCHECK(ep);
+
+    ep->channel->Close();
+
+    zx_status_t status;
+    disc_req_msg req{{DISCONNECT_REQUEST, sizeof(tipc_disc_req_body)},
+                     {ep->src_addr}};
+    status = SendMessageToRee(dst_addr, kTipcCtrlAddress, &req, sizeof(req));
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "failed to send disconnect request, status=" << status;
+    }
+
+    ep_table_->FreeSlotByAddr(dst_addr);
+  });
+}
+
+void TipcAgent::OnChannelMessage(uint32_t dst_addr) {
+  async::PostTask(async_get_default(), [this, dst_addr] {
+    fbl::AutoLock lock(&lock_);
+    auto ep = ep_table_->LookupByAddr(dst_addr);
+    FXL_DCHECK(ep);
+
+    auto channel = ep->channel;
+    uint32_t msg_id;
+    size_t msg_len;
+    zx_status_t status = channel->GetMessage(&msg_id, &msg_len);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "no message come in";
+      return;
+    }
+
+    void* buf = static_cast<void*>(write_buffer_.get());
+    size_t buf_size = max_message_size();
+    status = channel->ReadMessage(msg_id, 0, buf, &buf_size);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "failed to read message, status=" << status;
+      return;
+    }
+    FXL_DCHECK(msg_len == buf_size);
+
+    status = channel->PutMessage(msg_id);
+    if (status != ZX_OK) {
+      FXL_LOG(WARNING) << "failed to put message, status=" << status;
+    }
+
+    status = SendMessageToRee(dst_addr, ep->src_addr, buf, buf_size);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "failed to send message to ree, status=" << status;
+    }
+  });
+}
+
 zx_status_t TipcEndpointTable::AllocateSlot(uint32_t src_addr,
                                             fbl::RefPtr<TipcChannelImpl> chan,
                                             uint32_t* dst_addr) {
@@ -233,8 +304,7 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
     }
   });
 
-  fbl::RefPtr<TipcChannelImpl> channel;
-  channel = fbl::MakeRefCounted<TipcChannelImpl>();
+  auto channel = fbl::MakeRefCounted<TipcChannelImpl>();
   if (!channel) {
     FXL_LOG(ERROR) << "failed to create tipc channel";
     return ZX_ERR_NO_MEMORY;
@@ -251,118 +321,28 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
       return status;
     }
   }
-
   auto free_endpoint_slot = fbl::MakeAutoCall([this, &dst_addr]() {
     fbl::AutoLock lock(&lock_);
     ep_table_->FreeSlotByAddr(dst_addr);
   });
 
-  channel->SetReadyCallback([this, src_addr, dst_addr] {
-    zx_status_t st;
-    conn_rsp_msg res{{CONNECT_RESPONSE, sizeof(tipc_conn_rsp_body)},
-                     {src_addr, ZX_OK, dst_addr, kTipcChanMaxBufSize, 1}};
-    st =
-        SendMessageToRee(kTipcCtrlAddress, kTipcCtrlAddress, &res, sizeof(res));
-    if (st != ZX_OK) {
-      FXL_LOG(ERROR) << "failed to send connect response, status=" << st;
-    }
-  });
+  channel->SetReadyCallback([this, dst_addr] { OnChannelReady(dst_addr); });
+  channel->SetHupCallback([this, dst_addr] { OnChannelHup(dst_addr); });
+  channel->SetMessageCallback([this, dst_addr] { OnChannelMessage(dst_addr); });
 
-  auto handle_hup = [this, channel, src_addr, dst_addr] {
-    channel->Close();
+  PortConnectFacade facade;
+  facade.SetChannel(std::move(channel));
+  facade.SetPortServiceConnector(
+      [this](TipcPortSyncPtr& port_client, std::string path) {
+        ta_service_provider_.ConnectToService(
+            port_client.NewRequest().TakeChannel(), path);
+      });
 
-    zx_status_t st;
-    disc_req_msg req{{DISCONNECT_REQUEST, sizeof(tipc_disc_req_body)},
-                     {src_addr}};
-    st = SendMessageToRee(dst_addr, kTipcCtrlAddress, &req, sizeof(req));
-    if (st != ZX_OK) {
-      FXL_LOG(ERROR) << "failed to send disconnect request, status=" << st;
-    }
-
-    fbl::AutoLock lock(&lock_);
-    ep_table_->FreeSlotByAddr(dst_addr);
-  };
-
-  channel->SetHupCallback([handle_hup] {
-    async::PostTask(async_get_default(), [handle_hup] { handle_hup(); });
-  });
-
-  auto handle_rx_msg = [this, channel, dst_addr] {
-    fbl::AutoLock lock(&lock_);
-
-    uint32_t msg_id;
-    size_t msg_len;
-    zx_status_t st = channel->GetMessage(&msg_id, &msg_len);
-    if (st != ZX_OK) {
-      FXL_LOG(ERROR) << "no message come in";
-      return;
-    }
-
-    void* buf = static_cast<void*>(write_buffer_.get());
-    size_t buf_size = max_message_size();
-    st = channel->ReadMessage(msg_id, 0, buf, &buf_size);
-    if (st != ZX_OK) {
-      FXL_LOG(ERROR) << "failed to read message, status=" << st;
-      return;
-    }
-
-    FXL_DCHECK(msg_len == buf_size);
-
-    st = channel->PutMessage(msg_id);
-    if (st != ZX_OK) {
-      FXL_LOG(WARNING) << "failed to put message, status=" << st;
-    }
-
-    auto ep = static_cast<TipcEndpoint*>(channel->cookie());
-    if (!ep) {
-      FXL_LOG(ERROR) << "cannot get tipc endpoint from channel cookie";
-      return;
-    }
-
-    st = SendMessageToRee(dst_addr, ep->src_addr, buf, buf_size);
-    if (st != ZX_OK) {
-      FXL_LOG(ERROR) << "failed to send message to ree, status=" << st;
-    }
-  };
-
-  channel->SetMessageInCallback([handle_rx_msg] {
-    async::PostTask(async_get_default(), [handle_rx_msg] { handle_rx_msg(); });
-  });
-
-  TipcPortSyncPtr port_client;
-  std::string port_name(conn_req->name);
-  ta_service_provider_.ConnectToService(port_client.NewRequest().TakeChannel(),
-                                        port_name);
-
-  uint32_t num_items;
-  uint64_t item_size;
-  bool ret = port_client->GetInfo(&num_items, &item_size);
-  if (!ret) {
-    FXL_LOG(ERROR) << "internal error on calling port->GetInfo()";
-    return ZX_ERR_INTERNAL;
-  }
-
-  status = channel->Init(num_items, item_size);
+  std::string path(conn_req->name);
+  status = facade.Connect(path);
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "failed to init channel, status=" << status;
     return status;
   }
-
-  fidl::InterfaceHandle<TipcChannel> peer_handle;
-  auto local_handle = channel->GetInterfaceHandle();
-  ret = port_client->Connect(std::move(local_handle), nullptr, &status,
-                             &peer_handle);
-  if (!ret) {
-    FXL_LOG(ERROR) << "internal error on calling port->Connect()";
-    return ZX_ERR_INTERNAL;
-  }
-
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "failed to do port->Connect(), status=" << status;
-    return status;
-  }
-
-  channel->Bind(std::move(peer_handle));
 
   send_err_conn_resp.cancel();
   free_endpoint_slot.cancel();

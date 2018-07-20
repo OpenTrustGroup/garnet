@@ -17,6 +17,7 @@
 #include "lib/gzos/trusty_ipc/cpp/channel.h"
 #include "lib/gzos/trusty_ipc/cpp/id_alloc.h"
 #include "lib/gzos/trusty_ipc/cpp/object.h"
+#include "lib/gzos/trusty_ipc/cpp/port.h"
 
 using namespace trusty_ipc;
 
@@ -61,6 +62,10 @@ class TipcAgent : public ReeAgent {
   zx_status_t Start() override;
   zx_status_t Stop() override;
   zx_status_t HandleMessage(void* buf, size_t size) override;
+
+  void OnChannelReady(uint32_t dst_addr);
+  void OnChannelHup(uint32_t dst_addr);
+  void OnChannelMessage(uint32_t dst_addr);
 
  private:
   zx_status_t SendMessageToRee(uint32_t local, uint32_t remote, void* data,

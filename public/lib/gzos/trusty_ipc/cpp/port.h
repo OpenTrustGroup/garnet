@@ -27,7 +27,9 @@ class TipcChannelImpl;
 class TipcPortImpl : public TipcPort, public TipcObject {
  public:
   TipcPortImpl(uint32_t num_items, size_t item_size, uint32_t flags)
-      : binding_(this), num_items_(num_items), item_size_(item_size),
+      : binding_(this),
+        num_items_(num_items),
+        item_size_(item_size),
         flags_(flags) {}
 
   TipcPortImpl() = delete;
@@ -68,6 +70,25 @@ class TipcPortImpl : public TipcPort, public TipcObject {
   void RemoveFromPendingRequest(fbl::RefPtr<TipcChannelImpl> channel);
   fbl::RefPtr<TipcChannelImpl> GetPendingRequest();
   bool HasPendingRequests();
+};
+
+class PortConnectFacade {
+ public:
+  using ServiceConnector =
+      std::function<void(TipcPortSyncPtr& port, std::string path)>;
+
+  void SetChannel(fbl::RefPtr<TipcChannelImpl> channel) {
+    channel_ = std::move(channel);
+  }
+  void SetPortServiceConnector(ServiceConnector callback) {
+    port_service_connector_ = std::move(callback);
+  }
+
+  zx_status_t Connect(std::string path);
+
+ private:
+  ServiceConnector port_service_connector_ = nullptr;
+  fbl::RefPtr<TipcChannelImpl> channel_;
 };
 
 }  // namespace trusty_ipc

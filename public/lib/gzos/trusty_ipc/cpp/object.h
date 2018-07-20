@@ -75,6 +75,7 @@ class TipcObject : public fbl::RefCounted<TipcObject> {
 
   virtual zx_status_t Wait(WaitResult* result, zx::time deadline);
   virtual void Close();
+  virtual uint32_t tipc_event_state();
 
   void SignalEvent(uint32_t set_mask);
 
@@ -90,7 +91,6 @@ class TipcObject : public fbl::RefCounted<TipcObject> {
 
   ObjectType type() { return get_type(); }
   uint32_t handle_id() const { return handle_id_; }
-  uint32_t tipc_event_state();
   void* cookie() const { return cookie_; }
   void set_cookie(void* cookie) { cookie_ = cookie; }
 

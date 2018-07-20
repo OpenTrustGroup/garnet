@@ -36,6 +36,10 @@ class TipcChannelImpl
 
   zx_status_t Init(uint32_t num_items, size_t item_size);
 
+  // |TipcObject|
+  void Close() override;
+  uint32_t tipc_event_state() override;
+
   auto GetInterfaceHandle() {
     fidl::InterfaceHandle<TipcChannel> handle;
     binding_.Bind(handle.NewRequest());
@@ -64,7 +68,6 @@ class TipcChannelImpl
                           size_t* buf_size);
   zx_status_t PutMessage(uint32_t msg_id);
   void NotifyReady();
-  void Close() override;
 
   bool is_bound() { return peer_.is_bound(); }
   bool is_ready() {
@@ -75,6 +78,7 @@ class TipcChannelImpl
  protected:
   ObjectType get_type() override { return ObjectType::CHANNEL; }
 
+  // |TipcChannel|
   void Hup() override;
   void Ready() override;
   void RequestSharedMessageItems(

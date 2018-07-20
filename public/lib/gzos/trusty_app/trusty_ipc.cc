@@ -390,10 +390,6 @@ long wait(uint32_t handle_id, uevent_t *event, uint32_t timeout_ms) {
     return zx_status_to_lk_err(status);
   }
 
-  if (obj->is_channel() && (result.event & TipcEvent::READY)) {
-    obj->ClearEvent(TipcEvent::READY);
-  }
-
   event->handle = result.handle_id;
   event->event = result.event;
   event->cookie = result.cookie;

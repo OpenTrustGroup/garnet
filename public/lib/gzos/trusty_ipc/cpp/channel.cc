@@ -300,4 +300,14 @@ void TipcChannelImpl::Ready() {
   }
 }
 
+uint32_t TipcChannelImpl::tipc_event_state() {
+  auto event_state = TipcObject::tipc_event_state();
+
+  if (event_state & TipcEvent::READY) {
+    ClearEvent(TipcEvent::READY);
+  }
+
+  return event_state;
+}
+
 }  // namespace trusty_ipc

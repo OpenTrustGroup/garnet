@@ -23,6 +23,7 @@ class TipcObjectSet : public TipcObject, public TipcObjectObserver {
   zx_status_t AddObject(fbl::RefPtr<TipcObject> obj);
   void RemoveObject(fbl::RefPtr<TipcObject> obj);
 
+  // |TipcObject|
   virtual zx_status_t Wait(WaitResult* result, zx::time deadline) override;
   virtual void Close() override;
 

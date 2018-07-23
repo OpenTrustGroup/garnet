@@ -40,6 +40,7 @@ executable("rpc_agent_unittests") {
   deps = [
     "//garnet/bin/gzos/smc_service:test",
     "//garnet/bin/gzos/ree_agent:test",
+    "//garnet/bin/gzos/sysmgr:test",
   ]
 }
 

@@ -1,0 +1,15 @@
+// Copyright 2018 Open Trust Group
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library sysmgr;
+
+interface ServiceProvider {
+  1: AddService(string service_name) -> (handle<channel> channel);
+
+  2: LookupService(string service_name) -> (bool found);
+
+  3: ConnectToService(string service_name, handle<channel> channel);
+
+  4: WaitOnService(string service_name) -> ();
+};

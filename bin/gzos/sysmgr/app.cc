@@ -4,8 +4,6 @@
 
 #include "garnet/bin/gzos/sysmgr/app.h"
 
-#include <dirent.h>
-#include <fcntl.h>
 #include <zircon/process.h>
 #include <zircon/processargs.h>
 
@@ -14,93 +12,22 @@
 #include <lib/fdio/util.h>
 #include "lib/app/cpp/connect.h"
 #include "lib/fidl/cpp/clone.h"
-#include "lib/fsl/io/fd.h"
-#include "lib/fxl/files/file.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/concatenate.h"
 #include "lib/fxl/strings/string_view.h"
 
-#include "third_party/rapidjson/rapidjson/document.h"
+#include "garnet/bin/gzos/sysmgr/manifest_parser.h"
 
 namespace sysmgr {
 
 constexpr char kDefaultLabel[] = "sys";
-constexpr char kTrustedAppDataPath[] = "/system/data";
-
-void SafeCloseDir(DIR* dir) {
-  if (dir)
-    closedir(dir);
-}
-
-using ManifestCallback = std::function<void(const std::string& app_name,
-                                            const std::string& manifest_path)>;
-
-void ForEachManifest(ManifestCallback callback) {
-  std::unique_ptr<DIR, decltype(&SafeCloseDir)> dir(
-      opendir(kTrustedAppDataPath), SafeCloseDir);
-
-  if (dir != NULL) {
-    while (dirent* ta_entry = readdir(dir.get())) {
-      // skip "." and ".."
-      if (strcmp(".", ta_entry->d_name) == 0 ||
-          strcmp("..", ta_entry->d_name) == 0) {
-        continue;
-      }
-
-      std::string manifest_path = fxl::Concatenate(
-          {kTrustedAppDataPath, "/", ta_entry->d_name, "/manifest.json"});
-
-      if (files::IsFile(manifest_path)) {
-        callback(std::string(ta_entry->d_name), manifest_path);
-      }
-    }
-  } else {
-    FXL_LOG(WARNING) << "Could not open directory " << kTrustedAppDataPath;
-  }
-}
-
-void ParsePublicServices(
-    rapidjson::Document& document,
-    std::function<void(const std::string& service)> callback) {
-  auto it = document.FindMember("public_services");
-  if (it == document.MemberEnd()) {
-    return;
-  }
-
-  const auto& value = it->value;
-  if (!value.IsArray()) {
-    return;
-  }
-
-  for (rapidjson::SizeType i = 0; i < value.Size(); i++) {
-    callback(value[i].GetString());
-  }
-}
 
 void App::ScanPublicServices() {
   ForEachManifest([this](const std::string& app_name,
-                         const std::string& manifest_path) {
-    fxl::UniqueFD fd(open(manifest_path.c_str(), O_RDONLY));
-    if (!fd.is_valid()) {
-      FXL_LOG(WARNING) << "Failed to open " << manifest_path;
-      return;
-    }
-
-    std::string data;
-    if (!files::ReadFileDescriptorToString(fd.get(), &data)) {
-      FXL_LOG(WARNING) << "Failed to read " << manifest_path;
-      return;
-    }
-
-    rapidjson::Document document;
-    document.Parse(data);
-    if (document.HasParseError()) {
-      FXL_LOG(WARNING) << "Failed to parse " << manifest_path;
-      return;
-    }
-
+                         const std::string& manifest_path,
+                         const rapidjson::Document& document) {
     ParsePublicServices(document, [this, &app_name,
                                    &manifest_path](const std::string& service) {
       fbl::RefPtr<fs::Vnode> dummy;
@@ -173,20 +100,6 @@ void App::ConnectToService(const std::string& service_name,
   auto status = child->Serve(&vfs_, std::move(channel), 0);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Could not serve " << service_name << ": " << status;
-  }
-}
-
-void App::MountPackageData(fuchsia::sys::LaunchInfo& launch_info) {
-  std::string package_data_path = fxl::Concatenate(
-      {fxl::StringView(kTrustedAppDataPath), "/", launch_info.url.get()});
-  fxl::UniqueFD fd(open(package_data_path.c_str(), O_RDONLY));
-  if (fd.is_valid()) {
-    auto flat_namespace = fuchsia::sys::FlatNamespace::New();
-    flat_namespace->paths.push_back("pkg/data");
-    flat_namespace->directories.push_back(
-        fsl::CloneChannelFromFileDescriptor(fd.get()));
-
-    launch_info.flat_namespace = std::move(flat_namespace);
   }
 }
 

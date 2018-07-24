@@ -8,11 +8,16 @@ source_set("lib") {
   sources = [
     "service_provider_impl.cc",
     "service_provider_impl.h",
+    "manifest_parser.cc",
+    "manifest_parser.h",
   ]
 
   public_deps = [
+    "//garnet/public/lib/svc/cpp",
     "//garnet/public/lib/fxl",
+    "//garnet/public/lib/fsl",
     "//garnet/public/lib/gzos/sysmgr/fidl",
+    "//third_party/rapidjson",
     "//zircon/public/lib/fs",
   ]
 }

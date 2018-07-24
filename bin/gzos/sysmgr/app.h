@@ -41,7 +41,6 @@ class App {
   void LaunchApplication(fuchsia::sys::LaunchInfo launch_info);
 
   void ScanPublicServices();
-  void MountPackageData(fuchsia::sys::LaunchInfo &launch_info);
 
   std::unique_ptr<fuchsia::sys::StartupContext> startup_context_;
 

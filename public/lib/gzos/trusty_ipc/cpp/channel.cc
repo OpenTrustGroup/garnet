@@ -146,6 +146,7 @@ void TipcChannelImpl::UnBind() {
   ready_callback_ = nullptr;
   hup_callback_ = nullptr;
   message_callback_ = nullptr;
+  close_callback_ = nullptr;
 
   // Notify peer that channel is going to be shutdown
   if (peer_.is_bound()) {
@@ -155,6 +156,12 @@ void TipcChannelImpl::UnBind() {
 }
 
 void TipcChannelImpl::Close() {
+  {
+    fbl::AutoLock lock(&lock_);
+    if (close_callback_) {
+      close_callback_();
+    }
+  }
   UnBind();
   TipcObject::Close();
 }
@@ -300,8 +307,8 @@ void TipcChannelImpl::Ready() {
   }
 }
 
-uint32_t TipcChannelImpl::tipc_event_state() {
-  auto event_state = TipcObject::tipc_event_state();
+uint32_t TipcChannelImpl::ReadEvent() {
+  auto event_state = tipc_event_state();
 
   if (event_state & TipcEvent::READY) {
     ClearEvent(TipcEvent::READY);

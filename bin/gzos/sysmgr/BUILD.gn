@@ -4,35 +4,29 @@
 
 import("//build/package.gni")
 
+declare_args() {
+  enable_dynamic_service = true
+}
+
 source_set("lib") {
   sources = [
-    "service_provider_impl.cc",
-    "service_provider_impl.h",
     "manifest_parser.cc",
     "manifest_parser.h",
   ]
 
+  if (enable_dynamic_service) {
+    sources += [
+      "dynamic_service_app.cc",
+      "dynamic_service_app.h",
+    ]
+  }
+
   public_deps = [
-    "//garnet/public/lib/svc/cpp",
+    "//garnet/public/lib/app/cpp",
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/fsl",
-    "//garnet/public/lib/gzos/sysmgr/fidl",
     "//third_party/rapidjson",
     "//zircon/public/lib/fs",
-  ]
-}
-
-source_set("test") {
-  testonly = true
-
-  sources = [
-    "service_provider_unittest.cc"
-  ]
-
-  deps = [
-    ":lib",
-    "//third_party/googletest:gtest",
-    "//zircon/public/lib/async-loop-cpp",
   ]
 }
 
@@ -60,6 +54,12 @@ executable("bin") {
     "//zircon/public/lib/async-default",
     "//zircon/public/lib/async-loop-cpp",
   ]
+
+  defines = []
+  if (enable_dynamic_service) {
+    defines += [ "WITH_DYNAMIC_SERVICE" ]
+    deps += [ "//garnet/public/lib/gzos/sysmgr/fidl" ]
+  }
 }
 
 package("sysmgr") {

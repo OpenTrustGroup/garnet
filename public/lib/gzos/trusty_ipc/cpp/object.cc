@@ -122,11 +122,15 @@ zx_status_t TipcObject::Wait(WaitResult* result, zx::time deadline) {
     return err;
   }
 
-  result->event = tipc_event_state();
+  result->event = ReadEvent();
   result->cookie = cookie_;
   result->handle_id = handle_id_;
 
   return ZX_OK;
+}
+
+uint32_t TipcObject::ReadEvent() {
+  return tipc_event_state();
 }
 
 void TipcObject::Close() {

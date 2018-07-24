@@ -6,14 +6,14 @@
 
 #include <fbl/auto_call.h>
 #include <lib/async-loop/cpp/loop.h>
+#include <sysmgr/cpp/fidl.h>
 
-#include "garnet/public/lib/gzos/trusty_ipc/cpp/channel.h"
-#include "garnet/public/lib/gzos/trusty_ipc/cpp/object_manager.h"
-#include "garnet/public/lib/gzos/trusty_ipc/cpp/port.h"
-
-#include "garnet/public/lib/gzos/trusty_app/manifest.h"
-#include "garnet/public/lib/gzos/trusty_app/trusty_std.h"
-#include "garnet/public/lib/gzos/trusty_app/uapi/err.h"
+#include "lib/gzos/trusty_app/manifest.h"
+#include "lib/gzos/trusty_app/trusty_std.h"
+#include "lib/gzos/trusty_app/uapi/err.h"
+#include "lib/gzos/trusty_ipc/cpp/channel.h"
+#include "lib/gzos/trusty_ipc/cpp/object_manager.h"
+#include "lib/gzos/trusty_ipc/cpp/port.h"
 
 #include "lib/app/cpp/environment_services.h"
 #include "lib/app/cpp/startup_context.h"
@@ -23,6 +23,8 @@ using namespace trusty_ipc;
 
 static fbl::Mutex context_lock;
 static std::unique_ptr<fuchsia::sys::StartupContext> startup_context;
+static sysmgr::ServiceRegistrySyncPtr service_registry;
+static sysmgr::ServiceRegistryPtr service_registry_async;
 
 static fbl::Mutex async_loop_lock;
 static bool async_loop_started = false;
@@ -146,6 +148,11 @@ long port_create(const char *path, uint32_t num_recv_bufs,
 
     fbl::AutoLock lock(&async_loop_lock);
     loop_ptr = &loop;
+
+    fuchsia::sys::ConnectToEnvironmentService<sysmgr::ServiceRegistry>(
+        service_registry.NewRequest());
+    fuchsia::sys::ConnectToEnvironmentService<sysmgr::ServiceRegistry>(
+        service_registry_async.NewRequest());
   }
 
   auto port =
@@ -160,6 +167,8 @@ long port_create(const char *path, uint32_t num_recv_bufs,
     FXL_DLOG(ERROR) << "Failed to install object: " << status;
     return zx_status_to_lk_err(status);
   }
+  auto remove_port = fbl::MakeAutoCall(
+      [&obj_mgr, &port]() { obj_mgr->RemoveObject(port->handle_id()); });
 
   std::string service_name(path);
   status = startup_context->outgoing().AddPublicService<TipcPort>(
@@ -170,36 +179,72 @@ long port_create(const char *path, uint32_t num_recv_bufs,
 
   if (status != ZX_OK) {
     FXL_DLOG(ERROR) << "Failed to publish port service: " << status;
-    obj_mgr->RemoveObject(port->handle_id());
     return zx_status_to_lk_err(status);
   }
 
+  service_registry->AddService(service_name);
+
   port->set_name(path);
+  remove_port.cancel();
   return (long)port->handle_id();
+}
+
+static void wait_for_port(fbl::RefPtr<TipcChannelImpl> channel,
+                          std::string path) {
+  auto port_connect = [path, channel] {
+    PortConnectFacade facade(
+        std::move(channel), [](TipcPortSyncPtr &port, std::string path) {
+          fuchsia::sys::ConnectToEnvironmentService<TipcPort>(port.NewRequest(),
+                                                              path);
+          return ZX_OK;
+        });
+    zx_status_t err =
+        facade.Connect(path, trusty_app::Manifest::Instance()->GetUuid());
+    if (err != ZX_OK) {
+      FXL_DLOG(ERROR) << "Failed to connect " << path << ", err=" << err;
+      channel->SignalEvent(TipcEvent::HUP);
+    }
+  };
+
+  service_registry_async->WaitOnService(path,
+                                        [port_connect] { port_connect(); });
+
+  channel->SetCloseCallback(
+      [path]() { service_registry->CancelWaitOnService(path); });
 }
 
 long connect(const char *path, uint32_t flags) {
   fbl::RefPtr<TipcChannelImpl> channel;
   channel = fbl::MakeRefCounted<TipcChannelImpl>();
   if (!channel) {
-    FXL_LOG(ERROR) << "Failed to create tipc channel";
+    FXL_DLOG(ERROR) << "Failed to create tipc channel";
     return ERR_NO_MEMORY;
   }
 
   channel->SetReadyCallback(
-      [&channel] { channel->SignalEvent(TipcEvent::READY); });
+      [channel] { channel->SignalEvent(TipcEvent::READY); });
 
-  PortConnectFacade facade;
-  facade.SetChannel(channel);
-  facade.SetPortServiceConnector([](TipcPortSyncPtr &port, std::string path) {
-    std::string service_name(path);
-    fuchsia::sys::ConnectToEnvironmentService<TipcPort>(port.NewRequest(),
-                                                        path);
-  });
+  PortConnectFacade facade(
+      channel, [flags, channel](TipcPortSyncPtr &port, std::string path) {
+        bool found;
+        service_registry->LookupService(path, &found);
+        if (!found) {
+          if (flags & IPC_CONNECT_WAIT_FOR_PORT) {
+            wait_for_port(channel, path);
+            return ZX_ERR_SHOULD_WAIT;
+          }
 
-  zx_status_t status = facade.Connect(path);
+          return ZX_ERR_NOT_FOUND;
+        }
+        fuchsia::sys::ConnectToEnvironmentService<TipcPort>(port.NewRequest(),
+                                                            path);
+        return ZX_OK;
+      });
+
+  zx_status_t status =
+      facade.Connect(path, trusty_app::Manifest::Instance()->GetUuid());
   if (status != ZX_OK) {
-    return status;
+    return zx_status_to_lk_err(status);
   }
 
   auto obj_mgr = TipcObjectManager::Instance();
@@ -279,8 +324,12 @@ long trusty_close(uint32_t handle_id) {
     fbl::AutoLock lock(&context_lock);
 
     auto port = fbl::RefPtr<TipcPortImpl>::Downcast(fbl::move(obj));
+
     status =
         startup_context->outgoing().RemovePublicService<TipcPort>(port->name());
+    if (status == ZX_OK) {
+      service_registry->RemoveService(port->name());
+    }
   }
   return zx_status_to_lk_err(status);
 }
@@ -362,7 +411,11 @@ static void start_message_loop() {
   fbl::AutoLock lock(&async_loop_lock);
   if (!async_loop_started) {
     FXL_DCHECK(loop_ptr);
+
+    // We need exactly 2 message loop threads
     loop_ptr->StartThread();
+    loop_ptr->StartThread();
+
     async_loop_started = true;
   }
 }
@@ -466,7 +519,7 @@ long read_msg(uint32_t handle_id, uint32_t msg_id, uint32_t offset,
 
   auto channel = fbl::RefPtr<TipcChannelImpl>::Downcast(fbl::move(obj));
   auto buf = msg->iov->base;
-  auto& buf_size = msg->iov->len;
+  auto &buf_size = msg->iov->len;
   status = channel->ReadMessage(msg_id, offset, buf, &buf_size);
   if (status != ZX_OK) {
     FXL_DLOG(ERROR) << "Failed to read message, handle_id: " << handle_id

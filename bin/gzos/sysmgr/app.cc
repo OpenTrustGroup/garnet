@@ -121,8 +121,6 @@ void App::RegisterSingleton(std::string service_name,
           fidl::Clone(launch_info->arguments, &dup_launch_info.arguments);
           dup_launch_info.directory_request = services.NewRequest();
 
-          // Mount TA's "/pkg/data" to our "/system/data/<app_name>/", thus
-          // TA can read and parse manifest file by itself.
           MountPackageData(dup_launch_info);
 
           env_launcher_->CreateComponent(std::move(dup_launch_info),

@@ -6,9 +6,13 @@
 #include <lib/async-loop/cpp/loop.h>
 #include <sys/types.h>
 
-#include "garnet/bin/sysmgr/app.h"
+#include "garnet/bin/gzos/sysmgr/app.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/log_settings_command_line.h"
+
+#if WITH_DYNAMIC_SERVICE
+#include "garnet/bin/gzos/sysmgr/dynamic_service_app.h"
+#endif
 
 constexpr char kConfigDir[] = "/system/data/sysmgr/";
 
@@ -51,7 +55,11 @@ int main(int argc, const char** argv) {
   }
 
   async::Loop loop(&kAsyncLoopConfigMakeDefault);
+#if WITH_DYNAMIC_SERVICE
+  sysmgr::DynamicServiceApp app;
+#else
   sysmgr::App app(std::move(config));
+#endif
 
   loop.Run();
   return 0;

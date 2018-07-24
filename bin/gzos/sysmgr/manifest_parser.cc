@@ -85,13 +85,17 @@ void ParsePublicServices(
   }
 }
 
+// Mount TA's "/pkg/data" to our "/system/data/<app_name>/", thus
+// TA can read and parse manifest file by itself.
 void MountPackageData(fuchsia::sys::LaunchInfo& launch_info) {
   std::string package_data_path = fxl::Concatenate(
       {fxl::StringView(kTrustedAppDataPath), "/", launch_info.url.get()});
   fxl::UniqueFD fd(open(package_data_path.c_str(), O_RDONLY));
   if (fd.is_valid()) {
     auto flat_namespace = fuchsia::sys::FlatNamespace::New();
-    flat_namespace->paths.push_back("pkg/data");
+    FXL_CHECK(flat_namespace);
+
+    flat_namespace->paths.push_back("/pkg/data");
     flat_namespace->directories.push_back(
         fsl::CloneChannelFromFileDescriptor(fd.get()));
 

@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <fbl/auto_call.h>
 #include <fbl/auto_lock.h>
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
@@ -105,6 +106,7 @@ zx_status_t TipcPortImpl::Accept(std::string* uuid_out,
   if (channel == nullptr) {
     return ZX_ERR_SHOULD_WAIT;
   }
+  auto close_channel = fbl::MakeAutoCall([&channel]() { channel->Close(); });
 
   if (!HasPendingRequests()) {
     ClearEvent(TipcEvent::READY);
@@ -121,19 +123,20 @@ zx_status_t TipcPortImpl::Accept(std::string* uuid_out,
     delete uuid;
   }
 
-  // remove channel hup callback and user should take care of
-  // channel HUP event by itself
-  channel->set_cookie(nullptr);
-  channel->SetHupCallback(nullptr);
-
   zx_status_t err = TipcObjectManager::Instance()->InstallObject(channel);
   if (err != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to install channel object: " << err;
     return err;
   }
+
+  // remove channel hup callback and user should take care of
+  // channel HUP event by itself
+  channel->set_cookie(nullptr);
+  channel->SetHupCallback(nullptr);
   channel->NotifyReady();
 
   *channel_out = fbl::move(channel);
+  close_channel.cancel();
   return ZX_OK;
 }
 
@@ -144,11 +147,22 @@ void TipcPortImpl::Close() {
   TipcObject::Close();
 }
 
-zx_status_t PortConnectFacade::Connect(std::string path) {
+zx_status_t PortConnectFacade::Connect(std::string path, fidl::StringPtr uuid) {
   FXL_DCHECK(port_service_connector_);
 
   TipcPortSyncPtr port_client;
-  port_service_connector_(port_client, path);
+  zx_status_t status = port_service_connector_(port_client, path);
+
+  // We can simply return ZX_OK if the user wants to wait for port
+  // it's user's responsibility to re-connect the port when it is ready
+  if (status == ZX_ERR_SHOULD_WAIT) {
+    return ZX_OK;
+  }
+
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "failed to connect to port service, status=" << status;
+    return status;
+  }
 
   uint32_t num_items;
   uint64_t item_size;
@@ -158,7 +172,7 @@ zx_status_t PortConnectFacade::Connect(std::string path) {
     return ZX_ERR_INTERNAL;
   }
 
-  zx_status_t status = channel_->Init(num_items, item_size);
+  status = channel_->Init(num_items, item_size);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "failed to init channel, status=" << status;
     return status;
@@ -166,7 +180,7 @@ zx_status_t PortConnectFacade::Connect(std::string path) {
 
   fidl::InterfaceHandle<TipcChannel> peer_handle;
   auto local_handle = channel_->GetInterfaceHandle();
-  ret = port_client->Connect(std::move(local_handle), nullptr, &status,
+  ret = port_client->Connect(std::move(local_handle), uuid, &status,
                              &peer_handle);
   if (!ret) {
     FXL_LOG(ERROR) << "internal error on calling port->Connect()";

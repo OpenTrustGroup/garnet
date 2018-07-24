@@ -74,21 +74,19 @@ class TipcPortImpl : public TipcPort, public TipcObject {
 
 class PortConnectFacade {
  public:
-  using ServiceConnector =
-      std::function<void(TipcPortSyncPtr& port, std::string path)>;
+  using PortServiceConnector =
+      std::function<zx_status_t(TipcPortSyncPtr& port, std::string path)>;
 
-  void SetChannel(fbl::RefPtr<TipcChannelImpl> channel) {
-    channel_ = std::move(channel);
-  }
-  void SetPortServiceConnector(ServiceConnector callback) {
-    port_service_connector_ = std::move(callback);
-  }
+  PortConnectFacade(fbl::RefPtr<TipcChannelImpl> channel,
+                    PortServiceConnector connector)
+      : channel_(std::move(channel)),
+        port_service_connector_(std::move(connector)) {}
 
-  zx_status_t Connect(std::string path);
+  zx_status_t Connect(std::string path, fidl::StringPtr uuid);
 
  private:
-  ServiceConnector port_service_connector_ = nullptr;
   fbl::RefPtr<TipcChannelImpl> channel_;
+  PortServiceConnector port_service_connector_;
 };
 
 }  // namespace trusty_ipc

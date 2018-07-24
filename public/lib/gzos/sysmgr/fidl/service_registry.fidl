@@ -1,0 +1,18 @@
+// Copyright 2018 Open Trust Group
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library sysmgr;
+
+[Discoverable]
+interface ServiceRegistry {
+  1: AddService(string service_name);
+
+  2: RemoveService(string service_name);
+
+  3: LookupService(string service_name) -> (bool found);
+
+  4: WaitOnService(string service_name) -> ();
+
+  5: CancelWaitOnService(string service_name);
+};

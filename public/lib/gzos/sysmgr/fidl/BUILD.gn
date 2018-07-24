@@ -8,6 +8,6 @@ fidl("fidl") {
   name = "sysmgr"
 
   sources = [
-    "service_provider.fidl",
+    "service_registry.fidl",
   ]
 }

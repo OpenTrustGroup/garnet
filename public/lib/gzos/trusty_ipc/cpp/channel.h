@@ -38,7 +38,7 @@ class TipcChannelImpl
 
   // |TipcObject|
   void Close() override;
-  uint32_t tipc_event_state() override;
+  uint32_t ReadEvent() override;
 
   auto GetInterfaceHandle() {
     fidl::InterfaceHandle<TipcChannel> handle;
@@ -60,6 +60,10 @@ class TipcChannelImpl
   void SetMessageCallback(Callback callback) {
     fbl::AutoLock lock(&lock_);
     message_callback_ = std::move(callback);
+  }
+  void SetCloseCallback(Callback callback) {
+    fbl::AutoLock lock(&lock_);
+    close_callback_ = std::move(callback);
   }
 
   zx_status_t SendMessage(void* msg, size_t msg_size);
@@ -111,6 +115,7 @@ class TipcChannelImpl
   Callback ready_callback_ FXL_GUARDED_BY(lock_);
   Callback hup_callback_ FXL_GUARDED_BY(lock_);
   Callback message_callback_ FXL_GUARDED_BY(lock_);
+  Callback close_callback_ FXL_GUARDED_BY(lock_);
 };
 
 }  // namespace trusty_ipc

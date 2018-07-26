@@ -49,6 +49,9 @@ class TipcChannelTest : public ::testing::Test {
     remote_channel_->Bind(std::move(handle));
 
     local_channel_->NotifyReady();
+
+    ASSERT_TRUE(local_channel_->is_bound());
+    ASSERT_TRUE(remote_channel_->is_bound());
   }
 
   virtual void TeadDown() {
@@ -60,9 +63,6 @@ class TipcChannelTest : public ::testing::Test {
   }
 
   void TestSendAndReceive(TipcChannelImpl* sender, TipcChannelImpl* receiver) {
-    ASSERT_TRUE(sender->is_bound());
-    ASSERT_TRUE(receiver->is_bound());
-
     // Send test messages from sender
     for (uint32_t i = 0; i < kNumItems; i++) {
       TestMessage test_msg(i);
@@ -71,7 +71,7 @@ class TipcChannelTest : public ::testing::Test {
 
     // We ran out of free buffer, should fail
     uint32_t dummy;
-    EXPECT_EQ(sender->SendMessage(&dummy, sizeof(dummy)), ZX_ERR_NO_MEMORY);
+    EXPECT_EQ(sender->SendMessage(&dummy, sizeof(dummy)), ZX_ERR_UNAVAILABLE);
 
     // Read test messages from receiver and verify it
     for (uint32_t i = 0; i < kNumItems; i++) {
@@ -92,6 +92,14 @@ class TipcChannelTest : public ::testing::Test {
       // Put the message back to free list
       EXPECT_EQ(receiver->PutMessage(msg_id), ZX_OK);
     }
+
+    // Receiver channel should notify sender channel there are free buffers
+    WaitResult result;
+    EXPECT_EQ(sender->Wait(&result, zx::deadline_after(zx::msec(1))), ZX_OK);
+    EXPECT_EQ(result.event, TipcEvent::SEND_UNBLOCKED);
+
+    EXPECT_EQ(sender->Wait(&result, zx::deadline_after(zx::msec(1))),
+              ZX_ERR_TIMED_OUT);
   }
 
   async::Loop loop_;
@@ -102,6 +110,36 @@ class TipcChannelTest : public ::testing::Test {
 TEST_F(TipcChannelTest, ExchangeMessage) {
   TestSendAndReceive(local_channel_.get(), remote_channel_.get());
   TestSendAndReceive(remote_channel_.get(), local_channel_.get());
+}
+
+TEST_F(TipcChannelTest, IovMessageTest) {
+  TipcChannelImpl* sender = local_channel_.get();
+  TipcChannelImpl* receiver = remote_channel_.get();
+
+  char buf1[] = "Hello";
+  char buf2[] = "World";
+  iovec_t iov[2] = {{buf1, sizeof(buf1)}, {buf2, sizeof(buf2)}};
+
+  ipc_msg_t msg = {2, iov, 0, NULL};
+
+  size_t actual_send = 0;
+  EXPECT_EQ(sender->SendMessage(&msg, actual_send), ZX_OK);
+  EXPECT_EQ(actual_send, sizeof(buf1) + sizeof(buf2));
+
+  char recv_buf[32];
+  iovec_t recv_iov = {recv_buf, sizeof(recv_buf)};
+  ipc_msg_t recv_msg = {1, &recv_iov, 0, NULL};
+
+  uint32_t msg_id;
+  size_t msg_len = 0;
+  size_t actual_read = 0;
+  EXPECT_EQ(receiver->GetMessage(&msg_id, &msg_len), ZX_OK);
+  EXPECT_EQ(msg_len, sizeof(buf1) + sizeof(buf2));
+
+  EXPECT_EQ(receiver->ReadMessage(msg_id, 0, &recv_msg, actual_read), ZX_OK);
+  EXPECT_EQ(actual_read, sizeof(buf1) + sizeof(buf2));
+
+  EXPECT_EQ(receiver->PutMessage(msg_id), ZX_OK);
 }
 
 }  // namespace trusty_ipc

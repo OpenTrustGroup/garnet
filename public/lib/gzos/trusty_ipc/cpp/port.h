@@ -11,16 +11,10 @@
 
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/logging.h"
+#include "lib/gzos/trusty_app/trusty_ipc.h"
 #include "lib/gzos/trusty_ipc/cpp/object.h"
 
 namespace trusty_ipc {
-
-enum {
-  /* allow Trusted Apps to connect to this port */
-  IPC_PORT_ALLOW_TA_CONNECT = 0x1,
-  /* allow non-secure clients to connect to this port */
-  IPC_PORT_ALLOW_NS_CONNECT = 0x2,
-};
 
 class TipcChannelImpl;
 

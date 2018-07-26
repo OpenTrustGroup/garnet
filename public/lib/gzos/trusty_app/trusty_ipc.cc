@@ -55,6 +55,7 @@ static inline long zx_status_to_lk_err(zx_status_t status) {
     case ZX_ERR_OUT_OF_RANGE:
       return ERR_OUT_OF_RANGE;
     case ZX_ERR_BUFFER_TOO_SMALL:
+    case ZX_ERR_UNAVAILABLE:
       return ERR_NOT_ENOUGH_BUFFER;
     case ZX_ERR_BAD_STATE:
       return ERR_BAD_STATE;
@@ -72,8 +73,6 @@ static inline long zx_status_to_lk_err(zx_status_t status) {
       return ERR_ALREADY_EXISTS;
     case ZX_ERR_ALREADY_BOUND:
       return ERR_ALREADY_EXISTS;
-    case ZX_ERR_UNAVAILABLE:
-      return ERR_NOT_VALID;
     case ZX_ERR_ACCESS_DENIED:
       return ERR_ACCESS_DENIED;
     case ZX_ERR_IO:
@@ -509,8 +508,6 @@ long read_msg(uint32_t handle_id, uint32_t msg_id, uint32_t offset,
               ipc_msg_t *msg) {
   FXL_DCHECK(msg);
   FXL_DCHECK(msg->iov);
-  // TODO(james): support multiple iovs
-  FXL_DCHECK(msg->num_iov == 1);
 
   fbl::RefPtr<TipcObject> obj;
   zx_status_t status = get_object_by_id(TipcObject::CHANNEL, handle_id, &obj);
@@ -519,16 +516,15 @@ long read_msg(uint32_t handle_id, uint32_t msg_id, uint32_t offset,
   }
 
   auto channel = fbl::RefPtr<TipcChannelImpl>::Downcast(fbl::move(obj));
-  auto buf = msg->iov->base;
-  auto &buf_size = msg->iov->len;
-  status = channel->ReadMessage(msg_id, offset, buf, &buf_size);
+  size_t actual_read = 0;
+  status = channel->ReadMessage(msg_id, offset, msg, actual_read);
   if (status != ZX_OK) {
     FXL_DLOG(ERROR) << "Failed to read message, handle_id: " << handle_id
                     << " status: " << status;
     return zx_status_to_lk_err(status);
   }
 
-  return buf_size;
+  return actual_read;
 }
 
 long put_msg(uint32_t handle_id, uint32_t msg_id) {
@@ -552,8 +548,6 @@ long put_msg(uint32_t handle_id, uint32_t msg_id) {
 long send_msg(uint32_t handle_id, ipc_msg_t *msg) {
   FXL_DCHECK(msg);
   FXL_DCHECK(msg->iov);
-  // TODO(james): support multiple iovs
-  FXL_DCHECK(msg->num_iov == 1);
 
   fbl::RefPtr<TipcObject> obj;
   zx_status_t status = get_object_by_id(TipcObject::CHANNEL, handle_id, &obj);
@@ -562,14 +556,13 @@ long send_msg(uint32_t handle_id, ipc_msg_t *msg) {
   }
 
   auto channel = fbl::RefPtr<TipcChannelImpl>::Downcast(fbl::move(obj));
-  auto buf = msg->iov->base;
-  auto buf_size = msg->iov->len;
-  status = channel->SendMessage(buf, buf_size);
+  size_t actual_send = 0;
+  status = channel->SendMessage(msg, actual_send);
   if (status != ZX_OK) {
     FXL_DLOG(ERROR) << "Failed to send message, handle_id: " << handle_id
                     << " status: " << status;
     return zx_status_to_lk_err(status);
   }
 
-  return NO_ERROR;
+  return actual_send;
 }

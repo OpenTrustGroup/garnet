@@ -38,7 +38,7 @@ zx_status_t TipcChannelImpl::PopulatePeerSharedItemsLocked() {
   fidl::VectorPtr<SharedMessageItem> shared_items;
   bool ret = peer_->RequestSharedMessageItems(&shared_items);
   if (!ret) {
-    UnBind();
+    UnBindLocked();
     return ZX_ERR_INTERNAL;
   }
 
@@ -49,12 +49,13 @@ zx_status_t TipcChannelImpl::PopulatePeerSharedItemsLocked() {
   peer_shared_items_.resize(shared_items->size());
   for (auto& shared_item : *shared_items) {
     uint32_t msg_id = shared_item.msg_id;
+    uint32_t size = shared_item.size;
     auto item = fbl::make_unique<MessageItem>(msg_id);
     if (!item) {
       return ZX_ERR_NO_MEMORY;
     }
 
-    zx_status_t status = item->InitFromVmo(fbl::move(shared_item.vmo));
+    zx_status_t status = item->InitFromVmo(fbl::move(shared_item.vmo), size);
     if (status != ZX_OK) {
       return status;
     }
@@ -88,6 +89,7 @@ void TipcChannelImpl::RequestSharedMessageItems(
     SharedMessageItem shared_item;
 
     shared_item.vmo = item.GetDuplicateVmo();
+    shared_item.size = item.size();
     shared_item.msg_id = item.msg_id();
     shared_items.push_back(std::move(shared_item));
   }
@@ -99,7 +101,8 @@ void TipcChannelImpl::GetFreeMessageItem(GetFreeMessageItemCallback callback) {
   fbl::AutoLock lock(&lock_);
 
   if (free_list_.is_empty()) {
-    callback(ZX_ERR_NO_MEMORY, 0);
+    callback(ZX_ERR_UNAVAILABLE, 0);
+    no_free_item_ = true;
     return;
   }
 
@@ -110,24 +113,19 @@ void TipcChannelImpl::GetFreeMessageItem(GetFreeMessageItemCallback callback) {
   callback(ZX_OK, msg_id);
 }
 
-void TipcChannelImpl::NotifyMessageItemIsFilled(
-    uint32_t msg_id, uint64_t filled_size,
-    NotifyMessageItemIsFilledCallback callback) {
+void TipcChannelImpl::NotifyMessageItemIsFilled(uint32_t msg_id,
+                                                uint64_t filled_size) {
   fbl::AutoLock lock(&lock_);
 
   auto iter = outgoing_list_.find_if(
       [&msg_id](const MessageItem& item) { return item.msg_id() == msg_id; });
-  if (iter == outgoing_list_.end()) {
-    callback(ZX_ERR_NOT_FOUND);
-    return;
-  }
+  FXL_CHECK(iter != outgoing_list_.end());
 
   auto item = outgoing_list_.erase(iter);
   item->update_filled_size(filled_size);
   filled_list_.push_back(fbl::move(item));
 
   SignalEvent(TipcEvent::MSG);
-  callback(ZX_OK);
 
   if (message_callback_) {
     message_callback_();
@@ -140,6 +138,10 @@ void TipcChannelImpl::Bind(fidl::InterfaceHandle<TipcChannel> handle) {
 
 void TipcChannelImpl::UnBind() {
   fbl::AutoLock lock(&lock_);
+  UnBindLocked();
+}
+
+void TipcChannelImpl::UnBindLocked() {
   ready_ = false;
 
   // The reference count held by callbacks should be released
@@ -156,13 +158,12 @@ void TipcChannelImpl::UnBind() {
 }
 
 void TipcChannelImpl::Close() {
-  {
-    fbl::AutoLock lock(&lock_);
-    if (close_callback_) {
-      close_callback_();
-    }
+  fbl::AutoLock lock(&lock_);
+  if (close_callback_) {
+    close_callback_();
   }
-  UnBind();
+
+  UnBindLocked();
   TipcObject::Close();
 }
 
@@ -177,7 +178,27 @@ void TipcChannelImpl::NotifyReady() {
   ready_ = true;
 }
 
-zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
+zx_status_t TipcChannelImpl::SendMessage(void* buf, size_t buf_size) {
+  FXL_DCHECK(buf);
+
+  iovec_t iov[1] = {{buf, buf_size}};
+  ipc_msg_t msg = {1, iov, 0, NULL};
+
+  size_t actual_send = buf_size;
+  zx_status_t status = SendMessage(&msg, actual_send);
+  if (status != ZX_OK) {
+    return status;
+  }
+
+  if (actual_send != buf_size) {
+    FXL_LOG(ERROR) << "no available buffer for sending full message";
+    return ZX_ERR_NO_RESOURCES;
+  }
+
+  return ZX_OK;
+}
+
+zx_status_t TipcChannelImpl::SendMessage(ipc_msg_t* msg, size_t& actual_send) {
   FXL_DCHECK(msg);
   fbl::AutoLock lock(&lock_);
 
@@ -203,7 +224,7 @@ zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
 
   bool ret = peer_->GetFreeMessageItem(&status, &msg_id);
   if (!ret) {
-    UnBind();
+    UnBindLocked();
     return ZX_ERR_INTERNAL;
   }
 
@@ -212,20 +233,32 @@ zx_status_t TipcChannelImpl::SendMessage(void* msg, size_t msg_size) {
   }
 
   auto item = peer_shared_items_[msg_id].get();
-  if (msg_size > item->size()) {
-    return ZX_ERR_NO_MEMORY;
+
+  char* buffer_ptr = static_cast<char*>(item->PtrFromOffset(0));
+  size_t buffer_size = item->size();
+
+  actual_send = 0;
+  for (uint32_t i = 0; i < msg->num_iov; i++) {
+    iovec* iov = &msg->iov[i];
+    FXL_DCHECK(iov);
+    size_t iov_len = (iov->len < buffer_size) ? iov->len : buffer_size;
+    memcpy(buffer_ptr, iov->base, iov_len);
+    buffer_ptr += iov_len;
+    buffer_size -= iov_len;
+    actual_send += iov_len;
+
+    if (buffer_size == 0) {
+      break;
+    }
   }
 
-  void* buffer_ptr = item->PtrFromOffset(0);
-  memcpy(buffer_ptr, msg, msg_size);
-
-  ret = peer_->NotifyMessageItemIsFilled(msg_id, msg_size, &status);
+  ret = peer_->NotifyMessageItemIsFilled(msg_id, actual_send);
   if (!ret) {
-    UnBind();
+    UnBindLocked();
     return ZX_ERR_INTERNAL;
   }
 
-  return status;
+  return ZX_OK;
 }
 
 zx_status_t TipcChannelImpl::GetMessage(uint32_t* msg_id, size_t* len) {
@@ -236,8 +269,6 @@ zx_status_t TipcChannelImpl::GetMessage(uint32_t* msg_id, size_t* len) {
 
   auto item = filled_list_.pop_front();
   if (item == nullptr) {
-    FXL_DLOG(INFO) << "no message item found";
-    ClearEvent(TipcEvent::MSG);
     return ZX_ERR_SHOULD_WAIT;
   }
 
@@ -257,6 +288,23 @@ zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
   FXL_DCHECK(buf);
   FXL_DCHECK(buf_size);
 
+  iovec_t iov[1] = {{buf, *buf_size}};
+  ipc_msg_t msg = {1, iov, 0, NULL};
+
+  size_t actual_read = 0;
+  zx_status_t status = ReadMessage(msg_id, offset, &msg, actual_read);
+
+  if (status == ZX_OK) {
+    *buf_size = actual_read;
+  }
+
+  return status;
+}
+
+zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
+                                         ipc_msg_t* msg, size_t& actual_read) {
+  FXL_DCHECK(msg);
+
   fbl::AutoLock lock(&lock_);
 
   auto it = read_list_.find_if(
@@ -271,13 +319,24 @@ zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
     return ZX_ERR_OUT_OF_RANGE;
   }
 
-  size_t bytes_to_copy = filled_size - offset;
-  if (*buf_size < bytes_to_copy) {
-    return ZX_ERR_NO_MEMORY;
-  }
+  char* buffer_ptr = static_cast<char*>(it->PtrFromOffset(offset));
+  size_t buffer_size = filled_size - offset;
 
-  memcpy(buf, it->PtrFromOffset(offset), bytes_to_copy);
-  *buf_size = bytes_to_copy;
+  actual_read = 0;
+  for (uint32_t i = 0; i < msg->num_iov; i++) {
+    iovec_t* iov = &msg->iov[i];
+    FXL_DCHECK(iov);
+
+    size_t iov_len = (iov->len < buffer_size) ? iov->len : buffer_size;
+    memcpy(iov->base, buffer_ptr, iov_len);
+    buffer_ptr += iov_len;
+    buffer_size -= iov_len;
+    actual_read += iov_len;
+
+    if (buffer_size == 0) {
+      break;
+    }
+  }
 
   return ZX_OK;
 }
@@ -295,7 +354,25 @@ zx_status_t TipcChannelImpl::PutMessage(uint32_t msg_id) {
   auto item = read_list_.erase(it);
   free_list_.push_back(fbl::move(item));
 
+  if (no_free_item_) {
+    async::PostTask(async_get_default(), [this] {
+      fbl::AutoLock lock(&lock_);
+      no_free_item_ = false;
+
+      bool ret = peer_->NotifyFreeItemAvailable();
+      if (!ret) {
+        FXL_LOG(ERROR) << "failed to notify peer we have free item available";
+        UnBindLocked();
+      }
+    });
+  }
+
   return ZX_OK;
+}
+
+void TipcChannelImpl::NotifyFreeItemAvailable() {
+  // Notify user that peer has free item available
+  SignalEvent(TipcEvent::SEND_UNBLOCKED);
 }
 
 void TipcChannelImpl::Ready() {
@@ -312,6 +389,10 @@ uint32_t TipcChannelImpl::ReadEvent() {
 
   if (event_state & TipcEvent::READY) {
     ClearEvent(TipcEvent::READY);
+  }
+
+  if (event_state & TipcEvent::SEND_UNBLOCKED) {
+    ClearEvent(TipcEvent::SEND_UNBLOCKED);
   }
 
   return event_state;

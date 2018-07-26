@@ -29,10 +29,12 @@ class MessageItem
       return status;
     }
 
-    return InitInternal(fbl::move(vmo));
+    return InitInternal(fbl::move(vmo), size);
   }
 
-  zx_status_t InitFromVmo(zx::vmo vmo) { return InitInternal(fbl::move(vmo)); }
+  zx_status_t InitFromVmo(zx::vmo vmo, uint32_t size) {
+    return InitInternal(fbl::move(vmo), size);
+  }
 
   bool initialized() const { return buffer_ptr_ != nullptr; }
 
@@ -72,21 +74,23 @@ class MessageItem
   uint32_t msg_id() const { return msg_id_; }
 
  private:
-  zx_status_t InitInternal(zx::vmo vmo) {
+  zx_status_t InitInternal(zx::vmo vmo, uint32_t item_size) {
     Reset();
 
-    uint64_t size;
-    zx_status_t status = vmo.get_size(&size);
+    uint64_t vmo_size;
+    zx_status_t status = vmo.get_size(&vmo_size);
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "zx::vmo::get_size failed, status " << status;
       return status;
     }
-    size_ = size;
+
+    FXL_CHECK(vmo_size >= item_size);
+    size_ = item_size;
     filled_size_ = 0;
 
     uintptr_t mapped_buffer = 0u;
     status = zx::vmar::root_self().map(
-        0, vmo, 0u, size, ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE,
+        0, vmo, 0u, vmo_size, ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE,
         &mapped_buffer);
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "zx::vmar::map failed, status " << status;

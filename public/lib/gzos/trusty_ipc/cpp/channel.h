@@ -12,6 +12,7 @@
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
+#include "lib/gzos/trusty_app/trusty_ipc.h"
 #include "lib/gzos/trusty_ipc/cpp/msg_item.h"
 #include "lib/gzos/trusty_ipc/cpp/object.h"
 #include "lib/gzos/trusty_ipc/cpp/object_manager.h"
@@ -31,6 +32,7 @@ class TipcChannelImpl
   TipcChannelImpl()
       : initialized_(false),
         peer_shared_items_ready_(false),
+        no_free_item_(false),
         binding_(this),
         ready_(false) {}
 
@@ -66,10 +68,13 @@ class TipcChannelImpl
     close_callback_ = std::move(callback);
   }
 
-  zx_status_t SendMessage(void* msg, size_t msg_size);
+  zx_status_t SendMessage(void* buf, size_t buf_size);
+  zx_status_t SendMessage(ipc_msg_t* msg, size_t& actual_send);
   zx_status_t GetMessage(uint32_t* msg_id, size_t* len);
   zx_status_t ReadMessage(uint32_t msg_id, uint32_t offset, void* buf,
                           size_t* buf_size);
+  zx_status_t ReadMessage(uint32_t msg_id, uint32_t offset, ipc_msg_t* msg,
+                          size_t& actual_read);
   zx_status_t PutMessage(uint32_t msg_id);
   void NotifyReady();
 
@@ -88,9 +93,8 @@ class TipcChannelImpl
   void RequestSharedMessageItems(
       RequestSharedMessageItemsCallback callback) override;
   void GetFreeMessageItem(GetFreeMessageItemCallback callback) override;
-  void NotifyMessageItemIsFilled(
-      uint32_t msg_id, uint64_t msg_size,
-      NotifyMessageItemIsFilledCallback callback) override;
+  void NotifyMessageItemIsFilled(uint32_t msg_id, uint64_t msg_size) override;
+  void NotifyFreeItemAvailable() override;
 
  private:
   using MsgList = fbl::DoublyLinkedList<fbl::unique_ptr<MessageItem>>;
@@ -101,6 +105,7 @@ class TipcChannelImpl
   MsgList read_list_ FXL_GUARDED_BY(lock_);
   bool initialized_ FXL_GUARDED_BY(lock_);
   bool peer_shared_items_ready_ FXL_GUARDED_BY(lock_);
+  bool no_free_item_ FXL_GUARDED_BY(lock_);
 
   fidl::Binding<TipcChannel> binding_;
 
@@ -108,6 +113,9 @@ class TipcChannelImpl
   std::vector<fbl::unique_ptr<MessageItem>> peer_shared_items_;
 
   bool ready_ FXL_GUARDED_BY(lock_);
+
+  void UnBindLocked()
+      FXL_EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   zx_status_t PopulatePeerSharedItemsLocked()
       FXL_EXCLUSIVE_LOCKS_REQUIRED(lock_);

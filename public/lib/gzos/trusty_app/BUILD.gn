@@ -26,6 +26,12 @@ source_set("sources") {
   ]
 }
 
+source_set("share_headers") {
+  sources = [
+    "trusty_ipc.h",
+  ]
+}
+
 source_set("unittests") {
   testonly = true
   sources = [

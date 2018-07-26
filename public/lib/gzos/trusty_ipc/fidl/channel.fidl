@@ -7,6 +7,7 @@ library trusty_ipc;
 struct SharedMessageItem {
   uint32 msg_id;
   handle<vmo> vmo;
+  uint32 size;
 };
 
 interface TipcChannel {
@@ -23,5 +24,8 @@ interface TipcChannel {
   4: GetFreeMessageItem() -> (status s, uint32 msg_id);
 
   // Notify peer message item is filled
-  5: NotifyMessageItemIsFilled(uint32 msg_id, uint64 msg_size) -> (status s);
+  5: NotifyMessageItemIsFilled(uint32 msg_id, uint64 msg_size);
+
+  // Notify peer that there is a free item available
+  6: NotifyFreeItemAvailable();
 };

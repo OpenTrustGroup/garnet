@@ -318,12 +318,10 @@ long trusty_close(uint32_t handle_id) {
     return zx_status_to_lk_err(status);
   }
 
-  obj->Close();
-
   if (obj->is_port()) {
     fbl::AutoLock lock(&context_lock);
 
-    auto port = fbl::RefPtr<TipcPortImpl>::Downcast(fbl::move(obj));
+    auto port = fbl::RefPtr<TipcPortImpl>::Downcast(obj);
 
     status =
         startup_context->outgoing().RemovePublicService<TipcPort>(port->name());
@@ -331,6 +329,9 @@ long trusty_close(uint32_t handle_id) {
       service_registry->RemoveService(port->name());
     }
   }
+
+  obj->Close();
+
   return zx_status_to_lk_err(status);
 }
 

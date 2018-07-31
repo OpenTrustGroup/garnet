@@ -9,7 +9,7 @@
 #include <fbl/string.h>
 #include <ree_agent/cpp/fidl.h>
 
-#include "lib/fidl/cpp/binding.h"
+#include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/logging.h"
 #include "lib/gzos/trusty_ipc/cpp/object.h"
 
@@ -27,18 +27,14 @@ class TipcChannelImpl;
 class TipcPortImpl : public TipcPort, public TipcObject {
  public:
   TipcPortImpl(uint32_t num_items, size_t item_size, uint32_t flags)
-      : binding_(this),
-        num_items_(num_items),
-        item_size_(item_size),
-        flags_(flags) {}
-
+      : num_items_(num_items), item_size_(item_size), flags_(flags) {}
   TipcPortImpl() = delete;
 
   zx_status_t Accept(std::string* uuid_out,
                      fbl::RefPtr<TipcChannelImpl>* channel_out);
 
   void Bind(fidl::InterfaceRequest<TipcPort> request) {
-    binding_.Bind(std::move(request));
+    bindings_.AddBinding(this, std::move(request));
   }
 
   void Close() override;
@@ -55,7 +51,7 @@ class TipcPortImpl : public TipcPort, public TipcObject {
   void GetInfo(GetInfoCallback callback) override;
 
  private:
-  fidl::Binding<TipcPort> binding_;
+  fidl::BindingSet<TipcPort> bindings_;
   std::string name_;
 
   uint32_t num_items_;

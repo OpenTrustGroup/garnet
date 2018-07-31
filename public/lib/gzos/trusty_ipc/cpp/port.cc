@@ -142,7 +142,11 @@ zx_status_t TipcPortImpl::Accept(std::string* uuid_out,
 
 void TipcPortImpl::Close() {
   fbl::AutoLock lock(&mutex_);
-  pending_requests_.clear();
+  bindings_.CloseAll();
+
+  while (auto channel = pending_requests_.pop_back()) {
+    channel->Close();
+  }
 
   TipcObject::Close();
 }
@@ -168,8 +172,8 @@ zx_status_t PortConnectFacade::Connect(std::string path, fidl::StringPtr uuid) {
   uint64_t item_size;
   bool ret = port_client->GetInfo(&num_items, &item_size);
   if (!ret) {
-    FXL_LOG(ERROR) << "internal error on calling port->GetInfo()";
-    return ZX_ERR_INTERNAL;
+    FXL_LOG(ERROR) << "bind to a non-existed port service";
+    return ZX_ERR_NOT_FOUND;
   }
 
   status = channel_->Init(num_items, item_size);

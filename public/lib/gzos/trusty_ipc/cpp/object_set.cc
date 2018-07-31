@@ -34,8 +34,9 @@ zx_status_t TipcObjectSet::AddObject(fbl::RefPtr<TipcObject> obj) {
 
   // If the object already has event before adding to object set,
   // we need to add it to pending list, or the event may lost
-  if (child_ref->obj->tipc_event_state() != 0) {
-    AppendToPendingList(child_ref);
+  auto event = obj->tipc_event_state();
+  if (event) {
+    obj->SignalEvent(event);
   }
 
   AppendToChildList(child_ref);

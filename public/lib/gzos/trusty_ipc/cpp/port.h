@@ -16,6 +16,8 @@
 
 namespace trusty_ipc {
 
+static constexpr uint32_t kTipcPortPathMax = 64;
+
 class TipcChannelImpl;
 
 class TipcPortImpl : public TipcPort, public TipcObject {

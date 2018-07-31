@@ -178,6 +178,30 @@ void TipcChannelImpl::NotifyReady() {
   ready_ = true;
 }
 
+zx_status_t TipcChannelImpl::CheckMessageParameter(ipc_msg_t* msg) {
+  if (!msg) {
+    return ZX_ERR_INTERNAL;
+  }
+
+  if (msg->num_handles && !msg->handles) {
+    return ZX_ERR_INTERNAL;
+  }
+
+  if (msg->num_iov) {
+    if (!msg->iov) {
+      return ZX_ERR_INTERNAL;
+    }
+
+    for (uint32_t i = 0; i < msg->num_iov; i++) {
+      if (!msg->iov[i].base) {
+        return ZX_ERR_INTERNAL;
+      }
+    }
+  }
+
+  return ZX_OK;
+}
+
 zx_status_t TipcChannelImpl::SendMessage(void* buf, size_t buf_size) {
   FXL_DCHECK(buf);
 
@@ -220,6 +244,11 @@ zx_status_t TipcChannelImpl::SendMessage(ipc_msg_t* msg, size_t& actual_send) {
       return err;
     }
     peer_shared_items_ready_ = true;
+  }
+
+  status = CheckMessageParameter(msg);
+  if (status != ZX_OK) {
+    return status;
   }
 
   bool ret = peer_->GetFreeMessageItem(&status, &msg_id);
@@ -311,12 +340,17 @@ zx_status_t TipcChannelImpl::ReadMessage(uint32_t msg_id, uint32_t offset,
       [&msg_id](const MessageItem& item) { return msg_id == item.msg_id(); });
 
   if (it == read_list_.end()) {
-    return ZX_ERR_NOT_FOUND;
+    return ZX_ERR_INVALID_ARGS;
   }
 
   size_t filled_size = it->filled_size();
   if (offset > filled_size) {
-    return ZX_ERR_OUT_OF_RANGE;
+    return ZX_ERR_INVALID_ARGS;
+  }
+
+  zx_status_t status = CheckMessageParameter(msg);
+  if (status != ZX_OK) {
+    return status;
   }
 
   char* buffer_ptr = static_cast<char*>(it->PtrFromOffset(offset));
@@ -348,7 +382,7 @@ zx_status_t TipcChannelImpl::PutMessage(uint32_t msg_id) {
       [&msg_id](const MessageItem& item) { return msg_id == item.msg_id(); });
 
   if (it == read_list_.end()) {
-    return ZX_ERR_NOT_FOUND;
+    return ZX_ERR_INVALID_ARGS;
   }
 
   auto item = read_list_.erase(it);

@@ -120,6 +120,8 @@ class TipcChannelImpl
   zx_status_t PopulatePeerSharedItemsLocked()
       FXL_EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
+  zx_status_t CheckMessageParameter(ipc_msg_t* msg);
+
   Callback ready_callback_ FXL_GUARDED_BY(lock_);
   Callback hup_callback_ FXL_GUARDED_BY(lock_);
   Callback message_callback_ FXL_GUARDED_BY(lock_);

@@ -37,7 +37,7 @@ static inline long zx_status_to_lk_err(zx_status_t status) {
 
   switch (status) {
     case ZX_ERR_INTERNAL:
-      return ERR_GENERIC;
+      return ERR_FAULT;
     case ZX_ERR_NOT_SUPPORTED:
       return ERR_NOT_SUPPORTED;
     case ZX_ERR_NO_RESOURCES:
@@ -120,7 +120,7 @@ static zx_status_t get_object_by_id(TipcObject::ObjectType type,
       FXL_DLOG(ERROR) << "Tipc object type mismatch, expect: " << type
                       << " actual: " << obj->type()
                       << " handle_id: " << handle_id;
-      return ZX_ERR_BAD_HANDLE;
+      return ZX_ERR_INVALID_ARGS;
     }
   }
 
@@ -154,6 +154,20 @@ long port_create(const char *path, uint32_t num_recv_bufs,
         service_registry_async.NewRequest());
   }
 
+
+  std::string service_name(path);
+  if (service_name.empty() || (service_name.size() >= kTipcPortPathMax)) {
+    return ERR_INVALID_ARGS;
+  }
+
+  if (num_recv_bufs == 0 || (num_recv_bufs > kTipcChanMaxBufItems)) {
+    return ERR_INVALID_ARGS;
+  }
+
+  if (recv_buf_size == 0 || (recv_buf_size > kTipcChanMaxBufSize)) {
+    return ERR_INVALID_ARGS;
+  }
+
   auto port =
       fbl::MakeRefCounted<TipcPortImpl>(num_recv_bufs, recv_buf_size, flags);
   if (port == nullptr) {
@@ -169,7 +183,6 @@ long port_create(const char *path, uint32_t num_recv_bufs,
   auto remove_port = fbl::MakeAutoCall(
       [&obj_mgr, &port]() { obj_mgr->RemoveObject(port->handle_id()); });
 
-  std::string service_name(path);
   status = startup_context->outgoing().AddPublicService<TipcPort>(
       [port](fidl::InterfaceRequest<TipcPort> request) {
         port->Bind(std::move(request));
@@ -213,6 +226,15 @@ static void wait_for_port(fbl::RefPtr<TipcChannelImpl> channel,
 }
 
 long connect(const char *path, uint32_t flags) {
+  if (!path) {
+    return ERR_INVALID_ARGS;
+  }
+
+  size_t path_len = strlen(path);
+  if (path_len == 0 || (path_len >= kTipcPortPathMax)) {
+    return ERR_INVALID_ARGS;
+  }
+
   fbl::RefPtr<TipcChannelImpl> channel;
   channel = fbl::MakeRefCounted<TipcChannelImpl>();
   if (!channel) {
@@ -505,9 +527,10 @@ long get_msg(uint32_t handle_id, ipc_msg_info_t *msg_info) {
 }
 
 long read_msg(uint32_t handle_id, uint32_t msg_id, uint32_t offset,
-              ipc_msg_t *msg) {
-  FXL_DCHECK(msg);
-  FXL_DCHECK(msg->iov);
+              ipc_msg_t* msg) {
+  if (!msg) {
+    return ERR_FAULT;
+  }
 
   fbl::RefPtr<TipcObject> obj;
   zx_status_t status = get_object_by_id(TipcObject::CHANNEL, handle_id, &obj);
@@ -545,9 +568,10 @@ long put_msg(uint32_t handle_id, uint32_t msg_id) {
   return NO_ERROR;
 }
 
-long send_msg(uint32_t handle_id, ipc_msg_t *msg) {
-  FXL_DCHECK(msg);
-  FXL_DCHECK(msg->iov);
+long send_msg(uint32_t handle_id, ipc_msg_t* msg) {
+  if (!msg) {
+    return ERR_FAULT;
+  }
 
   fbl::RefPtr<TipcObject> obj;
   zx_status_t status = get_object_by_id(TipcObject::CHANNEL, handle_id, &obj);

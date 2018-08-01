@@ -8,6 +8,11 @@
 namespace trusty_ipc {
 
 zx_status_t TipcObjectSet::AddObject(fbl::RefPtr<TipcObject> obj) {
+  return AddObject(obj, nullptr, ~0u);
+}
+
+zx_status_t TipcObjectSet::AddObject(fbl::RefPtr<TipcObject> obj,
+                                     void* cookie, uint32_t event_mask) {
   FXL_DCHECK(obj);
   fbl::RefPtr<TipcObjectRef> child_ref;
 
@@ -32,6 +37,9 @@ zx_status_t TipcObjectSet::AddObject(fbl::RefPtr<TipcObject> obj) {
     return err;
   }
 
+  child_ref->cookie = cookie;
+  child_ref->event_mask = event_mask;
+
   // If the object already has event before adding to object set,
   // we need to add it to pending list, or the event may lost
   auto event = obj->tipc_event_state();
@@ -46,6 +54,31 @@ zx_status_t TipcObjectSet::AddObject(fbl::RefPtr<TipcObject> obj) {
 void TipcObjectSet::RemoveObject(fbl::RefPtr<TipcObject> obj) {
   FXL_DCHECK(obj);
   obj->RemoveParent(this);
+}
+
+zx_status_t TipcObjectSet::ModifyObject(fbl::RefPtr<TipcObject> obj,
+                                     void* cookie, uint32_t event_mask) {
+  FXL_DCHECK(obj);
+  {
+    fbl::AutoLock lock(&mutex_);
+
+    auto it = child_list_.find_if(
+        [&obj](const TipcObjectRef& ref) { return ref.obj == obj; });
+
+    if (it == child_list_.end()) {
+      return ZX_ERR_NOT_FOUND;
+    }
+
+    it->cookie = cookie;
+    it->event_mask = event_mask;
+  }
+
+  auto event = obj->tipc_event_state();
+  if (event) {
+    obj->SignalEvent(event);
+  }
+
+  return ZX_OK;
 }
 
 void TipcObjectSet::OnChildRemoved(fbl::RefPtr<TipcObjectRef> child_ref) {
@@ -106,12 +139,12 @@ bool TipcObjectSet::PollPendingEvents(WaitResult* result) {
 
   while (auto ref = pending_list_.pop_front()) {
     auto obj = ref->obj;
-    zx_signals_t event = obj->tipc_event_state();
+    zx_signals_t event = obj->tipc_event_state() & ref->event_mask;
 
     if (event) {
       result->handle_id = obj->handle_id();
       result->event = event;
-      result->cookie = obj->cookie();
+      result->cookie = is_root_ ? obj->cookie() : ref->cookie;
 
       pending_list_.push_back(ref);
       return true;

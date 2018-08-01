@@ -29,7 +29,7 @@ class TipcObjectManager {
   zx_status_t Wait(WaitResult* result, zx::time deadline);
 
  private:
-  TipcObjectManager() : root_obj_set_(fbl::AdoptRef(new TipcObjectSet())) {}
+  TipcObjectManager() : root_obj_set_(fbl::AdoptRef(new TipcObjectSet(true))) {}
 
   fbl::RefPtr<TipcObject> object_table_[kMaxHandle] FXL_GUARDED_BY(
       object_table_lock_);

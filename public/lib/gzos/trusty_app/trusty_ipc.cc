@@ -404,21 +404,14 @@ long handle_set_ctrl(uint32_t hset_id, uint32_t cmd, struct uevent *evt) {
 
   switch (cmd) {
     case HSET_ADD:
-      // TODO(james): support object event mask
-      // child_obj->set_event_mask(evt->event);
-      child_obj->set_cookie(evt->cookie);
-      status = hset->AddObject(child_obj);
+      status = hset->AddObject(child_obj, evt->cookie, evt->event);
       break;
     case HSET_DEL:
       hset->RemoveObject(child_obj);
       status = ZX_OK;
       break;
     case HSET_MOD:
-      // TODO(james): support object event mask
-      // child_obj->set_event_mask(evt->event);
-      child_obj->set_cookie(evt->cookie);
-      child_obj->SignalEvent(child_obj->tipc_event_state());
-      status = ZX_OK;
+      status = hset->ModifyObject(child_obj, evt->cookie, evt->event);
       break;
     default:
       FXL_LOG(ERROR) << "Invalid hset cmd: " << cmd;

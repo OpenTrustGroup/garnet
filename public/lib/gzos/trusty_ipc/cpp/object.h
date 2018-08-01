@@ -45,9 +45,12 @@ struct TipcObjectRef
   bool InPendingList() { return pending_list_node.InContainer(); }
   bool InChildList() { return child_list_node.InContainer(); }
 
-  TipcObjectRef(TipcObject* o) : obj(o) {}
+  TipcObjectRef(TipcObject* o) : parent(nullptr), cookie(nullptr),
+                                 event_mask(~0u), obj(o) {}
 
   TipcObjectObserver* parent;
+  void* cookie;
+  uint32_t event_mask;
 
   fbl::RefPtr<TipcObject> obj;
 

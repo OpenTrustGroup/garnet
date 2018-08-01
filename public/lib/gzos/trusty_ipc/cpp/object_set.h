@@ -19,9 +19,14 @@ namespace trusty_ipc {
 
 class TipcObjectSet : public TipcObject, public TipcObjectObserver {
  public:
-  TipcObjectSet() = default;
+  TipcObjectSet() : is_root_(false) {}
+  TipcObjectSet(bool is_root) : is_root_(is_root) {}
   zx_status_t AddObject(fbl::RefPtr<TipcObject> obj);
+  zx_status_t AddObject(fbl::RefPtr<TipcObject> obj, void* cookie,
+                        uint32_t event_mask);
   void RemoveObject(fbl::RefPtr<TipcObject> obj);
+  zx_status_t ModifyObject(fbl::RefPtr<TipcObject> obj, void* cookie,
+                           uint32_t event_mask);
 
   // |TipcObject|
   virtual zx_status_t Wait(WaitResult* result, zx::time deadline) override;
@@ -62,6 +67,7 @@ class TipcObjectSet : public TipcObject, public TipcObjectObserver {
   PendingList pending_list_ FXL_GUARDED_BY(mutex_);
   ChildList child_list_ FXL_GUARDED_BY(mutex_);
   fbl::Mutex mutex_;
+  bool is_root_;
 };
 
 }  // namespace trusty_ipc

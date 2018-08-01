@@ -66,7 +66,7 @@ zx_status_t TipcChannelImpl::PopulatePeerSharedItemsLocked() {
   return ZX_OK;
 }
 
-void TipcChannelImpl::Hup() {
+void TipcChannelImpl::Hup(HupCallback callback) {
   fbl::AutoLock lock(&lock_);
   ready_ = false;
 
@@ -76,6 +76,8 @@ void TipcChannelImpl::Hup() {
   if (hup_callback_) {
     hup_callback_();
   }
+
+  callback();
 }
 
 void TipcChannelImpl::RequestSharedMessageItems(

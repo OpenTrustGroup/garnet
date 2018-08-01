@@ -89,7 +89,7 @@ class TipcChannelImpl
   ObjectType get_type() override { return ObjectType::CHANNEL; }
 
   // |TipcChannel|
-  void Hup() override;
+  void Hup(HupCallback callback) override;
   void Ready() override;
   void RequestSharedMessageItems(
       RequestSharedMessageItemsCallback callback) override;

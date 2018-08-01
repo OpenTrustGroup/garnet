@@ -312,6 +312,9 @@ long accept(uint32_t handle_id, uuid_t *peer_uuid) {
   std::string uuid_str;
   fbl::RefPtr<TipcChannelImpl> new_channel;
   status = port->Accept(&uuid_str, &new_channel);
+  if (status == ZX_ERR_SHOULD_WAIT) {
+    return ERR_NO_MSG;
+  }
   if (status != ZX_OK) {
     FXL_DLOG(ERROR) << "Failed to accept new connection,"
                     << " handle_id: " << handle_id << " status: " << status;

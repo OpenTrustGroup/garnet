@@ -73,8 +73,7 @@ void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
   }
 
   auto handle_hup = [this, channel] {
-    channel->Close();
-    RemoveFromPendingRequest(channel);
+    channel->UnBind();
   };
 
   channel->SetHupCallback([handle_hup] {
@@ -121,6 +120,10 @@ zx_status_t TipcPortImpl::Accept(std::string* uuid_out,
       uuid_out->assign(uuid->c_str());
     }
     delete uuid;
+  }
+
+  if (!channel->IsBound()) {
+    return ZX_ERR_PEER_CLOSED;
   }
 
   zx_status_t err = TipcObjectManager::Instance()->InstallObject(channel);

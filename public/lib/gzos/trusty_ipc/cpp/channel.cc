@@ -157,6 +157,10 @@ void TipcChannelImpl::UnBindLocked() {
   }
 }
 
+bool TipcChannelImpl::IsBound() {
+  return peer_.is_bound();
+}
+
 void TipcChannelImpl::Close() {
   fbl::AutoLock lock(&lock_);
   if (close_callback_) {

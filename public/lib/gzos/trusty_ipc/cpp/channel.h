@@ -50,6 +50,7 @@ class TipcChannelImpl
 
   void Bind(fidl::InterfaceHandle<TipcChannel> handle);
   void UnBind();
+  bool IsBound();
 
   void SetReadyCallback(Callback callback) {
     fbl::AutoLock lock(&lock_);

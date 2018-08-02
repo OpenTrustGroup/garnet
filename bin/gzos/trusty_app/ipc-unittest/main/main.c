@@ -2612,6 +2612,8 @@ static void run_all_tests (void)
 	run_hset_add_chan_test();
 	run_hset_event_mask_test();
 
+// TODO(sy): send handle is not supported yet
+#if 0
 	/* send handle */
 	run_send_handle_test();
 	run_send_handle_negative_test();
@@ -2620,7 +2622,7 @@ static void run_all_tests (void)
 
 	run_send_handle_bulk_test();
 	run_echo_handle_bulk_test();
-
+#endif
 	TLOGI("Conditions checked: %d\n", _tests_total);
 	TLOGI("Conditions failed:  %d\n", _tests_failed);
 	if (_tests_failed == 0)

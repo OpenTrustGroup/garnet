@@ -8,6 +8,12 @@ config("include_dirs") {
   include_dirs = [ "./include" ]
 }
 
+config("suppress_warning") {
+  cflags = [
+    "-Wno-unused-function",
+  ]
+}
+
 trusty_app("ipc-unittest-main") {
   sources = [
     "main/main.c"
@@ -16,7 +22,8 @@ trusty_app("ipc-unittest-main") {
   manifest = "main/manifest.json"
 
   public_configs = [
-    ":include_dirs"
+    ":include_dirs",
+    ":suppress_warning"
   ]
 }
 

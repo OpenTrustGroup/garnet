@@ -25,20 +25,20 @@
 
 __BEGIN_CDECLS
 
-long port_create(const char *path, uint32_t num_recv_bufs,
+long port_create(const char* path, uint32_t num_recv_bufs,
                  uint32_t recv_buf_size, uint32_t flags);
-long connect(const char *path, uint32_t flags);
-long accept(uint32_t handle_id, uuid_t *peer_uuid);
-long set_cookie(uint32_t handle, void *cookie);
+long connect(const char* path, uint32_t flags);
+long accept(uint32_t handle_id, uuid_t* peer_uuid);
+long set_cookie(uint32_t handle, void* cookie);
 long handle_set_create(void);
-long handle_set_ctrl(uint32_t handle, uint32_t cmd, struct uevent *evt);
-long wait(uint32_t handle_id, uevent_t *event, uint32_t timeout_msecs);
-long wait_any(uevent_t *event, uint32_t timeout_msecs);
-long get_msg(uint32_t handle, ipc_msg_info_t *msg_info);
+long handle_set_ctrl(uint32_t handle, uint32_t cmd, struct uevent* evt);
+long wait(uint32_t handle_id, uevent_t* event, uint32_t timeout_msecs);
+long wait_any(uevent_t* event, uint32_t timeout_msecs);
+long get_msg(uint32_t handle, ipc_msg_info_t* msg_info);
 long read_msg(uint32_t handle, uint32_t msg_id, uint32_t offset,
-              ipc_msg_t *msg);
+              ipc_msg_t* msg);
 long put_msg(uint32_t handle, uint32_t msg_id);
-long send_msg(uint32_t handle, ipc_msg_t *msg);
+long send_msg(uint32_t handle, ipc_msg_t* msg);
 
 // Zircon has already defined the following symbols, thus
 // we need to rename it to avoid symbol conflicting.

@@ -28,7 +28,7 @@ static sysmgr::ServiceRegistryPtr service_registry_async;
 
 static fbl::Mutex async_loop_lock;
 static bool async_loop_started = false;
-static async::Loop *loop_ptr;
+static async::Loop* loop_ptr;
 
 static inline long zx_status_to_lk_err(zx_status_t status) {
   if (status == ZX_OK) {
@@ -94,7 +94,7 @@ static constexpr char kScanUuidFormatString[] =
     "-"
     "%2" SCNx8 "%2" SCNx8 "%2" SCNx8 "%2" SCNx8 "%2" SCNx8 "%2" SCNx8;
 
-static inline void string_to_uuid(std::string &str, uuid_t *uuid) {
+static inline void string_to_uuid(std::string& str, uuid_t* uuid) {
   sscanf(str.c_str(), kScanUuidFormatString, &uuid->time_low, &uuid->time_mid,
          &uuid->time_hi_and_version, &uuid->clock_seq_and_node[0],
          &uuid->clock_seq_and_node[1], &uuid->clock_seq_and_node[2],
@@ -105,21 +105,20 @@ static inline void string_to_uuid(std::string &str, uuid_t *uuid) {
 
 static zx_status_t get_object_by_id(TipcObject::ObjectType type,
                                     uint32_t handle_id,
-                                    fbl::RefPtr<TipcObject> *obj_out) {
+                                    fbl::RefPtr<TipcObject>* obj_out) {
   auto obj_mgr = TipcObjectManager::Instance();
   fbl::RefPtr<TipcObject> obj;
   zx_status_t status = obj_mgr->GetObject(handle_id, &obj);
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to get object, handle_id: " << handle_id
-                    << " status: " << status;
+    FXL_VLOG(1) << "Failed to get object, handle_id: " << handle_id
+                << " status: " << status;
     return status;
   }
 
   if (type != TipcObject::ANY) {
     if (obj->type() != type) {
-      FXL_DLOG(ERROR) << "Tipc object type mismatch, expect: " << type
-                      << " actual: " << obj->type()
-                      << " handle_id: " << handle_id;
+      FXL_VLOG(1) << "Tipc object type mismatch, expect: " << type
+                  << " actual: " << obj->type() << " handle_id: " << handle_id;
       return ZX_ERR_INVALID_ARGS;
     }
   }
@@ -133,7 +132,7 @@ long trusty_nanosleep(uint32_t clock_id, uint32_t flags, uint64_t sleep_time) {
   return zx_status_to_lk_err(status);
 }
 
-long port_create(const char *path, uint32_t num_recv_bufs,
+long port_create(const char* path, uint32_t num_recv_bufs,
                  uint32_t recv_buf_size, uint32_t flags) {
   // async_loop and startup_context objects should be created in main thread
   // so they can't be declared as global variable. We assume that the first time
@@ -153,7 +152,6 @@ long port_create(const char *path, uint32_t num_recv_bufs,
     fuchsia::sys::ConnectToEnvironmentService<sysmgr::ServiceRegistry>(
         service_registry_async.NewRequest());
   }
-
 
   std::string service_name(path);
   if (service_name.empty() || (service_name.size() >= kTipcPortPathMax)) {
@@ -177,7 +175,7 @@ long port_create(const char *path, uint32_t num_recv_bufs,
   auto obj_mgr = TipcObjectManager::Instance();
   zx_status_t status = obj_mgr->InstallObject(port);
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to install object: " << status;
+    FXL_VLOG(1) << "Failed to install object: " << status;
     return zx_status_to_lk_err(status);
   }
   auto remove_port = fbl::MakeAutoCall(
@@ -190,7 +188,7 @@ long port_create(const char *path, uint32_t num_recv_bufs,
       service_name);
 
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to publish port service: " << status;
+    FXL_VLOG(1) << "Failed to publish port service: " << status;
     return zx_status_to_lk_err(status);
   }
 
@@ -205,7 +203,7 @@ static void wait_for_port(fbl::RefPtr<TipcChannelImpl> channel,
                           std::string path) {
   auto port_connect = [path, channel] {
     PortConnectFacade facade(
-        std::move(channel), [](TipcPortSyncPtr &port, std::string path) {
+        std::move(channel), [](TipcPortSyncPtr& port, std::string path) {
           fuchsia::sys::ConnectToEnvironmentService<TipcPort>(port.NewRequest(),
                                                               path);
           return ZX_OK;
@@ -213,7 +211,7 @@ static void wait_for_port(fbl::RefPtr<TipcChannelImpl> channel,
     zx_status_t err =
         facade.Connect(path, trusty_app::Manifest::Instance()->GetUuid());
     if (err != ZX_OK) {
-      FXL_DLOG(ERROR) << "Failed to connect " << path << ", err=" << err;
+      FXL_VLOG(1) << "Failed to connect " << path << ", err=" << err;
       channel->SignalEvent(TipcEvent::HUP);
     }
   };
@@ -225,7 +223,7 @@ static void wait_for_port(fbl::RefPtr<TipcChannelImpl> channel,
       [path]() { service_registry->CancelWaitOnService(path); });
 }
 
-long connect(const char *path, uint32_t flags) {
+long connect(const char* path, uint32_t flags) {
   if (!path) {
     return ERR_INVALID_ARGS;
   }
@@ -238,7 +236,7 @@ long connect(const char *path, uint32_t flags) {
   fbl::RefPtr<TipcChannelImpl> channel;
   channel = fbl::MakeRefCounted<TipcChannelImpl>();
   if (!channel) {
-    FXL_DLOG(ERROR) << "Failed to create tipc channel";
+    FXL_VLOG(1) << "Failed to create tipc channel";
     return ERR_NO_MEMORY;
   }
 
@@ -246,7 +244,7 @@ long connect(const char *path, uint32_t flags) {
       [channel] { channel->SignalEvent(TipcEvent::READY); });
 
   PortConnectFacade facade(
-      channel, [flags, channel](TipcPortSyncPtr &port, std::string path) {
+      channel, [flags, channel](TipcPortSyncPtr& port, std::string path) {
         bool found;
         service_registry->LookupService(path, &found);
         if (!found) {
@@ -271,7 +269,7 @@ long connect(const char *path, uint32_t flags) {
   auto obj_mgr = TipcObjectManager::Instance();
   status = obj_mgr->InstallObject(channel);
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to install object: " << status;
+    FXL_VLOG(1) << "Failed to install object: " << status;
     return zx_status_to_lk_err(status);
   }
 
@@ -284,7 +282,7 @@ long connect(const char *path, uint32_t flags) {
   WaitResult result;
   status = channel->Wait(&result, zx::time::infinite());
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to wait event: " << status;
+    FXL_VLOG(1) << "Failed to wait event: " << status;
     return zx_status_to_lk_err(status);
   }
 
@@ -300,7 +298,7 @@ long connect(const char *path, uint32_t flags) {
   return channel->handle_id();
 }
 
-long accept(uint32_t handle_id, uuid_t *peer_uuid) {
+long accept(uint32_t handle_id, uuid_t* peer_uuid) {
   fbl::RefPtr<TipcObject> obj;
   zx_status_t status = get_object_by_id(TipcObject::PORT, handle_id, &obj);
   if (status != ZX_OK) {
@@ -316,8 +314,8 @@ long accept(uint32_t handle_id, uuid_t *peer_uuid) {
     return ERR_NO_MSG;
   }
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to accept new connection,"
-                    << " handle_id: " << handle_id << " status: " << status;
+    FXL_VLOG(1) << "Failed to accept new connection,"
+                << " handle_id: " << handle_id << " status: " << status;
     return zx_status_to_lk_err(status);
   }
 
@@ -328,9 +326,6 @@ long accept(uint32_t handle_id, uuid_t *peer_uuid) {
       string_to_uuid(uuid_str, peer_uuid);
     }
   }
-
-  FXL_DLOG(INFO) << "accept: port handle_id: " << port->handle_id()
-                 << " new_channel handle_id: " << new_channel->handle_id();
 
   return (long)new_channel->handle_id();
 }
@@ -359,7 +354,7 @@ long trusty_close(uint32_t handle_id) {
   return zx_status_to_lk_err(status);
 }
 
-long set_cookie(uint32_t handle_id, void *cookie) {
+long set_cookie(uint32_t handle_id, void* cookie) {
   fbl::RefPtr<TipcObject> obj;
   zx_status_t status = get_object_by_id(TipcObject::ANY, handle_id, &obj);
   if (status != ZX_OK) {
@@ -378,13 +373,13 @@ long handle_set_create(void) {
 
   zx_status_t status = TipcObjectManager::Instance()->InstallObject(hset);
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to install hset object: " << status;
+    FXL_VLOG(1) << "Failed to install hset object: " << status;
     return zx_status_to_lk_err(status);
   }
   return (long)hset->handle_id();
 }
 
-long handle_set_ctrl(uint32_t hset_id, uint32_t cmd, struct uevent *evt) {
+long handle_set_ctrl(uint32_t hset_id, uint32_t cmd, struct uevent* evt) {
   FXL_DCHECK(evt);
 
   fbl::RefPtr<TipcObject> hset_obj;
@@ -438,7 +433,7 @@ static void start_message_loop() {
   }
 }
 
-long wait(uint32_t handle_id, uevent_t *event, uint32_t timeout_ms) {
+long wait(uint32_t handle_id, uevent_t* event, uint32_t timeout_ms) {
   start_message_loop();
 
   fbl::RefPtr<TipcObject> obj;
@@ -456,8 +451,8 @@ long wait(uint32_t handle_id, uevent_t *event, uint32_t timeout_ms) {
   }
 
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to wait event, handle_id: " << handle_id
-                    << " status: " << status;
+    FXL_VLOG(1) << "Failed to wait event, handle_id: " << handle_id
+                << " status: " << status;
     return zx_status_to_lk_err(status);
   }
 
@@ -467,7 +462,7 @@ long wait(uint32_t handle_id, uevent_t *event, uint32_t timeout_ms) {
   return NO_ERROR;
 }
 
-long wait_any(uevent_t *event, uint32_t timeout_ms) {
+long wait_any(uevent_t* event, uint32_t timeout_ms) {
   start_message_loop();
 
   WaitResult result;
@@ -481,7 +476,7 @@ long wait_any(uevent_t *event, uint32_t timeout_ms) {
   }
 
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to wait any events: " << status;
+    FXL_VLOG(1) << "Failed to wait any events: " << status;
     return zx_status_to_lk_err(status);
   }
 
@@ -491,7 +486,7 @@ long wait_any(uevent_t *event, uint32_t timeout_ms) {
   return NO_ERROR;
 }
 
-long get_msg(uint32_t handle_id, ipc_msg_info_t *msg_info) {
+long get_msg(uint32_t handle_id, ipc_msg_info_t* msg_info) {
   FXL_DCHECK(msg_info);
 
   fbl::RefPtr<TipcObject> obj;
@@ -509,8 +504,8 @@ long get_msg(uint32_t handle_id, ipc_msg_info_t *msg_info) {
   }
 
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to get message, handle_id: " << handle_id
-                    << " status: " << status;
+    FXL_VLOG(1) << "Failed to get message, handle_id: " << handle_id
+                << " status: " << status;
     return zx_status_to_lk_err(status);
   }
 
@@ -538,8 +533,8 @@ long read_msg(uint32_t handle_id, uint32_t msg_id, uint32_t offset,
   size_t actual_read = 0;
   status = channel->ReadMessage(msg_id, offset, msg, actual_read);
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to read message, handle_id: " << handle_id
-                    << " status: " << status;
+    FXL_VLOG(1) << "Failed to read message, handle_id: " << handle_id
+                << " status: " << status;
     return zx_status_to_lk_err(status);
   }
 
@@ -556,8 +551,8 @@ long put_msg(uint32_t handle_id, uint32_t msg_id) {
   auto channel = fbl::RefPtr<TipcChannelImpl>::Downcast(fbl::move(obj));
   status = channel->PutMessage(msg_id);
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to put message, handle_id: " << handle_id
-                    << " status: " << status;
+    FXL_VLOG(1) << "Failed to put message, handle_id: " << handle_id
+                << " status: " << status;
     return zx_status_to_lk_err(status);
   }
 
@@ -579,8 +574,8 @@ long send_msg(uint32_t handle_id, ipc_msg_t* msg) {
   size_t actual_send = 0;
   status = channel->SendMessage(msg, actual_send);
   if (status != ZX_OK) {
-    FXL_DLOG(ERROR) << "Failed to send message, handle_id: " << handle_id
-                    << " status: " << status;
+    FXL_VLOG(1) << "Failed to send message, handle_id: " << handle_id
+                << " status: " << status;
     return zx_status_to_lk_err(status);
   }
 

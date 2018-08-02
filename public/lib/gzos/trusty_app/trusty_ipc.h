@@ -66,7 +66,7 @@ typedef struct iovec {
 
 typedef struct ipc_msg {
   uint32_t num_iov;
-  iovec_t *iov;
+  iovec_t* iov;
 
   uint32_t num_handles;
   handle_t *handles;

@@ -1,4 +1,4 @@
-// Copyright 2018 Open Trust Group.
+// Copyright 2018 Open Trust Group
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 

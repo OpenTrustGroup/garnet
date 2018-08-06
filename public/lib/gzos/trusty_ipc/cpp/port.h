@@ -11,8 +11,9 @@
 
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/logging.h"
-#include "lib/gzos/trusty_app/trusty_ipc.h"
 #include "lib/gzos/trusty_ipc/cpp/object.h"
+
+#include "trusty_ipc.h"
 
 namespace trusty_ipc {
 

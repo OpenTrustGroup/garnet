@@ -12,10 +12,11 @@
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
-#include "lib/gzos/trusty_app/trusty_ipc.h"
 #include "lib/gzos/trusty_ipc/cpp/msg_item.h"
 #include "lib/gzos/trusty_ipc/cpp/object.h"
 #include "lib/gzos/trusty_ipc/cpp/object_manager.h"
+
+#include "trusty_ipc.h"
 
 namespace trusty_ipc {
 

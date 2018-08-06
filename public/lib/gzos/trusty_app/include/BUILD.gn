@@ -1,0 +1,21 @@
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+config("trusty_header_config") {
+  include_dirs = [ "." ]
+}
+
+source_set("include") {
+  public_configs = [ ":trusty_header_config" ]
+
+  sources = [
+    "trusty_ipc.h",
+    "trusty_std.h",
+    "trusty_syscalls.h",
+    "trusty_uuid.h",
+    "lk/list.h",
+    "lk/trace.h",
+    "uapi/err.h"
+  ]
+}

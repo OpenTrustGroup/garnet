@@ -9,8 +9,6 @@
 #include <sysmgr/cpp/fidl.h>
 
 #include "lib/gzos/trusty_app/manifest.h"
-#include "lib/gzos/trusty_app/trusty_std.h"
-#include "lib/gzos/trusty_app/uapi/err.h"
 #include "lib/gzos/trusty_ipc/cpp/channel.h"
 #include "lib/gzos/trusty_ipc/cpp/object_manager.h"
 #include "lib/gzos/trusty_ipc/cpp/port.h"
@@ -18,6 +16,9 @@
 #include "lib/app/cpp/environment_services.h"
 #include "lib/app/cpp/startup_context.h"
 #include "lib/fxl/logging.h"
+
+#include "trusty_std.h"
+#include "uapi/err.h"
 
 using namespace trusty_ipc;
 

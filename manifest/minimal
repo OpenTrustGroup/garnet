@@ -3,7 +3,7 @@
   <projects>
     <project name="garnet"
              path="garnet"
-             remote="ssh://review.gerrithub.io:29418/OpenTrustGroup/garnet"
+             remote="https://review.gerrithub.io/OpenTrustGroup/garnet"
              remotebranch="gzos"
              gerrithost="https://review.gerrithub.io"/>
   </projects>

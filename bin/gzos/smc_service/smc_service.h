@@ -43,8 +43,9 @@ class SmcService {
   static SmcService* GetInstance();
 
   SmcService()
-      : smc_handle_(ZX_HANDLE_INVALID), shared_mem_(nullptr),
-        nop_threads_stop_(true) {}
+      : smc_handle_(ZX_HANDLE_INVALID),
+        shared_mem_(nullptr),
+        nop_threads_should_stop_(true) {}
 
   ~SmcService() { Stop(); }
 
@@ -60,7 +61,7 @@ class SmcService {
     return smc_handle_;
   };
 
-  bool nop_threads_stop() { return nop_threads_stop_.load(); }
+  bool nop_threads_should_stop() { return nop_threads_should_stop_.load(); }
 
  private:
   struct ThreadArgs;
@@ -79,10 +80,11 @@ class SmcService {
   zx_handle_t smc_handle_ __TA_GUARDED(lock_);
   async::WaitMethod<SmcService, &SmcService::OnSmcReady> smc_wait_{this};
   fbl::RefPtr<SharedMem> shared_mem_ __TA_GUARDED(lock_);
-  fbl::unique_ptr<SmcEntity> smc_entities_[SMC_NUM_ENTITIES] __TA_GUARDED(lock_);
+  fbl::unique_ptr<SmcEntity> smc_entities_[SMC_NUM_ENTITIES] __TA_GUARDED(
+      lock_);
   fbl::Mutex nop_threads_lock_;
   thrd_t nop_threads_[kMaxCpuNumbers] __TA_GUARDED(nop_threads_lock_);
-  fbl::atomic<bool> nop_threads_stop_;
+  fbl::atomic<bool> nop_threads_should_stop_;
 };
 
 }  // namespace smc_service

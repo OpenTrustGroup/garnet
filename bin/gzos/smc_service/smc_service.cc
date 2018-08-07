@@ -105,7 +105,7 @@ struct SmcService::ThreadArgs {
 };
 
 zx_status_t SmcService::CreateNopThreads() {
-  FXL_DCHECK(nop_threads_stop());
+  FXL_DCHECK(nop_threads_should_stop());
 
   fbl::AutoLock lock(&nop_threads_lock_);
   nop_threads_stop_.store(false);
@@ -118,7 +118,7 @@ zx_status_t SmcService::CreateNopThreads() {
       SmcService* smc_svc = thrd_args->smc_service;
       uint32_t cpu = thrd_args->cpu_num;
 
-      while (!smc_svc->nop_threads_stop()) {
+      while (!smc_svc->nop_threads_should_stop()) {
         zx_status_t status =
             zx_smc_read_nop(smc_svc->GetHandle(), cpu, &smc_args);
         if (status != ZX_OK) {

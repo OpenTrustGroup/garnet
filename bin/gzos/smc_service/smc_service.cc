@@ -108,7 +108,7 @@ zx_status_t SmcService::CreateNopThreads() {
   FXL_DCHECK(nop_threads_should_stop());
 
   fbl::AutoLock lock(&nop_threads_lock_);
-  nop_threads_stop_.store(false);
+  nop_threads_should_stop_.store(false);
 
   uint32_t cpu;
   for (cpu = 0; cpu < kMaxCpuNumbers; cpu++) {
@@ -197,7 +197,7 @@ void SmcService::Stop() {
 void SmcService::JoinNopThreads() {
   fbl::AutoLock lock(&nop_threads_lock_);
 
-  if (nop_threads_stop_.exchange(true)) {
+  if (nop_threads_should_stop_.exchange(true)) {
     return;
   }
 

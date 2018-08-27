@@ -180,7 +180,7 @@ zx_status_t TipcAgent::SendMessageToRee(uint32_t local, uint32_t remote,
   hdr->flags = 0;
   memcpy(hdr->data, data, data_len);
 
-  return WriteMessage(buf.get(), msg_size);
+  return Write(buf.get(), msg_size);
 }
 
 void TipcAgent::CloseTipcChannelLocked(TipcEndpoint* ep, uint32_t dst_addr) {

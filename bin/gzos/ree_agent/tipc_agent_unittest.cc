@@ -268,8 +268,8 @@ class TipcAgentTest : public ::testing::Test {
     }
   }
 
-  zx_status_t SendMsgByRee(uint32_t src, uint32_t dst,
-                             const char* msg, size_t len) {
+  zx_status_t SendMsgByRee(uint32_t src, uint32_t dst, const char* msg,
+                           size_t len) {
     void* buf = static_cast<void*>(buf_ptr_.get());
     auto hdr = reinterpret_cast<tipc_hdr*>(buf);
     auto data = reinterpret_cast<void*>(hdr->data);
@@ -284,8 +284,7 @@ class TipcAgentTest : public ::testing::Test {
     return msg_cli_.write(0, buf, write_size, nullptr, 0);
   }
 
-  void VerifyReplyMsg(uint32_t src, uint32_t dst,
-                      const char* msg, size_t len) {
+  void VerifyReplyMsg(uint32_t src, uint32_t dst, const char* msg, size_t len) {
     void* buf = static_cast<void*>(buf_ptr_.get());
     uint32_t actual;
     EXPECT_EQ(msg_cli_.read(0, buf, PAGE_SIZE, &actual, nullptr, 0, nullptr),
@@ -520,4 +519,4 @@ TEST_F(TipcAgentTest, SendMsgWithRemoteChannelNotAccepted) {
   ASSERT_EQ(ep->channel->SendMessage(buf, len), ZX_ERR_SHOULD_WAIT);
 }
 
-}  // ree_agent
+}  // namespace ree_agent

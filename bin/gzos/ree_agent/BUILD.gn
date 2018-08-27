@@ -2,9 +2,21 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/fidl/fidl.gni")
 import("//build/package.gni")
+
 source_set("lib") {
   sources = [
+    "message_reader.h",
+    "gz_ipc_agent.cc",
+    "gz_ipc_agent.h",
+    "gz_ipc_msg.h",
+    "gz_ipc_endpoint.cc",
+    "gz_ipc_endpoint.h",
+    "gz_ipc_server.cc",
+    "gz_ipc_server.h",
+    "gz_ipc_client.cc",
+    "gz_ipc_client.h",
     "ree_agent.cc",
     "ree_agent.h",
     "ree_message_impl.cc",
@@ -19,6 +31,7 @@ source_set("lib") {
     "//garnet/public/lib/gzos/trusty_ipc/cpp",
     "//garnet/public/fidl/gzos.reeagent",
     "//garnet/public/lib/svc/cpp",
+    "//garnet/public/lib/fsl",
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/async-loop-cpp",
   ]
@@ -57,6 +70,7 @@ source_set("test") {
   sources = [
     "ree_message-unittest.cc",
     "tipc_agent_unittest.cc",
+    "gz_ipc_agent-unittest.cc",
   ]
 
   deps = [
@@ -64,7 +78,9 @@ source_set("test") {
   ]
 
   public_deps = [
+    "//garnet/public/fidl/gzos.ipc.test",
     "//third_party/googletest:gtest",
+    "//zircon/public/lib/fs",
   ]
 }
 

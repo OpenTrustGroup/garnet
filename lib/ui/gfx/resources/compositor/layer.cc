@@ -11,12 +11,12 @@
 #include "garnet/lib/ui/scenic/util/error_reporter.h"
 #include "garnet/public/lib/escher/util/type_utils.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 const ResourceTypeInfo Layer::kTypeInfo = {ResourceType::kLayer, "Layer"};
 
-Layer::Layer(Session* session, scenic::ResourceId id)
+Layer::Layer(Session* session, ResourceId id)
     : Resource(session, id, Layer::kTypeInfo), translation_(0) {}
 
 Layer::~Layer() = default;
@@ -70,7 +70,9 @@ bool Layer::IsDrawable() const {
 }
 
 std::vector<Hit> Layer::HitTest(const escher::ray4& ray,
-                                Session* session) const {
+                                HitTester* hit_tester) const {
+  FXL_CHECK(hit_tester);
+
   Camera* camera = renderer()->camera();
 
   if (width() == 0.f || height() == 0.f) {
@@ -88,9 +90,8 @@ std::vector<Hit> Layer::HitTest(const escher::ray4& ray,
   std::pair<escher::ray4, escher::mat4> camera_projection_pair =
       camera->ProjectRayIntoScene(local_ray, GetViewingVolume());
 
-  HitTester hit_tester;
-  std::vector<Hit> hits = hit_tester.HitTest(
-      camera->scene().get(), camera_projection_pair.first, session);
+  std::vector<Hit> hits =
+      hit_tester->HitTest(camera->scene().get(), camera_projection_pair.first);
 
   escher::mat4 inverse_layer_transform =
       glm::inverse(camera_projection_pair.second * layer_normalization);
@@ -115,4 +116,4 @@ escher::ViewingVolume Layer::GetViewingVolume() const {
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

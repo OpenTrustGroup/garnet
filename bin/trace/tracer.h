@@ -31,23 +31,19 @@ class Tracer {
   // Streams records |record_consumer| and errors to |error_handler|.
   // Invokes |done_callback| when tracing stops.
   void Start(fuchsia::tracing::TraceOptions options,
-             RecordConsumer record_consumer,
-             ErrorHandler error_handler,
-             fit::closure start_callback,
-             fit::closure done_callback);
+             RecordConsumer record_consumer, ErrorHandler error_handler,
+             fit::closure start_callback, fit::closure done_callback);
 
   // Stops the trace.
   // Does nothing if not started or if already stopping.
   void Stop();
 
  private:
-  void OnHandleReady(async_t* async,
-                     async::WaitBase* wait,
-                     zx_status_t status,
-                     const zx_packet_signal_t* signal);
+  void OnHandleReady(async_dispatcher_t* dispatcher, async::WaitBase* wait,
+                     zx_status_t status, const zx_packet_signal_t* signal);
   void OnHandleError(zx_status_t status);
 
-  void DrainSocket(async_t* async);
+  void DrainSocket(async_dispatcher_t* dispatcher);
   void CloseSocket();
   void Done();
 
@@ -59,7 +55,7 @@ class Tracer {
   fit::closure start_callback_;
   fit::closure done_callback_;
   zx::socket socket_;
-  async_t* async_;
+  async_dispatcher_t* dispatcher_;
   async::WaitMethod<Tracer, &Tracer::OnHandleReady> wait_;
   std::unique_ptr<trace::TraceReader> reader_;
   std::vector<uint8_t> buffer_;

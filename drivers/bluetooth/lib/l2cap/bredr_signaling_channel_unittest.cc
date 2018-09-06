@@ -45,6 +45,49 @@ class L2CAP_BrEdrSignalingChannelTest : public testing::FakeChannelTest {
   std::unique_ptr<BrEdrSignalingChannel> sig_;
 };
 
+TEST_F(L2CAP_BrEdrSignalingChannelTest, RegisterRequestResponder) {
+  const common::ByteBuffer& remote_req = common::CreateStaticByteBuffer(
+      // Disconnection Request.
+      0x06, 0x01, 0x04, 0x00,
+
+      // Payload
+      0x0A, 0x00, 0x08, 0x00);
+  const common::BufferView& expected_payload = remote_req.view(4, 4);
+
+  auto expected_rej = common::CreateStaticByteBuffer(
+      // Command header (Command rejected, length 2)
+      0x01, 0x01, 0x02, 0x00,
+
+      // Reason (Command not understood)
+      0x00, 0x00);
+
+  // Receive remote's request before a handler is assigned, expecting an
+  // outbound rejection.
+  ReceiveAndExpect(remote_req, expected_rej);
+
+  // Register the handler.
+  bool cb_called = false;
+  sig()->ServeRequest(
+      kDisconnectionRequest,
+      [&cb_called, &expected_payload](const common::ByteBuffer& req_payload,
+                                      SignalingChannel::Responder* responder) {
+        cb_called = true;
+        EXPECT_TRUE(common::ContainersEqual(expected_payload, req_payload));
+        responder->Send(req_payload);
+      });
+
+  const common::ByteBuffer& local_rsp = common::CreateStaticByteBuffer(
+      // Disconnection Response.
+      0x07, 0x01, 0x04, 0x00,
+
+      // Payload
+      0x0A, 0x00, 0x08, 0x00);
+
+  // Receive the same command again.
+  ReceiveAndExpect(remote_req, local_rsp);
+  EXPECT_TRUE(cb_called);
+}
+
 TEST_F(L2CAP_BrEdrSignalingChannelTest, RespondsToEchoRequest) {
   auto cmd = common::CreateStaticByteBuffer(
       // Command header (Echo Request, length 1)
@@ -401,6 +444,38 @@ TEST_F(L2CAP_BrEdrSignalingChannelTest, ReuseCommandIds) {
 
   RunLoopUntilIdle();
   EXPECT_EQ(256, req_count);
+}
+
+// Ensure that the signaling channel plumbs a rejection command from remote to
+// the appropriate response handler.
+TEST_F(L2CAP_BrEdrSignalingChannelTest, EchoRemoteRejection) {
+  const common::ByteBuffer& reject_rsp = common::CreateStaticByteBuffer(
+      // Command header (Command Rejected)
+      0x01, 0x01, 0x02, 0x00,
+
+      // Reason (Command not understood)
+      0x00, 0x00);
+
+  bool tx_success = false;
+  fake_chan()->SetSendCallback([&tx_success](auto) { tx_success = true; },
+                               dispatcher());
+
+  const common::ByteBuffer& req_data = common::CreateStaticByteBuffer('h', 'i');
+  bool rx_success = false;
+  EXPECT_TRUE(
+      sig()->TestLink(req_data, [&rx_success](const common::ByteBuffer& data) {
+        rx_success = true;
+        EXPECT_EQ(0U, data.size());
+      }));
+
+  RunLoopUntilIdle();
+  EXPECT_TRUE(tx_success);
+
+  // Remote sends back a rejection.
+  fake_chan()->Receive(reject_rsp);
+
+  RunLoopUntilIdle();
+  EXPECT_TRUE(rx_success);
 }
 
 }  // namespace

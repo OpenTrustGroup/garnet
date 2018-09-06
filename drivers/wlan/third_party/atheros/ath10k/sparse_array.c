@@ -14,11 +14,11 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#include "sparse_array.h"
+
 #include <stdlib.h>
 
 #include <zircon/assert.h>
-
-#include "sparse_array.h"
 
 // An individual element is either a part of the used list or the free list at
 // any given time, each of which is a non-circular doubly-linked list terminated
@@ -39,16 +39,13 @@ struct sparse_array {
     struct sa_elem elems[0];
 };
 
-#define RANGE_CHECK(sa, ndx) \
-    ZX_DEBUG_ASSERT(((ndx) >= 0) && (((size_t)(ndx)) < sa->size))
+#define RANGE_CHECK(sa, ndx) ZX_DEBUG_ASSERT(((ndx) >= 0) && (((size_t)(ndx)) < sa->size))
 
 void sa_init(sparse_array_t* psa, size_t size) {
     ZX_DEBUG_ASSERT(size > 0);
     size_t total_size = sizeof(struct sparse_array) + (sizeof(struct sa_elem) * size);
     *psa = calloc(1, total_size);
-    if (*psa == NULL) {
-        return;
-    }
+    if (*psa == NULL) { return; }
 
     sparse_array_t sa = *psa;
     sa->size = size;
@@ -74,9 +71,7 @@ void sa_free(sparse_array_t sa) {
 
 ssize_t sa_add(sparse_array_t sa, void* payload) {
     ssize_t elem_ndx = sa->free;
-    if (elem_ndx == -1) {
-        return -1;
-    }
+    if (elem_ndx == -1) { return -1; }
     RANGE_CHECK(sa, elem_ndx);
     struct sa_elem* elem = &sa->elems[elem_ndx];
 

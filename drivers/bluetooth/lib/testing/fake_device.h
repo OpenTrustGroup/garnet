@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_FAKE_DEVICE_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_FAKE_DEVICE_H_
 
 #include <unordered_set>
 
@@ -61,7 +62,8 @@ class FakeDevice {
 
   // Generates a Inquiry Response Event payload containing a inquiry result
   // response.
-  common::DynamicByteBuffer CreateInquiryResponseEvent() const;
+  common::DynamicByteBuffer CreateInquiryResponseEvent(
+      hci::InquiryMode mode) const;
 
   const common::DeviceAddress& address() const { return address_; }
 
@@ -165,3 +167,5 @@ class FakeDevice {
 
 }  // namespace testing
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_FAKE_DEVICE_H_

@@ -32,7 +32,7 @@
 #include "garnet/lib/ui/gfx/resources/view_holder.h"
 #include "lib/fxl/logging.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 DumpVisitor::DumpVisitor(std::ostream& output) : output_(output) {}
@@ -207,7 +207,8 @@ void DumpVisitor::Visit(MeshShape* r) {
     WriteProperty("num_indices") << mesh->num_indices();
     WriteProperty("num_vertices") << mesh->num_vertices();
     WriteProperty("index_buffer_offset") << mesh->index_buffer_offset();
-    WriteProperty("vertex_buffer_offset") << mesh->vertex_buffer_offset();
+    WriteProperty("vertex_buffer_offset") << mesh->attribute_buffer(0).offset;
+    WriteProperty("vertex_buffer_stride") << mesh->attribute_buffer(0).stride;
     BeginSection("index_buffer");
     r->index_buffer()->Accept(this);
     EndSection();
@@ -230,6 +231,17 @@ void DumpVisitor::Visit(Material* r) {
         << r->escher_material()->texture()->height();
   } else if (r->texture_image()) {
     WriteProperty("texture.pending") << "true";
+  }
+  VisitResource(r);
+  EndItem();
+}
+
+void DumpVisitor::Visit(Compositor* r) {
+  BeginItem("Compositor", r);
+  if (r->layer_stack()) {
+    BeginSection("stack");
+    r->layer_stack()->Accept(this);
+    EndSection();
   }
   VisitResource(r);
   EndItem();
@@ -399,4 +411,4 @@ void DumpVisitor::EndLine() {
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

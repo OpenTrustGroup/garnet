@@ -4,9 +4,10 @@
 
 #include "lib/ui/scenic/cpp/session.h"
 
-#include "lib/fxl/functional/make_copyable.h"
-#include "lib/fxl/logging.h"
-#include "lib/ui/scenic/cpp/fidl_helpers.h"
+#include <stdio.h>
+#include <zircon/assert.h>
+
+#include "lib/ui/scenic/cpp/commands.h"
 
 namespace scenic {
 
@@ -30,14 +31,14 @@ Session::Session(fuchsia::ui::scenic::SessionPtr session,
                  fidl::InterfaceRequest<fuchsia::ui::scenic::SessionListener>
                      session_listener)
     : session_(std::move(session)), session_listener_binding_(this) {
-  FXL_DCHECK(session_);
+  ZX_DEBUG_ASSERT(session_);
   if (session_listener.is_valid())
     session_listener_binding_.Bind(std::move(session_listener));
 }
 
 Session::Session(fuchsia::ui::scenic::Scenic* scenic)
     : session_listener_binding_(this) {
-  FXL_DCHECK(scenic);
+  ZX_DEBUG_ASSERT(scenic);
   scenic->CreateSession(session_.NewRequest(),
                         session_listener_binding_.NewBinding());
 }
@@ -47,13 +48,14 @@ Session::Session(SessionPtrAndListenerRequest session_and_listener)
               std::move(session_and_listener.second)) {}
 
 Session::~Session() {
-  FXL_DCHECK(resource_count_ == 0)
-      << "Some resources outlived the session: " << resource_count_;
+  ZX_DEBUG_ASSERT_MSG(resource_count_ == 0,
+                      "Some resources outlived the session: %u",
+                      resource_count_);
 }
 
 uint32_t Session::AllocResourceId() {
   uint32_t resource_id = next_resource_id_++;
-  FXL_DCHECK(resource_id);
+  ZX_DEBUG_ASSERT(resource_id);
   resource_count_++;
   return resource_id;
 }
@@ -64,24 +66,35 @@ void Session::ReleaseResource(uint32_t resource_id) {
 }
 
 void Session::Enqueue(fuchsia::ui::gfx::Command command) {
-  commands_.push_back(NewCommand(std::move(command)));
-  if (commands_->size() >= kCommandsPerMessage)
+  Enqueue(NewCommand(std::move(command)));
+}
+
+void Session::Enqueue(fuchsia::ui::input::Command command) {
+  Enqueue(NewCommand(std::move(command)));
+}
+
+void Session::Enqueue(fuchsia::ui::scenic::Command command) {
+  commands_.push_back(std::move(command));
+  if (commands_->size() >= kCommandsPerMessage ||
+      command.Which() == fuchsia::ui::scenic::Command::Tag::kInput) {
     Flush();
+  }
 }
 
 void Session::EnqueueAcquireFence(zx::event fence) {
-  FXL_DCHECK(fence);
+  ZX_DEBUG_ASSERT(fence);
   acquire_fences_.push_back(std::move(fence));
 }
 
 void Session::EnqueueReleaseFence(zx::event fence) {
-  FXL_DCHECK(fence);
+  ZX_DEBUG_ASSERT(fence);
   release_fences_.push_back(std::move(fence));
 }
 
 void Session::Flush() {
+  ZX_DEBUG_ASSERT(session_);
   if (!commands_->empty()) {
-    FXL_DCHECK(static_cast<bool>(commands_));
+    ZX_DEBUG_ASSERT(static_cast<bool>(commands_));
     session_->Enqueue(std::move(commands_));
 
     // After being moved, |commands_| is in a "valid but unspecified state";
@@ -92,6 +105,7 @@ void Session::Flush() {
 }
 
 void Session::Present(uint64_t presentation_time, PresentCallback callback) {
+  ZX_DEBUG_ASSERT(session_);
   Flush();
 
   if (acquire_fences_.is_null())
@@ -104,6 +118,7 @@ void Session::Present(uint64_t presentation_time, PresentCallback callback) {
 
 void Session::HitTest(uint32_t node_id, const float ray_origin[3],
                       const float ray_direction[3], HitTestCallback callback) {
+  ZX_DEBUG_ASSERT(session_);
   fuchsia::ui::gfx::vec3 ray_origin_vec;
   ray_origin_vec.x = ray_origin[0];
   ray_origin_vec.y = ray_origin[1];
@@ -121,6 +136,7 @@ void Session::HitTest(uint32_t node_id, const float ray_origin[3],
 void Session::HitTestDeviceRay(
     const float ray_origin[3], const float ray_direction[3],
     fuchsia::ui::scenic::Session::HitTestDeviceRayCallback callback) {
+  ZX_DEBUG_ASSERT(session_);
   fuchsia::ui::gfx::vec3 ray_origin_vec;
   ray_origin_vec.x = ray_origin[0];
   ray_origin_vec.y = ray_origin[1];
@@ -135,11 +151,28 @@ void Session::HitTestDeviceRay(
                              std::move(ray_direction_vec), std::move(callback));
 }
 
-void Session::OnError(fidl::StringPtr error) {
-  FXL_LOG(ERROR) << "Session error: " << error;
+void Session::Unbind() {
+  ZX_DEBUG_ASSERT(session_);
+  ZX_DEBUG_ASSERT(!session_handle_);
+  session_handle_ = session_.Unbind();
+  session_ = nullptr;
 }
 
-void Session::OnEvent(fidl::VectorPtr<fuchsia::ui::scenic::Event> events) {
+void Session::Rebind() {
+  ZX_DEBUG_ASSERT(!session_);
+  ZX_DEBUG_ASSERT(session_handle_);
+  session_ = fuchsia::ui::scenic::SessionPtr(session_handle_.Bind());
+  session_handle_ = nullptr;
+}
+
+void Session::OnScenicError(fidl::StringPtr error) {
+  // TODO(SCN-903): replace fprintf with SDK-approved logging mechanism.  Also
+  // remove "#include <stdio.h>".
+  fprintf(stderr, "Session error: %s", error->c_str());
+}
+
+void Session::OnScenicEvent(
+    fidl::VectorPtr<fuchsia::ui::scenic::Event> events) {
   if (event_handler_)
     event_handler_(std::move(events));
 }

@@ -4,8 +4,9 @@
 
 //! Type-safe bindings for Zircon channel objects.
 
-use {AsHandleRef, HandleBased, Handle, HandleRef, Peered, Status, Time, usize_into_u32, size_to_u32_sat};
-use {sys, ok};
+use crate::{AsHandleRef, HandleBased, Handle, HandleRef, Peered, Status, Time, usize_into_u32, size_to_u32_sat};
+use crate::ok;
+use fuchsia_zircon_sys as sys;
 use std::mem;
 
 /// An object representing a Zircon
@@ -92,8 +93,8 @@ impl Channel {
             -> Result<(), Status>
     {
         let opts = 0;
-        let n_bytes = try!(usize_into_u32(bytes.len()).map_err(|_| Status::OUT_OF_RANGE));
-        let n_handles = try!(usize_into_u32(handles.len()).map_err(|_| Status::OUT_OF_RANGE));
+        let n_bytes = usize_into_u32(bytes.len()).map_err(|_| Status::OUT_OF_RANGE)?;
+        let n_handles = usize_into_u32(handles.len()).map_err(|_| Status::OUT_OF_RANGE)?;
         unsafe {
             let status = sys::zx_channel_write(self.raw_handle(), opts, bytes.as_ptr(), n_bytes,
                 handles.as_ptr() as *const sys::zx_handle_t, n_handles);
@@ -126,10 +127,10 @@ impl Channel {
     pub fn call(&self, timeout: Time, bytes: &[u8], handles: &mut Vec<Handle>,
         buf: &mut MessageBuf) -> Result<(), Status>
     {
-        let write_num_bytes = try!(usize_into_u32(bytes.len()).map_err(
-            |_| Status::OUT_OF_RANGE));
-        let write_num_handles = try!(usize_into_u32(handles.len()).map_err(
-            |_| Status::OUT_OF_RANGE));
+        let write_num_bytes = usize_into_u32(bytes.len()).map_err(
+            |_| Status::OUT_OF_RANGE)?;
+        let write_num_handles = usize_into_u32(handles.len()).map_err(
+            |_| Status::OUT_OF_RANGE)?;
         buf.clear();
         let read_num_bytes: u32 = size_to_u32_sat(buf.bytes.capacity());
         let read_num_handles: u32 = size_to_u32_sat(buf.handles.capacity());
@@ -292,7 +293,7 @@ fn ensure_capacity<T>(vec: &mut Vec<T>, size: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use {DurationNum, Rights, Signals, Vmo};
+    use crate::{DurationNum, Rights, Signals, Vmo};
     use std::thread;
 
     #[test]

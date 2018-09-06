@@ -10,12 +10,16 @@
 
 #include <fbl/vector.h>
 #include <fuchsia/images/cpp/fidl.h>
-#include <garnet/lib/media/camera/simple_camera_lib/camera_client.h>
-#include <garnet/lib/media/camera/simple_camera_lib/fake_camera_source.h>
-#include <garnet/lib/media/camera/simple_camera_lib/fenced_buffer.h>
+#include <garnet/lib/media/camera/simple_camera_lib/buffer_fence.h>
 #include <garnet/lib/media/camera/simple_camera_lib/frame_scheduler.h>
 
+#include <garnet/drivers/usb_video/usb-video-camera.h>
+
 namespace simple_camera {
+
+using OnShutdownCallback = fit::function<void()>;
+using OnFrameAvailableCallback =
+    fit::function<zx_status_t(fuchsia::camera::FrameAvailableEvent)>;
 
 class VideoDisplay {
  public:
@@ -30,41 +34,25 @@ class VideoDisplay {
       ::fidl::InterfaceHandle<::fuchsia::images::ImagePipe> image_pipe,
       OnShutdownCallback callback);
 
+  void DisconnectFromCamera();
+
   ~VideoDisplay() = default;
   VideoDisplay() = default;
 
  private:
   // Called when the driver tells us a new frame is available:
-  zx_status_t IncomingBufferFilled(const camera_vb_frame_notify_t& frame);
-
-  // Called to reserve a buffer for writing.  Currently, this is only called
-  // by IncomingBufferFilled.  It should be possible to get notified that the
-  // frame is being written, and get a pipelining benefit from notifying
-  // scenic earlier.  Scenic would have to allow erroneous frames to be
-  // cancelled though.
-  zx_status_t ReserveIncomingBuffer(FencedBuffer* buffer,
-                                    uint64_t capture_time_ns);
+  zx_status_t IncomingBufferFilled(
+      const fuchsia::camera::FrameAvailableEvent& frame);
 
   // Called when a buffer is released by the consumer.
-  void BufferReleased(FencedBuffer* buffer);
+  void BufferReleased(uint32_t buffer_id);
 
-  // Callbacks from asyncronous interface:
-  zx_status_t OnGetFormats(
-      const std::vector<camera_video_format_t>& out_formats);
-  zx_status_t OnSetFormat(uint64_t max_frame_size);
+  zx_status_t SetupBuffers(
+      const fuchsia::sysmem::BufferCollectionInfo& buffer_collection);
 
-  // Creates a new buffer and registers an image with scenic.  If the buffer
-  // already exists, returns a pointer to that buffer.  Buffer is not required
-  // to be valid. If it is nullptr, the returned status can be used to check if
-  // that buffer is now available.
-  // TODO(garratt): There is currently no way to detect overlapping or unused
-  // frames to remove them.
-  zx_status_t FindOrCreateBuffer(uint32_t frame_size, uint64_t vmo_offset,
-                                 FencedBuffer** buffer,
-                                 const camera_video_format_t& format);
+  zx_status_t OpenCamera(int dev_id);
 
-  // The currently selected format.
-  camera_video_format_t format_;
+  zx_status_t OpenFakeCamera();
 
   // The number of buffers to allocate while setting up the camera stream.
   // This number has to be at least 2, since scenic will hold onto one buffer
@@ -77,13 +65,16 @@ class VideoDisplay {
   // Callback to that we're closing communication:
   OnShutdownCallback on_shut_down_callback_ = nullptr;
 
-  std::vector<std::unique_ptr<FencedBuffer>> frame_buffers_;
-  uint32_t last_buffer_index_ = 0;
-  uint64_t max_frame_size_ = 0;
+  std::vector<std::unique_ptr<BufferFence>> frame_buffers_;
 
-  zx::vmo vmo_;
   SimpleFrameScheduler frame_scheduler_;
-  std::unique_ptr<CameraInterfaceBase> video_source_;
+
+  class CameraClient {
+   public:
+    fuchsia::camera::ControlSyncPtr control_;
+    fuchsia::camera::StreamPtr stream_;
+  };
+  std::unique_ptr<CameraClient> camera_client_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(VideoDisplay);
 };

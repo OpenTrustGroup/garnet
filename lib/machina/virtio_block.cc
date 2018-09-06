@@ -10,8 +10,6 @@
 
 #include <block-client/client.h>
 #include <fbl/auto_call.h>
-#include <fbl/auto_lock.h>
-#include <fbl/unique_ptr.h>
 #include <trace-engine/types.h>
 #include <trace/event.h>
 #include <virtio/virtio_ids.h>
@@ -23,53 +21,41 @@
 
 namespace machina {
 
-VirtioBlock::VirtioBlock(const PhysMem& phys_mem) : VirtioDeviceBase(phys_mem) {
+VirtioBlock::VirtioBlock(const PhysMem& phys_mem,
+                         std::unique_ptr<BlockDispatcher> dispatcher)
+    : VirtioDevice(
+          phys_mem,
+          // Virtio 1.0: 5.2.5.2: Devices SHOULD alwaysoffer VIRTIO_BLK_F_FLUSH.
+          // VIRTIO_BLK_F_BLK_SIZE is required by Zircon guests.
+          VIRTIO_BLK_F_FLUSH | VIRTIO_BLK_F_BLK_SIZE |
+              (dispatcher->read_only() ? VIRTIO_BLK_F_RO : 0)),
+      dispatcher_(std::move(dispatcher)) {
+  config_.capacity = dispatcher_->size() / kSectorSize;
   config_.blk_size = kSectorSize;
-  // Virtio 1.0: 5.2.5.2: Devices SHOULD always offer VIRTIO_BLK_F_FLUSH
-  add_device_features(VIRTIO_BLK_F_FLUSH
-                      // Required by zircon guests.
-                      | VIRTIO_BLK_F_BLK_SIZE);
-}
-
-zx_status_t VirtioBlock::SetDispatcher(
-    fbl::unique_ptr<BlockDispatcher> dispatcher) {
-  if (dispatcher_ != nullptr) {
-    FXL_LOG(ERROR) << "Block device has already been initialized";
-    return ZX_ERR_BAD_STATE;
-  }
-
-  dispatcher_ = fbl::move(dispatcher);
-  {
-    fbl::AutoLock lock(&config_mutex_);
-    config_.capacity = dispatcher_->size() / kSectorSize;
-  }
-  if (dispatcher_->read_only()) {
-    add_device_features(VIRTIO_BLK_F_RO);
-  }
-  return ZX_OK;
 }
 
 zx_status_t VirtioBlock::Start() {
-  return queue(0)->Poll(
-      fit::bind_member(this, &VirtioBlock::HandleBlockRequest), "virtio-block");
+  return request_queue()->Poll(
+      "virtio-block", fit::bind_member(this, &VirtioBlock::HandleBlockRequest));
 }
 
 zx_status_t VirtioBlock::HandleBlockRequest(VirtioQueue* queue, uint16_t head,
                                             uint32_t* used) {
-  // Attempt to correlate the processing of descriptors with a previous kick.
-  // As noted in virtio_device.cc this should be considered best-effort only.
+  // Attempt to correlate the processing of descriptors with a previous
+  // notification. As noted in virtio_device.cc this should be considered
+  // best-effort only.
   const trace_async_id_t unset_id = 0;
   const trace_async_id_t flow_id = trace_flow_id(0)->exchange(unset_id);
   TRACE_DURATION("machina", "virtio_block_request", "flow_id", flow_id);
   if (flow_id != unset_id) {
-    TRACE_FLOW_END("machina", "io_queue_signal", flow_id);
+    TRACE_FLOW_END("machina", "queue_signal", flow_id);
   }
 
   uint8_t block_status = VIRTIO_BLK_S_OK;
   uint8_t* block_status_ptr = nullptr;
   const virtio_blk_req_t* req = nullptr;
   off_t offset = 0;
-  virtio_desc_t desc;
+  VirtioDescriptor desc;
 
   zx_status_t status = queue->ReadDesc(head, &desc);
   if (status != ZX_OK) {

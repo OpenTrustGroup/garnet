@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GATT_REMOTE_SERVICE_MANAGER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GATT_REMOTE_SERVICE_MANAGER_H_
 
 #include <map>
 #include <memory>
@@ -10,6 +11,7 @@
 
 #include <fbl/ref_ptr.h>
 #include <lib/async/dispatcher.h>
+#include <zircon/assert.h>
 
 #include "garnet/drivers/bluetooth/lib/att/status.h"
 #include "garnet/drivers/bluetooth/lib/gatt/gatt.h"
@@ -37,12 +39,12 @@ namespace internal {
 class RemoteServiceManager final {
  public:
   RemoteServiceManager(std::unique_ptr<Client> client,
-                       async_t* gatt_dispatcher);
+                       async_dispatcher_t* gatt_dispatcher);
   ~RemoteServiceManager();
 
   // Adds a handler to be notified when a new service is added.
   void set_service_watcher(RemoteServiceWatcher watcher) {
-    FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+    ZX_DEBUG_ASSERT(thread_checker_.IsCreationThreadCurrent());
     svc_watcher_ = std::move(watcher);
   }
 
@@ -92,7 +94,7 @@ class RemoteServiceManager final {
   void OnNotification(bool ind, att::Handle value_handle,
                       const common::ByteBuffer& value);
 
-  async_t* gatt_dispatcher_;
+  async_dispatcher_t* gatt_dispatcher_;
   std::unique_ptr<Client> client_;
 
   bool initialized_;
@@ -113,3 +115,5 @@ class RemoteServiceManager final {
 }  // namespace internal
 }  // namespace gatt
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GATT_REMOTE_SERVICE_MANAGER_H_

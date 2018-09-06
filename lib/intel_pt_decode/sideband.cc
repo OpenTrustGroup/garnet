@@ -25,14 +25,12 @@
 
 namespace intel_processor_trace {
 
-using debugserver::util::ErrnoString;
-
 // For passing data from ReadKtraceFile to ProcessKtraceRecord.
 struct KtraceData {
   DecoderState* state;
 };
 
-int DecoderState::ProcessKtraceRecord(debugserver::ktrace::KtraceRecord* rec,
+int DecoderState::ProcessKtraceRecord(debugger_utils::KtraceRecord* rec,
                                       void* arg) {
   KtraceData* data = reinterpret_cast<KtraceData*>(arg);
   DecoderState* state = data->state;
@@ -102,12 +100,12 @@ bool DecoderState::ReadKtraceFile(const std::string& file) {
   fxl::UniqueFD fd(open(file.c_str(), O_RDONLY));
   if (!fd.is_valid()) {
     FXL_LOG(ERROR) << "error opening ktrace file"
-                   << ", " << ErrnoString(errno);
+                   << ", " << debugger_utils::ErrnoString(errno);
     return false;
   }
 
   KtraceData data = {this};
-  int rc = debugserver::ktrace::ReadFile(fd.get(), ProcessKtraceRecord, &data);
+  int rc = debugger_utils::KtraceReadFile(fd.get(), ProcessKtraceRecord, &data);
   if (rc != 0) {
     FXL_LOG(ERROR) << fxl::StringPrintf("Error %d reading ktrace file", rc);
     return false;
@@ -132,7 +130,7 @@ bool DecoderState::ReadPtListFile(const std::string& file) {
   FILE* f = fopen(file.c_str(), "r");
   if (!f) {
     FXL_LOG(ERROR) << "error opening pt file list file"
-                   << ", " << ErrnoString(errno);
+                   << ", " << debugger_utils::ErrnoString(errno);
     return false;
   }
 
@@ -147,7 +145,8 @@ bool DecoderState::ReadPtListFile(const std::string& file) {
 
   for (; getline(&line, &linelen, f) > 0; ++lineno) {
     size_t n = strlen(line);
-    if (n > 0 && line[n - 1] == '\n') line[n - 1] = '\0';
+    if (n > 0 && line[n - 1] == '\n')
+      line[n - 1] = '\0';
     FXL_VLOG(2) << fxl::StringPrintf("read %d: %s", lineno, line);
 
 #define MAX_LINE_LEN 1024
@@ -156,8 +155,10 @@ bool DecoderState::ReadPtListFile(const std::string& file) {
       continue;
     }
 
-    if (!strcmp(line, "\n")) continue;
-    if (line[0] == '#') continue;
+    if (!strcmp(line, "\n"))
+      continue;
+    if (line[0] == '#')
+      continue;
 
     unsigned long long id;
     char path[linelen];
@@ -186,8 +187,10 @@ bool DecoderState::ReadElf(const std::string& file_name, uint64_t base,
                           map_len, &symtab, &dynsym))
     return false;
 
-  if (symtab) AddSymtab(std::move(symtab));
-  if (dynsym) AddSymtab(std::move(dynsym));
+  if (symtab)
+    AddSymtab(std::move(symtab));
+  if (dynsym)
+    AddSymtab(std::move(dynsym));
   return true;
 }
 
@@ -201,8 +204,10 @@ bool DecoderState::ReadKernelElf(const std::string& file_name, uint64_t cr3) {
                                 &dynsym))
     return false;
 
-  if (symtab) AddSymtab(std::move(symtab));
-  if (dynsym) FXL_LOG(WARNING) << "Kernel has SHT_DYNSYM symtab?";
+  if (symtab)
+    AddSymtab(std::move(symtab));
+  if (dynsym)
+    FXL_LOG(WARNING) << "Kernel has SHT_DYNSYM symtab?";
   return true;
 }
 

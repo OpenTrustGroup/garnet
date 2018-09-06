@@ -5,15 +5,16 @@
 #ifndef LIB_UI_SCENIC_CPP_SESSION_H_
 #define LIB_UI_SCENIC_CPP_SESSION_H_
 
+#include <fuchsia/images/cpp/fidl.h>
+#include <fuchsia/ui/gfx/cpp/fidl.h>
+#include <fuchsia/ui/input/cpp/fidl.h>
+#include <fuchsia/ui/scenic/cpp/fidl.h>
 #include <lib/fit/function.h>
 #include <lib/zx/event.h>
 
-#include <fuchsia/images/cpp/fidl.h>
-#include <fuchsia/ui/gfx/cpp/fidl.h>
-#include <fuchsia/ui/scenic/cpp/fidl.h>
+#include <utility>
 
 #include "lib/fidl/cpp/binding.h"
-#include "lib/fxl/macros.h"
 
 namespace scenic {
 
@@ -55,6 +56,9 @@ class Session : private fuchsia::ui::scenic::SessionListener {
 
   explicit Session(SessionPtrAndListenerRequest session_and_listener);
 
+  Session(const Session&) = delete;
+  Session& operator=(const Session&) = delete;
+
   // Destroys the session.
   // All resources must be released prior to destruction.
   ~Session();
@@ -81,7 +85,9 @@ class Session : private fuchsia::ui::scenic::SessionListener {
   // Enqueues an operation.
   // The session will queue operations locally to batch submission of operations
   // until |Flush()| or |Present()| is called.
+  void Enqueue(fuchsia::ui::scenic::Command command);
   void Enqueue(fuchsia::ui::gfx::Command command);
+  void Enqueue(fuchsia::ui::input::Command command);
 
   // Registers an acquire fence to be submitted during the subsequent call to
   // |Present()|.
@@ -109,12 +115,22 @@ class Session : private fuchsia::ui::scenic::SessionListener {
       const float ray_origin[3], const float ray_direction[3],
       fuchsia::ui::scenic::Session::HitTestDeviceRayCallback callback);
 
+  // Unbinds the internal SessionPtr; this allows moving this across threads.
+  void Unbind();
+
+  // Rebinds the Session interface internally; this must be called after a call
+  // to Unbind().
+  void Rebind();
+
  private:
   // |fuchsia::ui::scenic::SessionListener|
-  void OnError(fidl::StringPtr error) override;
-  void OnEvent(fidl::VectorPtr<fuchsia::ui::scenic::Event> events) override;
+  void OnScenicError(fidl::StringPtr error) override;
+  void OnScenicEvent(
+      fidl::VectorPtr<fuchsia::ui::scenic::Event> events) override;
 
   fuchsia::ui::scenic::SessionPtr session_;
+  // |session_handle_| is stored only when |session_| is unbound/invalid.
+  fidl::InterfaceHandle<fuchsia::ui::scenic::Session> session_handle_;
   uint32_t next_resource_id_ = 1u;
   uint32_t resource_count_ = 0u;
 
@@ -124,8 +140,6 @@ class Session : private fuchsia::ui::scenic::SessionListener {
 
   EventHandler event_handler_;
   fidl::Binding<fuchsia::ui::scenic::SessionListener> session_listener_binding_;
-
-  FXL_DISALLOW_COPY_AND_ASSIGN(Session);
 };
 
 }  // namespace scenic

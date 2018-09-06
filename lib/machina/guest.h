@@ -10,6 +10,8 @@
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/fit/function.h>
 #include <zircon/types.h>
+#include <zx/guest.h>
+#include <zx/vmar.h>
 
 #include "garnet/lib/machina/phys_mem.h"
 #include "garnet/lib/machina/vcpu.h"
@@ -30,13 +32,13 @@ class Guest {
   using VcpuFactory = fit::function<zx_status_t(Guest* guest, uintptr_t entry,
                                                 uint64_t id, Vcpu* vcpu)>;
 
-  ~Guest();
-
   zx_status_t Init(size_t mem_size);
 
   const PhysMem& phys_mem() const { return phys_mem_; }
-  zx_handle_t handle() const { return guest_; }
-  async_t* device_async() const { return device_loop_.async(); }
+  zx::guest* object() { return &guest_; }
+  async_dispatcher_t* device_dispatcher() const {
+    return device_loop_.dispatcher();
+  }
 
   // Setup a trap to delegate accesses to an IO region to |handler|.
   zx_status_t CreateMapping(TrapType type, uint64_t addr, size_t size,
@@ -52,7 +54,7 @@ class Guest {
   zx_status_t StartVcpu(uintptr_t entry, uint64_t id);
 
   // Signals an interrupt to the VCPUs indicated by |mask|.
-  zx_status_t SignalInterrupt(uint32_t mask, uint8_t vector);
+  zx_status_t Interrupt(uint64_t mask, uint8_t vector);
 
   // Waits for all VCPUs associated with the guest to finish executing.
   zx_status_t Join();
@@ -61,9 +63,10 @@ class Guest {
   // TODO(alexlegg): Consolidate this constant with other definitions in Garnet.
   static constexpr size_t kMaxVcpus = 16u;
 
-  fbl::Mutex mutex_;
+  std::mutex mutex_;
 
-  zx_handle_t guest_ = ZX_HANDLE_INVALID;
+  zx::guest guest_;
+  zx::vmar vmar_;
   PhysMem phys_mem_;
 
   fbl::SinglyLinkedList<fbl::unique_ptr<IoMapping>> mappings_;
@@ -72,7 +75,7 @@ class Guest {
                                  Vcpu* vcpu) { return ZX_ERR_BAD_STATE; };
   fbl::unique_ptr<Vcpu> vcpus_[kMaxVcpus] = {};
 
-  async::Loop device_loop_;
+  async::Loop device_loop_{&kAsyncLoopConfigNoAttachToThread};
 };
 
 }  // namespace machina

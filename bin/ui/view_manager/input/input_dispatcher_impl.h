@@ -8,10 +8,11 @@
 #include <queue>
 #include <set>
 #include <utility>
+#include <unordered_map>
 
 #include <fuchsia/math/cpp/fidl.h>
 #include <fuchsia/ui/input/cpp/fidl.h>
-#include <fuchsia/ui/views_v1/cpp/fidl.h>
+#include <fuchsia/ui/viewsv1/cpp/fidl.h>
 #include "garnet/bin/ui/view_manager/internal/view_inspector.h"
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fidl/cpp/interface_request.h"
@@ -29,11 +30,11 @@ class InputDispatcherImpl : public fuchsia::ui::input::InputDispatcher {
  public:
   InputDispatcherImpl(
       ViewInspector* inspector, InputOwner* owner,
-      ::fuchsia::ui::views_v1::ViewTreeToken view_tree_token,
+      ::fuchsia::ui::viewsv1::ViewTreeToken view_tree_token,
       fidl::InterfaceRequest<fuchsia::ui::input::InputDispatcher> request);
   ~InputDispatcherImpl() override;
 
-  ::fuchsia::ui::views_v1::ViewTreeToken view_tree_token() const {
+  ::fuchsia::ui::viewsv1::ViewTreeToken view_tree_token() const {
     return view_tree_token_;
   }
 
@@ -60,13 +61,18 @@ class InputDispatcherImpl : public fuchsia::ui::input::InputDispatcher {
 
   ViewInspector* const inspector_;
   InputOwner* const owner_;
-  ::fuchsia::ui::views_v1::ViewTreeToken view_tree_token_;
+  ::fuchsia::ui::viewsv1::ViewTreeToken view_tree_token_;
 
   // TODO(jeffbrown): Replace this with a proper pipeline.
   std::queue<fuchsia::ui::input::InputEvent> pending_events_;
 
-  std::vector<ViewHit> event_path_;
-  uint64_t event_path_propagation_id_ = 0;
+  std::vector<ViewHit> event_path_focused_;
+  uint64_t event_path_propagation_id_focused_ = 0;
+
+  std::unordered_map<uint64_t, std::vector<ViewHit>>
+      event_path_per_pointer_;
+  std::unordered_map<uint64_t, uint64_t>
+      event_path_propagation_id_per_pointer_;
 
   // Occasionally a touch gesture gets lost because the hit test returns empty.
   // For those cases, we remember the pointer is "uncaptured" (identified by

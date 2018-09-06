@@ -16,7 +16,7 @@
 #include "lib/escher/util/image_utils.h"
 #include "lib/escher/vk/gpu_mem.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 namespace {
@@ -69,29 +69,39 @@ DisplaySwapchain::DisplaySwapchain(DisplayManager* display_manager,
                                    Display* display,
                                    EventTimestamper* timestamper,
                                    escher::Escher* escher)
-    : display_manager_(display_manager),
+    : escher_(escher),
+      display_manager_(display_manager),
       display_(display),
-      device_(escher->vk_device()),
-      queue_(escher->device()->vk_main_queue()),
-      vulkan_proc_addresses_(escher->device()->proc_addrs()),
       timestamper_(timestamper) {
   FXL_DCHECK(display);
   FXL_DCHECK(timestamper);
-  FXL_DCHECK(escher);
 
-  display_->Claim();
+  if (escher_) {
+    device_ = escher_->vk_device();
+    queue_ = escher_->device()->vk_main_queue();
+    format_ = GetDisplayImageFormat(escher->device());
 
-  format_ = GetDisplayImageFormat(escher->device());
+    display_->Claim();
 
-  frames_.resize(kSwapchainImageCount);
+    frames_.resize(kSwapchainImageCount);
 
-  if (!InitializeFramebuffers(escher->resource_recycler())) {
-    FXL_LOG(ERROR) << "Initializing buffers for display swapchain failed.";
+    if (!InitializeFramebuffers(escher_->resource_recycler())) {
+      FXL_LOG(ERROR) << "Initializing buffers for display swapchain failed.";
+    }
+  } else {
+    device_ = vk::Device();
+    queue_ = vk::Queue();
+    format_ = vk::Format::eUndefined;
+
+    display_->Claim();
+
+    FXL_VLOG(2) << "Using a NULL escher in DisplaySwapchain; likely in a test.";
   }
 }
 
 bool DisplaySwapchain::InitializeFramebuffers(
     escher::ResourceRecycler* resource_recycler) {
+  FXL_CHECK(escher_);
   vk::ImageUsageFlags image_usage = GetFramebufferImageUsage();
 
 #if !defined(__x86_64__)
@@ -101,6 +111,8 @@ bool DisplaySwapchain::InitializeFramebuffers(
 
   const uint32_t width_in_px = display_->width_in_px();
   const uint32_t height_in_px = display_->height_in_px();
+  display_manager_->SetImageConfig(width_in_px, height_in_px,
+                                   ZX_PIXEL_FORMAT_ARGB_8888);
   for (uint32_t i = 0; i < kSwapchainImageCount; i++) {
     // Allocate a framebuffer.
 
@@ -181,8 +193,9 @@ bool DisplaySwapchain::InitializeFramebuffers(
         buffer.device_memory->base(),
         vk::ExternalMemoryHandleTypeFlagBitsKHR::eFuchsiaVmo);
 
-    auto export_result = vulkan_proc_addresses_.getMemoryFuchsiaHandleKHR(
-        device_, export_memory_info);
+    auto export_result =
+        escher_->device()->proc_addrs().getMemoryFuchsiaHandleKHR(
+            device_, export_memory_info);
 
     if (export_result.result != vk::Result::eSuccess) {
       FXL_DLOG(ERROR) << "VkGetMemoryFuchsiaHandleKHR failed: "
@@ -191,8 +204,7 @@ bool DisplaySwapchain::InitializeFramebuffers(
     }
 
     buffer.vmo = zx::vmo(export_result.value);
-    buffer.fb_id = display_manager_->ImportImage(
-        buffer.vmo, width_in_px, height_in_px, ZX_PIXEL_FORMAT_ARGB_8888);
+    buffer.fb_id = display_manager_->ImportImage(buffer.vmo);
     if (buffer.fb_id == fuchsia::display::invalidId) {
       FXL_DLOG(ERROR) << "Importing image failed.";
       return false;
@@ -200,10 +212,35 @@ bool DisplaySwapchain::InitializeFramebuffers(
 
     swapchain_buffers_.push_back(std::move(buffer));
   }
+
+  if (!display_manager_->EnableVsync(
+          fit::bind_member(this, &DisplaySwapchain::OnVsync))) {
+    FXL_DLOG(ERROR) << "Failed to enable vsync";
+    return false;
+  }
+
   return true;
 }
 
 DisplaySwapchain::~DisplaySwapchain() {
+  if (!escher_) {
+    display_->Unclaim();
+    return;
+  }
+
+  // Turn off operations.
+  display_manager_->EnableVsync(nullptr);
+
+  // A FrameRecord is now stale and will no longer receive the OnFramePresented
+  // callback; OnFrameDropped will clean up and make the state consistent.
+  for (size_t i = 0; i < frames_.size(); ++i) {
+    const size_t idx = (i + next_frame_index_) % frames_.size();
+    FrameRecord* record = frames_[idx].get();
+    if (record && !record->frame_timings->finalized()) {
+      record->frame_timings->OnFrameDropped(record->swapchain_index);
+    }
+  }
+
   display_->Unclaim();
   for (auto& buffer : swapchain_buffers_) {
     display_manager_->ReleaseImage(buffer.fb_id);
@@ -212,27 +249,18 @@ DisplaySwapchain::~DisplaySwapchain() {
 
 std::unique_ptr<DisplaySwapchain::FrameRecord> DisplaySwapchain::NewFrameRecord(
     const FrameTimingsPtr& frame_timings) {
+  FXL_CHECK(escher_);
   auto render_finished_escher_semaphore =
       escher::Semaphore::NewExportableSem(device_);
 
-  zx::event render_finished_event = GetEventForSemaphore(
-      vulkan_proc_addresses_, device_, render_finished_escher_semaphore);
+  zx::event render_finished_event =
+      GetEventForSemaphore(escher_->device()->proc_addrs(), device_,
+                           render_finished_escher_semaphore);
   uint64_t render_finished_event_id =
       display_manager_->ImportEvent(render_finished_event);
 
-  zx::event frame_presented_event;
-  zx_status_t status = zx::event::create(0u, &frame_presented_event);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR)
-        << "DisplaySwapchain::NewFrameRecord() failed to create event.";
-    return std::unique_ptr<FrameRecord>();
-  }
-  uint64_t frame_presented_event_id =
-      display_manager_->ImportEvent(frame_presented_event);
-
   if (!render_finished_escher_semaphore ||
-      render_finished_event_id == fuchsia::display::invalidId ||
-      frame_presented_event_id == fuchsia::display::invalidId) {
+      render_finished_event_id == fuchsia::display::invalidId) {
     FXL_LOG(ERROR)
         << "DisplaySwapchain::NewFrameRecord() failed to create semaphores";
     return std::unique_ptr<FrameRecord>();
@@ -244,17 +272,11 @@ std::unique_ptr<DisplaySwapchain::FrameRecord> DisplaySwapchain::NewFrameRecord(
   record->render_finished_escher_semaphore =
       std::move(render_finished_escher_semaphore);
   record->render_finished_event_id = render_finished_event_id;
-  record->frame_presented_event_id = frame_presented_event_id;
 
   record->render_finished_watch = EventTimestamper::Watch(
       timestamper_, std::move(render_finished_event), escher::kFenceSignalled,
       [this, index = next_frame_index_](zx_time_t timestamp) {
         OnFrameRendered(index, timestamp);
-      });
-  record->frame_presented_watch = EventTimestamper::Watch(
-      timestamper_, std::move(frame_presented_event), escher::kFenceSignalled,
-      [this, index = next_frame_index_](zx_time_t timestamp) {
-        OnFramePresented(index, timestamp);
       });
 
   return record;
@@ -268,18 +290,19 @@ bool DisplaySwapchain::DrawAndPresentFrame(const FrameTimingsPtr& frame_timings,
   // Create a record that can be used to notify |frame_timings| (and hence
   // ultimately the FrameScheduler) that the frame has been presented.
   //
-  // There must not already exist a record.  If there is, it indicates an error
-  // in the FrameScheduler logic (or somewhere similar), which should not have
-  // scheduled another frame when there are no framebuffers available.
-  FXL_CHECK(!frames_[next_frame_index_]);
+  // There must not already exist a pending record.  If there is, it indicates
+  // an error in the FrameScheduler logic (or somewhere similar), which should
+  // not have scheduled another frame when there are no framebuffers available.
+  FXL_CHECK(!frames_[next_frame_index_] ||
+            frames_[next_frame_index_]->frame_timings->finalized());
   auto& frame_record = frames_[next_frame_index_] =
       NewFrameRecord(frame_timings);
 
   // TODO(MZ-244): See below.  What to do if rendering fails?
   frame_record->render_finished_watch.Start();
-  frame_record->frame_presented_watch.Start();
 
   next_frame_index_ = (next_frame_index_ + 1) % kSwapchainImageCount;
+  outstanding_frame_count_++;
 
   // Render the scene.
   {
@@ -293,11 +316,9 @@ bool DisplaySwapchain::DrawAndPresentFrame(const FrameTimingsPtr& frame_timings,
 
   display_manager_->Flip(
       display_, buffer.fb_id, frame_record->render_finished_event_id,
-      frame_record->frame_presented_event_id,
       fuchsia::display::invalidId /* frame_signal_event_id */);
 
   display_manager_->ReleaseEvent(frame_record->render_finished_event_id);
-  display_manager_->ReleaseEvent(frame_record->frame_presented_event_id);
 
   return true;
 }
@@ -309,14 +330,55 @@ void DisplaySwapchain::OnFrameRendered(size_t frame_index,
   FXL_DCHECK(record);
   record->frame_timings->OnFrameRendered(record->swapchain_index,
                                          render_finished_time);
+  // See ::OnVsync for comment about finalization.
 }
 
-void DisplaySwapchain::OnFramePresented(size_t frame_index,
-                                        zx_time_t vsync_time) {
-  FXL_DCHECK(frame_index < kSwapchainImageCount);
-  auto record = std::move(frames_[frame_index]);
-  FXL_DCHECK(record);
-  record->frame_timings->OnFramePresented(record->swapchain_index, vsync_time);
+void DisplaySwapchain::OnVsync(zx_time_t timestamp,
+                               const std::vector<uint64_t>& image_ids) {
+  if (image_ids.empty()) {
+    return;
+  }
+
+  // Currently, only a single layer is ever used
+  FXL_CHECK(image_ids.size() == 1);
+  uint64_t image_id = image_ids[0];
+
+  bool match = false;
+  while (outstanding_frame_count_ && !match) {
+    auto& buf = swapchain_buffers_[presented_frame_idx_];
+    auto& record = frames_[presented_frame_idx_];
+    match = buf.fb_id == image_id;
+
+    // Don't double-report a frame as presented if a frame is shown twice
+    // due to the next frame missing its deadline.
+    if (!record->presented) {
+      record->presented = true;
+
+      if (match) {
+        record->frame_timings->OnFramePresented(record->swapchain_index,
+                                                timestamp);
+      } else {
+        record->frame_timings->OnFrameDropped(record->swapchain_index);
+      }
+    }
+
+    // Retaining the currently displayed frame allows us to differentiate
+    // between a frame being dropped and a frame being displayed twice
+    // without having to look ahead in the queue, so only update the queue
+    // when we know that the display controller has progressed to the next
+    // frame.
+    //
+    // Since there is no guaranteed order between a frame being retired here
+    // and OnFrameRendered() for a given frame, and since both must be called
+    // in order for the FrameTimings to be finalzied, we don't immediately
+    // destroy the FrameRecord. It will eventually be replaced by
+    // DrawAndPresentFrame(), when a new frame is rendered into this index.
+    if (!match) {
+      presented_frame_idx_ = (presented_frame_idx_ + 1) % kSwapchainImageCount;
+      outstanding_frame_count_--;
+    }
+  }
+  FXL_DCHECK(match) << "Unhandled vsync";
 }
 
 namespace {
@@ -392,4 +454,4 @@ vk::Format GetDisplayImageFormat(escher::VulkanDeviceQueues* device_queues) {
 }  // namespace
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

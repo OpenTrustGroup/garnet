@@ -8,9 +8,9 @@
 #include "garnet/lib/ui/gfx/tests/util.h"
 #include "gtest/gtest.h"
 #include "lib/escher/flib/release_fence_signaller.h"
-#include "lib/ui/scenic/fidl_helpers.h"
+#include "lib/ui/scenic/cpp/commands.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 namespace test {
 
@@ -69,10 +69,8 @@ TEST_F(GfxSystemTest, DISABLED_ReleaseFences) {
       gfx_system()->engine()->session_manager()->FindSession(1));
   {
     ::fidl::VectorPtr<fuchsia::ui::scenic::Command> commands;
-    commands.push_back(
-        scenic::NewCommand(scenic::NewCreateCircleCmd(1, 50.f)));
-    commands.push_back(
-        scenic::NewCommand(scenic::NewCreateCircleCmd(2, 25.f)));
+    commands.push_back(scenic::NewCommand(scenic::NewCreateCircleCmd(1, 50.f)));
+    commands.push_back(scenic::NewCommand(scenic::NewCreateCircleCmd(2, 25.f)));
 
     session->Enqueue(std::move(commands));
   }
@@ -114,10 +112,8 @@ TEST_F(GfxSystemTest, DISABLED_AcquireAndReleaseFences) {
       gfx_system()->engine()->session_manager()->FindSession(1));
   {
     ::fidl::VectorPtr<fuchsia::ui::scenic::Command> commands;
-    commands.push_back(
-        scenic::NewCommand(scenic::NewCreateCircleCmd(1, 50.f)));
-    commands.push_back(
-        scenic::NewCommand(scenic::NewCreateCircleCmd(2, 25.f)));
+    commands.push_back(scenic::NewCommand(scenic::NewCreateCircleCmd(1, 50.f)));
+    commands.push_back(scenic::NewCommand(scenic::NewCreateCircleCmd(2, 25.f)));
 
     session->Enqueue(std::move(commands));
   }
@@ -155,4 +151,4 @@ TEST_F(GfxSystemTest, DISABLED_AcquireAndReleaseFences) {
 
 }  // namespace test
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

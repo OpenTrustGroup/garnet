@@ -14,8 +14,7 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-//#include <linux/module.h>
-//#include <linux/netdevice.h>
+#include "feature.h"
 
 #include <string.h>
 
@@ -25,7 +24,6 @@
 #include "common.h"
 #include "core.h"
 #include "debug.h"
-#include "feature.h"
 #include "fwil.h"
 #include "fwil_types.h"
 #include "linuxisms.h"
@@ -63,7 +61,7 @@ static const char* const brcmf_quirk_names[] = {BRCMF_QUIRK_LIST};
  * @data: raw data pointer.
  */
 static zx_status_t brcmf_feat_debugfs_read(struct seq_file* seq, void* data) {
-    struct brcmf_bus* bus_if = dev_get_drvdata(seq->private);
+    struct brcmf_bus* bus_if = dev_to_bus(seq->private);
     uint32_t feats = bus_if->drvr->feat_flags;
     uint32_t quirks = bus_if->drvr->chip_quirks;
     int id;

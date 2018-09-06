@@ -14,6 +14,8 @@
 #include <thread>
 
 #include "garnet/bin/zxdb/client/arch_info.h"
+#include "garnet/bin/zxdb/client/breakpoint_action.h"
+#include "garnet/bin/zxdb/client/breakpoint_impl.h"
 #include "garnet/bin/zxdb/client/process_impl.h"
 #include "garnet/bin/zxdb/client/remote_api_impl.h"
 #include "garnet/bin/zxdb/client/thread_impl.h"
@@ -42,9 +44,9 @@ Err ResolveAddress(const std::string& host, uint16_t port, addrinfo* addr) {
 
   struct addrinfo hints;
   memset(&hints, 0, sizeof(hints));
-  hints.ai_family = AF_INET;
+  hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
-  hints.ai_protocol = 0;
+  hints.ai_protocol = IPPROTO_TCP;
   hints.ai_flags = AI_NUMERICSERV;
 
   struct addrinfo* addrs = nullptr;
@@ -170,7 +172,7 @@ void Session::PendingConnection::ConnectCompleteMainThread(
 
   if (!session_ || err.has_error()) {
     // Error or session destroyed, skip sending hello and forward the error.
-    HelloCompleteMainThread(std::move(owner), err, debug_ipc::HelloReply());
+    HelloCompleteMainThread(owner, err, debug_ipc::HelloReply());
     return;
   }
 
@@ -186,7 +188,11 @@ void Session::PendingConnection::ConnectCompleteMainThread(
   buffer_->stream().Write(std::move(serialized));
 
   buffer_->set_data_available_callback(
-      [owner = std::move(owner)]() { owner->DataAvailableMainThread(owner); });
+      [owner]() { owner->DataAvailableMainThread(owner); });
+  buffer_->set_error_callback([owner]() {
+    owner->HelloCompleteMainThread(owner, Err("Connection error."),
+                                   debug_ipc::HelloReply());
+  });
 }
 
 void Session::PendingConnection::DataAvailableMainThread(
@@ -216,15 +222,18 @@ void Session::PendingConnection::DataAvailableMainThread(
     reply = debug_ipc::HelloReply();
   }
 
-  // Prevent future notifications to this function.
-  buffer_->set_data_available_callback(std::function<void()>());
-
   HelloCompleteMainThread(owner, err, reply);
 }
 
 void Session::PendingConnection::HelloCompleteMainThread(
     fxl::RefPtr<PendingConnection> owner, const Err& err,
     const debug_ipc::HelloReply& reply) {
+  // Prevent future notifications.
+  if (buffer_.get()) {
+    buffer_->set_data_available_callback(std::function<void()>());
+    buffer_->set_error_callback(std::function<void()>());
+  }
+
   if (session_) {
     // The buffer must be created here on the main thread since it will
     // register with the message loop to watch the FD.
@@ -249,7 +258,7 @@ Err Session::PendingConnection::DoConnectBackgroundThread() {
   if (err.has_error())
     return err;
 
-  socket_.reset(socket(AF_INET, SOCK_STREAM, 0));
+  socket_.reset(socket(addr.ai_family, SOCK_STREAM, IPPROTO_TCP));
   if (!socket_.is_valid())
     return Err(ErrType::kGeneral, "Could not create socket.");
 
@@ -351,6 +360,10 @@ void Session::OnStreamReadable() {
   }
 }
 
+void Session::OnStreamError() {
+  ClearConnectionData();
+}
+
 bool Session::IsConnected() const { return !!stream_; }
 
 void Session::Connect(const std::string& host, uint16_t port,
@@ -405,14 +418,97 @@ void Session::Disconnect(std::function<void(const Err&)> callback) {
     }
   }
 
-  stream_ = nullptr;
-  connection_storage_.reset();
-  arch_info_.reset();
-  arch_ = debug_ipc::Arch::kUnknown;
+  ClearConnectionData();
 
   if (callback) {
     debug_ipc::MessageLoop::Current()->PostTask(
         [callback]() { callback(Err()); });
+  }
+}
+
+void Session::ClearConnectionData() {
+  stream_ = nullptr;
+  connection_storage_.reset();
+  arch_info_.reset();
+  arch_ = debug_ipc::Arch::kUnknown;
+  system_.DidDisconnect();
+}
+
+void Session::DispatchNotifyThread(debug_ipc::MsgHeader::Type type,
+                                   const debug_ipc::NotifyThread& notify) {
+  ProcessImpl* process = system_.ProcessImplFromKoid(notify.process_koid);
+  if (process) {
+    if (type == debug_ipc::MsgHeader::Type::kNotifyThreadStarting)
+      process->OnThreadStarting(notify.record);
+    else
+      process->OnThreadExiting(notify.record);
+  } else {
+    fprintf(stderr,
+            "Warning: received thread notification for an "
+            "unexpected process %" PRIu64 ".",
+            notify.process_koid);
+  }
+}
+
+// This is the main entrypoint for all thread stops notifications in the client.
+void Session::DispatchNotifyException(
+    const debug_ipc::NotifyException& notify) {
+  ThreadImpl* thread =
+      ThreadImplFromKoid(notify.process_koid, notify.thread.koid);
+  if (!thread) {
+    fprintf(stderr,
+            "Warning: received thread exception for an unknown thread.\n");
+    return;
+  }
+
+  // First update the thread state so the breakpoint code can query it.
+  // This should not issue any notifications.
+  thread->SetMetadataFromException(notify);
+
+  // The breakpoints that were hit to pass to the thread stop handler.
+  std::vector<fxl::WeakPtr<Breakpoint>> hit_breakpoints;
+
+  if (!notify.hit_breakpoints.empty()) {
+    // Update breakpoints' hit counts and stats. This is done before any
+    // notifications are sent so that all breakpoint state is consistent.
+    for (const debug_ipc::BreakpointStats& stats : notify.hit_breakpoints) {
+      BreakpointImpl* impl = system_.BreakpointImplForId(stats.breakpoint_id);
+      if (impl) {
+        impl->UpdateStats(stats);
+        hit_breakpoints.push_back(impl->GetWeakPtr());
+      }
+    }
+  }
+
+  // This is the main notification of an exception.
+  thread->OnException(notify.type, hit_breakpoints);
+
+  // Delete all one-shot breakpoints the backend deleted. This happens after
+  // the thread notifications so observers can tell why the thread stopped.
+  for (const auto& stats : notify.hit_breakpoints) {
+    if (!stats.should_delete)
+      continue;
+
+    // Breakpoint needs deleting.
+    BreakpointImpl* impl = system_.BreakpointImplForId(stats.breakpoint_id);
+    if (impl) {
+      // Need to tell the breakpoint it was removed in the backend before
+      // deleting it or it will try to uninstall itself.
+      impl->BackendBreakpointRemoved();
+      system_.DeleteBreakpoint(impl);
+    }
+  }
+}
+
+void Session::DispatchNotifyModules(const debug_ipc::NotifyModules& notify) {
+  ProcessImpl* process = system_.ProcessImplFromKoid(notify.process_koid);
+  if (process) {
+    process->OnModules(notify.modules, notify.stopped_thread_koids);
+  } else {
+    fprintf(stderr,
+            "Warning: received modules notification for an "
+            "unexpected process %" PRIu64 ".",
+            notify.process_koid);
   }
 }
 
@@ -434,31 +530,20 @@ void Session::DispatchNotification(const debug_ipc::MsgHeader& header,
     case debug_ipc::MsgHeader::Type::kNotifyThreadStarting:
     case debug_ipc::MsgHeader::Type::kNotifyThreadExiting: {
       debug_ipc::NotifyThread thread;
-      if (!debug_ipc::ReadNotifyThread(&reader, &thread))
-        return;
-
-      ProcessImpl* process = system_.ProcessImplFromKoid(thread.process_koid);
-      if (process) {
-        if (header.type == debug_ipc::MsgHeader::Type::kNotifyThreadStarting)
-          process->OnThreadStarting(thread.record);
-        else
-          process->OnThreadExiting(thread.record);
-      } else {
-        fprintf(stderr,
-                "Warning: received thread notification for an "
-                "unexpected process %" PRIu64 ".",
-                thread.process_koid);
-      }
+      if (debug_ipc::ReadNotifyThread(&reader, &thread))
+        DispatchNotifyThread(header.type, thread);
       break;
     }
     case debug_ipc::MsgHeader::Type::kNotifyException: {
       debug_ipc::NotifyException notify;
-      if (!debug_ipc::ReadNotifyException(&reader, &notify))
-        return;
-      ThreadImpl* thread =
-          ThreadImplFromKoid(notify.process_koid, notify.thread.koid);
-      if (thread)
-        thread->OnException(notify);
+      if (debug_ipc::ReadNotifyException(&reader, &notify))
+        DispatchNotifyException(notify);
+      break;
+    }
+    case debug_ipc::MsgHeader::Type::kNotifyModules: {
+      debug_ipc::NotifyModules notify;
+      if (debug_ipc::ReadNotifyModules(&reader, &notify))
+        DispatchNotifyModules(notify);
       break;
     }
     default:
@@ -522,7 +607,10 @@ void Session::ConnectionResolved(fxl::RefPtr<PendingConnection> pending,
   stream_ = &connection_storage_->stream();
   connection_storage_->set_data_available_callback(
       [this]() { OnStreamReadable(); });
+  connection_storage_->set_error_callback([this]() { OnStreamError(); });
 
+  // Issue success callbacks.
+  system_.DidConnect();
   if (callback)
     callback(Err());
 }

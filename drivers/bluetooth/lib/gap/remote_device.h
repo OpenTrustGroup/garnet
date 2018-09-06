@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GAP_REMOTE_DEVICE_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GAP_REMOTE_DEVICE_H_
 
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 
 #include "garnet/drivers/bluetooth/lib/common/byte_buffer.h"
@@ -13,12 +15,13 @@
 #include "garnet/drivers/bluetooth/lib/gap/gap.h"
 #include "garnet/drivers/bluetooth/lib/hci/connection.h"
 #include "garnet/drivers/bluetooth/lib/hci/lmp_feature_set.h"
+#include "garnet/drivers/bluetooth/lib/sm/pairing_state.h"
 #include "lib/fxl/macros.h"
-
-#include "remote_device_cache.h"
 
 namespace btlib {
 namespace gap {
+
+class RemoteDeviceCache;
 
 // Represents a remote Bluetooth device that is known to the current system due
 // to discovery and/or connection and bonding procedures. These devices can be
@@ -28,8 +31,6 @@ namespace gap {
 // RemoteDeviceCache.
 class RemoteDevice final {
  public:
-  using UpdatedCallback = fit::function<void(RemoteDevice*)>;
-
   // TODO(armansito): Probably keep separate states for LE and BR/EDR.
   enum class ConnectionState {
     // No link exists between the local adapter and this device.
@@ -83,9 +84,14 @@ class RemoteDevice final {
   void SetLEAdvertisingData(int8_t rssi,
                             const common::ByteBuffer& advertising_data);
 
-  // Updates the device based on inquiry result data obtained through a
-  // BR/EDR discovery procedure.
-  void SetInquiryData(const hci::InquiryResult& result);
+  // Updates the device based on |inquiry_result|. Notifies listeners if |this|
+  // has changed in a significant way.
+  template <typename T>
+  typename std::enable_if<
+      std::is_same<T, hci::InquiryResult>::value ||
+      std::is_same<T, hci::InquiryResultRSSI>::value ||
+      std::is_same<T, hci::ExtendedInquiryResultEventParams>::value>::type
+  SetInquiryData(const T& inquiry_result);
 
   // Updates the name of this device.
   // If Advertising Data has been set, this must match any local name advertised
@@ -105,6 +111,10 @@ class RemoteDevice final {
     le_conn_params_ = params;
   }
 
+  void set_ltk(const sm::LTK& key) { ltk_ = key; }
+
+  const common::Optional<sm::LTK> ltk() const { return ltk_; }
+
   // Returns this device's preferred connection parameters, if known. LE
   // peripherals report their preferred connection parameters using one of the
   // GAP Connection Parameter Update procedures (e.g. L2CAP, Advertising, LL).
@@ -119,13 +129,13 @@ class RemoteDevice final {
 
   // The current LE connection state of this RemoteDevice.
   ConnectionState le_connection_state() const { return le_connection_state_; }
-  void set_le_connection_state(ConnectionState state);
+  void SetLEConnectionState(ConnectionState state);
 
   // The current BR/EDR connection state of this RemoteDevice.
   ConnectionState bredr_connection_state() const {
     return bredr_connection_state_;
   }
-  void set_bredr_connection_state(ConnectionState state);
+  void SetBREDRConnectionState(ConnectionState state);
 
   // A temporary device is one that is never persisted, such as
   //
@@ -173,6 +183,12 @@ class RemoteDevice final {
     lmp_features_.SetPage(page, features);
   }
 
+  void set_last_page_number(uint8_t page) {
+    lmp_features_.set_last_page_number(page);
+  }
+
+  uint8_t last_page_number() const { return lmp_features_.last_page_number(); }
+
   void set_version(hci::HCIVersion version, uint16_t manufacturer,
                    uint16_t subversion) {
     lmp_version_ = version;
@@ -186,19 +202,41 @@ class RemoteDevice final {
 
  private:
   friend class RemoteDeviceCache;
+  using DeviceCallback = fit::function<void(const RemoteDevice&)>;
 
   // TODO(armansito): Add constructor from persistent storage format.
 
-  // Caller must ensure that |callback| is non-emtpy, and outlives |this|.
-  RemoteDevice(UpdatedCallback callback, const std::string& identifier,
+  // Caller must ensure that both callbacks are non-empty.
+  // Note that the ctor is only intended for use by RemoteDeviceCache.
+  // Expanding access would a) violate the constraint that all RemoteDevices
+  // are created through a RemoteDeviceCache, and b) introduce lifetime issues
+  // (do the callbacks outlive |this|?).
+  RemoteDevice(DeviceCallback notify_listeners_callback,
+               DeviceCallback update_expiry_callback,
+               const std::string& identifier,
                const common::DeviceAddress& address, bool connectable);
 
-  UpdatedCallback updated_callback_;
+  // Updates the device based on extended inquiry response data.
+  // |bytes| contains the data from an ExtendedInquiryResponse event.
+  // Returns true if |this| was modified in a way that warrants notification to
+  // listeners.
+  bool SetExtendedInquiryResponse(const common::ByteBuffer& bytes);
+
+  // Updates the device based on type-specific inquiry data. Returns true if
+  // |this| was modified in a way that warrants notification to listeners.
+  bool SetSpecificInquiryData(const hci::InquiryResult& result);
+  bool SetSpecificInquiryData(const hci::InquiryResultRSSI& result);
+  bool SetSpecificInquiryData(
+      const hci::ExtendedInquiryResultEventParams& result);
+
+  DeviceCallback notify_listeners_callback_;
+  DeviceCallback update_expiry_callback_;
   const std::string identifier_;
   const common::DeviceAddress address_;
   const TechnologyType technology_;
   ConnectionState le_connection_state_;
   ConnectionState bredr_connection_state_;
+  common::Optional<sm::LTK> ltk_;
   common::Optional<std::string> name_;
   bool connectable_;
   bool temporary_;
@@ -219,6 +257,9 @@ class RemoteDevice final {
   size_t advertising_data_length_;
   common::DynamicByteBuffer advertising_data_buffer_;
 
+  // TODO(jamuraa): Parse more of the Extended Inquiry Response fields
+  common::DynamicByteBuffer extended_inquiry_response_;
+
   // Most recently used LE connection parameters. Has no value if this device
   // has never been connected.
   common::Optional<hci::LEConnectionParameters> le_conn_params_;
@@ -234,3 +275,5 @@ class RemoteDevice final {
 
 }  // namespace gap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GAP_REMOTE_DEVICE_H_

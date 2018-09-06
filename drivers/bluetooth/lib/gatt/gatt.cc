@@ -6,7 +6,10 @@
 
 #include <unordered_map>
 
+#include <zircon/assert.h>
+
 #include "garnet/drivers/bluetooth/lib/att/bearer.h"
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/common/task_domain.h"
 #include "garnet/drivers/bluetooth/lib/gatt/generic_attribute_service.h"
 #include "garnet/drivers/bluetooth/lib/l2cap/channel.h"
@@ -24,17 +27,17 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
   using TaskDomainBase = common::TaskDomain<Impl, GATT>;
 
  public:
-  explicit Impl(async_t* gatt_dispatcher)
+  explicit Impl(async_dispatcher_t* gatt_dispatcher)
       : TaskDomainBase(this, gatt_dispatcher), initialized_(false) {}
 
   ~Impl() override {
-    FXL_DCHECK(!initialized_) << "gatt: ShutDown() must have been called!";
+    ZX_DEBUG_ASSERT_MSG(!initialized_, "ShutDown() must have been called!");
   }
 
   // GATT overrides:
   void Initialize() override {
     PostMessage([this] {
-      FXL_DCHECK(!initialized_);
+      ZX_DEBUG_ASSERT(!initialized_);
 
       local_services_ = std::make_unique<LocalServiceManager>();
 
@@ -44,7 +47,7 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
                                              const common::ByteBuffer& value) {
         auto iter = connections_.find(peer_id);
         if (iter == connections_.end()) {
-          FXL_LOG(WARNING) << "gatt: Peer not registered: " << peer_id;
+          bt_log(WARN, "gatt", "peer not registered: %s", peer_id.c_str());
           return;
         }
         iter->second.server()->SendNotification(handle, value.view(), true);
@@ -56,7 +59,7 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
 
       initialized_ = true;
 
-      FXL_VLOG(1) << "gatt: initialized";
+      bt_log(TRACE, "gatt", "initialized");
     });
   }
 
@@ -64,7 +67,7 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
 
   // Called on the GATT runner as a result of ScheduleCleanUp().
   void CleanUp() {
-    FXL_VLOG(1) << "gatt: shutting down";
+    bt_log(TRACE, "gatt", "shutting down");
 
     initialized_ = false;
     connections_.clear();
@@ -75,14 +78,14 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
 
   void AddConnection(const std::string& peer_id,
                      fbl::RefPtr<l2cap::Channel> att_chan) override {
-    FXL_VLOG(1) << "gatt: Add connection: " << peer_id;
+    bt_log(TRACE, "gatt", "add connection %s", peer_id.c_str());
 
     PostMessage([this, peer_id, att_chan] {
-      FXL_DCHECK(local_services_);
+      ZX_DEBUG_ASSERT(local_services_);
 
       auto iter = connections_.find(peer_id);
       if (iter != connections_.end()) {
-        FXL_LOG(WARNING) << "gatt: Peer is already registered: " << peer_id;
+        bt_log(WARN, "gatt", "peer is already registered: %s", peer_id.c_str());
         return;
       }
 
@@ -90,7 +93,7 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
       if (!att_bearer) {
         // This can happen if the link closes before the Bearer activates the
         // channel.
-        FXL_LOG(ERROR) << "gatt: Failed to initialize ATT bearer";
+        bt_log(ERROR, "gatt", "failed to initialize ATT bearer");
         att_chan->SignalLinkError();
         return;
       }
@@ -104,7 +107,7 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
   }
 
   void RemoveConnection(std::string peer_id) override {
-    FXL_VLOG(1) << "gatt: Remove connection: " << peer_id;
+    bt_log(TRACE, "gatt", "remove connection: %s", peer_id.c_str());
     PostMessage(
         [this, peer_id = std::move(peer_id)] {
             local_services_->DisconnectClient(peer_id);
@@ -123,7 +126,7 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
       IdType id;
 
       if (!initialized_) {
-        FXL_VLOG(1) << "gatt: Cannot register service after shutdown";
+        bt_log(TRACE, "gatt", "cannot register service after shutdown");
         id = kInvalidId;
       } else {
         id = local_services_->RegisterService(std::move(svc), std::move(rh),
@@ -139,7 +142,7 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
       if (!initialized_)
         return;
 
-      FXL_DCHECK(local_services_);
+      ZX_DEBUG_ASSERT(local_services_);
       local_services_->UnregisterService(service_id);
     });
   }
@@ -152,30 +155,31 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
     PostMessage([this, svc_id = service_id, chrc_id, indicate,
                  peer_id = std::move(peer_id), value = value.take()] {
       if (!initialized_) {
-        FXL_VLOG(3) << "gatt: Cannot notify after shutdown";
+        bt_log(SPEW, "gatt", "cannot notify after shutdown");
         return;
       }
 
       // There is nothing to do if the requested peer is not connected.
       auto iter = connections_.find(peer_id);
       if (iter == connections_.end()) {
-        FXL_VLOG(2) << "gatt: Cannot notify disconnected peer: " << peer_id;
+        bt_log(SPEW, "gatt", "cannot notify disconnected peer: %s",
+               peer_id.c_str());
         return;
       }
 
       LocalServiceManager::ClientCharacteristicConfig config;
       if (!local_services_->GetCharacteristicConfig(svc_id, chrc_id, peer_id,
                                                     &config)) {
-        FXL_VLOG(2) << "gatt: Peer has not configured characteristic: "
-                    << peer_id;
+        bt_log(SPEW, "gatt", "peer has not configured characteristic: %s",
+               peer_id.c_str());
         return;
       }
 
       // Make sure that the client has subscribed to the requested protocol
       // method.
       if ((indicate & !config.indicate) || (!indicate && !config.notify)) {
-        FXL_VLOG(2) << "gatt: Peer has no configuration ("
-                    << (indicate ? "ind" : "not") << "): " << peer_id;
+        bt_log(SPEW, "gatt", "peer has no configuration (%s): %s",
+               (indicate ? "ind" : "not"), peer_id.c_str());
         return;
       }
 
@@ -185,9 +189,23 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
     });
   }
 
+  void DiscoverServices(std::string peer_id) override {
+    bt_log(TRACE, "gatt", "discover services: %s", peer_id.c_str());
+
+    PostMessage([this, peer_id = std::move(peer_id)] {
+      auto iter = connections_.find(peer_id);
+      if (iter == connections_.end()) {
+        bt_log(WARN, "gatt", "unknown peer: %s", peer_id.c_str());
+        return;
+      }
+
+      iter->second.Initialize();
+    });
+  }
+
   void RegisterRemoteServiceWatcher(RemoteServiceWatcher callback,
-                                    async_t* dispatcher) override {
-    FXL_DCHECK(callback);
+                                    async_dispatcher_t* dispatcher) override {
+    ZX_DEBUG_ASSERT(callback);
     PostMessage(
         [this, callback = std::move(callback), runner = dispatcher]() mutable {
           if (initialized_) {
@@ -200,7 +218,7 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
   void ListServices(std::string peer_id,
                     std::vector<common::UUID> uuids,
                     ServiceListCallback callback) override {
-    FXL_DCHECK(callback);
+    ZX_DEBUG_ASSERT(callback);
     PostMessage([this, peer_id = std::move(peer_id),
                  callback = std::move(callback),
                  uuids = std::move(uuids)]() mutable {
@@ -234,9 +252,8 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
   // Called when a new remote GATT service is discovered.
   void OnServiceAdded(const std::string& peer_id,
                       fbl::RefPtr<RemoteService> svc) {
-    FXL_VLOG(1) << "gatt: Service added (peer_id: " << peer_id
-                << ", handle: " << svc->handle()
-                << ", uuid: " << svc->uuid().ToString();
+    bt_log(TRACE, "gatt", "service added (peer_id: %s, handle: %#.4x, uuid: %s",
+           peer_id.c_str(), svc->handle(), svc->uuid().ToString().c_str());
     for (auto& handler : remote_service_callbacks_) {
       handler.Notify(peer_id, svc);
     }
@@ -259,7 +276,7 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
 
   // All registered remote service handlers.
   struct RemoteServiceHandler {
-    RemoteServiceHandler(RemoteServiceWatcher watcher, async_t* dispatcher)
+    RemoteServiceHandler(RemoteServiceWatcher watcher, async_dispatcher_t* dispatcher)
         : watcher_(std::move(watcher)), dispatcher_(dispatcher) {}
 
     RemoteServiceHandler() = default;
@@ -280,7 +297,7 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
 
    private:
     RemoteServiceWatcher watcher_;
-    async_t* dispatcher_;
+    async_dispatcher_t* dispatcher_;
 
     FXL_DISALLOW_COPY_AND_ASSIGN(RemoteServiceHandler);
   };
@@ -293,7 +310,7 @@ class Impl final : public GATT, common::TaskDomain<Impl, GATT> {
 }  // namespace
 
 // static
-fbl::RefPtr<GATT> GATT::Create(async_t* gatt_dispatcher) {
+fbl::RefPtr<GATT> GATT::Create(async_dispatcher_t* gatt_dispatcher) {
   return AdoptRef(new Impl(gatt_dispatcher));
 }
 

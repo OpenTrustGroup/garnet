@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_TASK_DOMAIN_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_TASK_DOMAIN_H_
+
+#include <string>
 
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
@@ -12,14 +15,15 @@
 #include <lib/async/cpp/task.h>
 #include <lib/async/dispatcher.h>
 #include <lib/fit/function.h>
+#include <zircon/assert.h>
 
-#include "lib/fxl/memory/ref_ptr.h"
+#include "lib/fxl/macros.h"
 
 namespace btlib {
 namespace common {
 
 // A task domain is a mixin for objects that maintain state that needs to be
-// accessed exclusively on a specific async dispatcher.
+// accessed exclusively on a specific dispatcher.
 //
 //   * A TaskDomain can be initialized with a task runner representing the
 //     serialization domain. If not, TaskDomain will spawn a thread with the
@@ -48,7 +52,7 @@ namespace common {
 //     MyObject() : common::TaskDomain<MyObject>(this, "my-thread") {}
 //
 //     // Initialize to run on |dispatcher|.
-//     explicit MyObject(async_t* dispatcher)
+//     explicit MyObject(async_dispatcher_t* dispatcher)
 //        : common::TaskDomain<MyObject>(this, dispatcher) {}
 //
 //     void CleanUp()
@@ -92,21 +96,21 @@ class TaskDomain {
   TaskDomain(T* obj, std::string name) {
     Init(obj);
 
-    loop_ = std::make_unique<async::Loop>();
+    loop_ = std::make_unique<async::Loop>(&kAsyncLoopConfigNoAttachToThread);
     loop_->StartThread(name.c_str());
-    dispatcher_ = loop_->async();
+    dispatcher_ = loop_->dispatcher();
   }
 
   // Initializes this domain by assigning the given |dispatcher| to it.
-  TaskDomain(T* obj, async_t* dispatcher) : dispatcher_(dispatcher) {
+  TaskDomain(T* obj, async_dispatcher_t* dispatcher) : dispatcher_(dispatcher) {
     Init(obj);
 
-    FXL_DCHECK(dispatcher_);
+    ZX_DEBUG_ASSERT(dispatcher_);
   }
 
   virtual ~TaskDomain() {
-    FXL_DCHECK(!alive_)
-        << "ScheduleCleanUp() must be called before destruction";
+    ZX_DEBUG_ASSERT_MSG(!alive_,
+                        "ScheduleCleanUp() must be called before destruction");
   }
 
   // Runs the object's CleanUp() handler on the domain's dispatcher. Quits the
@@ -128,7 +132,7 @@ class TaskDomain {
     }
   }
 
-  async_t* dispatcher() const { return dispatcher_; }
+  async_dispatcher_t* dispatcher() const { return dispatcher_; }
 
   void PostMessage(fit::closure func) {
     // |objref| is captured here to make sure |obj_| stays alive until |func|
@@ -145,7 +149,7 @@ class TaskDomain {
   // default. This is purely intended for debug assertions and should not be
   // used for any other purpose.
   inline void AssertOnDispatcherThread() const {
-    FXL_DCHECK(async_get_default() == dispatcher());
+    ZX_DEBUG_ASSERT(async_get_default_dispatcher() == dispatcher());
   }
 
   // Returns true if this domain is still alive. This function is only safe to
@@ -157,7 +161,7 @@ class TaskDomain {
 
  private:
   void Init(T* obj) {
-    FXL_DCHECK(obj);
+    ZX_DEBUG_ASSERT(obj);
     obj_ = obj;
     alive_ = true;
 
@@ -175,7 +179,7 @@ class TaskDomain {
   // |loop_| is null if this TaskDomain gets initialized with an existing
   // dispatcher. Otherwise it will be valid and |dispatcher_| will point to
   // |loop_|'s dispatcher. |dispatcher_| is never null.
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
   std::unique_ptr<async::Loop> loop_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TaskDomain);
@@ -188,3 +192,5 @@ class TaskDomain {
 
 }  // namespace common
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_TASK_DOMAIN_H_

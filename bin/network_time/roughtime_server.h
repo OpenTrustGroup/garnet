@@ -11,7 +11,7 @@
 #include <string>
 #include <utility>
 
-namespace time_zone {
+namespace time_server {
 
 enum Status {
   OK,
@@ -26,9 +26,7 @@ class RoughTimeServer {
  public:
   bool IsValid() const;
   Status GetTimeFromServer(roughtime::rough_time_t* timestamp) const;
-  RoughTimeServer(std::string name,
-                  std::string address,
-                  uint8_t public_key[],
+  RoughTimeServer(std::string name, std::string address, uint8_t public_key[],
                   int public_key_len)
       : name_(std::move(name)), address_(std::move(address)) {
     if (public_key_len != ED25519_PUBLIC_KEY_LEN) {
@@ -47,4 +45,4 @@ class RoughTimeServer {
   uint8_t public_key_[ED25519_PUBLIC_KEY_LEN];
 };
 
-}  // namespace time_zone
+}  // namespace time_server

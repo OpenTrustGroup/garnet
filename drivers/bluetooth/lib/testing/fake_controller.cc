@@ -7,6 +7,7 @@
 #include <endian.h>
 #include <lib/async/cpp/task.h>
 
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/common/packet_view.h"
 #include "garnet/drivers/bluetooth/lib/hci/defaults.h"
 #include "garnet/drivers/bluetooth/lib/hci/hci.h"
@@ -76,6 +77,8 @@ void FakeController::Settings::ApplyDualModeDefaults() {
   SetBit(&lmp_features_page0, hci::LMPFeature::kLESupported);
   SetBit(&lmp_features_page0, hci::LMPFeature::kSimultaneousLEAndBREDR);
   SetBit(&lmp_features_page0, hci::LMPFeature::kExtendedFeatures);
+  SetBit(&lmp_features_page0, hci::LMPFeature::kRSSIwithInquiryResults);
+  SetBit(&lmp_features_page0, hci::LMPFeature::kExtendedInquiryResponse);
 
   AddBREDRSupportedCommands();
   AddLESupportedCommands();
@@ -98,6 +101,8 @@ void FakeController::Settings::AddBREDRSupportedCommands() {
   SetBit(supported_commands + 7, hci::SupportedCommand::kWriteScanEnable);
   SetBit(supported_commands + 8, hci::SupportedCommand::kReadPageScanActivity);
   SetBit(supported_commands + 8, hci::SupportedCommand::kWritePageScanActivity);
+  SetBit(supported_commands + 12, hci::SupportedCommand::kReadInquiryMode);
+  SetBit(supported_commands + 12, hci::SupportedCommand::kWriteInquiryMode);
   SetBit(supported_commands + 13, hci::SupportedCommand::kReadPageScanType);
   SetBit(supported_commands + 13, hci::SupportedCommand::kWritePageScanType);
   SetBit(supported_commands + 14, hci::SupportedCommand::kReadBufferSize);
@@ -181,7 +186,7 @@ FakeController::~FakeController() { Stop(); }
 
 void FakeController::SetDefaultResponseStatus(hci::OpCode opcode,
                                               hci::StatusCode status) {
-  FXL_DCHECK(status != hci::StatusCode::kSuccess);
+  ZX_DEBUG_ASSERT(status != hci::StatusCode::kSuccess);
   default_status_map_[opcode] = status;
 }
 
@@ -196,9 +201,9 @@ void FakeController::AddDevice(std::unique_ptr<FakeDevice> device) {
 
 void FakeController::SetScanStateCallback(
     ScanStateCallback callback,
-    async_t* dispatcher) {
-  FXL_DCHECK(callback);
-  FXL_DCHECK(dispatcher);
+    async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(callback);
+  ZX_DEBUG_ASSERT(dispatcher);
 
   scan_state_cb_ = std::move(callback);
   scan_state_cb_dispatcher_ = dispatcher;
@@ -206,9 +211,9 @@ void FakeController::SetScanStateCallback(
 
 void FakeController::SetAdvertisingStateCallback(
     fit::closure callback,
-    async_t* dispatcher) {
-  FXL_DCHECK(callback);
-  FXL_DCHECK(dispatcher);
+    async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(callback);
+  ZX_DEBUG_ASSERT(dispatcher);
 
   advertising_state_cb_ = std::move(callback);
   advertising_state_cb_dispatcher_ = dispatcher;
@@ -216,9 +221,9 @@ void FakeController::SetAdvertisingStateCallback(
 
 void FakeController::SetConnectionStateCallback(
     ConnectionStateCallback callback,
-    async_t* dispatcher) {
-  FXL_DCHECK(callback);
-  FXL_DCHECK(dispatcher);
+    async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(callback);
+  ZX_DEBUG_ASSERT(dispatcher);
 
   conn_state_cb_ = std::move(callback);
   conn_state_cb_dispatcher_ = dispatcher;
@@ -226,9 +231,9 @@ void FakeController::SetConnectionStateCallback(
 
 void FakeController::SetLEConnectionParametersCallback(
     LEConnectionParametersCallback callback,
-    async_t* dispatcher) {
-  FXL_DCHECK(callback);
-  FXL_DCHECK(dispatcher);
+    async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(callback);
+  ZX_DEBUG_ASSERT(dispatcher);
 
   le_conn_params_cb_ = std::move(callback);
   le_conn_params_cb_dispatcher_ = dispatcher;
@@ -316,7 +321,7 @@ void FakeController::SendLEMetaEvent(hci::EventCode subevent_code,
 
 void FakeController::SendACLPacket(hci::ConnectionHandle handle,
                                    const ByteBuffer& payload) {
-  FXL_DCHECK(payload.size() <= hci::kMaxACLPayloadSize);
+  ZX_DEBUG_ASSERT(payload.size() <= hci::kMaxACLPayloadSize);
 
   common::DynamicByteBuffer buffer(sizeof(hci::ACLDataHeader) + payload.size());
   common::MutablePacketView<hci::ACLDataHeader> acl(&buffer, payload.size());
@@ -332,8 +337,8 @@ void FakeController::SendACLPacket(hci::ConnectionHandle handle,
 void FakeController::SendL2CAPBFrame(hci::ConnectionHandle handle,
                                      l2cap::ChannelId channel_id,
                                      const ByteBuffer& payload) {
-  FXL_DCHECK(payload.size() <=
-             hci::kMaxACLPayloadSize - sizeof(l2cap::BasicHeader));
+  ZX_DEBUG_ASSERT(payload.size() <=
+                  hci::kMaxACLPayloadSize - sizeof(l2cap::BasicHeader));
 
   common::DynamicByteBuffer buffer(sizeof(l2cap::BasicHeader) + payload.size());
   common::MutablePacketView<l2cap::BasicHeader> bframe(&buffer, payload.size());
@@ -383,15 +388,15 @@ void FakeController::ConnectLowEnergy(const common::DeviceAddress& addr,
   async::PostTask(dispatcher(), [addr, role, this] {
     FakeDevice* dev = FindDeviceByAddress(addr);
     if (!dev) {
-      FXL_LOG(WARNING) << "bt-hci (fake): no device found with address: "
-                       << addr.ToString();
+      bt_log(WARN, "fake-hci", "no device found with address: %s",
+             addr.ToString().c_str());
       return;
     }
 
     // TODO(armansito): Don't worry about managing multiple links per device
     // until this supports Bluetooth classic.
     if (dev->connected()) {
-      FXL_LOG(WARNING) << "bt-hci (fake): device already connected";
+      bt_log(WARN, "fake-hci", "device already connected");
       return;
     }
 
@@ -432,17 +437,17 @@ void FakeController::L2CAPConnectionParameterUpdate(
       async::PostTask(dispatcher(), [addr, params, this] {
         FakeDevice* dev = FindDeviceByAddress(addr);
         if (!dev) {
-          FXL_LOG(WARNING) << "bt-hci (fake): no device found with address: "
-                           << addr.ToString();
+          bt_log(WARN, "fake-hci", "no device found with address: %s",
+                 addr.ToString().c_str());
           return;
         }
 
         if (!dev->connected()) {
-          FXL_LOG(WARNING) << "bt-hci (fake): device not connected";
+          bt_log(WARN, "fake-hci", "device not connected");
           return;
         }
 
-        FXL_DCHECK(!dev->logical_links().empty());
+        ZX_DEBUG_ASSERT(!dev->logical_links().empty());
 
         l2cap::ConnectionParameterUpdateRequestPayload payload;
         payload.interval_min = htole16(params.min_interval());
@@ -463,15 +468,14 @@ void FakeController::Disconnect(const common::DeviceAddress& addr) {
   async::PostTask(dispatcher(), [addr, this] {
     FakeDevice* dev = FindDeviceByAddress(addr);
     if (!dev || !dev->connected()) {
-      FXL_LOG(WARNING)
-          << "bt-hci (fake): no connected device found with address: "
-          << addr.ToString();
+      bt_log(WARN, "fake-hci", "no connected device found with address: %s",
+             addr.ToString().c_str());
       return;
     }
 
     auto links = dev->Disconnect();
-    FXL_DCHECK(!dev->connected());
-    FXL_DCHECK(!links.empty());
+    ZX_DEBUG_ASSERT(!dev->connected());
+    ZX_DEBUG_ASSERT(!links.empty());
 
     NotifyConnectionState(addr, false);
 
@@ -491,10 +495,9 @@ bool FakeController::MaybeRespondWithDefaultStatus(hci::OpCode opcode) {
   if (iter == default_status_map_.end())
     return false;
 
-  FXL_LOG(INFO) << fxl::StringPrintf(
-      "hci: bt-hci (fake): Responding with error (command: 0x%04x, status: "
-      "0x%02x",
-      opcode, iter->second);
+  bt_log(INFO, "fake-hci",
+         "responding with error (command: %#.4x, status: %#.2x)", opcode,
+         iter->second);
 
   hci::SimpleReturnParams params;
   params.status = iter->second;
@@ -509,7 +512,7 @@ void FakeController::SendInquiryResponses() {
       continue;
     }
 
-    SendCommandChannelPacket(device->CreateInquiryResponseEvent());
+    SendCommandChannelPacket(device->CreateInquiryResponseEvent(inquiry_mode_));
     inquiry_num_responses_left_--;
     if (inquiry_num_responses_left_ == 0) {
       break;
@@ -552,7 +555,7 @@ void FakeController::NotifyAdvertisingState() {
     return;
   }
 
-  FXL_DCHECK(advertising_state_cb_dispatcher_);
+  ZX_DEBUG_ASSERT(advertising_state_cb_dispatcher_);
   async::PostTask(advertising_state_cb_dispatcher_, advertising_state_cb_.share());
 }
 
@@ -562,7 +565,7 @@ void FakeController::NotifyConnectionState(const common::DeviceAddress& addr,
   if (!conn_state_cb_)
     return;
 
-  FXL_DCHECK(conn_state_cb_dispatcher_);
+  ZX_DEBUG_ASSERT(conn_state_cb_dispatcher_);
   async::PostTask(conn_state_cb_dispatcher_, [
     addr, connected, canceled, cb = conn_state_cb_.share()
   ] { cb(addr, connected, canceled); });
@@ -574,7 +577,7 @@ void FakeController::NotifyLEConnectionParameters(
   if (!le_conn_params_cb_)
     return;
 
-  FXL_DCHECK(le_conn_params_cb_dispatcher_);
+  ZX_DEBUG_ASSERT(le_conn_params_cb_dispatcher_);
   async::PostTask(le_conn_params_cb_dispatcher_,
       [addr, params, cb = le_conn_params_cb_.share()] { cb(addr, params); });
 }
@@ -590,7 +593,7 @@ void FakeController::OnLECreateConnectionCommandReceived(
 
   common::DeviceAddress::Type addr_type =
       hci::AddressTypeFromHCI(params.peer_address_type);
-  FXL_DCHECK(addr_type != common::DeviceAddress::Type::kBREDR);
+  ZX_DEBUG_ASSERT(addr_type != common::DeviceAddress::Type::kBREDR);
 
   const common::DeviceAddress peer_address(addr_type, params.peer_address);
   hci::StatusCode status = hci::StatusCode::kSuccess;
@@ -617,8 +620,8 @@ void FakeController::OnLECreateConnectionCommandReceived(
   // The procedure was initiated successfully but the device cannot be connected
   // because it either doesn't exist or isn't connectable.
   if (!device || !device->connectable()) {
-    FXL_LOG(INFO)
-        << "Requested fake device cannot be connected; request will time out";
+    bt_log(INFO, "fake-hci",
+           "requested fake device cannot be connected; request will time out");
     return;
   }
 
@@ -689,7 +692,7 @@ void FakeController::OnLEConnectionUpdateCommandReceived(
     return;
   }
 
-  FXL_DCHECK(device->connected());
+  ZX_DEBUG_ASSERT(device->connected());
 
   uint16_t min_interval = le16toh(params.conn_interval_min);
   uint16_t max_interval = le16toh(params.conn_interval_max);
@@ -734,7 +737,7 @@ void FakeController::OnDisconnectCommandReceived(
     return;
   }
 
-  FXL_DCHECK(device->connected());
+  ZX_DEBUG_ASSERT(device->connected());
 
   RespondWithCommandStatus(hci::kDisconnect, hci::StatusCode::kSuccess);
 
@@ -928,6 +931,21 @@ void FakeController::OnCommandPacketReceived(
       RespondWithSuccess(opcode);
       break;
     }
+    case hci::kReadInquiryMode: {
+      hci::ReadInquiryModeReturnParams params;
+      params.status = hci::StatusCode::kSuccess;
+      params.inquiry_mode = inquiry_mode_;
+      RespondWithCommandComplete(hci::kReadInquiryMode,
+                                 common::BufferView(&params, sizeof(params)));
+      break;
+    }
+    case hci::kWriteInquiryMode: {
+      const auto& in_params =
+          command_packet.payload<hci::WriteInquiryModeCommandParams>();
+      inquiry_mode_ = in_params.inquiry_mode;
+      RespondWithSuccess(opcode);
+      break;
+    };
     case hci::kReadPageScanType: {
       hci::ReadPageScanTypeReturnParams params;
       params.status = hci::StatusCode::kSuccess;
@@ -1125,7 +1143,7 @@ void FakeController::OnCommandPacketReceived(
       // event. This guarantees that single-threaded unit tests receive the scan
       // state update BEFORE the HCI command sequence terminates.
       if (scan_state_cb_) {
-        FXL_DCHECK(scan_state_cb_dispatcher_);
+        ZX_DEBUG_ASSERT(scan_state_cb_dispatcher_);
         async::PostTask(scan_state_cb_dispatcher_, [
           cb = scan_state_cb_.share(), enabled = le_scan_state_.enabled
         ] { cb(enabled); });
@@ -1160,7 +1178,7 @@ void FakeController::OnCommandPacketReceived(
 
       RespondWithCommandStatus(opcode, hci::kSuccess);
 
-      FXL_LOG(INFO) << "FakeController: sending inquiry responses..";
+      bt_log(INFO, "fake-hci", "sending inquiry responses..");
       SendInquiryResponses();
 
       // TODO(jamuraa): do this after an appropriate amount of time?
@@ -1201,7 +1219,7 @@ void FakeController::OnCommandPacketReceived(
 void FakeController::OnACLDataPacketReceived(
     const ByteBuffer& acl_data_packet) {
   if (acl_data_packet.size() < sizeof(hci::ACLDataHeader)) {
-    FXL_LOG(WARNING) << "bt-hci (fake): Malformed ACL packet!";
+    bt_log(WARN, "fake-hci", "malformed ACL packet!");
     return;
   }
 
@@ -1209,7 +1227,7 @@ void FakeController::OnACLDataPacketReceived(
   hci::ConnectionHandle handle = le16toh(header.handle_and_flags) & 0x0FFFF;
   FakeDevice* dev = FindDeviceByConnHandle(handle);
   if (!dev) {
-    FXL_LOG(WARNING) << "bt-hci (fake): ACL data received for unknown handle!";
+    bt_log(WARN, "fake-hci", "ACL data received for unknown handle!");
     return;
   }
 

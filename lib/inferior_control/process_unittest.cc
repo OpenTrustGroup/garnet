@@ -10,17 +10,19 @@
 
 #include "gtest/gtest.h"
 
-namespace debugserver {
+namespace inferior_control {
 namespace {
 
 // TODO(dje): Obtain path more cleanly.
-const char helper_program[] = "/system/test/helper/inferior_control_test_helper";
+const char helper_program[] =
+    "/pkgfs/packages/inferior_control_tests/0/bin/"
+    "inferior_control_test_helper";
 
 using ProcessTest = TestServer;
 
 TEST_F(ProcessTest, Launch) {
   std::vector<std::string> argv{
-    helper_program,
+      helper_program,
   };
   ASSERT_TRUE(SetupInferior(argv));
 
@@ -44,7 +46,8 @@ class AttachTest : public TestServer {
     if (!main_thread_started_) {
       // Must be the inferior's main thread.
       main_thread_started_ = true;
-      async::PostTask(message_loop().async(), [this] { DoDetachAttach(); });
+      async::PostTask(message_loop().dispatcher(),
+                      [this] { DoDetachAttach(); });
     }
     TestServer::OnThreadStarting(process, thread, context);
   }
@@ -71,8 +74,8 @@ class AttachTest : public TestServer {
 
 TEST_F(AttachTest, Attach) {
   std::vector<std::string> argv{
-    helper_program,
-    "test-attach",
+      helper_program,
+      "test-attach",
   };
   ASSERT_TRUE(SetupInferior(argv));
 
@@ -87,4 +90,4 @@ TEST_F(AttachTest, Attach) {
 }
 
 }  // namespace
-}  // namespace debugserver
+}  // namespace inferior_control

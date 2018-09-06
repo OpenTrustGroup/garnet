@@ -18,6 +18,11 @@ static constexpr uint32_t kDisplayWidth = 1024;
 static constexpr uint32_t kDisplayHeight = 768;
 static constexpr uint32_t kCursorWidth = 16;
 static constexpr uint32_t kCursorHeight = 16;
+static constexpr uint32_t kCursorAlphaPixelRow = 5;
+static constexpr uint32_t kCursorAlphaPixelCol = 7;
+static constexpr uint32_t kCursorAlphaPixelValue = 0x56789ABC;
+// kCursorAlphaPixelValue manually blended with 0xABABABAB
+static constexpr uint32_t kCursorAlphaPixelExpectedResult = 0xC79AA5B1;
 static constexpr uint32_t kPixelFormat = VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM;
 static constexpr uint8_t kPixelSize = 4;
 static constexpr uint16_t kQueueSize = 32;
@@ -36,8 +41,7 @@ struct BackingPages
 class VirtioGpuTest : public ::gtest::TestLoopFixture {
  public:
   VirtioGpuTest()
-      : gpu_(phys_mem_, dispatcher()),
-        control_queue_(gpu_.control_queue()) {}
+      : gpu_(phys_mem_, dispatcher()), control_queue_(gpu_.control_queue()) {}
 
   zx_status_t Init() {
     zx_status_t status = control_queue_.Init(kQueueSize);
@@ -72,7 +76,7 @@ class VirtioGpuTest : public ::gtest::TestLoopFixture {
     scanout_size_ = width * height * surface.pixelsize();
     scanout_buffer_ = surface.buffer();
 
-    scanout_.SetBitmap(fbl::move(surface));
+    scanout_.SetBitmap(std::move(surface));
     gpu_.AddScanout(&scanout_);
     return ZX_OK;
   }
@@ -134,7 +138,7 @@ class VirtioGpuTest : public ::gtest::TestLoopFixture {
     virtio_gpu_mem_entry_t entry = {};
     entry.addr = reinterpret_cast<uint64_t>(backing->buffer.get());
     entry.length = size;
-    backing_pages->push_front(fbl::move(backing));
+    backing_pages->push_front(std::move(backing));
 
     virtio_gpu_ctrl_hdr_t response = {};
     zx_status_t status = control_queue()
@@ -325,9 +329,8 @@ TEST_F(VirtioGpuTest, HandleTransfer2D) {
   // Verify backing/scanout are now in sync.
   size_t offset = 0;
   for (const auto& entry : root_backing_pages()) {
-    ASSERT_EQ(
-        memcmp(entry.buffer.get(), scanout_buffer() + offset, entry.len),
-        0);
+    ASSERT_EQ(memcmp(entry.buffer.get(), scanout_buffer() + offset, entry.len),
+              0);
     offset += entry.len;
   }
 }
@@ -345,6 +348,13 @@ TEST_F(VirtioGpuTest, DrawCursor) {
   memset(scanout_buffer(), 0xab, scanout_size());
   for (const auto& entry : cursor_backing_pages()) {
     memset(entry.buffer.get(), 0xff, entry.len);
+    // Add a single semi-transparent pixel.
+    size_t cursor_row_pitch = kCursorWidth * kPixelSize;
+    size_t cursor_alpha_pixel_offset = cursor_row_pitch * kCursorAlphaPixelRow +
+                                       kPixelSize * kCursorAlphaPixelCol;
+    *reinterpret_cast<uint32_t*>(entry.buffer.get() +
+                                 cursor_alpha_pixel_offset) =
+        kCursorAlphaPixelValue;
   }
   virtio_gpu_transfer_to_host_2d_t transfer_request = {};
   transfer_request.hdr.type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D;
@@ -391,7 +401,12 @@ TEST_F(VirtioGpuTest, DrawCursor) {
       size_t index = y * kDisplayWidth + x;
       if (y >= cursor_pos_y && y < cursor_pos_y + kCursorHeight &&
           x >= cursor_pos_x && x < cursor_pos_x + kCursorWidth) {
-        ASSERT_EQ(0xffffffff, scanout[index]);
+        if (y == cursor_pos_y + kCursorAlphaPixelRow &&
+            x == cursor_pos_x + kCursorAlphaPixelCol) {
+          ASSERT_EQ(kCursorAlphaPixelExpectedResult, scanout[index]);
+        } else {
+          ASSERT_EQ(0xffffffff, scanout[index]);
+        }
       } else {
         ASSERT_EQ(0xabababab, scanout[index]);
       }

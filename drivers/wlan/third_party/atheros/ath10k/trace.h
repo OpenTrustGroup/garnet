@@ -18,6 +18,7 @@
 #if !defined(_TRACE_H_) || defined(TRACE_HEADER_MULTI_READ)
 
 #include <linux/tracepoint.h>
+
 #include "core.h"
 
 #if !defined(_TRACE_H_)
@@ -39,12 +40,12 @@ static inline uint32_t ath10k_frm_hdr_len(const void* buf, size_t len) {
 #if !defined(CONFIG_ATH10K_TRACING)
 #undef TRACE_EVENT
 #define TRACE_EVENT(name, proto, ...) \
-static inline void trace_ ## name(proto) {}
+    static inline void trace_##name(proto) {}
 #undef DECLARE_EVENT_CLASS
 #define DECLARE_EVENT_CLASS(...)
 #undef DEFINE_EVENT
 #define DEFINE_EVENT(evt_class, name, proto, ...) \
-static inline void trace_ ## name(proto) {}
+    static inline void trace_##name(proto) {}
 #endif /* !CONFIG_ATH10K_TRACING || __CHECKER__ */
 
 #undef TRACE_SYSTEM
@@ -52,6 +53,7 @@ static inline void trace_ ## name(proto) {}
 
 #define ATH10K_MSG_MAX 400
 
+// clang-format off
 DECLARE_EVENT_CLASS(ath10k_log_event,
                     TP_PROTO(struct ath10k* ar, struct va_format* vaf),
                     TP_ARGS(ar, vaf),
@@ -534,6 +536,7 @@ TRACE_EVENT(ath10k_wmi_diag,
                 __entry->len
             )
            );
+// clang-format on
 
 #endif /* _TRACE_H_ || TRACE_HEADER_MULTI_READ*/
 

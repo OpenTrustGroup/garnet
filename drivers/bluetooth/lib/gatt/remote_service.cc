@@ -6,6 +6,7 @@
 
 #include <lib/async/default.h>
 
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/common/run_or_post.h"
 #include "garnet/drivers/bluetooth/lib/common/slab_allocator.h"
 
@@ -15,21 +16,24 @@ namespace gatt {
 using att::Status;
 using att::StatusCallback;
 using common::BufferView;
+using common::ByteBuffer;
 using common::HostError;
+using common::MutableByteBufferPtr;
+using common::NewSlabBuffer;
 using common::RunOrPost;
 
 namespace {
 
 void ReportStatus(Status status,
                   StatusCallback callback,
-                  async_t* dispatcher) {
+                  async_dispatcher_t* dispatcher) {
   RunOrPost([status, cb = std::move(callback)] { cb(status); }, dispatcher);
 }
 
 void ReportValue(att::Status status,
                  const common::ByteBuffer& value,
                  RemoteService::ReadValueCallback callback,
-                 async_t* dispatcher) {
+                 async_dispatcher_t* dispatcher) {
   if (!dispatcher) {
     callback(status, value);
     return;
@@ -53,23 +57,23 @@ constexpr size_t RemoteService::kSentinel;
 
 RemoteService::RemoteService(const ServiceData& service_data,
                              fxl::WeakPtr<Client> client,
-                             async_t* gatt_dispatcher)
+                             async_dispatcher_t* gatt_dispatcher)
     : service_data_(service_data),
       gatt_dispatcher_(gatt_dispatcher),
       client_(client),
       remaining_descriptor_requests_(kSentinel),
       shut_down_(false) {
-  FXL_DCHECK(client_);
-  FXL_DCHECK(gatt_dispatcher_);
+  ZX_DEBUG_ASSERT(client_);
+  ZX_DEBUG_ASSERT(gatt_dispatcher_);
 }
 
 RemoteService::~RemoteService() {
   std::lock_guard<std::mutex> lock(mtx_);
-  FXL_DCHECK(!alive());
+  ZX_DEBUG_ASSERT(!alive());
 }
 
 void RemoteService::ShutDown() {
-  FXL_DCHECK(IsOnGattThread());
+  ZX_DEBUG_ASSERT(IsOnGattThread());
 
   std::vector<PendingClosure> rm_handlers;
 
@@ -93,7 +97,7 @@ void RemoteService::ShutDown() {
 }
 
 bool RemoteService::AddRemovedHandler(fit::closure handler,
-                                      async_t* dispatcher) {
+                                      async_dispatcher_t* dispatcher) {
   std::lock_guard<std::mutex> lock(mtx_);
 
   if (!alive())
@@ -104,7 +108,7 @@ bool RemoteService::AddRemovedHandler(fit::closure handler,
 }
 
 void RemoteService::DiscoverCharacteristics(CharacteristicCallback callback,
-                                            async_t* dispatcher) {
+                                            async_dispatcher_t* dispatcher) {
   RunGattTask([this, cb = std::move(callback), dispatcher]() mutable {
     if (shut_down_) {
       ReportCharacteristics(Status(HostError::kFailed), std::move(cb),
@@ -138,10 +142,8 @@ void RemoteService::DiscoverCharacteristics(CharacteristicCallback callback,
         status = Status(HostError::kFailed);
       }
 
-      if (!status) {
-        FXL_VLOG(1) << "gatt: characteristic discovery failed "
-                    << status.ToString();
-
+      if (bt_is_error(status, TRACE, "gatt",
+                      "characteristic discovery failed")) {
         self->characteristics_.clear();
       }
 
@@ -175,7 +177,7 @@ bool RemoteService::IsDiscovered() const {
 
 void RemoteService::ReadCharacteristic(IdType id,
                                        ReadValueCallback cb,
-                                       async_t* dispatcher) {
+                                       async_dispatcher_t* dispatcher) {
   RunGattTask([this, id, cb = std::move(cb), dispatcher]() mutable {
     RemoteCharacteristic* chrc;
     att::Status status = att::Status(GetCharacteristic(id, &chrc));
@@ -184,14 +186,13 @@ void RemoteService::ReadCharacteristic(IdType id,
       return;
     }
 
-    // TODO(armansito): Use the "long read" procedure when supported.
     if (!(chrc->info().properties & Property::kRead)) {
-      FXL_VLOG(1) << "gatt: Characteristic does not support \"read\"";
+      bt_log(TRACE, "gatt", "characteristic does not support \"read\"");
       ReportValue(att::Status(HostError::kNotSupported), BufferView(), std::move(cb), dispatcher);
       return;
     }
 
-    FXL_DCHECK(chrc);
+    ZX_DEBUG_ASSERT(chrc);
 
     auto res_cb = [cb = std::move(cb), dispatcher](att::Status status,
                                                    const auto& value) mutable {
@@ -202,10 +203,53 @@ void RemoteService::ReadCharacteristic(IdType id,
   });
 }
 
+void RemoteService::ReadLongCharacteristic(IdType id, uint16_t offset,
+                                           size_t max_bytes,
+                                           ReadValueCallback cb,
+                                           async_dispatcher_t* dispatcher) {
+  RunGattTask(
+      [this, id, offset, max_bytes, cb = std::move(cb), dispatcher]() mutable {
+        RemoteCharacteristic* chrc;
+        att::Status status = att::Status(GetCharacteristic(id, &chrc));
+        if (!status) {
+          ReportValue(status, BufferView(), std::move(cb), dispatcher);
+          return;
+        }
+
+        if (!(chrc->info().properties & Property::kRead)) {
+          bt_log(TRACE, "gatt", "characteristic does not support \"read\"");
+          ReportValue(att::Status(HostError::kNotSupported), BufferView(),
+                      std::move(cb), dispatcher);
+          return;
+        }
+
+        ZX_DEBUG_ASSERT(chrc);
+
+        if (max_bytes == 0) {
+          bt_log(SPEW, "gatt", "invalid value for |max_bytes|: 0");
+          ReportValue(att::Status(HostError::kInvalidParameters), BufferView(),
+                      std::move(cb), dispatcher);
+          return;
+        }
+
+        // Set up the buffer in which we'll accumulate the blobs.
+        auto buffer =
+            NewSlabBuffer(std::min(max_bytes, att::kMaxAttributeValueLength));
+        if (!buffer) {
+          ReportValue(att::Status(HostError::kOutOfMemory), BufferView(),
+                      std::move(cb), dispatcher);
+          return;
+        }
+
+        ReadLongHelper(chrc->info().value_handle, offset, std::move(buffer),
+                       0u /* bytes_read */, std::move(cb), dispatcher);
+      });
+}
+
 void RemoteService::WriteCharacteristic(IdType id,
                                         std::vector<uint8_t> value,
                                         StatusCallback cb,
-                                        async_t* dispatcher) {
+                                        async_dispatcher_t* dispatcher) {
   RunGattTask([this, id, value = std::move(value), cb = std::move(cb),
                dispatcher]() mutable {
     RemoteCharacteristic* chrc;
@@ -215,28 +259,50 @@ void RemoteService::WriteCharacteristic(IdType id,
       return;
     }
 
+    ZX_DEBUG_ASSERT(chrc);
+
     // TODO(armansito): Use the "long write" procedure when supported.
     if (!(chrc->info().properties & Property::kWrite)) {
-      FXL_VLOG(1) << "gatt: Characteristic does not support \"write\"";
+      bt_log(TRACE, "gatt", "characteristic does not support \"write\"");
       ReportStatus(Status(HostError::kNotSupported), std::move(cb), dispatcher);
       return;
     }
-
-    FXL_DCHECK(chrc);
 
     auto res_cb = [cb = std::move(cb), dispatcher](Status status) mutable {
       ReportStatus(status, std::move(cb), dispatcher);
     };
 
     client_->WriteRequest(chrc->info().value_handle,
-                          common::BufferView(value.data(), value.size()),
+                          BufferView(value.data(), value.size()),
                           std::move(res_cb));
+  });
+}
+
+void RemoteService::WriteCharacteristicWithoutResponse(
+    IdType id, std::vector<uint8_t> value) {
+  RunGattTask([this, id, value = std::move(value)]() mutable {
+    RemoteCharacteristic* chrc;
+    Status status = Status(GetCharacteristic(id, &chrc));
+    if (!status) {
+      return;
+    }
+
+    ZX_DEBUG_ASSERT(chrc);
+
+    if (!(chrc->info().properties & Property::kWriteWithoutResponse)) {
+      bt_log(TRACE, "gatt",
+             "characteristic does not support \"write without response\"");
+      return;
+    }
+
+    client_->WriteWithoutResponse(chrc->info().value_handle,
+                                  BufferView(value.data(), value.size()));
   });
 }
 
 void RemoteService::EnableNotifications(IdType id, ValueCallback callback,
                                         NotifyStatusCallback status_callback,
-                                        async_t* dispatcher) {
+                                        async_dispatcher_t* dispatcher) {
   RunGattTask([this, id, cb = std::move(callback),
                status_cb = std::move(status_callback), dispatcher]() mutable {
     RemoteCharacteristic* chrc;
@@ -247,7 +313,7 @@ void RemoteService::EnableNotifications(IdType id, ValueCallback callback,
       return;
     }
 
-    FXL_DCHECK(chrc);
+    ZX_DEBUG_ASSERT(chrc);
 
     chrc->EnableNotifications(std::move(cb), std::move(status_cb), dispatcher);
   });
@@ -255,7 +321,7 @@ void RemoteService::EnableNotifications(IdType id, ValueCallback callback,
 
 void RemoteService::DisableNotifications(IdType id, IdType handler_id,
                                          StatusCallback status_callback,
-                                         async_t* dispatcher) {
+                                         async_dispatcher_t* dispatcher) {
   RunGattTask([this, id, handler_id, cb = std::move(status_callback),
                dispatcher]() mutable {
     RemoteCharacteristic* chrc;
@@ -268,10 +334,10 @@ void RemoteService::DisableNotifications(IdType id, IdType handler_id,
 }
 
 void RemoteService::StartDescriptorDiscovery() {
-  FXL_DCHECK(IsOnGattThread());
-  FXL_DCHECK(!pending_discov_reqs_.empty());
+  ZX_DEBUG_ASSERT(IsOnGattThread());
+  ZX_DEBUG_ASSERT(!pending_discov_reqs_.empty());
 
-  FXL_DCHECK(characteristics_.size());
+  ZX_DEBUG_ASSERT(characteristics_.size());
   remaining_descriptor_requests_ = characteristics_.size();
 
   auto self = fbl::WrapRefPtr(this);
@@ -298,12 +364,13 @@ void RemoteService::StartDescriptorDiscovery() {
         return;
 
       // HasCharacteristics() should return true now.
-      FXL_DCHECK(self->HasCharacteristics());
+      ZX_DEBUG_ASSERT(self->HasCharacteristics());
 
       // Fall through and notify clients below.
     } else {
-      FXL_DCHECK(!self->HasCharacteristics());
-      FXL_VLOG(1) << "gatt: descriptor discovery failed " << status.ToString();
+      ZX_DEBUG_ASSERT(!self->HasCharacteristics());
+      bt_log(TRACE, "gatt", "descriptor discovery failed %s",
+             status.ToString().c_str());
       self->characteristics_.clear();
 
       // Fall through and notify the clients below.
@@ -324,18 +391,18 @@ void RemoteService::StartDescriptorDiscovery() {
       end_handle = characteristics_[i + 1].info().handle - 1;
     }
 
-    FXL_DCHECK(client_);
+    ZX_DEBUG_ASSERT(client_);
     characteristics_[i].DiscoverDescriptors(end_handle, desc_done_callback);
   }
 }
 
 bool RemoteService::IsOnGattThread() const {
-  return async_get_default() == gatt_dispatcher_;
+  return async_get_default_dispatcher() == gatt_dispatcher_;
 }
 
 HostError RemoteService::GetCharacteristic(IdType id, RemoteCharacteristic** out_char) {
-  FXL_DCHECK(IsOnGattThread());
-  FXL_DCHECK(out_char);
+  ZX_DEBUG_ASSERT(IsOnGattThread());
+  ZX_DEBUG_ASSERT(out_char);
 
   if (shut_down_)
     return HostError::kFailed;
@@ -359,8 +426,8 @@ void RemoteService::RunGattTask(fit::closure task) {
 
 void RemoteService::ReportCharacteristics(Status status,
                                           CharacteristicCallback callback,
-                                          async_t* dispatcher) {
-  FXL_DCHECK(IsOnGattThread());
+                                          async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(IsOnGattThread());
   RunOrPost(
       [self = fbl::WrapRefPtr(this), status, cb = std::move(callback)] {
         // We return a const reference to our |characteristics_| field to avoid
@@ -377,8 +444,8 @@ void RemoteService::ReportCharacteristics(Status status,
 }
 
 void RemoteService::CompleteCharacteristicDiscovery(att::Status status) {
-  FXL_DCHECK(!pending_discov_reqs_.empty());
-  FXL_DCHECK(!status || remaining_descriptor_requests_ == 0u);
+  ZX_DEBUG_ASSERT(!pending_discov_reqs_.empty());
+  ZX_DEBUG_ASSERT(!status || remaining_descriptor_requests_ == 0u);
 
   auto pending = std::move(pending_discov_reqs_);
   for (auto& req : pending) {
@@ -386,9 +453,61 @@ void RemoteService::CompleteCharacteristicDiscovery(att::Status status) {
   }
 }
 
+void RemoteService::ReadLongHelper(att::Handle value_handle, uint16_t offset,
+                                   MutableByteBufferPtr buffer,
+                                   size_t bytes_read,
+                                   ReadValueCallback callback,
+                                   async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(IsOnGattThread());
+  ZX_DEBUG_ASSERT(callback);
+  ZX_DEBUG_ASSERT(buffer);
+  ZX_DEBUG_ASSERT(!shut_down_);
+
+  // Capture a reference so that this object is alive when the callback runs.
+  auto self = fbl::WrapRefPtr(this);
+  auto read_blob_cb = [self, value_handle, offset, buffer = std::move(buffer),
+                       bytes_read, cb = std::move(callback), dispatcher](
+                          att::Status status, const ByteBuffer& blob) mutable {
+    if (self->shut_down_) {
+      // The service was removed. Report an error.
+      ReportValue(att::Status(HostError::kCanceled), BufferView(),
+                  std::move(cb), dispatcher);
+      return;
+    }
+
+    if (!status) {
+      ReportValue(status, BufferView(), std::move(cb), dispatcher);
+      return;
+    }
+
+    // Copy the blob into our |buffer|. |blob| may be truncated depending on the
+    // size of |buffer|.
+    ZX_DEBUG_ASSERT(bytes_read < buffer->size());
+    size_t copy_size = std::min(blob.size(), buffer->size() - bytes_read);
+    buffer->Write(blob.view(0, copy_size), bytes_read);
+    bytes_read += copy_size;
+
+    // We are done if the blob is smaller than (ATT_MTU - 1) or we have read the
+    // maximum number of bytes requested.
+    ZX_DEBUG_ASSERT(bytes_read <= buffer->size());
+    if (blob.size() < (self->client_->mtu() - 1) ||
+        bytes_read == buffer->size()) {
+      ReportValue(att::Status(), buffer->view(0, bytes_read), std::move(cb),
+                  dispatcher);
+      return;
+    }
+
+    // We have more bytes to read. Read the next blob.
+    self->ReadLongHelper(value_handle, offset + blob.size(), std::move(buffer),
+                         bytes_read, std::move(cb), dispatcher);
+  };
+
+  client_->ReadBlobRequest(value_handle, offset, std::move(read_blob_cb));
+}
+
 void RemoteService::HandleNotification(att::Handle value_handle,
                                        const common::ByteBuffer& value) {
-  FXL_DCHECK(IsOnGattThread());
+  ZX_DEBUG_ASSERT(IsOnGattThread());
 
   if (shut_down_)
     return;

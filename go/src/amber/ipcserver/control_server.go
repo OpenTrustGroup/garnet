@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"sync"
 
-	"fidl/bindings"
 	"fidl/fuchsia/amber"
 
 	"amber/daemon"
@@ -19,12 +18,13 @@ import (
 	"amber/pkg"
 
 	"syscall/zx"
+	"syscall/zx/fidl"
 )
 
 type ControlSrvr struct {
 	daemonGate  sync.Once
 	daemon      *daemon.Daemon
-	bs          bindings.BindingSet
+	bs          fidl.BindingSet
 	actMon      *ActivationMonitor
 	activations chan<- string
 	compReqs    chan<- *completeUpdateRequest
@@ -38,7 +38,7 @@ const ZXSIO_DAEMON_ERROR = zx.SignalUser0
 var merklePat = regexp.MustCompile("^[0-9a-f]{64}$")
 
 func NewControlSrvr(d *daemon.Daemon, s *daemon.SystemUpdateMonitor) *ControlSrvr {
-	go bindings.Serve()
+	go fidl.Serve()
 	a := make(chan string, 5)
 	c := make(chan *completeUpdateRequest, 1)
 	w := make(chan *startUpdateRequest, 1)
@@ -86,8 +86,8 @@ func (c *ControlSrvr) CheckForSystemUpdate() (bool, error) {
 	return false, nil
 }
 
-func (c *ControlSrvr) RemoveSrc(url string) (bool, error) {
-	return true, nil
+func (c *ControlSrvr) RemoveSrc(id string) (amber.Status, error) {
+	return c.daemon.RemoveTUFSource(id)
 }
 
 func (c *ControlSrvr) Check() (bool, error) {
@@ -98,7 +98,9 @@ func (c *ControlSrvr) ListSrcs() ([]amber.SourceConfig, error) {
 	m := c.daemon.GetSources()
 	v := make([]amber.SourceConfig, 0, len(m))
 	for _, src := range m {
-		v = append(v, *src.GetConfig())
+		c := *src.GetConfig()
+		c.StatusConfig.Enabled = src.Enabled()
+		v = append(v, c)
 	}
 
 	return v, nil
@@ -110,10 +112,10 @@ func (c *ControlSrvr) getAndWaitForUpdate(name string, version, merkle *string, 
 		signalErr := ch.Handle().SignalPeer(0, zx.SignalUser0)
 		if signalErr != nil {
 			lg.Log.Printf("signal failed: %s", signalErr)
-			ch.Close()
 		} else {
 			ch.Write([]byte(err.Error()), []zx.Handle{}, 0)
 		}
+		ch.Close()
 		return
 	}
 	lg.Log.Println("Package metadata retrieved, sending for additional processing")
@@ -137,6 +139,19 @@ func (c *ControlSrvr) PackagesActivated(merkle []string) error {
 		lg.Log.Printf("control_server: Got package activation for %s\n", m)
 	}
 	return nil
+}
+
+func (c *ControlSrvr) SetSrcEnabled(id string, enabled bool) (amber.Status, error) {
+	if enabled {
+		if err := c.daemon.EnableSource(id); err != nil {
+			return amber.StatusErr, nil
+		}
+	} else {
+		if err := c.daemon.DisableSource(id); err != nil {
+			return amber.StatusErr, nil
+		}
+	}
+	return amber.StatusOk, nil
 }
 
 func (c *ControlSrvr) downloadPkgMeta(name string, version, merkle *string) (*daemon.GetResult, error) {

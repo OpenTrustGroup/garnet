@@ -24,18 +24,18 @@ TEST(FormatContext, FormatSourceContext) {
   opts.first_line = 2;
   opts.last_line = 6;
   opts.active_line = 4;
-  opts.active_column = 11;
+  opts.highlight_line = 4;
+  opts.highlight_column = 11;
 
   OutputBuffer out;
   ASSERT_FALSE(
       FormatSourceContext("file", kSimpleProgram, opts, &out).has_error());
-  EXPECT_EQ(R"(   2 
-   3 int main(int argc, char** argv) {
- ▶ 4   printf("Hello, world");
-   5   return 1;
-   6 }
-)",
-            out.AsString());
+  EXPECT_EQ(
+      "   2 \n   3 int main(int argc, char** argv) {\n"
+      " ▶ 4   printf(\"Hello, world\");\n"
+      "   5   return 1;\n"
+      "   6 }\n",
+      out.AsString());
 }
 
 TEST(FormatContext, FormatSourceContext_OffBeginning) {
@@ -43,19 +43,20 @@ TEST(FormatContext, FormatSourceContext_OffBeginning) {
   opts.first_line = 0;
   opts.last_line = 4;
   opts.active_line = 2;
-  opts.active_column = 11;
+  opts.highlight_line = 2;
+  opts.highlight_column = 11;
 
   OutputBuffer out;
   // This column is off the end of line two, and the context has one less line
   // at the beginning because it hit the top of the file.
   ASSERT_FALSE(
       FormatSourceContext("file", kSimpleProgram, opts, &out).has_error());
-  EXPECT_EQ(R"(   1 #include "foo.h"
- ▶ 2 
-   3 int main(int argc, char** argv) {
-   4   printf("Hello, world");
-)",
-            out.AsString());
+  EXPECT_EQ(
+      "   1 #include \"foo.h\"\n"
+      " ▶ 2 \n"
+      "   3 int main(int argc, char** argv) {\n"
+      "   4   printf(\"Hello, world\");\n",
+      out.AsString());
 }
 
 TEST(FormatContext, FormatSourceContext_OffEnd) {
@@ -63,18 +64,19 @@ TEST(FormatContext, FormatSourceContext_OffEnd) {
   opts.first_line = 4;
   opts.last_line = 8;
   opts.active_line = 6;
-  opts.active_column = 6;
+  opts.highlight_line = 6;
+  opts.highlight_column = 6;
 
   OutputBuffer out;
   // This column is off the end of line two, and the context has one less line
   // at the beginning because it hit the top of the file.
   ASSERT_FALSE(
       FormatSourceContext("file", kSimpleProgram, opts, &out).has_error());
-  EXPECT_EQ(R"(   4   printf("Hello, world");
-   5   return 1;
- ▶ 6 }
-)",
-            out.AsString());
+  EXPECT_EQ(
+      "   4   printf(\"Hello, world\");\n"
+      "   5   return 1;\n"
+      " ▶ 6 }\n",
+      out.AsString());
 }
 
 TEST(FormatContext, FormatSourceContext_LineOffEnd) {
@@ -82,6 +84,8 @@ TEST(FormatContext, FormatSourceContext_LineOffEnd) {
   opts.first_line = 0;
   opts.last_line = 100;
   opts.active_line = 10;  // This line is off the end of the input.
+  opts.highlight_line = 10;
+  opts.require_active_line = true;
 
   OutputBuffer out;
   Err err = FormatSourceContext("file.cc", kSimpleProgram, opts, &out);
@@ -118,11 +122,11 @@ TEST(FormatContext, FormatAsmContext) {
   err = FormatAsmContext(&arch, dump, opts, &out);
   ASSERT_FALSE(err.has_error());
 
-  EXPECT_EQ(R"( ◉ 0x123456780  mov  edi, 0x28e5e0 
- ▶ 0x123456785  mov  rsi, rbx 
-   0x123456788  lea  rdi, [rsp + 0xc] 
-)",
-            out.AsString());
+  EXPECT_EQ(
+      " ◉ 0x123456780  mov  edi, 0x28e5e0 \n"
+      " ▶ 0x123456785  mov  rsi, rbx \n"
+      "   0x123456788  lea  rdi, [rsp + 0xc] \n",
+      out.AsString());
 
   // Try again with source bytes and a disabled breakpoint on the same line as
   // the active address.
@@ -133,11 +137,11 @@ TEST(FormatContext, FormatAsmContext) {
   err = FormatAsmContext(&arch, dump, opts, &out);
   ASSERT_FALSE(err.has_error());
 
-  EXPECT_EQ(R"(   0x123456780  bf e0 e5 28 00  mov  edi, 0x28e5e0 
-◯▶ 0x123456785  48 89 de        mov  rsi, rbx 
-   0x123456788  48 8d 7c 24 0c  lea  rdi, [rsp + 0xc] 
-)",
-            out.AsString());
+  EXPECT_EQ(
+      "   0x123456780  bf e0 e5 28 00  mov  edi, 0x28e5e0 \n"
+      "◯▶ 0x123456785  48 89 de        mov  rsi, rbx \n"
+      "   0x123456788  48 8d 7c 24 0c  lea  rdi, [rsp + 0xc] \n",
+      out.AsString());
 }
 
 }  // namespace zxdb

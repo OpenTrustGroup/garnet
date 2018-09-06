@@ -19,6 +19,7 @@
 #include "garnet/bin/mdns/service/mdns_addresses.h"
 #include "garnet/bin/mdns/service/mdns_interface_transceiver_v4.h"
 #include "garnet/bin/mdns/service/mdns_interface_transceiver_v6.h"
+#include "lib/fostr/hex_dump.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/time/time_delta.h"
@@ -56,8 +57,8 @@ bool MdnsInterfaceTransceiver::Start(InboundMessageCallback callback) {
   FXL_DCHECK(callback);
   FXL_DCHECK(!socket_fd_.is_valid()) << "Start called when already started.";
 
-  std::cerr << "Starting mDNS on interface " << name_ << ", address "
-            << address_ << ".\n";
+  std::cerr << "Starting mDNS on interface " << name_ << ", IPv4 " << address_
+            << "\n";
 
   socket_fd_ = fxl::UniqueFD(socket(address_.family(), SOCK_DGRAM, 0));
 
@@ -177,8 +178,8 @@ void MdnsInterfaceTransceiver::InboundReady(zx_status_t status,
   if (result < 0) {
     FXL_LOG(ERROR) << "Failed to recvfrom, errno " << errno;
     // Wait a bit before trying again to avoid spamming the log.
-    async::PostDelayedTask(async_get_default(), [this]() { WaitForInbound(); },
-                           zx::sec(10));
+    async::PostDelayedTask(async_get_default_dispatcher(),
+                           [this]() { WaitForInbound(); }, zx::sec(10));
     return;
   }
 
@@ -204,7 +205,7 @@ void MdnsInterfaceTransceiver::InboundReady(zx_status_t status,
   } else {
     inbound_buffer_.resize(result);
     FXL_LOG(ERROR) << "Couldn't parse message from " << reply_address << ", "
-                   << result << " bytes: " << inbound_buffer_;
+                   << result << " bytes: " << fostr::HexDump(inbound_buffer_);
     inbound_buffer_.resize(kMaxPacketSize);
   }
 

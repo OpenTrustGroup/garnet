@@ -3,57 +3,25 @@
 # found in the LICENSE file.
 
 import("//build/go/go_binary.gni")
+import("//build/go/go_library.gni")
 import("//build/go/go_test.gni")
 import("//build/go/toolchain.gni")
 import("//build/host.gni")
 import("//build/package.gni")
 
-common_dependencies = [
-  {
-    package = "amber"
-    source = "//garnet/go/src/amber"
-  },
-  {
-    package = "fuchsia.googlesource.com/far"
-    source = "//garnet/go/src/far"
-  },
-  {
-    package = "fuchsia.googlesource.com/merkle"
-    source = "//garnet/go/src/merkle"
-  },
-  {
-    package = "github.com/flynn/go-tuf"
-    source = "//third_party/golibs/github.com/flynn/go-tuf"
-  },
-  {
-    package = "golang.org/x/crypto"
-    source = "//third_party/golang/crypto"
-  },
-  {
-    package = "github.com/syndtr/goleveldb/leveldb"
-    source = "//third_party/golibs/github.com/syndtr/goleveldb/leveldb"
-  },
-  {
-    package = "github.com/tent/canonical-json-go"
-    source = "//third_party/golibs/github.com/tent/canonical-json-go"
-  },
-  {
-    package = "github.com/golang/snappy"
-    source = "//third_party/golibs/github.com/golang/snappy"
-  },
-  {
-    package = "golang.org/x/net"
-    source = "//third_party/golibs/golang.org/x/net"
-  },
-  {
-    package = "golang.org/x/oauth2"
-    source = "//third_party/golibs/golang.org/x/oauth2"
-  },
-  {
-    package = "github.com/rjw57/oauth2device"
-    source = "//third_party/golibs/github.com/rjw57/oauth2device"
-  },
-]
+go_library("amber_lib") {
+  name = "amber"
+  deps = [
+    "//garnet/go/src/merkle",
+    "//garnet/public/fidl/fuchsia.amber($go_toolchain)",
+    "//garnet/public/fidl/fuchsia.sys($go_toolchain)",
+    "//garnet/public/go/third_party:github.com/flynn/go-tuf",
+    "//garnet/public/go/third_party:github.com/rjw57/oauth2device",
+    "//garnet/public/go/third_party:golang.org/x/oauth2",
+    "//garnet/public/lib/component/go/src/app",
+    "//garnet/public/lib/syslog/go/src/syslog",
+  ]
+}
 
 amber_target_binaries = [
   {
@@ -67,13 +35,6 @@ amber_target_binaries = [
   },
 ]
 
-common_extra_dependencies = [
-  "//garnet/public/lib/amber/fidl($go_toolchain)",
-  "//garnet/public/lib/app/fidl($go_toolchain)",
-  "//garnet/public/lib/app/go/src/app",
-  "//garnet/public/lib/fidl/go/src/fidl/bindings",
-]
-
 foreach(tgt, amber_target_binaries) {
   target_name = tgt.name
   if (defined(tgt.target)) {
@@ -84,9 +45,7 @@ foreach(tgt, amber_target_binaries) {
 
     gopackage = tgt.gopkg
 
-    extra_dependencies = common_extra_dependencies
-
-    go_dependencies = common_dependencies
+    deps = [ ":amber_lib" ]
   }
 }
 
@@ -147,7 +106,7 @@ foreach(tgt, amber_host_binaries) {
 
     gopackage = tgt.gopkg
 
-    go_dependencies = common_dependencies
+    deps = [ ":amber_lib" ]
   }
 }
 
@@ -178,25 +137,23 @@ test_targets = [
     name = "amber_fidl_test"
     gopkg = "amber/ipcserver"
   },
+  {
+    name = "amber_source_test"
+    gopkg = "amber/source"
+  }
 ]
 foreach(test, test_targets) {
   go_test(test.name) {
     gopackage = test.gopkg
 
-    extra_dependencies = common_extra_dependencies
-
-    go_dependencies =
-        common_dependencies + [
-          {
-            package = "github.com/google/go-cmp/cmp"
-            source = "//third_party/golibs/github.com/google/go-cmp/cmp"
-          },
-        ]
+    deps = [
+      ":amber_lib",
+      "//garnet/public/go/third_party:github.com/google/go-cmp",
+    ]
   }
 }
 
 package("amber_tests") {
-  deprecated_system_image = true
   testonly = true
 
   deps = []
@@ -222,6 +179,23 @@ copy("amber-srv-keys") {
   ]
   outputs = [
     "$root_out_dir/{{source_file_part}}",
+  ]
+}
+
+package("test_config") {
+  deprecated_system_image = true
+  package_name = "amber_test_config"
+  testonly = true
+
+  resources = [
+    {
+      dest = "amber/test_sources/test1/config.json"
+      path = rebase_path("etc/sources/test1/config.json")
+    },
+    {
+      dest = "amber/test_sources/test2/config.json"
+      path = rebase_path("etc/sources/test2/config.json")
+    }
   ]
 }
 

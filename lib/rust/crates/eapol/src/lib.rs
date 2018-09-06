@@ -1,21 +1,13 @@
 // Copyright 2018 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
 #![feature(test)]
 #![deny(warnings)]
 
-#[macro_use]
-extern crate bitfield;
-extern crate byteorder;
-extern crate bytes;
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate nom;
-extern crate test;
-
-use bytes::{BufMut, Bytes, BytesMut};
-use nom::{be_u16, be_u64, be_u8};
+use bitfield::{bitfield, bitfield_debug, bitfield_fields, bitfield_struct};
+use bytes::{BufMut, Bytes};
+use nom::{be_u16, be_u64, be_u8, call, do_parse, eof, error_position, map, named_args, take, verify};
 use std::convert::AsMut;
 
 pub trait FrameReceiver {
@@ -26,13 +18,13 @@ pub trait KeyFrameReceiver {
     fn on_eapol_key_frame(&self, frame: &KeyFrame) -> Result<(), failure::Error>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Frame {
     Key(KeyFrame),
 }
 
 // IEEE Std 802.1X-2010, 11.9, Table 11-5
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum KeyDescriptor {
     Rc4 = 1,
     Ieee802dot11 = 2,
@@ -55,6 +47,8 @@ pub const KEY_TYPE_PAIRWISE: u16 = 1;
 // IEEE Std 802.1X-2010, 11.3.1
 #[derive(Debug)]
 pub enum ProtocolVersion {
+    Ieee802dot1x2001 = 1,
+    Ieee802dot1x2004 = 2,
     Ieee802dot1x2010 = 3,
 }
 
@@ -73,6 +67,7 @@ pub enum PacketType {
 
 // IEEE Std 802.11-2016, 12.7.2, Figure 12-33
 bitfield! {
+    #[derive(PartialEq)]
     pub struct KeyInformation(u16);
     impl Debug;
     pub key_descriptor_version, set_key_descriptor_version: 2, 0;
@@ -97,7 +92,7 @@ impl Default for KeyInformation {
 }
 
 // IEEE Std 802.11-2016, 12.7.2, Figure 12-32
-#[derive(Default, Debug)]
+#[derive(Default, Debug, PartialEq)]
 pub struct KeyFrame {
     pub version: u8,
     pub packet_type: u8,
@@ -123,11 +118,8 @@ impl KeyFrame {
         static_part_len + dynamic_part_len
     }
 
-    pub fn as_bytes(&self, clear_mic: bool, buf: &mut BytesMut) -> Result<(), failure::Error> {
-        let frame_len = self.len();
-        if buf.remaining_mut() < frame_len {
-            return Err(ErrorBufferTooSmall(frame_len, buf.remaining_mut()).into());
-        }
+    pub fn as_bytes(&self, clear_mic: bool, buf: &mut Vec<u8>) {
+        buf.reserve(self.len());
 
         buf.put_u8(self.version);
         buf.put_u8(self.packet_type);
@@ -148,7 +140,6 @@ impl KeyFrame {
         }
         buf.put_u16_be(self.key_data_len);
         buf.put_slice(&self.key_data[..]);
-        Ok(())
     }
 
     pub fn update_packet_body_len(&mut self) {
@@ -202,10 +193,6 @@ named_args!(pub key_frame_from_bytes(mic_size: u16) <KeyFrame>,
            })
     )
 );
-
-#[derive(Debug, Fail)]
-#[fail(display = "buffer too small; required: {}, available: {}", _0, _1)]
-struct ErrorBufferTooSmall(usize, usize);
 
 #[cfg(test)]
 mod tests {
@@ -333,14 +320,9 @@ mod tests {
         let keyframe: KeyFrame = result.unwrap().1;
 
         // Buffer is too small to write entire frame to.
-        let mut buf = BytesMut::with_capacity(frame.len() - 1);
-        let result = keyframe.as_bytes(false, &mut buf);
-        assert!(result.is_err());
-
-        // Sufficiently large buffer should work.
-        let mut buf = BytesMut::with_capacity(frame.len());
-        let result = keyframe.as_bytes(false, &mut buf);
-        assert!(result.is_ok());
+        let mut buf = Vec::with_capacity(frame.len() - 1);
+        keyframe.as_bytes(false, &mut buf);
+        verify_as_bytes_result(keyframe, false, &buf[..]);
     }
 
     #[test]
@@ -398,9 +380,8 @@ mod tests {
     }
 
     fn verify_as_bytes_result(keyframe: KeyFrame, clear_mic: bool, expected: &[u8]) {
-        let mut buf = BytesMut::with_capacity(128);
-        let result = keyframe.as_bytes(clear_mic, &mut buf);
-        assert!(result.is_ok());
+        let mut buf = Vec::with_capacity(128);
+        keyframe.as_bytes(clear_mic, &mut buf);
         let written = buf.len();
         let left_over = buf.split_off(written);
         assert_eq!(&buf[..], expected);

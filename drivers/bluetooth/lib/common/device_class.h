@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_DEVICE_CLASS_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_DEVICE_CLASS_H_
 
 #include <array>
 #include <initializer_list>
@@ -54,7 +55,4 @@ static_assert(sizeof(DeviceClass) == 3,
 }  // namespace common
 }  // namespace btlib
 
-namespace std {
-// Stream operator for easy logging
-ostream& operator<<(ostream& os, const ::btlib::common::DeviceClass& d);
-}  // namespace std
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_DEVICE_CLASS_H_

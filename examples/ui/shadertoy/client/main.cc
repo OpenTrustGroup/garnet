@@ -8,7 +8,7 @@
 #include "garnet/examples/ui/shadertoy/client/view.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/log_settings_command_line.h"
-#include "lib/ui/scenic/cpp/view_provider_service.h"
+#include "lib/ui/base_view/cpp/view_provider_service.h"
 #include "lib/ui/view_framework/view_provider_app.h"
 
 int main(int argc, const char** argv) {
@@ -16,12 +16,12 @@ int main(int argc, const char** argv) {
   if (!fxl::SetLogSettingsFromCommandLine(command_line))
     return 1;
 
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
-  trace::TraceProvider trace_provider(loop.async());
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
+  trace::TraceProvider trace_provider(loop.dispatcher());
 
-  auto startup_context = fuchsia::sys::StartupContext::CreateFromStartupInfo();
+  auto startup_context = component::StartupContext::CreateFromStartupInfo();
 
-  // Export deprecated |fuchsia.ui.views_v1.ViewProvider| service.
+  // Export deprecated |fuchsia.ui.viewsv1.ViewProvider| service.
   mozart::ViewProviderApp mozart_app(
       startup_context.get(), [](mozart::ViewContext view_context) {
         return std::make_unique<shadertoy_client::OldView>(

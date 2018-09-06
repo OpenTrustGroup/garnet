@@ -23,7 +23,8 @@ driver_module("brcmfmac_driver") {
 
   defines = [
     "CONFIG_BRCMFMAC_USB",
-    "CONFIG_BRCMFMAC_SDIO",
+    # DNS if CONFIG_BRCMFMAC_SDIO is defined!
+    # "CONFIG_BRCMFMAC_SDIO",
     "CONFIG_BRCMFMAC_PCIE",
   ]
 
@@ -63,7 +64,7 @@ driver_module("brcmfmac_driver") {
     "fwil_types.h",
     "fwsignal.c",
     "fwsignal.h",
-    "linuxisms.c",
+    "linuxisms.h",
     "msgbuf.c",
     "msgbuf.h",
     "netbuf.c",
@@ -94,9 +95,11 @@ driver_module("brcmfmac_driver") {
   deps = [
     "//zircon/public/lib/ddk",
     "//zircon/public/lib/driver",
+    "//zircon/public/lib/usb",
     "//zircon/public/lib/sync",
     "//zircon/public/lib/zx",
     "//zircon/public/lib/async-loop",
+    "//garnet/lib/wlan/protocol"
   ]
 
   configs += [ "//build/config/fuchsia:enable_zircon_asserts" ]
@@ -122,6 +125,27 @@ executable("workqueue_test") {
     "workqueue.c",
     "workqueue.h",
     "workqueue_test.cc",
+  ]
+
+  deps = [
+    "//third_party/googletest:gtest_main",
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/fbl",
+    "//zircon/public/lib/sync",
+    "//zircon/public/lib/zx",
+    "//zircon/public/lib/fbl",
+    "//third_party/googletest:gtest_main",
+    "//zircon/public/lib/async-loop",
+  ]
+}
+
+executable("netbuf_test") {
+  output_name = "netbuf_test"
+  testonly = true
+  sources = [
+    "netbuf.c",
+    "netbuf.h",
+    "netbuf_test.cc",
   ]
 
   deps = [
@@ -170,17 +194,20 @@ package("brcmfmac") {
 
 package("brcmfmac_test") {
   testonly = true
-  deprecated_system_image = true
 
   package_name = "brcmfmac_test"
 
   deps = [
     ":workqueue_test",
+    ":netbuf_test",
   ]
 
   tests = [
     {
       name = "workqueue_test"
+    },
+    {
+      name = "netbuf_test"
     },
   ]
 }

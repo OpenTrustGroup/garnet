@@ -29,7 +29,7 @@ namespace debugserver {
 // NOTE: This class is generally not thread safe. Care must be taken when
 // calling methods such as set_current_process(), SetCurrentThread(), and
 // QueueNotification() which modify its internal state.
-class RspServer final : public ServerWithIO {
+class RspServer final : public inferior_control::ServerWithIO {
  public:
   // The default timeout interval used when sending notifications.
   constexpr static int64_t kDefaultTimeoutSeconds = 30;
@@ -53,8 +53,7 @@ class RspServer final : public ServerWithIO {
   // A notification will time out if the remote end does not acknowledge it
   // within |timeout|. If a notification times out, it will be sent again.
   void QueueNotification(
-      const fxl::StringView& name,
-      const fxl::StringView& event,
+      const fxl::StringView& name, const fxl::StringView& event,
       const fxl::TimeDelta& timeout =
           fxl::TimeDelta::FromSeconds(kDefaultTimeoutSeconds));
 
@@ -69,8 +68,7 @@ class RspServer final : public ServerWithIO {
                     const fxl::StringView& value);
 
   // Store the value of |parameter| in |*value|. Return true if success.
-  bool GetParameter(const fxl::StringView& parameter,
-                    std::string* value);
+  bool GetParameter(const fxl::StringView& parameter, std::string* value);
 
  private:
   // Maximum number of characters in the outbound buffer.
@@ -129,23 +127,24 @@ class RspServer final : public ServerWithIO {
   void OnIOError() override;
 
   // Process::Delegate overrides.
-  void OnThreadStarting(Process* process,
-                       Thread* thread,
+  void OnThreadStarting(inferior_control::Process* process,
+                        inferior_control::Thread* thread,
+                        const zx_exception_context_t& context) override;
+  void OnThreadExiting(inferior_control::Process* process,
+                       inferior_control::Thread* thread,
                        const zx_exception_context_t& context) override;
-  void OnThreadExiting(Process* process,
-                       Thread* thread,
-                       const zx_exception_context_t& context) override;
-  void OnProcessExit(Process* process) override;
-  void OnArchitecturalException(Process* process,
-                                Thread* thread,
+  void OnProcessExit(inferior_control::Process* process) override;
+  void OnArchitecturalException(inferior_control::Process* process,
+                                inferior_control::Thread* thread,
                                 const zx_excp_type_t type,
                                 const zx_exception_context_t& context) override;
-  void OnSyntheticException(Process* process, Thread* thread,
+  void OnSyntheticException(inferior_control::Process* process,
+                            inferior_control::Thread* thread,
                             zx_excp_type_t type,
                             const zx_exception_context_t& context) override;
-  void ExceptionHelper(
-      Process* process, Thread* thread, zx_excp_type_t type,
-      const zx_exception_context_t& context);
+  void ExceptionHelper(inferior_control::Process* process,
+                       inferior_control::Thread* thread, zx_excp_type_t type,
+                       const zx_exception_context_t& context);
 
   // TCP port number that we will listen on.
   uint16_t port_;

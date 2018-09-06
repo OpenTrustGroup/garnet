@@ -14,9 +14,9 @@
 #include <zircon/types.h>
 
 #include "example_view_provider_service.h"
-#include "garnet/public/lib/ui/scenic/fidl_helpers.h"
 #include "lib/fxl/logging.h"
 #include "lib/svc/cpp/services.h"
+#include "lib/ui/scenic/cpp/commands.h"
 
 static fuchsia::sys::FileDescriptorPtr CloneFileDescriptor(int fd) {
   zx_handle_t handles[FDIO_MAX_HANDLES] = {0, 0, 0};
@@ -57,7 +57,7 @@ namespace hello_views {
 static fuchsia::sys::ComponentControllerPtr s_subview_controller;
 
 App::App(async::Loop* loop, AppType type)
-    : startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()),
+    : startup_context_(component::StartupContext::CreateFromStartupInfo()),
       loop_(loop),
       type_(type) {
   // Connect the ExampleViewProviderService.
@@ -65,7 +65,7 @@ App::App(async::Loop* loop, AppType type)
     // Launch the subview app.  Clone our stdout and stderr file descriptors
     // into it so output (FXL_LOG, etc) from the subview app will show up as
     // if it came from us.
-    fuchsia::sys::Services subview_services;
+    component::Services subview_services;
     fuchsia::sys::LaunchInfo launch_info;
     launch_info.out = CloneFileDescriptor(STDOUT_FILENO);
     launch_info.err = CloneFileDescriptor(STDERR_FILENO);
@@ -90,8 +90,7 @@ App::App(async::Loop* loop, AppType type)
               view_id_, std::move(context.token), "Subview"));
 
           if (root_node_id_ != 0) {
-            session_->Enqueue(
-                scenic::NewAddChildCmd(view_id_, root_node_id_));
+            session_->Enqueue(scenic::NewAddChildCmd(view_id_, root_node_id_));
           }
         });
   }
@@ -137,7 +136,7 @@ App::App(async::Loop* loop, AppType type)
   }
 
   // Close the session and quit after several seconds.
-  async::PostDelayedTask(loop_->async(),
+  async::PostDelayedTask(loop_->dispatcher(),
                          [this] {
                            FXL_LOG(INFO)
                                << AppTypeString(type_) << "Closing session.";

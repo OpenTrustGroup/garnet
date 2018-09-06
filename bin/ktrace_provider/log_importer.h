@@ -22,14 +22,12 @@ class LogImporter {
   void Stop();
 
  private:
-  void Handle(async_t* async,
-              async::WaitBase* wait,
-              zx_status_t status,
-              const zx_packet_signal_t* signal);
+  void Handle(async_dispatcher_t* dispatcher, async::WaitBase* wait,
+              zx_status_t status, const zx_packet_signal_t* signal);
 
   zx::log log_;
-  trace_ticks_t start_ticks_;
   zx_time_t start_time_;
+  double time_scale_;
   async::WaitMethod<LogImporter, &LogImporter::Handle> wait_{this};
 
   FXL_DISALLOW_COPY_AND_ASSIGN(LogImporter);

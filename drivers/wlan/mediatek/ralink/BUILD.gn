@@ -14,13 +14,11 @@ driver_module("ralink_driver") {
     "device.cpp",
     "device.h",
     "driver.cpp",
-    "driver.h",
     "ralink.h",
     "register.h",
   ]
 
   deps = [
-    "//garnet/drivers/wlan/lib",
     "//garnet/lib/wlan/common",
     "//garnet/lib/wlan/fidl",
     "//garnet/lib/wlan/mlme",
@@ -31,10 +29,13 @@ driver_module("ralink_driver") {
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/fit",
     "//zircon/public/lib/sync",
+    "//zircon/public/lib/usb",
     "//zircon/public/lib/zx",
   ]
 
   configs += [ "//build/config/fuchsia:enable_zircon_asserts" ]
+  configs -= [ "//build/config/fuchsia:no_cpp_standard_library" ]
+  configs += [ "//build/config/fuchsia:static_cpp_standard_library" ]
 }
 
 if (internal_access) {

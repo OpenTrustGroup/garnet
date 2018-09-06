@@ -40,9 +40,9 @@ class System : public ClientObject {
   // the message loop.
   virtual std::vector<Target*> GetTargets() const = 0;
 
-  // Returns all breakpoints currently in the system. The returned pointers are
-  // managed by the System object and should not be cached once you return to
-  // the message loop.
+  // Returns all non-internal breakpoints currently in the system. The returned
+  // pointers are managed by the System object and should not be cached once
+  // you return to the message loop.
   virtual std::vector<Breakpoint*> GetBreakpoints() const = 0;
 
   // Returns the process (and hence Target) associated with the given live
@@ -61,8 +61,12 @@ class System : public ClientObject {
   // and will be disabled.
   virtual Breakpoint* CreateNewBreakpoint() = 0;
 
+  // Creates an internal breakpoint. Internal breakpoints are not reported by
+  // GetBreakpoints() and are used to implement internal stepping functions.
+  virtual Breakpoint* CreateNewInternalBreakpoint() = 0;
+
   // Deletes the given breakpoint. The passed-in pointer will be invalid after
-  // this call.
+  // this call. Used for both internal and external breapoints.
   virtual void DeleteBreakpoint(Breakpoint* breakpoint) = 0;
 
   // Applies to all threads of all debugged processes.

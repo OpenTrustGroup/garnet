@@ -1,36 +1,43 @@
-//! Connect to or provide Fuchsia services.
-
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+//! Connect to or provide Fuchsia services.
+
+#![feature(futures_api, pin, arbitrary_self_types)]
+
 #![deny(warnings)]
 #![deny(missing_docs)]
 
-extern crate fuchsia_async as async;
-extern crate fuchsia_zircon as zx;
-extern crate mxruntime;
-extern crate fdio;
-#[macro_use] extern crate failure;
-extern crate fidl;
-extern crate futures;
-
-// Generated FIDL bindings
-extern crate fidl_fuchsia_sys;
-
-use fidl_fuchsia_sys::{
-    ComponentControllerProxy,
-    LauncherMarker,
-    LauncherProxy,
-    LaunchInfo,
+#[allow(unused)] // Remove pending fix to rust-lang/rust#53682
+use {
+    failure::{Error, ResultExt, Fail},
+    fuchsia_async as fasync,
+    futures::{
+        Future, Poll,
+        stream::{FuturesUnordered, StreamExt, StreamFuture},
+        task,
+    },
+    fidl::endpoints2::{RequestStream, ServiceMarker, Proxy},
+    fidl_fuchsia_io::{
+        DirectoryRequestStream,
+        DirectoryRequest,
+        DirectoryObject,
+        NodeAttributes,
+        ObjectInfo,
+    },
+    fidl_fuchsia_sys::{
+        ComponentControllerProxy,
+        LauncherMarker,
+        LauncherProxy,
+        LaunchInfo,
+    },
+    fuchsia_zircon as zx,
+    std::{
+        marker::Unpin,
+        mem::PinMut,
+    },
 };
-#[allow(unused_imports)]
-use fidl::endpoints2::{ServiceMarker, Proxy};
-
-#[allow(unused_imports)]
-use failure::{Error, ResultExt, Fail};
-use futures::prelude::*;
-use futures::stream::FuturesUnordered;
 
 /// Tools for starting or connecting to existing Fuchsia applications and services.
 pub mod client {
@@ -47,7 +54,7 @@ pub mod client {
         fdio::service_connect(&service_path, server)
             .with_context(|_| format!("Error connecting to service path: {}", service_path))?;
 
-        let proxy = async::Channel::from_channel(proxy)?;
+        let proxy = fasync::Channel::from_channel(proxy)?;
         Ok(S::Proxy::from_channel(proxy))
     }
 
@@ -90,7 +97,7 @@ pub mod client {
                 .create_component(&mut launch_info, Some(controller_server_end.into()))
                 .context("Failed to start a new Fuchsia application.")?;
 
-            let controller = async::Channel::from_channel(controller)?;
+            let controller = fasync::Channel::from_channel(controller)?;
             let controller = ComponentControllerProxy::new(controller);
 
             Ok(App { directory_request, controller })
@@ -115,7 +122,7 @@ pub mod client {
         {
             let (client_channel, server_channel) = zx::Channel::create()?;
             self.pass_to_service(service, server_channel)?;
-            Ok(S::Proxy::from_channel(async::Channel::from_channel(client_channel)?))
+            Ok(S::Proxy::from_channel(fasync::Channel::from_channel(client_channel)?))
         }
 
         /// Connect to a service by passing a channel for the server.
@@ -131,18 +138,35 @@ pub mod client {
 /// Tools for providing Fuchsia services.
 pub mod server {
     use super::*;
-    use futures::{Future, Poll};
 
-    use self::errors::*;
-    /// New root-level errors that may occur when using the `fuchsia_component::server` module.
-    /// Note that these are not the only kinds of errors that may occur: errors the module
-    /// may also be caused by `fidl::Error` or `zircon::Status`.
-    pub mod errors {
-        /// The startup handle on which the FIDL server attempted to start was missing.
-        #[derive(Debug, Fail)]
-        #[fail(display = "The startup handle on which the FIDL server attempted to start was missing.")]
-        pub struct MissingStartupHandle;
+    /// Startup handle types, derived from zircon/system/public/zircon/processargs.h.
+    /// Other variants may be added in the future.
+    #[repr(u32)]
+    enum HandleType {
+        /// Server endpoint for handling connections to appmgr services.
+        DirectoryRequest = 0x3B,
     }
+
+    fn take_startup_handle(htype: HandleType) -> Option<zx::Handle> {
+        unsafe {
+            let raw = zx_take_startup_handle(htype as u32);
+            if raw == zx::sys::ZX_HANDLE_INVALID {
+                None
+            } else {
+                Some(zx::Handle::from_raw(raw))
+            }
+        }
+    }
+
+    extern {
+        fn zx_take_startup_handle(id: u32) -> zx::sys::zx_handle_t;
+    }
+
+    /// An error indicating the startup handle on which the FIDL server
+    /// attempted to start was missing.
+    #[derive(Debug, Fail)]
+    #[fail(display = "The startup handle on which the FIDL server attempted to start was missing.")]
+    pub struct MissingStartupHandle;
 
     /// `ServiceFactory` lazily creates instances of services.
     ///
@@ -155,22 +179,23 @@ pub mod server {
 
         /// Create a `fidl::Stub` service.
         // TODO(cramertj): allow `spawn` calls to fail.
-        fn spawn_service(&mut self, channel: async::Channel);
+        fn spawn_service(&mut self, channel: fasync::Channel);
     }
 
     impl<F> ServiceFactory for (&'static str, F)
-        where F: FnMut(async::Channel) + Send + 'static,
+        where F: FnMut(fasync::Channel) + Send + 'static,
     {
         fn service_name(&self) -> &str {
             self.0
         }
 
-        fn spawn_service(&mut self, channel: async::Channel) {
+        fn spawn_service(&mut self, channel: fasync::Channel) {
             (self.1)(channel)
         }
     }
 
-    /// `ServicesServer` is a server which manufactures service instances of varying types on demand.
+    /// `ServicesServer` is a server which manufactures service instances of
+    /// varying types on demand.
     /// To run a `ServicesServer`, use `Server::new`.
     pub struct ServicesServer {
         services: Vec<Box<ServiceFactory>>,
@@ -188,19 +213,21 @@ pub mod server {
             self
         }
 
-        /// Start serving directory protocol service requests on the process PA_DIRECTORY_REQUEST handle
+        /// Start serving directory protocol service requests on the process
+        /// PA_DIRECTORY_REQUEST handle
         pub fn start(self) -> Result<FdioServer, Error> {
-            let fdio_handle = mxruntime::get_startup_handle(mxruntime::HandleType::DirectoryRequest)
-                .ok_or(MissingStartupHandle)?;
+            let fdio_handle =
+                take_startup_handle(HandleType::DirectoryRequest)
+                    .ok_or(MissingStartupHandle)?;
 
-            let fdio_channel = async::Channel::from_channel(fdio_handle.into())?;
+            let fdio_channel = fasync::Channel::from_channel(fdio_handle.into())?;
 
-            let mut server = FdioServer{
-                readers: FuturesUnordered::new(),
+            let mut server = FdioServer {
+                connections: FuturesUnordered::new(),
                 factories: self.services,
             };
 
-            server.serve_channel(fdio_channel);
+            server.serve_connection(fdio_channel);
 
             Ok(server)
         }
@@ -211,102 +238,124 @@ pub mod server {
     /// newly spawned fidl service produced by the factory F.
     #[must_use = "futures must be polled"]
     pub struct FdioServer {
-        readers: FuturesUnordered<async::RecvMsg<zx::MessageBuf>>,
+        // The open connections to this FdioServer. These connections
+        // represent external clients who may attempt to open services.
+        connections: FuturesUnordered<StreamFuture<DirectoryRequestStream>>,
+        // The collection of services, exported from the current process,
+        // which may be opened from external clients.
         factories: Vec<Box<ServiceFactory>>,
     }
 
+    impl Unpin for FdioServer {}
+
     impl FdioServer {
-        fn dispatch(&mut self, chan: &async::Channel, buf: zx::MessageBuf) -> zx::MessageBuf {
-            // TODO(raggi): provide an alternative to the into() here so that we
-            // don't need to pass the buf in owned back and forward.
-            let mut msg: fdio::rio::Message = buf.into();
-
-            // open & clone use a different reply channel
-            //
-            // Note: msg.validate() ensures that open must have exactly one
-            // handle, but the message may yet be invalid.
-            let reply_channel = match msg.op() {
-                fdio::fdio_sys::ZXRIO_OPEN |
-                fdio::fdio_sys::ZXRIO_CLONE => {
-                    msg.take_handle(0).map(zx::Channel::from)
-                }
-                _ => None,
-            };
-
-            let validation = msg.validate();
-            if validation.is_err() ||
-                (
-                    msg.op() != fdio::fdio_sys::ZXRIO_OPEN &&
-                    msg.op() != fdio::fdio_sys::ZXRIO_CLONE
-                ) ||
-                msg.is_describe() ||
-                !reply_channel.is_some()
-            {
-                eprintln!(
-                    "service request channel received invalid/unsupported zxrio request: {:?}",
-                    &msg
-                );
-
-                if msg.is_describe() {
-                    let reply_channel = reply_channel.as_ref().unwrap_or(chan.as_ref());
-                    let reply_err = validation.err().unwrap_or(zx::Status::NOT_SUPPORTED);
-                    fdio::rio::write_object(reply_channel, reply_err, 0, &[], &mut vec![])
-                        .unwrap_or_else(|e| {
-                            eprintln!("service request reply write failed with {:?}", e)
-                        });
-                }
-
-                return msg.into();
-            }
-
-            if msg.op() == fdio::fdio_sys::ZXRIO_CLONE {
-                if let Some(c) = reply_channel {
-                    if let Ok(fdio_chan) = async::Channel::from_channel(c) {
-                        self.serve_channel(fdio_chan);
-                    }
-                }
-                return msg.into();
-            }
-
-            let service_channel = reply_channel.unwrap();
-            let service_channel = async::Channel::from_channel(service_channel).unwrap();
-
-            // TODO(raggi): re-arrange things to avoid the copy here
-            let path = std::str::from_utf8(msg.data()).unwrap().to_owned();
-
-            if path == "public" {
-                self.serve_channel(service_channel);
-                return msg.into();
-            }
-
-            match self.factories.iter_mut().find(|factory| factory.service_name() == path) {
-                Some(factory) => factory.spawn_service(service_channel),
-                None => eprintln!("No service found for path {}", path),
-            }
-            msg.into()
+        fn serve_connection(&mut self, chan: fasync::Channel) {
+            self.connections.push(DirectoryRequestStream::from_channel(chan).into_future())
         }
 
-        fn serve_channel(&mut self, chan: async::Channel) {
-            let rmsg = chan.recv_msg(zx::MessageBuf::new());
-            self.readers.push(rmsg);
+        fn handle_request(&mut self, req: DirectoryRequest) -> Result<(), Error> {
+            match req {
+                DirectoryRequest::Clone { flags: _, object, control_handle: _ } => {
+                    let service_channel = fasync::Channel::from_channel(object.into_channel())?;
+                    self.serve_connection(service_channel);
+                    Ok(())
+                }
+                DirectoryRequest::Close { responder, } => {
+                    responder.send(zx::sys::ZX_OK).map_err(|e| e.into())
+                }
+                DirectoryRequest::Open { flags: _, mode: _, path, object, control_handle: _, } => {
+                    let service_channel = fasync::Channel::from_channel(object.into_channel())?;
+
+                    // This mechanism to open "public" redirects the service
+                    // request to the FDIO Server itself for historical reasons.
+                    //
+                    // This has the unfortunate implication that "public" can be
+                    // continually opened from the directory, resulting in paths
+                    // like "public/public/public".
+                    //
+                    // TODO(smklein): Implement a more realistic pseudo-directory,
+                    // capable of distinguishing between different characteristics
+                    // of imported / exported directories.
+                    if path == "public" {
+                        self.serve_connection(service_channel);
+                        return Ok(());
+                    }
+
+                    match self.factories.iter_mut().find(|factory| factory.service_name() == path) {
+                        Some(factory) => factory.spawn_service(service_channel),
+                        None => eprintln!("No service found for path {}", path),
+                    }
+                    Ok(())
+                }
+                DirectoryRequest::Describe { responder } => {
+                    let mut info = ObjectInfo::Directory(DirectoryObject { reserved: 0 } );
+                    responder.send(&mut info).map_err(|e| e.into())
+                }
+                // Unsupported / Ignored methods.
+                DirectoryRequest::GetAttr { responder, } => {
+                    let mut attrs = NodeAttributes {
+                        mode: 0,
+                        id: 0,
+                        content_size: 0,
+                        storage_size: 0,
+                        link_count: 0,
+                        creation_time: 0,
+                        modification_time: 0,
+                    };
+                    responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED, &mut attrs).map_err(|e| e.into())
+                }
+                DirectoryRequest::SetAttr { flags: _, attributes:_, responder, } => {
+                    responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED).map_err(|e| e.into())
+                }
+                DirectoryRequest::Ioctl { opcode: _, max_out: _, handles: _, in_: _, responder, } => {
+                    responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED,
+                                   &mut std::iter::empty(),
+                                   &mut std::iter::empty()).map_err(|e| e.into())
+                }
+                DirectoryRequest::Sync { responder, } => {
+                    responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED).map_err(|e| e.into())
+                }
+                DirectoryRequest::Bind { interface_name: _, control_handle: _ } => {
+                    Ok(())
+                }
+                DirectoryRequest::Unlink { path: _, responder, } => {
+                    responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED).map_err(|e| e.into())
+                }
+                DirectoryRequest::ReadDirents { max_out: _, responder, } => {
+                    responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED,
+                                   &mut std::iter::empty()).map_err(|e| e.into())
+                }
+                DirectoryRequest::Rewind { responder, } => {
+                    responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED).map_err(|e| e.into())
+                }
+                DirectoryRequest::GetToken { responder, } => {
+                    responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED, None).map_err(|e| e.into())
+                }
+                DirectoryRequest::Rename { src: _, dst_parent_token: _, dst: _, responder, } => {
+                    responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED).map_err(|e| e.into())
+                }
+                DirectoryRequest::Link { src: _, dst_parent_token: _, dst: _, responder, } => {
+                    responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED).map_err(|e| e.into())
+                }
+            }
         }
     }
 
     impl Future for FdioServer {
-        type Item = ();
-        type Error = Error;
+        type Output = Result<(), Error>;
 
-        fn poll(&mut self, cx: &mut task::Context) -> Poll<Self::Item, Self::Error> {
+        fn poll(mut self: PinMut<Self>, cx: &mut task::Context) -> Poll<Self::Output> {
             loop {
-                match self.readers.poll_next(cx) {
-                    Ok(Async::Ready(Some((chan, buf)))) => {
-                        let buf = self.dispatch(&chan, buf);
-                        self.readers.push(chan.recv_msg(buf));
+                match self.connections.poll_next_unpin(cx) {
+                    Poll::Ready(Some((maybe_request, stream))) => {
+                        if let Some(Ok(request)) = maybe_request {
+                            match self.handle_request(request) {
+                                Ok(()) => self.connections.push(stream.into_future()),
+                                _ => (),
+                            }
+                        }
                     },
-                    Ok(Async::Ready(None)) | Ok(Async::Pending) => return Ok(Async::Pending),
-                    Err(_) => {
-                        // errors are ignored, as we assume that the channel should still be read from.
-                    },
+                    Poll::Ready(None) | Poll::Pending => return Poll::Pending,
                 }
             }
         }

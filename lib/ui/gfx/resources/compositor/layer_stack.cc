@@ -7,22 +7,25 @@
 #include "garnet/lib/ui/gfx/resources/compositor/layer.h"
 #include "garnet/lib/ui/scenic/util/error_reporter.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 const ResourceTypeInfo LayerStack::kTypeInfo = {ResourceType::kLayerStack,
                                                 "LayerStack"};
 
-LayerStack::LayerStack(Session* session, scenic::ResourceId id)
+LayerStack::LayerStack(Session* session, ResourceId id)
     : Resource(session, id, LayerStack::kTypeInfo) {}
 
 LayerStack::~LayerStack() = default;
 
 std::vector<Hit> LayerStack::HitTest(const escher::ray4& ray,
-                                     Session* session) const {
+                                     HitTester* hit_tester) const {
+  FXL_CHECK(hit_tester);
+
   std::vector<Hit> hits;
   for (auto layer : layers_) {
-    std::vector<Hit> layer_hits = layer->HitTest(ray, session);
+    std::vector<Hit> layer_hits = layer->HitTest(ray, hit_tester);
+    // N.B. We specifically want sort-first-by-layer-then-by-depth ordering.
     hits.insert(hits.end(), layer_hits.begin(), layer_hits.end());
   }
   return hits;
@@ -68,4 +71,4 @@ void LayerStack::RemoveLayer(Layer* layer) {
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

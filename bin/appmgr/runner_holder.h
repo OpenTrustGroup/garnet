@@ -22,7 +22,7 @@ class Realm;
 
 class RunnerHolder : public ComponentContainer<ComponentBridge> {
  public:
-  RunnerHolder(fuchsia::sys::Services services,
+  RunnerHolder(Services services,
                fuchsia::sys::ComponentControllerPtr controller,
                fuchsia::sys::LaunchInfo launch_info, Realm* realm,
                std::function<void()> error_handler = nullptr);
@@ -31,7 +31,8 @@ class RunnerHolder : public ComponentContainer<ComponentBridge> {
   void StartComponent(
       fuchsia::sys::Package package, fuchsia::sys::StartupInfo startup_info,
       fxl::RefPtr<Namespace> ns,
-      fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller);
+      fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
+      TerminationCallback termination_callback);
 
   std::unique_ptr<ComponentBridge> ExtractComponent(
       ComponentBridge* controller) override;
@@ -40,7 +41,7 @@ class RunnerHolder : public ComponentContainer<ComponentBridge> {
   void CreateComponentCallback(ComponentControllerImpl* component);
   void Cleanup();
 
-  fuchsia::sys::Services services_;
+  Services services_;
   fuchsia::sys::ComponentControllerPtr controller_;
   fuchsia::sys::RunnerPtr runner_;
   ComponentControllerImpl* impl_object_;

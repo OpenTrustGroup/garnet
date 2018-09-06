@@ -4,16 +4,15 @@
 
 pub mod handshake;
 
-use self::handshake::fourway::{self, Fourway};
-use Error;
-use eapol;
+use self::handshake::{fourway::{self, Fourway}, group_key::{self, GroupKey}};
+use crate::akm::Akm;
 use failure;
-use key::gtk::Gtk;
-use key::ptk::Ptk;
-use rsna::{Role, SecAssocResult};
-use rsne::Rsne;
+use crate::key::gtk::Gtk;
+use crate::key::ptk::Ptk;
+use crate::rsna::{Role, SecAssocResult, VerifiedKeyFrame};
+use crate::rsne::Rsne;
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Key {
     Pmk(Vec<u8>),
     Ptk(Ptk),
@@ -25,40 +24,32 @@ pub enum Key {
     Stk(Vec<u8>),
 }
 
-impl Key {
-    pub fn by_ref(&self) -> &Self {
-        self
-    }
-}
-
+#[derive(Debug, PartialEq)]
 pub enum Method {
     FourWayHandshake(Fourway),
-    // TODO(hahnr): Add Group Key Handshake support,
+    GroupKeyHandshake(GroupKey),
 }
 
 impl Method {
-    pub fn from_config(cfg: Config, pmk: Vec<u8>) -> Result<Method, failure::Error> {
-        match cfg {
-            Config::FourWayHandshake(c) => Ok(Method::FourWayHandshake(Fourway::new(c, pmk)?)),
-            _ => Err(Error::UnknownKeyExchange.into()),
-        }
-    }
-
-    pub fn on_eapol_key_frame(&mut self, frame: &eapol::KeyFrame) -> SecAssocResult {
+    pub fn on_eapol_key_frame(&mut self, frame: VerifiedKeyFrame) -> SecAssocResult {
         match self {
-            &mut Method::FourWayHandshake(ref mut hs) => hs.on_eapol_key_frame(frame),
-            _ => Ok(vec![]),
+            Method::FourWayHandshake(hs) => hs.on_eapol_key_frame(frame),
+            Method::GroupKeyHandshake(hs) => hs.on_eapol_key_frame(frame),
         }
     }
 
-    pub fn by_mut_ref(&mut self) -> &mut Self {
-        self
+    pub fn destroy(self) -> Config {
+        match self {
+            Method::FourWayHandshake(hs) => hs.destroy(),
+            Method::GroupKeyHandshake(hs) => hs.destroy(),
+        }
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum Config {
     FourWayHandshake(fourway::Config),
-    // TODO(hahnr): Add Group Key Handshake support,
+    GroupKeyHandshake(group_key::Config),
 }
 
 impl Config {
@@ -74,7 +65,8 @@ impl Config {
             .map(|c| Config::FourWayHandshake(c))
     }
 
-    pub fn by_ref(&self) -> &Self {
-        self
+    pub fn for_groupkey_handshake(role: Role, akm: Akm) -> Config
+    {
+        Config::GroupKeyHandshake(group_key::Config{role, akm})
     }
 }

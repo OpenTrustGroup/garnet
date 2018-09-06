@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_UUID_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_UUID_H_
 
 #include <string>
 #include <unordered_set>
@@ -182,10 +183,11 @@ class UUID final {
 // 0123456789abcdefABCDEF.
 bool IsStringValidUuid(const std::string& uuid_string);
 
-// Constructs a 128-bit UUID from a string representation in the following
-// formats:
+// Constructs a 128-bit UUID from a string representation in one of the
+// following formats:
 //
-//   xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+//   xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (full UUID string)
+//   xxxx (abbreviated 16-bit UUID)
 //
 // where x is one of the alphanumeric characters in the string
 // 0123456789abcdefABCDEF.
@@ -231,3 +233,5 @@ struct hash<::btlib::common::UUID> {
 };
 
 }  // namespace std
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_UUID_H_

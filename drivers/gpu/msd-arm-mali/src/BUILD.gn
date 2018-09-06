@@ -40,6 +40,8 @@ source_set("src") {
     "msd_arm_driver.h",
     "msd_arm_semaphore.cc",
     "msd_arm_semaphore.h",
+    "performance_counters.cc",
+    "performance_counters.h",
     "power_manager.cc",
     "power_manager.h",
     "registers.h",
@@ -54,17 +56,21 @@ source_set("src") {
     defines += [ "MSD_ARM_ENABLE_CACHE_COHERENCY" ]
   }
 
+  # Don't depend on shared libraries besides libzircon.so, libc.c, and
+  # libdriver.so.
   deps = [
     "../include",
     "//garnet/lib/magma/src/magma_util",
     "//garnet/lib/magma/src/magma_util:command_buffer",
     "//garnet/lib/magma/src/magma_util:registers",
     "//garnet/lib/magma/src/magma_util:thread",
+    "//garnet/lib/magma/src/magma_util/platform:barriers",
+    "//garnet/lib/magma/src/magma_util/platform:bus_mapper",
     "//garnet/lib/magma/src/magma_util/platform:device",
     "//garnet/lib/magma/src/magma_util/platform:event",
     "//garnet/lib/magma/src/magma_util/platform:port",
     "//garnet/lib/magma/src/magma_util/platform:semaphore",
     "//garnet/lib/magma/src/magma_util/platform:trace",
-    "//garnet/public/lib/fxl",
+    "//zircon/public/lib/fbl",
   ]
 }

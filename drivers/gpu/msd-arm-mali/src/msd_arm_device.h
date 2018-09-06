@@ -5,6 +5,8 @@
 #ifndef MSD_ARM_DEVICE_H
 #define MSD_ARM_DEVICE_H
 
+#include <zircon/compiler.h>
+
 #include <deque>
 #include <list>
 #include <mutex>
@@ -15,12 +17,12 @@
 #include "device_request.h"
 #include "gpu_features.h"
 #include "job_scheduler.h"
-#include "lib/fxl/synchronization/thread_annotations.h"
 #include "magma_util/macros.h"
 #include "magma_util/register_io.h"
 #include "magma_util/thread.h"
 #include "msd.h"
 #include "msd_arm_connection.h"
+#include "performance_counters.h"
 #include "platform_device.h"
 #include "platform_interrupt.h"
 #include "platform_semaphore.h"
@@ -29,7 +31,8 @@
 class MsdArmDevice : public msd_device_t,
                      public JobScheduler::Owner,
                      public MsdArmConnection::Owner,
-                     public AddressManager::Owner {
+                     public AddressManager::Owner,
+                     public PerformanceCounters::Owner {
 public:
     // Creates a device for the given |device_handle| and returns ownership.
     // If |start_device_thread| is false, then StartDeviceThread should be called
@@ -101,6 +104,12 @@ public:
 
     magma_status_t QueryInfo(uint64_t id, uint64_t* value_out);
 
+    void RequestPerfCounterOperation(uint32_t type);
+
+    // PerformanceCounters::Owner implementation.
+    AddressManager* address_manager() override { return address_manager_.get(); }
+    MsdArmConnection::Owner* connection_owner() override { return this; }
+
 private:
 #define CHECK_THREAD_IS_CURRENT(x)                                                                 \
     if (x)                                                                                         \
@@ -118,6 +127,7 @@ private:
     class MmuInterruptRequest;
     class ScheduleAtomRequest;
     class CancelAtomsRequest;
+    class PerfCounterRequest;
 
     magma::RegisterIo* register_io() override
     {
@@ -147,6 +157,7 @@ private:
     magma::Status ProcessMmuInterrupt();
     magma::Status ProcessScheduleAtoms();
     magma::Status ProcessCancelAtoms(std::weak_ptr<MsdArmConnection> connection);
+    magma::Status ProcessPerfCounterRequest(uint32_t type);
 
     void ExecuteAtomOnDevice(MsdArmAtom* atom, magma::RegisterIo* registers);
 
@@ -154,6 +165,7 @@ private:
     void RunAtom(MsdArmAtom* atom) override;
     void AtomCompleted(MsdArmAtom* atom, ArmMaliResultCode result) override;
     void HardStopAtom(MsdArmAtom* atom) override;
+    void SoftStopAtom(MsdArmAtom* atom) override;
     void ReleaseMappingsForAtom(MsdArmAtom* atom) override;
     magma::PlatformPort* GetPlatformPort() override;
     void UpdateGpuActive(bool active) override;
@@ -175,7 +187,7 @@ private:
     std::list<std::unique_ptr<DeviceRequest>> device_request_list_;
 
     std::mutex schedule_mutex_;
-    FXL_GUARDED_BY(schedule_mutex_) std::vector<std::shared_ptr<MsdArmAtom>> atoms_to_schedule_;
+    __TA_GUARDED(schedule_mutex_) std::vector<std::shared_ptr<MsdArmAtom>> atoms_to_schedule_;
 
     std::unique_ptr<magma::PlatformDevice> platform_device_;
     std::unique_ptr<magma::RegisterIo> register_io_;
@@ -191,6 +203,8 @@ private:
     std::unique_ptr<JobScheduler> scheduler_;
     std::unique_ptr<magma::PlatformBusMapper> bus_mapper_;
     uint64_t cycle_counter_refcount_ = 0;
+
+    std::unique_ptr<PerformanceCounters> perf_counters_;
 };
 
 #endif // MSD_ARM_DEVICE_H

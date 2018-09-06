@@ -86,8 +86,12 @@ func FetchBlob(repos []BlobRepo, blob string, outputDir string) error {
 // the io.ReadCloser, size and any error enountered.
 func FetchBlobFromRepo(r BlobRepo, blob string) (io.ReadCloser, int64, error) {
 	var client *http.Client
+	var err error
 	if r.Source != nil {
-		client = r.Source.GetHttpClient()
+		client, err = r.Source.GetHttpClient()
+		if err != nil {
+			return nil, -1, err
+		}
 	}
 	if client == nil {
 		client = http.DefaultClient
@@ -115,7 +119,7 @@ func FetchBlobFromRepo(r BlobRepo, blob string) (io.ReadCloser, int64, error) {
 		return resp.Body, resp.ContentLength, nil
 	} else {
 		resp.Body.Close()
-		return nil, -1, fmt.Errorf("fetch failed with status %s", resp.StatusCode)
+		return nil, -1, fmt.Errorf("fetch failed with status %d", resp.StatusCode)
 	}
 }
 

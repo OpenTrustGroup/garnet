@@ -453,22 +453,25 @@ TEST(RefCountedTest, SelfAssignment) {
 }
 
 TEST(RefCountedTest, Swap) {
-  MyClass* created1 = nullptr;
-  bool was_destroyed1 = false;
-  RefPtr<MyClass> r1(MakeRefCounted<MyClass>(&created1, &was_destroyed1));
-  EXPECT_TRUE(created1);
-  EXPECT_EQ(created1, r1.get());
+  bool was_destroyed1, was_destroyed2;
+  {
+    MyClass* created1 = nullptr;
+    was_destroyed1 = false;
+    RefPtr<MyClass> r1(MakeRefCounted<MyClass>(&created1, &was_destroyed1));
+    EXPECT_TRUE(created1);
+    EXPECT_EQ(created1, r1.get());
 
-  MyClass* created2 = nullptr;
-  bool was_destroyed2 = false;
-  RefPtr<MyClass> r2(MakeRefCounted<MyClass>(&created2, &was_destroyed2));
-  EXPECT_TRUE(created2);
-  EXPECT_EQ(created2, r2.get());
-  EXPECT_NE(created1, created2);
+    MyClass* created2 = nullptr;
+    was_destroyed2 = false;
+    RefPtr<MyClass> r2(MakeRefCounted<MyClass>(&created2, &was_destroyed2));
+    EXPECT_TRUE(created2);
+    EXPECT_EQ(created2, r2.get());
+    EXPECT_NE(created1, created2);
 
-  r1.swap(r2);
-  EXPECT_EQ(created2, r1.get());
-  EXPECT_EQ(created1, r2.get());
+    r1.swap(r2);
+    EXPECT_EQ(created2, r1.get());
+    EXPECT_EQ(created1, r2.get());
+  }
 }
 
 TEST(RefCountedTest, GetAndDereferenceOperators) {
@@ -587,28 +590,40 @@ TEST(RefCountedTest, PublicCtorAndDtor) {
   EXPECT_FALSE(r1);
 }
 
-// The danger with having a public constructor or destructor is that certain
-// things will compile. You should get some protection by assertions in Debug
-// builds.
-#ifndef NDEBUG
-TEST(RefCountedTest, DebugChecks) {
-  {
-    MyPublicClass* p = new MyPublicClass();
-    EXPECT_DEATH_IF_SUPPORTED(delete p, "!adoption_required_");
+// This class saves the value from a RefPtr to a given location in its
+// destructor. It is designed to test the value of a refptr from within the
+// destructor of the object the RefPtr is destroying.
+class SaveValueInDestructor : public RefCountedThreadSafe<SaveValueInDestructor> {
+ public:
+  SaveValueInDestructor() = default;
+  ~SaveValueInDestructor() {
+    *output_ptr_ = save_ref_ptr_->get();
   }
 
-  {
-    MyPublicClass* p = new MyPublicClass();
-    EXPECT_DEATH_IF_SUPPORTED(RefPtr<MyPublicClass> r(p),
-                              "!adoption_required_");
+  // Call after constructing.
+  void SetToSave(RefPtr<SaveValueInDestructor>* to_save,
+                 SaveValueInDestructor** save_here) {
+    save_ref_ptr_ = to_save;
+    output_ptr_ = save_here;
   }
 
-  {
-    RefPtr<MyPublicClass> r(MakeRefCounted<MyPublicClass>());
-    EXPECT_DEATH_IF_SUPPORTED(delete r.get(), "destruction_started_");
-  }
+ private:
+  RefPtr<SaveValueInDestructor>* save_ref_ptr_;
+  SaveValueInDestructor** output_ptr_ = nullptr;
+};
+
+TEST(RefCountedTest, RefPtrRelease) {
+  RefPtr<SaveValueInDestructor> r1 = MakeRefCounted<SaveValueInDestructor>();
+  // Initialize with an arbitrary non-null value so we can tell when it's
+  // assigned to null.
+  SaveValueInDestructor* saved_r1 = reinterpret_cast<SaveValueInDestructor*>(1);
+  r1->SetToSave(&r1, &saved_r1);
+
+  // Calling reset() should delete the value, and it should see its own pointer
+  // being null in the refptr during the call.
+  r1.reset();
+  EXPECT_FALSE(saved_r1);
 }
-#endif
 
 // TODO(vtl): Add (threaded) stress tests.
 

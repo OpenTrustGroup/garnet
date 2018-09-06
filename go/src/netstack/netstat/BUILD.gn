@@ -9,41 +9,17 @@ import("//build/go/toolchain.gni")
 go_binary("netstat") {
   gopackage = "netstack/netstat"
 
-  go_dependencies = [
-    {
-      package = "netstack"
-      source = "//garnet/go/src/netstack"
-    },
-    {
-      package = "github.com/google/netstack"
-      source = "//third_party/netstack"
-    },
-  ]
-
-  extra_dependencies = [
-    "//garnet/public/lib/app/fidl($go_toolchain)",
-    "//garnet/public/lib/app/go/src/app",
-    "//garnet/public/lib/fidl/go/src/fidl/bindings",
-    "//garnet/public/lib/netstack/fidl($go_toolchain)",
+  deps = [
+    "//garnet/go/src/netstack:netstack_lib",
+    "//garnet/public/lib/component/go/src/app",
   ]
 }
 
 go_test("netstack_netstat_test") {
   gopackage = "netstack/netstat"
-  go_dependencies = [
-    {
-      package = "netstack"
-      source = "//garnet/go/src/netstack"
-    },
-    {
-      package = "github.com/google/netstack"
-      source = "//third_party/netstack"
-    },
-  ]
-  extra_dependencies = [
-    "//garnet/public/lib/app/fidl($go_toolchain)",
-    "//garnet/public/lib/netstack/fidl($go_toolchain)",
-    "//garnet/public/lib/app/go/src/app",
-    "//garnet/public/lib/fidl/go/src/fidl/bindings",
+
+  deps = [
+    "//garnet/go/src/netstack:netstack_lib",
+    "//garnet/public/lib/component/go/src/app",
   ]
 }

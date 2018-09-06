@@ -73,10 +73,11 @@ zx_status_t amlogic_video_bind(void* ctx, zx_device_t* parent) {
 }  // namespace
 
 DriverCtx::DriverCtx() {
-  // We don't use kAsyncLoopConfigMakeDefault here, because we don't really want
+  // We use kAsyncLoopConfigNoAttachToThread here, because we don't really want
   // to be setting the default async_t for the the thread that creates the
   // DriverCtx.  We'll plumb async_t(s) explicitly instead.
-  shared_fidl_loop_ = std::make_unique<async::Loop>();
+  shared_fidl_loop_ =
+      std::make_unique<async::Loop>(&kAsyncLoopConfigNoAttachToThread);
   shared_fidl_loop_->StartThread("shared_fidl_thread", &shared_fidl_thread_);
 }
 
@@ -120,9 +121,10 @@ void DriverCtx::FatalError(const char* format, ...) {
   FXL_CHECK(false) << "DriverCtx::FatalError() is fatal.";
 }
 
-// Run to_run on given async, in order.
-void DriverCtx::PostSerial(async_t* async, fit::closure to_run) {
-  zx_status_t post_result = async::PostTask(async, std::move(to_run));
+// Run to_run on given dispatcher, in order.
+void DriverCtx::PostSerial(async_dispatcher_t* dispatcher,
+                           fit::closure to_run) {
+  zx_status_t post_result = async::PostTask(dispatcher, std::move(to_run));
   if (post_result != ZX_OK) {
     FatalError("async::PostTask() failed - result: %d", post_result);
   }
@@ -131,6 +133,6 @@ void DriverCtx::PostSerial(async_t* async, fit::closure to_run) {
 // Run to_run_on_shared_fidl_thread on shared_fidl_thread().
 void DriverCtx::PostToSharedFidl(fit::closure to_run_on_shared_fidl_thread) {
   // Switch the implementation here to fit::function when possible.
-  PostSerial(shared_fidl_loop()->async(),
+  PostSerial(shared_fidl_loop()->dispatcher(),
              std::move(to_run_on_shared_fidl_thread));
 }

@@ -5,6 +5,7 @@
 #include "garnet/lib/ui/gfx/displays/display_manager.h"
 
 #include <lib/async/default.h>
+#include <trace/event.h>
 #include <zircon/device/display-controller.h>
 #include <zircon/pixelformat.h>
 #include <zircon/syscalls.h>
@@ -13,7 +14,7 @@
 #include "garnet/lib/ui/gfx/displays/display_watcher.h"
 #include "garnet/lib/ui/gfx/resources/renderers/renderer.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 DisplayManager::DisplayManager() = default;
@@ -53,16 +54,27 @@ void DisplayManager::WaitForDefaultDisplay(fit::closure callback) {
         dispatcher->ClientOwnershipChange = [this](auto change) {
           ClientOwnershipChange(change);
         };
+        dispatcher->Vsync = [this](uint64_t display_id, uint64_t timestamp,
+                                   ::fidl::VectorPtr<uint64_t> images) {
+          if (display_id == default_display_->display_id()) {
+            // Emit an event called "VSYNC", which is by convention the event
+            // that Trace Viewer looks for in its "Highlight VSync" feature.
+            TRACE_INSTANT("gfx", "VSYNC", TRACE_SCOPE_THREAD);
+            if (vsync_cb_) {
+              vsync_cb_(timestamp, images.get());
+            }
+          }
+        };
 
         wait_.set_object(dc_channel_);
         wait_.set_trigger(ZX_CHANNEL_READABLE | ZX_CHANNEL_PEER_CLOSED);
-        wait_.Begin(async_get_default());
+        wait_.Begin(async_get_default_dispatcher());
 #endif
       });
 }
 
-void DisplayManager::OnAsync(async_t* async, async::WaitBase* self,
-                             zx_status_t status,
+void DisplayManager::OnAsync(async_dispatcher_t* dispatcher,
+                             async::WaitBase* self, zx_status_t status,
                              const zx_packet_signal_t* signal) {
   if (status & ZX_CHANNEL_PEER_CLOSED) {
     // TODO(SCN-244): handle this more robustly.
@@ -79,7 +91,7 @@ void DisplayManager::OnAsync(async_t* async, async::WaitBase* self,
     return;
   }
   // Re-arm the wait.
-  wait_.Begin(async_get_default());
+  wait_.Begin(async_get_default_dispatcher());
 
   // TODO(FIDL-183): Resolve this hack when synchronous interfaces
   // support events.
@@ -95,6 +107,25 @@ void DisplayManager::DisplaysChanged(
 
     auto& display = added.get()[0];
     auto& mode = display.modes.get()[0];
+
+    zx_status_t status;
+    zx_status_t transport_status =
+        display_controller_->CreateLayer(&status, &layer_id_);
+    if (transport_status != ZX_OK || status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to create layer";
+      return;
+    }
+
+    std::vector<uint64_t> layers;
+    layers.push_back(layer_id_);
+    ::fidl::VectorPtr<uint64_t> fidl_layers(std::move(layers));
+    status = display_controller_->SetDisplayLayers(display.id,
+                                                   std::move(fidl_layers));
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to configure display layers";
+      return;
+    }
+
     default_display_ = std::make_unique<Display>(
         display.id, mode.horizontal_resolution, mode.vertical_resolution);
     ClientOwnershipChange(owns_display_controller_);
@@ -141,7 +172,7 @@ uint64_t DisplayManager::ImportEvent(const zx::event& event) {
   zx::event dup;
   uint64_t event_id = next_event_id_++;
   if (event.duplicate(ZX_RIGHT_SAME_RIGHTS, &dup) == ZX_OK &&
-      display_controller_->ImportEvent(std::move(dup), event_id)) {
+      display_controller_->ImportEvent(std::move(dup), event_id) == ZX_OK) {
     return event_id;
   }
   return fuchsia::display::invalidId;
@@ -158,26 +189,29 @@ uint32_t DisplayManager::FetchLinearStride(uint32_t width,
   return stride;
 }
 
-uint64_t DisplayManager::ImportImage(const zx::vmo& vmo, int32_t width,
-                                     int32_t height, zx_pixel_format_t format) {
-  fuchsia::display::ImageConfig config;
-  config.height = height;
-  config.width = width;
-  config.pixel_format = format;
+void DisplayManager::SetImageConfig(int32_t width, int32_t height,
+                                    zx_pixel_format_t format) {
+  image_config_.height = height;
+  image_config_.width = width;
+  image_config_.pixel_format = format;
 
 #if defined(__x86_64__)
   // IMAGE_TYPE_X_TILED from ddk/protocol/intel-gpu-core.h
-  config.type = 1;
+  image_config_.type = 1;
 #else
   FXL_DCHECK(false) << "Display swapchain only supported on intel";
 #endif
 
+  display_controller_->SetLayerPrimaryConfig(layer_id_, image_config_);
+}
+
+uint64_t DisplayManager::ImportImage(const zx::vmo& vmo) {
   zx::vmo vmo_dup;
   uint64_t id;
   zx_status_t status;
   if (vmo.duplicate(ZX_RIGHT_SAME_RIGHTS, &vmo_dup) == ZX_OK &&
-      display_controller_->ImportVmoImage(config, std::move(vmo_dup), 0,
-                                          &status, &id) &&
+      display_controller_->ImportVmoImage(image_config_, std::move(vmo_dup), 0,
+                                          &status, &id) == ZX_OK &&
       status == ZX_OK) {
     return id;
   }
@@ -190,16 +224,21 @@ void DisplayManager::ReleaseImage(uint64_t id) {
 
 void DisplayManager::Flip(Display* display, uint64_t buffer,
                           uint64_t render_finished_event_id,
-                          uint64_t frame_presented_event_id,
                           uint64_t signal_event_id) {
-  bool res = display_controller_->SetDisplayImage(
-      display->display_id(), buffer, render_finished_event_id,
-      frame_presented_event_id, signal_event_id);
-  res |= display_controller_->ApplyConfig();
-
+  zx_status_t status = display_controller_->SetLayerImage(
+      layer_id_, buffer, render_finished_event_id, signal_event_id);
   // TODO(SCN-244): handle this more robustly.
-  FXL_DCHECK(res) << "DisplayManager::Flip failed";
+  FXL_DCHECK(status == ZX_OK) << "DisplayManager::Flip failed";
+
+  status = display_controller_->ApplyConfig();
+  // TODO(SCN-244): handle this more robustly.
+  FXL_DCHECK(status == ZX_OK) << "DisplayManager::Flip failed";
+}
+
+bool DisplayManager::EnableVsync(VsyncCallback vsync_cb) {
+  vsync_cb_ = std::move(vsync_cb);
+  return display_controller_->EnableVsync(true) == ZX_OK;
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

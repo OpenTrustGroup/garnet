@@ -10,18 +10,17 @@
 #include <fuchsia/netstack/cpp/fidl.h>
 
 #include "garnet/bin/mdns/service/interface_monitor.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 
 namespace mdns {
 
 // FIDL-based interface monitor implementation.
-class FidlInterfaceMonitor : public fuchsia::netstack::NotificationListener,
-                             public InterfaceMonitor {
+class FidlInterfaceMonitor : public InterfaceMonitor {
  public:
   static std::unique_ptr<InterfaceMonitor> Create(
-      fuchsia::sys::StartupContext* startup_context);
+      component::StartupContext* startup_context);
 
-  FidlInterfaceMonitor(fuchsia::sys::StartupContext* startup_context);
+  FidlInterfaceMonitor(component::StartupContext* startup_context);
 
   ~FidlInterfaceMonitor();
 
@@ -32,12 +31,9 @@ class FidlInterfaceMonitor : public fuchsia::netstack::NotificationListener,
       override;
 
  private:
-  // NotificationListener implementation.
-  void OnInterfacesChanged(
-      fidl::VectorPtr<fuchsia::netstack::NetInterface> interfaces) override;
-
+  void InterfacesChanged(
+      fidl::VectorPtr<fuchsia::netstack::NetInterface> interfaces);
   fuchsia::netstack::NetstackPtr netstack_;
-  fidl::Binding<fuchsia::netstack::NotificationListener> binding_;
   fit::closure link_change_callback_;
   std::vector<std::unique_ptr<InterfaceDescriptor>> interfaces_;
 };

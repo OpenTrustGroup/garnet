@@ -21,10 +21,8 @@
 #ifndef BRCMFMAC_CORE_H
 #define BRCMFMAC_CORE_H
 
-//#include <net/cfg80211.h>
-
 #include <netinet/if_ether.h>
-#include <sync/completion.h>
+#include <lib/sync/completion.h>
 
 #include <stdatomic.h>
 #include <threads.h>
@@ -144,7 +142,7 @@ struct brcmf_pub {
 
     struct brcmf_rev_info revinfo;
 #ifdef DEBUG
-    struct dentry* dbgfs_dir;
+    zx_handle_t dbgfs_dir;
 #endif
 
     struct notifier_block inetaddr_notifier;
@@ -205,7 +203,7 @@ struct brcmf_if {
     uint8_t netif_stop;
     //spinlock_t netif_stop_lock;
     atomic_int pend_8021x_cnt;
-    completion_t pend_8021x_wait;
+    sync_completion_t pend_8021x_wait;
     struct in6_addr ipv6_addr_tbl[NDOL_MAX_ENTRIES];
     uint8_t ipv6addr_idx;
 };

@@ -10,13 +10,10 @@
 
 #include "lib/fxl/macros.h"
 
-namespace debugserver {
+namespace inferior_control {
 
 class Process;
 class Thread;
-
-namespace arch {
-
 class ProcessBreakpointSet;
 class ThreadBreakpointSet;
 
@@ -184,5 +181,4 @@ class ThreadBreakpointSet final {
   FXL_DISALLOW_COPY_AND_ASSIGN(ThreadBreakpointSet);
 };
 
-}  // namespace arch
-}  // namespace debugserver
+}  // namespace inferior_control

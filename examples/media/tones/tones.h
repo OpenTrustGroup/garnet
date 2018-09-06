@@ -10,10 +10,10 @@
 
 #include <fuchsia/media/cpp/fidl.h>
 #include <lib/fit/function.h>
-#include <lib/vmo-utils/vmo_mapper.h>
+#include <lib/fzl/vmo-mapper.h>
 
 #include "garnet/examples/media/tones/tone_generator.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fsl/tasks/fd_waiter.h"
 #include "lib/fxl/functional/closure.h"
 #include "lib/fxl/macros.h"
@@ -70,11 +70,11 @@ class Tones {
   bool interactive_;
   fit::closure quit_callback_;
   fsl::FDWaiter fd_waiter_;
-  fuchsia::media::AudioRenderer2Ptr audio_renderer_;
+  fuchsia::media::AudioOutPtr audio_renderer_;
   std::map<int64_t, float> frequencies_by_pts_;
   std::list<ToneGenerator> tone_generators_;
   int64_t pts_ = 0;
-  vmo_utils::VmoMapper payload_buffer_;
+  fzl::VmoMapper payload_buffer_;
   uint32_t active_packets_in_flight_ = 0;
   uint32_t target_packets_in_flight_ = 0;
   bool started_ = false;

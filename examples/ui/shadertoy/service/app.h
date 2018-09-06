@@ -9,7 +9,7 @@
 #include <lib/async-loop/cpp/loop.h>
 
 #include "garnet/examples/ui/shadertoy/service/shadertoy_impl.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/escher/escher.h"
 #include "lib/fidl/cpp/binding_set.h"
 
@@ -25,11 +25,12 @@ class ShadertoyState;
 // ShadertoyFactory.  What is the best-practice pattern to use here?
 class App : public fuchsia::examples::shadertoy::ShadertoyFactory {
  public:
-  App(async::Loop* loop, fuchsia::sys::StartupContext* app_context,
-      escher::Escher* escher);
+  App(async::Loop* loop, component::StartupContext* app_context,
+      escher::EscherWeakPtr escher);
   ~App();
 
-  escher::Escher* escher() const { return escher_; }
+  escher::Escher* escher() const { return escher_.get(); }
+
   Compiler* compiler() { return &compiler_; }
   Renderer* renderer() { return &renderer_; }
 
@@ -51,7 +52,7 @@ class App : public fuchsia::examples::shadertoy::ShadertoyFactory {
   void NewViewShadertoy(
       ::fidl::InterfaceRequest<fuchsia::examples::shadertoy::Shadertoy>
           toy_request,
-      ::fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+      ::fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
           view_owner_request,
       bool handle_input_events) override;
 
@@ -61,7 +62,7 @@ class App : public fuchsia::examples::shadertoy::ShadertoyFactory {
                    std::unique_ptr<ShadertoyImpl>>
       shadertoy_bindings_;
 
-  escher::Escher* const escher_;
+  const escher::EscherWeakPtr escher_;
   Renderer renderer_;
   Compiler compiler_;
 

@@ -15,10 +15,10 @@ constexpr uint32_t kBaseBufferPower = 10;
 namespace sketchy_service {
 
 SharedBufferPool::SharedBufferPool(scenic::Session* session,
-                                   escher::Escher* escher)
+                                   escher::EscherWeakPtr weak_escher)
     : session_(session),
-      escher_(escher),
-      factory_(std::make_unique<escher::BufferFactory>(escher)),
+      escher_(weak_escher),
+      factory_(std::make_unique<escher::BufferFactory>(std::move(weak_escher))),
       weak_factory_(this) {}
 
 SharedBufferPtr SharedBufferPool::GetBuffer(vk::DeviceSize capacity_req) {

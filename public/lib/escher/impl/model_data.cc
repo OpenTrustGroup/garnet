@@ -18,15 +18,25 @@ namespace impl {
 constexpr uint32_t kInitialPerModelDescriptorSetCount = 50;
 constexpr uint32_t kInitialPerObjectDescriptorSetCount = 200;
 
-ModelData::ModelData(Escher* escher, GpuAllocator* allocator)
+ModelData::ModelData(EscherWeakPtr escher, GpuAllocator* allocator)
     : device_(escher->vulkan_context().device),
-      uniform_buffer_pool_(escher, allocator),
+      // This is a 1-deep pool because it was this way before UniformBufferPool
+      // started to defer making buffers available for a number of frames.  The
+      // reason why this works (i.e. why the data in the buffer doesn't get
+      // stomped by the next frame while it is still being rendered) is because
+      // ModelDisplayListBuilder adds all resources to the ModelDisplayList,
+      // so they aren't returned to the pool until the frame is finished
+      // rendering.
+      //
+      // Furthermore, if this is deeper that 1, the buffers would never be
+      // recycled because nobody calls BeginFrame() on this pool.  In the future
+      // we'll likely move to an Escher-wide UniformBufferPool.
+      uniform_buffer_pool_(escher, 1, allocator),
       per_model_descriptor_set_pool_(escher,
                                      GetPerModelDescriptorSetLayoutCreateInfo(),
                                      kInitialPerModelDescriptorSetCount),
       per_object_descriptor_set_pool_(
-          escher,
-          GetPerObjectDescriptorSetLayoutCreateInfo(),
+          escher, GetPerObjectDescriptorSetLayoutCreateInfo(),
           kInitialPerObjectDescriptorSetCount) {}
 
 ModelData::~ModelData() {}
@@ -92,12 +102,12 @@ const MeshShaderBinding& ModelData::GetMeshShaderBinding(MeshSpec spec) {
   if (ptr) {
     return *ptr;
   }
-  FXL_DCHECK(spec.IsValid());
+  FXL_DCHECK(spec.IsValidOneBufferMesh());
 
   std::vector<vk::VertexInputAttributeDescription> attributes;
 
   vk::DeviceSize stride = 0;
-  if (spec.flags & MeshAttribute::kPosition2D) {
+  if (spec.has_attribute(0, MeshAttribute::kPosition2D)) {
     vk::VertexInputAttributeDescription attribute;
     attribute.location = kPositionAttributeLocation;
     attribute.binding = 0;
@@ -107,7 +117,7 @@ const MeshShaderBinding& ModelData::GetMeshShaderBinding(MeshSpec spec) {
     stride += sizeof(vec2);
     attributes.push_back(attribute);
   }
-  if (spec.flags & MeshAttribute::kPosition3D) {
+  if (spec.has_attribute(0, MeshAttribute::kPosition3D)) {
     vk::VertexInputAttributeDescription attribute;
     attribute.location = kPositionAttributeLocation;
     attribute.binding = 0;
@@ -117,7 +127,7 @@ const MeshShaderBinding& ModelData::GetMeshShaderBinding(MeshSpec spec) {
     stride += sizeof(vec3);
     attributes.push_back(attribute);
   }
-  if (spec.flags & MeshAttribute::kPositionOffset) {
+  if (spec.has_attribute(0, MeshAttribute::kPositionOffset)) {
     vk::VertexInputAttributeDescription attribute;
     attribute.location = kPositionOffsetAttributeLocation;
     attribute.binding = 0;
@@ -127,7 +137,7 @@ const MeshShaderBinding& ModelData::GetMeshShaderBinding(MeshSpec spec) {
     stride += sizeof(vec2);
     attributes.push_back(attribute);
   }
-  if (spec.flags & MeshAttribute::kUV) {
+  if (spec.has_attribute(0, MeshAttribute::kUV)) {
     vk::VertexInputAttributeDescription attribute;
     attribute.location = kUVAttributeLocation;
     attribute.binding = 0;
@@ -137,7 +147,7 @@ const MeshShaderBinding& ModelData::GetMeshShaderBinding(MeshSpec spec) {
     stride += sizeof(vec2);
     attributes.push_back(attribute);
   }
-  if (spec.flags & MeshAttribute::kPerimeterPos) {
+  if (spec.has_attribute(0, MeshAttribute::kPerimeterPos)) {
     vk::VertexInputAttributeDescription attribute;
     attribute.location = kPerimeterPosAttributeLocation;
     attribute.binding = 0;

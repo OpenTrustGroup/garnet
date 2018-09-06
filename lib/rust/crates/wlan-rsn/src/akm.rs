@@ -1,16 +1,15 @@
 // Copyright 2018 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-#![allow(dead_code)]
 
 use bytes::Bytes;
-use crypto_utils;
-use integrity;
-use integrity::hmac_sha1::HmacSha1;
-use keywrap;
+use crate::crypto_utils;
+use failure::{self, bail, ensure};
+use crate::integrity::{self, hmac_sha1::HmacSha1};
+use crate::keywrap;
 use std::fmt;
-use suite_selector;
-use {Error, Result};
+use crate::suite_selector;
+use crate::Error;
 
 macro_rules! return_none_if_unknown_algo {
     ($e:expr) => {
@@ -37,7 +36,7 @@ pub const EAP_SUITEB_SHA384: u8 = 12;
 pub const FT_EAP_SHA384: u8 = 13;
 // 14-255 - Reserved.
 
-#[derive(PartialOrd, PartialEq)]
+#[derive(PartialOrd, PartialEq, Clone)]
 pub struct Akm {
     pub oui: Bytes,
     pub suite_type: u8,
@@ -129,7 +128,9 @@ impl Akm {
         }
     }
 
-    pub fn prf(&self, k: &[u8], a: &str, b: &[u8], bits: usize) -> Option<Result<Vec<u8>>> {
+    pub fn prf(&self, k: &[u8], a: &str, b: &[u8], bits: usize)
+        -> Option<Result<Vec<u8>, failure::Error>>
+    {
         return_none_if_unknown_algo!(self);
 
         // IEEE 802.11-2016, 12.7.1.2
@@ -143,12 +144,9 @@ impl Akm {
 impl suite_selector::Factory for Akm {
     type Suite = Akm;
 
-    fn new(oui: Bytes, suite_type: u8) -> Result<Self::Suite> {
-        if oui.len() != 3 {
-            Err(Error::InvalidOuiLength(oui.len()))
-        } else {
-            Ok(Akm { oui, suite_type })
-        }
+    fn new(oui: Bytes, suite_type: u8) -> Result<Self::Suite, failure::Error> {
+        ensure!(oui.len() == 3, Error::InvalidOuiLength(oui.len()));
+        Ok(Akm { oui, suite_type })
     }
 }
 

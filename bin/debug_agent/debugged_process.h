@@ -37,6 +37,7 @@ class DebuggedProcess : public debug_ipc::ZirconExceptionWatcher,
   zx_koid_t koid() const { return koid_; }
   DebugAgent* debug_agent() const { return debug_agent_; }
   zx::process& process() { return process_; }
+  uint64_t dl_debug_addr() const { return dl_debug_addr_; }
 
   // Returns true on success. On failure, the object may not be used further.
   bool Init();
@@ -50,6 +51,11 @@ class DebuggedProcess : public debug_ipc::ZirconExceptionWatcher,
               debug_ipc::KillReply* reply);
   void OnAddressSpace(const debug_ipc::AddressSpaceRequest& request,
                       debug_ipc::AddressSpaceReply* reply);
+  void OnModules(debug_ipc::ModulesReply* reply);
+
+  // Pauses all threads in the process. If non-null, the pused_koids vector
+  // will be populated with the koids of all threads paused by this operation.
+  void PauseAll(std::vector<uint64_t>* paused_koids = nullptr);
 
   // Returns the thread or null if there is no known thread for this koid.
   DebuggedThread* GetThread(zx_koid_t thread_koid);
@@ -58,6 +64,16 @@ class DebuggedProcess : public debug_ipc::ZirconExceptionWatcher,
   // sends the list to the client. Used after an attach where we will not get
   // new thread notifications.
   void PopulateCurrentThreads();
+
+  // Attempts to load the debug_state_ value from the
+  // ZX_PROP_PROCESS_DEBUG_ADDR of the debugged process. Returns true if it
+  // is now set. False means it remains unset. Normally the first time this
+  // returns true would need to be followed up with a SendModuleNotification.
+  bool RegisterDebugState();
+
+  // Sends the currently loaded modules to the client with the given list
+  // of paused threads.
+  void SendModuleNotification(std::vector<uint64_t> paused_thread_koids);
 
   // Looks for breakpoints at the given address. Null if no breakpoints are
   // at that address.
@@ -85,6 +101,9 @@ class DebuggedProcess : public debug_ipc::ZirconExceptionWatcher,
   DebugAgent* debug_agent_;  // Non-owning.
   zx_koid_t koid_;
   zx::process process_;
+
+  // Address in the debugged program of the dl_debug_state in ld.so.
+  uint64_t dl_debug_addr_ = 0;
 
   // Handle for watching the process exceptions.
   debug_ipc::MessageLoop::WatchHandle process_watch_handle_;

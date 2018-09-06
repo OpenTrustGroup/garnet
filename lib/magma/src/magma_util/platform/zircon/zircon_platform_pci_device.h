@@ -8,6 +8,7 @@
 #include "platform_pci_device.h"
 
 #include <ddk/device.h>
+#include <ddk/protocol/pci.h>
 
 namespace magma {
 
@@ -39,6 +40,6 @@ private:
     pci_protocol_t pci_;
 };
 
-} // namespace
+} // namespace magma
 
 #endif // ZIRCON_PLATFORM_PCI_DEVICE_H

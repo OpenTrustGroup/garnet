@@ -7,93 +7,51 @@
 #include "garnet/lib/ui/gfx/engine/engine.h"
 #include "garnet/lib/ui/gfx/engine/object_linker.h"
 #include "garnet/lib/ui/gfx/engine/session.h"
+#include "garnet/lib/ui/gfx/resources/nodes/node.h"
 #include "garnet/lib/ui/gfx/resources/view_holder.h"
+#include "lib/fxl/logging.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 const ResourceTypeInfo View::kTypeInfo = {ResourceType::kView, "View"};
 
-View::View(Session* session, scenic::ResourceId id,
-           ::fuchsia::ui::gfx::ViewArgs args)
-    : Resource(session, id, View::kTypeInfo) {
-  ViewLinker* view_linker = session->engine()->view_linker();
-
-  import_handle_ = view_linker->RegisterImport(this, std::move(args.token),
-                                               session->error_reporter());
+View::View(Session* session, ResourceId id, ViewLinker::ImportLink link)
+    : Resource(session, id, View::kTypeInfo), link_(std::move(link)) {
+  FXL_DCHECK(link_.valid());
+  FXL_DCHECK(!link_.initialized());
 }
 
 View::~View() {
   for (const NodePtr& child : children_) {
     child->Detach();
   }
-
-  if (import_handle_ != 0) {
-    ViewLinker* view_linker = session()->engine()->view_linker();
-
-    view_linker->UnregisterImport(import_handle_);
-  }
 }
 
-void View::LinkResolved(ViewHolder* owner) {
-  FXL_DCHECK(!owner_);
-  owner_ = owner;
-
-  auto& parent = owner_ ? owner_->parent() : NodePtr();
-  if (parent) {
-    for (const NodePtr& child : children_) {
-      parent->AddChild(child);  // Also detaches child from the old parent.
-    }
-  } else {
-    for (const NodePtr& child : children_) {
-      child->Detach();
-    }
-  }
+void View::Connect() {
+  link_.Initialize(this, fit::bind_member(this, &View::LinkResolved),
+                   fit::bind_member(this, &View::LinkDisconnected));
 }
 
-void View::PeerDestroyed() {
-  for (const NodePtr& child : children_) {
-    child->Detach();
-  }
-  owner_ = nullptr;
-}
-
-void View::ConnectionClosed() {
-  for (const NodePtr& child : children_) {
-    child->Detach();
-  }
-  owner_ = nullptr;
-}
-
-void View::AddChild(NodePtr child_node) {
-  auto& current_parent = owner_ ? owner_->parent() : nullptr;
+bool View::AddChild(NodePtr child) {
+  auto* parent_node = view_holder_ ? view_holder_->parent() : nullptr;
 
   // Bail if this Node is already a child of ours.
-  if (children_.find(child_node) != children_.end()) {
-    FXL_DCHECK(current_parent.get() == child_node->parent());
-    return;
+  if (children_.find(child) != children_.end()) {
+    FXL_DCHECK(parent_node == child->parent());
+    return false;
   }
 
-  if (current_parent.get() != nullptr) {
-    current_parent->AddChild(child_node);
+  // Link the child to our parent, and set its view to us.
+  if (parent_node != nullptr) {
+    parent_node->AddChild(child);
   } else {
-    child_node->Detach();
+    child->Detach();
   }
-  child_node->set_view(this);
-  children_.insert(child_node);
-}
+  child->set_view(this);
+  children_.insert(child);
 
-void View::DetachChild(Node* child_node) {
-  bool found = false;
-  auto end = children_.end();
-  for (auto it = children_.begin(); it != end; it++) {
-    if (it->get() == child_node) {
-      children_.erase(it);
-      found = true;
-      break;
-    }
-  }
-  FXL_DCHECK(found);
+  return true;
 }
 
 void View::DetachChildren() {
@@ -103,5 +61,46 @@ void View::DetachChildren() {
   children_.clear();
 }
 
+void View::LinkResolved(ViewHolder* view_holder) {
+  FXL_DCHECK(!view_holder_);
+  view_holder_ = view_holder;
+
+  auto* parent_node = view_holder_->parent();
+  if (parent_node) {
+    for (const NodePtr& child : children_) {
+      parent_node->AddChild(child);  // Also detaches child from the old parent.
+    }
+  } else {
+    for (const NodePtr& child : children_) {
+      child->Detach();
+    }
+  }
+}
+
+void View::LinkDisconnected() {
+  // Make sure the parent and child Nodes' connections to each other remain
+  // consistent.
+  for (const NodePtr& child : children_) {
+    child->Detach();
+  }
+
+  view_holder_ = nullptr;
+  SendViewHolderDisconnectedEvent();
+}
+
+void View::RemoveChild(Node* child) {
+  // It is OK to use the temporary RefPtr here, as child is guaranteed to
+  // already have at least one other reference.  The RefPtr allows for easy
+  // lookup into the set.
+  size_t erase_count = children_.erase(NodePtr(child));
+  FXL_DCHECK(erase_count == 1);
+}
+
+void View::SendViewHolderDisconnectedEvent() {
+  fuchsia::ui::gfx::Event event;
+  event.set_view_holder_disconnected({.view_id = id()});
+  session()->EnqueueEvent(std::move(event));
+}
+
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

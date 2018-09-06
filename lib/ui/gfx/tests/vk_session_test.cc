@@ -5,7 +5,7 @@
 #include "garnet/lib/ui/gfx/tests/vk_session_test.h"
 #include "garnet/lib/ui/gfx/util/vulkan_utils.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 namespace test {
 
@@ -24,9 +24,9 @@ std::unique_ptr<Engine> VkSessionTest::CreateEngine() {
   escher_ = std::make_unique<escher::Escher>(vulkan_device);
 
   return std::make_unique<EngineForTest>(&display_manager_, nullptr,
-                                         escher_.get());
+                                         escher_->GetWeakPtr());
 }
 
 }  // namespace test
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

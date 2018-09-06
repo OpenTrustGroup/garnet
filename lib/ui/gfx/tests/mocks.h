@@ -11,7 +11,7 @@
 #include "garnet/lib/ui/gfx/engine/session_handler.h"
 #include "lib/escher/flib/release_fence_signaller.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 namespace test {
 
@@ -79,11 +79,11 @@ class EngineForTest : public Engine {
  public:
   EngineForTest(DisplayManager* display_manager,
                 std::unique_ptr<escher::ReleaseFenceSignaller> r,
-                escher::Escher* escher = nullptr);
+                escher::EscherWeakPtr escher = escher::EscherWeakPtr());
 };
 
 }  // namespace test
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_TESTS_MOCKS_H_

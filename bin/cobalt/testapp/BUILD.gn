@@ -3,40 +3,33 @@
 # found in the LICENSE file.
 
 import("//build/package.gni")
+import("//third_party/cobalt_config/cobalt_config.gni")
 import("//third_party/protobuf/proto_library.gni")
+
+cobalt_config("generate_testapp_config") {
+  project_id = 2
+}
 
 executable("cobalt_testapp") {
   output_name = "cobalt_testapp"
   sources = [
+    "cobalt_testapp_main.cc",
+    "cobalt_testapp_encoder.h",
+    "cobalt_testapp_encoder.cc",
+    "cobalt_testapp_logger.h",
+    "cobalt_testapp_logger.cc",
+    "cobalt_testapp.h",
     "cobalt_testapp.cc",
+    "tests.h",
+    "tests.cc",
   ]
 
   deps = [
-    "//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/component/cpp",
     "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/svc/cpp",
+    "//zircon/public/fidl/fuchsia-cobalt",
     "//zircon/public/lib/async-loop-cpp",
-    "//zircon/public/fidl/cobalt:cobalt",
-  ]
-}
-
-copy("cobalt_testapp_no_network") {
-  sources = [
-    "cobalt_testapp_no_network",
-  ]
-
-  outputs = [
-    "$root_out_dir/cobalt_testapp_no_network",
-  ]
-}
-
-copy("cobalt_testapp_no_environment") {
-  sources = [
-    "cobalt_testapp_no_environment",
-  ]
-
-  outputs = [
-    "$root_out_dir/cobalt_testapp_no_environment",
   ]
 }

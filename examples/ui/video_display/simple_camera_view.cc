@@ -19,7 +19,7 @@
 #include <lib/fxl/logging.h>
 #include <glm/gtc/type_ptr.hpp>
 
-#include <lib/ui/scenic/fidl_helpers.h>
+#include <lib/ui/scenic/cpp/commands.h>
 
 namespace video_display {
 
@@ -34,9 +34,9 @@ constexpr float kInitialWindowYPos = 240;
 static const std::string kSimpleCameraServiceUrl = "simple_camera_server_cpp";
 
 SimpleCameraView::SimpleCameraView(
-    async::Loop* loop, fuchsia::sys::StartupContext* startup_context,
-    ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+    async::Loop* loop, component::StartupContext* startup_context,
+    ::fuchsia::ui::viewsv1::ViewManagerPtr view_manager,
+    fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
         view_owner_request,
     bool use_fake_camera)
     : BaseView(std::move(view_manager), std::move(view_owner_request),
@@ -69,8 +69,8 @@ SimpleCameraView::SimpleCameraView(
   simple_camera_->ConnectToCamera(0, std::move(image_pipe_handle));
 
   // Create a rounded-rect shape to display the camera image on.
-  scenic::RoundedRectangle shape(session(), kShapeWidth, kShapeHeight, 80,
-                                     80, 80, 80);
+  scenic::RoundedRectangle shape(session(), kShapeWidth, kShapeHeight, 80, 80,
+                                 80, 80);
 
   node_.SetShape(shape);
   node_.SetMaterial(material);

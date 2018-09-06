@@ -10,37 +10,64 @@
 #include <fuchsia/cobalt/cpp/fidl.h>
 
 #include "garnet/bin/cobalt/app/cobalt_encoder_impl.h"
+#include "garnet/bin/cobalt/app/logger_impl.h"
 #include "garnet/bin/cobalt/app/timer_manager.h"
 #include "lib/fidl/cpp/binding_set.h"
-#include "third_party/cobalt/config/client_config.h"
+#include "third_party/cobalt/encoder/observation_store_dispatcher.h"
 #include "third_party/cobalt/encoder/shipping_dispatcher.h"
+#include "third_party/cobalt/util/encrypted_message_util.h"
 
 namespace cobalt {
 namespace encoder {
 
-class CobaltEncoderFactoryImpl : public fuchsia::cobalt::CobaltEncoderFactory {
+class CobaltEncoderFactoryImpl : public fuchsia::cobalt::LoggerFactory,
+                                 public fuchsia::cobalt::EncoderFactory {
  public:
-  // Does not take ownerhsip of |timer_manager|, |shipping_dispatcher| or
-  // |system_data|.
-  CobaltEncoderFactoryImpl(std::shared_ptr<config::ClientConfig> client_config,
-                           ClientSecret client_secret,
+  CobaltEncoderFactoryImpl(ClientSecret client_secret,
+                           ObservationStoreDispatcher* store_dispatcher,
+                           util::EncryptedMessageMaker* encrypt_to_analyzer,
                            ShippingDispatcher* shipping_dispatcher,
                            const SystemData* system_data,
                            TimerManager* timer_manager);
 
  private:
-  void GetEncoder(
-      int32_t project_id,
-      fidl::InterfaceRequest<fuchsia::cobalt::CobaltEncoder> request);
+  void CreateLogger(fuchsia::cobalt::ProjectProfile2 profile,
+                    fidl::InterfaceRequest<fuchsia::cobalt::Logger> request,
+                    CreateLoggerCallback callback);
 
-  std::shared_ptr<config::ClientConfig> client_config_;
+  void CreateLoggerExt(
+      fuchsia::cobalt::ProjectProfile2 profile,
+      fidl::InterfaceRequest<fuchsia::cobalt::LoggerExt> request,
+      CreateLoggerExtCallback callback);
+
+  void CreateLoggerSimple(
+      fuchsia::cobalt::ProjectProfile2 profile,
+      fidl::InterfaceRequest<fuchsia::cobalt::LoggerSimple> request,
+      CreateLoggerSimpleCallback callback);
+
+  void GetEncoderForProject(
+      fuchsia::cobalt::ProjectProfile profile,
+      fidl::InterfaceRequest<fuchsia::cobalt::Encoder> request,
+      GetEncoderForProjectCallback callback);
+
   ClientSecret client_secret_;
-  fidl::BindingSet<fuchsia::cobalt::CobaltEncoder,
-                   std::unique_ptr<fuchsia::cobalt::CobaltEncoder>>
+  fidl::BindingSet<fuchsia::cobalt::Logger,
+                   std::unique_ptr<fuchsia::cobalt::Logger>>
+      logger_bindings_;
+  fidl::BindingSet<fuchsia::cobalt::LoggerExt,
+                   std::unique_ptr<fuchsia::cobalt::LoggerExt>>
+      logger_ext_bindings_;
+  fidl::BindingSet<fuchsia::cobalt::LoggerSimple,
+                   std::unique_ptr<fuchsia::cobalt::LoggerSimple>>
+      logger_simple_bindings_;
+  fidl::BindingSet<fuchsia::cobalt::Encoder,
+                   std::unique_ptr<fuchsia::cobalt::Encoder>>
       cobalt_encoder_bindings_;
-  ShippingDispatcher* shipping_dispatcher_;  // not owned
-  const SystemData* system_data_;            // not owned
-  TimerManager* timer_manager_;              // not owned
+  ObservationStoreDispatcher* store_dispatcher_;      // not owned
+  util::EncryptedMessageMaker* encrypt_to_analyzer_;  // not owned
+  ShippingDispatcher* shipping_dispatcher_;           // not owned
+  const SystemData* system_data_;                     // not owned
+  TimerManager* timer_manager_;                       // not owned
 
   FXL_DISALLOW_COPY_AND_ASSIGN(CobaltEncoderFactoryImpl);
 };

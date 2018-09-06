@@ -9,8 +9,7 @@
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/string_printf.h"
 
-namespace debugserver {
-namespace arch {
+namespace inferior_control {
 
 Breakpoint::Breakpoint(uintptr_t address, size_t kind)
     : address_(address), kind_(kind) {}
@@ -26,7 +25,8 @@ SoftwareBreakpoint::SoftwareBreakpoint(uintptr_t address, size_t kind,
     : ProcessBreakpoint(address, kind, owner) {}
 
 SoftwareBreakpoint::~SoftwareBreakpoint() {
-  if (IsInserted()) Remove();
+  if (IsInserted())
+    Remove();
 }
 
 ProcessBreakpointSet::ProcessBreakpointSet(Process* process)
@@ -81,7 +81,8 @@ SingleStepBreakpoint::SingleStepBreakpoint(uintptr_t address,
     : ThreadBreakpoint(address, 0 /*TODO:type?*/, owner) {}
 
 SingleStepBreakpoint::~SingleStepBreakpoint() {
-  if (IsInserted()) Remove();
+  if (IsInserted())
+    Remove();
 }
 
 ThreadBreakpointSet::ThreadBreakpointSet(Thread* thread) : thread_(thread) {
@@ -122,5 +123,4 @@ bool ThreadBreakpointSet::SingleStepBreakpointInserted() {
   return !!single_step_breakpoint_;
 }
 
-}  // namespace arch
-}  // namespace debugserver
+}  // namespace inferior_control

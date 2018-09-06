@@ -16,51 +16,42 @@
 
 using namespace escher;
 
-WaterfallRendererPtr WaterfallRenderer::New(Escher* escher,
-                                            escher::ShaderProgramPtr program) {
-  return fxl::AdoptRef(new WaterfallRenderer(escher, std::move(program)));
+WaterfallRendererPtr WaterfallRenderer::New(EscherWeakPtr escher) {
+  return fxl::AdoptRef(new WaterfallRenderer(std::move(escher)));
 }
 
-WaterfallRenderer::WaterfallRenderer(Escher* escher,
-                                     escher::ShaderProgramPtr program)
-    : Renderer(escher), program_(std::move(program)) {
-  uniforms_ =
-      Buffer::New(escher->resource_recycler(), escher->gpu_allocator(), 10000,
-                  vk::BufferUsageFlagBits::eTransferDst |
-                      vk::BufferUsageFlagBits::eTransferSrc |
-                      vk::BufferUsageFlagBits::eUniformBuffer,
-                  vk::MemoryPropertyFlagBits::eHostVisible |
-                      vk::MemoryPropertyFlagBits::eHostCoherent);
-
+WaterfallRenderer::WaterfallRenderer(EscherWeakPtr weak_escher)
+    : Renderer(weak_escher), render_queue_(std::move(weak_escher)) {
   // Need at least one.
   SetNumDepthBuffers(1);
 }
 
 WaterfallRenderer::~WaterfallRenderer() { escher()->Cleanup(); }
 
-void WaterfallRenderer::DrawFrame(const FramePtr& frame, const Stage& stage,
-                                  const Model& model, const Camera& camera,
-                                  const ImagePtr& output_image) {
+void WaterfallRenderer::DrawFrame(const escher::FramePtr& frame,
+                                  escher::Stage* stage,
+                                  const escher::Camera& camera,
+                                  const escher::Stopwatch& stopwatch,
+                                  uint64_t frame_count, Scene* scene,
+                                  const escher::ImagePtr& output_image) {
   TRACE_DURATION("gfx", "WaterfallRenderer::DrawFrame");
 
   auto cb = frame->cmds();
 
-  // ViewProjection
-  mat4& view_projection_matrix = *reinterpret_cast<mat4*>(uniforms_->ptr());
-  view_projection_matrix = camera.projection() * camera.transform();
-  cb->BindUniformBuffer(0, 0, uniforms_, 0, 16 * sizeof(float));
+  frame->command_buffer()->TakeWaitSemaphore(
+      output_image, vk::PipelineStageFlagBits::eColorAttachmentOutput);
 
-  // Model transform.
-  // TODO(ES-83): Need to set this per-object.
-  // As a quick hack, we write into a separate region of the uniform buffer
-  // each frame.  That way we can animate a single object without stomping on
-  // the matrix being used by the previous frame.
-  int64_t offset = 256 + (frame->frame_number() % 3) * 256;
-  mat4& model_transform_matrix =
-      *reinterpret_cast<glm::mat4*>(uniforms_->ptr() + offset);
-  model_transform_matrix = model.objects()[0].transform();
-  cb->BindUniformBuffer(1, 0, uniforms_, offset, 16 * sizeof(float));
+  render_queue_.InitFrame(frame, *stage, camera);
+  scene->Update(stopwatch, frame_count, stage, &render_queue_);
+  render_queue_.Sort();
+  BeginRenderPass(frame, output_image);
+  render_queue_.GenerateCommands(cb, nullptr);
+  render_queue_.Clear();
+  EndRenderPass(frame);
+}
 
+void WaterfallRenderer::BeginRenderPass(const escher::FramePtr& frame,
+                                        const escher::ImagePtr& output_image) {
   TexturePtr depth_texture;
   {
     FXL_DCHECK(!depth_buffers_.empty());
@@ -79,11 +70,6 @@ void WaterfallRenderer::DrawFrame(const FramePtr& frame, const Stage& stage,
     }
   }
 
-  frame->command_buffer()->TakeWaitSemaphore(
-      output_image, vk::PipelineStageFlagBits::eColorAttachmentOutput);
-
-  cb->SetToDefaultState(CommandBuffer::DefaultState::kOpaque);
-
   RenderPassInfo render_pass_info;
   {
     auto& rp = render_pass_info;
@@ -99,41 +85,17 @@ void WaterfallRenderer::DrawFrame(const FramePtr& frame, const Stage& stage,
     rp.op_flags = RenderPassInfo::kClearDepthStencilOp |
                   RenderPassInfo::kOptimalColorLayoutOp |
                   RenderPassInfo::kOptimalDepthStencilLayoutOp;
-    rp.clear_color[0].setFloat32({0.3f, 0.f, 0.f, 1.f});
+    rp.clear_color[0].setFloat32({0.f, 0.f, 0.2f, 1.f});
   }
   FXL_CHECK(render_pass_info.Validate());
 
-  cb->BeginRenderPass(render_pass_info);
+  frame->cmds()->BeginRenderPass(render_pass_info);
+  frame->AddTimestamp("started lighting render pass");
+}
 
-  cb->SetShaderProgram(program_);
-
-  for (auto& o : model.objects()) {
-    FXL_DCHECK(o.shape().type() == Shape::Type::kMesh);
-    auto& mesh = o.shape().mesh();
-    auto& spec = mesh->spec();
-    auto vertex_offset = mesh->vertex_buffer_offset();
-
-    frame->command_buffer()->TakeWaitSemaphore(
-        mesh, vk::PipelineStageFlagBits::eTopOfPipe);
-
-    cb->BindTexture(1, 1, o.material()->texture());
-
-    cb->BindIndices(mesh->index_buffer(), mesh->index_buffer_offset(),
-                    vk::IndexType::eUint32);
-
-    cb->BindVertices(0, mesh->vertex_buffer(), vertex_offset, spec.GetStride());
-    cb->SetVertexAttributes(
-        0, 0, vk::Format::eR32G32Sfloat,
-        spec.GetAttributeOffset(MeshAttribute::kPosition2D));
-    cb->SetVertexAttributes(0, 1, vk::Format::eR32G32Sfloat,
-                            spec.GetAttributeOffset(MeshAttribute::kUV));
-
-    cb->DrawIndexed(mesh->num_indices());
-  }
-
-  cb->EndRenderPass();
-
-  frame->AddTimestamp("finished render pass");
+void WaterfallRenderer::EndRenderPass(const escher::FramePtr& frame) {
+  frame->cmds()->EndRenderPass();
+  frame->AddTimestamp("finished lighting render pass");
 }
 
 void WaterfallRenderer::SetNumDepthBuffers(size_t count) {

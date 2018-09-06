@@ -4,6 +4,7 @@
 
 #include "garnet/lib/ui/gfx/engine/session.h"
 
+#include <memory>
 #include <utility>
 
 #include <lib/async/cpp/task.h>
@@ -49,7 +50,7 @@
 #include "lib/escher/shape/rounded_rect_factory.h"
 #include "lib/escher/util/type_utils.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 namespace {
@@ -79,7 +80,6 @@ fidl::VectorPtr<::fuchsia::ui::gfx::Hit> WrapHits(
   }
   return wrapped_hits;
 }
-
 }  // anonymous namespace
 
 Session::Session(SessionId id, Engine* engine, EventReporter* event_reporter,
@@ -97,6 +97,7 @@ Session::Session(SessionId id, Engine* engine, EventReporter* event_reporter,
 Session::~Session() { FXL_DCHECK(!is_valid_); }
 
 bool Session::ApplyCommand(::fuchsia::ui::gfx::Command command) {
+  TRACE_DURATION("gfx", "Session::ApplyCommand");
   switch (command.Which()) {
     case ::fuchsia::ui::gfx::Command::Tag::kCreateResource:
       return ApplyCreateResourceCmd(std::move(command.create_resource()));
@@ -199,10 +200,10 @@ bool Session::ApplyCommand(::fuchsia::ui::gfx::Command command) {
 
 bool Session::ApplyCreateResourceCmd(
     ::fuchsia::ui::gfx::CreateResourceCmd command) {
-  const scenic::ResourceId id = command.id;
+  const ResourceId id = command.id;
   if (id == 0) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplyCreateResourceCmd(): invalid ID: "
+        << "scenic_impl::gfx::Session::ApplyCreateResourceCmd(): invalid ID: "
         << command;
     return false;
   }
@@ -256,6 +257,9 @@ bool Session::ApplyCreateResourceCmd(
                                    std::move(command.resource.entity_node()));
     case ::fuchsia::ui::gfx::ResourceArgs::Tag::kShapeNode:
       return ApplyCreateShapeNode(id, std::move(command.resource.shape_node()));
+    case ::fuchsia::ui::gfx::ResourceArgs::Tag::kCompositor:
+      return ApplyCreateCompositor(
+          id, std::move(command.resource.compositor()));
     case ::fuchsia::ui::gfx::ResourceArgs::Tag::kDisplayCompositor:
       return ApplyCreateDisplayCompositor(
           id, std::move(command.resource.display_compositor()));
@@ -285,7 +289,7 @@ bool Session::ApplyExportResourceCmd(
     ::fuchsia::ui::gfx::ExportResourceCmd command) {
   if (!command.token) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplyExportResourceCmd(): "
+        << "scenic_impl::gfx::Session::ApplyExportResourceCmd(): "
            "no token provided.";
     return false;
   }
@@ -300,7 +304,7 @@ bool Session::ApplyImportResourceCmd(
     ::fuchsia::ui::gfx::ImportResourceCmd command) {
   if (!command.token) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplyImportResourceCmd(): "
+        << "scenic_impl::gfx::Session::ApplyImportResourceCmd(): "
            "no token provided.";
     return false;
   }
@@ -316,22 +320,19 @@ bool Session::ApplyAddChildCmd(::fuchsia::ui::gfx::AddChildCmd command) {
   // - Nodes to Nodes
   // - ViewHolders to Nodes
   // - Nodes to Views
-  // TODO(SCN-795): Split these out into separate commands.
-  if (auto parent_node = resources_.FindResource<Node>(
+  // TODO(SCN-795): Split these out into separate commands?
+  if (auto parent = resources_.FindResource<Node>(
           command.node_id, ResourceMap::ErrorBehavior::kDontReportErrors)) {
-    if (auto child_node = resources_.FindResource<Node>(
+    if (auto child = resources_.FindResource<Node>(
             command.child_id, ResourceMap::ErrorBehavior::kDontReportErrors)) {
-      return parent_node->AddChild(std::move(child_node));
-    } else if (auto child_node =
+      return parent->AddChild(std::move(child));
+    } else if (auto child =
                    resources_.FindResource<ViewHolder>(command.child_id)) {
-      child_node->SetParent(std::move(parent_node));
-      return true;
+      return parent->AddViewHolder(std::move(child));
     }
-  } else if (auto parent_node =
-                 resources_.FindResource<View>(command.node_id)) {
-    if (auto child_node = resources_.FindResource<Node>(command.child_id)) {
-      parent_node->AddChild(std::move(child_node));
-      return true;
+  } else if (auto parent = resources_.FindResource<View>(command.node_id)) {
+    if (auto child = resources_.FindResource<Node>(command.child_id)) {
+      return parent->AddChild(std::move(child));
     }
   }
   return false;
@@ -428,8 +429,9 @@ bool Session::ApplySetAnchorCmd(::fuchsia::ui::gfx::SetAnchorCmd command) {
 bool Session::ApplySetSizeCmd(::fuchsia::ui::gfx::SetSizeCmd command) {
   if (auto layer = resources_.FindResource<Layer>(command.id)) {
     if (IsVariable(command.value)) {
-      error_reporter_->ERROR() << "scenic::gfx::Session::ApplySetSizeCmd(): "
-                                  "unimplemented for variable value.";
+      error_reporter_->ERROR()
+          << "scenic_impl::gfx::Session::ApplySetSizeCmd(): "
+             "unimplemented for variable value.";
       return false;
     }
     return layer->SetSize(UnwrapVector2(command.value));
@@ -469,8 +471,9 @@ bool Session::ApplySetMaterialCmd(::fuchsia::ui::gfx::SetMaterialCmd command) {
 bool Session::ApplySetClipCmd(::fuchsia::ui::gfx::SetClipCmd command) {
   if (command.clip_id != 0) {
     // TODO(SCN-167): Support non-zero clip_id.
-    error_reporter_->ERROR() << "scenic::gfx::Session::ApplySetClipCmd(): only "
-                                "clip_to_self is implemented.";
+    error_reporter_->ERROR()
+        << "scenic_impl::gfx::Session::ApplySetClipCmd(): only "
+           "clip_to_self is implemented.";
     return false;
   }
 
@@ -531,8 +534,9 @@ bool Session::ApplySetTextureCmd(::fuchsia::ui::gfx::SetTextureCmd command) {
 bool Session::ApplySetColorCmd(::fuchsia::ui::gfx::SetColorCmd command) {
   if (auto material = resources_.FindResource<Material>(command.material_id)) {
     if (IsVariable(command.color)) {
-      error_reporter_->ERROR() << "scenic::gfx::Session::ApplySetColorCmd(): "
-                                  "unimplemented for variable color.";
+      error_reporter_->ERROR()
+          << "scenic_impl::gfx::Session::ApplySetColorCmd(): "
+             "unimplemented for variable color.";
       return false;
     }
 
@@ -628,7 +632,7 @@ bool Session::ApplySetRendererParamCmd(
         return true;
       case ::fuchsia::ui::gfx::RendererParam::Tag::Invalid:
         error_reporter_->ERROR()
-            << "scenic::gfx::Session::ApplySetRendererParamCmd(): "
+            << "scenic_impl::gfx::Session::ApplySetRendererParamCmd(): "
                "invalid param.";
     }
   }
@@ -649,7 +653,7 @@ bool Session::ApplySetCameraTransformCmd(
   if (IsVariable(command.eye_position) || IsVariable(command.eye_look_at) ||
       IsVariable(command.eye_up)) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplySetCameraTransformCmd(): "
+        << "scenic_impl::gfx::Session::ApplySetCameraTransformCmd(): "
            "unimplemented: variable properties.";
     return false;
   } else if (auto camera = resources_.FindResource<Camera>(command.camera_id)) {
@@ -666,7 +670,7 @@ bool Session::ApplySetCameraProjectionCmd(
   // TODO(SCN-123): support variables.
   if (IsVariable(command.fovy)) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplySetCameraProjectionCmd(): "
+        << "scenic_impl::gfx::Session::ApplySetCameraProjectionCmd(): "
            "unimplemented: variable properties.";
     return false;
   } else if (auto camera = resources_.FindResource<Camera>(command.camera_id)) {
@@ -681,7 +685,7 @@ bool Session::ApplySetStereoCameraProjectionCmd(
   if (IsVariable(command.left_projection) ||
       IsVariable(command.right_projection)) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplySetStereoCameraProjectionOp(): "
+        << "scenic_impl::gfx::Session::ApplySetStereoCameraProjectionOp(): "
            "unimplemented: variable properties.";
     return false;
   } else if (auto stereo_camera =
@@ -695,9 +699,9 @@ bool Session::ApplySetStereoCameraProjectionCmd(
 
 bool Session::ApplySetCameraPoseBufferCmd(
     ::fuchsia::ui::gfx::SetCameraPoseBufferCmd command) {
-  if (zx::time(command.base_time) > zx::clock::get(ZX_CLOCK_MONOTONIC)) {
+  if (zx::time(command.base_time) > zx::clock::get_monotonic()) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplySetCameraPoseBufferCmd(): "
+        << "scenic_impl::gfx::Session::ApplySetCameraPoseBufferCmd(): "
            "base time not in the past";
     return false;
   }
@@ -705,21 +709,21 @@ bool Session::ApplySetCameraPoseBufferCmd(
   auto buffer = resources_.FindResource<Buffer>(command.buffer_id);
   if (!buffer) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplySetCameraPoseBufferCmd(): "
+        << "scenic_impl::gfx::Session::ApplySetCameraPoseBufferCmd(): "
            "invalid buffer ID";
     return false;
   }
 
   if (command.num_entries < 1) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplySetCameraPoseBufferCmd(): "
+        << "scenic_impl::gfx::Session::ApplySetCameraPoseBufferCmd(): "
            "must have at least one entry in the pose buffer";
     return false;
   }
 
   if (buffer->size() < command.num_entries * sizeof(escher::hmd::Pose)) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplySetCameraPoseBufferCmd(): "
+        << "scenic_impl::gfx::Session::ApplySetCameraPoseBufferCmd(): "
            "buffer is not large enough";
     return false;
   }
@@ -727,7 +731,7 @@ bool Session::ApplySetCameraPoseBufferCmd(
   auto camera = resources_.FindResource<Camera>(command.camera_id);
   if (!camera) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplySetCameraPoseBufferCmd(): "
+        << "scenic_impl::gfx::Session::ApplySetCameraPoseBufferCmd(): "
            "invalid camera ID";
     return false;
   }
@@ -743,7 +747,7 @@ bool Session::ApplySetLightColorCmd(
   // TODO(SCN-123): support variables.
   if (command.color.variable_id) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplySetLightColorCmd(): "
+        << "scenic_impl::gfx::Session::ApplySetLightColorCmd(): "
            "unimplemented: variable color.";
     return false;
   } else if (auto light = resources_.FindResource<Light>(command.light_id)) {
@@ -757,7 +761,7 @@ bool Session::ApplySetLightDirectionCmd(
   // TODO(SCN-123): support variables.
   if (command.direction.variable_id) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplySetLightDirectionCmd(): "
+        << "scenic_impl::gfx::Session::ApplySetLightDirectionCmd(): "
            "unimplemented: variable direction.";
     return false;
   } else if (auto light =
@@ -775,20 +779,20 @@ bool Session::ApplyAddLightCmd(::fuchsia::ui::gfx::AddLightCmd command) {
   }
 
   error_reporter_->ERROR()
-      << "scenic::gfx::Session::ApplyAddLightCmd(): unimplemented.";
+      << "scenic_impl::gfx::Session::ApplyAddLightCmd(): unimplemented.";
   return false;
 }
 
 bool Session::ApplyDetachLightCmd(::fuchsia::ui::gfx::DetachLightCmd command) {
   error_reporter_->ERROR()
-      << "scenic::gfx::Session::ApplyDetachLightCmd(): unimplemented.";
+      << "scenic_impl::gfx::Session::ApplyDetachLightCmd(): unimplemented.";
   return false;
 }
 
 bool Session::ApplyDetachLightsCmd(
     ::fuchsia::ui::gfx::DetachLightsCmd command) {
   error_reporter_->ERROR()
-      << "scenic::gfx::Session::ApplyDetachLightsCmd(): unimplemented.";
+      << "scenic_impl::gfx::Session::ApplyDetachLightsCmd(): unimplemented.";
   return false;
 }
 
@@ -808,13 +812,13 @@ bool Session::ApplySetDisableClippingCmd(
   return false;
 }
 
-bool Session::ApplyCreateMemory(scenic::ResourceId id,
+bool Session::ApplyCreateMemory(ResourceId id,
                                 ::fuchsia::ui::gfx::MemoryArgs args) {
   auto memory = CreateMemory(id, std::move(args));
   return memory ? resources_.AddResource(id, std::move(memory)) : false;
 }
 
-bool Session::ApplyCreateImage(scenic::ResourceId id,
+bool Session::ApplyCreateImage(ResourceId id,
                                ::fuchsia::ui::gfx::ImageArgs args) {
   if (auto memory = resources_.FindResource<Memory>(args.memory_id)) {
     if (auto image = CreateImage(id, std::move(memory), args)) {
@@ -825,14 +829,14 @@ bool Session::ApplyCreateImage(scenic::ResourceId id,
   return false;
 }
 
-bool Session::ApplyCreateImagePipe(scenic::ResourceId id,
+bool Session::ApplyCreateImagePipe(ResourceId id,
                                    ::fuchsia::ui::gfx::ImagePipeArgs args) {
   auto image_pipe = fxl::MakeRefCounted<ImagePipe>(
       this, id, std::move(args.image_pipe_request));
   return resources_.AddResource(id, image_pipe);
 }
 
-bool Session::ApplyCreateBuffer(scenic::ResourceId id,
+bool Session::ApplyCreateBuffer(ResourceId id,
                                 ::fuchsia::ui::gfx::BufferArgs args) {
   if (auto memory = resources_.FindResource<Memory>(args.memory_id)) {
     if (auto buffer = CreateBuffer(id, std::move(memory), args.memory_offset,
@@ -843,43 +847,43 @@ bool Session::ApplyCreateBuffer(scenic::ResourceId id,
   return false;
 }
 
-bool Session::ApplyCreateScene(scenic::ResourceId id,
+bool Session::ApplyCreateScene(ResourceId id,
                                ::fuchsia::ui::gfx::SceneArgs args) {
   auto scene = CreateScene(id, std::move(args));
   return scene ? resources_.AddResource(id, std::move(scene)) : false;
 }
 
-bool Session::ApplyCreateCamera(scenic::ResourceId id,
+bool Session::ApplyCreateCamera(ResourceId id,
                                 ::fuchsia::ui::gfx::CameraArgs args) {
   auto camera = CreateCamera(id, std::move(args));
   return camera ? resources_.AddResource(id, std::move(camera)) : false;
 }
 
 bool Session::ApplyCreateStereoCamera(
-    scenic::ResourceId id, ::fuchsia::ui::gfx::StereoCameraArgs args) {
+    ResourceId id, ::fuchsia::ui::gfx::StereoCameraArgs args) {
   auto camera = CreateStereoCamera(id, args);
   return camera ? resources_.AddResource(id, std::move(camera)) : false;
 }
 
-bool Session::ApplyCreateRenderer(scenic::ResourceId id,
+bool Session::ApplyCreateRenderer(ResourceId id,
                                   ::fuchsia::ui::gfx::RendererArgs args) {
   auto renderer = CreateRenderer(id, std::move(args));
   return renderer ? resources_.AddResource(id, std::move(renderer)) : false;
 }
 
 bool Session::ApplyCreateAmbientLight(
-    scenic::ResourceId id, ::fuchsia::ui::gfx::AmbientLightArgs args) {
+    ResourceId id, ::fuchsia::ui::gfx::AmbientLightArgs args) {
   auto light = CreateAmbientLight(id);
   return light ? resources_.AddResource(id, std::move(light)) : false;
 }
 
 bool Session::ApplyCreateDirectionalLight(
-    scenic::ResourceId id, ::fuchsia::ui::gfx::DirectionalLightArgs args) {
+    ResourceId id, ::fuchsia::ui::gfx::DirectionalLightArgs args) {
   auto light = CreateDirectionalLight(id);
   return light ? resources_.AddResource(id, std::move(light)) : false;
 }
 
-bool Session::ApplyCreateRectangle(scenic::ResourceId id,
+bool Session::ApplyCreateRectangle(ResourceId id,
                                    ::fuchsia::ui::gfx::RectangleArgs args) {
   if (!AssertValueIsOfType(args.width, kFloatValueTypes) ||
       !AssertValueIsOfType(args.height, kFloatValueTypes)) {
@@ -888,8 +892,9 @@ bool Session::ApplyCreateRectangle(scenic::ResourceId id,
 
   // TODO(SCN-123): support variables.
   if (IsVariable(args.width) || IsVariable(args.height)) {
-    error_reporter_->ERROR() << "scenic::gfx::Session::ApplyCreateRectangle(): "
-                                "unimplemented: variable width/height.";
+    error_reporter_->ERROR()
+        << "scenic_impl::gfx::Session::ApplyCreateRectangle(): "
+           "unimplemented: variable width/height.";
     return false;
   }
 
@@ -899,7 +904,7 @@ bool Session::ApplyCreateRectangle(scenic::ResourceId id,
 }
 
 bool Session::ApplyCreateRoundedRectangle(
-    scenic::ResourceId id, ::fuchsia::ui::gfx::RoundedRectangleArgs args) {
+    ResourceId id, ::fuchsia::ui::gfx::RoundedRectangleArgs args) {
   if (!AssertValueIsOfType(args.width, kFloatValueTypes) ||
       !AssertValueIsOfType(args.height, kFloatValueTypes) ||
       !AssertValueIsOfType(args.top_left_radius, kFloatValueTypes) ||
@@ -915,7 +920,7 @@ bool Session::ApplyCreateRoundedRectangle(
       IsVariable(args.bottom_left_radius) ||
       IsVariable(args.bottom_right_radius)) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::ApplyCreateRoundedRectangle(): "
+        << "scenic_impl::gfx::Session::ApplyCreateRoundedRectangle(): "
            "unimplemented: variable width/height/radii.";
     return false;
   }
@@ -933,7 +938,7 @@ bool Session::ApplyCreateRoundedRectangle(
   return rectangle ? resources_.AddResource(id, std::move(rectangle)) : false;
 }
 
-bool Session::ApplyCreateCircle(scenic::ResourceId id,
+bool Session::ApplyCreateCircle(ResourceId id,
                                 ::fuchsia::ui::gfx::CircleArgs args) {
   if (!AssertValueIsOfType(args.radius, kFloatValueTypes)) {
     return false;
@@ -941,8 +946,9 @@ bool Session::ApplyCreateCircle(scenic::ResourceId id,
 
   // TODO(SCN-123): support variables.
   if (IsVariable(args.radius)) {
-    error_reporter_->ERROR() << "scenic::gfx::Session::ApplyCreateCircle(): "
-                                "unimplemented: variable radius.";
+    error_reporter_->ERROR()
+        << "scenic_impl::gfx::Session::ApplyCreateCircle(): "
+           "unimplemented: variable radius.";
     return false;
   }
 
@@ -950,93 +956,110 @@ bool Session::ApplyCreateCircle(scenic::ResourceId id,
   return circle ? resources_.AddResource(id, std::move(circle)) : false;
 }
 
-bool Session::ApplyCreateMesh(scenic::ResourceId id,
+bool Session::ApplyCreateMesh(ResourceId id,
                               ::fuchsia::ui::gfx::MeshArgs args) {
   auto mesh = CreateMesh(id);
   return mesh ? resources_.AddResource(id, std::move(mesh)) : false;
 }
 
-bool Session::ApplyCreateMaterial(scenic::ResourceId id,
+bool Session::ApplyCreateMaterial(ResourceId id,
                                   ::fuchsia::ui::gfx::MaterialArgs args) {
   auto material = CreateMaterial(id);
   return material ? resources_.AddResource(id, std::move(material)) : false;
 }
 
-bool Session::ApplyCreateView(scenic::ResourceId id,
+bool Session::ApplyCreateView(ResourceId id,
                               ::fuchsia::ui::gfx::ViewArgs args) {
+  // Sanity check.  We also rely on FIDL to enforce this for us, although it
+  // does not at the moment.
   FXL_DCHECK(args.token)
-      << "scenic::gfx::Session::ApplyCreateView(): no token provided.";
+      << "scenic_impl::gfx::Session::ApplyCreateView(): no token provided.";
 
-  auto view = CreateView(id, std::move(args));
-  return view ? resources_.AddResource(id, std::move(view)) : false;
+  if (auto view = CreateView(id, std::move(args))) {
+    view->As<View>()->Connect();  // Initiate the link.
+    resources_.AddResource(id, std::move(view));
+    return true;
+  }
+  return false;
 }
 
-bool Session::ApplyCreateViewHolder(scenic::ResourceId id,
+bool Session::ApplyCreateViewHolder(ResourceId id,
                                     ::fuchsia::ui::gfx::ViewHolderArgs args) {
-  FXL_DCHECK(args.token)
-      << "scenic::gfx::Session::ApplyCreateViewHolder(): no token provided.";
+  // Sanity check.  We also rely on FIDL to enforce this for us, although it
+  // does not at the moment
+  FXL_DCHECK(args.token) << "scenic_impl::gfx::Session::ApplyCreateViewHolder()"
+                            ": no token provided.";
 
-  auto view_holder = CreateViewHolder(id, std::move(args));
-  return view_holder ? resources_.AddResource(id, std::move(view_holder))
-                     : false;
+  if (auto view_holder = CreateViewHolder(id, std::move(args))) {
+    view_holder->As<ViewHolder>()->Connect();  // Initiate the link.
+    resources_.AddResource(id, std::move(view_holder));
+    return true;
+  }
+  return false;
 }
 
-bool Session::ApplyCreateClipNode(scenic::ResourceId id,
+bool Session::ApplyCreateClipNode(ResourceId id,
                                   ::fuchsia::ui::gfx::ClipNodeArgs args) {
   auto node = CreateClipNode(id, std::move(args));
   return node ? resources_.AddResource(id, std::move(node)) : false;
 }
 
-bool Session::ApplyCreateEntityNode(scenic::ResourceId id,
+bool Session::ApplyCreateEntityNode(ResourceId id,
                                     ::fuchsia::ui::gfx::EntityNodeArgs args) {
   auto node = CreateEntityNode(id, std::move(args));
   return node ? resources_.AddResource(id, std::move(node)) : false;
 }
 
-bool Session::ApplyCreateOpacityNode(scenic::ResourceId id,
+bool Session::ApplyCreateOpacityNode(ResourceId id,
                                      ::fuchsia::ui::gfx::OpacityNodeArgs args) {
   auto node = CreateOpacityNode(id, args);
   return node ? resources_.AddResource(id, std::move(node)) : false;
 }
 
-bool Session::ApplyCreateShapeNode(scenic::ResourceId id,
+bool Session::ApplyCreateShapeNode(ResourceId id,
                                    ::fuchsia::ui::gfx::ShapeNodeArgs args) {
   auto node = CreateShapeNode(id, std::move(args));
   return node ? resources_.AddResource(id, std::move(node)) : false;
 }
 
+bool Session::ApplyCreateCompositor(scenic::ResourceId id,
+                                    ::fuchsia::ui::gfx::CompositorArgs args) {
+  auto compositor = CreateCompositor(id, std::move(args));
+  return compositor ? resources_.AddResource(id, std::move(compositor)) : false;
+}
+
 bool Session::ApplyCreateDisplayCompositor(
-    scenic::ResourceId id, ::fuchsia::ui::gfx::DisplayCompositorArgs args) {
+    ResourceId id, ::fuchsia::ui::gfx::DisplayCompositorArgs args) {
   auto compositor = CreateDisplayCompositor(id, std::move(args));
   return compositor ? resources_.AddResource(id, std::move(compositor)) : false;
 }
 
 bool Session::ApplyCreateImagePipeCompositor(
-    scenic::ResourceId id, ::fuchsia::ui::gfx::ImagePipeCompositorArgs args) {
+    ResourceId id, ::fuchsia::ui::gfx::ImagePipeCompositorArgs args) {
   auto compositor = CreateImagePipeCompositor(id, std::move(args));
   return compositor ? resources_.AddResource(id, std::move(compositor)) : false;
 }
 
-bool Session::ApplyCreateLayerStack(scenic::ResourceId id,
+bool Session::ApplyCreateLayerStack(ResourceId id,
                                     ::fuchsia::ui::gfx::LayerStackArgs args) {
   auto layer_stack = CreateLayerStack(id, std::move(args));
   return layer_stack ? resources_.AddResource(id, std::move(layer_stack))
                      : false;
 }
 
-bool Session::ApplyCreateLayer(scenic::ResourceId id,
+bool Session::ApplyCreateLayer(ResourceId id,
                                ::fuchsia::ui::gfx::LayerArgs args) {
   auto layer = CreateLayer(id, std::move(args));
   return layer ? resources_.AddResource(id, std::move(layer)) : false;
 }
 
-bool Session::ApplyCreateVariable(scenic::ResourceId id,
+bool Session::ApplyCreateVariable(ResourceId id,
                                   ::fuchsia::ui::gfx::VariableArgs args) {
   auto variable = CreateVariable(id, std::move(args));
   return variable ? resources_.AddResource(id, std::move(variable)) : false;
 }
 
-ResourcePtr Session::CreateMemory(scenic::ResourceId id,
+ResourcePtr Session::CreateMemory(ResourceId id,
                                   ::fuchsia::ui::gfx::MemoryArgs args) {
   vk::Device device = engine()->vk_device();
   switch (args.memory_type) {
@@ -1048,17 +1071,17 @@ ResourcePtr Session::CreateMemory(scenic::ResourceId id,
   }
 }
 
-ResourcePtr Session::CreateImage(scenic::ResourceId id, MemoryPtr memory,
+ResourcePtr Session::CreateImage(ResourceId id, MemoryPtr memory,
                                  ::fuchsia::ui::gfx::ImageArgs args) {
   return Image::New(this, id, memory, args.info, args.memory_offset,
                     error_reporter_);
 }
 
-ResourcePtr Session::CreateBuffer(scenic::ResourceId id, MemoryPtr memory,
+ResourcePtr Session::CreateBuffer(ResourceId id, MemoryPtr memory,
                                   uint32_t memory_offset, uint32_t num_bytes) {
   if (!memory->IsKindOf<GpuMemory>()) {
     // TODO(SCN-273): host memory should also be supported.
-    error_reporter_->ERROR() << "scenic::gfx::Session::CreateBuffer(): "
+    error_reporter_->ERROR() << "scenic_impl::gfx::Session::CreateBuffer(): "
                                 "memory must be of type "
                                 "ui.gfx.MemoryType.VK_DEVICE_MEMORY";
     return ResourcePtr();
@@ -1066,7 +1089,7 @@ ResourcePtr Session::CreateBuffer(scenic::ResourceId id, MemoryPtr memory,
 
   auto gpu_memory = memory->As<GpuMemory>();
   if (memory_offset + num_bytes > gpu_memory->size()) {
-    error_reporter_->ERROR() << "scenic::gfx::Session::CreateBuffer(): "
+    error_reporter_->ERROR() << "scenic_impl::gfx::Session::CreateBuffer(): "
                                 "buffer does not fit within memory (buffer "
                                 "offset: "
                              << memory_offset << ", buffer size: " << num_bytes
@@ -1078,12 +1101,12 @@ ResourcePtr Session::CreateBuffer(scenic::ResourceId id, MemoryPtr memory,
                                      memory_offset);
 }
 
-ResourcePtr Session::CreateScene(scenic::ResourceId id,
+ResourcePtr Session::CreateScene(ResourceId id,
                                  ::fuchsia::ui::gfx::SceneArgs args) {
   return fxl::MakeRefCounted<Scene>(this, id);
 }
 
-ResourcePtr Session::CreateCamera(scenic::ResourceId id,
+ResourcePtr Session::CreateCamera(ResourceId id,
                                   ::fuchsia::ui::gfx::CameraArgs args) {
   if (auto scene = resources_.FindResource<Scene>(args.scene_id)) {
     return fxl::MakeRefCounted<Camera>(this, id, std::move(scene));
@@ -1092,60 +1115,81 @@ ResourcePtr Session::CreateCamera(scenic::ResourceId id,
 }
 
 ResourcePtr Session::CreateStereoCamera(
-    scenic::ResourceId id, const ::fuchsia::ui::gfx::StereoCameraArgs args) {
+    ResourceId id, const ::fuchsia::ui::gfx::StereoCameraArgs args) {
   if (auto scene = resources_.FindResource<Scene>(args.scene_id)) {
     return fxl::MakeRefCounted<StereoCamera>(this, id, std::move(scene));
   }
   return ResourcePtr();
 }
 
-ResourcePtr Session::CreateRenderer(scenic::ResourceId id,
+ResourcePtr Session::CreateRenderer(ResourceId id,
                                     ::fuchsia::ui::gfx::RendererArgs args) {
   return fxl::MakeRefCounted<Renderer>(this, id);
 }
 
-ResourcePtr Session::CreateAmbientLight(scenic::ResourceId id) {
+ResourcePtr Session::CreateAmbientLight(ResourceId id) {
   return fxl::MakeRefCounted<AmbientLight>(this, id);
 }
 
-ResourcePtr Session::CreateDirectionalLight(scenic::ResourceId id) {
+ResourcePtr Session::CreateDirectionalLight(ResourceId id) {
   return fxl::MakeRefCounted<DirectionalLight>(this, id);
 }
 
-ResourcePtr Session::CreateView(scenic::ResourceId id,
+ResourcePtr Session::CreateView(ResourceId id,
                                 ::fuchsia::ui::gfx::ViewArgs args) {
-  return fxl::MakeRefCounted<View>(this, id, std::move(args));
+  ViewLinker* view_linker = engine()->view_linker();
+  ViewLinker::ImportLink link =
+      view_linker->CreateImport(std::move(args.token), error_reporter());
+
+  // Create a View if the Link was successfully registered.
+  if (link.valid()) {
+    return fxl::MakeRefCounted<View>(this, id, std::move(link));
+  }
+  return nullptr;
 }
 
-ResourcePtr Session::CreateViewHolder(scenic::ResourceId id,
+ResourcePtr Session::CreateViewHolder(ResourceId id,
                                       ::fuchsia::ui::gfx::ViewHolderArgs args) {
-  return fxl::MakeRefCounted<ViewHolder>(this, id, std::move(args));
+  ViewLinker* view_linker = engine()->view_linker();
+  ViewLinker::ExportLink link =
+      view_linker->CreateExport(std::move(args.token), error_reporter());
+
+  // Create a ViewHolder if the Link was successfully registered.
+  if (link.valid()) {
+    return fxl::MakeRefCounted<ViewHolder>(this, id, std::move(link));
+  }
+  return nullptr;
 }
 
-ResourcePtr Session::CreateClipNode(scenic::ResourceId id,
+ResourcePtr Session::CreateClipNode(ResourceId id,
                                     ::fuchsia::ui::gfx::ClipNodeArgs args) {
-  error_reporter_->ERROR() << "scenic::gfx::Session::CreateClipNode(): "
+  error_reporter_->ERROR() << "scenic_impl::gfx::Session::CreateClipNode(): "
                               "unimplemented.";
   return ResourcePtr();
 }
 
-ResourcePtr Session::CreateEntityNode(scenic::ResourceId id,
+ResourcePtr Session::CreateEntityNode(ResourceId id,
                                       ::fuchsia::ui::gfx::EntityNodeArgs args) {
   return fxl::MakeRefCounted<EntityNode>(this, id);
 }
 
 ResourcePtr Session::CreateOpacityNode(
-    scenic::ResourceId id, ::fuchsia::ui::gfx::OpacityNodeArgs args) {
+    ResourceId id, ::fuchsia::ui::gfx::OpacityNodeArgs args) {
   return fxl::MakeRefCounted<OpacityNode>(this, id);
 }
 
-ResourcePtr Session::CreateShapeNode(scenic::ResourceId id,
+ResourcePtr Session::CreateShapeNode(ResourceId id,
                                      ::fuchsia::ui::gfx::ShapeNodeArgs args) {
   return fxl::MakeRefCounted<ShapeNode>(this, id);
 }
 
+ResourcePtr Session::CreateCompositor(scenic::ResourceId id,
+                                      ::fuchsia::ui::gfx::CompositorArgs args) {
+  return Compositor::New(this, id);
+}
+
 ResourcePtr Session::CreateDisplayCompositor(
-    scenic::ResourceId id, ::fuchsia::ui::gfx::DisplayCompositorArgs args) {
+    ResourceId id, ::fuchsia::ui::gfx::DisplayCompositorArgs args) {
   Display* display = engine()->display_manager()->default_display();
   if (!display) {
     error_reporter_->ERROR() << "There is no default display available.";
@@ -1162,20 +1206,20 @@ ResourcePtr Session::CreateDisplayCompositor(
 }
 
 ResourcePtr Session::CreateImagePipeCompositor(
-    scenic::ResourceId id, ::fuchsia::ui::gfx::ImagePipeCompositorArgs args) {
+    ResourceId id, ::fuchsia::ui::gfx::ImagePipeCompositorArgs args) {
   // TODO(SCN-179)
   error_reporter_->ERROR()
-      << "scenic::gfx::Session::ApplyCreateImagePipeCompositor() "
+      << "scenic_impl::gfx::Session::ApplyCreateImagePipeCompositor() "
          "is unimplemented (SCN-179)";
   return ResourcePtr();
 }
 
-ResourcePtr Session::CreateLayerStack(scenic::ResourceId id,
+ResourcePtr Session::CreateLayerStack(ResourceId id,
                                       ::fuchsia::ui::gfx::LayerStackArgs args) {
   return fxl::MakeRefCounted<LayerStack>(this, id);
 }
 
-ResourcePtr Session::CreateVariable(scenic::ResourceId id,
+ResourcePtr Session::CreateVariable(ResourceId id,
                                     ::fuchsia::ui::gfx::VariableArgs args) {
   fxl::RefPtr<Variable> variable;
   switch (args.type) {
@@ -1218,21 +1262,20 @@ ResourcePtr Session::CreateVariable(scenic::ResourceId id,
   return nullptr;
 }
 
-ResourcePtr Session::CreateLayer(scenic::ResourceId id,
+ResourcePtr Session::CreateLayer(ResourceId id,
                                  ::fuchsia::ui::gfx::LayerArgs args) {
   return fxl::MakeRefCounted<Layer>(this, id);
 }
 
-ResourcePtr Session::CreateCircle(scenic::ResourceId id, float initial_radius) {
+ResourcePtr Session::CreateCircle(ResourceId id, float initial_radius) {
   return fxl::MakeRefCounted<CircleShape>(this, id, initial_radius);
 }
 
-ResourcePtr Session::CreateRectangle(scenic::ResourceId id, float width,
-                                     float height) {
+ResourcePtr Session::CreateRectangle(ResourceId id, float width, float height) {
   return fxl::MakeRefCounted<RectangleShape>(this, id, width, height);
 }
 
-ResourcePtr Session::CreateRoundedRectangle(scenic::ResourceId id, float width,
+ResourcePtr Session::CreateRoundedRectangle(ResourceId id, float width,
                                             float height, float top_left_radius,
                                             float top_right_radius,
                                             float bottom_right_radius,
@@ -1240,7 +1283,7 @@ ResourcePtr Session::CreateRoundedRectangle(scenic::ResourceId id, float width,
   auto factory = engine()->escher_rounded_rect_factory();
   if (!factory) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session::CreateRoundedRectangle(): "
+        << "scenic_impl::gfx::Session::CreateRoundedRectangle(): "
            "no RoundedRectFactory available.";
     return ResourcePtr();
   }
@@ -1270,14 +1313,15 @@ ResourcePtr Session::CreateRoundedRectangle(scenic::ResourceId id, float width,
                              escher::MeshAttribute::kUV};
 
   return fxl::MakeRefCounted<RoundedRectangleShape>(
-      this, id, rect_spec, factory->NewRoundedRect(rect_spec, mesh_spec));
+      this, id, rect_spec, factory->NewRoundedRect(rect_spec, mesh_spec, 
+        engine()->GetCommandContext()->batch_gpu_uploader));
 }
 
-ResourcePtr Session::CreateMesh(scenic::ResourceId id) {
+ResourcePtr Session::CreateMesh(ResourceId id) {
   return fxl::MakeRefCounted<MeshShape>(this, id);
 }
 
-ResourcePtr Session::CreateMaterial(scenic::ResourceId id) {
+ResourcePtr Session::CreateMaterial(ResourceId id) {
   return fxl::MakeRefCounted<Material>(this, id);
 }
 
@@ -1315,6 +1359,10 @@ ErrorReporter* Session::error_reporter() const {
   return error_reporter_ ? error_reporter_ : ErrorReporter::Default();
 }
 
+EventReporter* Session::event_reporter() const {
+  return event_reporter_;
+}
+
 bool Session::AssertValueIsOfType(const ::fuchsia::ui::gfx::Value& value,
                                   const ::fuchsia::ui::gfx::Value::Tag* tags,
                                   size_t tag_count) {
@@ -1334,8 +1382,9 @@ bool Session::AssertValueIsOfType(const ::fuchsia::ui::gfx::Value& value,
     }
     str << ").";
   }
-  error_reporter_->ERROR() << "scenic::gfx::Session: received value of type: "
-                           << value.Which() << str.str();
+  error_reporter_->ERROR()
+      << "scenic_impl::gfx::Session: received value of type: " << value.Which()
+      << str.str();
   return false;
 }
 
@@ -1356,7 +1405,7 @@ bool Session::ScheduleUpdate(
 
     if (requested_presentation_time < last_scheduled_presentation_time) {
       error_reporter_->ERROR()
-          << "scenic::gfx::Session: Present called with out-of-order "
+          << "scenic_impl::gfx::Session: Present called with out-of-order "
              "presentation time. "
           << "requested presentation time=" << requested_presentation_time
           << ", last scheduled presentation time="
@@ -1427,7 +1476,7 @@ bool Session::ApplyScheduledUpdates(uint64_t presentation_time,
 
   if (presentation_time < last_presentation_time_) {
     error_reporter_->ERROR()
-        << "scenic::gfx::Session: ApplyScheduledUpdates called with "
+        << "scenic_impl::gfx::Session: ApplyScheduledUpdates called with "
            "presentation_time="
         << presentation_time << ", which is less than last_presentation_time_="
         << last_presentation_time_ << ".";
@@ -1470,7 +1519,7 @@ bool Session::ApplyScheduledUpdates(uint64_t presentation_time,
       // presentation_time was to the requested time.
     } else {
       // An error was encountered while applying the update.
-      FXL_LOG(WARNING) << "scenic::gfx::Session::ApplyScheduledUpdates(): "
+      FXL_LOG(WARNING) << "scenic_impl::gfx::Session::ApplyScheduledUpdates(): "
                           "An error was encountered while applying the update. "
                           "Initiating teardown.";
 
@@ -1488,8 +1537,10 @@ bool Session::ApplyScheduledUpdates(uint64_t presentation_time,
   while (!scheduled_image_pipe_updates_.empty() &&
          scheduled_image_pipe_updates_.top().presentation_time <=
              presentation_time) {
-    needs_render = scheduled_image_pipe_updates_.top().image_pipe->Update(
-        presentation_time, presentation_interval);
+    // The bool returned from Update() is 0 or 1, and needs_render is 0 or 1, so
+    // bitwise |= is used which doesn't short-circuit.
+    needs_render |= scheduled_image_pipe_updates_.top().image_pipe->Update(
+                            presentation_time, presentation_interval);
     scheduled_image_pipe_updates_.pop();
   }
 
@@ -1497,16 +1548,18 @@ bool Session::ApplyScheduledUpdates(uint64_t presentation_time,
 }
 
 void Session::EnqueueEvent(::fuchsia::ui::gfx::Event event) {
-  if (!is_valid())
+  if (!is_valid()) {
     return;
-
-  if (event_reporter_) {
-    fuchsia::ui::scenic::Event scenic_event;
-    scenic_event.set_gfx(std::move(event));
-    event_reporter_->EnqueueEvent(std::move(scenic_event));
-  } else {
-    FXL_LOG(WARNING) << "Session::EnqueueEvent: no EventReporter is available";
   }
+  event_reporter_->EnqueueEvent(std::move(event));
+}
+
+
+void Session::EnqueueEvent(::fuchsia::ui::input::InputEvent event) {
+  if (!is_valid()) {
+    return;
+  }
+  event_reporter_->EnqueueEvent(std::move(event));
 }
 
 bool Session::ApplyUpdate(std::vector<::fuchsia::ui::gfx::Command> commands) {
@@ -1514,9 +1567,9 @@ bool Session::ApplyUpdate(std::vector<::fuchsia::ui::gfx::Command> commands) {
   if (is_valid()) {
     for (auto& command : commands) {
       if (!ApplyCommand(std::move(command))) {
-        error_reporter_->ERROR()
-            << "scenic::gfx::Session::ApplyCommand() failed to apply Command: "
-            << command;
+        error_reporter_->ERROR() << "scenic_impl::gfx::Session::ApplyCommand() "
+                                    "failed to apply Command: "
+                                 << command;
         return false;
       }
     }
@@ -1530,7 +1583,7 @@ void Session::HitTest(uint32_t node_id, ::fuchsia::ui::gfx::vec3 ray_origin,
                       ::fuchsia::ui::gfx::vec3 ray_direction,
                       fuchsia::ui::scenic::Session::HitTestCallback callback) {
   if (auto node = resources_.FindResource<Node>(node_id)) {
-    HitTester hit_tester;
+    SessionHitTester hit_tester(node->session());
     std::vector<Hit> hits = hit_tester.HitTest(
         node.get(), escher::ray4{escher::vec4(Unwrap(ray_origin), 1.f),
                                  escher::vec4(Unwrap(ray_direction), 0.f)});
@@ -1554,8 +1607,9 @@ void Session::HitTestDeviceRay(
 
   // The layer stack expects the input to the hit test to be in unscaled device
   // coordinates.
+  SessionHitTester hit_tester(this);
   std::vector<Hit> layer_stack_hits =
-      engine_->GetFirstCompositor()->layer_stack()->HitTest(ray, this);
+      engine_->GetFirstCompositor()->layer_stack()->HitTest(ray, &hit_tester);
 
   callback(WrapHits(layer_stack_hits));
 }
@@ -1565,4 +1619,4 @@ void Session::BeginTearDown() {
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

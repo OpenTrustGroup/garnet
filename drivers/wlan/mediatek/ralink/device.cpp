@@ -4,30 +4,30 @@
 
 #include "device.h"
 
-#include "driver.h"
 #include "ralink.h"
 
 #include <ddk/protocol/usb.h>
 #include <fbl/algorithm.h>
 #include <fbl/auto_call.h>
+#include <lib/sync/completion.h>
 #include <lib/zx/vmo.h>
-#include <sync/completion.h>
 #include <wlan/common/channel.h>
 #include <wlan/common/cipher.h>
 #include <wlan/common/logging.h>
 #include <wlan/common/mac_frame.h>
 #include <wlan/mlme/debug.h>
-#include <wlan/protocol/ioctl.h>
 #include <wlan/protocol/mac.h>
-#include <wlan/protocol/phy.h>
+#include <wlan/protocol/phy-impl.h>
 #include <zircon/assert.h>
 #include <zircon/hw/usb.h>
+#include <zircon/status.h>
 
 #include <endian.h>
 #include <inttypes.h>
 
 #include <algorithm>
 #include <cstdio>
+#include <iterator>
 
 #define RALINK_DUMP_EEPROM 0
 #define RALINK_DUMP_RX 0
@@ -60,8 +60,38 @@ constexpr char kFirmwareFile[] = "rt2870.bin";
 
 constexpr int kMaxBusyReads = 20;
 
+// The polling interval and slack for asynchronous transmission reports, when the transmit hardware
+// is believed to be idle.
+constexpr zx::duration kAsyncTxInterruptIdlePollInterval = zx::msec(100);
+constexpr zx::duration kAsyncTxInterruptIdlePollSlack = zx::msec(10);
+
+// The polling interval and slack for asynchronous transmission reports, when the transmit hardware
+// is believed to be busy. This interval must be small enough to ensure that packet transmission
+// does not overflow the 16-entry hardware TX stats FIFO.
+constexpr zx::duration kAsyncTxInterruptBusyPollInterval = zx::msec(1);
+constexpr zx::duration kAsyncTxInterruptBusyPollSlack = zx::usec(100);
+
+// The duration of lead time before a beacon frame used to send the pre-beacon notification.
+constexpr zx::duration kPreTbttLeadTime = zx::msec(6);
+
+// The polling interval for beacon frame interrupts, for when the interrupt is close but has not yet
+// elapsed.
+constexpr zx::duration kTbttInterruptPollInterval = zx::msec(1);
+
+// Key which will shut down the currently running interrupt thread.
+constexpr uint64_t kInterruptShutdownKey = 1;
+
+// Key indicating an asynchronous transmission report interrupt.
+constexpr uint64_t kAsyncTxInterruptKey = 2;
+
+// Key indicating a beacon frame interrupt.
+constexpr uint64_t kTbttInterruptKey = 3;
+
 // TODO(hahnr): Use bcast_mac from MacAddr once it was moved to common/.
 const uint8_t kBcastAddr[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+// TX packet ID used to signal an invalid or untracked (e.g. beacon frame) packet.
+constexpr int kInvalidTxPacketId = 0;
 
 // The <cstdlib> overloads confuse the compiler for <cstdint> types.
 template <typename T> constexpr T abs(T t) {
@@ -82,14 +112,10 @@ namespace ralink {
 namespace wlan_device = ::fuchsia::wlan::device;
 
 #define DEV(c) static_cast<Device*>(c)
-static zx_protocol_device_t wlanphy_device_ops = {
+static zx_protocol_device_t wlanphy_impl_device_ops = {
     .version = DEVICE_OPS_VERSION,
-    .unbind = [](void* ctx) { DEV(ctx)->Unbind(); },
-    .release = [](void* ctx) { DEV(ctx)->Release(); },
-    .ioctl = [](void* ctx, uint32_t op, const void* in_buf, size_t in_len, void* out_buf,
-                size_t out_len, size_t* out_actual) -> zx_status_t {
-        return DEV(ctx)->Ioctl(op, in_buf, in_len, out_buf, out_len, out_actual);
-    },
+    .unbind = [](void* ctx) { DEV(ctx)->PhyUnbind(); },
+    .release = [](void* ctx) { DEV(ctx)->PhyRelease(); },
 };
 
 static zx_protocol_device_t wlanmac_device_ops = {
@@ -98,9 +124,16 @@ static zx_protocol_device_t wlanmac_device_ops = {
     .release = [](void* ctx) { DEV(ctx)->MacRelease(); },
 };
 
-static wlanphy_protocol_ops_t wlanphy_ops = {
-    .reserved = 0,
-};
+static wlanphy_impl_protocol_ops_t wlanphy_impl_ops = {
+    .query = [](void* ctx, wlanphy_info_t* info) -> zx_status_t {
+        return DEV(ctx)->PhyQuery(info);
+    },
+    .create_iface = [](void* ctx, uint16_t mac_role, uint16_t* id) -> zx_status_t {
+        return DEV(ctx)->CreateIface(mac_role, id);
+    },
+    .destroy_iface = [](void* ctx, uint16_t id) -> zx_status_t {
+        return DEV(ctx)->DestroyIface(id);
+    }};
 
 static wlanmac_protocol_ops_t wlanmac_ops = {
     .query = [](void* ctx, uint32_t options, wlanmac_info_t* info) -> zx_status_t {
@@ -128,6 +161,10 @@ static wlanmac_protocol_ops_t wlanmac_ops = {
     .set_key = [](void* ctx, uint32_t options, wlan_key_config_t* key_config) -> zx_status_t {
         return DEV(ctx)->WlanmacSetKey(options, key_config);
     },
+    .configure_assoc = [](void* ctx, uint32_t options, wlan_assoc_ctx* assoc_ctx) -> zx_status_t {
+        // TODO(NET-1265): Configure the chipset for this association
+        return ZX_OK;
+    },
 };
 #undef DEV
 
@@ -135,18 +172,14 @@ constexpr zx::duration Device::kDefaultBusyWait;
 
 Device::Device(zx_device_t* device, usb_protocol_t usb, uint8_t bulk_in,
                std::vector<uint8_t>&& bulk_out)
-    : parent_(device),
-      usb_(usb),
-      rx_endpt_(bulk_in),
-      tx_endpts_(std::move(bulk_out)),
-      dispatcher_(ralink_async_t()) {
+    : parent_(device), usb_(usb), rx_endpt_(bulk_in), tx_endpts_(std::move(bulk_out)) {
     debugf("Device dev=%p bulk_in=%u\n", parent_, rx_endpt_);
 }
 
 Device::~Device() {
     debugfn();
     for (auto req : free_write_reqs_) {
-        usb_request_release(req);
+        usb_req_release(&usb_, req);
     }
 }
 
@@ -3025,7 +3058,7 @@ static void dump_rx(usb_request_t* request, RxInfo rx_info, RxDesc rx_desc, Rxwi
     }
 
     uint8_t* data;
-    usb_request_mmap(request, reinterpret_cast<void**>(&data));
+    usb_req_mmap(&usb_, request, reinterpret_cast<void**>(&data));
     debugf("# Rxed packet: rx_len=%" PRIu64 "\n", request->response.actual);
     debugf("  rxinfo: usb_dma_rx_pkt_len=%u\n", rx_info.usb_dma_rx_pkt_len());
     debugf("  rxdesc: ba=%u data=%u nulldata=%u frag=%u unicast_to_me=%u multicast=%u\n",
@@ -3072,6 +3105,7 @@ static const uint8_t kDataRates[4][8] = {
 static uint8_t ralink_mcs_to_rate(uint8_t phy_mode, uint8_t mcs, bool is_40mhz, bool is_sgi) {
     uint8_t rate = 0;            // Mbps * 2
     uint8_t rate_tbl_idx = 255;  // Init with invalid idx.
+    uint8_t nss = 1;             // Minimum NSS
 
     if (phy_mode >= fbl::count_of(kDataRates)) { return rate; }
 
@@ -3098,6 +3132,9 @@ static uint8_t ralink_mcs_to_rate(uint8_t phy_mode, uint8_t mcs, bool is_40mhz, 
         if (mcs == kHtDuplicateMcs) {
             // 40MHz, ShortGuardInterval case: HT duplicate 6 Mbps.
             rate_tbl_idx = 0;
+        } else if (mcs < kHtDuplicateMcs) {
+            rate_tbl_idx = mcs % fbl::count_of(kDataRates[0]);
+            nss = 1 + mcs / fbl::count_of(kDataRates[0]);
         } else {
             rate_tbl_idx = mcs;
         }
@@ -3114,7 +3151,7 @@ static uint8_t ralink_mcs_to_rate(uint8_t phy_mode, uint8_t mcs, bool is_40mhz, 
         return rate;
     }
 
-    rate = kDataRates[phy_mode][rate_tbl_idx];
+    rate = kDataRates[phy_mode][rate_tbl_idx] * nss;
     if (is_40mhz) {
         // 802.11n case
         // Set the multipler by the ratio of the subcarriers, not by the ratio of the bandwidth
@@ -3150,6 +3187,7 @@ static uint16_t ralink_phy_to_ddk_phy(uint8_t ralink_phy) {
 
 static uint8_t ddk_phy_to_ralink_phy(uint16_t ddk_phy) {
     switch (ddk_phy) {
+
     case WLAN_PHY_CCK:
         return PhyMode::kLegacyCck;
     case WLAN_PHY_OFDM:
@@ -3254,7 +3292,7 @@ void Device::HandleRxComplete(usb_request_t* request) {
         }
 
         uint8_t* data;
-        usb_request_mmap(request, reinterpret_cast<void**>(&data));
+        usb_req_mmap(&usb_, request, reinterpret_cast<void**>(&data));
         uint32_t* data32 = reinterpret_cast<uint32_t*>(data);
         RxInfo rx_info(letoh32(data32[RxInfo::addr()]));
 
@@ -3306,50 +3344,44 @@ void Device::HandleTxComplete(usb_request_t* request) {
     free_write_reqs_.push_back(request);
 }
 
-void Device::Unbind() {
+void Device::PhyUnbind() {
     debugfn();
-
-    StopInterruptPolling();
 
     {
         std::lock_guard<std::mutex> guard(lock_);
-        dead_ = true;
+        phy_state_ = PHY_DESTROYING;
     }
 
-    // Stop accepting new FIDL requests. Once the dispatcher is shut down,
-    // remove the device.
-    dispatcher_.InitiateShutdown([this] { device_remove(zxdev_); });
+    StopInterruptPolling();
+    device_remove(zxdev_);
 }
 
-void Device::Release() {
+void Device::PhyRelease() {
     debugfn();
     delete this;
 }
 
-zx_status_t Device::Ioctl(uint32_t op, const void* in_buf, size_t in_len, void* out_buf,
-                          size_t out_len, size_t* out_actual) {
-    debugfn();
-    switch (op) {
-    case IOCTL_WLANPHY_CONNECT:
-        return Connect(in_buf, in_len);
-    default:
-        errorf("ioctl unknown: %0x\n", op);
-        return ZX_ERR_NOT_SUPPORTED;
-    }
-}
-
 void Device::MacUnbind() {
     debugfn();
-    device_remove(wlanmac_dev_);
+    zx_device_t* dev;
+    {
+        std::lock_guard<std::mutex> guard(lock_);
+        if (iface_state_ == IFC_DESTROYING) { return; }
+        iface_state_ = IFC_DESTROYING;
+        dev = wlanmac_dev_;
+    }
+    device_remove(dev);
 }
 
 void Device::MacRelease() {
     debugfn();
-    // Do not delete this right now, as the wlanmac device shares a context with the wlanphy
-    // device. When the wlanphy is released, then the memory will be freed. We do forget that
+    // Do not delete this right now, as the wlanmac device shares a context with the wlanphy-impl
+    // device. When the wlanphy-impl is released, then the memory will be freed. We do forget that
     // this device existed though.
     std::lock_guard<std::mutex> guard(lock_);
     wlanmac_dev_ = nullptr;
+    iface_role_ = 0;
+    iface_state_ = IFC_NONE;
     // Bump the iface id in case the phy isn't being released and we want to create another
     // iface.
     iface_id_++;
@@ -3359,11 +3391,11 @@ zx_status_t Device::AddPhyDevice() {
     debugfn();
     device_add_args_t args = {};
     args.version = DEVICE_ADD_ARGS_VERSION;
-    args.name = "ralink";
+    args.name = "ralink-wlanphy";
     args.ctx = this;
-    args.ops = &wlanphy_device_ops;
-    args.proto_id = ZX_PROTOCOL_WLANPHY;
-    args.proto_ops = &wlanphy_ops;
+    args.ops = &wlanphy_impl_device_ops;
+    args.proto_id = ZX_PROTOCOL_WLANPHY_IMPL;
+    args.proto_ops = &wlanphy_impl_ops;
 
     return device_add(parent_, &args, &zxdev_);
 }
@@ -3378,183 +3410,34 @@ zx_status_t Device::AddMacDevice() {
     args.proto_id = ZX_PROTOCOL_WLANMAC;
     args.proto_ops = &wlanmac_ops;
 
-    return device_add(zxdev_, &args, &wlanmac_dev_);
+    zx_device_t* dev;
+    zx_status_t status;
+    status = device_add(zxdev_, &args, &dev);
+    if (status == ZX_OK) {
+        std::lock_guard<std::mutex> guard(lock_);
+        wlanmac_dev_ = dev;
+    }
+    return status;
 }
 
-zx_status_t Device::Connect(const void* buf, size_t len) {
+zx_status_t Device::Query(wlan_info_t* info) {
     debugfn();
-    if (buf == nullptr || len < sizeof(zx_handle_t)) { return ZX_ERR_INVALID_ARGS; }
-
-    zx_handle_t hnd = *reinterpret_cast<const zx_handle_t*>(buf);
-    zx::channel chan(hnd);
-
-    return dispatcher_.AddBinding(std::move(chan), this);
-}
-
-void Device::Query(QueryCallback callback) {
-    debugfn();
-    wlan_device::PhyInfo info;
-
-    info.supported_phys->push_back(wlan_device::SupportedPhy::DSSS);
-    info.supported_phys->push_back(wlan_device::SupportedPhy::CCK);
-    info.supported_phys->push_back(wlan_device::SupportedPhy::OFDM);
-    info.supported_phys->push_back(wlan_device::SupportedPhy::HT);
-
-    info.driver_features.resize(0);
-
-    info.mac_roles->push_back(wlan_device::MacRole::CLIENT);
-
-    info.caps->push_back(wlan_device::Capability::SHORT_PREAMBLE);
-    info.caps->push_back(wlan_device::Capability::SHORT_SLOT_TIME);
-
-    wlan_device::BandInfo band24;
-    band24.description = "2.4 GHz";
-    band24.ht_caps.ht_capability_info = 0x01fe;
-    auto& band24mcs = band24.ht_caps.supported_mcs_set;
-    std::fill(band24mcs.begin(), band24mcs.end(), 0);
-    band24mcs[0] = 0xff;                              // mcs 0-7
-    band24mcs[1] = rt_type_ == RT5592 ? 0xff : 0x00;  // mcs 8-15 for RT5592
-    band24mcs[3] = 0x80;                              // mcs 32
-    band24mcs[12] = 0x01;                             // Tx MCS defined, same as Rx MCS
-    // Basic rates are given in units of 0.5Mbps
-    band24.basic_rates.reset(std::vector<uint8_t>{2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108});
-    band24.supported_channels.base_freq = 2407;
-    band24.supported_channels.channels.reset(
-        std::vector<uint8_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14});
-
-    info.bands->push_back(std::move(band24));
-
-    if (rt_type_ == RT5592) {
-        wlan_device::BandInfo band5;
-        band5.description = "5 GHz";
-        band5.ht_caps.ht_capability_info = 0x01fe;
-        auto& band5mcs = band5.ht_caps.supported_mcs_set;
-        std::fill(band5mcs.begin(), band5mcs.end(), 0);
-        band5mcs[0] = 0xff;   // mcs 0-7
-        band5mcs[1] = 0xff;   // mcs 8-15 for RT5592
-        band5mcs[3] = 0x80;   // mcs 32
-        band5mcs[12] = 0x01;  // Tx MCS defined, same as Rx MCS
-        // Basic rates are given in units of 0.5Mbps
-        band5.basic_rates.reset(std::vector<uint8_t>{12, 18, 24, 36, 48, 72, 96, 108});
-        band5.supported_channels.base_freq = 5000;
-        band5.supported_channels.channels.reset(std::vector<uint8_t>{
-            // clang-format off
-                    36,  38,  40,  42,  44,  46,  48,  50,
-                    52,  54,  56,  58,  60,  62,  64,  100,
-                    102, 104, 106, 108, 110, 112, 114, 116,
-                    118, 120, 122, 124, 126, 128, 130, 132,
-                    134, 136, 138, 140, 149, 151, 153, 155,
-                    157, 159, 161, 165, 184, 188, 192, 196,
-            // clang-format on
-        });
-
-        info.bands->push_back(std::move(band5));
-    }
-
-    wlan_device::QueryResponse resp;
-    resp.info = std::move(info);
-    callback(std::move(resp));
-}
-
-void Device::CreateIface(wlan_device::CreateIfaceRequest req, CreateIfaceCallback callback) {
-    debugfn();
-    wlan_device::CreateIfaceResponse resp;
-
-    std::lock_guard<std::mutex> guard(lock_);
-
-    if (wlanmac_dev_ != nullptr) {
-        // Only one interface supported for now.
-        resp.status = ZX_ERR_ALREADY_BOUND;
-        callback(std::move(resp));
-        return;
-    }
-
-    switch (req.role) {
-    case wlan_device::MacRole::CLIENT:
-        iface_role_ = WLAN_MAC_ROLE_CLIENT;
-        break;
-    case wlan_device::MacRole::AP:
-        iface_role_ = WLAN_MAC_ROLE_AP;
-        break;
-    default:
-        errorf("Unknown MacRole: %u\n", req.role);
-        resp.status = ZX_ERR_NOT_SUPPORTED;
-        callback(std::move(resp));
-        return;
-    }
-
-    zx_status_t status = AddMacDevice();
-    if (status != ZX_OK) {
-        errorf("could not add iface device err=%d\n", status);
-        resp.status = status;
-        iface_role_ = 0;
-    } else {
-        infof("iface added\n");
-        resp.status = ZX_OK;
-    }
-    callback(std::move(resp));
-}
-
-void Device::DestroyIface(wlan_device::DestroyIfaceRequest req, DestroyIfaceCallback callback) {
-    debugfn();
-    wlan_device::DestroyIfaceResponse resp;
-
-    std::lock_guard<std::mutex> guard(lock_);
-
-    if (wlanmac_dev_ == nullptr) {
-        errorf("calling destroy iface when no iface exists\n");
-        resp.status = ZX_ERR_BAD_STATE;
-        callback(std::move(resp));
-        return;
-    }
-
-    if (req.id != iface_id_) {
-        errorf("unknown iface id in destroy request: %u (expected: %u)\n", req.id, iface_id_);
-        resp.status = ZX_ERR_INVALID_ARGS;
-        callback(std::move(resp));
-        return;
-    }
-
-    iface_role_ = 0;
-    device_remove(wlanmac_dev_);
-    resp.status = ZX_OK;
-    callback(std::move(resp));
-}
-
-zx_status_t Device::WlanmacQuery(uint32_t options, wlanmac_info_t* info) {
-    ZX_DEBUG_ASSERT(iface_role_ != 0);
-    if (iface_role_ == 0) { return ZX_ERR_BAD_STATE; }
 
     memset(info, 0, sizeof(*info));
     std::memcpy(info->mac_addr, mac_addr_, ETH_MAC_SIZE);
 
     info->supported_phys = WLAN_PHY_DSSS | WLAN_PHY_CCK | WLAN_PHY_OFDM | WLAN_PHY_HT;
-    info->mac_role = iface_role_;
+    info->mac_role = WLAN_MAC_ROLE_CLIENT;
     info->caps = WLAN_CAP_SHORT_PREAMBLE | WLAN_CAP_SHORT_SLOT_TIME;
     info->num_bands = 1;
     info->bands[0] = {
         .desc = "2.4 GHz",
-        // TODO(tkilbourn): verify these
-        // (*) represents a property to verify later
+        // These hard-coded values are experimentally proven to work,
+        // but does not necessarily reflect the true capabilities of the chipset.
         .ht_caps =
             {
-                // - No LDPC
-                // - Both 20 and 40 MHz operation
-                // - static SM power save mode
-                // - HT greenfield
-                // - short guard interval for 20 MHz
-                // - short guard interval for 40 MHz
-                // - Tx with STBC
-                // - Rx with STBC for one spatial stream
-                // - no delayed Block Ack (*)
-                // - Max A-MSDU is 3839 (*)
-                // - Does not use DSSS/CCK in 40 MHz (*)
-                // - Not 40MHz intolerant
-                // - No L-SIG TXOP protection (*)
-                .ht_capability_info = 0x01fe,
-                // - Max A-MPDU length 8191 (*)
-                // - No restriction on MPDU start spacing (*)
-                .ampdu_params = 0x00,
+                .ht_capability_info = 0x016e,
+                .ampdu_params = 0x17,
                 .supported_mcs_set =
                     {
                         // Rx MCS bitmask
@@ -3562,8 +3445,8 @@ zx_status_t Device::WlanmacQuery(uint32_t options, wlanmac_info_t* info) {
                         0xff,
                         0x00,
                         0x00,
-                        0x80,
                         0x00,
+                        0x01,
                         0x00,
                         0x00,
                         0x00,
@@ -3589,13 +3472,18 @@ zx_status_t Device::WlanmacQuery(uint32_t options, wlanmac_info_t* info) {
             },
         .vht_supported = false,
         .vht_caps = {},
-        .basic_rates = {2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108},
+        // TODO(NET-1321, NET-1375):
+        // Unmark the "BasicRate" bit for the first 4 rates.
+        // Rename ".basic_rates" to ".supported_rates"
+        // See IEEE Std 802.11-2016, 9.4.2.3 for encoding
+        .basic_rates = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24, 0x30, 0x48, 0x60, 0x6c},
         .supported_channels =
             {
-                .base_freq = 2417,
+                .base_freq = 2407,
                 .channels = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14},
             },
     };
+
     if (rt_type_ == RT5592) {
         info->num_bands = 2;
         // Add MCS 8-15 to band 0
@@ -3605,8 +3493,8 @@ zx_status_t Device::WlanmacQuery(uint32_t options, wlanmac_info_t* info) {
             // See above for descriptions of these capabilities
             .ht_caps =
                 {
-                    .ht_capability_info = 0x01fe,
-                    .ampdu_params = 0x00,
+                    .ht_capability_info = 0x016e,
+                    .ampdu_params = 0x17,
                     .supported_mcs_set =
                         {
                             // Rx MCS bitmask
@@ -3614,8 +3502,8 @@ zx_status_t Device::WlanmacQuery(uint32_t options, wlanmac_info_t* info) {
                             0xff,
                             0xff,
                             0x00,
-                            0x80,
                             0x00,
+                            0x01,
                             0x00,
                             0x00,
                             0x00,
@@ -3635,29 +3523,108 @@ zx_status_t Device::WlanmacQuery(uint32_t options, wlanmac_info_t* info) {
                 },
             .vht_supported = false,
             .vht_caps = {},
-            .basic_rates = {12, 18, 24, 36, 48, 72, 96, 108},
+            // TODO(NET-1321, NET-1375):
+            // Unmark the "BasicRate" bit for the first 4 rates.
+            // Rename ".basic_rates" to ".supported_rates"
+            // See IEEE Std 802.11-2016, 9.4.2.3 for encoding
+            .basic_rates = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24, 0x30, 0x48, 0x60, 0x6c},
             .supported_channels =
                 {
                     .base_freq = 5000,
                     .channels =
                         {
-                            36,  38,  40,  42,  44,  46,  48,  50,  52,  54,  56,  58,
-                            60,  62,  64,  100, 102, 104, 106, 108, 110, 112, 114, 116,
-                            118, 120, 122, 124, 126, 128, 130, 132, 134, 136, 138, 140,
-                            149, 151, 153, 155, 157, 159, 161, 165, 184, 188, 192, 196,
+                            36,  40,  44,  48,                                      // UNII-1
+                            52,  56,  60,  64,                                      // UNII-2A
+                            100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140,  // UNII-2C
+                            149, 153, 157, 161, 165,                                // UNII-3
                         },
                 },
         };
     }
 
+    debugf("ralink: HT capabilities for band[0]: %s\n",
+           wlan::debug::Describe(info->bands[0].ht_caps).c_str());
+    debugf("ralink: HT capabilities for band[1]: %s\n",
+           wlan::debug::Describe(info->bands[1].ht_caps).c_str());
+
     return ZX_OK;
+}
+
+zx_status_t Device::PhyQuery(wlanphy_info_t* info) {
+    return Query(&info->wlan_info);
+}
+
+zx_status_t Device::CreateIface(uint16_t role, uint16_t* id) {
+    debugfn();
+
+    {
+        std::lock_guard<std::mutex> guard(lock_);
+        if (phy_state_ != PHY_RUNNING) { return ZX_ERR_BAD_STATE; }
+        if (iface_state_ != IFC_NONE) { return ZX_ERR_ALREADY_BOUND; }
+        iface_state_ = IFC_CREATING;
+    }
+
+    zx_status_t status = AddMacDevice();
+
+    if (status != ZX_OK) {
+        errorf("could not add iface device err: %s\n", zx_status_get_string(status));
+        std::lock_guard<std::mutex> guard(lock_);
+        iface_state_ = IFC_NONE;
+        return status;
+    }
+
+    {
+        std::lock_guard<std::mutex> guard(lock_);
+        *id = iface_id_;
+        iface_role_ = role;
+        iface_state_ = IFC_RUNNING;
+    }
+
+    infof("iface added\n");
+    return status;
+}
+
+zx_status_t Device::DestroyIface(uint16_t id) {
+    debugfn();
+
+    zx_device_t* dev;
+
+    {
+        std::lock_guard<std::mutex> guard(lock_);
+        if (phy_state_ != PHY_RUNNING || iface_state_ != IFC_RUNNING) { return ZX_ERR_BAD_STATE; }
+
+        if (id != iface_id_) {
+            errorf("unknown iface id in destroy request: %u (expected %u)\n", id, iface_id_);
+            return ZX_ERR_INVALID_ARGS;
+        }
+
+        iface_state_ = IFC_DESTROYING;
+        dev = wlanmac_dev_;
+    }
+
+    // device_remove() may invoke MacRelease(), so we can't hold the lock across the call
+    device_remove(dev);
+
+    return ZX_OK;
+}
+
+zx_status_t Device::WlanmacQuery(uint32_t options, wlanmac_info_t* info) {
+    uint16_t role;
+    {
+        std::lock_guard<std::mutex> guard(lock_);
+        if (phy_state_ != PHY_RUNNING || iface_state_ != IFC_RUNNING) { return ZX_ERR_BAD_STATE; }
+        role = iface_role_;
+    }
+    zx_status_t status = Query(&info->ifc_info);
+    info->ifc_info.mac_role = role;
+    return status;
 }
 
 zx_status_t Device::WlanmacStart(wlanmac_ifc_t* ifc, void* cookie) {
     debugfn();
     std::lock_guard<std::mutex> guard(lock_);
 
-    if (dead_) { return ZX_ERR_PEER_CLOSED; }
+    if (phy_state_ != PHY_RUNNING) { return ZX_ERR_PEER_CLOSED; }
     if (wlanmac_proxy_ != nullptr) { return ZX_ERR_ALREADY_BOUND; }
 
     zx_status_t status = LoadFirmware();
@@ -3765,6 +3732,8 @@ zx_status_t Device::WlanmacStart(wlanmac_ifc_t* ifc, void* cookie) {
     chan.cbw = CBW20;
     status = WlanmacSetChannel(0, &chan);
 
+    StartInterruptPolling();
+
     infof("wlan started\n");
     return ZX_OK;
 }
@@ -3783,30 +3752,44 @@ zx_status_t Device::StartInterruptPolling() {
         return status;
     }
 
-    status = zx::timer::create(0u, ZX_CLOCK_MONOTONIC, &interrupt_timer_);
+    status = zx::timer::create(0u, ZX_CLOCK_MONOTONIC, &async_tx_interrupt_timer_);
     if (status != ZX_OK) {
-        errorf("could not create timer: %d\n", status);
+        errorf("could not create async TX timer: %d\n", status);
         return status;
     }
 
-    status =
-        interrupt_timer_.wait_async(interrupt_port_, 0, ZX_TIMER_SIGNALED, ZX_WAIT_ASYNC_REPEATING);
+    status = async_tx_interrupt_timer_.wait_async(interrupt_port_, kAsyncTxInterruptKey,
+                                                  ZX_TIMER_SIGNALED, ZX_WAIT_ASYNC_REPEATING);
     if (status != ZX_OK) {
-        errorf("could not create timer: %d\n", status);
+        errorf("could not wait on async TX timer: %d\n", status);
+        return status;
+    }
+
+    status = zx::timer::create(0u, ZX_CLOCK_MONOTONIC, &tbtt_interrupt_timer_);
+    if (status != ZX_OK) {
+        errorf("could not create TBTT timer: %d\n", status);
+        return status;
+    }
+
+    status = tbtt_interrupt_timer_.wait_async(interrupt_port_, kTbttInterruptKey, ZX_TIMER_SIGNALED,
+                                              ZX_WAIT_ASYNC_REPEATING);
+    if (status != ZX_OK) {
+        errorf("could not wait on TBTT timer: %d\n", status);
         return status;
     }
 
     interrupt_thrd_ = std::thread(&Device::InterruptWorker, this);
-
-    zx::duration pre_tbtt = RemainingTbttTime() - kPreTbttLeadTime;
-    interrupt_timer_.set(zx::deadline_after(pre_tbtt), zx::usec(1));
+    async_tx_interrupt_timer_.set(zx::deadline_after(kAsyncTxInterruptIdlePollInterval),
+                                  kAsyncTxInterruptIdlePollSlack);
     return ZX_OK;
 }
 
 void Device::StopInterruptPolling() {
+    async_tx_interrupt_timer_.cancel();
+    tbtt_interrupt_timer_.cancel();
     if (interrupt_thrd_.joinable()) {
         zx_port_packet_t pkt = {
-            .key = kIntPortPktShutdown,
+            .key = kInterruptShutdownKey,
             .type = ZX_PKT_TYPE_USER,
         };
         interrupt_port_.queue(&pkt);
@@ -3814,9 +3797,103 @@ void Device::StopInterruptPolling() {
     }
 }
 
+zx_status_t Device::OnTxReportInterruptTimer() {
+    TxStatFifo stat_fifo;
+    TxStatFifoExt stat_fifo_ext;
+    int tracked_tx_packet_count = 0;
+    while (true) {
+        // TX_STAT_FIFO_EXT must be read before TX_STAT_FIFO.
+        auto status = ReadRegister(&stat_fifo_ext);
+        CHECK_READ(TX_STAT_FIFO_EXT, status);
+        status = ReadRegister(&stat_fifo);
+        CHECK_READ(TX_STAT_FIFO, status);
+        if (!stat_fifo.txq_vld()) { break; }
+
+        const int packet_id = stat_fifo.txq_pid();
+        if (packet_id == kInvalidTxPacketId) { continue; }
+
+        std::lock_guard<std::mutex> guard(lock_);
+        if (wlanmac_proxy_ != nullptr) {
+            wlan_tx_status reported_tx_status = ReadTxStatsFifoEntry(packet_id);
+            reported_tx_status.retries = stat_fifo_ext.txq_rty_cnt();
+            reported_tx_status.success = (stat_fifo.txq_ok() != 0);
+
+            wlanmac_proxy_->ReportTxStatus(&reported_tx_status);
+        }
+        tracked_tx_packet_count++;
+    }
+
+    zx::duration poll_interval;
+    zx::duration poll_slack;
+    if (tracked_tx_packet_count < kTxStatsFifoSize / 4) {
+        // Assume that the hardware is (relatively) idle, so we can afford to poll with a large
+        // interval to catch any remaining long-running TX.
+        poll_interval = kAsyncTxInterruptIdlePollInterval;
+        poll_slack = kAsyncTxInterruptIdlePollSlack;
+    } else {
+        // Assume that the hardware is busy. We may see more TX completion soon.
+        poll_interval = kAsyncTxInterruptBusyPollInterval;
+        poll_slack = kAsyncTxInterruptBusyPollSlack;
+    }
+    async_tx_interrupt_timer_.set(zx::deadline_after(poll_interval), poll_slack);
+    return ZX_OK;
+}
+
+zx_status_t Device::OnTbttInterruptTimer() {
+    IntStatus intStatus;
+    auto status = ReadRegister(&intStatus);
+    CHECK_READ(INT_STATUS, status);
+
+    const bool pre_tbtt_interrupt = intStatus.mac_int_1();
+    if (pre_tbtt_interrupt) {
+        {
+            std::lock_guard<std::mutex> guard(lock_);
+            if (wlanmac_proxy_ != nullptr) { wlanmac_proxy_->Indication(WLAN_INDICATION_PRE_TBTT); }
+        }
+
+        // Clear the pre-TBTT interrupt.
+        intStatus.clear();
+        intStatus.set_mac_int_1(1);
+        status = WriteRegister(intStatus);
+        CHECK_WRITE(INT_STATUS, status);
+
+        // Wait for TBTT.
+        zx::duration tbtt = RemainingTbttTime();
+        tbtt_interrupt_timer_.set(zx::deadline_after(tbtt), zx::usec(1));
+        return ZX_OK;
+    }
+
+    const bool tbtt_interrupt = intStatus.mac_int_0();
+    if (tbtt_interrupt) {
+        {
+            // Due to Ralinks limitation of not being able to report actual beacon transmission,
+            // TBTT is used instead.
+            std::lock_guard<std::mutex> guard(lock_);
+            if (wlanmac_proxy_ != nullptr) {
+                wlanmac_proxy_->Indication(WLAN_INDICATION_BCN_TX_COMPLETE);
+            }
+        }
+
+        // Clear the TBTT interrupts.
+        intStatus.clear();
+        intStatus.set_mac_int_0(1);
+        status = WriteRegister(intStatus);
+        CHECK_WRITE(INT_STATUS, status);
+
+        // Wait for next Pre-TBTT.
+        const zx::duration pre_tbtt = RemainingTbttTime() - kPreTbttLeadTime;
+        tbtt_interrupt_timer_.set(zx::deadline_after(pre_tbtt), zx::usec(1));
+        return ZX_OK;
+    }
+
+    // Pre-TBTT or TBTT interrupt is about to happen very soon, poll.
+    tbtt_interrupt_timer_.set(zx::deadline_after(kTbttInterruptPollInterval), zx::usec(1));
+    return ZX_OK;
+}
+
 zx_status_t Device::InterruptWorker() {
     const char kThreadName[] = "ralink-interrupt-worker";
-    zx::thread::self().set_property(ZX_PROP_NAME, kThreadName, sizeof(kThreadName));
+    zx::thread::self()->set_property(ZX_PROP_NAME, kThreadName, sizeof(kThreadName));
 
     zx_port_packet_t pkt;
     for (;;) {
@@ -3835,55 +3912,16 @@ zx_status_t Device::InterruptWorker() {
 
         switch (pkt.type) {
         case ZX_PKT_TYPE_USER:
-            if (pkt.key == kIntPortPktShutdown) { return ZX_OK; }
+            if (pkt.key == kInterruptShutdownKey) { return ZX_OK; }
             break;
         case ZX_PKT_TYPE_SIGNAL_REP: {
-            IntStatus intStatus;
-            status = ReadRegister(&intStatus);
-            CHECK_READ(INT_STATUS, status);
-
-            bool tbtt_interrupt = intStatus.mac_int_0();
-            if (tbtt_interrupt) {
-                {
-                    // Due to Ralinks limitation of not being able to report actual
-                    // Beacon transmission, TBTT is used instead.
-                    std::lock_guard<std::mutex> guard(lock_);
-                    if (wlanmac_proxy_ != nullptr) {
-                        wlanmac_proxy_->Indication(WLAN_INDICATION_BCN_TX_COMPLETE);
-                    }
-                }
-
-                // Clear interrupts.
-                status = WriteRegister(intStatus);
-                CHECK_WRITE(INT_STATUS, status);
-
-                // Wait for next Pre-TBTT.
-                zx::duration pre_tbtt = RemainingTbttTime() - kPreTbttLeadTime;
-                interrupt_timer_.set(zx::deadline_after(pre_tbtt), zx::usec(1));
-                break;
+            if (pkt.key == kAsyncTxInterruptKey) {
+                status = OnTxReportInterruptTimer();
+                if (status != ZX_OK) { return status; }
+            } else if (pkt.key == kTbttInterruptKey) {
+                status = OnTbttInterruptTimer();
+                if (status != ZX_OK) { return status; }
             }
-
-            bool pre_tbtt_interrupt = intStatus.mac_int_1();
-            if (pre_tbtt_interrupt) {
-                {
-                    std::lock_guard<std::mutex> guard(lock_);
-                    if (wlanmac_proxy_ != nullptr) {
-                        wlanmac_proxy_->Indication(WLAN_INDICATION_PRE_TBTT);
-                    }
-                }
-
-                // Clear interrupts.
-                status = WriteRegister(intStatus);
-                CHECK_WRITE(INT_STATUS, status);
-
-                // Wait for TBTT.
-                zx::duration tbtt = RemainingTbttTime();
-                interrupt_timer_.set(zx::deadline_after(tbtt), zx::usec(1));
-                break;
-            }
-
-            // Pre-TBTT or TBTT interrupt is about to happen very soon. Poll every millisecond.
-            interrupt_timer_.set(zx::deadline_after(kInterruptReadTimeout), zx::usec(1));
             break;
         }
         default:
@@ -3904,6 +3942,7 @@ zx::duration Device::RemainingTbttTime() {
 void Device::WlanmacStop() {
     debugfn();
     std::lock_guard<std::mutex> guard(lock_);
+    StopInterruptPolling();
     // This is safe even if we're already unbound.
     wlanmac_proxy_.reset();
 
@@ -3915,12 +3954,11 @@ size_t Device::WriteBulkout(uint8_t* dest, const wlan_tx_packet_t& wlan_pkt) {
     // MPDU Header + L2Pad + MSDU + Bulkout Aggregation Pad + Bulkout Aggregation Tail Pad
 
     ZX_DEBUG_ASSERT(dest != nullptr);
-    ZX_DEBUG_ASSERT(wlan_pkt.packet_head != nullptr);
 
-    auto head_data = static_cast<uint8_t*>(wlan_pkt.packet_head->data);
-    auto head_len = wlan_pkt.packet_head->len;
+    auto head_data = static_cast<uint8_t*>(wlan_pkt.packet_head.data);
+    auto head_len = wlan_pkt.packet_head.len;
 
-    auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_pkt.packet_head->data);
+    auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_pkt.packet_head.data);
     auto frame_hdr_len = frame_hdr->len();
 
     size_t dest_offset = 0;
@@ -4008,7 +4046,7 @@ zx_status_t Device::WlanmacConfigureBeacon(uint32_t options, wlan_tx_packet_t* b
     }
     auto buf = fbl::unique_ptr<uint8_t[]>(new uint8_t[req_len]);
     auto aggr = reinterpret_cast<BulkoutAggregation*>(buf.get());
-    auto status = FillAggregation(aggr, bcn_pkt, aggr_payload_len);
+    auto status = FillAggregation(aggr, bcn_pkt, kInvalidTxPacketId, aggr_payload_len);
     if (status != ZX_OK) {
         errorf("could not fill usb request packet: %d\n", status);
         return status;
@@ -4043,7 +4081,7 @@ zx_status_t Device::WlanmacConfigureBeacon(uint32_t options, wlan_tx_packet_t* b
 }
 
 zx_status_t Device::WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* wlan_pkt) {
-    ZX_DEBUG_ASSERT(wlan_pkt != nullptr && wlan_pkt->packet_head != nullptr);
+    ZX_DEBUG_ASSERT(wlan_pkt != nullptr);
 
     auto aggr_payload_len = GetBulkoutAggrPayloadLen(*wlan_pkt);
     size_t usb_req_len = sizeof(TxInfo) + aggr_payload_len + GetBulkoutAggrTailLen();
@@ -4069,7 +4107,7 @@ zx_status_t Device::WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* wlan_pkt)
     ZX_DEBUG_ASSERT(req != nullptr);
 
     BulkoutAggregation* aggr;
-    auto status = usb_request_mmap(req, reinterpret_cast<void**>(&aggr));
+    auto status = usb_req_mmap(&usb_, req, reinterpret_cast<void**>(&aggr));
     if (status != ZX_OK) {
         errorf("could not map usb request: %d\n", status);
         std::lock_guard<std::mutex> guard(lock_);
@@ -4077,7 +4115,15 @@ zx_status_t Device::WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* wlan_pkt)
         return status;
     }
 
-    status = FillAggregation(aggr, wlan_pkt, aggr_payload_len);
+    // Record the packet to be transmitted in the packet TX stats FIFO.
+    const int packet_id = WriteTxStatsFifoEntry(*wlan_pkt);
+    if (packet_id != kInvalidTxPacketId) {
+        // The TX hardware will become busy.  Begin firing the timer immediately.
+        async_tx_interrupt_timer_.set(zx::deadline_after(zx::msec(0)),
+                                      kAsyncTxInterruptBusyPollSlack);
+    }
+
+    status = FillAggregation(aggr, wlan_pkt, packet_id, aggr_payload_len);
     if (status != ZX_OK) {
         errorf("could not fill usb request packet: %d\n", status);
         return status;
@@ -4097,8 +4143,48 @@ zx_status_t Device::WlanmacQueueTx(uint32_t options, wlan_tx_packet_t* wlan_pkt)
     return ZX_OK;
 }
 
+wlan_tx_status Device::ReadTxStatsFifoEntry(int packet_id) {
+    // The entry in tx_stats_fifo_ is indexed by packet ID.
+    ZX_DEBUG_ASSERT(kInvalidTxPacketId < packet_id && packet_id < kTxStatsFifoSize);
+    TxStatsFifoEntry& tx_stats_entry = tx_stats_fifo_[packet_id];
+
+    wlan_tx_status reported_tx_status = {};
+    std::copy(std::begin(tx_stats_entry.peer_addr), std::end(tx_stats_entry.peer_addr),
+              std::begin(reported_tx_status.peer_addr));
+    reported_tx_status.rate_idx = tx_stats_entry.rate_idx;
+
+    tx_stats_entry.in_use = false;
+    return reported_tx_status;
+}
+
+int Device::WriteTxStatsFifoEntry(const wlan_tx_packet_t& wlan_pkt) {
+    if ((wlan_pkt.info.tx_flags & WLAN_TX_INFO_VALID_RATE_IDX) == 0) {
+        return kInvalidTxPacketId;
+    }
+
+    std::lock_guard<std::mutex> guard(lock_);
+    // 0 is reserved as invalid packet ID (e.g. for beacon frames); the hardware appears to ignore
+    // the TX stats registers when packet ID 0 is used. Hence, tx_stats_fifo_counter_ iterates on
+    // the interval [0, kTxStatsFifoSize - 1) so we generate TX packet IDs on the interval
+    // [1, kTxStatsFifoSize).
+    const int packet_id = tx_stats_fifo_counter_ + 1;
+    TxStatsFifoEntry& tx_stats = tx_stats_fifo_[packet_id];
+    if (!tx_stats_fifo_[packet_id].in_use) {
+        tx_stats_fifo_counter_ = (tx_stats_fifo_counter_ + 1) % (kTxStatsFifoSize - 1);
+        auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_pkt.packet_head.data);
+        std::copy(std::begin(frame_hdr->addr1.byte), std::end(frame_hdr->addr1.byte),
+                  tx_stats.peer_addr);
+        tx_stats.rate_idx = wlan_pkt.info.rate_idx;
+        tx_stats.in_use = true;
+        return packet_id;
+    } else {
+        errorf("tx_stats_fifo_ overrun\n");
+        return kInvalidTxPacketId;
+    }
+}
+
 zx_status_t Device::FillAggregation(BulkoutAggregation* aggr, wlan_tx_packet_t* wlan_pkt,
-                                    size_t aggr_payload_len) {
+                                    int packet_id, size_t aggr_payload_len) {
     // FillAggregation() fills up Aggregation Header, Payload, and its Tail marker.
     // Header is in the form of TxInfo. Its length field is to carry the length
     // of the Aggregation Payload.
@@ -4106,7 +4192,7 @@ zx_status_t Device::FillAggregation(BulkoutAggregation* aggr, wlan_tx_packet_t* 
     // Though the name suggests 'aggregation', this code always prepared only one unit.
     // As a result, Tail marker of 4 bytes of zero padding is always appended.
 
-    ZX_DEBUG_ASSERT(wlan_pkt != nullptr && wlan_pkt->packet_head != nullptr);
+    ZX_DEBUG_ASSERT(wlan_pkt != nullptr);
 
     std::memset(aggr, 0, sizeof(TxInfo) + GetTxwiLen());
 
@@ -4154,7 +4240,7 @@ zx_status_t Device::FillAggregation(BulkoutAggregation* aggr, wlan_tx_packet_t* 
     txwi0.set_stbc(0);  // TODO(porce): Define the value.
 
     // The frame header is always in the packet head.
-    auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_pkt->packet_head->data);
+    auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_pkt->packet_head.data);
     auto wcid = LookupTxWcid(frame_hdr->addr1.byte, protected_frame);
     Txwi1& txwi1 = aggr->txwi1;
     txwi1.set_ack(GetRxAckPolicy(*wlan_pkt));
@@ -4168,7 +4254,7 @@ zx_status_t Device::FillAggregation(BulkoutAggregation* aggr, wlan_tx_packet_t* 
 
     size_t mpdu_len = GetMpduLen(*wlan_pkt);
     txwi1.set_mpdu_total_byte_count(mpdu_len);
-    txwi1.set_tx_packet_id(0);
+    txwi1.set_tx_packet_id(packet_id);
 
     Txwi2& txwi2 = aggr->txwi2;
     txwi2.set_iv(0);
@@ -4217,9 +4303,10 @@ zx_status_t Device::EnableHwBcn(bool active) {
         CHECK_WRITE(interrupt_timer_EN, status);
 
         if (active) {
-            StartInterruptPolling();
+            const zx::duration pre_tbtt = RemainingTbttTime() - kPreTbttLeadTime;
+            tbtt_interrupt_timer_.set(zx::deadline_after(pre_tbtt), zx::usec(1));
         } else {
-            StopInterruptPolling();
+            tbtt_interrupt_timer_.cancel();
         }
     }
     return ZX_OK;
@@ -4604,24 +4691,25 @@ zx_status_t Device::WlanmacSetKey(uint32_t options, wlan_key_config_t* key_confi
 }
 
 void Device::ReadRequestComplete(usb_request_t* request, void* cookie) {
+    auto dev = static_cast<Device*>(cookie);
     if (request->response.status == ZX_ERR_IO_NOT_PRESENT) {
-        usb_request_release(request);
+        usb_req_release(&dev->usb_, request);
         return;
     }
 
-    auto dev = static_cast<Device*>(cookie);
     dev->HandleRxComplete(request);
 }
 
 void Device::WriteRequestComplete(usb_request_t* request, void* cookie) {
+    auto dev = static_cast<Device*>(cookie);
     if (request->response.status == ZX_ERR_IO_NOT_PRESENT) {
-        usb_request_release(request);
+        usb_req_release(&dev->usb_, request);
         return;
     }
 
-    auto dev = static_cast<Device*>(cookie);
     dev->HandleTxComplete(request);
 }
+
 uint8_t Device::GetRxAckPolicy(const wlan_tx_packet_t& wlan_pkt) {
     // TODO(NET-571): Honor what MLME instructs the chipset for this particular wlan_pkt
     // whether to wait for an acknowledgement from the recipient or not.
@@ -4631,7 +4719,7 @@ uint8_t Device::GetRxAckPolicy(const wlan_tx_packet_t& wlan_pkt) {
 }
 
 size_t Device::GetMpduLen(const wlan_tx_packet_t& wlan_pkt) {
-    auto len = wlan_pkt.packet_head->len;
+    auto len = wlan_pkt.packet_head.len;
     if (wlan_pkt.packet_tail != nullptr) {
         if (wlan_pkt.packet_tail->len < wlan_pkt.tail_offset) { return ZX_ERR_INVALID_ARGS; }
         len += wlan_pkt.packet_tail->len - wlan_pkt.tail_offset;
@@ -4655,8 +4743,8 @@ size_t Device::GetBulkoutAggrPayloadLen(const wlan_tx_packet_t& wlan_pkt) {
     // MSDU            :      (d) bytes // (d).  (b) + (d) is mpdu_len
     // Bulkout Agg Pad :      0~3 bytes // (e).
 
-    auto head_data = static_cast<uint8_t*>(wlan_pkt.packet_head->data);
-    auto head_len = wlan_pkt.packet_head->len;
+    auto head_data = static_cast<uint8_t*>(wlan_pkt.packet_head.data);
+    auto head_len = wlan_pkt.packet_head.len;
     auto has_tail = wlan_pkt.packet_tail != nullptr;
     uint16_t tail_len_eff = 0;
     if (has_tail) {
@@ -4702,7 +4790,7 @@ void Device::DumpLengths(const wlan_tx_packet_t& wlan_pkt, BulkoutAggregation* u
     }
 
     {  // wlan_pkt
-        uint16_t wlan_pkt_head_len = wlan_pkt.packet_head->len;
+        uint16_t wlan_pkt_head_len = wlan_pkt.packet_head.len;
         uint16_t wlan_pkt_tail_offset = wlan_pkt.tail_offset;
         bool has_wlan_pkt_tail = (wlan_pkt.packet_tail != nullptr);
         uint16_t wlan_pkt_tail_len = has_wlan_pkt_tail ? wlan_pkt.packet_tail->len : 0;
@@ -4717,8 +4805,7 @@ void Device::DumpLengths(const wlan_tx_packet_t& wlan_pkt, BulkoutAggregation* u
 }
 
 size_t Device::GetL2PadLen(const wlan_tx_packet_t& wlan_pkt) {
-    ZX_DEBUG_ASSERT(wlan_pkt.packet_head != nullptr);
-    auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_pkt.packet_head->data);
+    auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_pkt.packet_head.data);
     auto frame_hdr_len = frame_hdr->len();
     auto l2pad_len = ROUNDUP(frame_hdr_len, 4) - frame_hdr_len;
 

@@ -4,6 +4,7 @@
 
 #include "l2cap.h"
 
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/common/task_domain.h"
 #include "garnet/drivers/bluetooth/lib/hci/transport.h"
 
@@ -19,16 +20,15 @@ class Impl final : public L2CAP, public common::TaskDomain<Impl, L2CAP> {
       : L2CAP(),
         common::TaskDomain<Impl, L2CAP>(this, std::move(thread_name)),
         hci_(hci) {
-    FXL_DCHECK(hci_);
+    ZX_DEBUG_ASSERT(hci_);
   }
 
   void Initialize() override {
     PostMessage([this] {
       // This can only run once during initialization.
-      FXL_DCHECK(!chanmgr_);
+      ZX_DEBUG_ASSERT(!chanmgr_);
       chanmgr_ = std::make_unique<ChannelManager>(hci_, dispatcher());
-
-      FXL_VLOG(1) << "l2cap: Initialized";
+      bt_log(TRACE, "l2cap", "initialized");
     });
   }
 
@@ -39,14 +39,14 @@ class Impl final : public L2CAP, public common::TaskDomain<Impl, L2CAP> {
   // Called on the L2CAP runner as a result of ScheduleCleanUp().
   void CleanUp() {
     AssertOnDispatcherThread();
-    FXL_VLOG(1) << "l2cap: Shutting down";
+    bt_log(TRACE, "l2cap", "shutting down");
     chanmgr_ = nullptr;
   }
 
-  void RegisterACL(hci::ConnectionHandle handle,
-                   hci::Connection::Role role,
-                   LinkErrorCallback link_error_callback,
-                   async_t* dispatcher) override {
+  void AddACLConnection(hci::ConnectionHandle handle,
+                        hci::Connection::Role role,
+                        LinkErrorCallback link_error_callback,
+                        async_dispatcher_t* dispatcher) override {
     PostMessage([this, handle, role, lec = std::move(link_error_callback),
                  dispatcher]() mutable {
       if (chanmgr_) {
@@ -55,21 +55,31 @@ class Impl final : public L2CAP, public common::TaskDomain<Impl, L2CAP> {
     });
   }
 
-  void RegisterLE(hci::ConnectionHandle handle,
-                  hci::Connection::Role role,
-                  LEConnectionParameterUpdateCallback conn_param_callback,
-                  LinkErrorCallback link_error_callback,
-                  async_t* dispatcher) override {
-    PostMessage([this, handle, role, cpc = std::move(conn_param_callback),
-                 lec = std::move(link_error_callback), dispatcher]() mutable {
+  void AddLEConnection(hci::ConnectionHandle handle, hci::Connection::Role role,
+                       LEConnectionParameterUpdateCallback conn_param_callback,
+                       LinkErrorCallback link_error_callback,
+                       AddLEConnectionCallback channel_callback,
+                       async_dispatcher_t* dispatcher) override {
+    PostMessage([this, handle, role, cp_cb = std::move(conn_param_callback),
+                 link_err_cb = std::move(link_error_callback),
+                 chan_cb = std::move(channel_callback), dispatcher]() mutable {
       if (chanmgr_) {
-        chanmgr_->RegisterLE(handle, role, std::move(cpc), std::move(lec),
-                             dispatcher);
+        chanmgr_->RegisterLE(handle, role, std::move(cp_cb),
+                             std::move(link_err_cb), dispatcher);
+
+        auto att = chanmgr_->OpenFixedChannel(handle, kATTChannelId);
+        auto smp = chanmgr_->OpenFixedChannel(handle, kLESMPChannelId);
+        ZX_DEBUG_ASSERT(att);
+        ZX_DEBUG_ASSERT(smp);
+        async::PostTask(dispatcher, [att = std::move(att), smp = std::move(smp),
+                                     cb = std::move(chan_cb)]() mutable {
+          cb(std::move(att), std::move(smp));
+        });
       }
     });
   }
 
-  void Unregister(hci::ConnectionHandle handle) override {
+  void RemoveConnection(hci::ConnectionHandle handle) override {
     PostMessage([this, handle] {
       if (chanmgr_) {
         chanmgr_->Unregister(handle);
@@ -77,20 +87,20 @@ class Impl final : public L2CAP, public common::TaskDomain<Impl, L2CAP> {
     });
   }
 
-  void OpenFixedChannel(hci::ConnectionHandle handle,
-                        ChannelId id,
-                        ChannelCallback callback,
-                        async_t* dispatcher) override {
-    FXL_DCHECK(dispatcher);
+  void OpenChannel(hci::ConnectionHandle handle, PSM psm,
+                   ChannelCallback callback,
+                   async_dispatcher_t* dispatcher) override {
+    bt_log(WARN, "l2cap", "OpenChannel not implemented");
+  }
 
-    PostMessage(
-        [this, handle, id, cb = std::move(callback), dispatcher]() mutable {
-          if (!chanmgr_)
-            return;
+  bool RegisterService(PSM psm, ChannelCallback cb,
+                       async_dispatcher_t* dispatcher) override {
+    bt_log(WARN, "l2cap", "RegisterService not implemented");
+    return false;
+  }
 
-          auto chan = chanmgr_->OpenFixedChannel(handle, id);
-          async::PostTask(dispatcher, [chan, cb = std::move(cb)] { cb(chan); });
-        });
+  void UnregisterService(PSM psm) override {
+    bt_log(WARN, "l2cap", "UnregisterService not implemented");
   }
 
  private:
@@ -107,7 +117,7 @@ class Impl final : public L2CAP, public common::TaskDomain<Impl, L2CAP> {
 // static
 fbl::RefPtr<L2CAP> L2CAP::Create(fxl::RefPtr<hci::Transport> hci,
                                  std::string thread_name) {
-  FXL_DCHECK(hci);
+  ZX_DEBUG_ASSERT(hci);
 
   return AdoptRef(new Impl(hci, std::move(thread_name)));
 }

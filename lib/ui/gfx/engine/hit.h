@@ -5,15 +5,21 @@
 #ifndef GARNET_LIB_UI_GFX_ENGINE_HIT_H_
 #define GARNET_LIB_UI_GFX_ENGINE_HIT_H_
 
+#include "garnet/lib/ui/gfx/engine/session.h"
+#include "garnet/lib/ui/gfx/id.h"
 #include "lib/escher/geometry/types.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 // Describes where a hit occurred within the content of a tagged node.
 struct Hit {
-  // The node's tag value.
+  // The node's tag value. Non-zero values participate in the hit test.
   uint32_t tag_value;
+
+  // The View that owns the node that was hit.
+  SessionId view_session;
+  ResourceId view_resource;
 
   // The ray that was used to perform the hit test, in the hit node's coordinate
   // system.
@@ -31,6 +37,6 @@ struct Hit {
 };
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_ENGINE_HIT_H_

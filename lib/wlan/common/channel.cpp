@@ -47,7 +47,7 @@ bool Is2Ghz(const wlan_channel_t& chan) {
 bool IsValidChan2Ghz(const wlan_channel_t& chan) {
     uint8_t p = chan.primary;
 
-    if (p < 1 || p > 11) { return false; }
+    if (p < 1 || p > 14) { return false; }
 
     switch (chan.cbw) {
     case CBW20:
@@ -64,7 +64,7 @@ bool IsValidChan2Ghz(const wlan_channel_t& chan) {
 bool IsValidChan5Ghz(const wlan_channel_t& chan) {
     uint8_t p = chan.primary;
 
-    if (p < 36 || p > 165) { return false; }
+    if (p < 36 || p > 173) { return false; }
     if (p > 64 && p < 100) { return false; }
     if (p > 144 && p < 149) { return false; }
     if (p <= 144 && (p % 4 != 0)) { return false; }
@@ -112,10 +112,10 @@ Mhz GetCenterFreq(const wlan_channel_t& chan) {
     Mhz spacing = 5;
     Mhz channel_starting_frequency;
     if (Is2Ghz(chan)) {
-        channel_starting_frequency = 2407;
+        channel_starting_frequency = kBaseFreq2Ghz;
     } else {
         // 5Ghz
-        channel_starting_frequency = 5000;
+        channel_starting_frequency = kBaseFreq5Ghz;
     }
 
     // IEEE Std 802.11-2016, 21.3.14

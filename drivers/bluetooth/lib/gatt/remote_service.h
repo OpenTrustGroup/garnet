@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GATT_REMOTE_SERVICE_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GATT_REMOTE_SERVICE_H_
 
 #include <fbl/intrusive_hash_table.h>
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
 #include <lib/fit/function.h>
+#include <zircon/assert.h>
 
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
@@ -41,7 +43,7 @@ class RemoteServiceManager;
 //
 // A RemoteService can be accessed from multiple threads. All continuations
 // provided in |callback| parameters below will run on the GATT thread unless an
-// async dispatcher is explicitly provided.
+// dispatcher is explicitly provided.
 class RemoteService : public fbl::RefCounted<RemoteService> {
  public:
   // Shuts down this service. Called when the service gets removed (e.g. due to
@@ -60,7 +62,7 @@ class RemoteService : public fbl::RefCounted<RemoteService> {
   // Adds a handler which will be called when this service gets removed.
   // Returns false if the service was already shut down. |callback| will be
   // posted on |dispatcher|.
-  bool AddRemovedHandler(fit::closure handler, async_t* dispatcher = nullptr);
+  bool AddRemovedHandler(fit::closure handler, async_dispatcher_t* dispatcher = nullptr);
 
   // Returns true if all contents of this service have been discovered. This can
   // only be called on the GATT thread and is primarily intended for unit tests.
@@ -74,7 +76,7 @@ class RemoteService : public fbl::RefCounted<RemoteService> {
   using CharacteristicCallback =
       fit::function<void(att::Status, const RemoteCharacteristicList&)>;
   void DiscoverCharacteristics(CharacteristicCallback callback,
-                               async_t* dispatcher = nullptr);
+                               async_dispatcher_t* dispatcher = nullptr);
 
   // Sends a read request to the characteristic with the given identifier. Fails
   // if characteristics have not been discovered.
@@ -84,7 +86,17 @@ class RemoteService : public fbl::RefCounted<RemoteService> {
       fit::function<void(att::Status, const common::ByteBuffer&)>;
   void ReadCharacteristic(IdType id,
                           ReadValueCallback callback,
-                          async_t* dispatcher = nullptr);
+                          async_dispatcher_t* dispatcher = nullptr);
+
+  // Performs the "Read Long Characteristic Values" procedure which allows
+  // characteristic values larger than the ATT_MTU to be read over multiple
+  // requests.
+  //
+  // The read will start at |offset| and will return at most |max_bytes| octets.
+  // The resulting value will be returned via |callback|.
+  void ReadLongCharacteristic(IdType id, uint16_t offset, size_t max_bytes,
+                              ReadValueCallback callback,
+                              async_dispatcher_t* dispatcher = nullptr);
 
   // Sends a write request to the characteristic with the given identifier.
   // Fails if characteristics have not been discovered.
@@ -93,7 +105,12 @@ class RemoteService : public fbl::RefCounted<RemoteService> {
   void WriteCharacteristic(IdType id,
                            std::vector<uint8_t> value,
                            att::StatusCallback callback,
-                           async_t* dispatcher = nullptr);
+                           async_dispatcher_t* dispatcher = nullptr);
+
+  // Sends a "Write Without Response" to the characteristic with the given
+  // identifier. Fails if characteristics have not been discovered.
+  void WriteCharacteristicWithoutResponse(IdType id,
+                                          std::vector<uint8_t> value);
 
   // Subscribe to characteristic handle/value notifications or indications
   // from the characteristic with the given identifier. Either notifications or
@@ -114,14 +131,14 @@ class RemoteService : public fbl::RefCounted<RemoteService> {
   using NotifyStatusCallback = RemoteCharacteristic::NotifyStatusCallback;
   void EnableNotifications(IdType id, ValueCallback callback,
                            NotifyStatusCallback status_callback,
-                           async_t* dispatcher = nullptr);
+                           async_dispatcher_t* dispatcher = nullptr);
 
   // Disables characteristic notifications for the given |handler_id| previously
   // obtained via EnableNotifications. The value of the Client Characteristic
   // Configuration descriptor will be cleared if no subscribers remain.
   void DisableNotifications(IdType characteristic_id, IdType handler_id,
                             att::StatusCallback status_callback,
-                            async_t* dispatcher = nullptr);
+                            async_dispatcher_t* dispatcher = nullptr);
 
  private:
   friend class fbl::RefPtr<RemoteService>;
@@ -131,13 +148,13 @@ class RemoteService : public fbl::RefCounted<RemoteService> {
 
   template <typename T>
   struct PendingCallback {
-    PendingCallback(T callback, async_t* dispatcher)
+    PendingCallback(T callback, async_dispatcher_t* dispatcher)
         : callback(std::move(callback)), dispatcher(dispatcher) {
-      FXL_DCHECK(this->callback);
+      ZX_DEBUG_ASSERT(this->callback);
     }
 
     T callback;
-    async_t* dispatcher;
+    async_dispatcher_t* dispatcher;
   };
 
   using PendingClosure = PendingCallback<fit::closure>;
@@ -146,7 +163,7 @@ class RemoteService : public fbl::RefCounted<RemoteService> {
   // A RemoteService can only be constructed by a RemoteServiceManager.
   RemoteService(const ServiceData& service_data,
                 fxl::WeakPtr<Client> client,
-                async_t* gatt_dispatcher);
+                async_dispatcher_t* gatt_dispatcher);
   ~RemoteService();
 
   bool alive() const __TA_REQUIRES(mtx_) { return !shut_down_; }
@@ -172,15 +189,21 @@ class RemoteService : public fbl::RefCounted<RemoteService> {
   // Used to complete a characteristic discovery request.
   void ReportCharacteristics(att::Status status,
                              CharacteristicCallback callback,
-                             async_t* dispatcher) __TA_EXCLUDES(mtx_);
+                             async_dispatcher_t* dispatcher) __TA_EXCLUDES(mtx_);
 
   // Completes all pending characteristic discovery requests.
   void CompleteCharacteristicDiscovery(att::Status status) __TA_EXCLUDES(mtx_);
 
+  // Helper function that drives the recursive "Read Long Characteristic Values"
+  // procedure. Called by ReadLongCharacteristic().
+  void ReadLongHelper(att::Handle value_handle, uint16_t offset,
+                      common::MutableByteBufferPtr buffer, size_t bytes_read,
+                      ReadValueCallback callback, async_dispatcher_t* dispatcher);
+
   // Returns true if characteristic discovery has completed. This must be
   // accessed only through |gatt_dispatcher_|.
   inline bool HasCharacteristics() const {
-    FXL_DCHECK(IsOnGattThread());
+    ZX_DEBUG_ASSERT(IsOnGattThread());
     return remaining_descriptor_requests_ == 0u;
   }
 
@@ -192,7 +215,7 @@ class RemoteService : public fbl::RefCounted<RemoteService> {
   ServiceData service_data_;
 
   // All unguarded members below MUST be accessed via |gatt_dispatcher_|.
-  async_t* gatt_dispatcher_;
+  async_dispatcher_t* gatt_dispatcher_;
 
   // The GATT Client bearer for performing remote procedures.
   fxl::WeakPtr<Client> client_;
@@ -236,3 +259,5 @@ class RemoteService : public fbl::RefCounted<RemoteService> {
 
 }  // namespace gatt
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GATT_REMOTE_SERVICE_H_

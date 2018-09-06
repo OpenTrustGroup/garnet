@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GAP_BREDR_DISCOVERY_MANAGER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GAP_BREDR_DISCOVERY_MANAGER_H_
 
 #include <queue>
 #include <unordered_set>
@@ -106,7 +107,7 @@ class BrEdrDiscoverableSession final {
 class BrEdrDiscoveryManager final {
  public:
   // |device_cache| MUST out-live this BrEdrDiscoveryManager.
-  BrEdrDiscoveryManager(fxl::RefPtr<hci::Transport> hci,
+  BrEdrDiscoveryManager(fxl::RefPtr<hci::Transport> hci, hci::InquiryMode mode,
                         RemoteDeviceCache* device_cache);
 
   ~BrEdrDiscoveryManager();
@@ -144,6 +145,9 @@ class BrEdrDiscoveryManager final {
   // Used to receive Inquiry Results.
   void InquiryResult(const hci::EventPacket& event);
 
+  // Used to receive Inquiry Results.
+  void ExtendedInquiryResult(const hci::EventPacket& event);
+
   // Creates and stores a new session object and returns it.
   std::unique_ptr<BrEdrDiscoverySession> AddDiscoverySession();
 
@@ -163,11 +167,14 @@ class BrEdrDiscoveryManager final {
   // Removes |session_| from the active sessions.
   void RemoveDiscoverableSession(BrEdrDiscoverableSession* session);
 
+  // Sends a RemoteNameRequest for the device |id|
+  void RequestRemoteDeviceName(const std::string& device_id);
+
   // The HCI Transport
   fxl::RefPtr<hci::Transport> hci_;
 
   // The dispatcher that we use for invoking callbacks asynchronously.
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
 
   // Device cache to use.
   // We hold a raw pointer is because it must out-live us.
@@ -193,8 +200,15 @@ class BrEdrDiscoveryManager final {
   // The set of callbacks that are waiting on inquiry to start.
   std::queue<hci::StatusCallback> pending_discoverable_;
 
-  // The Handler ID of the event handler if we are scanning.
+  // The Handler IDs of the event handlers for inquiry results.
   hci::CommandChannel::EventHandlerId result_handler_id_;
+  hci::CommandChannel::EventHandlerId rssi_handler_id_;
+  hci::CommandChannel::EventHandlerId eir_handler_id_;
+
+  // The inquiry mode that we should use.
+  hci::InquiryMode desired_inquiry_mode_;
+  // The current inquiry mode.
+  hci::InquiryMode current_inquiry_mode_;
 
   fxl::ThreadChecker thread_checker_;
 
@@ -205,3 +219,5 @@ class BrEdrDiscoveryManager final {
 
 }  // namespace gap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GAP_BREDR_DISCOVERY_MANAGER_H_

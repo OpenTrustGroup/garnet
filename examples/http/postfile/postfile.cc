@@ -6,12 +6,12 @@
 
 #include <cstdio>
 
+#include <fuchsia/net/oldhttp/cpp/fidl.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/default.h>
-#include <fuchsia/net/oldhttp/cpp/fidl.h>
 
-#include "lib/app/cpp/connect.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/connect.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fsl/socket/files.h"
 #include "lib/fxl/files/file.h"
 #include "lib/fxl/files/file_descriptor.h"
@@ -76,9 +76,8 @@ class PostFileApp {
  public:
   PostFileApp(async::Loop* loop)
       : loop_(loop),
-        context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
-    http_service_ =
-        context_->ConnectToEnvironmentService<http::HttpService>();
+        context_(component::StartupContext::CreateFromStartupInfo()) {
+    http_service_ = context_->ConnectToEnvironmentService<http::HttpService>();
   }
 
   bool Start(const std::vector<std::string>& args) {
@@ -119,8 +118,8 @@ class PostFileApp {
     request.body = http::URLBody::New();
     request.body->set_stream(std::move(consumer));
 
-    async_t* async = async_get_default();
-    fsl::CopyFromFileDescriptor(std::move(fd), std::move(producer), async,
+    async_dispatcher_t* dispatcher = async_get_default_dispatcher();
+    fsl::CopyFromFileDescriptor(std::move(fd), std::move(producer), dispatcher,
                                 [this](bool result, fxl::UniqueFD fd) {
                                   if (!result) {
                                     printf("file read error\n");
@@ -130,17 +129,16 @@ class PostFileApp {
 
     http_service_->CreateURLLoader(url_loader_.NewRequest());
 
-    url_loader_->Start(std::move(request),
-                       [this](http::URLResponse response) {
-                         ResponsePrinter printer;
-                         printer.Run(loop_, std::move(response));
-                       });
+    url_loader_->Start(std::move(request), [this](http::URLResponse response) {
+      ResponsePrinter printer;
+      printer.Run(loop_, std::move(response));
+    });
     return true;
   }
 
  private:
   async::Loop* const loop_;
-  std::unique_ptr<fuchsia::sys::StartupContext> context_;
+  std::unique_ptr<component::StartupContext> context_;
   http::HttpServicePtr http_service_;
   http::URLLoaderPtr url_loader_;
 };
@@ -149,7 +147,7 @@ class PostFileApp {
 
 int main(int argc, const char** argv) {
   std::vector<std::string> args(argv, argv + argc);
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
   examples::PostFileApp postfile_app(&loop);
   if (postfile_app.Start(args))

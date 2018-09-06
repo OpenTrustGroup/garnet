@@ -5,7 +5,7 @@
 #include <lib/async-loop/cpp/loop.h>
 
 #include "garnet/bin/timezone/timezone.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/logging.h"
 
@@ -17,7 +17,7 @@ constexpr char kTzIdPath[] = "/data/tz_id";
 class MainService {
  public:
   MainService()
-      : timezone_(fuchsia::sys::StartupContext::CreateFromStartupInfo(),
+      : timezone_(component::StartupContext::CreateFromStartupInfo(),
                   kIcuDataPath, kTzIdPath) {}
 
  private:
@@ -27,7 +27,7 @@ class MainService {
 }  // namespace time_zone
 
 int main(int argc, char** argv) {
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
   time_zone::MainService svc;
   loop.Run();
   return 0;

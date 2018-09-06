@@ -3,12 +3,12 @@
 // found in the LICENSE file.
 
 #include "msd_intel_device.h"
-#include "msd_intel_gen_query.h"
 #include "device_id.h"
 #include "forcewake.h"
 #include "global_context.h"
 #include "magma_util/dlog.h"
 #include "magma_util/macros.h"
+#include "msd_intel_gen_query.h"
 #include "msd_intel_semaphore.h"
 #include "platform_trace.h"
 #include "registers.h"
@@ -394,19 +394,15 @@ int MsdIntelDevice::DeviceThreadLoop()
     std::unique_lock<std::mutex> lock(device_request_mutex_, std::defer_lock);
 
     while (true) {
-        if (progress_->work_outstanding()) {
-            DLOG("waiting with timeout");
-            // When the semaphore wait returns the semaphore will be reset.
-            // The reset may race with subsequent enqueue/signals on the semaphore,
-            // which is fine because we process everything available in the queue
-            // before returning here to wait.
-            bool timed_out = !device_request_semaphore_->Wait(kTimeoutMs);
-            if (timed_out)
-                HangCheckTimeout();
-        } else {
-            DLOG("waiting, no timeout");
-            device_request_semaphore_->Wait();
-        }
+        auto timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+            progress_->GetHangcheckTimeout(kTimeoutMs, std::chrono::steady_clock::now()));
+        // When the semaphore wait returns the semaphore will be reset.
+        // The reset may race with subsequent enqueue/signals on the semaphore,
+        // which is fine because we process everything available in the queue
+        // before returning here to wait.
+        bool timed_out = !device_request_semaphore_->Wait(timeout.count());
+        if (timed_out)
+            HangCheckTimeout();
 
         while (true) {
             lock.lock();
@@ -463,7 +459,7 @@ void MsdIntelDevice::ProcessCompletedCommandBuffers()
         hardware_status_page(RENDER_COMMAND_STREAMER)->read_sequence_number();
     render_engine_cs_->ProcessCompletedCommandBuffers(sequence_number);
 
-    progress_->Completed(sequence_number);
+    progress_->Completed(sequence_number, std::chrono::steady_clock::now());
 }
 
 magma::Status MsdIntelDevice::ProcessInterrupts(uint64_t interrupt_time_ns,
@@ -539,8 +535,7 @@ magma::Status MsdIntelDevice::ProcessCommandBuffer(std::unique_ptr<CommandBuffer
     if (context->killed())
         return DRET_MSG(MAGMA_STATUS_CONTEXT_KILLED, "Context killed");
 
-    TRACE_DURATION_BEGIN("magma", "PrepareForExecution",
-                         "id", command_buffer->GetBatchBufferId());
+    TRACE_DURATION_BEGIN("magma", "PrepareForExecution", "id", command_buffer->GetBatchBufferId());
     if (!command_buffer->PrepareForExecution(render_engine_cs_.get(), gtt()))
         return DRET_MSG(MAGMA_STATUS_INTERNAL_ERROR,
                         "Failed to prepare command buffer for execution");
@@ -688,7 +683,7 @@ magma_status_t msd_device_query(msd_device_t* device, uint64_t id, uint64_t* val
     return DRET_MSG(MAGMA_STATUS_INVALID_ARGS, "unhandled id %" PRIu64, id);
 }
 
-void msd_device_dump_status(msd_device_t* device)
+void msd_device_dump_status(msd_device_t* device, uint32_t dump_type)
 {
     MsdIntelDevice::cast(device)->DumpStatusToLog();
 }

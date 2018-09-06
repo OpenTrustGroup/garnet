@@ -24,8 +24,14 @@ DemoHarnessFuchsia::DemoHarnessFuchsia(async::Loop* loop,
                                        WindowParams window_params)
     : DemoHarness(window_params),
       loop_(loop),
-      owned_loop_(loop_ ? nullptr : new async::Loop()),
-      startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
+      owned_loop_(loop_ ? nullptr
+                        : new async::Loop(&kAsyncLoopConfigAttachToThread)),
+      startup_context_(component::StartupContext::CreateFromStartupInfo()) {
+  // Provide a PseudoDir where the demo can register debugging services.
+  fbl::RefPtr<fs::PseudoDir> debug_dir(fbl::AdoptRef(new fs::PseudoDir));
+  startup_context()->outgoing().debug_dir()->AddEntry("demo", debug_dir);
+  filesystem_ = escher::HackFilesystem::New(debug_dir);
+
   if (!loop_) {
     loop_ = owned_loop_.get();
   }
@@ -57,7 +63,7 @@ void DemoHarnessFuchsia::ShutdownWindowSystem() {}
 void DemoHarnessFuchsia::Run(Demo* demo) {
   FXL_CHECK(!demo_);
   demo_ = demo;
-  async::PostTask(loop_->async(), [this] { this->RenderFrameOrQuit(); });
+  async::PostTask(loop_->dispatcher(), [this] { this->RenderFrameOrQuit(); });
   loop_->Run();
 }
 
@@ -67,11 +73,8 @@ void DemoHarnessFuchsia::RenderFrameOrQuit() {
     loop_->Quit();
     device().waitIdle();
   } else {
-    {
-      TRACE_DURATION("gfx", "escher::DemoHarness::DrawFrame");
-      demo_->DrawFrame();
-    }
-    async::PostDelayedTask(loop_->async(),
+    demo_->MaybeDrawFrame();
+    async::PostDelayedTask(loop_->dispatcher(),
                            [this] { this->RenderFrameOrQuit(); }, zx::msec(1));
   }
 }

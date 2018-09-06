@@ -11,41 +11,21 @@ namespace mdns {
 
 // static
 std::unique_ptr<InterfaceMonitor> FidlInterfaceMonitor::Create(
-    fuchsia::sys::StartupContext* startup_context) {
+    component::StartupContext* startup_context) {
   return std::unique_ptr<InterfaceMonitor>(
       new FidlInterfaceMonitor(startup_context));
 }
 
 FidlInterfaceMonitor::FidlInterfaceMonitor(
-    fuchsia::sys::StartupContext* startup_context)
-    : binding_(this) {
+    component::StartupContext* startup_context) {
   netstack_ = startup_context
                   ->ConnectToEnvironmentService<fuchsia::netstack::Netstack>();
 
-  fidl::InterfaceHandle<fuchsia::netstack::NotificationListener>
-      listener_handle;
-
-  binding_.Bind(listener_handle.NewRequest());
-  binding_.set_error_handler([this]() {
-    binding_.set_error_handler(nullptr);
-    binding_.Unbind();
-    FXL_LOG(ERROR) << "Connection to netstack dropped.";
-  });
-
-  netstack_->RegisterListener(std::move(listener_handle));
-
-  netstack_->GetInterfaces(
-      [this](fidl::VectorPtr<fuchsia::netstack::NetInterface> interfaces) {
-        OnInterfacesChanged(std::move(interfaces));
-      });
+  netstack_.events().OnInterfacesChanged =
+      fit::bind_member(this, &FidlInterfaceMonitor::InterfacesChanged);
 }
 
-FidlInterfaceMonitor::~FidlInterfaceMonitor() {
-  if (binding_.is_bound()) {
-    binding_.set_error_handler(nullptr);
-    binding_.Unbind();
-  }
-}
+FidlInterfaceMonitor::~FidlInterfaceMonitor() {}
 
 void FidlInterfaceMonitor::RegisterLinkChangeCallback(fit::closure callback) {
   link_change_callback_ = std::move(callback);
@@ -56,7 +36,7 @@ FidlInterfaceMonitor::GetInterfaces() {
   return interfaces_;
 }
 
-void FidlInterfaceMonitor::OnInterfacesChanged(
+void FidlInterfaceMonitor::InterfacesChanged(
     fidl::VectorPtr<fuchsia::netstack::NetInterface> interfaces) {
   bool link_change = false;
 

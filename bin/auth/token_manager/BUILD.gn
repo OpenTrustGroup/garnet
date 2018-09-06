@@ -14,16 +14,15 @@ executable("token_manager") {
   ]
 
   deps = [
-    "//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/component/cpp",
     "//garnet/public/lib/fidl/cpp",
     "//zircon/public/lib/async-loop-cpp",
-    "//garnet/public/lib/auth/fidl",
+    "//garnet/public/fidl/fuchsia.auth",
     "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
     "//garnet/bin/auth/cache",
     "//garnet/bin/auth/store:credentials",
     "//garnet/bin/auth/store:lib",
-    "//garnet/bin/auth/token_manager/test:dev_auth_provider",
     "//zircon/public/lib/trace-provider",
     "//zircon/public/lib/async-loop-cpp",
   ]

@@ -16,16 +16,18 @@
 #ifndef _THERMAL_
 #define _THERMAL_
 
+// clang-format off
 #define ATH10K_QUIET_PERIOD_DEFAULT     100
 #define ATH10K_QUIET_PERIOD_MIN         25
 #define ATH10K_QUIET_START_OFFSET       10
 #define ATH10K_HWMON_NAME_LEN           15
 #define ATH10K_THERMAL_SYNC_TIMEOUT     (ZX_SEC(5))
 #define ATH10K_THERMAL_THROTTLE_MAX     100
+// clang-format on
 
 struct ath10k_thermal {
     struct thermal_cooling_device* cdev;
-    completion_t wmi_sync;
+    sync_completion_t wmi_sync;
 
     /* protected by conf_mutex */
     uint32_t throttle_state;
@@ -46,15 +48,11 @@ static inline int ath10k_thermal_register(struct ath10k* ar) {
     return 0;
 }
 
-static inline void ath10k_thermal_unregister(struct ath10k* ar) {
-}
+static inline void ath10k_thermal_unregister(struct ath10k* ar) {}
 
-static inline void ath10k_thermal_event_temperature(struct ath10k* ar,
-        int temperature) {
-}
+static inline void ath10k_thermal_event_temperature(struct ath10k* ar, int temperature) {}
 
-static inline void ath10k_thermal_set_throttling(struct ath10k* ar) {
-}
+static inline void ath10k_thermal_set_throttling(struct ath10k* ar) {}
 
 #endif
 #endif /* _THERMAL_ */

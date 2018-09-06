@@ -6,13 +6,12 @@
 
 #include "byte_block.h"
 
-namespace debugserver {
-namespace util {
+namespace debugger_utils {
 
 // The API for accessing a file via the "byte block" interface.
 // This is a fixed size block of contiguous bytes.
 
-class FileByteBlock final : public util::ByteBlock {
+class FileByteBlock final : public ByteBlock {
  public:
   // This consumes fd;
   explicit FileByteBlock(int fd);
@@ -28,5 +27,4 @@ class FileByteBlock final : public util::ByteBlock {
   FXL_DISALLOW_COPY_AND_ASSIGN(FileByteBlock);
 };
 
-}  // namespace util
-}  // namespace debugserver
+}  // namespace debugger_utils

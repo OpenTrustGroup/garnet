@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 if (is_fuchsia) {
-  import("//build/cpp/prebuilt_shared_library.gni")
   import("//build/package.gni")
 }
 
@@ -69,16 +68,19 @@ source_set("fxl_lib") {
     "files/file.h",
     "files/file_descriptor.cc",
     "files/file_descriptor.h",
+    "files/glob.cc",
+    "files/glob.h",
+    "files/path.cc",
     "files/path.h",
     "files/scoped_temp_dir.cc",
     "files/scoped_temp_dir.h",
+    "files/symlink.cc",
     "files/symlink.h",
     "files/unique_fd.cc",
     "files/unique_fd.h",
     "functional/apply.h",
     "functional/cancelable_callback.h",
     "functional/make_copyable.h",
-    "inttypes.h",
     "memory/ref_counted.h",
     "memory/ref_counted_internal.h",
     "memory/ref_ptr.h",
@@ -103,6 +105,8 @@ source_set("fxl_lib") {
     "strings/string_printf.h",
     "strings/string_view.cc",
     "strings/string_view.h",
+    "strings/substitute.cc",
+    "strings/substitute.h",
     "strings/trim.cc",
     "strings/trim.h",
     "strings/utf_codecs.cc",
@@ -123,18 +127,6 @@ source_set("fxl_lib") {
     "time/time_point.h",
     "type_converter.h",
   ]
-
-  if (is_win) {
-    sources += [
-      "files/path_win.cc",
-      "files/symlink_win.cc",
-    ]
-  } else {
-    sources += [
-      "files/path_posix.cc",
-      "files/symlink_posix.cc",
-    ]
-  }
 
   public_deps = [
     ":fxl_common",
@@ -171,11 +163,7 @@ source_set("fxl_logging_lib") {
 }
 
 if (is_fuchsia) {
-  prebuilt_shared_library("fxl_logging") {
-    no_headers = true
-
-    category = "partner"
-
+  shared_library("fxl_logging") {
     public_deps = [
       ":fxl_logging_lib",
     ]
@@ -191,16 +179,10 @@ if (is_fuchsia) {
 }
 
 if (is_fuchsia) {
-  prebuilt_shared_library("fxl") {
-    no_headers = true
-
-    category = "partner"
-
+  shared_library("fxl") {
     public_deps = [
       ":fxl_lib",
     ]
-
-    runtime_deps = [ ":fxl_logging_sdk" ]
   }
 } else {
   group("fxl") {
@@ -230,6 +212,7 @@ executable("fxl_unittests") {
     "files/directory_unittest.cc",
     "files/file_descriptor_unittest.cc",
     "files/file_unittest.cc",
+    "files/glob_unittest.cc",
     "files/path_unittest.cc",
     "files/scoped_temp_dir_unittest.cc",
     "functional/apply_unittest.cc",
@@ -249,6 +232,7 @@ executable("fxl_unittests") {
     "strings/string_number_conversions_unittest.cc",
     "strings/string_printf_unittest.cc",
     "strings/string_view_unittest.cc",
+    "strings/substitute_unittest.cc",
     "strings/trim_unittest.cc",
     "synchronization/thread_annotations_unittest.cc",
     "synchronization/thread_checker_unittest.cc",
@@ -268,6 +252,7 @@ executable("fxl_unittests") {
     ":fxl_printers",
     "test",
     "test:gtest_main",
+    "//third_party/googletest:gmock",
     "//third_party/googletest:gtest",
   ]
 }

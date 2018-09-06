@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GATT_CONNECTION_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GATT_CONNECTION_H_
 
 #include <memory>
 
@@ -44,8 +45,8 @@ class Connection final {
              fxl::RefPtr<att::Bearer> att_bearer,
              fxl::RefPtr<att::Database> local_db,
              RemoteServiceWatcher svc_watcher,
-             async_t* gatt_dispatcher);
-  ~Connection();
+             async_dispatcher_t* gatt_dispatcher);
+  ~Connection() = default;
 
   Connection() = default;
   Connection(Connection&&) = default;
@@ -56,7 +57,13 @@ class Connection final {
     return remote_service_manager_.get();
   }
 
+  // Initiate MTU exchange followed by primary service discovery. On failure,
+  // signals a link error through the ATT channel (which is expected to
+  // disconnect the link).
+  void Initialize();
+
  private:
+  fxl::RefPtr<att::Bearer> att_;
   std::unique_ptr<Server> server_;
   std::unique_ptr<RemoteServiceManager> remote_service_manager_;
 
@@ -66,3 +73,5 @@ class Connection final {
 }  // namespace internal
 }  // namespace gatt
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GATT_CONNECTION_H_

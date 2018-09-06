@@ -13,6 +13,15 @@ namespace fuchsia {
 namespace ui {
 namespace input {
 
+// NOTE:
+// //garnet/public/lib/fostr/fidl/fuchsia.ui.input generates ostream formatters
+// for this library *except* those formatters that are listed here. The code
+// generator knows which formatters to exclude from the generated code by
+// consulting the 'amendments.json' file in that directory.
+//
+// If you add or remove formatters from this file, please be sure that the
+// amendments.json file is updated accordingly.
+
 std::ostream& operator<<(std::ostream& os,
                          const fuchsia::ui::input::InputEvent& value);
 std::ostream& operator<<(std::ostream& os,
@@ -59,6 +68,13 @@ std::ostream& operator<<(std::ostream& os,
                          const fuchsia::ui::input::TextRange& value);
 std::ostream& operator<<(std::ostream& os,
                          const fuchsia::ui::input::TextInputState& value);
+
+std::ostream& operator<<(std::ostream& os,
+                         const fuchsia::ui::input::Command& value);
+std::ostream& operator<<(std::ostream& os,
+                         const fuchsia::ui::input::SendKeyboardInputCmd& value);
+std::ostream& operator<<(std::ostream& os,
+                         const fuchsia::ui::input::SendPointerInputCmd& value);
 
 }  // namespace input
 }  // namespace ui

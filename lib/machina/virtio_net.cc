@@ -17,13 +17,14 @@
 
 namespace machina {
 
-VirtioNet::Stream::Stream(VirtioNet* device, async_t* async, VirtioQueue* queue,
+VirtioNet::Stream::Stream(const PhysMem& phys_mem,
+                          async_dispatcher_t* dispatcher, VirtioQueue* queue,
                           std::atomic<trace_async_id_t>* trace_flow_id)
-    : device_(device),
-      async_(async),
+    : phys_mem_(phys_mem),
+      dispatcher_(dispatcher),
       queue_(queue),
       trace_flow_id_(trace_flow_id),
-      queue_wait_(async, queue,
+      queue_wait_(dispatcher, queue,
                   fit::bind_member(this, &VirtioNet::Stream::OnQueueReady)) {}
 
 zx_status_t VirtioNet::Stream::Start(zx_handle_t fifo, size_t fifo_max_entries,
@@ -56,17 +57,18 @@ void VirtioNet::Stream::OnQueueReady(zx_status_t status, uint16_t index) {
     return;
   }
 
-  // Attempt to correlate the processing of descriptors with a previous kick.
-  // As noted in virtio_device.cc this should be considered best-effort only.
+  // Attempt to correlate the processing of descriptors with a previous
+  // notification. As noted in virtio_device.cc this should be considered
+  // best-effort only.
   const trace_async_id_t flow_id = trace_flow_id_->load();
   TRACE_DURATION("machina", "virtio_net_packet_read_from_queue", "direction",
                  TA_STRING_LITERAL(rx_ ? "RX" : "TX"), "flow_id", flow_id);
   if (flow_id != 0) {
-    TRACE_FLOW_STEP("machina", "io_queue_signal", flow_id);
+    TRACE_FLOW_STEP("machina", "queue_signal", flow_id);
   }
 
   FXL_DCHECK(fifo_num_entries_ == 0);
-  virtio_desc_t desc;
+  VirtioDescriptor desc;
   fifo_num_entries_ = 0;
   fifo_entries_write_index_ = 0;
   do {
@@ -80,11 +82,11 @@ void VirtioNet::Stream::OnQueueReady(zx_status_t status, uint16_t index) {
     uintptr_t packet_length;
     auto header = reinterpret_cast<virtio_net_hdr_t*>(desc.addr);
     if (!desc.has_next) {
-      packet_offset = device_->phys_mem().offset(header + 1);
+      packet_offset = phys_mem_.offset(header + 1);
       packet_length = static_cast<uint16_t>(desc.len - sizeof(*header));
     } else if (desc.len == sizeof(virtio_net_hdr_t)) {
       status = queue_->ReadDesc(desc.next, &desc);
-      packet_offset = device_->phys_mem().offset(desc.addr, desc.len);
+      packet_offset = phys_mem_.offset(desc.addr, desc.len);
       packet_length = static_cast<uint16_t>(desc.len);
     }
 
@@ -126,10 +128,11 @@ void VirtioNet::Stream::OnQueueReady(zx_status_t status, uint16_t index) {
 }
 
 zx_status_t VirtioNet::Stream::WaitOnFifoWritable() {
-  return fifo_writable_wait_.Begin(async_);
+  return fifo_writable_wait_.Begin(dispatcher_);
 }
 
-void VirtioNet::Stream::OnFifoWritable(async_t* async, async::WaitBase* wait,
+void VirtioNet::Stream::OnFifoWritable(async_dispatcher_t* dispatcher,
+                                       async::WaitBase* wait,
                                        zx_status_t status,
                                        const zx_packet_signal_t* signal) {
   if (status != ZX_OK) {
@@ -142,7 +145,7 @@ void VirtioNet::Stream::OnFifoWritable(async_t* async, async::WaitBase* wait,
   TRACE_DURATION("machina", "virtio_net_packet_pipe_to_fifo", "direction",
                  TA_STRING_LITERAL(rx_ ? "RX" : "TX"), "flow_id", flow_id);
   if (flow_id != 0) {
-    TRACE_FLOW_STEP("machina", "io_queue_signal", flow_id);
+    TRACE_FLOW_STEP("machina", "queue_signal", flow_id);
   }
 
   size_t num_entries_written = 0;
@@ -154,7 +157,7 @@ void VirtioNet::Stream::OnFifoWritable(async_t* async, async::WaitBase* wait,
   fifo_num_entries_ -= num_entries_written;
   if (status == ZX_ERR_SHOULD_WAIT ||
       (status == ZX_OK && fifo_num_entries_ > 0)) {
-    status = wait->Begin(async);
+    status = wait->Begin(dispatcher);
     if (status != ZX_OK) {
       FXL_LOG(INFO) << "Async wait failed on fifo writable: " << status;
     }
@@ -169,10 +172,11 @@ void VirtioNet::Stream::OnFifoWritable(async_t* async, async::WaitBase* wait,
 }
 
 zx_status_t VirtioNet::Stream::WaitOnFifoReadable() {
-  return fifo_readable_wait_.Begin(async_);
+  return fifo_readable_wait_.Begin(dispatcher_);
 }
 
-void VirtioNet::Stream::OnFifoReadable(async_t* async, async::WaitBase* wait,
+void VirtioNet::Stream::OnFifoReadable(async_dispatcher_t* dispatcher,
+                                       async::WaitBase* wait,
                                        zx_status_t status,
                                        const zx_packet_signal_t* signal) {
   if (status != ZX_OK) {
@@ -185,7 +189,7 @@ void VirtioNet::Stream::OnFifoReadable(async_t* async, async::WaitBase* wait,
   TRACE_DURATION("machina", "virtio_net_packet_return_to_queue", "direction",
                  TA_STRING_LITERAL(rx_ ? "RX" : "TX"), "flow_id", flow_id);
   if (flow_id != 0) {
-    TRACE_FLOW_END("machina", "io_queue_signal", flow_id);
+    TRACE_FLOW_END("machina", "queue_signal", flow_id);
   }
 
   // Dequeue entries for the Ethernet device.
@@ -194,7 +198,7 @@ void VirtioNet::Stream::OnFifoReadable(async_t* async, async::WaitBase* wait,
   status = zx_fifo_read(fifo_, sizeof(entries[0]), entries, countof(entries),
                         &num_entries_read);
   if (status == ZX_ERR_SHOULD_WAIT) {
-    status = wait->Begin(async);
+    status = wait->Begin(dispatcher);
     if (status != ZX_OK) {
       FXL_LOG(INFO) << "Async wait failed on fifo readable: " << status;
     }
@@ -215,20 +219,19 @@ void VirtioNet::Stream::OnFifoReadable(async_t* async, async::WaitBase* wait,
     }
   }
 
-  status = wait->Begin(async);
+  status = wait->Begin(dispatcher);
   if (status != ZX_OK) {
     FXL_LOG(INFO) << "Async wait failed on fifo readable: " << status;
   }
 }
 
-VirtioNet::VirtioNet(const PhysMem& phys_mem, async_t* async)
-    : VirtioDeviceBase(phys_mem),
-      rx_stream_(this, async, rx_queue(), rx_trace_flow_id()),
-      tx_stream_(this, async, tx_queue(), tx_trace_flow_id()) {
+VirtioNet::VirtioNet(const PhysMem& phys_mem, async_dispatcher_t* dispatcher)
+    // TODO(abdulla): Support VIRTIO_NET_F_STATUS via IOCTL_ETHERNET_GET_STATUS.
+    : VirtioDevice(phys_mem, VIRTIO_NET_F_MAC),
+      rx_stream_(phys_mem, dispatcher, rx_queue(), rx_trace_flow_id()),
+      tx_stream_(phys_mem, dispatcher, tx_queue(), tx_trace_flow_id()) {
   config_.status = VIRTIO_NET_S_LINK_UP;
   config_.max_virtqueue_pairs = 1;
-  // TODO(abdulla): Support VIRTIO_NET_F_STATUS via IOCTL_ETHERNET_GET_STATUS.
-  add_device_features(VIRTIO_NET_F_MAC);
 }
 
 VirtioNet::~VirtioNet() {
@@ -261,7 +264,7 @@ zx_status_t VirtioNet::Start(const char* path) {
   // is exposed to the Ethernet server.
   zx_handle_t vmo;
   zx_status_t status =
-      zx_handle_duplicate(phys_mem().vmo().get(), ZX_RIGHT_SAME_RIGHTS, &vmo);
+      zx_handle_duplicate(phys_mem_.vmo().get(), ZX_RIGHT_SAME_RIGHTS, &vmo);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to duplicate guest physical memory";
     return status;

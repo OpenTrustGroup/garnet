@@ -2,21 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#![allow(dead_code)]
+use crate::client;
 
-use fidl::{self, endpoints2::create_endpoints};
-use futures::prelude::*;
-use legacy;
-use fidl_wlan_stats;
-use fidl_mlme;
-use fidl_sme;
-use std::sync::{Arc, Mutex};
-use wlan_service;
-use zx;
+use {
+    fidl_fuchsia_wlan_device_service as wlan_service,
+    fidl_fuchsia_wlan_mlme as fidl_mlme,
+    fidl_fuchsia_wlan_service as legacy,
+    fidl_fuchsia_wlan_sme as fidl_sme,
+    fidl_fuchsia_wlan_stats as fidl_wlan_stats,
+    fidl::{self, endpoints2::create_endpoints},
+    fuchsia_async::unsafe_many_futures,
+    fuchsia_zircon as zx,
+    futures::{prelude::*, channel::oneshot},
+    std::sync::{Arc, Mutex},
+};
 
 #[derive(Clone)]
 pub struct Client {
     pub service: wlan_service::DeviceServiceProxy,
+    pub client: client::Client,
     pub sme: fidl_sme::ClientSmeProxy,
     pub iface_id: u16
 }
@@ -56,92 +60,81 @@ impl ClientRef {
     }
 }
 
+const MAX_CONCURRENT_WLAN_REQUESTS: usize = 1000;
+
 pub fn serve_legacy(requests: legacy::WlanRequestStream, client: ClientRef)
-    -> impl Future<Item = (), Error = fidl::Error>
+    -> impl Future<Output = Result<(), fidl::Error>>
 {
-    many_futures!(WlanFut, [Scan, Connect, Disconnect, Status, StartBss, StopBss, Stats]);
-    requests.for_each_concurrent(move |request| match request {
+    unsafe_many_futures!(WlanFut, [Scan, Connect, Disconnect, Status, StartBss, StopBss, Stats]);
+    requests.try_for_each_concurrent(MAX_CONCURRENT_WLAN_REQUESTS, move |request| match request {
         legacy::WlanRequest::Scan { req, responder } => WlanFut::Scan(
             scan(&client, req)
-                .then(move |r| match r {
-                    Ok(mut r) => responder.send(&mut r),
-                    Err(e) => e.never_into()
-                })
+                .map(move |mut r| responder.send(&mut r))
         ),
         legacy::WlanRequest::Connect { req, responder } => WlanFut::Connect(
             connect(&client, req)
-                .then(move |r| match r {
-                    Ok(mut r) => responder.send(&mut r),
-                    Err(e) => e.never_into()
-                })
+                .map(move |mut r| responder.send(&mut r))
         ),
         legacy::WlanRequest::Disconnect { responder } => WlanFut::Disconnect({
-            eprintln!("Disconnect() is not implemented");
-            responder.send(&mut not_supported()).into_future()
+            disconnect(client.clone())
+                .map(move |mut r| responder.send(&mut r))
         }),
         legacy::WlanRequest::Status { responder } => WlanFut::Status(
             status(&client)
-                .then(move |r| match r {
-                    Ok(mut r) => responder.send(&mut r),
-                    Err(e) => e.never_into()
-                })
+                .map(move |mut r| responder.send(&mut r))
         ),
         legacy::WlanRequest::StartBss { responder, .. } => WlanFut::StartBss({
             eprintln!("StartBss() is not implemented");
-            responder.send(&mut not_supported()).into_future()
+            future::ready(responder.send(&mut not_supported()))
         }),
         legacy::WlanRequest::StopBss { responder } => WlanFut::StopBss({
             eprintln!("StopBss() is not implemented");
-            responder.send(&mut not_supported()).into_future()
+            future::ready(responder.send(&mut not_supported()))
         }),
         legacy::WlanRequest::Stats { responder } => WlanFut::Stats(
             stats(&client)
-                .then(move |r| match r {
-                    Ok(mut r) => responder.send(&mut r),
-                    Err(e) => e.never_into()
-                })
+                .map(move |mut r| responder.send(&mut r))
         ),
-    }).map(|_| ())
+    })
 }
 
 fn scan(client: &ClientRef, legacy_req: legacy::ScanRequest)
-    -> impl Future<Item = legacy::ScanResult, Error = Never>
+    -> impl Future<Output = legacy::ScanResult>
 {
-    client.get()
-        .into_future()
+    future::ready(client.get())
         .and_then(move |client| {
-            start_scan_txn(&client, legacy_req)
+            future::ready(start_scan_txn(&client, legacy_req)
                 .map_err(|e| {
                     eprintln!("Failed to start a scan transaction: {}", e);
                     internal_error()
-                })
+                }))
         })
         .and_then(|scan_txn| scan_txn.take_event_stream()
             .map_err(|e| {
                 eprintln!("Error reading from scan transaction stream: {}", e);
                 internal_error()
             })
-            .fold((Vec::new(), false), |(mut old_aps, _done), event| {
-                match event {
+            .try_fold((Vec::new(), false), |(mut old_aps, _done), event| {
+                future::ready(match event {
                     fidl_sme::ScanTransactionEvent::OnResult { aps } => {
                         old_aps.extend(aps);
                         Ok((old_aps, false))
                     },
                     fidl_sme::ScanTransactionEvent::OnFinished { } => Ok((old_aps, true)),
                     fidl_sme::ScanTransactionEvent::OnError { error } => Err(convert_scan_err(error))
-                }
+                })
             }))
         .and_then(|(aps, done)| {
-            if !done {
+            future::ready(if !done {
                 eprintln!("Failed to fetch all results before the channel was closed");
                 Err(internal_error())
             } else {
                 Ok(aps.into_iter().map(|ess| convert_bss_info(ess.best_bss)).collect())
-            }
+            })
         })
-        .then(|r| match r {
-            Ok(aps) => Ok(legacy::ScanResult { error: success(), aps: Some(aps) }),
-            Err(error) => Ok(legacy::ScanResult { error, aps: None })
+        .map(|r| match r {
+            Ok(aps) => legacy::ScanResult { error: success(), aps: Some(aps) },
+            Err(error) => legacy::ScanResult { error, aps: None },
         })
 }
 
@@ -159,8 +152,8 @@ fn start_scan_txn(client: &Client, legacy_req: legacy::ScanRequest)
 fn convert_scan_err(error: fidl_sme::ScanError) -> legacy::Error {
     legacy::Error {
         code: match error.code {
-            fidl_sme::ScanErrorCode::NotSupported
-            => legacy::ErrCode::NotSupported
+            fidl_sme::ScanErrorCode::NotSupported => legacy::ErrCode::NotSupported,
+            fidl_sme::ScanErrorCode::InternalError => legacy::ErrCode::Internal,
         },
         description: error.message
     }
@@ -182,58 +175,64 @@ fn convert_bss_info(bss: fidl_sme::BssInfo) -> legacy::Ap {
 }
 
 fn connect(client: &ClientRef, legacy_req: legacy::ConnectConfig)
-    -> impl Future<Item = legacy::Error, Error = Never>
+    -> impl Future<Output = legacy::Error>
 {
-    client.get()
-        .into_future()
-        .and_then(|client| {
-            start_connect_txn(&client, legacy_req)
+    future::ready(client.get())
+        .and_then(move |client| {
+            let (responder, receiver) = oneshot::channel();
+            let req = client::ConnectRequest {
+                ssid: legacy_req.ssid.as_bytes().to_vec(),
+                password: legacy_req.pass_phrase.as_bytes().to_vec(),
+                responder
+            };
+            future::ready(client.client.connect(req)
                 .map_err(|e| {
                     eprintln!("Failed to start a connect transaction: {}", e);
                     internal_error()
+                }))
+                .and_then(move |()| {
+                    receiver.map_err(|_e| {
+                        eprintln!("Did not receive a connect result");
+                        internal_error()
+                    })
                 })
         })
-        .and_then(|txn| txn.take_event_stream()
-            .map_err(|e| {
-                eprintln!("Error reading from connect transaction stream: {}", e);
-                internal_error()
-            })
-            .filter_map(|event| match event {
-                fidl_sme::ConnectTransactionEvent::OnFinished { code } => Ok(Some(code)),
-            })
-            .next()
-            .map_err(|(e, _stream)| e)
-        )
-        .and_then(|(code, _stream)| match code {
-            None => {
-                eprintln!("Connect transaction ended abruptly");
-                Ok(internal_error())
-            },
-            Some(fidl_sme::ConnectResultCode::Success) => Ok(success()),
-            Some(fidl_sme::ConnectResultCode::Canceled)
-                => Ok(error_message("Request was canceled")),
-            Some(fidl_sme::ConnectResultCode::Failed)
-                => Ok(error_message("Failed to join"))
-        })
-        .recover(|e| e)
+        .map_ok(convert_connect_result)
+        .unwrap_or_else(|e| e)
 }
 
-fn start_connect_txn(client: &Client, legacy_req: legacy::ConnectConfig)
-    -> Result<fidl_sme::ConnectTransactionProxy, fidl::Error>
-{
-    let (connect_txn, remote) = create_endpoints()?;
-    let mut req = fidl_sme::ConnectRequest {
-        ssid: legacy_req.ssid.as_bytes().to_vec(),
+async fn disconnect(client: ClientRef) -> legacy::Error {
+    let client = match client.get() {
+        Ok(c) => c,
+        Err(e) => return e,
     };
-    client.sme.connect(&mut req, Some(remote))?;
-    Ok(connect_txn)
+    let (responder, receiver) = oneshot::channel();
+    if let Err(e) = client.client.disconnect(responder) {
+        eprintln!("Failed to enqueue a disconnect command: {}", e);
+        return internal_error();
+    }
+    match await!(receiver) {
+        Ok(()) => success(),
+        Err(_) => error_message("Request was canceled"),
+    }
+}
+
+fn convert_connect_result(code: fidl_sme::ConnectResultCode) -> legacy::Error {
+    match code {
+        fidl_sme::ConnectResultCode::Success => success(),
+        fidl_sme::ConnectResultCode::Canceled
+            => error_message("Request was canceled"),
+        fidl_sme::ConnectResultCode::BadCredentials
+            => error_message("Failed to join; bad credentials"),
+        fidl_sme::ConnectResultCode::Failed
+            => error_message("Failed to join")
+    }
 }
 
 fn status(client: &ClientRef)
-    -> impl Future<Item = legacy::WlanStatus, Error = Never>
+    -> impl Future<Output = legacy::WlanStatus>
 {
-    client.get()
-        .into_future()
+    future::ready(client.get())
         .and_then(|client| {
             client.sme.status()
                 .map_err(|e| {
@@ -241,7 +240,7 @@ fn status(client: &ClientRef)
                     internal_error()
                 })
         })
-        .then(|r| Ok(match r {
+        .map(|r| match r {
             Ok(status) => legacy::WlanStatus {
                 error: success(),
                 state: convert_state(&status),
@@ -252,7 +251,7 @@ fn status(client: &ClientRef)
                 state: legacy::State::Unknown,
                 current_ap: None
             }
-        }))
+        })
 }
 
 fn convert_state(status: &fidl_sme::ClientStatusResponse) -> legacy::State {
@@ -267,10 +266,9 @@ fn convert_state(status: &fidl_sme::ClientStatusResponse) -> legacy::State {
 }
 
 fn stats(client: &ClientRef)
-    -> impl Future<Item = legacy::WlanStats, Error = Never>
+    -> impl Future<Output = legacy::WlanStats>
 {
-    client.get()
-        .into_future()
+    future::ready(client.get())
         .and_then(|client| {
             client.service.get_iface_stats(client.iface_id)
                 .map_err(|e| {
@@ -278,7 +276,7 @@ fn stats(client: &ClientRef)
                     internal_error()
                 })
         })
-        .then(|r| Ok(match r {
+        .map(|r| match r {
             Ok((zx::sys::ZX_OK, Some(iface_stats))) => legacy::WlanStats {
                 error: success(),
                 stats: *iface_stats,
@@ -294,7 +292,7 @@ fn stats(client: &ClientRef)
                 error,
                 stats: empty_stats(),
             }
-        }))
+        })
 }
 
 fn internal_error() -> legacy::Error {

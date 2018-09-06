@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_HCI_CONTROL_PACKETS_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_HCI_CONTROL_PACKETS_H_
 
 #include <memory>
 
@@ -11,6 +12,7 @@
 #include "garnet/drivers/bluetooth/lib/common/byte_buffer.h"
 #include "garnet/drivers/bluetooth/lib/hci/hci.h"
 #include "garnet/drivers/bluetooth/lib/hci/packet.h"
+#include "garnet/drivers/bluetooth/lib/hci/status.h"
 #include "lib/fxl/macros.h"
 
 namespace btlib {
@@ -109,3 +111,10 @@ class Packet<EventHeader> : public PacketBase<EventHeader, EventPacket> {
 
 }  // namespace hci
 }  // namespace btlib
+
+// Convenience macros to check and log any non-Success status of an event.
+// Evaluate to true if the event status is not success.
+#define hci_is_error(event, flag, tag, fmt...) \
+  bt_is_error(event.ToStatus(), flag, tag, fmt)
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_HCI_CONTROL_PACKETS_H_

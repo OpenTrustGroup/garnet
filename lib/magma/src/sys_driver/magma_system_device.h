@@ -49,11 +49,6 @@ public:
     // Returns the device id. 0 is invalid.
     uint32_t GetDeviceId();
 
-    // Takes ownership of handle and either wraps it up in new MagmaSystemBuffer or
-    // closes it and returns an existing MagmaSystemBuffer backed by the same memory
-    std::shared_ptr<MagmaSystemBuffer> ImportBuffer(uint32_t handle);
-    void ReleaseBuffer(uint64_t id);
-
     // Called on driver thread
     void Shutdown();
 
@@ -63,7 +58,7 @@ public:
     // Called on connection thread
     void ConnectionClosed(std::thread::id thread_id);
 
-    void DumpStatus() { msd_device_dump_status(msd_dev()); }
+    void DumpStatus(uint32_t dump_type) { msd_device_dump_status(msd_dev(), dump_type); }
 
     magma::Status Query(uint32_t id, uint64_t* value_out)
     {
@@ -72,9 +67,6 @@ public:
 
 private:
     msd_device_unique_ptr_t msd_dev_;
-
-    std::unordered_map<uint64_t, std::weak_ptr<MagmaSystemBuffer>> buffer_map_;
-    std::mutex buffer_map_mutex_;
 
     struct Connection {
         std::thread thread;
@@ -85,4 +77,4 @@ private:
     std::mutex connection_list_mutex_;
 };
 
-#endif  // GARNET_LIB_MAGMA_SRC_SYS_DRIVER_MAGMA_SYSTEM_DEVICE_H_
+#endif // GARNET_LIB_MAGMA_SRC_SYS_DRIVER_MAGMA_SYSTEM_DEVICE_H_

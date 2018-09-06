@@ -6,6 +6,7 @@
 
 #include "firmware_blob.h"
 #include "macros.h"
+#include "memory_barriers.h"
 
 using MregSeqInfo = AvScratch4;
 using MregPicInfo = AvScratch5;
@@ -35,7 +36,13 @@ using MregFatalError = AvScratchF;
 Mpeg12Decoder::~Mpeg12Decoder() {
   owner_->core()->StopDecoding();
   owner_->core()->WaitForIdle();
-  io_buffer_release(&cc_buffer_);
+
+  BarrierBeforeRelease();
+  io_buffer_release(&workspace_buffer_);
+  for (auto& frame : video_frames_) {
+    owner_->FreeCanvas(std::move(frame.y_canvas));
+    owner_->FreeCanvas(std::move(frame.uv_canvas));
+  }
 }
 
 void Mpeg12Decoder::SetFrameReadyNotifier(FrameReadyNotifier notifier) {
@@ -91,16 +98,24 @@ zx_status_t Mpeg12Decoder::Initialize() {
   if (status != ZX_OK)
     return status;
 
-  enum { kCcBufSize = 5 * 1024 };
+  enum { kWorkspaceSize = 2 * (1 << 16) };  // 128 kB
 
-  status = io_buffer_init(&cc_buffer_, owner_->bti(), kCcBufSize,
+  status = io_buffer_init(&workspace_buffer_, owner_->bti(), kWorkspaceSize,
                           IO_BUFFER_RW | IO_BUFFER_CONTIG);
   if (status != ZX_OK) {
-    DECODE_ERROR("Failed to make cc buffer");
+    DECODE_ERROR("Failed to make workspace buffer");
     return status;
   }
+  io_buffer_cache_flush(&workspace_buffer_, 0, kWorkspaceSize);
+
+  BarrierAfterFlush();
+
+  // The first part of the workspace buffer is used for the CC buffer, which
+  // stores metadata that was encoded in the stream.
+  enum { kCcBufSize = 5 * 1024 };
   MregCoMvStart::Get()
-      .FromValue(truncate_to_32(io_buffer_phys(&cc_buffer_)) + kCcBufSize)
+      .FromValue(truncate_to_32(io_buffer_phys(&workspace_buffer_)) +
+                 kCcBufSize)
       .WriteTo(owner_->dosbus());
 
   Mpeg12Reg::Get().FromValue(0).WriteTo(owner_->dosbus());
@@ -148,17 +163,42 @@ void Mpeg12Decoder::HandleInterrupt() {
       "Received buffer index: %d info: %x, offset: %x, width: %d, height: %d\n",
       index, info.reg_value(), offset.reg_value(), width, height);
 
-  auto& frame = video_frames_[index];
+  auto& frame = video_frames_[index].frame;
   frame->width = std::min(width, kMaxWidth);
+  frame->display_width = width;
   frame->height = std::min(height, kMaxHeight);
+  frame->display_height = height;
   if (notifier_)
-    notifier_(frame.get());
+    notifier_(frame);
 
   MregBufferOut::Get().FromValue(0).WriteTo(owner_->dosbus());
+  // Some returned frames may have been buffered up earlier, so try to return
+  // them now that the firmware had a chance to do some work.
+  TryReturnFrames();
 
-  // Return buffer to decoder.
-  if (MregBufferIn::Get().ReadFrom(owner_->dosbus()).reg_value() == 0) {
-    MregBufferIn::Get().FromValue(index + 1).WriteTo(owner_->dosbus());
+  if (AvScratchM::Get().ReadFrom(owner_->dosbus()).reg_value() & (1 << 16)) {
+    DLOG("ccbuf has new data\n");
+  }
+}
+
+void Mpeg12Decoder::ReturnFrame(std::shared_ptr<VideoFrame> video_frame) {
+  returned_frames_.push_back(video_frame);
+  TryReturnFrames();
+}
+
+void Mpeg12Decoder::TryReturnFrames() {
+  while (!returned_frames_.empty()) {
+    std::shared_ptr<VideoFrame> frame = returned_frames_.back();
+    assert(frame->index < video_frames_.size());
+    assert(video_frames_[frame->index].frame == frame);
+    // Return buffer to decoder.
+    if (MregBufferIn::Get().ReadFrom(owner_->dosbus()).reg_value() == 0) {
+      MregBufferIn::Get().FromValue(frame->index + 1).WriteTo(owner_->dosbus());
+    } else {
+      // No return slots are free, so give up for now.
+      return;
+    }
+    returned_frames_.pop_back();
   }
 }
 
@@ -178,26 +218,25 @@ zx_status_t Mpeg12Decoder::InitializeVideoBuffers() {
 
     frame->stride = kMaxWidth;
     frame->uv_plane_offset = kMaxWidth * kMaxHeight;
+    frame->index = i;
     io_buffer_cache_flush(&frame->buffer, 0, buffer_size);
 
-    uint32_t buffer_start = truncate_to_32(io_buffer_phys(&frame->buffer));
-    // Try to avoid overlapping with any framebuffers.
-    // TODO(ZX-2154): Use canvas driver to allocate indices.
-    constexpr uint32_t kCanvasOffset = 5;
-    // Linux code uses 32x32 block size (and different endianness) for these for
-    // some reason.
-    uint32_t y_index = 2 * i + kCanvasOffset;
-    uint32_t uv_index = y_index + 1;
-    // NV12 output format.
-    owner_->ConfigureCanvas(y_index, buffer_start, kMaxWidth, kMaxHeight, 0,
-                            DmcCavLutDatah::kBlockModeLinear);
-    owner_->ConfigureCanvas(uv_index, buffer_start + frame->uv_plane_offset,
-                            kMaxWidth, kMaxHeight / 2, 0,
-                            DmcCavLutDatah::kBlockModeLinear);
+    auto y_canvas = owner_->ConfigureCanvas(&frame->buffer, 0, frame->stride,
+                                            kMaxHeight, 0, 0);
+    auto uv_canvas =
+        owner_->ConfigureCanvas(&frame->buffer, frame->uv_plane_offset,
+                                frame->stride, kMaxHeight / 2, 0, 0);
+    if (!y_canvas || !uv_canvas) {
+      DECODE_ERROR("Failed to allocate canvases\n");
+      return ZX_ERR_NO_MEMORY;
+    }
     AvScratch::Get(i)
-        .FromValue(y_index | (uv_index << 8) | (uv_index << 16))
+        .FromValue(y_canvas->index() | (uv_canvas->index() << 8) |
+                   (uv_canvas->index() << 16))
         .WriteTo(owner_->dosbus());
-    video_frames_.push_back(std::move(frame));
+    video_frames_.push_back(
+        {std::move(frame), std::move(y_canvas), std::move(uv_canvas)});
   }
+  BarrierAfterFlush();
   return ZX_OK;
 }

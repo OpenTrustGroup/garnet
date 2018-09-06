@@ -7,10 +7,14 @@
 #include "garnet/public/lib/escher/test/gtest_escher.h"
 #include "garnet/public/lib/escher/test/vk/vulkan_tester.h"
 
+#include "lib/escher/defaults/default_shader_program_factory.h"
+#include "lib/escher/geometry/clip_planes.h"
 #include "lib/escher/geometry/tessellation.h"
 #include "lib/escher/shape/mesh.h"
+#include "lib/escher/util/string_utils.h"
 #include "lib/escher/vk/command_buffer.h"
 #include "lib/escher/vk/shader_module_template.h"
+#include "lib/escher/vk/shader_variant_args.h"
 #include "lib/escher/vk/texture.h"
 
 namespace {
@@ -18,7 +22,6 @@ using namespace escher;
 
 class ShaderProgramTest : public ::testing::Test, public VulkanTester {
  protected:
-  const HackFilesystemPtr& filesystem() const { return filesystem_; }
   const MeshPtr& ring_mesh1() const { return ring_mesh1_; }
   const MeshPtr& ring_mesh2() const { return ring_mesh2_; }
   const MeshPtr& sphere_mesh() const { return sphere_mesh_; }
@@ -28,8 +31,8 @@ class ShaderProgramTest : public ::testing::Test, public VulkanTester {
     auto escher = test::GetEscher();
     EXPECT_TRUE(escher->Cleanup());
 
-    filesystem_ = fxl::MakeRefCounted<HackFilesystem>();
-    bool success = filesystem_->InitializeWithRealFiles(
+    auto factory = escher->shader_program_factory();
+    bool success = factory->filesystem()->InitializeWithRealFiles(
         {"shaders/model_renderer/default_position.vert",
          "shaders/model_renderer/main.frag", "shaders/model_renderer/main.vert",
          "shaders/model_renderer/shadow_map_generation.frag",
@@ -55,38 +58,56 @@ class ShaderProgramTest : public ::testing::Test, public VulkanTester {
     escher->vk_device().waitIdle();
     EXPECT_TRUE(escher->Cleanup());
 
-    filesystem_ = nullptr;
+    escher->shader_program_factory()->Clear();
   }
 
-  HackFilesystemPtr filesystem_;
   MeshPtr ring_mesh1_;
   MeshPtr ring_mesh2_;
   MeshPtr sphere_mesh_;
 };
 
+VK_TEST_F(ShaderProgramTest, CachedVariants) {
+  auto escher = test::GetEscher();
+
+  ShaderVariantArgs variant1(
+      {{"NO_SHADOW_LIGHTING_PASS", "1"},
+       {"USE_UV_ATTRIBUTE", "1"},
+       {"NUM_CLIP_PLANES", ToString(ClipPlanes::kNumPlanes)}});
+  ShaderVariantArgs variant2(
+      {{"NO_SHADOW_LIGHTING_PASS", "1"},
+       {"USE_UV_ATTRIBUTE", "0"},
+       {"NUM_CLIP_PLANES", ToString(ClipPlanes::kNumPlanes)}});
+
+  const char* kMainVert = "shaders/model_renderer/main.vert";
+  const char* kMainFrag = "shaders/model_renderer/main.frag";
+
+  auto program1 = escher->GetGraphicsProgram(kMainVert, kMainFrag, variant1);
+  auto program2 = escher->GetGraphicsProgram(kMainVert, kMainFrag, variant1);
+  auto program3 = escher->GetGraphicsProgram(kMainVert, kMainFrag, variant2);
+  auto program4 = escher->GetGraphicsProgram(kMainVert, kMainFrag, variant2);
+
+  // The first two programs use the same variant args, so should be identical,
+  // and similarly with the last two.
+  EXPECT_EQ(program1, program2);
+  EXPECT_EQ(program3, program4);
+  EXPECT_NE(program1, program3);
+}
+
 // TODO(ES-83): we need to set up so many meshes, materials, framebuffers, etc.
 // before we can obtain pipelines, we might as well just make this an end-to-end
 // test and actually render.  Or, go the other direction and manually set up
 // state in a standalone CommandBufferPipelineState object.
-VK_TEST_F(ShaderProgramTest, BasicVariants) {
+VK_TEST_F(ShaderProgramTest, GeneratePipelines) {
   auto escher = test::GetEscher();
 
-  auto vertex_template = fxl::MakeRefCounted<ShaderModuleTemplate>(
-      escher->vk_device(), escher->shaderc_compiler(), ShaderStage::kVertex,
-      "shaders/model_renderer/main.vert", filesystem());
+  ShaderVariantArgs variant(
+      {{"NO_SHADOW_LIGHTING_PASS", "1"},
+       {"USE_UV_ATTRIBUTE", "1"},
+       {"NUM_CLIP_PLANES", ToString(ClipPlanes::kNumPlanes)}});
 
-  auto fragment_template = fxl::MakeRefCounted<ShaderModuleTemplate>(
-      escher->vk_device(), escher->shaderc_compiler(), ShaderStage::kFragment,
-      "shaders/model_renderer/main.frag", filesystem());
-
-  ShaderModuleVariantArgs variant(
-      {{"NO_SHADOW_LIGHTING_PASS", "1"}, {"USE_UV_ATTRIBUTE", "1"}});
-
-  auto vertex_module = vertex_template->GetShaderModuleVariant(variant);
-  auto fragment_module = fragment_template->GetShaderModuleVariant(variant);
-
-  auto program = ShaderProgram::NewGraphics(escher->resource_recycler(),
-                                            {vertex_module, fragment_module});
+  auto program =
+      escher->GetGraphicsProgram("shaders/model_renderer/main.vert",
+                                 "shaders/model_renderer/main.frag", variant);
 
   auto cb = CommandBuffer::NewForGraphics(escher);
 
@@ -137,17 +158,17 @@ VK_TEST_F(ShaderProgramTest, BasicVariants) {
   cb->BindTexture(1, 1, noise_texture);
 
   auto mesh = ring_mesh1();
+  auto ab = &mesh->attribute_buffer(0);
 
   cb->BindIndices(mesh->index_buffer(), mesh->index_buffer_offset(),
                   vk::IndexType::eUint32);
 
-  cb->BindVertices(0, mesh->vertex_buffer(), mesh->vertex_buffer_offset(),
-                   mesh->spec().GetStride());
+  cb->BindVertices(0, ab->buffer, ab->offset, ab->stride);
   cb->SetVertexAttributes(
       0, 0, vk::Format::eR32G32Sfloat,
-      mesh->spec().GetAttributeOffset(MeshAttribute::kPosition2D));
+      mesh->spec().attribute_offset(0, MeshAttribute::kPosition2D));
   cb->SetVertexAttributes(0, 2, vk::Format::eR32G32Sfloat,
-                          mesh->spec().GetAttributeOffset(MeshAttribute::kUV));
+                          mesh->spec().attribute_offset(0, MeshAttribute::kUV));
 
   // Set the command buffer to a known default state, and obtain a pipeline.
   cb->SetToDefaultState(CommandBuffer::DefaultState::kOpaque);
@@ -172,36 +193,36 @@ VK_TEST_F(ShaderProgramTest, BasicVariants) {
   // Changing to a different mesh with the same layout doesn't change the
   // obtained pipeline.
   mesh = ring_mesh2();
+  ab = &mesh->attribute_buffer(0);
 
   cb->BindIndices(mesh->index_buffer(), mesh->index_buffer_offset(),
                   vk::IndexType::eUint32);
 
-  cb->BindVertices(0, mesh->vertex_buffer(), mesh->vertex_buffer_offset(),
-                   mesh->spec().GetStride());
+  cb->BindVertices(0, ab->buffer, ab->offset, ab->stride);
 
   cb->SetVertexAttributes(
       0, 0, vk::Format::eR32G32Sfloat,
-      mesh->spec().GetAttributeOffset(MeshAttribute::kPosition2D));
+      mesh->spec().attribute_offset(0, MeshAttribute::kPosition2D));
   cb->SetVertexAttributes(0, 2, vk::Format::eR32G32Sfloat,
-                          mesh->spec().GetAttributeOffset(MeshAttribute::kUV));
+                          mesh->spec().attribute_offset(0, MeshAttribute::kUV));
 
   EXPECT_EQ(depth_readonly_pipeline, ObtainGraphicsPipeline(cb));
 
   // Changing to a mesh with a different layout results in a different pipeline.
   // pipeline.
   mesh = sphere_mesh();
+  ab = &mesh->attribute_buffer(0);
 
   cb->BindIndices(mesh->index_buffer(), mesh->index_buffer_offset(),
                   vk::IndexType::eUint32);
 
-  cb->BindVertices(0, mesh->vertex_buffer(), mesh->vertex_buffer_offset(),
-                   mesh->spec().GetStride());
+  cb->BindVertices(0, ab->buffer, ab->offset, ab->stride);
 
   cb->SetVertexAttributes(
       0, 0, vk::Format::eR32G32B32Sfloat,
-      mesh->spec().GetAttributeOffset(MeshAttribute::kPosition3D));
+      mesh->spec().attribute_offset(0, MeshAttribute::kPosition3D));
   cb->SetVertexAttributes(2, 0, vk::Format::eR32G32Sfloat,
-                          mesh->spec().GetAttributeOffset(MeshAttribute::kUV));
+                          mesh->spec().attribute_offset(0, MeshAttribute::kUV));
 
   EXPECT_NE(depth_readonly_pipeline, ObtainGraphicsPipeline(cb));
   EXPECT_NE(vk::Pipeline(), ObtainGraphicsPipeline(cb));

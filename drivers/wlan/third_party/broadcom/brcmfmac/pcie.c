@@ -13,21 +13,10 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-//#include <asm/unaligned.h>
-//#include <linux/bcma/bcma.h>
-//#include <linux/delay.h>
-//#include <linux/firmware.h>
-//#include <linux/interrupt.h>
-//#include <linux/kernel.h>
-//#include <linux/module.h>
-//#include <linux/pci.h>
-//#include <linux/sched.h>
-//#include <linux/vmalloc.h>
-
 #include "pcie.h"
 
 #include <ddk/driver.h>
-#include <sync/completion.h>
+#include <lib/sync/completion.h>
 
 #include "brcm_hw_ids.h"
 #include "brcmu_utils.h"
@@ -260,7 +249,7 @@ struct brcmf_pciedev_info {
     struct brcmf_chip* ci;
     uint32_t coreid;
     struct brcmf_pcie_shared_info shared;
-    completion_t mbdata_resp_wait;
+    sync_completion_t mbdata_resp_wait;
     bool irq_allocated;
     bool wowl_enabled;
     uint8_t dma_idx_sz;
@@ -635,7 +624,7 @@ static void brcmf_pcie_handle_mb_data(struct brcmf_pciedev_info* devinfo) {
     }
     if (dtoh_mb_data & BRCMF_D2H_DEV_D3_ACK) {
         brcmf_dbg(PCIE, "D2H_MB_DATA: D3 ACK\n");
-        completion_signal(&devinfo->mbdata_resp_wait);
+        sync_completion_signal(&devinfo->mbdata_resp_wait);
     }
 }
 
@@ -879,7 +868,7 @@ static void* brcmf_pcie_init_dmabuffer_for_device(struct brcmf_pciedev_info* dev
     void* ring;
     uint64_t address;
 
-    ring = dma_alloc_coherent(&devinfo->pdev->dev, size, dma_handle, GFP_KERNEL);
+    ring = dma_alloc_coherent(&devinfo->pdev->dev, size, dma_handle);
     if (!ring) {
         return NULL;
     }
@@ -995,7 +984,7 @@ static zx_status_t brcmf_pcie_init_ringbuffers(struct brcmf_pciedev_info* devinf
     if (devinfo->dma_idx_sz != 0) {
         bufsz = (max_submissionrings + max_completionrings) * devinfo->dma_idx_sz * 2;
         devinfo->idxbuf =
-            dma_alloc_coherent(&devinfo->pdev->dev, bufsz, &devinfo->idxbuf_dmahandle, GFP_KERNEL);
+            dma_alloc_coherent(&devinfo->pdev->dev, bufsz, &devinfo->idxbuf_dmahandle);
         if (!devinfo->idxbuf) {
             devinfo->dma_idx_sz = 0;
         }
@@ -1121,7 +1110,7 @@ static zx_status_t brcmf_pcie_init_scratchbuffers(struct brcmf_pciedev_info* dev
 
     devinfo->shared.scratch =
         dma_zalloc_coherent(&devinfo->pdev->dev, BRCMF_DMA_D2H_SCRATCH_BUF_LEN,
-                            &devinfo->shared.scratch_dmahandle, GFP_KERNEL);
+                            &devinfo->shared.scratch_dmahandle);
     if (!devinfo->shared.scratch) {
         goto fail;
     }
@@ -1135,7 +1124,7 @@ static zx_status_t brcmf_pcie_init_scratchbuffers(struct brcmf_pciedev_info* dev
 
     devinfo->shared.ringupd =
         dma_zalloc_coherent(&devinfo->pdev->dev, BRCMF_DMA_D2H_RINGUPD_BUF_LEN,
-                            &devinfo->shared.ringupd_dmahandle, GFP_KERNEL);
+                            &devinfo->shared.ringupd_dmahandle);
     if (!devinfo->shared.ringupd) {
         goto fail;
     }
@@ -1173,7 +1162,7 @@ static zx_status_t brcmf_pcie_rx_ctlpkt(struct brcmf_device* dev, unsigned char*
 }
 
 static void brcmf_pcie_wowl_config(struct brcmf_device* dev, bool enabled) {
-    struct brcmf_bus* bus_if = dev_get_drvdata(dev);
+    struct brcmf_bus* bus_if = dev_to_bus(dev);
     struct brcmf_pciedev* buspub = bus_if->bus_priv.pcie;
     struct brcmf_pciedev_info* devinfo = buspub->devinfo;
 
@@ -1182,7 +1171,7 @@ static void brcmf_pcie_wowl_config(struct brcmf_device* dev, bool enabled) {
 }
 
 static size_t brcmf_pcie_get_ramsize(struct brcmf_device* dev) {
-    struct brcmf_bus* bus_if = dev_get_drvdata(dev);
+    struct brcmf_bus* bus_if = dev_to_bus(dev);
     struct brcmf_pciedev* buspub = bus_if->bus_priv.pcie;
     struct brcmf_pciedev_info* devinfo = buspub->devinfo;
 
@@ -1190,7 +1179,7 @@ static size_t brcmf_pcie_get_ramsize(struct brcmf_device* dev) {
 }
 
 static zx_status_t brcmf_pcie_get_memdump(struct brcmf_device* dev, void* data, size_t len) {
-    struct brcmf_bus* bus_if = dev_get_drvdata(dev);
+    struct brcmf_bus* bus_if = dev_to_bus(dev);
     struct brcmf_pciedev* buspub = bus_if->bus_priv.pcie;
     struct brcmf_pciedev_info* devinfo = buspub->devinfo;
 
@@ -1201,7 +1190,7 @@ static zx_status_t brcmf_pcie_get_memdump(struct brcmf_device* dev, void* data, 
 
 static zx_status_t brcmf_pcie_get_fwname(struct brcmf_device* dev, uint32_t chip, uint32_t chiprev,
                                          uint8_t* fw_name) {
-    struct brcmf_bus* bus_if = dev_get_drvdata(dev);
+    struct brcmf_bus* bus_if = dev_to_bus(dev);
     struct brcmf_pciedev* buspub = bus_if->bus_priv.pcie;
     struct brcmf_pciedev_info* devinfo = buspub->devinfo;
     zx_status_t ret = ZX_OK;
@@ -1318,7 +1307,7 @@ static zx_status_t brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info* devin
     brcmf_pcie_copy_mem_todev(devinfo, devinfo->ci->rambase, (void*)fw->data, fw->size);
     brcmf_dbg(TEMP, "Survived copy_mem_todev");
 
-    resetintr = get_unaligned_le32(fw->data);
+    resetintr = *(uint32_t*)&fw->data;
 
     /* reset last 4 bytes of RAM address. to be used for shared
      * area. This identifies when FW is running
@@ -1518,7 +1507,7 @@ static void brcmf_pcie_setup(struct brcmf_device* dev, zx_status_t ret,
         goto fail;
     }
 
-    bus = dev_get_drvdata(dev);
+    bus = dev_to_bus(dev);
     pcie_bus_dev = bus->bus_priv.pcie;
     devinfo = pcie_bus_dev->devinfo;
     brcmf_pcie_attach(devinfo);
@@ -1572,7 +1561,7 @@ static void brcmf_pcie_setup(struct brcmf_device* dev, zx_status_t ret,
     bus->msgbuf->max_rxbufpost = devinfo->shared.max_rxbufpost;
     bus->msgbuf->max_flowrings = devinfo->shared.max_flowrings;
 
-    devinfo->mbdata_resp_wait = COMPLETION_INIT;
+    devinfo->mbdata_resp_wait = SYNC_COMPLETION_INIT;
 
     brcmf_pcie_intr_enable(devinfo);
     if (brcmf_pcie_attach_bus(devinfo) == 0) {
@@ -1652,7 +1641,7 @@ static zx_status_t brcmf_pcie_probe(struct brcmf_pci_device* pdev) {
     bus->proto_type = BRCMF_PROTO_MSGBUF;
     bus->chip = devinfo->coreid;
     bus->wowl_supported = pci_is_pme_capable(pdev, PCI_D3hot);
-    dev_set_drvdata(&pdev->dev, bus);
+    pdev->dev.bus = bus;
 
     ret = brcmf_fw_map_chip_to_name(devinfo->ci->chip, devinfo->ci->chiprev, brcmf_pcie_fwnames,
                                     ARRAY_SIZE(brcmf_pcie_fwnames), devinfo->fw_name,
@@ -1690,7 +1679,7 @@ static void brcmf_pcie_remove(struct brcmf_pci_device* pdev) {
 
     brcmf_dbg(PCIE, "Enter\n");
 
-    bus = dev_get_drvdata(&pdev->dev);
+    bus = dev_to_bus(&pdev->dev);
     if (bus == NULL) {
         return;
     }
@@ -1723,7 +1712,7 @@ static void brcmf_pcie_remove(struct brcmf_pci_device* pdev) {
     }
 
     free(devinfo);
-    dev_set_drvdata(&pdev->dev, NULL);
+    pdev->dev.bus = NULL;
 }
 
 #ifdef CONFIG_PM
@@ -1735,15 +1724,15 @@ static zx_status_t brcmf_pcie_pm_enter_D3(struct brcmf_device* dev) {
 
     brcmf_dbg(PCIE, "Enter\n");
 
-    bus = dev_get_drvdata(dev);
+    bus = dev_to_bus(dev);
     devinfo = bus->bus_priv.pcie->devinfo;
 
     brcmf_bus_change_state(bus, BRCMF_BUS_DOWN);
 
-    completion_reset(&devinfo->mbdata_resp_wait);
+    sync_completion_reset(&devinfo->mbdata_resp_wait);
     brcmf_pcie_send_mb_data(devinfo, BRCMF_H2D_HOST_D3_INFORM);
 
-    result = completion_wait(&devinfo->mbdata_resp_wait, ZX_MSEC(BRCMF_PCIE_MBDATA_TIMEOUT_MSEC));
+    result = sync_completion_wait(&devinfo->mbdata_resp_wait, ZX_MSEC(BRCMF_PCIE_MBDATA_TIMEOUT_MSEC));
     if (result != ZX_OK) {
         brcmf_err("Timeout on response for entering D3 substate\n");
         brcmf_bus_change_state(bus, BRCMF_BUS_UP);
@@ -1763,7 +1752,7 @@ static zx_status_t brcmf_pcie_pm_leave_D3(struct brcmf_device* dev) {
 
     brcmf_dbg(PCIE, "Enter\n");
 
-    bus = dev_get_drvdata(dev);
+    bus = dev_to_bus(dev);
     devinfo = bus->bus_priv.pcie->devinfo;
     brcmf_dbg(PCIE, "Enter, dev=%p, bus=%p\n", dev, bus);
 

@@ -11,6 +11,23 @@ import (
 	"syscall/zx/fdio"
 )
 
+func IoctlGetTopoPath(m fdio.FDIO) (string, error) {
+	res, _, err := m.Ioctl(fdio.IoctlDeviceGetTopoPath, 1024, nil, nil)
+	if err != nil {
+		return "", fmt.Errorf("IOCTL_DEVICE_GET_TOPO_PATH: %v", err)
+	}
+	// If a device manages per-instance state, the path will begin with an '@' to
+	// signify that opening the path will not give the same instance. This is not
+	// relevant for netstack, so drop the leading '@' if it exists.
+	// See https://fuchsia.googlesource.com/zircon/+/master/docs/ddk/device-ops.md#open
+	// for more information on opening devices.
+	start := 0
+	if res[0] == '@' {
+		start = 1
+	}
+	return string(res[start:]), nil
+}
+
 type EthInfo struct {
 	Features uint32
 	MTU      uint32
@@ -18,18 +35,6 @@ type EthInfo struct {
 	_        [2]byte
 	_        [12]uint32
 } // eth_info_t
-
-// LINT.IfChange
-const (
-	FeatureWlan     = 0x01
-	FeatureSynth    = 0x02
-	FeatureLoopback = 0x04
-)
-
-// LINT.ThenChange(
-//	 //zircon/system/public/zircon/device/ethernet.h,
-//	 //garnet/public/lib/netstack/fidl/netstack.fidl
-// )
 
 type ethfifos struct {
 	// fifo handles
@@ -56,8 +61,8 @@ const (
 
 func IoctlGetInfo(m fdio.FDIO) (info EthInfo, err error) {
 	num := fdio.IoctlNum(fdio.IoctlKindDefault, ioctlFamilyETH, ioctlOpGetInfo)
-	res := make([]byte, 64)
-	if _, err := m.Ioctl(num, nil, res); err != nil {
+	res, _, err := m.Ioctl(num, 64, nil, nil)
+	if err != nil {
 		return info, fmt.Errorf("IOCTL_ETHERNET_GET_INFO: %v", err)
 	}
 	info.Features = binary.LittleEndian.Uint32(res)
@@ -68,24 +73,30 @@ func IoctlGetInfo(m fdio.FDIO) (info EthInfo, err error) {
 
 func IoctlGetFifos(m fdio.FDIO) (fifos ethfifos, err error) {
 	num := fdio.IoctlNum(fdio.IoctlKindGetTwoHandles, ioctlFamilyETH, ioctlOpGetFifos)
-	res := make([]byte, 8)
-	h, err := m.Ioctl(num, nil, res)
+	res, h, err := m.Ioctl(num, 8+(zx.HandleSize*2), nil, nil)
 	if err != nil {
 		return fifos, fmt.Errorf("IOCTL_ETHERNET_GET_FIFOS: %v", err)
 	}
-	if len(res) != 8 {
+	if len(h) != 2 {
+		for i := range h {
+			h[i].Close()
+		}
+		return fifos, fmt.Errorf("IOCTL_ETHERNET_GET_FIFOS: bad hcount: %d", len(h))
+	}
+	if len(res) != int(8+(zx.HandleSize*2)) {
 		return fifos, fmt.Errorf("IOCTL_ETHERNET_GET_FIFOS: bad length: %d", len(res))
 	}
 	fifos.tx = h[0]
 	fifos.rx = h[1]
-	fifos.txDepth = binary.LittleEndian.Uint32(res)
-	fifos.rxDepth = binary.LittleEndian.Uint32(res[4:])
+	fifos.txDepth = binary.LittleEndian.Uint32(res[8:])
+	fifos.rxDepth = binary.LittleEndian.Uint32(res[12:])
 	return fifos, nil
 }
 
 func IoctlSetIobuf(m fdio.FDIO, h zx.Handle) error {
 	num := fdio.IoctlNum(fdio.IoctlKindSetHandle, ioctlFamilyETH, ioctlOpSetIobuf)
-	err := m.IoctlSetHandle(num, h)
+	in := make([]byte, zx.HandleSize)
+	_, _, err := m.Ioctl(num, 0, in, []zx.Handle{h})
 	if err != nil {
 		return fmt.Errorf("IOCTL_ETHERNET_SET_IOBUF: %v", err)
 	}
@@ -94,7 +105,7 @@ func IoctlSetIobuf(m fdio.FDIO, h zx.Handle) error {
 
 func IoctlSetClientName(m fdio.FDIO, name []byte) error {
 	num := fdio.IoctlNum(fdio.IoctlKindDefault, ioctlFamilyETH, ioctlOpSetClientName)
-	_, err := m.Ioctl(num, name, nil)
+	_, _, err := m.Ioctl(num, 0, name, nil)
 	if err != nil {
 		return fmt.Errorf("IOCTL_ETHERNET_SET_CLIENT_NAME: %v", err)
 	}
@@ -103,7 +114,7 @@ func IoctlSetClientName(m fdio.FDIO, name []byte) error {
 
 func IoctlStart(m fdio.FDIO) error {
 	num := fdio.IoctlNum(fdio.IoctlKindDefault, ioctlFamilyETH, ioctlOpStart)
-	_, err := m.Ioctl(num, nil, nil)
+	_, _, err := m.Ioctl(num, 0, nil, nil)
 	if err != nil {
 		return fmt.Errorf("IOCTL_ETHERNET_START: %v", err)
 	}
@@ -112,7 +123,7 @@ func IoctlStart(m fdio.FDIO) error {
 
 func IoctlStop(m fdio.FDIO) error {
 	num := fdio.IoctlNum(fdio.IoctlKindDefault, ioctlFamilyETH, ioctlOpStop)
-	_, err := m.Ioctl(num, nil, nil)
+	_, _, err := m.Ioctl(num, 0, nil, nil)
 	if err != nil {
 		return fmt.Errorf("IOCTL_ETHERNET_STOP: %v", err)
 	}
@@ -121,7 +132,7 @@ func IoctlStop(m fdio.FDIO) error {
 
 func IoctlTXListenStart(m fdio.FDIO) error {
 	num := fdio.IoctlNum(fdio.IoctlKindDefault, ioctlFamilyETH, ioctlOpTXListenStart)
-	_, err := m.Ioctl(num, nil, nil)
+	_, _, err := m.Ioctl(num, 0, nil, nil)
 	if err != nil {
 		return fmt.Errorf("IOCTL_ETHERNET_TX_LISTEN_START: %v", err)
 	}
@@ -130,8 +141,7 @@ func IoctlTXListenStart(m fdio.FDIO) error {
 
 func IoctlGetStatus(m fdio.FDIO) (status uint32, err error) {
 	num := fdio.IoctlNum(fdio.IoctlKindDefault, ioctlFamilyETH, ioctlOpGetStatus)
-	res := make([]byte, 4)
-	_, err = m.Ioctl(num, nil, res)
+	res, _, err := m.Ioctl(num, 4, nil, nil)
 	if err != nil {
 		return 0, fmt.Errorf("IOCTL_ETHERNET_GET_STATUS: %v", err)
 	}
@@ -148,7 +158,7 @@ func IoctlSetPromisc(m fdio.FDIO, enabled bool) error {
 	if enabled {
 		in[0] = 1
 	}
-	_, err := m.Ioctl(num, in, nil)
+	_, _, err := m.Ioctl(num, 0, in, nil)
 
 	if err != nil {
 		return fmt.Errorf("IOCTL_ETHERNET_SET_PROMISC: %v", err)

@@ -2,42 +2,32 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <lib/fxl/strings/string_printf.h>
+
 #include "garnet/bin/appmgr/appmgr.h"
+#include "lib/component/cpp/termination_reason.h"
+
+using fuchsia::sys::TerminationReason;
 
 namespace component {
 namespace {
 constexpr char kRootLabel[] = "app";
+constexpr zx::duration kMinSmsmgrBackoff = zx::msec(200);
+constexpr zx::duration kMaxSysmgrBackoff = zx::sec(15);
+constexpr zx::duration kSysmgrAliveReset = zx::sec(5);
 }  // namespace
 
-Appmgr::Appmgr(async_t* async, AppmgrArgs args)
-    : loader_vfs_(async),
-      loader_dir_(fbl::AdoptRef(new fs::PseudoDir())),
-      publish_vfs_(async),
+Appmgr::Appmgr(async_dispatcher_t* dispatcher, AppmgrArgs args)
+    : publish_vfs_(dispatcher),
       publish_dir_(fbl::AdoptRef(new fs::PseudoDir())),
       sysmgr_url_(std::move(args.sysmgr_url)),
-      sysmgr_args_(std::move(args.sysmgr_args)) {
-  // 1. Serve loader.
-  loader_dir_->AddEntry(
-      fuchsia::sys::Loader::Name_,
-      fbl::AdoptRef(new fs::Service([this](zx::channel channel) {
-        root_loader_.AddBinding(
-            fidl::InterfaceRequest<fuchsia::sys::Loader>(std::move(channel)));
-        return ZX_OK;
-      })));
+      sysmgr_args_(std::move(args.sysmgr_args)),
+      sysmgr_backoff_(kMinSmsmgrBackoff, kMaxSysmgrBackoff, kSysmgrAliveReset),
+      sysmgr_permanently_failed_(false) {
+  // 1. Create root realm.
+  RealmArgs realm_args{nullptr, args.environment_services, zx::channel(),
+                       kRootLabel, args.run_virtual_console};
 
-  zx::channel h1, h2;
-  if (zx::channel::create(0, &h1, &h2) < 0) {
-    FXL_LOG(FATAL) << "Appmgr unable to create channel.";
-    return;
-  }
-
-  if (loader_vfs_.ServeDirectory(loader_dir_, std::move(h2)) != ZX_OK) {
-    FXL_LOG(FATAL) << "Appmgr unable to serve directory.";
-    return;
-  }
-
-  RealmArgs realm_args{nullptr, std::move(h1), kRootLabel,
-                       args.run_virtual_console};
   root_realm_ = std::make_unique<Realm>(std::move(realm_args));
 
   // 2. Publish outgoing directories.
@@ -53,9 +43,24 @@ Appmgr::Appmgr(async_t* async, AppmgrArgs args)
 
   // 3. Run sysmgr
   auto run_sysmgr = [this] {
+    sysmgr_backoff_.Start();
     fuchsia::sys::LaunchInfo launch_info;
     launch_info.url = sysmgr_url_;
     launch_info.arguments.reset(sysmgr_args_);
+    sysmgr_.events().OnTerminated =
+        [this](zx_status_t status, TerminationReason termination_reason) {
+          if (termination_reason != TerminationReason::EXITED) {
+            FXL_LOG(ERROR) << "sysmgr launch failed: "
+                           << component::TerminationReasonToString(
+                                  termination_reason);
+            sysmgr_permanently_failed_ = true;
+          } else if (status == ZX_ERR_INVALID_ARGS) {
+            FXL_LOG(ERROR) << "sysmgr reported invalid arguments";
+            sysmgr_permanently_failed_ = true;
+          } else {
+            FXL_LOG(ERROR) << "sysmgr exited with status " << status;
+          }
+        };
     root_realm_->CreateComponent(std::move(launch_info), sysmgr_.NewRequest());
   };
 
@@ -63,9 +68,24 @@ Appmgr::Appmgr(async_t* async, AppmgrArgs args)
     run_sysmgr();
     return;
   }
-  async::PostTask(async, [this, run_sysmgr] {
+
+  async::PostTask(dispatcher, [this, dispatcher, run_sysmgr] {
     run_sysmgr();
-    sysmgr_.set_error_handler(run_sysmgr);
+
+    auto retry_handler = [this, dispatcher, run_sysmgr] {
+      if (sysmgr_permanently_failed_) {
+        FXL_LOG(ERROR)
+            << "sysmgr permanently failed. Check system configuration.";
+        return;
+      }
+
+      auto delay_duration = sysmgr_backoff_.GetNext();
+      FXL_LOG(ERROR) << fxl::StringPrintf("sysmgr failed, restarting in %.3fs",
+                                          .001f * delay_duration.to_msecs());
+      async::PostDelayedTask(dispatcher, run_sysmgr, delay_duration);
+    };
+
+    sysmgr_.set_error_handler(retry_handler);
   });
 }
 

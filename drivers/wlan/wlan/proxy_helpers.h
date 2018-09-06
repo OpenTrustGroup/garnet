@@ -26,9 +26,7 @@ class WlanmacProxy {
         return proto_.ops->start(proto_.ctx, ifc, cookie);
     }
 
-    void Stop() {
-        proto_.ops->stop(proto_.ctx);
-    }
+    void Stop() { proto_.ops->stop(proto_.ctx); }
 
     zx_status_t QueueTx(uint32_t options, wlan_tx_packet_t* pkt) {
         return proto_.ops->queue_tx(proto_.ctx, options, pkt);
@@ -54,6 +52,14 @@ class WlanmacProxy {
         return proto_.ops->set_key(proto_.ctx, options, key_config);
     }
 
+    zx_status_t ConfigureAssoc(uint32_t options, wlan_assoc_ctx_t* assoc_ctx) {
+        return proto_.ops->configure_assoc(proto_.ctx, options, assoc_ctx);
+    }
+
+    zx_status_t StartHwScan(const wlan_hw_scan_config_t* scan_config) {
+        return proto_.ops->start_hw_scan(proto_.ctx, scan_config);
+    }
+
    private:
     wlanmac_protocol_t proto_;
 };
@@ -63,9 +69,7 @@ class EthmacIfcProxy {
    public:
     EthmacIfcProxy(ethmac_ifc_t* ifc, void* cookie) : ifc_(ifc), cookie_(cookie) {}
 
-    void Status(uint32_t status) {
-        ifc_->status(cookie_, status);
-    }
+    void Status(uint32_t status) { ifc_->status(cookie_, status); }
 
     void Recv(void* data, size_t length, uint32_t flags) {
         ifc_->recv(cookie_, data, length, flags);

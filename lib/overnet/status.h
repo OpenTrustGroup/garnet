@@ -147,6 +147,9 @@ extern const std::string empty_string;
 
 }  // namespace status_impl
 
+template <class T>
+class StatusOr;
+
 // A result from some operation.
 // Currently a status code and a string reason, although this may be extended in
 // the future to also capture additional data in the case of errors.
@@ -160,8 +163,10 @@ class Status final {
   ~Status() {
     static_assert(sizeof(Status) == sizeof(void*),
                   "sizeof(Status) should be one pointer");
-    if (is_code_only()) return;
-    if (rep_->refs.fetch_add(-1, std::memory_order_acq_rel) == 1) delete rep_;
+    if (is_code_only())
+      return;
+    if (rep_->refs.fetch_add(-1, std::memory_order_acq_rel) == 1)
+      delete rep_;
   }
 
   Status(Status&& other) : code_(other.code_) { other.code_ = 0; }
@@ -182,8 +187,14 @@ class Status final {
 
   void Swap(Status* other) { std::swap(code_, other->code_); }
 
-  static Status Ok() { return Status(StatusCode::OK); }
-  static Status Cancelled() { return Status(StatusCode::CANCELLED); }
+  static const Status& Ok() { return Static<>::Ok; }
+  static const Status& Cancelled() { return Static<>::Cancelled; }
+
+  const Status& OrCancelled() const {
+    if (is_ok())
+      return Cancelled();
+    return *this;
+  }
 
   StatusCode code() const {
     return is_code_only() ? static_cast<StatusCode>(code_) : rep_->code;
@@ -194,14 +205,35 @@ class Status final {
     return is_code_only() ? status_impl::empty_string : rep_->reason;
   }
 
+  template <class T>
+  StatusOr<typename std::remove_reference<T>::type> Or(T&& value) const;
+
+  template <class F>
+  auto Then(F fn) -> decltype(fn()) {
+    if (is_error())
+      return *this;
+    return fn();
+  }
+
  private:
   bool is_code_only() const { return code_ < 256; }
+
+  template <int I = 0>
+  struct Static {
+    static const Status Ok;
+    static const Status Cancelled;
+  };
 
   union {
     status_impl::StatusRep* rep_;
     uintptr_t code_;
   };
 };
+
+template <int I>
+const Status Status::Static<I>::Ok{StatusCode::OK};
+template <int I>
+const Status Status::Static<I>::Cancelled{StatusCode::CANCELLED};
 
 inline std::ostream& operator<<(std::ostream& out, const Status& status) {
   out << StatusCodeString(status.code());
@@ -216,6 +248,8 @@ inline std::ostream& operator<<(std::ostream& out, const Status& status) {
 template <class T>
 class StatusOr final {
  public:
+  using element_type = T;
+
   template <typename U, typename = typename std::enable_if<
                             !std::is_convertible<U, Status>::value &&
                             !std::is_convertible<U, StatusOr>::value>::type>
@@ -224,7 +258,8 @@ class StatusOr final {
   StatusOr(StatusCode code, const std::string& description)
       : code_(code),
         storage_(new status_impl::StatusPayload{{1}, description}) {
-    if (code_ == StatusCode::OK) abort();
+    if (code_ == StatusCode::OK)
+      abort();
   }
   // Raise an untyped (but non-ok) Status object to a StatusOr
   StatusOr(const Status& status) : StatusOr(status.code(), status.reason()) {}
@@ -249,7 +284,8 @@ class StatusOr final {
     }
   }
   StatusOr& operator=(const StatusOr& other) {
-    if (&other == this) return *this;
+    if (&other == this)
+      return *this;
     this->~StatusOr();
     new (this) StatusOr(other);
     return *this;
@@ -259,7 +295,8 @@ class StatusOr final {
       unwrap()->~T();
     } else {
       auto* p = unwrap_err();
-      if (p->refs.fetch_add(-1, std::memory_order_acq_rel) == 1) delete p;
+      if (p->refs.fetch_add(-1, std::memory_order_acq_rel) == 1)
+        delete p;
     }
   }
 
@@ -273,19 +310,36 @@ class StatusOr final {
   // Return (a pointer-to) an object on successful completion, or nullptr on
   // failure
   const T* get() const {
-    if (is_ok()) return unwrap();
+    if (is_ok())
+      return unwrap();
     return nullptr;
   }
 
   T* get() {
-    if (is_ok()) return unwrap();
+    if (is_ok())
+      return unwrap();
     return nullptr;
   }
 
+  const T& value() const { return *unwrap(); }
+
+  const T* operator->() const { return unwrap(); }
+  T* operator->() { return unwrap(); }
+  const T& operator*() const { return *unwrap(); }
+  T& operator*() { return *unwrap(); }
+
   // Lower to an untyped status object
   Status AsStatus() const {
-    if (reason().empty()) return Status(code());
+    if (reason().empty())
+      return Status(code());
     return Status(code(), reason());
+  }
+
+  template <class F>
+  auto Then(F fn) const -> decltype(fn(*get())) {
+    if (is_error())
+      return AsStatus();
+    return fn(*get());
   }
 
  private:
@@ -316,5 +370,26 @@ class StatusOr final {
   };
   Storage storage_;
 };
+
+template <class T>
+StatusOr<typename std::remove_reference<T>::type> Status::Or(T&& t) const {
+  if (is_error()) {
+    return *this;
+  } else {
+    return std::forward<T>(t);
+  }
+}
+
+template <class T>
+inline std::ostream& operator<<(std::ostream& out, const StatusOr<T>& status) {
+  out << StatusCodeString(status.code());
+  if (status.reason().length()) {
+    out << "(" << status.reason() << ")";
+  }
+  if (status.is_ok()) {
+    out << ":" << status.value();
+  }
+  return out;
+}
 
 }  // namespace overnet

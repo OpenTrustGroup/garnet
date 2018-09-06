@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_LIB_INFERIOR_CONTROL_PROCESS_H_
+#define GARNET_LIB_INFERIOR_CONTROL_PROCESS_H_
 
 #include <memory>
 #include <string>
@@ -21,7 +22,7 @@
 #include "memory_process.h"
 #include "thread.h"
 
-namespace debugserver {
+namespace inferior_control {
 
 class Server;
 class Thread;
@@ -62,14 +63,15 @@ class Process final {
         const zx_exception_context_t& context) = 0;
   };
 
-  explicit Process(Server* server, Delegate* delegate_);
+  explicit Process(Server* server, Delegate* delegate_,
+                   std::shared_ptr<component::Services> services);
   ~Process();
 
   std::string GetName() const;
 
   // Note: This includes the program in |argv[0]|.
-  const util::Argv& argv() { return argv_; }
-  void set_argv(const util::Argv& argv) { argv_ = argv; }
+  const debugger_utils::Argv& argv() { return argv_; }
+  void set_argv(const debugger_utils::Argv& argv) { argv_ = argv; }
 
   // Add extra handles to the process.
   //
@@ -131,7 +133,7 @@ class Process final {
   zx_koid_t id() const { return id_; }
 
   // Returns a mutable handle to the set of breakpoints managed by this process.
-  arch::ProcessBreakpointSet* breakpoints() { return &breakpoints_; }
+  ProcessBreakpointSet* breakpoints() { return &breakpoints_; }
 
   // Returns the base load address of the dynamic linker.
   zx_vaddr_t base_address() const { return base_address_; }
@@ -198,16 +200,16 @@ class Process final {
   // Return list of loaded dsos.
   // Returns nullptr if none loaded yet or loading failed.
   // TODO(dje): constness wip
-  util::dsoinfo_t* GetDsos() const { return dsos_; }
+  debugger_utils::dsoinfo_t* GetDsos() const { return dsos_; }
 
   // Return the DSO for |pc| or nullptr if none.
   // TODO(dje): Result is not const for debug file lookup support.
-  util::dsoinfo_t* LookupDso(zx_vaddr_t pc) const;
+  debugger_utils::dsoinfo_t* LookupDso(zx_vaddr_t pc) const;
 
   // Return the entry for the main executable from the dsos list.
   // Returns nullptr if not present (could happen if inferior data structure
   // has been clobbered).
-  const util::dsoinfo_t* GetExecDso();
+  const debugger_utils::dsoinfo_t* GetExecDso();
 
  private:
   Process() = default;
@@ -238,8 +240,11 @@ class Process final {
   // The delegate that we send life-cycle notifications to.
   Delegate* delegate_;  // weak
 
+  // Handle containing services available to this process.
+  std::shared_ptr<component::Services> services_;
+
   // The argv that this process was initialized with.
-  util::Argv argv_;
+  debugger_utils::Argv argv_;
 
   // Extra handles to pass to process during creation.
   std::vector<fuchsia::process::HandleInfo> extra_handles_;
@@ -270,10 +275,10 @@ class Process final {
   bool attached_running_ = false;
 
   // The API to access memory.
-  std::shared_ptr<util::ByteBlock> memory_;
+  std::shared_ptr<debugger_utils::ByteBlock> memory_;
 
   // The collection of breakpoints that belong to this process.
-  arch::ProcessBreakpointSet breakpoints_;
+  ProcessBreakpointSet breakpoints_;
 
   // The threads owned by this process. This is map is populated lazily when
   // threads are requested through FindThreadById(). It can also be repopulated
@@ -288,7 +293,7 @@ class Process final {
   // NULL if none have been loaded yet (including main executable).
   // TODO(dje): Code taking from crashlogger, to be rewritten.
   // TODO(dje): Doesn't include dsos loaded later.
-  util::dsoinfo_t* dsos_ = nullptr;
+  debugger_utils::dsoinfo_t* dsos_ = nullptr;
 
   // If true then building the dso list failed, don't try again.
   bool dsos_build_failed_ = false;
@@ -296,4 +301,6 @@ class Process final {
   FXL_DISALLOW_COPY_AND_ASSIGN(Process);
 };
 
-}  // namespace debugserver
+}  // namespace inferior_control
+
+#endif  // GARNET_LIB_INFERIOR_CONTROL_PROCESS_H_

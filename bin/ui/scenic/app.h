@@ -11,11 +11,11 @@
 
 #include "garnet/lib/ui/scenic/scenic.h"
 
-namespace scenic {
+namespace scenic_impl {
 
 class App {
  public:
-  explicit App(fuchsia::sys::StartupContext* app_context,
+  explicit App(component::StartupContext* app_context,
                fit::closure quit_callback);
 
  private:
@@ -23,6 +23,6 @@ class App {
   fidl::BindingSet<Scenic> bindings_;
 };
 
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_BIN_UI_SCENIC_APP_H_

@@ -7,14 +7,14 @@
 #include "fs/pseudo-dir.h"
 #include "fs/service.h"
 #include "fuchsia/sys/cpp/fidl.h"
-#include "lib/app/cpp/outgoing.h"
-#include "lib/app/cpp/testing/fake_launcher.h"
 #include "lib/async-loop/cpp/loop.h"
+#include "lib/component/cpp/outgoing.h"
+#include "lib/component/cpp/testing/fake_launcher.h"
 #include "lib/fdio/spawn.h"
 #include "lib/fidl/cpp/binding_set.h"
 
 TEST(Run, Daemonize) {
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
   const char* run_d_command_argv[] = {"/system/bin/run", "-d",
                                       "test_program_name", nullptr};
@@ -27,7 +27,7 @@ TEST(Run, Daemonize) {
   fuchsia::sys::LaunchInfo received_launch_info;
   fidl::InterfaceRequest<fuchsia::sys::ComponentController> received_controller;
 
-  fuchsia::sys::testing::FakeLauncher test_launcher;
+  component::testing::FakeLauncher test_launcher;
   test_launcher.RegisterComponent(
       "test_program_name",
       [&launcher_create_calls, &received_launch_info, &received_controller](
@@ -39,9 +39,9 @@ TEST(Run, Daemonize) {
         received_controller = std::move(controller);
       });
 
-  fuchsia::sys::Outgoing outgoing_services;
+  component::Outgoing outgoing_services;
 
-  fs::SynchronousVfs vfs(loop.async());
+  fs::SynchronousVfs vfs(loop.dispatcher());
 
   fidl::BindingSet<fuchsia::sys::Launcher> launcher_bindings;
   outgoing_services.AddPublicService(

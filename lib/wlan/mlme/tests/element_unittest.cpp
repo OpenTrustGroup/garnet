@@ -136,7 +136,8 @@ TEST(ElementWriter, Insert) {
     EXPECT_TRUE(w.write<SsidElement>("test"));
     EXPECT_EQ(6u, w.size());
 
-    std::vector<uint8_t> rates = {1, 2, 3, 4};
+    std::vector<SupportedRate> rates = {SupportedRate(1), SupportedRate(2), SupportedRate(3),
+                                        SupportedRate(4)};
     EXPECT_TRUE(w.write<SupportedRatesElement>(std::move(rates)));
     EXPECT_EQ(12u, w.size());
 
@@ -174,7 +175,7 @@ TEST_F(Elements, SsidTooLong) {
 }
 
 TEST_F(Elements, SupportedRates) {
-    std::vector<uint8_t> rates = {1, 2, 3};
+    std::vector<SupportedRate> rates = {SupportedRate(1), SupportedRate(2), SupportedRate(3)};
     EXPECT_TRUE(SupportedRatesElement::Create(buf_, sizeof(buf_), &actual_, rates));
     EXPECT_EQ(sizeof(SupportedRatesElement) + rates.size(), actual_);
 
@@ -187,7 +188,9 @@ TEST_F(Elements, SupportedRates) {
 }
 
 TEST_F(Elements, SupportedRatesTooLong) {
-    std::vector<uint8_t> rates = {1, 2, 3, 4, 5, 6, 7, 8, 9};
+    std::vector<SupportedRate> rates = {SupportedRate(1), SupportedRate(2), SupportedRate(3),
+                                        SupportedRate(4), SupportedRate(5), SupportedRate(6),
+                                        SupportedRate(7), SupportedRate(8), SupportedRate(9)};
     ASSERT_GT(rates.size(), SupportedRatesElement::kMaxLen);
     EXPECT_FALSE(SupportedRatesElement::Create(buf_, sizeof(buf_), &actual_, rates));
 }
@@ -419,6 +422,248 @@ TEST_F(Elements, TsInfoScheduleSetting) {
 
     ts_info.p1.set_apsd(1);
     EXPECT_EQ(ts_info.GetScheduleSetting(), TsScheduleSetting::kScheduledApsd);
+}
+
+TEST_F(Elements, VhtCapabilities) {
+    // Consider endianness if test vector changes.
+    VhtCapabilitiesInfo vht_cap_info(0xffffffff);
+    VhtMcsNss vht_mcs_nss(0xaaaaaaaaaaaaaaaa);
+
+    EXPECT_TRUE(VhtCapabilities::Create(buf_, sizeof(buf_), &actual_, vht_cap_info, vht_mcs_nss));
+    EXPECT_EQ(sizeof(VhtCapabilities), actual_);
+
+    auto element = FromBytes<VhtCapabilities>(buf_, sizeof(buf_));
+    ASSERT_NE(nullptr, element);
+
+    EXPECT_EQ(element->vht_cap_info.max_mpdu_len(), 3);
+    EXPECT_EQ(element->vht_cap_info.supported_cbw_set(), 3);
+    EXPECT_EQ(element->vht_cap_info.rx_ldpc(), 1);
+    EXPECT_EQ(element->vht_cap_info.sgi_cbw80(), 1);
+    EXPECT_EQ(element->vht_cap_info.sgi_cbw160(), 1);
+    EXPECT_EQ(element->vht_cap_info.tx_stbc(), 1);
+
+    EXPECT_EQ(element->vht_cap_info.bfee_sts(), 7);
+    EXPECT_EQ(element->vht_cap_info.num_sounding(), 7);
+    EXPECT_EQ(element->vht_cap_info.link_adapt(), VhtCapabilitiesInfo::LINK_ADAPT_BOTH);
+
+    EXPECT_EQ(element->vht_mcs_nss.rx_max_mcs_ss1(), VhtMcsNss::VHT_MCS_0_TO_9);
+    EXPECT_EQ(element->vht_mcs_nss.rx_max_mcs_ss2(), VhtMcsNss::VHT_MCS_0_TO_9);
+    EXPECT_EQ(element->vht_mcs_nss.tx_max_mcs_ss4(), VhtMcsNss::VHT_MCS_0_TO_9);
+    EXPECT_EQ(element->vht_mcs_nss.max_nsts(), 5);
+    EXPECT_EQ(element->vht_mcs_nss.ext_nss_bw(), 1);
+}
+
+TEST_F(Elements, VhtOperation) {
+    BasicVhtMcsNss basic_mcs(0xaaaa);
+    uint8_t vht_cbw = VhtOperation::VHT_CBW_80_160_80P80;
+    uint8_t center_freq_seg0 = 155;
+    uint8_t center_freq_seg1 = 42;
+
+    EXPECT_TRUE(VhtOperation::Create(buf_, sizeof(buf_), &actual_, vht_cbw, center_freq_seg0,
+                                     center_freq_seg1, basic_mcs));
+    EXPECT_EQ(sizeof(VhtOperation), actual_);
+
+    auto element = FromBytes<VhtOperation>(buf_, sizeof(buf_));
+    ASSERT_NE(nullptr, element);
+
+    EXPECT_EQ(element->vht_cbw, vht_cbw);
+    EXPECT_EQ(element->center_freq_seg0, center_freq_seg0);
+    EXPECT_EQ(element->center_freq_seg1, center_freq_seg1);
+
+    EXPECT_EQ(element->basic_mcs.ss1(), VhtMcsNss::VHT_MCS_0_TO_9);
+    EXPECT_EQ(element->basic_mcs.ss2(), VhtMcsNss::VHT_MCS_0_TO_9);
+    EXPECT_EQ(element->basic_mcs.ss8(), VhtMcsNss::VHT_MCS_0_TO_9);
+}
+
+TEST(HtCapabilities, DdkConversion) {
+    wlan_ht_caps_t ddk{
+        .ht_capability_info = 0x016e,
+        .ampdu_params = 0x17,
+        .mcs_set.rx_mcs_head = 0x00000001000000ff,
+        .mcs_set.rx_mcs_tail = 0x01000000,
+        .mcs_set.tx_mcs = 0x00000000,
+        .ht_ext_capabilities = 0x1234,
+        .tx_beamforming_capabilities = 0x12345678,
+        .asel_capabilities = 0xff,
+    };
+
+    auto ieee = HtCapabilities::FromDdk(ddk);
+    EXPECT_EQ(0x016eU, ieee.ht_cap_info.val());
+    EXPECT_EQ(0x17U, ieee.ampdu_params.val());
+    EXPECT_EQ(0x00000001000000ffU, ieee.mcs_set.rx_mcs_head.val());
+    EXPECT_EQ(0x01000000U, ieee.mcs_set.rx_mcs_tail.val());
+    EXPECT_EQ(0x00000000U, ieee.mcs_set.tx_mcs.val());
+    EXPECT_EQ(0x1234U, ieee.ht_ext_cap.val());
+    EXPECT_EQ(0x12345678U, ieee.txbf_cap.val());
+    EXPECT_EQ(0xffU, ieee.asel_cap.val());
+
+    auto ddk2 = ieee.ToDdk();
+    EXPECT_EQ(ddk.ht_capability_info, ddk2.ht_capability_info);
+    EXPECT_EQ(ddk.ampdu_params, ddk2.ampdu_params);
+    EXPECT_EQ(ddk.mcs_set.rx_mcs_head, ddk2.mcs_set.rx_mcs_head);
+    EXPECT_EQ(ddk.mcs_set.rx_mcs_tail, ddk2.mcs_set.rx_mcs_tail);
+    EXPECT_EQ(ddk.mcs_set.tx_mcs, ddk2.mcs_set.tx_mcs);
+    EXPECT_EQ(ddk.ht_ext_capabilities, ddk2.ht_ext_capabilities);
+    EXPECT_EQ(ddk.tx_beamforming_capabilities, ddk2.tx_beamforming_capabilities);
+    EXPECT_EQ(ddk.asel_capabilities, ddk2.asel_capabilities);
+}
+
+TEST(HtOperation, DdkConversion) {
+    wlan_ht_op ddk{
+        .primary_chan = 123,
+        .head = 0x01020304,
+        .tail = 0x05,
+        .basic_mcs_set.rx_mcs_head = 0x00000001000000ff,
+        .basic_mcs_set.rx_mcs_tail = 0x01000000,
+        .basic_mcs_set.tx_mcs = 0x00000000,
+    };
+
+    auto ieee = HtOperation::FromDdk(ddk);
+    EXPECT_EQ(123U, ieee.primary_chan);
+    EXPECT_EQ(0x01020304U, ieee.head.val());
+    EXPECT_EQ(0x05U, ieee.tail.val());
+    EXPECT_EQ(0x00000001000000ffU, ieee.basic_mcs_set.rx_mcs_head.val());
+    EXPECT_EQ(0x01000000U, ieee.basic_mcs_set.rx_mcs_tail.val());
+    EXPECT_EQ(0x00000000U, ieee.basic_mcs_set.tx_mcs.val());
+
+    auto ddk2 = ieee.ToDdk();
+    EXPECT_EQ(ddk.primary_chan, ddk2.primary_chan);
+    EXPECT_EQ(ddk.head, ddk2.head);
+    EXPECT_EQ(ddk.tail, ddk2.tail);
+    EXPECT_EQ(ddk.basic_mcs_set.rx_mcs_head, ddk2.basic_mcs_set.rx_mcs_head);
+    EXPECT_EQ(ddk.basic_mcs_set.rx_mcs_tail, ddk2.basic_mcs_set.rx_mcs_tail);
+    EXPECT_EQ(ddk.basic_mcs_set.tx_mcs, ddk2.basic_mcs_set.tx_mcs);
+}
+
+TEST(VhtCapabilities, DdkConversion) {
+    wlan_vht_caps ddk{
+        .vht_capability_info = 0xaabbccdd,
+        .supported_vht_mcs_and_nss_set = 0x0011223344556677,
+    };
+
+    auto ieee = VhtCapabilities::FromDdk(ddk);
+    EXPECT_EQ(0xaabbccddU, ieee.vht_cap_info.val());
+    EXPECT_EQ(0x0011223344556677U, ieee.vht_mcs_nss.val());
+
+    auto ddk2 = ieee.ToDdk();
+    EXPECT_EQ(ddk.vht_capability_info, ddk2.vht_capability_info);
+    EXPECT_EQ(ddk.supported_vht_mcs_and_nss_set, ddk2.supported_vht_mcs_and_nss_set);
+}
+
+TEST(VhtOperation, DdkConversion) {
+    wlan_vht_op ddk{
+        .vht_cbw = 0x01,
+        .center_freq_seg0 = 42,
+        .center_freq_seg1 = 106,
+        .basic_mcs = 0x1122,
+    };
+
+    auto ieee = VhtOperation::FromDdk(ddk);
+    EXPECT_EQ(0x01U, ieee.vht_cbw);
+    EXPECT_EQ(42U, ieee.center_freq_seg0);
+    EXPECT_EQ(106U, ieee.center_freq_seg1);
+    EXPECT_EQ(0x1122U, ieee.basic_mcs.val());
+
+    auto ddk2 = ieee.ToDdk();
+    EXPECT_EQ(ddk.vht_cbw, ddk2.vht_cbw);
+    EXPECT_EQ(ddk.center_freq_seg0, ddk2.center_freq_seg0);
+    EXPECT_EQ(ddk.center_freq_seg1, ddk2.center_freq_seg1);
+    EXPECT_EQ(ddk.basic_mcs, ddk2.basic_mcs);
+}
+
+TEST(SupportedRate, Create) {
+    SupportedRate rate = {};
+    ASSERT_EQ(rate.rate(), 0);
+    ASSERT_EQ(rate.is_basic(), 0);
+
+    // Create a rate with basic bit set.
+    rate = SupportedRate(0xF9);
+    ASSERT_EQ(rate.rate(), 0x79);
+    ASSERT_EQ(rate.is_basic(), 1);
+
+    // Create a rate with basic bit set but explicitly override basic setting.
+    rate = SupportedRate(0xF9, false);
+    ASSERT_EQ(rate.rate(), 0x79);
+    ASSERT_EQ(rate.is_basic(), 0);
+
+    // Create a rate with explicitly setting basic bit.
+    rate = SupportedRate::basic(0x79);
+    ASSERT_EQ(rate.rate(), 0x79);
+    ASSERT_EQ(rate.is_basic(), 1);
+}
+
+TEST(SupportedRate, ToUint8) {
+    SupportedRate rate = {};
+    ASSERT_EQ(static_cast<uint8_t>(rate), 0);
+
+    rate = SupportedRate(0xF9);
+    ASSERT_EQ(static_cast<uint8_t>(rate), 0xF9);
+
+    rate = SupportedRate::basic(0x79);
+    ASSERT_EQ(static_cast<uint8_t>(rate), 0xF9);
+}
+
+TEST(SupportedRate, Compare) {
+    // Ignore basic bit when comparing rates.
+    SupportedRate rate1(0x79);
+    SupportedRate rate2(0xF9);
+    ASSERT_TRUE(rate1 == rate2);
+    ASSERT_FALSE(rate1 != rate2);
+    ASSERT_FALSE(rate1 < rate2);
+    ASSERT_FALSE(rate1 > rate2);
+
+    // Test smaller.
+    rate1 = SupportedRate(0x78);
+    rate2 = SupportedRate(0xF9);
+    ASSERT_FALSE(rate1 == rate2);
+    ASSERT_TRUE(rate1 != rate2);
+    ASSERT_TRUE(rate1 < rate2);
+    ASSERT_FALSE(rate1 > rate2);
+
+    // Test larger.
+    rate1 = SupportedRate(0x7A);
+    rate2 = SupportedRate(0xF9);
+    ASSERT_FALSE(rate1 == rate2);
+    ASSERT_TRUE(rate1 != rate2);
+    ASSERT_FALSE(rate1 < rate2);
+    ASSERT_TRUE(rate1 > rate2);
+}
+
+struct RateVector {
+    std::vector<SupportedRate> ap;
+    std::vector<SupportedRate> client;
+    std::vector<SupportedRate> want;
+};
+
+TEST(Intersector, IntersectRates) {
+    // Rates are in 0.5Mbps increment: 12 -> 6 Mbps, 11 -> 5.5 Mbps, etc.
+    std::vector<RateVector> list = {
+        {{}, {}, {}},
+        {{SupportedRate(12)}, {SupportedRate(12)}, {SupportedRate(12)}},
+        {{SupportedRate::basic(12)}, {SupportedRate(12)}, {SupportedRate::basic(12)}},
+        {{SupportedRate(12)}, {SupportedRate::basic(12)}, {SupportedRate(12)}},
+        {{SupportedRate::basic(12)}, {}, {}},
+        {{}, {SupportedRate::basic(12)}, {}},
+        {{SupportedRate(12)}, {}, {}},
+        {{}, {SupportedRate(12)}, {}},
+        {{SupportedRate::basic(12), SupportedRate(24)},
+         {SupportedRate::basic(24), SupportedRate(12)},
+         {SupportedRate::basic(12), SupportedRate(24)}},
+        {{SupportedRate(24), SupportedRate::basic(12)},
+         {SupportedRate(12), SupportedRate::basic(24)},
+         {SupportedRate::basic(12), SupportedRate(24)}},
+        {{SupportedRate(72), SupportedRate::basic(108), SupportedRate::basic(96)},
+         {SupportedRate(96)},
+         {SupportedRate::basic(96)}},
+        {{SupportedRate(72), SupportedRate::basic(108), SupportedRate::basic(96)},
+         {SupportedRate::basic(72)},
+         {SupportedRate(72)}},
+    };
+
+    for (auto vec : list) {
+        auto got = IntersectRatesAp(vec.ap, vec.client);
+        EXPECT_EQ(vec.want, got);
+    }
 }
 
 }  // namespace

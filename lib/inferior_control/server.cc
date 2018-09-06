@@ -17,17 +17,16 @@
 
 #include "garnet/lib/debugger_utils/util.h"
 
-namespace debugserver {
+namespace inferior_control {
 
 Server::Server(zx::job job_for_search, zx::job job_for_launch)
     : job_for_search_(std::move(job_for_search)),
       job_for_launch_(std::move(job_for_launch)),
-      exception_port_(message_loop_.async()),
-      run_status_(true) {
-}
+      message_loop_(&kAsyncLoopConfigNoAttachToThread),
+      exception_port_(message_loop_.dispatcher()),
+      run_status_(true) {}
 
-Server::~Server() {
-}
+Server::~Server() {}
 
 void Server::SetCurrentThread(Thread* thread) {
   if (!thread)
@@ -43,13 +42,12 @@ void Server::QuitMessageLoop(bool status) {
 
 void Server::PostQuitMessageLoop(bool status) {
   run_status_ = status;
-  async::PostTask(message_loop_.async(), [this] { message_loop_.Quit(); });
+  async::PostTask(message_loop_.dispatcher(), [this] { message_loop_.Quit(); });
 }
 
 ServerWithIO::ServerWithIO(zx::job job_for_search, zx::job job_for_launch)
     : Server(std::move(job_for_search), std::move(job_for_launch)),
-      client_sock_(-1) {
-}
+      client_sock_(-1) {}
 
 ServerWithIO::~ServerWithIO() {
   // This will invoke the IOLoop destructor which will clean up and join the
@@ -59,4 +57,4 @@ ServerWithIO::~ServerWithIO() {
   io_loop_.reset();
 }
 
-}  // namespace debugserver
+}  // namespace inferior_control

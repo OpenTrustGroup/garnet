@@ -52,6 +52,8 @@ import (
 	"unsafe"
 
 	"netstack/trace"
+
+	"fidl/zircon/ethernet"
 )
 
 const ZXSIO_ETH_SIGNAL_STATUS = zx.SignalUser0
@@ -60,8 +62,9 @@ const ZXSIO_ETH_SIGNAL_STATUS = zx.SignalUser0
 // It connects to a zircon ethernet driver using a FIFO-based protocol.
 // The protocol is described in system/public/zircon/device/ethernet.h.
 type Client struct {
-	MTU int
-	MAC [6]byte
+	MTU  int
+	MAC  [6]byte
+	Path string
 
 	f       *os.File
 	tx      zx.Handle
@@ -106,11 +109,16 @@ func NewClient(clientName, path string, arena *Arena, stateFunc func(State)) (*C
 
 	IoctlSetClientName(m, []byte(clientName))
 
+	topo, err := IoctlGetTopoPath(m)
+	if err != nil {
+		return nil, err
+	}
+
 	info, err := IoctlGetInfo(m)
 	if err != nil {
 		return nil, err
 	}
-	if info.Features&FeatureSynth != 0 {
+	if info.Features&ethernet.InfoFeatureSynth != 0 {
 		return nil, fmt.Errorf("eth: ignoring synthetic device")
 	}
 
@@ -129,6 +137,7 @@ func NewClient(clientName, path string, arena *Arena, stateFunc func(State)) (*C
 	c := &Client{
 		MTU:       int(info.MTU),
 		f:         f,
+		Path:      topo,
 		tx:        fifos.tx,
 		rx:        fifos.rx,
 		txDepth:   txDepth,
@@ -200,13 +209,12 @@ func (c *Client) Down() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.state != StateDown {
-		c.changeStateLocked(StateDown)
-
 		m := syscall.FDIOForFD(int(c.f.Fd()))
 		err := IoctlStop(m)
 		if err != nil {
 			return err
 		}
+		c.changeStateLocked(StateDown)
 	}
 	return nil
 }
@@ -224,7 +232,7 @@ func (c *Client) closeLocked() {
 	}
 
 	m := syscall.FDIOForFD(int(c.f.Fd()))
-	if err := IoctlStop(m); err == nil {
+	if err := IoctlStop(m); err != nil {
 		if fp, fperr := filepath.Abs(c.f.Name()); fperr != nil {
 			log.Printf("Failed to close ethernet file %s, error: %s", c.f.Name(), err)
 		} else {
@@ -268,8 +276,11 @@ func (c *Client) AllocForSend() Buffer {
 	if c.txInFlight == c.txDepth {
 		return nil
 	}
-	c.txInFlight++
-	return c.arena.alloc(c)
+	buf := c.arena.alloc(c)
+	if buf != nil {
+		c.txInFlight++
+	}
+	return buf
 }
 
 // Send sends a Buffer to the ethernet driver.
@@ -303,15 +314,15 @@ func (c *Client) Free(b Buffer) {
 }
 
 func fifoWrite(handle zx.Handle, b []bufferEntry) (zx.Status, uint) {
-    var actual uint
-    status := zx.Sys_fifo_write(handle, uint(unsafe.Sizeof(b[0])), unsafe.Pointer(&b[0]), uint(len(b)), &actual)
-    return status, actual
+	var actual uint
+	status := zx.Sys_fifo_write(handle, uint(unsafe.Sizeof(b[0])), unsafe.Pointer(&b[0]), uint(len(b)), &actual)
+	return status, actual
 }
 
 func fifoRead(handle zx.Handle, b []bufferEntry) (zx.Status, uint) {
-    var actual uint
-    status := zx.Sys_fifo_read(handle, uint(unsafe.Sizeof(b[0])), unsafe.Pointer(&b[0]), uint(len(b)), &actual)
-    return status, actual
+	var actual uint
+	status := zx.Sys_fifo_read(handle, uint(unsafe.Sizeof(b[0])), unsafe.Pointer(&b[0]), uint(len(b)), &actual)
+	return status, actual
 }
 
 func (c *Client) txCompleteLocked() (bool, error) {
@@ -438,6 +449,20 @@ func (c *Client) WaitRecv() {
 func (c *Client) ListenTX() {
 	m := syscall.FDIOForFD(int(c.f.Fd()))
 	IoctlTXListenStart(m)
+}
+
+type LinkStatus uint32
+
+const (
+	LinkDown LinkStatus = 0
+	LinkUp   LinkStatus = 1
+)
+
+// Check IoctlGetStatus link status, 0: link down; 1: link up
+func (c *Client) GetStatus() (LinkStatus, error) {
+	m := syscall.FDIOForFD(int(c.f.Fd()))
+	status, err := IoctlGetStatus(m)
+	return LinkStatus(status), err
 }
 
 type State int

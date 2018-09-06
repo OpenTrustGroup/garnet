@@ -18,6 +18,7 @@ class FirmwareBlob {
     kMPEG12,
     kH264,
     kVp9Mmu,
+    kVp9MmuG12a,
   };
 
   ~FirmwareBlob();
@@ -26,6 +27,9 @@ class FirmwareBlob {
 
   zx_status_t GetFirmwareData(FirmwareType firmware_type, uint8_t** data_out,
                               uint32_t* size_out);
+
+  void LoadFakeFirmwareForTesting(FirmwareType firmware_type, uint8_t* data,
+                                  uint32_t size);
 
  private:
   struct FirmwareCode {

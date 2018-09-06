@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_GATT_SERVER_SERVER_H_
+#define GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_GATT_SERVER_SERVER_H_
 
 #include <fuchsia/bluetooth/gatt/cpp/fidl.h>
 
@@ -46,15 +47,12 @@ class GattServerServer
       PublishServiceCallback callback) override;
 
   // Called when a remote device issues a read request to one of our services.
-  void OnReadRequest(::btlib::gatt::IdType service_id,
-                     ::btlib::gatt::IdType id,
-                     uint16_t offset,
-                     ::btlib::gatt::ReadResponder responder);
+  void OnReadRequest(::btlib::gatt::IdType service_id, ::btlib::gatt::IdType id,
+                     uint16_t offset, ::btlib::gatt::ReadResponder responder);
 
   // Called when a remote device issues a write request to one of our services.
   void OnWriteRequest(::btlib::gatt::IdType service_id,
-                      ::btlib::gatt::IdType id,
-                      uint16_t offset,
+                      ::btlib::gatt::IdType id, uint16_t offset,
                       const ::btlib::common::ByteBuffer& value,
                       ::btlib::gatt::WriteResponder responder);
 
@@ -62,8 +60,7 @@ class GattServerServer
   // a local characteristic.
   void OnCharacteristicConfig(::btlib::gatt::IdType service_id,
                               ::btlib::gatt::IdType chrc_id,
-                              const std::string& peer_id,
-                              bool notify,
+                              const std::string& peer_id, bool notify,
                               bool indicate);
 
   // The mapping between service identifiers and FIDL Service implementations.
@@ -78,3 +75,5 @@ class GattServerServer
 };
 
 }  // namespace bthost
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_GATT_SERVER_SERVER_H_

@@ -3,6 +3,17 @@
 # found in the LICENSE file.
 
 import("//build/package.gni")
+import("//third_party/vulkan_loader_and_validation_layers/layers/layers.gni")
+
+declare_args() {
+  # Using Vulkan on host (i.e. Linux) is an involved affair that involves
+  # downloading the Vulkan SDK, setting environment variables, and so forth...
+  # all things that are difficult to achieve in a CQ environment.  Therefore,
+  # by default we use a stub implementation of Vulkan which fails to create a
+  # VkInstance.  This allows everything to build, and also allows running Escher
+  # unit tests which don't require Vulkan.
+  escher_use_null_vulkan_config_on_host = true
+}
 
 package("escher_tests") {
   testonly = true
@@ -11,7 +22,9 @@ package("escher_tests") {
     "test:escher_unittests",
   ]
 
-  binary = "escher_unittests"
+  tests = [
+    { name = "escher_unittests" },
+  ]
 
   meta = [
     {
@@ -20,22 +33,63 @@ package("escher_tests") {
     },
   ]
 
-  resources = [
+  public_deps = vulkan_validation_layers.public_deps
+  loadable_modules = vulkan_validation_layers.loadable_modules
+  resources = vulkan_validation_layers.resources
+  resources += [
+    {
+      path = rebase_path("shaders/model_renderer/main.frag")
+      dest = "shaders/model_renderer/main.frag"
+    },
     {
       path = rebase_path("shaders/model_renderer/main.vert")
       dest = "shaders/model_renderer/main.vert"
     },
+    {
+      path = rebase_path("shaders/model_renderer/default_position.vert")
+      dest = "shaders/model_renderer/default_position.vert"
+    },
+    {
+      path = rebase_path("shaders/model_renderer/shadow_map_generation.frag")
+      dest = "shaders/model_renderer/shadow_map_generation.frag"
+    },
+    {
+      path = rebase_path("shaders/model_renderer/shadow_map_lighting.frag")
+      dest = "shaders/model_renderer/shadow_map_lighting.frag"
+    },
+    {
+      path = rebase_path("shaders/model_renderer/wobble_position.vert")
+      dest = "shaders/model_renderer/wobble_position.vert"
+    },
   ]
 }
 
+# Used by 'source_set("vulkan")' for host builds (e.g. Escher-on-Linux) for
+# build environments where Vulkan is not available.
+config("null_vulkan_config") {
+  defines = [
+    "VULKAN_HPP_NO_EXCEPTIONS",
+    "VULKAN_HPP_NO_SMART_HANDLE",
+  ]
+
+  # Only include the Vulkan headers: since this is used for host builds, we
+  # don't want to depend on e.g. //garnet/public/lib/vulkan, which brings in
+  # Zircon dependencies which cannot be compiled.
+  include_dirs = [ "//third_party/vulkan_loader_and_validation_layers/include" ]
+}
+
+# Used by 'source_set("vulkan")' target builds (i.e. Escher-on-Fuchsia), and
+# also for host builds (e.g. Escher-on-Linux) where Vulkan is made available via
+# the 'download-vulkan-sdk' script, which downloads the LunarG Vulkan SDK from
+# Google storage.
 config("vulkan_config") {
   defines = [
     "VULKAN_HPP_NO_EXCEPTIONS",
     "VULKAN_HPP_NO_SMART_HANDLE",
   ]
 
-  # When targeting Linux, we use a LunarG Vulkan SDK that we download from
-  # Google storage (see //garnet/public/lib/escher/scripts/).
+  # Specify the include/lib dirs and linked libraries for use with the
+  # downloaded LunarG Vulkan SDK.
   if (is_linux) {
     vulkan_sdk = "//garnet/public/lib/escher/third_party/vulkansdk/x86_64"
     include_dirs = [ "$vulkan_sdk/include" ]
@@ -44,12 +98,20 @@ config("vulkan_config") {
   }
 }
 
+# Cross-platform Vulkan setup; supports both host and target builds.
 source_set("vulkan") {
-  public_configs = [ ":vulkan_config" ]
-
   if (is_fuchsia) {
-    public_deps = [
-      "//garnet/public/lib/vulkan",
+    public_configs = [ ":vulkan_config" ]
+    public_deps = [ "//garnet/public/lib/vulkan" ]
+  } else if (!escher_use_null_vulkan_config_on_host) {
+    # Host build using downloaded LunarG SDK.
+    public_configs = [ ":vulkan_config" ]
+  } else {
+    # Host build using stub Vulkan implementation.
+    public_configs = [ ":null_vulkan_config" ]
+
+    sources = [
+      "//garnet/public/lib/escher/third_party/null_vulkan/escher_null_vulkan.cc",
     ]
   }
 }
@@ -96,11 +158,9 @@ source_set("escher") {
     "//garnet/public/lib/fxl",
   ]
 
-  if (is_fuchsia) {
-    public_deps += [ "//zircon/public/lib/async-loop-cpp" ]
-  }
-
   sources = [
+    "defaults/default_shader_program_factory.cc",
+    "defaults/default_shader_program_factory.h",
     "escher.cc",
     "escher.h",
     "escher_process_init.cc",
@@ -110,6 +170,8 @@ source_set("escher") {
     "fs/hack_filesystem.h",
     "geometry/bounding_box.cc",
     "geometry/bounding_box.h",
+    "geometry/clip_planes.cc",
+    "geometry/clip_planes.h",
     "geometry/intersection.cc",
     "geometry/intersection.h",
     "geometry/quad.cc",
@@ -131,6 +193,8 @@ source_set("escher") {
     "impl/debug_print.cc",
     "impl/descriptor_set_pool.cc",
     "impl/descriptor_set_pool.h",
+    "impl/frame_manager.cc",
+    "impl/frame_manager.h",
     "impl/gaussian_3x3f16.cc",
     "impl/gaussian_3x3f16.h",
     "impl/glsl_compiler.cc",
@@ -202,8 +266,16 @@ source_set("escher") {
     "material/material.h",
     "math/rotations.cc",
     "math/rotations.h",
+    "paper/paper_render_funcs.cc",
+    "paper/paper_render_funcs.h",
+    "paper/paper_render_queue.cc",
+    "paper/paper_render_queue.h",
     "profiling/timestamp_profiler.cc",
     "profiling/timestamp_profiler.h",
+    "renderer/batch_gpu_uploader.cc",
+    "renderer/batch_gpu_uploader.h",
+    "renderer/buffer_cache.cc",
+    "renderer/buffer_cache.h",
     "renderer/frame.cc",
     "renderer/frame.h",
     "renderer/moment_shadow_map.cc",
@@ -214,6 +286,9 @@ source_set("escher") {
     "renderer/paper_renderer.h",
     "renderer/renderer.cc",
     "renderer/renderer.h",
+    "renderer/render_queue.cc",
+    "renderer/render_queue.h",
+    "renderer/render_queue_item.h",
     "renderer/semaphore.cc",
     "renderer/semaphore.h",
     "renderer/shadow_map.cc",
@@ -221,6 +296,9 @@ source_set("escher") {
     "renderer/shadow_map_renderer.cc",
     "renderer/shadow_map_renderer.h",
     "renderer/shadow_map_type_info.h",
+    "renderer/uniform_allocation.h",
+    "renderer/uniform_block_allocator.cc",
+    "renderer/uniform_block_allocator.h",
     "resources/resource.cc",
     "resources/resource.h",
     "resources/resource_manager.cc",
@@ -280,6 +358,7 @@ source_set("escher") {
     "third_party/granite/vk/shader_utils.h",
     "util/align.h",
     "util/bit_ops.h",
+    "util/bitmap.h",
     "util/block_allocator.cc",
     "util/block_allocator.h",
     "util/depth_to_color.cc",
@@ -297,8 +376,10 @@ source_set("escher") {
     "util/image_utils.h",
     "util/intrusive_list.h",
     "util/object_pool.h",
+    "util/pair_hasher.h",
     "util/stack_allocator.h",
     "util/stopwatch.h",
+    "util/string_utils.h",
     "util/trace_macros.h",
     "util/tracer.cc",
     "util/tracer.h",
@@ -338,6 +419,10 @@ source_set("escher") {
     "vk/shader_module_template.h",
     "vk/shader_program.cc",
     "vk/shader_program.h",
+    "vk/shader_program_factory.cc",
+    "vk/shader_program_factory.h",
+    "vk/shader_variant_args.cc",
+    "vk/shader_variant_args.h",
     "vk/simple_image_factory.cc",
     "vk/simple_image_factory.h",
     "vk/texture.cc",
@@ -363,18 +448,24 @@ source_set("escher") {
       "flib/fence_set_listener.h",
       "flib/release_fence_signaller.cc",
       "flib/release_fence_signaller.h",
+      "fs/fuchsia_data_source.cc",
+      "fs/fuchsia_data_source.h",
       "util/fuchsia_utils.cc",
       "util/fuchsia_utils.h",
     ]
     public_deps += [
-      "//garnet/public/lib/images/fidl",
+      "//garnet/public/fidl/fuchsia.images",
+      "//zircon/public/lib/async-loop-cpp",
       "//zircon/public/lib/fit",
+      "//zircon/public/lib/fs",
     ]
     deps += [ "//zircon/public/lib/trace" ]
   }
 
   if (is_linux) {
     sources += [
+      "fs/linux_data_source.cc",
+      "fs/linux_data_source.h",
       "util/impl/trace_macros_impl.cc",
       "util/impl/trace_macros_impl.h",
     ]

@@ -7,21 +7,16 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
-#if defined(OS_WIN)
-#define FILE_CREATE_MODE _S_IREAD | _S_IWRITE
-#define BINARY_MODE _O_BINARY
-#else
 #define FILE_CREATE_MODE 0666
 #define BINARY_MODE 0
-#endif
 
 #include "lib/fxl/files/eintr_wrapper.h"
 #include "lib/fxl/files/file_descriptor.h"
 #include "lib/fxl/files/scoped_temp_dir.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/logging.h"
-#include "lib/fxl/portable_unistd.h"
 
 namespace files {
 namespace {
@@ -55,13 +50,9 @@ bool ReadFileDescriptor(int fd, T* result) {
 }  // namespace
 
 bool WriteFile(const std::string& path, const char* data, ssize_t size) {
-  fxl::UniqueFD fd(HANDLE_EINTR(creat(path.c_str(), FILE_CREATE_MODE)));
-  if (!fd.is_valid())
-    return false;
-  return fxl::WriteFileDescriptor(fd.get(), data, size);
+  return WriteFileAt(AT_FDCWD, path, data, size);
 }
 
-#if defined(OS_LINUX) || defined(OS_FUCHSIA)
 bool WriteFileAt(int dirfd, const std::string& path, const char* data,
                  ssize_t size) {
   fxl::UniqueFD fd(HANDLE_EINTR(openat(
@@ -70,7 +61,6 @@ bool WriteFileAt(int dirfd, const std::string& path, const char* data,
     return false;
   return fxl::WriteFileDescriptor(fd.get(), data, size);
 }
-#endif
 
 bool WriteFileInTwoPhases(const std::string& path, fxl::StringView data,
                           const std::string& temp_root) {
@@ -93,21 +83,18 @@ bool WriteFileInTwoPhases(const std::string& path, fxl::StringView data,
 }
 
 bool ReadFileToString(const std::string& path, std::string* result) {
-  fxl::UniqueFD fd(open(path.c_str(), O_RDONLY));
-  return ReadFileDescriptor(fd.get(), result);
+  return ReadFileToStringAt(AT_FDCWD, path, result);
 }
 
 bool ReadFileDescriptorToString(int fd, std::string* result) {
   return ReadFileDescriptor(fd, result);
 }
 
-#if defined(OS_LINUX) || defined(OS_FUCHSIA)
 bool ReadFileToStringAt(int dirfd, const std::string& path,
                         std::string* result) {
   fxl::UniqueFD fd(openat(dirfd, path.c_str(), O_RDONLY));
   return ReadFileDescriptor(fd.get(), result);
 }
-#endif
 
 bool ReadFileToVector(const std::string& path, std::vector<uint8_t>* result) {
   fxl::UniqueFD fd(open(path.c_str(), O_RDONLY | BINARY_MODE));
@@ -124,11 +111,11 @@ std::pair<uint8_t*, intptr_t> ReadFileToBytes(const std::string& path) {
 
 std::pair<uint8_t*, intptr_t> ReadFileDescriptorToBytes(int fd) {
   std::pair<uint8_t*, intptr_t> failure_pair{nullptr, -1};
-  struct stat st;
-  if (fstat(fd, &st) != 0) {
+  struct stat stat_buffer;
+  if (fstat(fd, &stat_buffer) != 0) {
     return failure_pair;
   }
-  intptr_t file_size = st.st_size;
+  intptr_t file_size = stat_buffer.st_size;
   uint8_t* ptr = (uint8_t*)malloc(file_size);
 
   size_t bytes_left = file_size;
@@ -144,25 +131,22 @@ std::pair<uint8_t*, intptr_t> ReadFileDescriptorToBytes(int fd) {
   return std::pair<uint8_t*, intptr_t>(ptr, file_size);
 }
 
-bool IsFile(const std::string& path) {
-  struct stat buf;
-  if (stat(path.c_str(), &buf) != 0)
-    return false;
-  return S_ISREG(buf.st_mode);
-}
+bool IsFile(const std::string& path) { return IsFileAt(AT_FDCWD, path); }
 
-#if defined(OS_LINUX) || defined(OS_FUCHSIA)
 bool IsFileAt(int dirfd, const std::string& path) {
-  struct stat buf;
-  if (fstatat(dirfd, path.c_str(), &buf, 0 /* flags */) != 0)
+  struct stat stat_buffer;
+  if (fstatat(dirfd, path.c_str(), &stat_buffer, /* flags = */ 0) != 0)
     return false;
-  return S_ISREG(buf.st_mode);
+  return S_ISREG(stat_buffer.st_mode);
 }
-#endif
 
 bool GetFileSize(const std::string& path, uint64_t* size) {
+  return GetFileSizeAt(AT_FDCWD, path, size);
+}
+
+bool GetFileSizeAt(int dirfd, const std::string& path, uint64_t* size) {
   struct stat stat_buffer;
-  if (stat(path.c_str(), &stat_buffer) != 0)
+  if (fstatat(dirfd, path.c_str(), &stat_buffer, /* flags = */ 0) != 0)
     return false;
   *size = stat_buffer.st_size;
   return true;

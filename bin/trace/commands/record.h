@@ -28,22 +28,26 @@ class Record : public CommandWithTraceController {
   struct Options {
     bool Setup(const fxl::CommandLine&);
 
+    std::string test_name;
     std::string app;
     std::vector<std::string> args;
     std::vector<std::string> categories = {};
     fxl::TimeDelta duration = fxl::TimeDelta::FromSeconds(10);
     bool detach = false;
     bool decouple = false;
-    bool launchpad = false;
-    uint32_t buffer_size_megabytes_hint = 4;
+    bool spawn = false;
+    uint32_t buffer_size_megabytes = 4;
+    fuchsia::tracing::BufferingMode buffering_mode =
+        fuchsia::tracing::BufferingMode::ONESHOT;
     std::string output_file_name = "/data/trace.json";
     std::string benchmark_results_file;
+    std::string test_suite;
     measure::Measurements measurements;
   };
 
   static Info Describe();
 
-  explicit Record(fuchsia::sys::StartupContext* context);
+  explicit Record(component::StartupContext* context);
 
  protected:
   void Start(const fxl::CommandLine& command_line) override;

@@ -1,0 +1,90 @@
+// Copyright 2018 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "garnet/bin/run_test_component/test_metadata.h"
+
+#include "garnet/lib/cmx/cmx.h"
+#include "lib/fxl/strings/substitute.h"
+
+namespace run {
+namespace {
+
+using fxl::Substitute;
+
+constexpr char kInjectedServices[] = "injected-services";
+
+}  // namespace
+
+TestMetadata::TestMetadata() {}
+TestMetadata::~TestMetadata() {}
+
+fuchsia::sys::LaunchInfo TestMetadata::GetLaunchInfo(
+    const rapidjson::Document::ValueType& value, const std::string& name) {
+  fuchsia::sys::LaunchInfo launch_info;
+  if (value.IsString()) {
+    launch_info.url = value.GetString();
+    return launch_info;
+  }
+
+  if (value.IsArray()) {
+    const auto& array = value.GetArray();
+    // If the element is an array, ensure it is non-empty and all values are
+    // strings.
+    if (!array.Empty() && std::all_of(array.begin(), array.end(),
+                                      [](const rapidjson::Value& val) {
+                                        return val.IsString();
+                                      })) {
+      launch_info.url = array[0].GetString();
+      for (size_t i = 1; i < array.Size(); ++i) {
+        launch_info.arguments.push_back(array[i].GetString());
+      }
+      return launch_info;
+    }
+  }
+
+  json_parser_.ReportError(Substitute(
+      "'$0' must be a string or a non-empty array of strings.", name));
+  return launch_info;
+}
+
+bool TestMetadata::ParseFromFile(const std::string& cmx_file_path) {
+  component::CmxMetadata cmx;
+  cmx.ParseFromFileAt(-1, cmx_file_path, &json_parser_);
+  if (json_parser_.HasError()) {
+    return false;
+  }
+  auto& fuchisa_test = cmx.facets_meta().GetSection(kFuchsiaTest);
+  if (!fuchisa_test.IsNull()) {
+    null_ = false;
+    if (!fuchisa_test.IsObject()) {
+      json_parser_.ReportError(
+          Substitute("'$0' in 'facets' should be an object.", kFuchsiaTest));
+      return false;
+    }
+    auto services = fuchisa_test.FindMember(kInjectedServices);
+    if (services != fuchisa_test.MemberEnd()) {
+      if (!services->value.IsObject()) {
+        json_parser_.ReportError(Substitute("'$0' in '$1' should be an object.",
+                                            kInjectedServices, kFuchsiaTest));
+        return false;
+      }
+      for (auto itr = services->value.MemberBegin();
+           itr != services->value.MemberEnd(); ++itr) {
+        if (!itr->name.IsString()) {
+          json_parser_.ReportError(
+              Substitute("'$0' in '$1' should define string service names.",
+                         kInjectedServices, kFuchsiaTest));
+          return false;
+        }
+        auto name = itr->name.GetString();
+        auto launch_info = GetLaunchInfo(itr->value, name);
+        service_url_pair_.push_back(
+            std::make_pair(name, std::move(launch_info)));
+      }
+    }
+  }
+  return !HasError();
+}
+
+}  // namespace run

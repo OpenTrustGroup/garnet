@@ -17,16 +17,19 @@
 
 #include <utility>
 
-#include "garnet/bin/appmgr/cmx_metadata.h"
 #include "garnet/bin/appmgr/dynamic_library_loader.h"
 #include "garnet/bin/appmgr/hub/realm_hub.h"
 #include "garnet/bin/appmgr/namespace_builder.h"
-#include "garnet/bin/appmgr/runtime_metadata.h"
-#include "garnet/bin/appmgr/sandbox_metadata.h"
+#include "garnet/bin/appmgr/scheme_map.h"
 #include "garnet/bin/appmgr/url_resolver.h"
 #include "garnet/bin/appmgr/util.h"
-#include "garnet/lib/far/format.h"
-#include "lib/app/cpp/connect.h"
+#include "garnet/lib/cmx/cmx.h"
+#include "garnet/lib/cmx/program.h"
+#include "garnet/lib/cmx/runtime.h"
+#include "garnet/lib/cmx/sandbox.h"
+#include "garnet/lib/json/json_parser.h"
+#include "garnet/lib/pkg_url/fuchsia_pkg_url.h"
+#include "lib/component/cpp/connect.h"
 #include "lib/fsl/handles/object_info.h"
 #include "lib/fsl/io/fd.h"
 #include "lib/fsl/vmo/file.h"
@@ -35,19 +38,22 @@
 #include "lib/fxl/files/file.h"
 #include "lib/fxl/functional/auto_call.h"
 #include "lib/fxl/functional/make_copyable.h"
+#include "lib/fxl/strings/concatenate.h"
 #include "lib/fxl/strings/string_printf.h"
 #include "lib/svc/cpp/services.h"
 
 namespace component {
 namespace {
 
-constexpr zx_rights_t kChildJobRights = ZX_RIGHTS_BASIC | ZX_RIGHTS_IO;
-
 constexpr char kNumberedLabelFormat[] = "env-%d";
 constexpr char kAppPath[] = "bin/app";
-constexpr char kAppArv0[] = "/pkg/bin/app";
+constexpr char kAppArgv0Prefix[] = "/pkg/";
 constexpr char kLegacyFlatExportedDirPath[] = "meta/legacy_flat_exported_dir";
-constexpr char kRuntimePath[] = "meta/runtime";
+// Runtime files are deprecated. Use component manifests instead.
+constexpr char kDeprecatedRuntimePath[] = "meta/deprecated_runtime";
+constexpr zx_status_t kComponentCreationFailed = -1;
+
+using fuchsia::sys::TerminationReason;
 
 std::vector<const char*> GetArgv(const std::string& argv0,
                                  const fuchsia::sys::LaunchInfo& launch_info) {
@@ -103,10 +109,7 @@ zx::process CreateProcess(const zx::job& job, fsl::SizedVmo data,
   std::string label = Util::GetLabelFromURL(launch_info.url);
   std::vector<const char*> argv = GetArgv(argv0, launch_info);
 
-  // TODO(abarth): We probably shouldn't pass environ, but currently this
-  // is very useful as a way to tell the loader in the child process to
-  // print out load addresses so we can understand crashes.
-  uint32_t flags = FDIO_SPAWN_CLONE_ENVIRON;
+  uint32_t flags = 0u;
 
   std::vector<fdio_spawn_action_t> actions;
 
@@ -166,19 +169,23 @@ Realm::Realm(RealmArgs args)
       default_namespace_(
           fxl::MakeRefCounted<Namespace>(nullptr, this, nullptr)),
       hub_(fbl::AdoptRef(new fs::PseudoDir())),
-      info_vfs_(async_get_default()) {
+      info_vfs_(async_get_default_dispatcher()),
+      environment_services_(args.environment_services) {
   // parent_ is null if this is the root application environment. if so, we
   // derive from the application manager's job.
-  zx_handle_t parent_job =
-      parent_ != nullptr ? parent_->job_.get() : zx_job_default();
+  zx::unowned<zx::job> parent_job;
+  if (parent_) {
+    parent_job = zx::unowned<zx::job>(parent_->job_);
+  } else {
+    parent_job = zx::unowned<zx::job>(zx::job::default_job());
+  }
 
   // init svc service channel for root application environment
   if (parent_ == nullptr) {
     FXL_CHECK(zx::channel::create(0, &svc_channel_server_,
                                   &svc_channel_client_) == ZX_OK);
   }
-  FXL_CHECK(zx::job::create(parent_job, 0u, &job_) == ZX_OK);
-  FXL_CHECK(job_.duplicate(kChildJobRights, &job_for_child_) == ZX_OK);
+  FXL_CHECK(zx::job::create(*parent_job, 0u, &job_) == ZX_OK);
 
   koid_ = std::to_string(fsl::GetKoid(job_.get()));
   if (args.label->size() == 0)
@@ -190,29 +197,61 @@ Realm::Realm(RealmArgs args)
   hub_.SetName(label_);
   hub_.SetJobId(koid_);
   hub_.AddServices(default_namespace_->services());
+  hub_.AddJobProvider(fbl::AdoptRef(new fs::Service([this](
+                                                        zx::channel channel) {
+    default_namespace_->job_provider()->AddBinding(
+        fidl::InterfaceRequest<fuchsia::sys::JobProvider>(std::move(channel)));
+    return ZX_OK;
+  })));
 
+  if (!parent_) {
+    // Set up Loader service for root realm.
+    root_loader_.reset(new RootLoader);
+    default_namespace_->services()->AddService(
+        fbl::AdoptRef(new fs::Service([this](zx::channel channel) {
+          root_loader_->AddBinding(
+              fidl::InterfaceRequest<fuchsia::sys::Loader>(std::move(channel)));
+          return ZX_OK;
+        })),
+        fuchsia::sys::Loader::Name_);
+  }
   default_namespace_->services()->set_backing_dir(
       std::move(args.host_directory));
 
   fuchsia::sys::ServiceProviderPtr service_provider;
   default_namespace_->services()->AddBinding(service_provider.NewRequest());
-  loader_ = fuchsia::sys::ConnectToService<fuchsia::sys::Loader>(
-      service_provider.get());
+  loader_ =
+      component::ConnectToService<fuchsia::sys::Loader>(service_provider.get());
+
+  std::string error;
+  if (!files::IsDirectory(SchemeMap::kConfigDirPath)) {
+    FXL_LOG(FATAL) << "Could not find scheme map config dir: "
+                   << SchemeMap::kConfigDirPath;
+  }
+  if (!scheme_map_.ParseFromDirectory(SchemeMap::kConfigDirPath)) {
+    FXL_LOG(FATAL) << "Could not parse scheme map config dir: "
+                   << scheme_map_.error_str();
+  }
 }
 
 Realm::~Realm() { job_.kill(); }
 
-zx::channel Realm::OpenRootInfoDir() {
-  // TODO: define /hub access policy: CP-26
-  Realm* root_realm = this;
-  while (root_realm->parent() != nullptr) {
-    root_realm = root_realm->parent();
-  }
-  return Util::OpenAsDirectory(&info_vfs_, root_realm->hub_dir());
+zx::channel Realm::OpenInfoDir() {
+  return Util::OpenAsDirectory(&info_vfs_, hub_dir());
 }
 
 HubInfo Realm::HubInfo() {
   return component::HubInfo(label_, koid_, hub_.dir());
+}
+
+zx::job Realm::DuplicateJob() const {
+  zx::job duplicate_job;
+  zx_status_t status =
+      job_.duplicate(ZX_RIGHTS_BASIC | ZX_RIGHT_WRITE, &duplicate_job);
+  if (status != ZX_OK) {
+    return zx::job();
+  }
+  return duplicate_job;
 }
 
 void Realm::CreateNestedJob(
@@ -221,7 +260,8 @@ void Realm::CreateNestedJob(
     fidl::InterfaceRequest<fuchsia::sys::EnvironmentController>
         controller_request,
     fidl::StringPtr label) {
-  RealmArgs args{this, std::move(host_directory), label, false};
+  RealmArgs args{this, environment_services_, std::move(host_directory), label,
+                 false};
   auto controller = std::make_unique<EnvironmentControllerImpl>(
       std::move(controller_request), std::make_unique<Realm>(std::move(args)));
   Realm* child = controller->realm();
@@ -230,8 +270,6 @@ void Realm::CreateNestedJob(
   // update hub
   hub_.AddRealm(child->HubInfo());
 
-  children_.emplace(child, std::move(controller));
-
   Realm* root_realm = this;
   while (root_realm->parent() != nullptr) {
     root_realm = root_realm->parent();
@@ -239,10 +277,18 @@ void Realm::CreateNestedJob(
   child->default_namespace_->ServeServiceDirectory(
       std::move(root_realm->svc_channel_server_));
 
+  controller->OnCreated();
+  children_.emplace(child, std::move(controller));
+
   if (run_virtual_console_) {
-    child->CreateShell("/boot/bin/run-vc");
-    child->CreateShell("/boot/bin/run-vc");
-    child->CreateShell("/boot/bin/run-vc");
+    // TODO(anmittal): remove svc hardcoding once we no longer need to launch
+    // shell with sysmgr services, i.e once we have chrealm.
+    CreateShell("/boot/bin/run-vc",
+                child->default_namespace_->OpenServicesAsDirectory());
+    CreateShell("/boot/bin/run-vc",
+                child->default_namespace_->OpenServicesAsDirectory());
+    CreateShell("/boot/bin/run-vc",
+                child->default_namespace_->OpenServicesAsDirectory());
   }
 }
 
@@ -250,57 +296,72 @@ void Realm::CreateComponent(
     fuchsia::sys::LaunchInfo launch_info,
     fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
     ComponentObjectCreatedCallback callback) {
+  ComponentRequestWrapper component_request(
+      std::move(controller), MakeForwardingTerminationCallback());
   if (launch_info.url.get().empty()) {
     FXL_LOG(ERROR) << "Cannot create application because launch_info contains"
                       " an empty url";
+    component_request.SetReturnValues(kComponentCreationFailed,
+                                      TerminationReason::URL_INVALID);
     return;
   }
   std::string canon_url = CanonicalizeURL(launch_info.url);
   if (canon_url.empty()) {
     FXL_LOG(ERROR) << "Cannot run " << launch_info.url
                    << " because the url could not be canonicalized";
+    component_request.SetReturnValues(kComponentCreationFailed,
+                                      TerminationReason::URL_INVALID);
     return;
   }
   launch_info.url = canon_url;
-
   std::string scheme = GetSchemeFromURL(canon_url);
 
-  fxl::RefPtr<Namespace> ns = default_namespace_;
-  if (launch_info.additional_services) {
-    ns = fxl::MakeRefCounted<Namespace>(
-        default_namespace_, this, std::move(launch_info.additional_services));
-  }
+  const std::string launcher_type = scheme_map_.LookUp(scheme);
+  if (launcher_type == "") {
+    component_request.SetReturnValues(kComponentCreationFailed,
+                                      TerminationReason::URL_INVALID);
+  } else if (launcher_type == "package") {
+    // "package" type doesn't use a runner.
 
-  // TODO(CP-69): Provision this map as a config file rather than hard-coding.
-  if (scheme == "http" || scheme == "https") {
-    CreateComponentFromNetwork(std::move(launch_info), std::move(controller),
-                               std::move(ns), std::move(callback));
-    return;
-  }
-
-  // launch_info is moved before LoadComponent() gets at its first argument.
-  fidl::StringPtr url = launch_info.url;
-  loader_->LoadComponent(
-      url, fxl::MakeCopyable([this, launch_info = std::move(launch_info),
-                              controller = std::move(controller), ns,
-                              callback = fbl::move(callback)](
-                                 fuchsia::sys::PackagePtr package) mutable {
-        if (package) {
-          if (package->data) {
-            CreateComponentWithProcess(
-                std::move(package), std::move(launch_info),
-                std::move(controller), std::move(ns), fbl::move(callback));
-          } else if (package->directory) {
-            CreateComponentFromPackage(
-                std::move(package), std::move(launch_info),
-                std::move(controller), std::move(ns), fbl::move(callback));
+    // launch_info is moved before LoadComponent() gets at its first argument.
+    fidl::StringPtr url = launch_info.url;
+    loader_->LoadComponent(
+        url,
+        fxl::MakeCopyable([this, launch_info = std::move(launch_info),
+                           component_request = std::move(component_request),
+                           callback = fbl::move(callback)](
+                              fuchsia::sys::PackagePtr package) mutable {
+          fxl::RefPtr<Namespace> ns = fxl::MakeRefCounted<Namespace>(
+              default_namespace_, this,
+              std::move(launch_info.additional_services));
+          ns->set_component_url(launch_info.url);
+          if (package) {
+            if (package->data) {
+              // TODO(CP-25): Deprecate and remove CreateComponentWithProcess.
+              CreateComponentWithProcess(std::move(package),
+                                         std::move(launch_info),
+                                         std::move(component_request),
+                                         std::move(ns), fbl::move(callback));
+            } else if (package->directory) {
+              CreateComponentFromPackage(std::move(package),
+                                         std::move(launch_info),
+                                         std::move(component_request),
+                                         std::move(ns), fbl::move(callback));
+            }
+          } else {
+            component_request.SetReturnValues(
+                kComponentCreationFailed, TerminationReason::PACKAGE_NOT_FOUND);
           }
-        }
-      }));
+        }));
+  } else {
+    // Component from scheme that maps to a runner.
+    CreateComponentWithRunnerForScheme(launcher_type, std::move(launch_info),
+                                       std::move(component_request),
+                                       std::move(callback));
+  }
 }
 
-void Realm::CreateShell(const std::string& path) {
-  zx::channel svc = default_namespace_->OpenServicesAsDirectory();
+void Realm::CreateShell(const std::string& path, zx::channel svc) {
   if (!svc)
     return;
 
@@ -309,16 +370,21 @@ void Realm::CreateShell(const std::string& path) {
 
   NamespaceBuilder builder;
   builder.AddServices(std::move(svc));
-  builder.AddSandbox(sandbox, [this] { return OpenRootInfoDir(); });
+  builder.AddSandbox(sandbox, [this] { return OpenInfoDir(); });
 
   fsl::SizedVmo executable;
   if (!fsl::VmoFromFilename(path, &executable))
     return;
 
+  zx::job child_job;
+  zx_status_t status = zx::job::create(job_, 0u, &child_job);
+  if (status != ZX_OK)
+    return;
+
   fuchsia::sys::LaunchInfo launch_info;
   launch_info.url = path;
   zx::process process =
-      CreateProcess(job_for_child_, std::move(executable), path,
+      CreateProcess(child_job, std::move(executable), path,
                     std::move(launch_info), zx::channel(), builder.Build());
 }
 
@@ -358,11 +424,14 @@ void Realm::AddBinding(
 
 void Realm::CreateComponentWithProcess(
     fuchsia::sys::PackagePtr package, fuchsia::sys::LaunchInfo launch_info,
-    fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
-    fxl::RefPtr<Namespace> ns, ComponentObjectCreatedCallback callback) {
+    ComponentRequestWrapper component_request, fxl::RefPtr<Namespace> ns,
+    ComponentObjectCreatedCallback callback) {
   zx::channel svc = ns->OpenServicesAsDirectory();
-  if (!svc)
+  if (!svc) {
+    component_request.SetReturnValues(kComponentCreationFailed,
+                                      TerminationReason::INTERNAL_ERROR);
     return;
+  }
 
   NamespaceBuilder builder;
   builder.AddServices(std::move(svc));
@@ -378,87 +447,155 @@ void Realm::CreateComponentWithProcess(
   builder.AddDeprecatedDefaultDirectories();
 
   fsl::SizedVmo executable;
-  if (!fsl::SizedVmo::FromTransport(std::move(*package->data), &executable))
+  if (!fsl::SizedVmo::FromTransport(std::move(*package->data), &executable)) {
+    component_request.SetReturnValues(kComponentCreationFailed,
+                                      TerminationReason::INTERNAL_ERROR);
+    return;
+  }
+
+  zx::job child_job;
+  zx_status_t status = zx::job::create(job_, 0u, &child_job);
+  if (status != ZX_OK)
     return;
 
   const std::string args = Util::GetArgsString(launch_info.arguments);
   const std::string url = launch_info.url;  // Keep a copy before moving it.
   auto channels = Util::BindDirectory(&launch_info);
   zx::process process =
-      CreateProcess(job_for_child_, std::move(executable), url,
+      CreateProcess(child_job, std::move(executable), url,
                     std::move(launch_info), zx::channel(), builder.Build());
 
   if (process) {
+    fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller;
+    TerminationCallback termination_callback;
+    component_request.Extract(&controller, &termination_callback);
     auto application = std::make_unique<ComponentControllerImpl>(
-        std::move(controller), this, koid_, std::move(process), url,
-        std::move(args), Util::GetLabelFromURL(url), std::move(ns),
+        std::move(controller), this, std::move(child_job), std::move(process),
+        url, std::move(args), Util::GetLabelFromURL(url), std::move(ns),
         ExportedDirType::kPublicDebugCtrlLayout,
-        std::move(channels.exported_dir), std::move(channels.client_request));
+        std::move(channels.exported_dir), std::move(channels.client_request),
+        std::move(termination_callback));
     // update hub
     hub_.AddComponent(application->HubInfo());
     ComponentControllerImpl* key = application.get();
-    if (callback != nullptr) {
-      callback(key);
-    }
     applications_.emplace(key, std::move(application));
+  } else {
+    component_request.SetReturnValues(
+        kComponentCreationFailed, TerminationReason::PROCESS_CREATION_ERROR);
   }
 }
 
-void Realm::CreateComponentFromNetwork(
-    fuchsia::sys::LaunchInfo launch_info,
-    fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
-    fxl::RefPtr<Namespace> ns, ComponentObjectCreatedCallback callback) {
-  zx::channel svc = ns->OpenServicesAsDirectory();
-  if (!svc)
-    return;
-
-  NamespaceBuilder builder;
-  builder.AddServices(std::move(svc));
+void Realm::CreateComponentWithRunnerForScheme(
+    std::string runner_url, fuchsia::sys::LaunchInfo launch_info,
+    ComponentRequestWrapper component_request,
+    ComponentObjectCreatedCallback callback) {
+  // Use "web_runner" if it is installed, otherwise fall back to using
+  // "web_runner_prototype" instead.
+  // TODO(CP-71): Remove web_runner_prototype scaffolding once there is a real
+  // web_runner.
+  if (runner_url == "web_runner" &&
+      !files::IsDirectory("/pkgfs/packages/web_runner") &&
+      files::IsDirectory("/pkgfs/packages/web_runner_prototype")) {
+    runner_url = "web_runner_prototype";
+  }
 
   fuchsia::sys::Package package;
   package.resolved_url = launch_info.url;
 
   fuchsia::sys::StartupInfo startup_info;
   startup_info.launch_info = std::move(launch_info);
+  NamespaceBuilder builder;
   startup_info.flat_namespace = builder.BuildForRunner();
-
-  // TODO(CP-71): Remove web_runner_prototype scaffolding once there is a real
-  // web_runner.
-  const char* runner_url = "web_runner_prototype";
-  if (!files::IsDirectory("/pkgfs/packages/web_runner_prototype"))
-    runner_url = "web_runner";
 
   auto* runner = GetOrCreateRunner(runner_url);
   if (runner == nullptr) {
     FXL_LOG(ERROR) << "Cannot create " << runner_url << " to run "
                    << launch_info.url;
+    component_request.SetReturnValues(kComponentCreationFailed,
+                                      TerminationReason::RUNNER_FAILED);
     return;
   }
 
+  fxl::RefPtr<Namespace> ns =
+      fxl::MakeRefCounted<Namespace>(default_namespace_, this, nullptr);
+
+  fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller;
+  TerminationCallback termination_callback;
+  component_request.Extract(&controller, &termination_callback);
   runner->StartComponent(std::move(package), std::move(startup_info),
-                         std::move(ns), std::move(controller));
+                         std::move(ns), std::move(controller),
+                         std::move(termination_callback));
 }
 
 void Realm::CreateComponentFromPackage(
     fuchsia::sys::PackagePtr package, fuchsia::sys::LaunchInfo launch_info,
-    fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
-    fxl::RefPtr<Namespace> ns, ComponentObjectCreatedCallback callback) {
+    ComponentRequestWrapper component_request, fxl::RefPtr<Namespace> ns,
+    ComponentObjectCreatedCallback callback) {
   zx::channel svc = ns->OpenServicesAsDirectory();
-  if (!svc)
+  if (!svc) {
+    component_request.SetReturnValues(kComponentCreationFailed,
+                                      TerminationReason::INTERNAL_ERROR);
     return;
+  }
 
   fxl::UniqueFD fd =
       fsl::OpenChannelAsFileDescriptor(std::move(package->directory));
 
-  std::string cmx_data;
-  std::string cmx_path = CmxMetadata::GetCmxPath(package->resolved_url.get());
-  if (!cmx_path.empty())
-    files::ReadFileToStringAt(fd.get(), cmx_path, &cmx_data);
+  // Parse cmx manifest file, if it's there.
+  CmxMetadata cmx;
+  std::string cmx_path;
+  FuchsiaPkgUrl fp;
+  if (fp.Parse(package->resolved_url.get())) {
+    // The package's resolved_url uses fuchsia-pkg://. This means it is a cmx,
+    // and we are requesting to launch a specific component, instead of the
+    // package default component.
+    cmx_path = fp.resource_path();
+  } else {
+    // If we do not specify a cmx, then we are launching the default component
+    // of the package.
+    cmx_path =
+        CmxMetadata::GetDefaultComponentCmxPath(package->resolved_url.get());
+  }
+  if (!cmx_path.empty() && files::IsFileAt(fd.get(), cmx_path)) {
+    json::JSONParser json_parser;
+    if (!cmx.ParseFromFileAt(fd.get(), cmx_path, &json_parser)) {
+      FXL_LOG(ERROR) << "cmx file failed to parse: " << json_parser.error_str();
+      component_request.SetReturnValues(kComponentCreationFailed,
+                                        TerminationReason::INTERNAL_ERROR);
+      return;
+    }
+  }
 
-  std::string runtime_data;
+  RuntimeMetadata runtime;
+  std::string runtime_parse_error;
+  // If meta/*.cmx has runtime data, get it.
+  if (!cmx.runtime_meta().IsNull()) {
+    runtime = cmx.runtime_meta();
+  } else {
+    json::JSONParser json_parser;
+    runtime.ParseFromFileAt(fd.get(), kDeprecatedRuntimePath, &json_parser);
+    runtime_parse_error = json_parser.error_str();
+  }
+
+  // If we cannot parse a runtime from either .cmx or deprecated_runtime, then
+  // we fall back to the default runner, which is running an ELF binary.
   fsl::SizedVmo app_data;
-  if (!files::ReadFileToStringAt(fd.get(), kRuntimePath, &runtime_data))
-    VmoFromFilenameAt(fd.get(), kAppPath, &app_data);
+  std::string app_argv0;
+  if (runtime.IsNull()) {
+    const ProgramMetadata program = cmx.program_meta();
+    const std::string bin_path =
+        program.IsBinaryNull() ? kAppPath : program.binary();
+    app_argv0 = fxl::Concatenate({kAppArgv0Prefix, bin_path});
+    VmoFromFilenameAt(fd.get(), bin_path, &app_data);
+    if (!app_data) {
+      FXL_LOG(ERROR) << "component has neither runner (error: '"
+                     << runtime_parse_error << "') nor elf binary: '"
+                     << bin_path << "'";
+      component_request.SetReturnValues(kComponentCreationFailed,
+                                        TerminationReason::INTERNAL_ERROR);
+      return;
+    }
+  }
 
   ExportedDirType exported_dir_layout =
       files::IsFileAt(fd.get(), kLegacyFlatExportedDirPath)
@@ -469,8 +606,11 @@ void Realm::CreateComponentFromPackage(
   // the channel back.
   zx::channel pkg = fsl::CloneChannelFromFileDescriptor(fd.get());
   zx::channel loader_service;
-  if (DynamicLibraryLoader::Start(std::move(fd), &loader_service) != ZX_OK)
+  if (DynamicLibraryLoader::Start(std::move(fd), &loader_service) != ZX_OK) {
+    component_request.SetReturnValues(kComponentCreationFailed,
+                                      TerminationReason::INTERNAL_ERROR);
     return;
+  }
 
   // Note that |builder| is only used in the else block below. It is left here
   // because we would like to use it everywhere once US-313 is fixed.
@@ -478,25 +618,22 @@ void Realm::CreateComponentFromPackage(
   builder.AddPackage(std::move(pkg));
   builder.AddServices(std::move(svc));
 
-  // If meta/*.cmx exists, read sandbox data from it.
-  if (!cmx_data.empty()) {
-    SandboxMetadata sandbox;
-    CmxMetadata cmx;
-    rapidjson::Value sandbox_meta;
-    if (!cmx.ParseSandboxMetadata(cmx_data, &sandbox_meta)) {
-      FXL_LOG(ERROR) << "Failed to parse sandbox metadata for "
-                     << launch_info.url;
-      return;
+  // If meta/*.cmx exists, attempt to read sandbox data from it.
+  if (!cmx.sandbox_meta().IsNull()) {
+    const auto& sandbox = cmx.sandbox_meta();
+
+    if (!sandbox.has_all_services()) {
+      ns->SetServicesWhitelist(sandbox.services());
     }
-    sandbox.Parse(sandbox_meta);
 
     // If an app has the "shell" feature, then we use the libraries from the
     // system rather than from the package because programs spawned from the
     // shell will need the system-provided libraries to run.
-    if (sandbox.HasFeature("shell"))
+    if (sandbox.HasFeature("shell")) {
       loader_service.reset();
+    }
 
-    builder.AddSandbox(sandbox, [this] { return OpenRootInfoDir(); });
+    builder.AddSandbox(sandbox, [this] { return OpenInfoDir(); });
   }
 
   // Add the custom namespace.
@@ -505,52 +642,83 @@ void Realm::CreateComponentFromPackage(
   // steps.
   builder.AddFlatNamespace(std::move(launch_info.flat_namespace));
 
-  if (app_data) {
-    const std::string args = Util::GetArgsString(launch_info.arguments);
-    const std::string url = launch_info.url;  // Keep a copy before moving it.
-    auto channels = Util::BindDirectory(&launch_info);
-    zx::process process = CreateProcess(
-        job_for_child_, std::move(app_data), kAppArv0, std::move(launch_info),
-        std::move(loader_service), builder.Build());
-
-    if (process) {
-      auto application = std::make_unique<ComponentControllerImpl>(
-          std::move(controller), this, koid_, std::move(process), url,
-          std::move(args), Util::GetLabelFromURL(url), std::move(ns),
-          exported_dir_layout, std::move(channels.exported_dir),
-          std::move(channels.client_request));
-      // update hub
-      hub_.AddComponent(application->HubInfo());
-      ComponentControllerImpl* key = application.get();
-      if (callback != nullptr) {
-        callback(key);
-      }
-      applications_.emplace(key, std::move(application));
-    }
+  if (runtime.IsNull()) {
+    // Use the default runner: ELF binaries.
+    CreateElfBinaryComponentFromPackage(
+        std::move(launch_info), app_data, app_argv0, exported_dir_layout,
+        std::move(loader_service), builder.Build(),
+        std::move(component_request), std::move(ns), fbl::move(callback));
   } else {
-    RuntimeMetadata runtime;
-    if (!runtime.Parse(runtime_data)) {
-      FXL_LOG(ERROR) << "Failed to parse runtime metadata for "
-                     << launch_info.url;
-      return;
-    }
-
-    fuchsia::sys::Package inner_package;
-    inner_package.resolved_url = package->resolved_url;
-
-    fuchsia::sys::StartupInfo startup_info;
-    startup_info.launch_info = std::move(launch_info);
-    startup_info.flat_namespace = builder.BuildForRunner();
-
-    auto* runner = GetOrCreateRunner(runtime.runner());
-    if (runner == nullptr) {
-      FXL_LOG(ERROR) << "Cannot create " << runner << " to run "
-                     << launch_info.url;
-      return;
-    }
-    runner->StartComponent(std::move(inner_package), std::move(startup_info),
-                           std::move(ns), std::move(controller));
+    // Use other component runners.
+    CreateRunnerComponentFromPackage(
+        std::move(package), std::move(launch_info), runtime,
+        builder.BuildForRunner(), std::move(component_request), std::move(ns));
   }
+}
+
+void Realm::CreateElfBinaryComponentFromPackage(
+    fuchsia::sys::LaunchInfo launch_info, fsl::SizedVmo& app_data,
+    const std::string& app_argv0, ExportedDirType exported_dir_layout,
+    zx::channel loader_service, fdio_flat_namespace_t* flat,
+    ComponentRequestWrapper component_request, fxl::RefPtr<Namespace> ns,
+    ComponentObjectCreatedCallback callback) {
+  zx::job child_job;
+  zx_status_t status = zx::job::create(job_, 0u, &child_job);
+  if (status != ZX_OK)
+    return;
+
+  const std::string args = Util::GetArgsString(launch_info.arguments);
+  const std::string url = launch_info.url;  // Keep a copy before moving it.
+  auto channels = Util::BindDirectory(&launch_info);
+  zx::process process =
+      CreateProcess(child_job, std::move(app_data), app_argv0,
+                    std::move(launch_info), std::move(loader_service), flat);
+
+  if (process) {
+    fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller;
+    TerminationCallback termination_callback;
+    component_request.Extract(&controller, &termination_callback);
+    auto application = std::make_unique<ComponentControllerImpl>(
+        std::move(controller), this, std::move(child_job), std::move(process),
+        url, std::move(args), Util::GetLabelFromURL(url), std::move(ns),
+        exported_dir_layout, std::move(channels.exported_dir),
+        std::move(channels.client_request), std::move(termination_callback));
+    // update hub
+    hub_.AddComponent(application->HubInfo());
+    ComponentControllerImpl* key = application.get();
+    if (callback != nullptr) {
+      callback(key);
+    }
+    applications_.emplace(key, std::move(application));
+  }
+}
+
+void Realm::CreateRunnerComponentFromPackage(
+    fuchsia::sys::PackagePtr package, fuchsia::sys::LaunchInfo launch_info,
+    RuntimeMetadata& runtime, fuchsia::sys::FlatNamespace flat,
+    ComponentRequestWrapper component_request, fxl::RefPtr<Namespace> ns) {
+  fuchsia::sys::Package inner_package;
+  inner_package.resolved_url = package->resolved_url;
+
+  fuchsia::sys::StartupInfo startup_info;
+  startup_info.launch_info = std::move(launch_info);
+  startup_info.flat_namespace = std::move(flat);
+
+  auto* runner = GetOrCreateRunner(runtime.runner());
+  if (runner == nullptr) {
+    FXL_LOG(ERROR) << "Cannot create " << runner << " to run "
+                   << launch_info.url;
+    component_request.SetReturnValues(kComponentCreationFailed,
+                                      TerminationReason::INTERNAL_ERROR);
+    return;
+  }
+
+  fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller;
+  TerminationCallback termination_callback;
+  component_request.Extract(&controller, &termination_callback);
+  runner->StartComponent(std::move(inner_package), std::move(startup_info),
+                         std::move(ns), std::move(controller),
+                         std::move(termination_callback));
 }
 
 RunnerHolder* Realm::GetOrCreateRunner(const std::string& runner) {
@@ -558,7 +726,7 @@ RunnerHolder* Realm::GetOrCreateRunner(const std::string& runner) {
   // recursively to detect cycles.
   auto result = runners_.emplace(runner, nullptr);
   if (result.second) {
-    fuchsia::sys::Services runner_services;
+    Services runner_services;
     fuchsia::sys::ComponentControllerPtr runner_controller;
     fuchsia::sys::LaunchInfo runner_launch_info;
     runner_launch_info.url = runner;

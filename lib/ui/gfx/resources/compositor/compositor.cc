@@ -28,22 +28,25 @@
 #include "garnet/lib/ui/gfx/resources/stereo_camera.h"
 #include "garnet/lib/ui/gfx/swapchain/swapchain.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 const ResourceTypeInfo Compositor::kTypeInfo = {ResourceType::kCompositor,
                                                 "Compositor"};
 
+CompositorPtr Compositor::New(Session* session, scenic::ResourceId id) {
+  return fxl::AdoptRef(
+      new Compositor(session, id, Compositor::kTypeInfo, nullptr));
+}
+
 Compositor::Compositor(Session* session, scenic::ResourceId id,
                        const ResourceTypeInfo& type_info,
                        std::unique_ptr<Swapchain> swapchain)
     : Resource(session, id, type_info),
-      escher_(session->engine()->escher()),
+      escher_(session->engine()->GetEscherWeakPtr()),
       swapchain_(std::move(swapchain)),
       pose_buffer_latching_shader_(
           std::make_unique<escher::hmd::PoseBufferLatchingShader>(escher_)) {
-  FXL_DCHECK(swapchain_.get());
-
   session->engine()->AddCompositor(this);
 }
 
@@ -265,6 +268,9 @@ bool Compositor::DrawFrame(const FrameTimingsPtr& frame_timings,
                            escher::ShadowMapRenderer* shadow_renderer) {
   TRACE_DURATION("gfx", "Compositor::DrawFrame");
 
+  if (!swapchain_)
+    return false;
+
   std::vector<Layer*> drawable_layers = GetDrawableLayers();
   if (drawable_layers.empty())
     return false;
@@ -338,4 +344,4 @@ escher::ImagePtr Compositor::GetLayerFramebufferImage(uint32_t width,
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

@@ -13,7 +13,7 @@
 #include "garnet/bin/trace_manager/config.h"
 #include "garnet/bin/trace_manager/trace_provider_bundle.h"
 #include "garnet/bin/trace_manager/trace_session.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fidl/cpp/interface_ptr_set.h"
 #include "lib/fidl/cpp/interface_request.h"
@@ -24,7 +24,7 @@ namespace tracing {
 class TraceManager : public fuchsia::tracelink::Registry,
                      public fuchsia::tracing::TraceController {
  public:
-  TraceManager(fuchsia::sys::StartupContext* context, const Config& config);
+  TraceManager(component::StartupContext* context, const Config& config);
   ~TraceManager() override;
 
  private:
@@ -35,18 +35,27 @@ class TraceManager : public fuchsia::tracelink::Registry,
   void GetKnownCategories(GetKnownCategoriesCallback callback) override;
 
   // |TraceRegistry| implementation.
+  void RegisterTraceProviderWorker(
+      fidl::InterfaceHandle<fuchsia::tracelink::Provider> provider,
+      uint64_t pid, fidl::StringPtr name);
   void RegisterTraceProvider(
       fidl::InterfaceHandle<fuchsia::tracelink::Provider> provider) override;
+  void RegisterTraceProviderSynchronously(
+      fidl::InterfaceHandle<fuchsia::tracelink::Provider> provider,
+      uint64_t pid, fidl::StringPtr name,
+      RegisterTraceProviderSynchronouslyCallback callback) override;
 
   void FinalizeTracing();
   void LaunchConfiguredProviders();
 
-  fuchsia::sys::StartupContext* const context_;
+  component::StartupContext* const context_;
   const Config& config_;
 
   uint32_t next_provider_id_ = 1u;
   fxl::RefPtr<TraceSession> session_;
   std::list<TraceProviderBundle> providers_;
+  // True if tracing has been started, and is not (yet) being stopped.
+  bool trace_running_ = false;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TraceManager);
 };

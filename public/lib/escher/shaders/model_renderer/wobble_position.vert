@@ -15,8 +15,13 @@ float EvalSineParams(SineParams params) {
 
 layout(set = 1, binding = 0) uniform PerObject {
   mat4 model_transform;
-  mat4 light_transform;
   vec4 color;
+
+  // Format of each plane:
+  // - xyz: normalized plane normal, pointing toward the non-clipped half-space.
+  // - w: distance from origin to plane along plane normal vector, negated.
+  vec4 clip_planes[NUM_CLIP_PLANES];
+
   // Corresponds to ModifierWobble::SineParams[0].
   float speed_0;
   float amplitude_0;
@@ -61,5 +66,5 @@ vec4 ComputeVertexPosition() {
   //               EvalSineParams(sine_params_1) +
   //               EvalSineParams(sine_params_2);
   float offset_scale = EvalSineParams_0() + EvalSineParams_1() + EvalSineParams_2();
-  return vec4(inPosition + offset_scale * vec3(inPositionOffset, 0), 1);
+  return vec4(inPosition + offset_scale * inPositionOffset, 1);
 }

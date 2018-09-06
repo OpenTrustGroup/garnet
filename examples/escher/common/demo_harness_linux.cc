@@ -4,6 +4,9 @@
 
 #include "garnet/examples/escher/common/demo_harness_linux.h"
 
+#include <chrono>
+#include <thread>
+
 #include <GLFW/glfw3.h>
 
 #include "garnet/examples/escher/common/demo.h"
@@ -133,7 +136,9 @@ std::unique_ptr<DemoHarness> DemoHarness::New(
 }
 
 DemoHarnessLinux::DemoHarnessLinux(WindowParams window_params)
-    : DemoHarness(window_params) {}
+    : DemoHarness(window_params) {
+  filesystem_ = escher::HackFilesystem::New();
+}
 
 void DemoHarnessLinux::InitWindowSystem() {
   FXL_CHECK(!g_harness);
@@ -189,9 +194,12 @@ void DemoHarnessLinux::Run(Demo* demo) {
   demo_ = demo;
 
   while (!this->ShouldQuit()) {
-    {
-      TRACE_DURATION("gfx", "escher::DemoHarness::DrawFrame");
-      demo->DrawFrame();
+    if (!demo_->MaybeDrawFrame()) {
+      // Too many frames already in flight.  Sleep for a moment before trying
+      // again.
+      static constexpr int kTooManyFramesInFlightSleepMilliseconds = 4;
+      std::this_thread::sleep_for(
+          std::chrono::milliseconds(kTooManyFramesInFlightSleepMilliseconds));
     }
     glfwPollEvents();
   }

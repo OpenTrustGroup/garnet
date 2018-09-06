@@ -5,11 +5,12 @@
 #ifndef GARNET_LIB_MACHINA_VIRTIO_CONSOLE_H_
 #define GARNET_LIB_MACHINA_VIRTIO_CONSOLE_H_
 
+#include <array>
+
 #include <lib/async/cpp/wait.h>
 #include <lib/zx/socket.h>
 #include <virtio/console.h>
 #include <virtio/virtio_ids.h>
-#include <array>
 
 #include "garnet/lib/machina/virtio_device.h"
 #include "garnet/lib/machina/virtio_queue_waiter.h"
@@ -29,10 +30,11 @@ static_assert(kVirtioConsoleNumQueues % 2 == 0,
               "There must be a queue for both RX and TX");
 
 class VirtioConsole
-    : public VirtioDeviceBase<VIRTIO_ID_CONSOLE, kVirtioConsoleNumQueues,
-                              virtio_console_config_t> {
+    : public VirtioDevice<VIRTIO_ID_CONSOLE, kVirtioConsoleNumQueues,
+                          virtio_console_config_t> {
  public:
-  VirtioConsole(const PhysMem&, async_t* async, zx::socket socket);
+  VirtioConsole(const PhysMem&, async_dispatcher_t* dispatcher,
+                zx::socket socket);
   ~VirtioConsole();
 
   zx_status_t Start();
@@ -40,7 +42,7 @@ class VirtioConsole
  private:
   class Port;
 
-  fbl::Mutex mutex_;
+  std::mutex mutex_;
   std::array<std::unique_ptr<Port>, kVirtioConsoleMaxNumPorts> ports_
       __TA_GUARDED(mutex_);
 };

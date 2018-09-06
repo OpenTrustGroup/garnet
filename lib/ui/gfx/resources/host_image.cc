@@ -8,15 +8,16 @@
 #include "garnet/lib/ui/gfx/resources/gpu_memory.h"
 #include "garnet/lib/ui/gfx/resources/host_memory.h"
 #include "garnet/lib/ui/gfx/util/image_formats.h"
+#include "lib/images/cpp/images.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 const ResourceTypeInfo HostImage::kTypeInfo = {
     ResourceType::kHostImage | ResourceType::kImage | ResourceType::kImageBase,
     "HostImage"};
 
-HostImage::HostImage(Session* session, scenic::ResourceId id,
+HostImage::HostImage(Session* session, ResourceId id,
                      HostMemoryPtr memory, escher::ImagePtr image,
                      uint64_t host_memory_offset,
                      fuchsia::images::ImageInfo host_image_format)
@@ -29,16 +30,14 @@ HostImage::HostImage(Session* session, scenic::ResourceId id,
       image_formats::GetFunctionToConvertToBgra8(host_image_format);
 }
 
-ImagePtr HostImage::New(Session* session, scenic::ResourceId id,
+ImagePtr HostImage::New(Session* session, ResourceId id,
                         HostMemoryPtr host_memory,
                         const fuchsia::images::ImageInfo& host_image_info,
                         uint64_t memory_offset, ErrorReporter* error_reporter) {
   // No matter what the incoming format, the gpu format will be BGRA:
   vk::Format gpu_image_pixel_format = vk::Format::eB8G8R8A8Unorm;
-  size_t bytes_per_pixel =
-      image_formats::BytesPerPixel(host_image_info.pixel_format);
   size_t pixel_alignment =
-      image_formats::PixelAlignment(host_image_info.pixel_format);
+      images::MaxSampleAlignment(host_image_info.pixel_format);
 
   if (host_image_info.width <= 0) {
     error_reporter->ERROR()
@@ -65,9 +64,12 @@ ImagePtr HostImage::New(Session* session, scenic::ResourceId id,
     return nullptr;
   }
 
-  if (host_image_info.stride < host_image_info.width * bytes_per_pixel) {
+  uint64_t width_bytes =
+      host_image_info.width *
+      images::StrideBytesPerWidthPixel(host_image_info.pixel_format);
+  if (host_image_info.stride < width_bytes) {
     error_reporter->ERROR()
-        << "Image::CreateFromMemory(): stride too small for width.";
+        << "Image::CreateFromMemory(): stride too small for width";
     return nullptr;
   }
   if (host_image_info.stride % pixel_alignment != 0) {
@@ -82,14 +84,13 @@ ImagePtr HostImage::New(Session* session, scenic::ResourceId id,
     return nullptr;
   }
 
-  size_t image_size = host_image_info.height * host_image_info.stride;
+  size_t image_size = images::ImageSize(host_image_info);
   if (memory_offset >= host_memory->size()) {
     error_reporter->ERROR()
         << "Image::CreateFromMemory(): the offset of the Image must be "
         << "within the range of the Memory";
     return nullptr;
   }
-
   if (memory_offset + image_size > host_memory->size()) {
     error_reporter->ERROR()
         << "Image::CreateFromMemory(): the Image must fit within the size "
@@ -97,10 +98,15 @@ ImagePtr HostImage::New(Session* session, scenic::ResourceId id,
     return nullptr;
   }
 
-  // TODO(MZ-141): Support non-minimal strides.
-  if (host_image_info.stride != host_image_info.width * bytes_per_pixel) {
+  // TODO(SCN-141): Support non-minimal strides for all formats.  For now, NV12
+  // is ok because it will have image_conversion_function_ and for formats with
+  // image_conversion_function_, the stride is really only the input data stride
+  // not the output data stride (which ends up being minimal thanks to the
+  // image_conversion_function_).
+  if (host_image_info.pixel_format != fuchsia::images::PixelFormat::NV12 &&
+      host_image_info.stride != width_bytes) {
     error_reporter->ERROR()
-        << "Image::CreateFromMemory(): the stride must be minimal (MZ-141)";
+        << "Image::CreateFromMemory(): the stride must be minimal (SCN-141)";
     return nullptr;
   }
 
@@ -126,7 +132,7 @@ bool HostImage::UpdatePixels() {
   return false;
 }
 
-ImagePtr HostImage::NewForTesting(Session* session, scenic::ResourceId id,
+ImagePtr HostImage::NewForTesting(Session* session, ResourceId id,
                                   escher::ResourceManager* image_owner,
                                   HostMemoryPtr host_memory) {
   escher::ImagePtr escher_image = escher::Image::New(
@@ -139,4 +145,4 @@ ImagePtr HostImage::NewForTesting(Session* session, scenic::ResourceId id,
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

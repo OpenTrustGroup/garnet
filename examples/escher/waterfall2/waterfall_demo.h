@@ -11,6 +11,7 @@
 
 #include "garnet/examples/escher/common/demo.h"
 #include "garnet/examples/escher/common/demo_harness.h"
+#include "garnet/examples/escher/waterfall/scenes/scene.h"
 #include "garnet/examples/escher/waterfall2/waterfall_renderer.h"
 
 #include "lib/escher/escher.h"
@@ -18,7 +19,6 @@
 #include "lib/escher/fs/hack_filesystem.h"
 #include "lib/escher/scene/stage.h"
 #include "lib/escher/util/stopwatch.h"
-#include "lib/escher/vk/vulkan_swapchain_helper.h"
 #include "lib/fxl/logging.h"
 
 class WaterfallDemo : public Demo {
@@ -38,7 +38,8 @@ class WaterfallDemo : public Demo {
 
   bool HandleKeyPress(std::string key) override;
 
-  void DrawFrame() override;
+  void DrawFrame(const escher::FramePtr& frame,
+                 const escher::ImagePtr& output_image) override;
 
  private:
   void ProcessCommandLineArgs(int argc, char** argv);
@@ -46,24 +47,26 @@ class WaterfallDemo : public Demo {
   void InitializeEscherStage(const DemoHarness::WindowParams& window_params);
   void InitializeDemoScene();
 
-  escher::HackFilesystemPtr filesystem_;
-
   WaterfallRendererPtr renderer_;
-  escher::VulkanSwapchainHelper swapchain_helper_;
 
   escher::Stage stage_;
 
   escher::MeshPtr ring_;
   escher::TexturePtr texture_;
   escher::MaterialPtr material_;
+  escher::MaterialPtr material2_;
 
+  // 4 camera projection modes:
+  // - orthographic full-screen
+  // - perspective where floor plane is full-screen, and parallel to screen
+  // - perspective from tilted viewpoint (from x-center of stage).
+  // - perspective from tilted viewpoint (from corner).
+  int camera_projection_mode_ = 0;
+
+  std::unique_ptr<Scene> scene_;
   escher::Stopwatch stopwatch_;
   uint64_t frame_count_ = 0;
   uint64_t first_frame_microseconds_;
-
-  // Profile a single frame; print out timestamps about how long each part of
-  // the frame took.
-  bool profile_one_frame_ = false;
 
   // Toggle debug overlays.
   bool show_debug_info_ = false;

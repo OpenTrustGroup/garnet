@@ -20,7 +20,7 @@ static async::Loop* loop = nullptr;
 
 extern "C" zx_status_t wlanphy_test_init(void** out_ctx) {
     zxlogf(INFO, "%s\n", __func__);
-    loop = new async::Loop;
+    loop = new async::Loop(&kAsyncLoopConfigNoAttachToThread);
     zx_status_t status = loop->StartThread("wlan-test-loop");
     if (status != ZX_OK) {
         zxlogf(ERROR, "wlanphy_test: could not create event loop: %d\n", status);
@@ -52,13 +52,11 @@ extern "C" zx_status_t wlanphy_test_bind(void* ctx, zx_device_t* device) {
 }
 
 extern "C" void wlanphy_test_release(void* ctx) {
-    if (loop != nullptr) {
-        loop->Shutdown();
-    }
+    if (loop != nullptr) { loop->Shutdown(); }
     delete loop;
     loop = nullptr;
 }
 
-async_t* wlanphy_async_t() {
-    return loop->async();
+async_dispatcher_t* wlanphy_async_t() {
+    return loop->dispatcher();
 }

@@ -5,13 +5,14 @@
 #include "legacy_low_energy_scanner.h"
 
 #include <endian.h>
+#include <zircon/assert.h>
 
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/hci/advertising_report_parser.h"
 #include "garnet/drivers/bluetooth/lib/hci/hci.h"
 #include "garnet/drivers/bluetooth/lib/hci/sequential_command_runner.h"
 #include "garnet/drivers/bluetooth/lib/hci/transport.h"
 #include "garnet/drivers/bluetooth/lib/hci/util.h"
-#include "lib/fxl/logging.h"
 
 namespace btlib {
 namespace hci {
@@ -31,7 +32,7 @@ std::string ScanStateToString(LowEnergyScanner::State state) {
       break;
   }
 
-  FXL_NOTREACHED();
+  ZX_PANIC("invalid scanner state: %u", static_cast<unsigned int>(state));
   return "(unknown)";
 }
 
@@ -45,7 +46,7 @@ LegacyLowEnergyScanner::PendingScanResult::PendingScanResult(
 LegacyLowEnergyScanner::LegacyLowEnergyScanner(
     Delegate* delegate,
     fxl::RefPtr<Transport> hci,
-    async_t* dispatcher)
+    async_dispatcher_t* dispatcher)
     : LowEnergyScanner(delegate, hci, dispatcher), active_scanning_(false) {
   event_handler_id_ = transport()->command_channel()->AddLEMetaEventHandler(
       kLEAdvertisingReportSubeventCode,
@@ -65,26 +66,25 @@ bool LegacyLowEnergyScanner::StartScan(bool active,
                                        LEScanFilterPolicy filter_policy,
                                        int64_t period_ms,
                                        ScanStatusCallback callback) {
-  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
-  FXL_DCHECK(callback);
-  FXL_DCHECK(period_ms == kPeriodInfinite || period_ms > 0);
-  FXL_DCHECK(scan_interval <= kLEScanIntervalMax &&
-             scan_interval >= kLEScanIntervalMin);
-  FXL_DCHECK(scan_window <= kLEScanIntervalMax &&
-             scan_window >= kLEScanIntervalMin);
-  FXL_DCHECK(scan_window < scan_interval);
+  ZX_DEBUG_ASSERT(thread_checker_.IsCreationThreadCurrent());
+  ZX_DEBUG_ASSERT(callback);
+  ZX_DEBUG_ASSERT(period_ms == kPeriodInfinite || period_ms > 0);
+  ZX_DEBUG_ASSERT(scan_interval <= kLEScanIntervalMax &&
+                  scan_interval >= kLEScanIntervalMin);
+  ZX_DEBUG_ASSERT(scan_window <= kLEScanIntervalMax &&
+                  scan_window >= kLEScanIntervalMin);
+  ZX_DEBUG_ASSERT(scan_window < scan_interval);
 
   if (state() != State::kIdle) {
-    FXL_LOG(ERROR)
-        << "gap: LegacyLowEnergyScanner: cannot start scan while in state: "
-        << ScanStateToString(state());
+    bt_log(ERROR, "hci-le", "cannot start scan while in state: %s",
+           ScanStateToString(state()).c_str());
     return false;
   }
 
-  FXL_DCHECK(!scan_cb_);
-  FXL_DCHECK(scan_timeout_cb_.IsCanceled());
-  FXL_DCHECK(hci_cmd_runner()->IsReady());
-  FXL_DCHECK(pending_results_.empty());
+  ZX_DEBUG_ASSERT(!scan_cb_);
+  ZX_DEBUG_ASSERT(scan_timeout_cb_.IsCanceled());
+  ZX_DEBUG_ASSERT(hci_cmd_runner()->IsReady());
+  ZX_DEBUG_ASSERT(pending_results_.empty());
 
   set_state(State::kInitiating);
   active_scanning_ = active;
@@ -117,22 +117,22 @@ bool LegacyLowEnergyScanner::StartScan(bool active,
 
   hci_cmd_runner()->QueueCommand(std::move(command));
   hci_cmd_runner()->RunCommands([this, period_ms](Status status) {
-    FXL_DCHECK(scan_cb_);
-    FXL_DCHECK(state() == State::kInitiating);
+    ZX_DEBUG_ASSERT(scan_cb_);
+    ZX_DEBUG_ASSERT(state() == State::kInitiating);
 
     if (!status) {
       if (status.error() == common::HostError::kCanceled) {
-        FXL_VLOG(1) << "gap: LegacyLowEnergyScanner: canceled";
+        bt_log(TRACE, "hci-le", "scan canceled");
         return;
       }
 
       auto cb = std::move(scan_cb_);
 
-      FXL_DCHECK(!scan_cb_);
+      ZX_DEBUG_ASSERT(!scan_cb_);
       set_state(State::kIdle);
 
-      FXL_LOG(ERROR) << "gap: LegacyLowEnergyScanner: failed to start scan: "
-                     << status.ToString();
+      bt_log(ERROR, "hci-le", "failed to start scan: %s",
+             status.ToString().c_str());
       cb(ScanStatus::kFailed);
       return;
     }
@@ -157,12 +157,11 @@ bool LegacyLowEnergyScanner::StartScan(bool active,
 }
 
 bool LegacyLowEnergyScanner::StopScan() {
-  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+  ZX_DEBUG_ASSERT(thread_checker_.IsCreationThreadCurrent());
 
   if (state() == State::kStopping || state() == State::kIdle) {
-    FXL_VLOG(1)
-        << "gap: LegacyLowEnergyScanner: cannot stop scan while in state: "
-        << ScanStateToString(state());
+    bt_log(TRACE, "hci-le", "cannot stop scan while in state: %s",
+           ScanStateToString(state()).c_str());
     return false;
   }
 
@@ -180,12 +179,12 @@ bool LegacyLowEnergyScanner::StopScan() {
 }
 
 void LegacyLowEnergyScanner::StopScanPeriodForTesting() {
-  FXL_DCHECK(IsScanning());
+  ZX_DEBUG_ASSERT(IsScanning());
   StopScanInternal(false);
 }
 
 void LegacyLowEnergyScanner::StopScanInternal(bool stopped) {
-  FXL_DCHECK(scan_cb_);
+  ZX_DEBUG_ASSERT(scan_cb_);
 
   scan_timeout_cb_.Cancel();
   set_state(State::kStopping);
@@ -202,7 +201,7 @@ void LegacyLowEnergyScanner::StopScanInternal(bool stopped) {
   // Either way clear all results from the previous scan period.
   pending_results_.clear();
 
-  FXL_DCHECK(hci_cmd_runner()->IsReady());
+  ZX_DEBUG_ASSERT(hci_cmd_runner()->IsReady());
 
   // Tell the controller to stop scanning.
   auto command = CommandPacket::New(kLESetScanEnable,
@@ -214,12 +213,12 @@ void LegacyLowEnergyScanner::StopScanInternal(bool stopped) {
 
   hci_cmd_runner()->QueueCommand(std::move(command));
   hci_cmd_runner()->RunCommands([this, stopped](Status status) {
-    FXL_DCHECK(scan_cb_);
-    FXL_DCHECK(state() == State::kStopping);
+    ZX_DEBUG_ASSERT(scan_cb_);
+    ZX_DEBUG_ASSERT(state() == State::kStopping);
 
     if (!status) {
-      FXL_LOG(WARNING) << "gap: LegacyLowEnergyScanner: Failed to stop scan: "
-                       << status.ToString();
+      bt_log(WARN, "hci-le", "failed to stop scan: %s",
+             status.ToString().c_str());
       // Something went wrong but there isn't really a meaningful way to
       // recover, so we just fall through and notify the caller with
       // ScanStatus::kFailed instead.
@@ -249,8 +248,7 @@ void LegacyLowEnergyScanner::OnAdvertisingReportEvent(
       case LEAdvertisingEventType::kAdvDirectInd:
         // TODO(armansito): Forward this to a subroutine that can be shared with
         // the LE Directed Advertising eport event handler.
-        FXL_LOG(WARNING)
-            << "gap: LegacyLowEnergyScanner: ignoring ADV_DIRECT_IND";
+        bt_log(SPEW, "hci-le", "ignoring ADV_DIRECT_IND");
         continue;
       case LEAdvertisingEventType::kAdvInd:
         connectable = true;
@@ -267,8 +265,7 @@ void LegacyLowEnergyScanner::OnAdvertisingReportEvent(
     }
 
     if (report->length_data > kMaxLEAdvertisingDataLength) {
-      FXL_LOG(WARNING)
-          << "gap: LegacyLowEnergyScanner: advertising data too long! Ignoring";
+      bt_log(WARN, "hci-le", "advertising data too long! Ignoring");
       continue;
     }
 
@@ -290,7 +287,7 @@ void LegacyLowEnergyScanner::OnAdvertisingReportEvent(
 
     // We overwrite the pending result entry with the most recent report, even
     // if one from this device was already pending.
-    FXL_DCHECK(address == pending.result.address);
+    ZX_DEBUG_ASSERT(address == pending.result.address);
     pending.result.connectable = connectable;
     pending.result.rssi = rssi;
     pending.adv_data_len = report->length_data;
@@ -307,18 +304,16 @@ void LegacyLowEnergyScanner::HandleScanResponse(
 
   auto iter = pending_results_.find(address);
   if (iter == pending_results_.end()) {
-    FXL_VLOG(1)
-        << "gap: LegacyLowEnergyScanner: Dropping unmatched scan response";
+    bt_log(TRACE, "hci-le", "dropping unmatched scan response");
     return;
   }
 
   if (report.length_data > kMaxLEAdvertisingDataLength) {
-    FXL_LOG(WARNING)
-        << "gap: LegacyLowEnergyScanner: scan response too long! Ignoring";
+    bt_log(WARN, "hci-le", "scan response too long! Ignoring");
     return;
   }
   auto& pending = iter->second;
-  FXL_DCHECK(address == pending.result.address);
+  ZX_DEBUG_ASSERT(address == pending.result.address);
 
   // Use the newer RSSI.
   pending.result.rssi = rssi;

@@ -1,6 +1,9 @@
 {
     "imports": [
+        "garnet/packages/config/kernel_crash_checker",
+        "garnet/packages/config/thermd",
+        "garnet/packages/prod/scenic",
         "garnet/packages/products/sshd",
-        "garnet/packages/prod/scenic"
+        "garnet/packages/prod/thermd"
     ]
 }

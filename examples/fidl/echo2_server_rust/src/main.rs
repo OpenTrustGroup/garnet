@@ -2,39 +2,41 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-extern crate fidl;
-extern crate failure;
-extern crate fuchsia_app as component;
-extern crate fuchsia_async as async;
-extern crate fuchsia_zircon as zx;
-extern crate futures;
-extern crate fidl_fidl_examples_echo;
+#![feature(async_await, await_macro)]
 
-use component::server::ServicesServer;
 use failure::{Error, ResultExt};
-use futures::future;
-use futures::prelude::*;
 use fidl::endpoints2::{ServiceMarker, RequestStream};
 use fidl_fidl_examples_echo::{EchoMarker, EchoRequest, EchoRequestStream};
+use fuchsia_app::server::ServicesServer;
+use fuchsia_async as fasync;
+use futures::prelude::*;
 
-fn spawn_echo_server(chan: async::Channel) {
-    async::spawn(EchoRequestStream::from_channel(chan)
-        .for_each(|EchoRequest::EchoString { value, responder }| {
-            println!("Received echo request for string {:?}", value);
-            responder.send(value.as_ref().map(|s| &**s))
-               .into_future()
-               .map(|_| println!("echo response sent successfully"))
-               .recover(|e| eprintln!("error sending response: {:?}", e))
-        })
-        .map(|_| ())
-        .recover(|e| eprintln!("error running echo server: {:?}", e)))
+use std::env;
+
+fn spawn_echo_server(chan: fasync::Channel, quiet: bool) {
+    fasync::spawn(async move {
+        let mut stream = EchoRequestStream::from_channel(chan);
+        while let Some(EchoRequest::EchoString { value, responder }) =
+            await!(stream.try_next()).context("error running echo server")?
+        {
+            if !quiet {
+                println!("Received echo request for string {:?}", value);
+            }
+            responder.send(value.as_ref().map(|s| &**s)).context("error sending response")?;
+            if !quiet {
+                println!("echo response sent successfully");
+            }
+        }
+        Ok(())
+    }.unwrap_or_else(|e: failure::Error| eprintln!("{:?}", e)));
 }
 
 fn main() -> Result<(), Error> {
-    let mut executor = async::Executor::new().context("Error creating executor")?;
+    let mut executor = fasync::Executor::new().context("Error creating executor")?;
+    let quiet = env::args().any(|arg| arg == "-q");
 
     let fut = ServicesServer::new()
-                .add_service((EchoMarker::NAME, |chan| spawn_echo_server(chan)))
+                .add_service((EchoMarker::NAME, move |chan| spawn_echo_server(chan, quiet)))
                 .start()
                 .context("Error starting echo services server")?;
 

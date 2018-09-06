@@ -2,19 +2,35 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "garnet/bin/zxdb/console/verbs.h"
-
 #include <inttypes.h>
 
-#include "garnet/bin/zxdb/client/err.h"
+#include "garnet/bin/zxdb/client/finish_thread_controller.h"
+#include "garnet/bin/zxdb/client/frame.h"
 #include "garnet/bin/zxdb/client/process.h"
+#include "garnet/bin/zxdb/client/register.h"
 #include "garnet/bin/zxdb/client/session.h"
+#include "garnet/bin/zxdb/client/step_into_thread_controller.h"
+#include "garnet/bin/zxdb/client/symbols/code_block.h"
+#include "garnet/bin/zxdb/client/symbols/function.h"
+#include "garnet/bin/zxdb/client/symbols/location.h"
+#include "garnet/bin/zxdb/client/symbols/variable.h"
 #include "garnet/bin/zxdb/client/thread.h"
+#include "garnet/bin/zxdb/client/until_thread_controller.h"
+#include "garnet/bin/zxdb/common/err.h"
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/command_utils.h"
 #include "garnet/bin/zxdb/console/console.h"
+#include "garnet/bin/zxdb/console/format_frame.h"
+#include "garnet/bin/zxdb/console/format_register.h"
+#include "garnet/bin/zxdb/console/format_table.h"
+#include "garnet/bin/zxdb/console/format_value.h"
+#include "garnet/bin/zxdb/console/input_location_parser.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
-#include "garnet/public/lib/fxl/strings/string_printf.h"
+#include "garnet/bin/zxdb/console/verbs.h"
+#include "garnet/bin/zxdb/expr/expr.h"
+#include "garnet/bin/zxdb/expr/symbol_eval_context.h"
+#include "garnet/lib/debug_ipc/helper/message_loop.h"
+#include "lib/fxl/strings/string_printf.h"
 
 namespace zxdb {
 
@@ -33,6 +49,33 @@ bool VerifySystemHasRunningProcess(System* system, Err* err) {
   }
   *err = Err("No processes are running.");
   return false;
+}
+
+// backtrace -------------------------------------------------------------------
+
+const char kBacktraceShortHelp[] = "backtrace / bt: Print a backtrace.";
+const char kBacktraceHelp[] =
+    R"(backtrace / bt
+
+  Prints a backtrace of the selected thread. This is an alias for "frame -v".
+
+  To see less information, use "frame" or just "f".
+
+Examples
+
+  t 2 bt
+  thread 2 backtrace
+)";
+Err DoBacktrace(ConsoleContext* context, const Command& cmd) {
+  Err err = cmd.ValidateNouns({Noun::kProcess, Noun::kThread});
+  if (err.has_error())
+    return err;
+
+  if (!cmd.thread())
+    return Err("There is no thread to have frames.");
+
+  OutputFrameList(cmd.thread(), true);
+  return Err();
 }
 
 // continue --------------------------------------------------------------------
@@ -106,6 +149,148 @@ Err DoContinue(ConsoleContext* context, const Command& cmd) {
   return Err();
 }
 
+// finish ----------------------------------------------------------------------
+
+const char kFinishShortHelp[] =
+    "finish / fi: Finish execution of a stack frame.";
+const char kFinishHelp[] =
+    R"(finish / fi
+
+  Alias: "fi"
+
+  Resume thread execution until the selected stack frame returns. This means
+  that the current function call will execute normally until it finished.
+
+  See also "until".
+
+Examples
+
+  fi
+  finish
+      Exit the currently selected stack frame (see "frame").
+
+  pr 1 t 4 fi
+  process 1 thead 4 finish
+      Applies "finish" to process 1, thread 4.
+
+  f 2 fi
+  frame 2 finish
+      Exit frame 2, leaving program execution in what was frame 3. Try also
+      "frame 3 until" which will do the same thing when the function is not
+      recursive.
+)";
+Err DoFinish(ConsoleContext* context, const Command& cmd) {
+  // This command allows "frame" which AssertStoppedThreadCommand doesn't,
+  // so pass "false" to disabled noun checking and manually check ourselves.
+  Err err = AssertStoppedThreadCommand(context, cmd, false, "finish");
+  if (err.has_error())
+    return err;
+  err = cmd.ValidateNouns({Noun::kProcess, Noun::kThread, Noun::kFrame});
+  if (err.has_error())
+    return err;
+
+  auto controller = std::make_unique<FinishThreadController>(cmd.frame());
+  cmd.thread()->ContinueWith(std::move(controller), [](const Err& err) {
+    if (err.has_error())
+      Console::get()->Output(err);
+  });
+  return Err();
+}
+
+// locals ----------------------------------------------------------------------
+
+const char kLocalsShortHelp[] =
+    "locals: Print local variables and function args.";
+const char kLocalsHelp[] =
+    R"(locals
+
+  Prints all local variables and the current function's arguments. By default
+  it will print the variables for the curretly selected stack frame.
+
+  You can override the stack frame with the "frame" noun to get the locals
+  for any specific stack frame of thread.
+
+Examples
+
+  locals
+      Prints locals and args for the current stack frame.
+
+  f 4 locals
+  frame 4 locals
+  thread 2 frame 3 locals
+      Prints locals for a specific stack frame.
+)";
+Err DoLocals(ConsoleContext* context, const Command& cmd) {
+  Err err = cmd.ValidateNouns({Noun::kProcess, Noun::kThread, Noun::kFrame});
+  if (err.has_error())
+    return err;
+  if (!cmd.frame())
+    return Err("There isn't a current frame to read locals from.");
+
+  const Location& location = cmd.frame()->GetLocation();
+  if (!location.function())
+    return Err("There is no symbol information for the frame.");
+  const Function* function = location.function().Get()->AsFunction();
+  if (!function)
+    return Err("Symbols are corrupt.");
+
+  // Find the innermost lexical block for the current IP.
+  const CodeBlock* block = function->GetMostSpecificChild(
+      location.symbol_context(), location.address());
+  if (!block)
+    return Err("There is no symbol information for the current IP.");
+
+  // Walk upward in the hierarchy to collect local variables until hitting a
+  // function. Using the map allows collecting only the innermost version of
+  // a given name, and sorts them as we go.
+  std::map<std::string, const Variable*> vars;
+  while (block) {
+    for (const auto& lazy_var : block->variables()) {
+      const Variable* var = lazy_var.Get()->AsVariable();
+      if (!var)
+        continue;  // Symbols are corrupt.
+      const std::string& name = var->GetAssignedName();
+      if (vars.find(name) == vars.end())
+        vars[name] = var;  // New one.
+    }
+
+    if (block == function)
+      break;
+    block = block->parent().Get()->AsCodeBlock();
+  }
+
+  // Add function parameters. Don't overwrite existing names in case of
+  // duplicates to duplicate the shadowing rules of the language.
+  for (const auto& param : function->parameters()) {
+    const Variable* var = param.Get()->AsVariable();
+    if (!var)
+      continue;  // Symbols are corrupt.
+    const std::string& name = var->GetAssignedName();
+    if (vars.find(name) == vars.end())
+      vars[name] = var;  // New one.
+  }
+
+  if (vars.empty()) {
+    Console::get()->Output(
+        OutputBuffer::WithContents("No local variables in scope."));
+    return Err();
+  }
+
+  // TODO(brettw) hook this up with switches on the command.
+  FormatValueOptions options;
+
+  auto helper = fxl::MakeRefCounted<FormatValue>();
+  for (const auto& pair : vars) {
+    helper->AppendVariableWithName(location.symbol_context(),
+                                   cmd.frame()->GetSymbolDataProvider(),
+                                   pair.second, options);
+    helper->Append(OutputBuffer::WithContents("\n"));
+  }
+  helper->Complete(
+      [helper](OutputBuffer out) { Console::get()->Output(std::move(out)); });
+  return Err();
+}
+
 // pause -----------------------------------------------------------------------
 
 const char kPauseShortHelp[] = "pause / pa: Pause a thread or process.";
@@ -175,12 +360,103 @@ Err DoPause(ConsoleContext* context, const Command& cmd) {
   return Err();
 }
 
+// print -----------------------------------------------------------------------
+
+const char kPrintShortHelp[] = "print / p: Print a variable or expression.";
+const char kPrintHelp[] =
+    R"(print <expression>
+
+  Alias: p
+
+  Evaluates a simple expression or variable name and prints the result.
+
+  The expression is evaluated by default in the currently selected thread and
+  stack frame. You can override this with "frame <x> print ...".
+
+Expressions
+
+  The expression evaluator understands the following C/C++ things:
+
+    - Identifiers
+
+    - Struct and class member access: . ->
+
+    - Array access (for native arrays): [ <expression> ]
+
+    - Create or dereference pointers: & *
+
+    - Precedence: ( <expression> )
+
+  Not supported: function calls, overloaded operators, casting.
+
+Examples
+
+  p foo
+  print foo
+      Print a variable
+
+  p *foo->bar
+  print &foo.bar[2]
+      Deal with structs and arrays.
+
+  f 2 p foo
+  frame 2 print foo
+  thread 1 frame 2 print foo
+      Print a variable in the context of a specific stack frame.
+)";
+Err DoPrint(ConsoleContext* context, const Command& cmd) {
+  Err err = AssertStoppedThreadCommand(context, cmd, false, "print");
+  if (err.has_error())
+    return err;
+  err = cmd.ValidateNouns({Noun::kProcess, Noun::kThread, Noun::kFrame});
+  if (err.has_error())
+    return err;
+  if (!cmd.frame())
+    return Err("There isn't a current frame for printing context.");
+
+  // This takes one expression that may have spaces, so concatenate everything
+  // the command parser has split apart back into one thing.
+  //
+  // If we run into limitations of this, we should add a "don't parse the args"
+  // flag to the command record.
+  std::string expr;
+  for (const auto& cur : cmd.args()) {
+    if (!expr.empty())
+      expr.push_back(' ');
+    expr += cur;
+  }
+
+  // TODO(brettw) parse options.
+  FormatValueOptions options;
+
+  auto data_provider = cmd.frame()->GetSymbolDataProvider();
+
+  EvalExpression(expr, cmd.frame()->GetExprEvalContext(),
+                 [options, data_provider](const Err& err, ExprValue value) {
+                   if (err.has_error()) {
+                     Console::get()->Output(err);
+                   } else {
+                     auto formatter = fxl::MakeRefCounted<FormatValue>();
+                     formatter->AppendValue(data_provider, value, options);
+                     // Bind the formatter to keep it in scope across this
+                     // async call.
+                     formatter->Complete([formatter](OutputBuffer out) {
+                       Console::get()->Output(std::move(out));
+                     });
+                   }
+                 });
+
+  return Err();
+}
+
 // step ------------------------------------------------------------------------
 
 const char kStepShortHelp[] =
     "step / s: Step one source line, going into subroutines.";
 const char kStepHelp[] =
     R"(step
+
+  Alias: "s"
 
   When a thread is stopped, "step" will execute one source line and stop the
   thread again. This will follow execution into subroutines. If the thread is
@@ -204,11 +480,16 @@ Examples
       Steps thread 2 in the current process.
 )";
 Err DoStep(ConsoleContext* context, const Command& cmd) {
-  Err err = AssertStoppedThreadCommand(context, cmd, "stepi");
+  Err err = AssertStoppedThreadCommand(context, cmd, true, "stepi");
   if (err.has_error())
     return err;
 
-  return cmd.thread()->Step();
+  auto controller = std::make_unique<StepIntoThreadController>();
+  cmd.thread()->ContinueWith(std::move(controller), [](const Err& err) {
+    if (err.has_error())
+      Console::get()->Output(err);
+  });
+  return Err();
 }
 
 // stepi -----------------------------------------------------------------------
@@ -245,7 +526,7 @@ Examples
       Steps thread 2 in process 3.
 )";
 Err DoStepi(ConsoleContext* context, const Command& cmd) {
-  Err err = AssertStoppedThreadCommand(context, cmd, "stepi");
+  Err err = AssertStoppedThreadCommand(context, cmd, true, "stepi");
   if (err.has_error())
     return err;
 
@@ -255,61 +536,280 @@ Err DoStepi(ConsoleContext* context, const Command& cmd) {
 
 // regs ------------------------------------------------------------------------
 
-const char kRegsShortHelp[] = "regs / rg: Show the current registers for a thread.";
-const char kRegsHelp[] =
-    R"(regs
+using debug_ipc::RegisterCategory;
 
-  Shows the current registers for  thread.
+const char kRegsShortHelp[] =
+    "regs / rg: Show the current registers for a thread.";
+const char kRegsHelp[] =
+    R"(regs [--category=<category>] [<regexp>]
+
   Alias: "rg"
+
+  Shows the current registers for a thread. The thread must be stopped.
+  By default the general purpose registers will be shown, but more can be
+  configures through switches.
+
+  NOTE: The values are displayed in the endianess of the target architecture.
+        The interpretation of which bits are the MSB will vary across different
+        endianess.
+
+Arguments:
+
+  --category=<category> | -c <category>
+      Which categories if registers to show.
+      The following options can be set:
+
+      - general: Show general purpose registers.
+      - fp: Show floating point registers.
+      - vector: Show vector registries.
+      - all: Show all the categories available.
+
+      NOTE: not all categories exist within all architectures. For example,
+            ARM64's fp category doesn't have any registers.
+
+  <regexp>
+      Case insensitive regular expression. Any register that matches will be
+      shown. Uses POSIX Basic Regular Expression syntax. If not specified, it
+      will match all registers.
 
 Examples
 
   regs
-  thread 4 regs
-  process 2 thread 1 regs
+  thread 4 regs --category=vector
+  process 2 thread 1 regs -c all v*
 )";
 
-void OnRegsComplete(const Err& err,
-                    std::vector<debug_ipc::Register> registers) {
+// Switches
+constexpr int kRegsCategoriesSwitch = 1;
+const std::vector<std::string> kRegsCategoriesValues = {"general", "fp",
+                                                        "vector", "all"};
+
+void OnRegsComplete(const Err& cmd_err, const RegisterSet& registers,
+                    const std::string& reg_name,
+                    const std::vector<RegisterCategory::Type>& cats_to_show) {
   Console* console = Console::get();
+  if (cmd_err.has_error()) {
+    console->Output(cmd_err);
+    return;
+  }
+
+  OutputBuffer out;
+  Err err = FormatRegisters(registers, reg_name, &out, cats_to_show);
   if (err.has_error()) {
     console->Output(err);
     return;
   }
 
-  OutputBuffer out = OutputBuffer::WithContents("REGISTERS:\n");
-
-  out.Append("General Registers:\n");
-  out.Append("-------------------------------------------------\n");
-  for (auto&& reg : registers) {
-    out.Append(
-        fxl::StringPrintf("%4s: 0x%016lx\n", reg.name.c_str(), reg.value));
-  }
-  console->Output(std::move(out));
+  console->Output(out);
 }
 
 Err DoRegs(ConsoleContext* context, const Command& cmd) {
-  Err err = AssertStoppedThreadCommand(context, cmd, "regs");
+  Err err = AssertStoppedThreadCommand(context, cmd, true, "regs");
   if (err.has_error())
     return err;
 
-  cmd.thread()->GetRegisters(&OnRegsComplete);
+  // When empty, we print all the registers.
+  std::string reg_name;
+  if (!cmd.args().empty()) {
+    // We expect only one name.
+    if (cmd.args().size() > 1u) {
+      return Err("Only one register name expected.");
+    }
+    reg_name = cmd.args().front();
+  }
+
+  // Parse the switches
+
+  // General purpose are the default.
+  std::vector<RegisterCategory::Type> cats_to_show = {
+      RegisterCategory::Type::kGeneral};
+  if (cmd.HasSwitch(kRegsCategoriesSwitch)) {
+    auto option = cmd.GetSwitchValue(kRegsCategoriesSwitch);
+    if (option == "all") {
+      cats_to_show = {debug_ipc::RegisterCategory::Type::kGeneral,
+                      debug_ipc::RegisterCategory::Type::kFloatingPoint,
+                      debug_ipc::RegisterCategory::Type::kVector,
+                      debug_ipc::RegisterCategory::Type::kMisc};
+    } else if (option == "general") {
+      cats_to_show = {RegisterCategory::Type::kGeneral};
+    } else if (option == "fp") {
+      cats_to_show = {RegisterCategory::Type::kFloatingPoint};
+    } else if (option == "vector") {
+      cats_to_show = {RegisterCategory::Type::kVector};
+    } else {
+      return Err(fxl::StringPrintf("Unknown category: %s", option.c_str()));
+    }
+  }
+
+  // We pass the given register name to the callback
+  auto regs_cb = [ reg_name, cats = std::move(cats_to_show) ](
+      const Err& err, const RegisterSet& registers) {
+    OnRegsComplete(err, registers, reg_name, std::move(cats));
+  };
+
+  cmd.thread()->GetRegisters(regs_cb);
+  return Err();
+}
+
+// until -----------------------------------------------------------------------
+
+const char kUntilShortHelp[] =
+    "until / u: Runs a thread until a location is reached.";
+const char kUntilHelp[] =
+    R"(until <location>
+
+  Alias: "u"
+
+  Continues execution of a thread or a process until a given location is
+  reached. You could think of this command as setting an implicit one-shot
+  breakpoint at the given location and continuing execution.
+
+  Normally this operation will apply only to the current thread. To apply to
+  all threads in a process, use "process until" (see the examples below).
+
+  See also "finish".
+
+Location arguments
+
+  Current frame's address (no input)
+    until
+
+)" LOCATION_ARG_HELP("until")
+        R"(
+Examples
+
+  u
+  until
+      Runs until the current frame's location is hit again. This can be useful
+      if the current code is called in a loop to advance to the next iteration
+      of the current code.
+
+  f 1 u
+  frame 1 until
+      Runs until the given frame's location is hit. Since frame 1 is
+      always the current function's calling frame, this command will normally
+      stop when the current function returns. The exception is if the code
+      in the calling function is called recursively from the current location,
+      in which case the next invocation will stop ("until" does not match
+      stack frames on break). See "finish" for a stack-aware version.
+
+  u 24
+  until 24
+      Runs the current thread until line 24 of the current frame's file.
+
+  until foo.cc:24
+      Runs the current thread until the given file/line is reached.
+
+  thread 2 until 24
+  process 1 thread 2 until 24
+      Runs the specified thread until line 24 is reached. When no filename is
+      given, the specified thread's currently selected frame will be used.
+
+  u MyClass::MyFunc
+  until MyClass::MyFunc
+      Runs the current thread until the given function is called.
+
+  pr u MyClass::MyFunc
+  process until MyClass::MyFunc
+      Continues all threads of the current process, stopping the next time any
+      of them call the function.
+)";
+Err DoUntil(ConsoleContext* context, const Command& cmd) {
+  Err err;
+
+  // Decode the location.
+  //
+  // The validation on this is a bit tricky. Most uses apply to the current
+  // thread and take some implicit information from the current frame (which
+  // requires the thread be stopped). But when doing a process-wide one, don't
+  // require a currently stopped thread unless it's required to compute the
+  // location.
+  InputLocation location;
+  if (cmd.args().empty()) {
+    // No args means use the current location.
+    if (!cmd.frame()) {
+      return Err(ErrType::kInput,
+                 "There isn't a current frame to take the location from.");
+    }
+    location = InputLocation(cmd.frame()->GetAddress());
+  } else if (cmd.args().size() == 1) {
+    // One arg = normal location (ParseInputLocation can handle null frames).
+    Err err = ParseInputLocation(cmd.frame(), cmd.args()[0], &location);
+    if (err.has_error())
+      return err;
+  } else {
+    return Err(ErrType::kInput,
+               "Expecting zero or one arg for the location.\n"
+               "Formats: <function>, <file>:<line#>, <line#>, or *<address>");
+  }
+
+  auto callback = [](const Err& err) {
+    if (err.has_error())
+      Console::get()->Output(err);
+  };
+
+  // Dispatch the request.
+  if (cmd.HasNoun(Noun::kProcess) && !cmd.HasNoun(Noun::kThread) &&
+      !cmd.HasNoun(Noun::kFrame)) {
+    // Process-wide ("process until ...").
+    err = AssertRunningTarget(context, "until", cmd.target());
+    if (err.has_error())
+      return err;
+    cmd.target()->GetProcess()->ContinueUntil(location, callback);
+  } else {
+    // Thread-specific.
+    err = cmd.ValidateNouns({Noun::kProcess, Noun::kThread, Noun::kFrame});
+    if (err.has_error())
+      return err;
+
+    err = AssertStoppedThreadCommand(context, cmd, false, "until");
+    if (err.has_error())
+      return err;
+
+    auto controller = std::make_unique<UntilThreadController>(location);
+    cmd.thread()->ContinueWith(std::move(controller), [](const Err& err) {
+      if (err.has_error())
+        Console::get()->Output(err);
+    });
+  }
   return Err();
 }
 
 }  // namespace
 
 void AppendThreadVerbs(std::map<Verb, VerbRecord>* verbs) {
-  (*verbs)[Verb::kContinue] = VerbRecord(&DoContinue, {"continue", "c"},
-                                         kContinueShortHelp, kContinueHelp);
+  (*verbs)[Verb::kBacktrace] =
+      VerbRecord(&DoBacktrace, {"backtrace", "bt"}, kBacktraceShortHelp,
+                 kBacktraceHelp, CommandGroup::kQuery);
+  (*verbs)[Verb::kContinue] =
+      VerbRecord(&DoContinue, {"continue", "c"}, kContinueShortHelp,
+                 kContinueHelp, CommandGroup::kStep, SourceAffinity::kSource);
+  (*verbs)[Verb::kFinish] =
+      VerbRecord(&DoFinish, {"finish", "fi"}, kFinishShortHelp, kFinishHelp,
+                 CommandGroup::kStep);
+  (*verbs)[Verb::kLocals] = VerbRecord(&DoLocals, {"locals"}, kLocalsShortHelp,
+                                       kLocalsHelp, CommandGroup::kQuery);
   (*verbs)[Verb::kPause] =
-      VerbRecord(&DoPause, {"pause", "pa"}, kPauseShortHelp, kPauseHelp);
-  (*verbs)[Verb::kRegs] =
-      VerbRecord(&DoRegs, {"regs", "rg"}, kRegsShortHelp, kRegsHelp);
+      VerbRecord(&DoPause, {"pause", "pa"}, kPauseShortHelp, kPauseHelp,
+                 CommandGroup::kProcess);
+  (*verbs)[Verb::kPrint] = VerbRecord(&DoPrint, {"print", "p"}, kPrintShortHelp,
+                                      kPrintHelp, CommandGroup::kQuery);
+
+  // regs
+  SwitchRecord regs_categories(kRegsCategoriesSwitch, true, "category", 'c');
+  VerbRecord regs(&DoRegs, {"regs", "rg"}, kRegsShortHelp, kRegsHelp,
+                  CommandGroup::kAssembly);
+  regs.switches.push_back(regs_categories);
+  (*verbs)[Verb::kRegs] = std::move(regs);
+
   (*verbs)[Verb::kStep] =
-      VerbRecord(&DoStep, {"step", "s"}, kStepShortHelp, kStepHelp);
+      VerbRecord(&DoStep, {"step", "s"}, kStepShortHelp, kStepHelp,
+                 CommandGroup::kStep, SourceAffinity::kSource);
   (*verbs)[Verb::kStepi] =
-      VerbRecord(&DoStepi, {"stepi", "si"}, kStepiShortHelp, kStepiHelp);
+      VerbRecord(&DoStepi, {"stepi", "si"}, kStepiShortHelp, kStepiHelp,
+                 CommandGroup::kAssembly, SourceAffinity::kAssembly);
+  (*verbs)[Verb::kUntil] = VerbRecord(&DoUntil, {"until", "u"}, kUntilShortHelp,
+                                      kUntilHelp, CommandGroup::kStep);
 }
 
 }  // namespace zxdb

@@ -143,7 +143,23 @@ constexpr char g_sampler_fragment_src[] = R"GLSL(
     // Consult the accelerator; exit early if no shadow is possible,
     vec4 accel = texture(accelerator, accel_coords);
     uvec2 cell = uvec2(fract(accel_coords) * 4);
-    int cell_val = (int(accel[cell.y] * 255.0) >> (cell.x * 2)) & 3;
+    float component = 0.0;
+    switch (cell.y) {
+      case 0:
+        component = accel.r;
+        break;
+      case 1:
+        component = accel.g;
+        break;
+      case 2:
+        component = accel.b;
+        break;
+      case 3:
+      default:
+        component = accel.a;
+        break;
+    }
+    int cell_val = (int(component * 255.0) >> (cell.x * 2)) & 3;
     if (cell_val == 0) {
       outColor = vec4(1.0, 0.0, 0.0, 1.0);
       return;
@@ -211,7 +227,23 @@ constexpr char g_filter_fragment_src[] = R"GLSL(
     // Consult the accelerator; exit early if no shadow is possible,
     vec4 accel = texture(accelerator, accel_coords);
     uvec2 cell = uvec2(fract(accel_coords) * 4);
-    int cell_val = (int(accel[cell.y] * 255.0) >> (cell.x * 2)) & 3;
+    float component = 0.0;
+    switch (cell.y) {
+      case 0:
+        component = accel.r;
+        break;
+      case 1:
+        component = accel.g;
+        break;
+      case 2:
+        component = accel.b;
+        break;
+      case 3:
+      default:
+        component = accel.a;
+        break;
+    }
+    int cell_val = (int(component * 255.0) >> (cell.x * 2)) & 3;
     if (cell_val == 0) {
       outColor = vec4(1.0, 0.0, 0.0, 1.0);
       return;
@@ -521,7 +553,7 @@ vk::RenderPass CreateRenderPass(vk::Device device, vk::Format color_format) {
 
 }  // namespace
 
-SsdoSampler::SsdoSampler(Escher* escher, MeshPtr full_screen,
+SsdoSampler::SsdoSampler(EscherWeakPtr escher, MeshPtr full_screen,
                          ImagePtr noise_image, ModelData* model_data)
     : device_(escher->vulkan_context().device),
       color_format_(ChooseColorFormat(escher->vk_physical_device())),

@@ -6,7 +6,7 @@
 
 #include <trace/event.h>
 
-#include "lib/app/cpp/connect.h"
+#include "lib/component/cpp/connect.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/time/time_point.h"
 #include "lib/ui/geometry/cpp/geometry_util.h"
@@ -14,7 +14,8 @@
 namespace mozart {
 namespace {
 
-fuchsia::ui::scenic::ScenicPtr GetScenic(::fuchsia::ui::views_v1::ViewManager* view_manager) {
+fuchsia::ui::scenic::ScenicPtr GetScenic(
+    ::fuchsia::ui::viewsv1::ViewManager* view_manager) {
   fuchsia::ui::scenic::ScenicPtr scenic;
   view_manager->GetScenic(scenic.NewRequest());
   return scenic;
@@ -23,8 +24,9 @@ fuchsia::ui::scenic::ScenicPtr GetScenic(::fuchsia::ui::views_v1::ViewManager* v
 }  // namespace
 
 BaseView::BaseView(
-    ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request,
+    ::fuchsia::ui::viewsv1::ViewManagerPtr view_manager,
+    fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
+        view_owner_request,
     const std::string& label)
     : view_manager_(std::move(view_manager)),
       view_listener_binding_(this),
@@ -41,7 +43,7 @@ BaseView::BaseView(
                             view_listener_binding_.NewBinding(),
                             std::move(parent_export_token), label);
 
-  fuchsia::sys::ConnectToService(GetViewServiceProvider(),
+  component::ConnectToService(GetViewServiceProvider(),
                               input_connection_.NewRequest());
   input_connection_->SetEventListener(input_listener_binding_.NewBinding());
 
@@ -58,7 +60,7 @@ fuchsia::sys::ServiceProvider* BaseView::GetViewServiceProvider() {
   return view_service_provider_.get();
 }
 
-::fuchsia::ui::views_v1::ViewContainer* BaseView::GetViewContainer() {
+::fuchsia::ui::viewsv1::ViewContainer* BaseView::GetViewContainer() {
   if (!view_container_) {
     view_->GetContainer(view_container_.NewRequest());
     view_container_->SetListener(view_container_listener_binding_.NewBinding());
@@ -134,7 +136,7 @@ void BaseView::HandleSessionEvents(
     AdjustMetricsAndPhysicalSize();
   }
 
-  OnSessionEvent(std::move(events));
+  OnScenicEvent(std::move(events));
 }
 
 void BaseView::SetNeedSquareMetrics(bool enable) {
@@ -157,28 +159,31 @@ void BaseView::AdjustMetricsAndPhysicalSize() {
   InvalidateScene();
 }
 
-void BaseView::OnPropertiesChanged(::fuchsia::ui::views_v1::ViewProperties old_properties) {}
+void BaseView::OnPropertiesChanged(
+    ::fuchsia::ui::viewsv1::ViewProperties old_properties) {}
 
 void BaseView::OnSceneInvalidated(
     fuchsia::images::PresentationInfo presentation_info) {}
 
-void BaseView::OnSessionEvent(
+void BaseView::OnScenicEvent(
     fidl::VectorPtr<fuchsia::ui::scenic::Event> events) {}
 
 bool BaseView::OnInputEvent(fuchsia::ui::input::InputEvent event) {
   return false;
 }
 
-void BaseView::OnChildAttached(uint32_t child_key,
-                               ::fuchsia::ui::views_v1::ViewInfo child_view_info) {}
+void BaseView::OnChildAttached(
+    uint32_t child_key, ::fuchsia::ui::viewsv1::ViewInfo child_view_info) {}
 
 void BaseView::OnChildUnavailable(uint32_t child_key) {}
 
-void BaseView::OnPropertiesChanged(::fuchsia::ui::views_v1::ViewProperties properties,
-                                   OnPropertiesChangedCallback callback) {
+void BaseView::OnPropertiesChanged(
+    ::fuchsia::ui::viewsv1::ViewProperties properties,
+    OnPropertiesChangedCallback callback) {
   TRACE_DURATION("view", "OnPropertiesChanged");
 
-  ::fuchsia::ui::views_v1::ViewProperties old_properties = std::move(properties_);
+  ::fuchsia::ui::viewsv1::ViewProperties old_properties =
+      std::move(properties_);
   properties_ = std::move(properties);
 
   if (logical_size_ != properties_.view_layout->size) {
@@ -192,7 +197,7 @@ void BaseView::OnPropertiesChanged(::fuchsia::ui::views_v1::ViewProperties prope
 }
 
 void BaseView::OnChildAttached(uint32_t child_key,
-                               ::fuchsia::ui::views_v1::ViewInfo child_view_info,
+                               ::fuchsia::ui::viewsv1::ViewInfo child_view_info,
                                OnChildUnavailableCallback callback) {
   TRACE_DURATION("view", "OnChildAttached", "child_key", child_key);
   OnChildAttached(child_key, std::move(child_view_info));

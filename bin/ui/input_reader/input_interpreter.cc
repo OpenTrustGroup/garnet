@@ -6,7 +6,10 @@
 
 #include <fcntl.h>
 #include <hid/acer12.h>
+#include <hid/ambient-light.h>
 #include <hid/egalax.h>
+#include <hid/eyoyo.h>
+#include <hid/ft3x27.h>
 #include <hid/hid.h>
 #include <hid/paradise.h>
 #include <hid/samsung.h>
@@ -45,6 +48,7 @@ fuchsia::ui::input::InputReport CloneReport(
 // TODO(SCN-473): Extract sensor IDs from HID.
 const size_t kParadiseAccLid = 0;
 const size_t kParadiseAccBase = 1;
+const size_t kAmbientLight = 2;
 }  // namespace
 
 namespace mozart {
@@ -201,6 +205,25 @@ bool InputInterpreter::Initialize() {
 
     touch_device_type_ = TouchDeviceType::PARADISEv1;
   } else if (protocol == HidDecoder::Protocol::ParadiseV2Touch) {
+    FXL_VLOG(2) << "Device " << name() << " has stylus";
+    has_stylus_ = true;
+    stylus_descriptor_ = fuchsia::ui::input::StylusDescriptor::New();
+
+    stylus_descriptor_->x.range.min = 0;
+    stylus_descriptor_->x.range.max = PARADISE_STYLUS_X_MAX;
+    stylus_descriptor_->x.resolution = 1;
+
+    stylus_descriptor_->y.range.min = 0;
+    stylus_descriptor_->y.range.max = PARADISE_STYLUS_Y_MAX;
+    stylus_descriptor_->y.resolution = 1;
+
+    stylus_descriptor_->is_invertible = false;
+
+    stylus_descriptor_->buttons |= fuchsia::ui::input::kStylusBarrel;
+
+    stylus_report_ = fuchsia::ui::input::InputReport::New();
+    stylus_report_->stylus = fuchsia::ui::input::StylusReport::New();
+
     FXL_VLOG(2) << "Device " << name() << " has touchscreen";
     has_touchscreen_ = true;
     touchscreen_descriptor_ = fuchsia::ui::input::TouchscreenDescriptor::New();
@@ -221,7 +244,26 @@ bool InputInterpreter::Initialize() {
         fuchsia::ui::input::TouchscreenReport::New();
 
     touch_device_type_ = TouchDeviceType::PARADISEv2;
-   } else if (protocol == HidDecoder::Protocol::ParadiseV3Touch) {
+  } else if (protocol == HidDecoder::Protocol::ParadiseV3Touch) {
+    FXL_VLOG(2) << "Device " << name() << " has stylus";
+    has_stylus_ = true;
+    stylus_descriptor_ = fuchsia::ui::input::StylusDescriptor::New();
+
+    stylus_descriptor_->x.range.min = 0;
+    stylus_descriptor_->x.range.max = PARADISE_STYLUS_X_MAX;
+    stylus_descriptor_->x.resolution = 1;
+
+    stylus_descriptor_->y.range.min = 0;
+    stylus_descriptor_->y.range.max = PARADISE_STYLUS_Y_MAX;
+    stylus_descriptor_->y.resolution = 1;
+
+    stylus_descriptor_->is_invertible = false;
+
+    stylus_descriptor_->buttons |= fuchsia::ui::input::kStylusBarrel;
+
+    stylus_report_ = fuchsia::ui::input::InputReport::New();
+    stylus_report_->stylus = fuchsia::ui::input::StylusReport::New();
+
     FXL_VLOG(2) << "Device " << name() << " has touchscreen";
     has_touchscreen_ = true;
     touchscreen_descriptor_ = fuchsia::ui::input::TouchscreenDescriptor::New();
@@ -319,6 +361,81 @@ bool InputInterpreter::Initialize() {
 
     sensor_report_ = fuchsia::ui::input::InputReport::New();
     sensor_report_->sensor = fuchsia::ui::input::SensorReport::New();
+  } else if (protocol == HidDecoder::Protocol::EyoyoTouch) {
+    FXL_VLOG(2) << "Device " << name() << " has touchscreen";
+    has_touchscreen_ = true;
+    touchscreen_descriptor_ = fuchsia::ui::input::TouchscreenDescriptor::New();
+
+    touchscreen_descriptor_->x.range.min = 0;
+    touchscreen_descriptor_->x.range.max = EYOYO_X_MAX;
+    touchscreen_descriptor_->x.resolution = 1;
+
+    touchscreen_descriptor_->y.range.min = 0;
+    touchscreen_descriptor_->y.range.max = EYOYO_Y_MAX;
+    touchscreen_descriptor_->y.resolution = 1;
+
+    // TODO(jpoichet) do not hardcode this
+    touchscreen_descriptor_->max_finger_id = 255;
+
+    touchscreen_report_ = fuchsia::ui::input::InputReport::New();
+    touchscreen_report_->touchscreen =
+        fuchsia::ui::input::TouchscreenReport::New();
+
+    touch_device_type_ = TouchDeviceType::EYOYO;
+  } else if (protocol == HidDecoder::Protocol::LightSensor) {
+    FXL_VLOG(2) << "Device " << name() << " has an ambient light sensor";
+    sensor_device_type_ = SensorDeviceType::AMBIENT_LIGHT;
+    has_sensors_ = true;
+
+    fuchsia::ui::input::SensorDescriptorPtr desc =
+        fuchsia::ui::input::SensorDescriptor::New();
+    desc->type = fuchsia::ui::input::SensorType::LIGHTMETER;
+    desc->loc = fuchsia::ui::input::SensorLocation::UNKNOWN;
+    sensor_descriptors_[kAmbientLight] = std::move(desc);
+
+    sensor_report_ = fuchsia::ui::input::InputReport::New();
+    sensor_report_->sensor = fuchsia::ui::input::SensorReport::New();
+  } else if (protocol == HidDecoder::Protocol::EyoyoTouch) {
+    FXL_VLOG(2) << "Device " << name() << " has touchscreen";
+    has_touchscreen_ = true;
+    touchscreen_descriptor_ = fuchsia::ui::input::TouchscreenDescriptor::New();
+
+    touchscreen_descriptor_->x.range.min = 0;
+    touchscreen_descriptor_->x.range.max = EYOYO_X_MAX;
+    touchscreen_descriptor_->x.resolution = 1;
+
+    touchscreen_descriptor_->y.range.min = 0;
+    touchscreen_descriptor_->y.range.max = EYOYO_Y_MAX;
+    touchscreen_descriptor_->y.resolution = 1;
+
+    // TODO(jpoichet) do not hardcode this
+    touchscreen_descriptor_->max_finger_id = 255;
+
+    touchscreen_report_ = fuchsia::ui::input::InputReport::New();
+    touchscreen_report_->touchscreen =
+        fuchsia::ui::input::TouchscreenReport::New();
+
+    touch_device_type_ = TouchDeviceType::EYOYO;
+  } else if (protocol == HidDecoder::Protocol::Ft3x27Touch) {
+    FXL_VLOG(2) << "Device " << name() << " has a touchscreen";
+    has_touchscreen_ = true;
+    touchscreen_descriptor_ = fuchsia::ui::input::TouchscreenDescriptor::New();
+    touchscreen_descriptor_->x.range.min = 0;
+    touchscreen_descriptor_->x.range.max = FT3X27_X_MAX;
+    touchscreen_descriptor_->x.resolution = 1;
+    touchscreen_descriptor_->y.range.min = 0;
+    touchscreen_descriptor_->y.range.max = FT3X27_Y_MAX;
+    touchscreen_descriptor_->y.resolution = 1;
+
+    // TODO(SCN-867) Use HID parsing for all touch devices
+    // will remove the need for this hardcoding
+    touchscreen_descriptor_->max_finger_id = 255;
+
+    touchscreen_report_ = fuchsia::ui::input::InputReport::New();
+    touchscreen_report_->touchscreen =
+        fuchsia::ui::input::TouchscreenReport::New();
+
+    touch_device_type_ = TouchDeviceType::FT3X27;
   } else {
     FXL_VLOG(2) << "Device " << name() << " has unsupported HID device";
     return false;
@@ -476,14 +593,26 @@ bool InputInterpreter::Read(bool discard) {
             input_device_->DispatchReport(CloneReport(touchscreen_report_));
           }
         }
+      } else if (report[0] == PARADISE_RPT_ID_STYLUS) {
+        if (ParseParadiseStylusReport(report.data(), rc)) {
+          if (!discard) {
+            input_device_->DispatchReport(CloneReport(stylus_report_));
+          }
+        }
       }
       break;
-     case TouchDeviceType::PARADISEv3:
+    case TouchDeviceType::PARADISEv3:
       if (report[0] == PARADISE_RPT_ID_TOUCH) {
         if (ParseParadiseTouchscreenReport<paradise_touch_t>(report.data(),
                                                              rc)) {
           if (!discard) {
             input_device_->DispatchReport(CloneReport(touchscreen_report_));
+          }
+        }
+      } else if (report[0] == PARADISE_RPT_ID_STYLUS) {
+        if (ParseParadiseStylusReport(report.data(), rc)) {
+          if (!discard) {
+            input_device_->DispatchReport(CloneReport(stylus_report_));
           }
         }
       }
@@ -498,6 +627,25 @@ bool InputInterpreter::Read(bool discard) {
       }
       break;
 
+    case TouchDeviceType::EYOYO:
+      if (report[0] == EYOYO_RPT_ID_TOUCH) {
+        if (ParseEyoyoTouchscreenReport(report.data(), rc)) {
+          if (!discard) {
+            input_device_->DispatchReport(CloneReport(touchscreen_report_));
+          }
+        }
+      }
+      break;
+    case TouchDeviceType::FT3X27:
+      if (report[0] == FT3X27_RPT_ID_TOUCH) {
+        if (ParseFt3x27TouchscreenReport(report.data(), rc)) {
+          if (!discard) {
+            input_device_->DispatchReport(CloneReport(touchscreen_report_));
+          }
+        }
+      }
+      break;
+
     default:
       break;
   }
@@ -505,6 +653,16 @@ bool InputInterpreter::Read(bool discard) {
   switch (sensor_device_type_) {
     case SensorDeviceType::PARADISE:
       if (ParseParadiseSensorReport(report.data(), rc)) {
+        if (!discard) {
+          FXL_DCHECK(sensor_idx_ < kMaxSensorCount);
+          FXL_DCHECK(sensor_devices_[sensor_idx_]);
+          sensor_devices_[sensor_idx_]->DispatchReport(
+              CloneReport(sensor_report_));
+        }
+      }
+      break;
+    case SensorDeviceType::AMBIENT_LIGHT:
+      if (ParseAmbientLightSensorReport()) {
         if (!discard) {
           FXL_DCHECK(sensor_idx_ < kMaxSensorCount);
           FXL_DCHECK(sensor_devices_[sensor_idx_]);
@@ -795,6 +953,122 @@ bool InputInterpreter::ParseParadiseSensorReport(uint8_t* r, size_t len) {
   FXL_VLOG(2) << name()
               << " parsed (sensor=" << static_cast<uint16_t>(sensor_idx_)
               << "): " << *sensor_report_;
+  return true;
+}
+
+bool InputInterpreter::ParseParadiseStylusReport(uint8_t* r, size_t len) {
+  if (len != sizeof(paradise_stylus_t)) {
+    FXL_LOG(INFO) << "paradise wrong stylus report size " << len;
+    return false;
+  }
+
+  auto report = reinterpret_cast<paradise_stylus_t*>(r);
+  stylus_report_->event_time = InputEventTimestampNow();
+
+  stylus_report_->stylus->x = report->x;
+  stylus_report_->stylus->y = report->y;
+  stylus_report_->stylus->pressure = report->pressure;
+
+  stylus_report_->stylus->is_in_contact =
+      paradise_stylus_status_inrange(report->status) &&
+      (paradise_stylus_status_tswitch(report->status) ||
+       paradise_stylus_status_eraser(report->status));
+
+  stylus_report_->stylus->in_range =
+      paradise_stylus_status_inrange(report->status);
+
+  if (paradise_stylus_status_invert(report->status) ||
+      paradise_stylus_status_eraser(report->status)) {
+    stylus_report_->stylus->is_inverted = true;
+  }
+
+  if (paradise_stylus_status_barrel(report->status)) {
+    stylus_report_->stylus->pressed_buttons |=
+        fuchsia::ui::input::kStylusBarrel;
+  }
+  FXL_VLOG(2) << name() << " parsed: " << *stylus_report_;
+
+  return true;
+}
+
+// Writes out result to sensor_report_ and sensor_idx_.
+bool InputInterpreter::ParseAmbientLightSensorReport() {
+  HidDecoder::HidAmbientLightSimple data;
+  if (!hid_decoder_.Read(&data)) {
+    FXL_LOG(ERROR) << " failed reading from ambient light sensor";
+    return false;
+  }
+  sensor_report_->sensor->set_scalar(data.illuminance);
+  sensor_report_->event_time = InputEventTimestampNow();
+  sensor_idx_ = kAmbientLight;
+
+  FXL_VLOG(2) << name()
+              << " parsed (sensor=" << static_cast<uint16_t>(sensor_idx_)
+              << "): " << *sensor_report_;
+  return true;
+}
+
+bool InputInterpreter::ParseEyoyoTouchscreenReport(uint8_t* r, size_t len) {
+  if (len != sizeof(eyoyo_touch_t)) {
+    return false;
+  }
+
+  const auto& report = *(reinterpret_cast<eyoyo_touch_t*>(r));
+  touchscreen_report_->event_time = InputEventTimestampNow();
+
+  size_t index = 0;
+  touchscreen_report_->touchscreen->touches.resize(index);
+
+  for (size_t i = 0; i < countof(report.fingers); ++i) {
+    auto fid = report.fingers[i].finger_id;
+
+    if (!eyoyo_finger_id_tswitch(fid))
+      continue;
+
+    fuchsia::ui::input::Touch touch;
+    touch.finger_id = eyoyo_finger_id_contact(fid);
+    touch.x = report.fingers[i].x;
+    touch.y = report.fingers[i].y;
+    // Panel does not support touch width/height.
+    touch.width = 5;
+    touch.height = 5;
+    touchscreen_report_->touchscreen->touches.resize(index + 1);
+    touchscreen_report_->touchscreen->touches->at(index++) = std::move(touch);
+  }
+
+  return true;
+}
+
+bool InputInterpreter::ParseFt3x27TouchscreenReport(uint8_t* r, size_t len) {
+  if (len != sizeof(ft3x27_touch_t)) {
+    return false;
+  }
+
+  const auto& report = *(reinterpret_cast<ft3x27_touch_t*>(r));
+  touchscreen_report_->event_time = InputEventTimestampNow();
+
+  size_t index = 0;
+  touchscreen_report_->touchscreen->touches.resize(index);
+
+  for (size_t i = 0; i < countof(report.fingers); ++i) {
+    auto fid = report.fingers[i].finger_id;
+
+    if (!ft3x27_finger_id_tswitch(fid))
+      continue;
+
+    fuchsia::ui::input::Touch touch;
+    touch.finger_id = ft3x27_finger_id_contact(fid);
+    touch.x = report.fingers[i].x;
+    touch.y = report.fingers[i].y;
+    touch.width = 5;
+    touch.height = 5;
+    touchscreen_report_->touchscreen->touches.resize(index + 1);
+    touchscreen_report_->touchscreen->touches->at(index++) = std::move(touch);
+    FXL_VLOG(2) << name()
+                << " parsed (sensor=" << static_cast<uint16_t>(touch.finger_id)
+                << ") x=" << touch.x << ", y=" << touch.y;
+  }
+
   return true;
 }
 

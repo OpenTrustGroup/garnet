@@ -9,7 +9,7 @@
 #include <string>
 
 #include "garnet/public/lib/fidl/compatibility_test/echo_client_app.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fidl/cpp/interface_request.h"
 
@@ -21,7 +21,7 @@ class EchoServerApp : public Echo {
  public:
   explicit EchoServerApp(async::Loop* loop)
       : loop_(loop),
-        context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
+        context_(component::StartupContext::CreateFromStartupInfo()) {
     context_->outgoing().AddPublicService(bindings_.GetHandler(this));
   }
 
@@ -81,7 +81,7 @@ class EchoServerApp : public Echo {
   EchoServerApp& operator=(const EchoServerApp&) = delete;
 
   async::Loop* loop_;
-  std::unique_ptr<fuchsia::sys::StartupContext> context_;
+  std::unique_ptr<component::StartupContext> context_;
   fidl::BindingSet<Echo> bindings_;
   std::vector<std::unique_ptr<EchoClientApp>> client_apps_;
 };
@@ -91,8 +91,9 @@ class EchoServerApp : public Echo {
 }  // namespace fidl
 
 int main(int argc, const char** argv) {
-  // The FIDL support lib requires async_get_default() to return non-null.
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  // The FIDL support lib requires async_get_default_dispatcher() to return
+  // non-null.
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
   fidl::test::compatibility::EchoServerApp app(&loop);
   loop.Run();

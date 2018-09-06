@@ -7,7 +7,7 @@
 
 #include <fuchsia/examples/shadertoy/cpp/fidl.h>
 #include <fuchsia/images/cpp/fidl.h>
-#include <fuchsia/ui/views_v1_token/cpp/fidl.h>
+#include <fuchsia/ui/viewsv1token/cpp/fidl.h>
 #include "garnet/examples/ui/shadertoy/service/glm_hack.h"
 #include "lib/escher/escher.h"
 #include "lib/escher/resources/resource.h"
@@ -34,7 +34,7 @@ class ShadertoyState : public escher::Resource {
   // Factory constructor.
   static fxl::RefPtr<ShadertoyState> NewForView(
       App* app,
-      ::fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+      ::fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
           view_owner_request,
       bool handle_input_events);
 
@@ -64,7 +64,7 @@ class ShadertoyState : public escher::Resource {
 
   uint32_t width() const { return width_; }
   uint32_t height() const { return height_; }
-  escher::Escher* escher() const { return escher_; }
+  escher::Escher* escher() const { return escher_.get(); }
   Renderer* renderer() const { return renderer_; }
   const PipelinePtr& pipeline() const { return pipeline_; }
   escher::Texture* channel0() const { return nullptr; }
@@ -90,7 +90,7 @@ class ShadertoyState : public escher::Resource {
   static constexpr uint32_t kMaxHeight = 2048;
 
   App* const app_;
-  escher::Escher* const escher_;
+  const escher::EscherWeakPtr escher_;
   Compiler* const compiler_;
   Renderer* const renderer_;
   fxl::WeakPtrFactory<ShadertoyState> weak_ptr_factory_;

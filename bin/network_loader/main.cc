@@ -12,7 +12,7 @@
 #include <lib/async/default.h>
 #include <zx/time.h>
 
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fidl/cpp/optional.h"
 #include "lib/fxl/functional/make_copyable.h"
@@ -78,7 +78,7 @@ class RetryingLoader {
   }
 
   void Retry(const http::URLResponse& response) {
-    async::PostDelayedTask(async_get_default(),
+    async::PostDelayedTask(async_get_default_dispatcher(),
                            [weak_this = weak_ptr_factory_.GetWeakPtr()] {
                              if (weak_this) {
                                weak_this->Attempt();
@@ -126,7 +126,7 @@ class RetryingLoader {
 class NetworkLoader : public fuchsia::sys::Loader {
  public:
   NetworkLoader()
-      : context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
+      : context_(component::StartupContext::CreateFromStartupInfo()) {
     context_->outgoing().AddPublicService(bindings_.GetHandler(this));
     context_->ConnectToEnvironmentService(http_.NewRequest());
   }
@@ -145,7 +145,7 @@ class NetworkLoader : public fuchsia::sys::Loader {
   }
 
  private:
-  std::unique_ptr<fuchsia::sys::StartupContext> context_;
+  std::unique_ptr<component::StartupContext> context_;
   fidl::BindingSet<fuchsia::sys::Loader> bindings_;
 
   http::HttpServicePtr http_;
@@ -155,7 +155,7 @@ class NetworkLoader : public fuchsia::sys::Loader {
 }  // namespace
 
 int main(int argc, const char** argv) {
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
   NetworkLoader app;
   loop.Run();
   return 0;

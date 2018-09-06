@@ -5,10 +5,13 @@
 #include "garnet/bin/ui/root_presenter/app.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <string>
 
-#include <fuchsia/ui/views_v1/cpp/fidl.h>
-#include "lib/app/cpp/connect.h"
+#include <fuchsia/ui/viewsv1/cpp/fidl.h>
+#include "lib/component/cpp/connect.h"
 #include "lib/fidl/cpp/clone.h"
+#include "lib/fxl/files/file.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 #include "lib/ui/input/cpp/formatting.h"
@@ -16,7 +19,7 @@
 namespace root_presenter {
 
 App::App(const fxl::CommandLine& command_line)
-    : startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()),
+    : startup_context_(component::StartupContext::CreateFromStartupInfo()),
       input_reader_(this) {
   FXL_DCHECK(startup_context_);
 
@@ -73,15 +76,27 @@ Presentation::ShutdownCallback App::GetShutdownCallback(
   });
 }
 
-void App::Present(
-    fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner>
-        view_owner_handle,
-    fidl::InterfaceRequest<fuchsia::ui::policy::Presentation>
-        presentation_request) {
+void App::Present(fidl::InterfaceHandle<::fuchsia::ui::viewsv1token::ViewOwner>
+                      view_owner_handle,
+                  fidl::InterfaceRequest<fuchsia::ui::policy::Presentation>
+                      presentation_request) {
   InitializeServices();
 
-  auto presentation = std::make_unique<PresentationOld>(
-      view_manager_.get(), scenic_.get(), session_.get(), renderer_params_);
+  // Duplication intentional, this copy will go away soon.
+  int32_t display_startup_rotation_adjustment = 0;
+  {
+    std::string rotation_value;
+    if (files::ReadFileToString("/system/data/root_presenter/display_rotation",
+                                &rotation_value)) {
+      display_startup_rotation_adjustment = atoi(rotation_value.c_str());
+      FXL_LOG(INFO) << "Display rotation adjustment applied: "
+                    << display_startup_rotation_adjustment << " degrees.";
+    }
+  }
+
+  auto presentation = std::make_unique<Presentation1>(
+      view_manager_.get(), scenic_.get(), session_.get(), renderer_params_,
+      display_startup_rotation_adjustment, startup_context_.get());
   presentation->Present(view_owner_handle.Bind(),
                         std::move(presentation_request), GetYieldCallback(),
                         GetShutdownCallback(presentation.get()));
@@ -95,9 +110,21 @@ void App::PresentView(
         presentation_request) {
   InitializeServices();
 
-  auto presentation = std::make_unique<PresentationNew>(
-      scenic_.get(), session_.get(), std::move(view_holder_token),
-      renderer_params_);
+  int32_t display_startup_rotation_adjustment = 0;
+  {
+    std::string rotation_value;
+    if (files::ReadFileToString("/system/data/root_presenter/display_rotation",
+                                &rotation_value)) {
+      display_startup_rotation_adjustment = atoi(rotation_value.c_str());
+      FXL_LOG(INFO) << "Display rotation adjustment applied: "
+                    << display_startup_rotation_adjustment << " degrees.";
+    }
+  }
+
+  auto presentation = std::make_unique<Presentation2>(
+      scenic_.get(), session_.get(), compositor_->id(),
+      std::move(view_holder_token), renderer_params_,
+      display_startup_rotation_adjustment);
   presentation->PresentView(std::move(presentation_request), GetYieldCallback(),
                             GetShutdownCallback(presentation.get()));
   AddPresentation(std::move(presentation));
@@ -125,17 +152,20 @@ void App::HACK_SetRendererParams(
         renderer_params_.shadow_technique.set_value(param.shadow_technique());
         FXL_LOG(INFO)
             << "Presenter::HACK_SetRendererParams: Setting shadow technique to "
-            << param.shadow_technique();
+            << fidl::ToUnderlying(param.shadow_technique());
         continue;
       case fuchsia::ui::gfx::RendererParam::Tag::kRenderFrequency:
         renderer_params_.render_frequency.set_value(param.render_frequency());
         FXL_LOG(INFO)
             << "Presenter::HACK_SetRendererParams: Setting render frequency to "
-            << param.render_frequency();
+            << fidl::ToUnderlying(param.render_frequency());
         continue;
       case fuchsia::ui::gfx::RendererParam::Tag::Invalid:
         continue;
     }
+  }
+  for (const auto& presentation : presentations_) {
+    presentation->OverrideRendererParams(renderer_params_);
   }
 }
 

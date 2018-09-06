@@ -9,7 +9,9 @@
 #include <fuchsia/ui/policy/cpp/fidl.h>
 
 #include "garnet/bin/ui/root_presenter/displays/display_model.h"
+#include "garnet/bin/ui/root_presenter/renderer_params.h"
 #include "lib/ui/input/input_device_impl.h"
+#include "lib/ui/scenic/cpp/id.h"
 #include "lib/ui/scenic/cpp/resources.h"
 
 namespace root_presenter {
@@ -33,13 +35,17 @@ class Presentation : protected fuchsia::ui::policy::Presentation {
   virtual void OnDeviceAdded(mozart::InputDeviceImpl* input_device) = 0;
   virtual void OnDeviceRemoved(uint32_t device_id) = 0;
 
+  virtual void OverrideRendererParams(RendererParams renderer_params,
+                                      bool present_changes = true) = 0;
+
  protected:
   virtual float display_rotation_desired() const = 0;
   virtual void set_display_rotation_desired(float display_rotation) = 0;
   virtual float display_rotation_current() const = 0;
-  virtual const DisplayModel::DisplayInfo& display_info() = 0;
+  virtual int32_t display_startup_rotation_adjustment() const = 0;
+  virtual const DisplayModel::DisplayInfo& actual_display_info() = 0;
 
-  virtual const DisplayMetrics& display_metrics() const = 0;
+  virtual const DisplayMetrics& simulated_display_metrics() const = 0;
 
   virtual scenic::Camera* camera() = 0;
 

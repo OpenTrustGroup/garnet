@@ -16,6 +16,7 @@
 #include "garnet/bin/debug_agent/process_info.h"
 #include "garnet/bin/debug_agent/unwind.h"
 #include "garnet/lib/debug_ipc/agent_protocol.h"
+#include "garnet/lib/debug_ipc/helper/message_loop_zircon.h"
 #include "garnet/lib/debug_ipc/helper/stream_buffer.h"
 #include "garnet/lib/debug_ipc/message_reader.h"
 #include "garnet/lib/debug_ipc/message_writer.h"
@@ -30,7 +31,7 @@ DebuggedThread::DebuggedThread(DebuggedProcess* process, zx::thread thread,
       thread_(std::move(thread)),
       koid_(koid) {
   if (starting)
-    thread_.resume(ZX_RESUME_EXCEPTION);
+    debug_ipc::MessageLoopZircon::Current()->ResumeFromException(thread_, 0);
 }
 
 DebuggedThread::~DebuggedThread() {}
@@ -70,7 +71,9 @@ void DebuggedThread::OnException(uint32_t type) {
   switch (type) {
     case ZX_EXCP_SW_BREAKPOINT:
       notify.type = debug_ipc::NotifyException::Type::kSoftware;
-      UpdateForSoftwareBreakpoint(&regs, &notify.hit_breakpoints);
+      if (UpdateForSoftwareBreakpoint(&regs, &notify.hit_breakpoints) ==
+          OnStop::kIgnore)
+        return;
       break;
     case ZX_EXCP_HW_BREAKPOINT:
       if (run_mode_ == debug_ipc::ResumeRequest::How::kContinue) {
@@ -107,8 +110,12 @@ void DebuggedThread::OnException(uint32_t type) {
 
   notify.process_koid = process_->koid();
   FillThreadRecord(thread_, &notify.thread);
-  notify.frame.ip = *arch::IPInRegs(&regs);
-  notify.frame.sp = *arch::SPInRegs(&regs);
+
+  // Send the top 2 stack frames so the caller has the current location and
+  // its return address.
+  UnwindStack(process_->process(), process_->dl_debug_addr(), thread_,
+              *arch::IPInRegs(&regs), *arch::SPInRegs(&regs),
+              *arch::BPInRegs(&regs), 2, &notify.frames);
 
   // Send notification.
   debug_ipc::MessageWriter writer;
@@ -121,11 +128,14 @@ void DebuggedThread::OnException(uint32_t type) {
   // processes as desired.
 }
 
-void DebuggedThread::Pause() {
+bool DebuggedThread::Pause() {
   if (suspend_reason_ == SuspendReason::kNone) {
-    if (thread_.suspend() == ZX_OK)
+    if (thread_.suspend(&suspend_token_) == ZX_OK) {
       suspend_reason_ = SuspendReason::kOther;
+      return true;
+    }
   }
+  return false;
 }
 
 void DebuggedThread::Resume(const debug_ipc::ResumeRequest& request) {
@@ -146,13 +156,14 @@ void DebuggedThread::GetBacktrace(
     return;
 
   constexpr size_t kMaxStackDepth = 256;
-  UnwindStack(process_->process(), thread_, *arch::IPInRegs(&regs),
-              *arch::SPInRegs(&regs), kMaxStackDepth, frames);
+  UnwindStack(process_->process(), process_->dl_debug_addr(), thread_,
+              *arch::IPInRegs(&regs), *arch::SPInRegs(&regs),
+              *arch::BPInRegs(&regs), kMaxStackDepth, frames);
 }
 
 void DebuggedThread::GetRegisters(
-    std::vector<debug_ipc::Register>* registers) const {
-  arch::GetRegisterStateFromCPU(thread_, registers);
+    std::vector<debug_ipc::RegisterCategory>* categories) const {
+  arch::GetRegisterStateFromCPU(thread_, categories);
 }
 
 void DebuggedThread::SendThreadNotification() const {
@@ -174,7 +185,7 @@ void DebuggedThread::WillDeleteProcessBreakpoint(ProcessBreakpoint* bp) {
     current_breakpoint_ = nullptr;
 }
 
-void DebuggedThread::UpdateForSoftwareBreakpoint(
+DebuggedThread::OnStop DebuggedThread::UpdateForSoftwareBreakpoint(
     zx_thread_state_general_regs* regs,
     std::vector<debug_ipc::BreakpointStats>* hit_breakpoints) {
   uint64_t breakpoint_address =
@@ -206,6 +217,19 @@ void DebuggedThread::UpdateForSoftwareBreakpoint(
         fprintf(stderr, "Warning: could not update IP on thread, error = %d.",
                 static_cast<int>(status));
       }
+
+      if (!process_->dl_debug_addr() && process_->RegisterDebugState()) {
+        // This breakpoint was the explicit breakpoint ld.so executes to notify
+        // us that the loader is ready. Send the current module list and
+        // silently keep this thread stopped. The client will explicitly
+        // resume this thread when it's ready to continue (it will need to load
+        // symbols for the moduless and may need to set breakpoints based on
+        // them).
+        std::vector<uint64_t> paused_threads;
+        paused_threads.push_back(koid());
+        process_->SendModuleNotification(std::move(paused_threads));
+        return OnStop::kIgnore;
+      }
     } else {
       // Not a breakpoint instruction. Probably the breakpoint instruction used
       // to be ours but its removal raced with the exception handler. Resume
@@ -218,6 +242,7 @@ void DebuggedThread::UpdateForSoftwareBreakpoint(
       // the exception.
     }
   }
+  return OnStop::kSendNotification;
 }
 
 void DebuggedThread::UpdateForHitProcessBreakpoint(
@@ -262,7 +287,8 @@ void DebuggedThread::ResumeForRunMode() {
       SetSingleStep(run_mode_ != debug_ipc::ResumeRequest::How::kContinue);
     }
     suspend_reason_ = SuspendReason::kNone;
-    thread_.resume(ZX_RESUME_EXCEPTION);
+    FXL_DCHECK(!suspend_token_.is_valid());  // Should not exist.
+    debug_ipc::MessageLoopZircon::Current()->ResumeFromException(thread_, 0);
   } else if (suspend_reason_ == SuspendReason::kOther) {
     // A breakpoint should only be current when it was hit which will be
     // caused by an exception.
@@ -270,8 +296,12 @@ void DebuggedThread::ResumeForRunMode() {
 
     // All non-continue resumptions require single stepping.
     SetSingleStep(run_mode_ != debug_ipc::ResumeRequest::How::kContinue);
+
+    // The suspend token is holding the thread suspended, releasing it will
+    // resume (if nobody else has the thread suspended).
     suspend_reason_ = SuspendReason::kNone;
-    thread_.resume(0);
+    FXL_DCHECK(suspend_token_.is_valid());
+    suspend_token_.reset();
   }
 }
 

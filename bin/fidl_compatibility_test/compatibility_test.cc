@@ -21,8 +21,8 @@
 #include "lib/fxl/strings/split_string.h"
 #include "lib/fxl/strings/utf_codecs.h"
 
-using fidl::test::compatibility::Struct;
 using fidl::VectorPtr;
+using fidl::test::compatibility::Struct;
 using std::string;
 
 namespace {
@@ -33,11 +33,12 @@ constexpr uint8_t kArbitraryVectorSize = 3;
 constexpr uint8_t kArbitraryConstant = 2;
 
 constexpr char kServersEnvVarName[] = "FIDL_COMPATIBILITY_TEST_SERVERS";
-constexpr char kUsage[] = (
-    "Usage:\n  FIDL_COMPATIBILITY_TEST_SERVERS=foo_server,bar_server "
-    "fidl_compatibility_test\n"
-    "You must set the environment variable FIDL_COMPATIBILITY_TEST_SERVERS to a"
-    "comma-separated list of server URLs when running this test.");
+constexpr char kUsage[] =
+    ("Usage:\n  FIDL_COMPATIBILITY_TEST_SERVERS=foo_server,bar_server "
+     "fidl_compatibility_test\n"
+     "You must set the environment variable FIDL_COMPATIBILITY_TEST_SERVERS to "
+     "a"
+     "comma-separated list of server URLs when running this test.");
 
 zx::handle Handle() {
   zx_handle_t raw_event;
@@ -705,12 +706,10 @@ void Initialize(Struct* s) {
         VectorPtr<zx::handle>(std::move(underlying_vec));
   }
 
-  s->vectors.b_sized_1 = VectorPtr<bool>(
-      std::vector<bool>(fidl::test::compatibility::vectors_size,
-                        bool_distribution(rand_engine)));
-  s->vectors.i8_sized_1 = VectorPtr<int8_t>(
-      std::vector<int8_t>(fidl::test::compatibility::vectors_size,
-                          int8_distribution(rand_engine)));
+  s->vectors.b_sized_1 = VectorPtr<bool>(std::vector<bool>(
+      fidl::test::compatibility::vectors_size, bool_distribution(rand_engine)));
+  s->vectors.i8_sized_1 = VectorPtr<int8_t>(std::vector<int8_t>(
+      fidl::test::compatibility::vectors_size, int8_distribution(rand_engine)));
   s->vectors.i16_sized_1 = VectorPtr<int16_t>(
       std::vector<int16_t>(fidl::test::compatibility::vectors_size,
                            int16_distribution(rand_engine)));
@@ -853,13 +852,11 @@ void Initialize(Struct* s) {
   // handles
   s->handles.handle_handle = Handle();
 
-  zx_handle_t duplicate_process = ZX_HANDLE_INVALID;
-  zx_handle_duplicate(zx::process::self().get(), ZX_RIGHT_SAME_RIGHTS,
-                      &duplicate_process);
-  s->handles.process_handle = zx::process(duplicate_process);
-
-  ASSERT_EQ(ZX_OK, zx::thread::create(zx::process::self(), "dummy", 5u, 0u,
-                                      &s->handles.thread_handle));
+  ASSERT_EQ(ZX_OK, zx::process::self()->duplicate(ZX_RIGHT_SAME_RIGHTS,
+                                                  &s->handles.process_handle));
+  ASSERT_EQ(ZX_OK,
+            zx::thread::create(*zx::unowned_process(zx::process::self()),
+                               "dummy", 5u, 0u, &s->handles.thread_handle));
   ASSERT_EQ(ZX_OK, zx::vmo::create(0u, 0u, &s->handles.vmo_handle));
   ASSERT_EQ(ZX_OK, zx::event::create(0u, &s->handles.event_handle));
   ASSERT_EQ(ZX_OK, zx::port::create(0u, &s->handles.port_handle));
@@ -872,11 +869,11 @@ void Initialize(Struct* s) {
   ASSERT_EQ(ZX_OK, zx::eventpair::create(0u, &s->handles.eventpair_handle,
                                          &eventpair1));
 
-  ASSERT_EQ(ZX_OK,
-            zx::job::create(zx_job_default(), 0u, &s->handles.job_handle));
+  ASSERT_EQ(ZX_OK, zx::job::create(*zx::job::default_job(), 0u,
+                                   &s->handles.job_handle));
 
   uintptr_t vmar_addr;
-  ASSERT_EQ(ZX_OK, zx::vmar::root_self().allocate(
+  ASSERT_EQ(ZX_OK, zx::vmar::root_self()->allocate(
                        0u, getpagesize(), ZX_VM_FLAG_CAN_MAP_READ,
                        &s->handles.vmar_handle, &vmar_addr));
 
@@ -925,8 +922,9 @@ class CompatibilityTest
   void SetUp() override {
     proxy_url_ = ::testing::get<0>(GetParam());
     server_url_ = ::testing::get<1>(GetParam());
-    // The FIDL support lib requires async_get_default() to return non-null.
-    loop_.reset(new async::Loop(&kAsyncLoopConfigMakeDefault));
+    // The FIDL support lib requires async_get_default_dispatcher() to return
+    // non-null.
+    loop_.reset(new async::Loop(&kAsyncLoopConfigAttachToThread));
   }
   std::string proxy_url_;
   std::string server_url_;
@@ -945,13 +943,12 @@ TEST_P(CompatibilityTest, EchoStruct) {
   sent.Clone(&sent_clone);
   Struct resp_clone;
   bool called_back = false;
-  app.echo()->EchoStruct(
-      std::move(sent), server_url_,
-      [this, &resp_clone, &called_back](Struct resp) {
-        ASSERT_EQ(ZX_OK, resp.Clone(&resp_clone));
-        called_back = true;
-        loop_->Quit();
-      });
+  app.echo()->EchoStruct(std::move(sent), server_url_,
+                         [this, &resp_clone, &called_back](Struct resp) {
+                           ASSERT_EQ(ZX_OK, resp.Clone(&resp_clone));
+                           called_back = true;
+                           loop_->Quit();
+                         });
 
   loop_->Run();
   ASSERT_TRUE(called_back);
@@ -989,10 +986,10 @@ TEST_P(CompatibilityTest, EchoStructNoRetVal) {
 std::vector<std::string> ServerURLsFromEnv() {
   const char* servers_raw = getenv(kServersEnvVarName);
   FXL_CHECK(servers_raw != nullptr) << kUsage;
-  std::vector<std::string> servers = fxl::SplitStringCopy(
-      fxl::StringView(servers_raw, strlen(servers_raw)), ",",
-      fxl::WhiteSpaceHandling::kTrimWhitespace,
-      fxl::SplitResult::kSplitWantNonEmpty);
+  std::vector<std::string> servers =
+      fxl::SplitStringCopy(fxl::StringView(servers_raw, strlen(servers_raw)),
+                           ",", fxl::WhiteSpaceHandling::kTrimWhitespace,
+                           fxl::SplitResult::kSplitWantNonEmpty);
   FXL_CHECK(!servers.empty()) << kUsage;
   return servers;
 }

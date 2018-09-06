@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-//! Type-safe bindings for Zircon process.
+//! Type-safe bindings for Zircon processes.
 
-use {AsHandleRef, HandleBased, Handle, HandleRef};
+use crate::{AsHandleRef, HandleBased, Handle, HandleRef};
 
 /// An object representing a Zircon process.
 ///

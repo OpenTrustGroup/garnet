@@ -6,8 +6,6 @@
 
 #include "platform_trace.h"
 #include "zircon_platform_handle.h"
-#include <ddk/driver.h>
-#include <lib/fdio/io.h>
 #include <lib/zx/vmar.h>
 #include <lib/zx/vmo.h>
 #include <limits.h> // PAGE_SIZE
@@ -20,7 +18,7 @@ namespace magma {
 uint64_t PlatformBuffer::MinimumMappableAddress()
 {
     zx_info_vmar_t root_info;
-    zx::vmar::root_self().get_info(ZX_INFO_VMAR, &root_info, sizeof(root_info), nullptr, nullptr);
+    zx::vmar::root_self()->get_info(ZX_INFO_VMAR, &root_info, sizeof(root_info), nullptr, nullptr);
     return root_info.base;
 }
 
@@ -37,10 +35,10 @@ bool ZirconPlatformBuffer::MapAtCpuAddr(uint64_t addr)
 
     uint64_t child_addr;
     zx_status_t status =
-        zx::vmar::root_self().allocate(addr - minimum_mappable, size(),
-                                       ZX_VM_FLAG_CAN_MAP_READ | ZX_VM_FLAG_CAN_MAP_WRITE |
-                                           ZX_VM_FLAG_CAN_MAP_SPECIFIC | ZX_VM_FLAG_SPECIFIC,
-                                       &vmar_, &child_addr);
+        zx::vmar::root_self()->allocate(addr - minimum_mappable, size(),
+                                        ZX_VM_FLAG_CAN_MAP_READ | ZX_VM_FLAG_CAN_MAP_WRITE |
+                                            ZX_VM_FLAG_CAN_MAP_SPECIFIC | ZX_VM_FLAG_SPECIFIC,
+                                        &vmar_, &child_addr);
     if (status != ZX_OK)
         return DRETF(false, "Failed to create vmar, status %d", status);
     DASSERT(child_addr == addr);
@@ -72,7 +70,7 @@ bool ZirconPlatformBuffer::MapCpu(void** addr_out, uint64_t alignment)
         // If alignment is needed, allocate a vmar that's large enough so that
         // the buffer will fit at an aligned address inside it.
         uintptr_t vmar_size = alignment ? size() + alignment : size();
-        zx_status_t status = zx::vmar::root_self().allocate(
+        zx_status_t status = zx::vmar::root_self()->allocate(
             0, vmar_size,
             ZX_VM_FLAG_CAN_MAP_READ | ZX_VM_FLAG_CAN_MAP_WRITE | ZX_VM_FLAG_CAN_MAP_SPECIFIC,
             &vmar_, &child_addr);
@@ -174,7 +172,7 @@ bool ZirconPlatformBuffer::SetCachePolicy(magma_cache_policy_t cache_policy)
             zx_cache_policy = ZX_CACHE_POLICY_WRITE_COMBINING;
             break;
 
-       case MAGMA_CACHE_POLICY_UNCACHED:
+        case MAGMA_CACHE_POLICY_UNCACHED:
             zx_cache_policy = ZX_CACHE_POLICY_UNCACHED;
             break;
 

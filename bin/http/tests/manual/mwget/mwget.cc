@@ -4,11 +4,11 @@
 
 #include <stdlib.h>
 
-#include <lib/async-loop/cpp/loop.h>
 #include <fuchsia/net/oldhttp/cpp/fidl.h>
+#include <lib/async-loop/cpp/loop.h>
 
-#include "lib/app/cpp/connect.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/connect.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/macros.h"
 
@@ -61,10 +61,9 @@ class MWGetApp {
   static constexpr int MAX_LOADERS = 100;
 
   MWGetApp(async::Loop* loop)
-      : context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()),
+      : context_(component::StartupContext::CreateFromStartupInfo()),
         loop_(loop) {
-    http_service_ =
-        context_->ConnectToEnvironmentService<http::HttpService>();
+    http_service_ = context_->ConnectToEnvironmentService<http::HttpService>();
     FXL_DCHECK(loop);
     FXL_DCHECK(http_service_);
   }
@@ -110,7 +109,7 @@ class MWGetApp {
   }
 
  private:
-  std::unique_ptr<fuchsia::sys::StartupContext> context_;
+  std::unique_ptr<component::StartupContext> context_;
 
   async::Loop* const loop_;
   http::HttpServicePtr http_service_;
@@ -123,7 +122,7 @@ class MWGetApp {
 
 int main(int argc, const char** argv) {
   std::vector<std::string> args(argv, argv + argc);
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
   examples::MWGetApp app(&loop);
   if (app.Start(args))

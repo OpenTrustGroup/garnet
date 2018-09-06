@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_CHANNEL_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_CHANNEL_H_
 
 #include <atomic>
 #include <list>
@@ -23,6 +24,9 @@
 
 namespace btlib {
 namespace l2cap {
+
+class Channel;
+using ChannelCallback = fit::function<void(fbl::RefPtr<Channel>)>;
 
 // Represents a L2CAP channel. Each instance is owned by a service
 // implementation that operates on the corresponding channel. Instances can only
@@ -53,7 +57,19 @@ namespace l2cap {
 // Activate().
 class Channel : public fbl::RefCounted<Channel> {
  public:
+  // Identifier for this channel's endpoint on this device. It can be prior-
+  // specified for fixed channels or allocated for dynamic channels per v5.0,
+  // Vol 3, Part A, Section 2.1 "Channel Identifiers." Channels on a link will
+  // have unique identifiers to each other.
   ChannelId id() const { return id_; }
+
+  // Identifier for this channel's endpoint on the remote peer. Same value as
+  // |id()| for fixed channels and allocated by the remote for dynamic channels.
+  ChannelId remote_id() const { return remote_id_; }
+
+  // TODO(xow): Remove setters after fixing tests to no longer mutate Channels
+  void set_id_for_testing(ChannelId id) { id_ = id; }
+  void set_remote_id_for_testing(ChannelId id) { remote_id_ = id; }
 
   // Callback invoked when this channel has been closed without an explicit
   // request from the owner of this instance. For example, this can happen when
@@ -64,7 +80,7 @@ class Channel : public fbl::RefCounted<Channel> {
   // Callback invoked when a new SDU is received on this channel. Any previously
   // buffered SDUs will be sent to |rx_cb| right away, provided that |rx_cb| is
   // not empty and the underlying logical link is active.
-  using RxCallback = fit::function<void(const SDU& sdu)>;
+  using RxCallback = fit::function<void(SDU sdu)>;
 
   // Activates this channel assigning |dispatcher| to execute |rx_callback| and
   // |closed_callback|.
@@ -73,9 +89,8 @@ class Channel : public fbl::RefCounted<Channel> {
   //
   // NOTE: Callers shouldn't assume that this method will succeed, as the
   // underlying link can be removed at any time.
-  virtual bool Activate(RxCallback rx_callback,
-                        ClosedCallback closed_callback,
-                        async_t* dispatcher) = 0;
+  virtual bool Activate(RxCallback rx_callback, ClosedCallback closed_callback,
+                        async_dispatcher_t* dispatcher) = 0;
 
   // Deactivates this channel. No more packets can be sent or received after
   // this is called. |rx_callback| may still be called if it has been already
@@ -104,16 +119,23 @@ class Channel : public fbl::RefCounted<Channel> {
   // The type of the logical link this channel operates on.
   hci::Connection::LinkType link_type() const { return link_type_; }
 
+  // The connection handle of the underlying logical link.
+  hci::ConnectionHandle link_handle() const { return link_handle_; }
+
   uint16_t tx_mtu() const { return tx_mtu_; }
   uint16_t rx_mtu() const { return rx_mtu_; }
 
  protected:
   friend class fbl::RefPtr<Channel>;
-  Channel(ChannelId id, hci::Connection::LinkType link_type);
+  Channel(ChannelId id, ChannelId remote_id,
+          hci::Connection::LinkType link_type,
+          hci::ConnectionHandle link_handle);
   virtual ~Channel() = default;
 
   ChannelId id_;
+  ChannelId remote_id_;
   hci::Connection::LinkType link_type_;
+  hci::ConnectionHandle link_handle_;
 
   // The maximum SDU sizes for this channel.
   uint16_t tx_mtu_;
@@ -130,9 +152,8 @@ class LogicalLink;
 class ChannelImpl : public Channel {
  public:
   // Channel overrides:
-  bool Activate(RxCallback rx_callback,
-                ClosedCallback closed_callback,
-                async_t* dispatcher) override;
+  bool Activate(RxCallback rx_callback, ClosedCallback closed_callback,
+                async_dispatcher_t* dispatcher) override;
   void Deactivate() override;
   void SignalLinkError() override;
   bool Send(std::unique_ptr<const common::ByteBuffer> sdu) override;
@@ -141,7 +162,7 @@ class ChannelImpl : public Channel {
   friend class fbl::RefPtr<ChannelImpl>;
   friend class internal::LogicalLink;
 
-  ChannelImpl(ChannelId id,
+  ChannelImpl(ChannelId id, ChannelId remote_id,
               fxl::WeakPtr<internal::LogicalLink> link,
               std::list<PDU> buffered_pdus);
   ~ChannelImpl() override = default;
@@ -159,8 +180,8 @@ class ChannelImpl : public Channel {
 
   std::mutex mtx_;
 
-  bool active_  __TA_GUARDED(mtx_);
-  async_t* dispatcher_ __TA_GUARDED(mtx_);
+  bool active_ __TA_GUARDED(mtx_);
+  async_dispatcher_t* dispatcher_ __TA_GUARDED(mtx_);
   RxCallback rx_cb_ __TA_GUARDED(mtx_);
   ClosedCallback closed_cb_ __TA_GUARDED(mtx_);
 
@@ -189,3 +210,5 @@ class ChannelImpl : public Channel {
 }  // namespace internal
 }  // namespace l2cap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_CHANNEL_H_

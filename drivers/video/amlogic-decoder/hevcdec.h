@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef HEVCDEC_H_
-#define HEVCDEC_H_
+#ifndef GARNET_DRIVERS_VIDEO_AMLOGIC_DECODER_HEVCDEC_H_
+#define GARNET_DRIVERS_VIDEO_AMLOGIC_DECODER_HEVCDEC_H_
 
 #include "decoder_core.h"
 
@@ -30,6 +30,12 @@ class HevcDec : public DecoderCore {
                              uint32_t buffer_size) override;
   void InitializeParserInput() override;
   void InitializeDirectInput() override;
+  void UpdateWritePointer(uint32_t write_pointer) override;
+  uint32_t GetStreamInputOffset() override;
+  uint32_t GetReadOffset() override;
+  zx_status_t InitializeInputContext(InputContext* context) override;
+  void SaveInputContext(InputContext* context) override;
+  void RestoreInputContext(InputContext* context) override;
 
  private:
   MmioRegisters* mmio() const { return owner_->mmio(); }
@@ -39,4 +45,4 @@ class HevcDec : public DecoderCore {
   bool decoding_started_ = false;
 };
 
-#endif  // HEVCDEC_H_
+#endif  // GARNET_DRIVERS_VIDEO_AMLOGIC_DECODER_HEVCDEC_H_

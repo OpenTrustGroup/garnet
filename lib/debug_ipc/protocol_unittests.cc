@@ -182,7 +182,7 @@ TEST(Protocol, PauseRequest) {
 TEST(Protocol, ResumeRequest) {
   ResumeRequest initial;
   initial.process_koid = 3746234;
-  initial.thread_koid = 123523;
+  initial.thread_koids.push_back(123523);
   initial.how = ResumeRequest::How::kStepInRange;
   initial.range_begin = 0x12345;
   initial.range_end = 0x123456;
@@ -190,7 +190,7 @@ TEST(Protocol, ResumeRequest) {
   ResumeRequest second;
   ASSERT_TRUE(SerializeDeserializeRequest(initial, &second));
   EXPECT_EQ(initial.process_koid, second.process_koid);
-  EXPECT_EQ(initial.thread_koid, second.thread_koid);
+  EXPECT_EQ(initial.thread_koids, second.thread_koids);
   EXPECT_EQ(initial.how, second.how);
   EXPECT_EQ(initial.range_begin, second.range_begin);
   EXPECT_EQ(initial.range_end, second.range_end);
@@ -378,8 +378,10 @@ TEST(Protocol, BacktraceReply) {
   initial.frames.resize(2);
   initial.frames[0].ip = 1234;
   initial.frames[0].sp = 9875;
+  initial.frames[0].bp = 6666;
   initial.frames[1].ip = 71562341;
   initial.frames[1].sp = 89236413;
+  initial.frames[1].bp = 777;
 
   BacktraceReply second;
   ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
@@ -387,8 +389,10 @@ TEST(Protocol, BacktraceReply) {
   EXPECT_EQ(2u, second.frames.size());
   EXPECT_EQ(initial.frames[0].ip, second.frames[0].ip);
   EXPECT_EQ(initial.frames[0].sp, second.frames[0].sp);
+  EXPECT_EQ(initial.frames[0].bp, second.frames[0].bp);
   EXPECT_EQ(initial.frames[1].ip, second.frames[1].ip);
   EXPECT_EQ(initial.frames[1].sp, second.frames[1].sp);
+  EXPECT_EQ(initial.frames[1].bp, second.frames[1].bp);
 }
 
 // Modules ---------------------------------------------------------------------
@@ -469,6 +473,26 @@ TEST(Protocol, AspaceReply) {
 
 // Registers -------------------------------------------------------------------
 
+using debug_ipc::RegisterID;
+
+std::vector<uint8_t> CreateData(size_t length) {
+  std::vector<uint8_t> data;
+  data.reserve(length);
+  // So that we get the number backwards (0x0102...).
+  uint8_t base = length;
+  for (size_t i = 0; i < length; i++) {
+    data.emplace_back(base - i);
+  }
+  return data;
+}
+
+debug_ipc::Register CreateRegister(RegisterID id, size_t length) {
+  debug_ipc::Register reg;
+  reg.id = id;
+  reg.data = CreateData(length);
+  return reg;
+}
+
 TEST(Protocol, RegistersRequest) {
   RegistersRequest initial;
   initial.process_koid = 0x1234;
@@ -483,23 +507,58 @@ TEST(Protocol, RegistersRequest) {
 
 TEST(Protocol, RegistersReply) {
   RegistersReply initial;
-  initial.registers.push_back({"W0", 0xF000});
-  initial.registers.push_back({"W1", 0xF001});
-  initial.registers.push_back({"W2", 0xF002});
-  initial.registers.push_back({"W3", 0xF003});
+
+  RegisterCategory cat1;
+  cat1.type = RegisterCategory::Type::kGeneral;
+  cat1.registers.push_back(CreateRegister(RegisterID::kARMv8_lr, 1));
+  cat1.registers.push_back(CreateRegister(RegisterID::kARMv8_pc, 2));
+  cat1.registers.push_back(CreateRegister(RegisterID::kARMv8_sp, 4));
+  cat1.registers.push_back(CreateRegister(RegisterID::kARMv8_cpsr, 8));
+  initial.categories.push_back(cat1);
+
+  // Sanity check
+  ASSERT_EQ(*(uint8_t*)&(cat1.registers[0].data[0]), 0x01u);
+  ASSERT_EQ(*(uint16_t*)&(cat1.registers[1].data[0]), 0x0102u);
+  ASSERT_EQ(*(uint32_t*)&(cat1.registers[2].data[0]), 0x01020304u);
+  ASSERT_EQ(*(uint64_t*)&(cat1.registers[3].data[0]), 0x0102030405060708u);
+
+  RegisterCategory cat2;
+  cat2.type = RegisterCategory::Type::kVector;
+  cat2.registers.push_back(CreateRegister(RegisterID::kARMv8_x0, 1));
+  cat2.registers.push_back(CreateRegister(RegisterID::kARMv8_x1, 2));
+  cat2.registers.push_back(CreateRegister(RegisterID::kARMv8_x2, 4));
+  cat2.registers.push_back(CreateRegister(RegisterID::kARMv8_x3, 8));
+  cat2.registers.push_back(CreateRegister(RegisterID::kARMv8_x4, 16));
+  initial.categories.push_back(cat2);
 
   RegistersReply second;
   ASSERT_TRUE(SerializeDeserializeReply(initial, &second));
 
-  ASSERT_EQ(4u, second.registers.size());
-  EXPECT_EQ(initial.registers[0].name, second.registers[0].name);
-  EXPECT_EQ(initial.registers[0].value, second.registers[0].value);
-  EXPECT_EQ(initial.registers[1].name, second.registers[1].name);
-  EXPECT_EQ(initial.registers[1].value, second.registers[1].value);
-  EXPECT_EQ(initial.registers[2].name, second.registers[2].name);
-  EXPECT_EQ(initial.registers[2].value, second.registers[2].value);
-  EXPECT_EQ(initial.registers[3].name, second.registers[3].name);
-  EXPECT_EQ(initial.registers[3].value, second.registers[3].value);
+  ASSERT_EQ(second.categories.size(), 2u);
+
+  // Check cat1
+  auto& out_cat1 = second.categories[0];
+  EXPECT_EQ(out_cat1.type, cat1.type);
+  ASSERT_EQ(out_cat1.registers.size(), 4u);
+  EXPECT_EQ(out_cat1.registers[0].id, cat1.registers[0].id);
+  EXPECT_EQ(out_cat1.registers[0].data, cat1.registers[0].data);
+  EXPECT_EQ(out_cat1.registers[1].id, cat1.registers[1].id);
+  EXPECT_EQ(out_cat1.registers[1].data, cat1.registers[1].data);
+  EXPECT_EQ(out_cat1.registers[2].id, cat1.registers[2].id);
+  EXPECT_EQ(out_cat1.registers[2].data, cat1.registers[2].data);
+
+  // Check cat2
+  auto& out_cat2 = second.categories[1];
+  EXPECT_EQ(out_cat2.type, cat2.type);
+  ASSERT_EQ(out_cat2.registers.size(), 5u);
+  EXPECT_EQ(out_cat2.registers[0].id, cat2.registers[0].id);
+  EXPECT_EQ(out_cat2.registers[0].data, cat2.registers[0].data);
+  EXPECT_EQ(out_cat2.registers[1].id, cat2.registers[1].id);
+  EXPECT_EQ(out_cat2.registers[1].data, cat2.registers[1].data);
+  EXPECT_EQ(out_cat2.registers[2].id, cat2.registers[2].id);
+  EXPECT_EQ(out_cat2.registers[2].data, cat2.registers[2].data);
+  EXPECT_EQ(out_cat2.registers[3].id, cat2.registers[3].id);
+  EXPECT_EQ(out_cat2.registers[3].data, cat2.registers[3].data);
 }
 
 // Notifications ---------------------------------------------------------------
@@ -529,8 +588,9 @@ TEST(Protocol, NotifyException) {
   initial.process_koid = 23;
   initial.thread.name = "foo";
   initial.type = NotifyException::Type::kHardware;
-  initial.frame.ip = 0x7647342634;
-  initial.frame.sp = 0x9861238251;
+  initial.frames.resize(1);
+  initial.frames[0].ip = 0x7647342634;
+  initial.frames[0].sp = 0x9861238251;
 
   initial.hit_breakpoints.emplace_back();
   initial.hit_breakpoints[0].breakpoint_id = 45;
@@ -549,8 +609,8 @@ TEST(Protocol, NotifyException) {
   EXPECT_EQ(initial.process_koid, second.process_koid);
   EXPECT_EQ(initial.thread.name, second.thread.name);
   EXPECT_EQ(initial.type, second.type);
-  EXPECT_EQ(initial.frame.ip, second.frame.ip);
-  EXPECT_EQ(initial.frame.sp, second.frame.sp);
+  EXPECT_EQ(initial.frames[0].ip, second.frames[0].ip);
+  EXPECT_EQ(initial.frames[0].sp, second.frames[0].sp);
   ASSERT_EQ(initial.hit_breakpoints.size(), second.hit_breakpoints.size());
 
   EXPECT_EQ(initial.hit_breakpoints[0].breakpoint_id,
@@ -566,6 +626,30 @@ TEST(Protocol, NotifyException) {
             second.hit_breakpoints[1].hit_count);
   EXPECT_EQ(initial.hit_breakpoints[1].should_delete,
             second.hit_breakpoints[1].should_delete);
+}
+
+TEST(Protocol, NotifyModules) {
+  NotifyModules initial;
+  initial.process_koid = 23;
+  initial.modules.resize(2);
+  initial.modules[0].name = "foo";
+  initial.modules[0].base = 0x12345;
+  initial.modules[1].name = "bar";
+  initial.modules[1].base = 0x43567;
+  initial.stopped_thread_koids.push_back(34);
+  initial.stopped_thread_koids.push_back(96);
+
+  NotifyModules second;
+  ASSERT_TRUE(SerializeDeserializeNotification(
+      initial, &second, &WriteNotifyModules, &ReadNotifyModules));
+
+  EXPECT_EQ(initial.process_koid, second.process_koid);
+  ASSERT_EQ(initial.modules.size(), second.modules.size());
+  EXPECT_EQ(initial.modules[0].name, second.modules[0].name);
+  EXPECT_EQ(initial.modules[0].base, second.modules[0].base);
+  EXPECT_EQ(initial.modules[1].name, second.modules[1].name);
+  EXPECT_EQ(initial.modules[1].base, second.modules[1].base);
+  EXPECT_EQ(initial.stopped_thread_koids, second.stopped_thread_koids);
 }
 
 }  // namespace debug_ipc

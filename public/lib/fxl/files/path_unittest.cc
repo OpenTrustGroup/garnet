@@ -16,9 +16,6 @@ namespace files {
 namespace {
 
 void ExpectPlatformPath(std::string expected, std::string actual) {
-#if defined(OS_WIN)
-  std::replace(expected.begin(), expected.end(), '/', '\\');
-#endif
   EXPECT_EQ(expected, actual);
 }
 
@@ -131,30 +128,19 @@ TEST(Path, SimplifyPath) {
   ExpectPlatformPath("def", SimplifyPath("abc/./../def"));
   ExpectPlatformPath("def", SimplifyPath("abc//./../def"));
   ExpectPlatformPath("../../def", SimplifyPath("abc/../../././../def"));
-
-#if defined(OS_WIN)
-  ExpectPlatformPath("a\\c", SimplifyPath("a\\b\\..\\c"));
-  ExpectPlatformPath("X:\\a\\c", SimplifyPath("X:/a/b/../c"));
-  ExpectPlatformPath("X:\\a\\b\\c", SimplifyPath("X:/a/b/./c"));
-  ExpectPlatformPath("X:\\c", SimplifyPath("X:/../../c"));
-#endif
 }
 
 TEST(Path, AbsolutePath) {
-#if defined(OS_WIN)
-  // We cut out the drive letter as it can be different on every system.
-  EXPECT_EQ(":\\foo\\bar", AbsolutePath("\\foo\\bar").substr(1));
-  EXPECT_EQ(":\\foo\\bar", AbsolutePath("/foo/bar").substr(1));
-  EXPECT_EQ(":\\foo\\bar\\", AbsolutePath("\\foo\\bar\\").substr(1));
-  EXPECT_EQ(":\\foo\\bar\\", AbsolutePath("/foo/bar/").substr(1));
-  EXPECT_EQ("C:\\foo\\bar\\", AbsolutePath("C:\\foo\\bar\\"));
-  EXPECT_EQ(GetCurrentDirectory() + "\\foo", AbsolutePath("foo"));
-#else
   EXPECT_EQ("/foo/bar", AbsolutePath("/foo/bar"));
   EXPECT_EQ("/foo/bar/", AbsolutePath("/foo/bar/"));
+  ASSERT_EQ(0, chdir("/tmp"));
   EXPECT_EQ(GetCurrentDirectory() + "/foo", AbsolutePath("foo"));
-#endif
   EXPECT_EQ(GetCurrentDirectory(), AbsolutePath(""));
+
+  // Test paths from the root directory.
+  ASSERT_EQ(0, chdir("/"));
+  EXPECT_EQ("/foo/bar", AbsolutePath("/foo/bar"));
+  EXPECT_EQ("/foo/bar", AbsolutePath("foo/bar"));
 }
 
 TEST(Path, GetDirectoryName) {
@@ -169,15 +155,6 @@ TEST(Path, GetDirectoryName) {
   EXPECT_EQ("/", GetDirectoryName("/a"));
   EXPECT_EQ("/a", GetDirectoryName("/a/"));
   EXPECT_EQ("a", GetDirectoryName("a/"));
-#if defined(OS_WIN)
-  EXPECT_EQ("C:\\", GetDirectoryName("C:\\"));
-  EXPECT_EQ("C:\\foo", GetDirectoryName("C:\\foo\\"));
-  EXPECT_EQ("C:\\foo", GetDirectoryName("C:\\foo\\bar"));
-  EXPECT_EQ("foo\\bar", GetDirectoryName("foo\\bar\\"));
-  EXPECT_EQ("foo", GetDirectoryName("foo\\bar"));
-  EXPECT_EQ("\\", GetDirectoryName("\\"));
-  EXPECT_EQ("\\", GetDirectoryName("\\a"));
-#endif
 }
 
 TEST(Path, GetBaseName) {
@@ -192,15 +169,6 @@ TEST(Path, GetBaseName) {
   EXPECT_EQ("a", GetBaseName("/a"));
   EXPECT_EQ("", GetBaseName("/a/"));
   EXPECT_EQ("", GetBaseName("a/"));
-#if defined(OS_WIN)
-  EXPECT_EQ("", GetBaseName("C:\\"));
-  EXPECT_EQ("", GetBaseName("C:\\foo\\"));
-  EXPECT_EQ("bar", GetBaseName("C:\\foo\\bar"));
-  EXPECT_EQ("", GetBaseName("foo\\bar\\"));
-  EXPECT_EQ("bar", GetBaseName("foo\\bar"));
-  EXPECT_EQ("", GetBaseName("\\"));
-  EXPECT_EQ("a", GetBaseName("\\a"));
-#endif
 }
 
 TEST(Path, DeletePath) {

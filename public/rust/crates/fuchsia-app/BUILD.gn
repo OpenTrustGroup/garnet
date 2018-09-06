@@ -7,14 +7,16 @@ import("//build/rust/rustc_library.gni")
 rustc_library("fuchsia-app") {
   name = "fuchsia_app"
   version = "0.1.0"
+  edition = "2018"
   deps = [
-    "//garnet/public/lib/app/fidl:fidl-rustc",
+    "//garnet/public/fidl/fuchsia.sys:fuchsia.sys-rustc",
     "//garnet/public/lib/fidl/rust/fidl",
     "//garnet/public/rust/crates/fdio",
     "//garnet/public/rust/crates/fuchsia-async",
     "//garnet/public/rust/crates/fuchsia-zircon",
-    "//garnet/public/rust/crates/mxruntime",
     "//third_party/rust-crates/rustc_deps:failure",
-    "//third_party/rust-crates/rustc_deps:futures",
+    "//third_party/rust-crates/rustc_deps:futures-preview",
+    "//third_party/rust-crates/rustc_deps:log",
+    "//zircon/public/fidl/fuchsia-io:fuchsia-io-rustc"
   ]
 }

@@ -8,12 +8,13 @@
 #include <set>
 
 #include "garnet/lib/ui/gfx/engine/hit.h"
+#include "garnet/lib/ui/gfx/engine/hit_tester.h"
 #include "garnet/lib/ui/gfx/resources/resource.h"
 
 #include "lib/escher/geometry/types.h"
 #include "lib/escher/scene/viewing_volume.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 class Layer;
@@ -30,7 +31,7 @@ class Layer : public Resource {
  public:
   static const ResourceTypeInfo kTypeInfo;
 
-  Layer(Session* session, scenic::ResourceId id);
+  Layer(Session* session, ResourceId id);
 
   ~Layer() override;
 
@@ -67,8 +68,9 @@ class Layer : public Resource {
   // Performs a hit test into the scene of renderer, along the provided ray in
   // the layer's coordinate system.
   //
-  // |session| is a pointer to the session that initiated the hit test.
-  std::vector<Hit> HitTest(const escher::ray4& ray, Session* session) const;
+  // The hit collection behavior depends on the hit tester.
+  std::vector<Hit> HitTest(const escher::ray4& ray,
+                           HitTester* hit_tester) const;
 
   // Returns the current viewing volume of the layer. Used by the compositor
   // when initializing the stage, as well as for hit testing.
@@ -85,6 +87,6 @@ class Layer : public Resource {
 };
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_RESOURCES_COMPOSITOR_LAYER_H_

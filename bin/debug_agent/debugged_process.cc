@@ -46,46 +46,30 @@ void DebuggedProcess::OnPause(const debug_ipc::PauseRequest& request) {
     // the client sending the request.
   } else {
     // 0 thread ID means resume all in process.
-    for (const auto& pair : threads_)
-      pair.second->Pause();
+    PauseAll();
   }
 }
 
 void DebuggedProcess::OnResume(const debug_ipc::ResumeRequest& request) {
-  if (request.thread_koid) {
-    DebuggedThread* thread = GetThread(request.thread_koid);
-    if (thread)
-      thread->Resume(request);
-    // Could be not found if there is a race between the thread exiting and
-    // the client sending the request.
-  } else {
-    // 0 thread ID means resume all in process.
+  if (request.thread_koids.empty()) {
+    // Empty thread ID list means resume all threads.
     for (const auto& pair : threads_)
       pair.second->Resume(request);
+  } else {
+    for (uint64_t thread_koid : request.thread_koids) {
+      DebuggedThread* thread = GetThread(thread_koid);
+      if (thread)
+        thread->Resume(request);
+      // Could be not found if there is a race between the thread exiting and
+      // the client sending the request.
+    }
   }
 }
 
 void DebuggedProcess::OnReadMemory(const debug_ipc::ReadMemoryRequest& request,
                                    debug_ipc::ReadMemoryReply* reply) {
-  // TODO(brettw) break into blocks if a portion of the memory range is mapped
-  // but a portion isn't. Currently this assumes the entire range is in one
-  // block.
-  debug_ipc::MemoryBlock block;
-  block.address = request.address;
-  block.size = request.size;
-  block.data.resize(request.size);
-
-  size_t bytes_read = 0;
-  if (process_.read_memory(request.address, &block.data[0], block.size,
-                           &bytes_read) == ZX_OK &&
-      bytes_read == block.size) {
-    block.valid = true;
-  } else {
-    block.valid = false;
-    block.data.resize(0);
-  }
-
-  reply->blocks.emplace_back(std::move(block));
+  ReadProcessMemoryBlocks(process_, request.address, request.size,
+                          &reply->blocks);
 }
 
 void DebuggedProcess::OnKill(const debug_ipc::KillRequest& request,
@@ -114,6 +98,38 @@ void DebuggedProcess::PopulateCurrentThreads() {
       added.first->second->SendThreadNotification();
     }
   }
+}
+
+bool DebuggedProcess::RegisterDebugState() {
+  if (dl_debug_addr_)
+    return true;  // Previously set.
+
+  uintptr_t debug_addr = 0;
+  if (process_.get_property(ZX_PROP_PROCESS_DEBUG_ADDR, &debug_addr,
+                            sizeof(debug_addr)) != ZX_OK)
+    return false;  // Can't read value.
+
+  if (!debug_addr || debug_addr == ZX_PROCESS_DEBUG_ADDR_BREAK_ON_SET)
+    return false;  // Still not set.
+
+  dl_debug_addr_ = debug_addr;
+
+  // TODO(brettw) register breakpoint for dynamic loads. This current code
+  // only notifies for the inital set of binaries loaded by the process.
+  return true;
+}
+
+void DebuggedProcess::SendModuleNotification(
+    std::vector<uint64_t> paused_thread_koids) {
+  // Notify the client of any libraries.
+  debug_ipc::NotifyModules notify;
+  notify.process_koid = koid_;
+  GetModulesForProcess(process_, dl_debug_addr_, &notify.modules);
+  notify.stopped_thread_koids = std::move(paused_thread_koids);
+
+  debug_ipc::MessageWriter writer;
+  debug_ipc::WriteNotifyModules(notify, &writer);
+  debug_agent_->stream()->Write(writer.MessageComplete());
 }
 
 ProcessBreakpoint* DebuggedProcess::FindProcessBreakpointForAddr(
@@ -176,9 +192,6 @@ void DebuggedProcess::OnThreadStarting(zx_koid_t process_koid,
                                        zx_koid_t thread_koid) {
   zx::thread thread = ThreadForKoid(process_.get(), thread_koid);
 
-  // The thread will currently be in a suspended state, resume it.
-  thread.resume(ZX_RESUME_EXCEPTION);
-
   FXL_DCHECK(threads_.find(thread_koid) == threads_.end());
   auto added = threads_.emplace(
       thread_koid, std::make_unique<DebuggedThread>(this, std::move(thread),
@@ -222,34 +235,7 @@ void DebuggedProcess::OnException(zx_koid_t process_koid, zx_koid_t thread_koid,
 void DebuggedProcess::OnAddressSpace(
     const debug_ipc::AddressSpaceRequest& request,
     debug_ipc::AddressSpaceReply* reply) {
-  const size_t kRegionsCountGuess = 64u;
-  const size_t kNewRegionsCountGuess = 4u;
-
-  size_t count_guess = kRegionsCountGuess;
-
-  std::vector<zx_info_maps_t> map;
-  size_t actual;
-  size_t avail;
-
-  while (true) {
-    map.resize(count_guess);
-
-    zx_status_t status =
-        zx_object_get_info(process_.get(), ZX_INFO_PROCESS_MAPS, &map[0],
-                           sizeof(zx_info_maps) * map.size(), &actual, &avail);
-
-    if (status != ZX_OK) {
-      fprintf(stderr, "error %d for zx_object_get_info\n", status);
-      return;
-    } else if (actual == avail) {
-      break;
-    }
-
-    count_guess = avail + kNewRegionsCountGuess;
-  }
-
-  map.resize(actual);
-
+  std::vector<zx_info_maps_t> map = GetProcessMaps(process_);
   if (request.address != 0u) {
     for (const auto& entry : map) {
       if (request.address < entry.base)
@@ -261,15 +247,27 @@ void DebuggedProcess::OnAddressSpace(
     return;
   }
 
-  reply->map.resize(actual);
-
   size_t ix = 0;
+  reply->map.resize(map.size());
   for (const auto& entry : map) {
     reply->map[ix].name = entry.name;
     reply->map[ix].base = entry.base;
     reply->map[ix].size = entry.size;
     reply->map[ix].depth = entry.depth;
     ++ix;
+  }
+}
+
+void DebuggedProcess::OnModules(debug_ipc::ModulesReply* reply) {
+  // Modules can only be read after the debug state is set.
+  if (dl_debug_addr_)
+    GetModulesForProcess(process_, dl_debug_addr_, &reply->modules);
+}
+
+void DebuggedProcess::PauseAll(std::vector<uint64_t>* paused_koids) {
+  for (auto& pair : threads_) {
+    if (pair.second->Pause() && paused_koids)
+      paused_koids->push_back(pair.first);
   }
 }
 

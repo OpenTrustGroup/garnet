@@ -4,6 +4,8 @@
 
 #include "garnet/lib/ui/gfx/engine/engine.h"
 
+#include <fbl/string.h>
+#include <fs/pseudo-dir.h>
 #include <set>
 
 #include <lib/async/cpp/task.h>
@@ -22,10 +24,11 @@
 #include "garnet/lib/ui/gfx/swapchain/vulkan_display_swapchain.h"
 #include "garnet/lib/ui/scenic/session.h"
 #include "lib/escher/impl/vulkan_utils.h"
+#include "lib/escher/renderer/batch_gpu_uploader.h"
 #include "lib/escher/renderer/paper_renderer.h"
 #include "lib/escher/renderer/shadow_map_renderer.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 // Determine a plausible memory type index for importing memory from VMOs.
@@ -54,27 +57,29 @@ static uint32_t GetImportedMemoryTypeIndex(vk::PhysicalDevice physical_device,
       vk::MemoryPropertyFlagBits::eDeviceLocal);
 }
 
-Engine::Engine(DisplayManager* display_manager, escher::Escher* escher)
+Engine::Engine(DisplayManager* display_manager,
+               escher::EscherWeakPtr weak_escher)
     : display_manager_(display_manager),
-      escher_(escher),
-      paper_renderer_(escher::PaperRenderer::New(escher)),
+      escher_(std::move(weak_escher)),
+      paper_renderer_(escher::PaperRenderer::New(escher_)),
       shadow_renderer_(
-          escher::ShadowMapRenderer::New(escher, paper_renderer_->model_data(),
+          escher::ShadowMapRenderer::New(escher_, paper_renderer_->model_data(),
                                          paper_renderer_->model_renderer())),
       image_factory_(std::make_unique<escher::SimpleImageFactory>(
-          escher->resource_recycler(), escher->gpu_allocator())),
+          escher()->resource_recycler(), escher()->gpu_allocator())),
       rounded_rect_factory_(
-          std::make_unique<escher::RoundedRectFactory>(escher)),
+          std::make_unique<escher::RoundedRectFactory>(escher_)),
       release_fence_signaller_(std::make_unique<escher::ReleaseFenceSignaller>(
-          escher->command_buffer_sequencer())),
+          escher()->command_buffer_sequencer())),
       session_manager_(std::make_unique<SessionManager>()),
       imported_memory_type_index_(GetImportedMemoryTypeIndex(
-          escher->vk_physical_device(), escher->vk_device())),
+          escher()->vk_physical_device(), escher()->vk_device())),
       weak_factory_(this) {
   FXL_DCHECK(display_manager_);
   FXL_DCHECK(escher_);
 
   InitializeFrameScheduler();
+
   paper_renderer_->set_sort_by_pipeline(false);
 }
 
@@ -82,15 +87,15 @@ Engine::Engine(
     DisplayManager* display_manager,
     std::unique_ptr<escher::ReleaseFenceSignaller> release_fence_signaller,
     std::unique_ptr<SessionManager> session_manager,
-    escher::Escher* escher = nullptr)
+    escher::EscherWeakPtr weak_escher)
     : display_manager_(display_manager),
-      escher_(escher),
+      escher_(std::move(weak_escher)),
       release_fence_signaller_(std::move(release_fence_signaller)),
       session_manager_(std::move(session_manager)),
       imported_memory_type_index_(
-          escher ? GetImportedMemoryTypeIndex(escher->vk_physical_device(),
-                                              escher->vk_device())
-                 : 0),
+          escher_ ? GetImportedMemoryTypeIndex(escher_->vk_physical_device(),
+                                               escher_->vk_device())
+                  : 0),
       weak_factory_(this) {
   FXL_DCHECK(display_manager_);
 
@@ -135,9 +140,22 @@ bool Engine::RenderFrame(const FrameTimingsPtr& timings,
   TRACE_DURATION("gfx", "RenderFrame", "frame_number", timings->frame_number(),
                  "time", presentation_time, "interval", presentation_interval);
 
-  if (!session_manager_->ApplyScheduledSessionUpdates(presentation_time,
-                                                      presentation_interval) &&
-      !force_render) {
+  uint64_t trace_number = timings.get() ? timings->frame_number() : 0;
+  auto gpu_uploader = escher::BatchGpuUploader::Create(escher_, trace_number);
+  command_context_.batch_gpu_uploader = &gpu_uploader;
+  command_context_.MakeValid();
+
+  bool has_updates = session_manager_->ApplyScheduledSessionUpdates(
+      presentation_time, presentation_interval);
+  // Submit regardless of whether or not there are updates to release the
+  // underlying CommandBuffer so the pool and sequencer don't stall out.
+  // TODO(ES-115) to remove this restriction.
+  command_context_.batch_gpu_uploader->Submit(escher::SemaphorePtr());
+
+  // Invalidate the commands' context.
+  command_context_.Invalidate();
+
+  if (!has_updates && !force_render) {
     return false;
   }
 
@@ -175,6 +193,15 @@ void Engine::RemoveCompositor(Compositor* compositor) {
 Compositor* Engine::GetFirstCompositor() const {
   FXL_DCHECK(!compositors_.empty());
   return compositors_.empty() ? nullptr : *compositors_.begin();
+}
+
+Compositor* Engine::GetCompositor(scenic::ResourceId compositor_id) const {
+  for (Compositor* compositor : compositors_) {
+    if (compositor->id() == compositor_id) {
+      return compositor;
+    }
+  }
+  return nullptr;
 }
 
 void Engine::UpdateAndDeliverMetrics(uint64_t presentation_time) {
@@ -254,7 +281,7 @@ void Engine::CleanupEscher() {
     // Wait long enough to give GPU work a chance to finish.
     const zx::duration kCleanupDelay = zx::msec(1);
     escher_cleanup_scheduled_ = true;
-    async::PostDelayedTask(async_get_default(),
+    async::PostDelayedTask(async_get_default_dispatcher(),
                            [weak = weak_factory_.GetWeakPtr()] {
                              if (weak) {
                                // Recursively reschedule if cleanup is
@@ -284,4 +311,4 @@ std::string Engine::DumpScenes() const {
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

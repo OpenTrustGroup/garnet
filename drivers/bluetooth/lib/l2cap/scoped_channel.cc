@@ -9,8 +9,13 @@ namespace l2cap {
 
 ScopedChannel::ScopedChannel(fbl::RefPtr<Channel> chan) : chan_(chan) {}
 
-ScopedChannel::~ScopedChannel() {
-  Close();
+ScopedChannel::~ScopedChannel() { Close(); }
+
+void ScopedChannel::Reset(fbl::RefPtr<Channel> new_channel) {
+  if (chan_) {
+    Close();
+  }
+  chan_ = std::move(new_channel);
 }
 
 void ScopedChannel::Close() {

@@ -38,19 +38,6 @@
 #include <zircon/syscalls.h>
 #include <zircon/types.h>
 
-// TODO(cphoenix): Clean up the list stuff
-#define INIT_LIST_HEAD(head) list_initialize(head)
-#define list_empty(list) list_is_empty(list)
-#define list_del(item) list_delete(item)
-#define list_first_entry(list, type, element) list_peek_head_type(list, type, element)
-#define list_entry(list, type, element) containerof(list, type, element)
-#define list_del_init(item) list_delete(item)
-#define list_for_each_entry(cursor, list, field)  \
-    list_for_every_entry(list, cursor, __typeof__(*cursor), field)
-#define list_for_each_entry_safe(cursor, temp, list, field) \
-    list_for_every_entry_safe(list, cursor, temp, __typeof__(*cursor), field)
-#define container_of containerof
-
 typedef uint16_t __be16;
 typedef uint32_t __be32;
 typedef uint64_t __be64;
@@ -62,8 +49,6 @@ typedef uint64_t __be64;
 #define BIT(pos) (1UL << (pos))
 
 #define DIV_ROUND_UP(n, m) (((n) + ((m)-1)) / (m))
-
-#define ETHTOOL_FWVERS_LEN 32
 
 #define GENMASK1(val) ((1UL << (val)) - 1)
 #define GENMASK(start, end) ((GENMASK1((start) + 1) & ~GENMASK1(end)))
@@ -95,9 +80,6 @@ typedef uint64_t __be64;
         cond;                                            \
     })
 
-#define ilog2(val) \
-    (((val) == 0) ? 0 : (((sizeof(unsigned long long) * 8) - 1) - __builtin_clzll(val)))
-
 #define iowrite32(value, addr)                              \
     do {                                                    \
         (*(volatile uint32_t*)(uintptr_t)(addr)) = (value); \
@@ -119,8 +101,6 @@ typedef uint64_t __be64;
 
 #define ioread8(addr) (*(volatile uint8_t*)(uintptr_t)(addr))
 
-#define lockdep_assert_held(mtx) ZX_ASSERT(mtx_trylock(mtx) != thrd_success)
-
 #define usleep(us) zx_nanosleep(zx_deadline_after(ZX_USEC(us)))
 #define usleep_range(early, late) usleep(early)
 #define msleep(ms) zx_nanosleep(zx_deadline_after(ZX_MSEC(ms)))
@@ -129,18 +109,7 @@ typedef uint64_t __be64;
 #define min(a, b) (((a) < (b)) ? (a) : (b))
 #define min_t(t, a, b) (((t)(a) < (t)(b)) ? (t)(a) : (t)(b))
 
-#define rounddown(n, m) ((n) - ((n) % (m)))
 #define roundup(n, m) (((n) % (m) == 0) ? (n) : (n) + ((m) - ((n) % (m))))
-
-#define roundup_pow_of_two(val)        \
-    ((unsigned long)(val) == 0 ? (val) \
-                               : 1UL << ((sizeof(unsigned long) * 8) - __builtin_clzl((val)-1)))
-
-/* Not actually a linuxism, but closely related to the previous definition */
-#define roundup_log2(val) \
-    ((unsigned long)(val) == 0 ? (val) : ((sizeof(unsigned long) * 8) - __builtin_clzl((val)-1)))
-
-typedef uint32_t gfp_t;
 
 #define LINUX_FUNC(name, paramtype, rettype)                                                   \
     static inline rettype name(paramtype foo, ...) {                                           \
@@ -189,111 +158,30 @@ LINUX_FUNCVI(nla_put) // Add netlink attribute to netbuf
 LINUX_FUNCVI(nla_put_u16) // Add u16 attribute to netbuf
 LINUX_FUNCII(MBM_TO_DBM)
 LINUX_FUNCX(prandom_u32)
-LINUX_FUNCVU(get_unaligned_le16)
-LINUX_FUNCUU(put_unaligned_le32)
-static inline uint32_t get_unaligned_le32(void* addr) {
-    uint32_t value;
-    memcpy(&value, addr, sizeof(uint32_t));
-    return value;
-}
 
-LINUX_FUNCVI(brcmf_netbuf_realloc_head) // Realloc if necessary
-LINUX_FUNCVV(brcmf_netbuf_list_peek_tail) // netbuf list
-LINUX_FUNCVV(brcmf_netbuf_list_peek_head) // netbuf list
-LINUX_FUNCVV(brcmf_netbuf_list_add_head) // netbuf list
-LINUX_FUNCVI(brcmf_netbuf_list_is_empty) // netbuf list
-LINUX_FUNCVV(brcmf_netbuf_list_remove_head) // netbuf list
-LINUX_FUNCVV(brcmf_netbuf_list_remove_head_locked) // netbuf list
-LINUX_FUNCVI(brcmf_netbuf_list_length) // netbuf list
-LINUX_FUNCVI(brcmf_netbuf_set_length_to) // May either grow or shrink.
-LINUX_FUNCVI(brcmf_netbuf_list_remove) // netbuf list
-LINUX_FUNCVI(brcmf_netbuf_grow_head) // onion
-//LINUX_FUNCVU(brcmf_netbuf_head_space) // Already implemented
-//LINUX_FUNCVI(netbuf_cow_head) // Replaced using brcmf_netbuf_realloc_head()
-LINUX_FUNCVI(brcmf_netbuf_list_add_tail) // netbuf list
-//LINUX_FUNCVI(netbuf_queue_is_last) // Replaced using brcmf_netbuf_list_peek_tail()
-LINUX_FUNCVI(brcmf_netbuf_reduce_length_to) // If length is already shorter, NOP.
-//LINUX_FUNCVI(netbuf_linearize) // Not needed / used in this driver architecture
-LINUX_FUNCVI(brcmf_netbuf_add_after_locked) // netbuf list
-LINUX_FUNCVI(brcmf_netbuf_list_remove_locked) // netbuf list
-//LINUX_FUNCVI(brcmf_netbuf_grow_tail) // Already implemented
-LINUX_FUNCVI(brcmf_netbuf_list_init_nonlocked) // netbuf list
-LINUX_FUNCVI(brcmf_netbuf_add_tail_locked) // netbuf list
-LINUX_FUNCVV(brcmf_netbuf_remove_tail) // netbuf list
-LINUX_FUNCVV(brcmf_netbuf_list_prev) // netbuf list
-// LINUX_FUNCVV(netbuf_header_cloned) // Not needed / used in this driver architecture
-// LINUX_FUNCVI(__netbuf_insert) // Replaced by brcmf_netbuf_add_after_locked(): see fwsignal.c:1291
-// LINUX_FUNCVI(netbuf_orphan) // Not needed in this driver architecture
-#define brcmf_netbuf_list_for_every_safe(a, b, c)  \
-    for(({brcmf_err("Calling brcmf_netbuf_list_for_every_safe"); \
-                                        (void)c;}), b=(a)->next;true;)
-#define brcmf_netbuf_list_for_every(a, b) for(({brcmf_err("Calling brcmf_netbuf_list_for_every"); \
-                                    b=(a)->next;});true;)
-
-LINUX_FUNCVI(netdev_mc_count) // In core.c
-LINUX_FUNCVI(waitqueue_active) // In core.c
+LINUX_FUNCVI(netdev_mc_count) // In core.c - Count of multicast addresses in netdev.
 LINUX_FUNCX(rtnl_lock) // In core.c and p2p.c
 LINUX_FUNCX(rtnl_unlock) // In core.c and p2p.c
 LINUX_FUNCVV(bcm47xx_nvram_get_contents) // In firmware.c
 LINUX_FUNCVI(bcm47xx_nvram_release_contents) // In firmware.c
-LINUX_FUNCX(in_interrupt) // In core.c and sdio.c
 
 LINUX_FUNCVI(device_set_wakeup_enable) // USB only
 LINUX_FUNCVI(usb_deregister) // USB only
 LINUX_FUNCVI(driver_for_each_device) // In usb.c only
 
-LINUX_FUNCII(send_sig) // SDIO only
-LINUX_FUNCVI(kthread_stop) // SDIO only
-LINUX_FUNCVI(pr_warn) // SDIO only
-LINUX_FUNCII(enable_irq) // SDIO only
 // Last parameter of this returns an error code. Must be a zx_status_t (0 or negative).
-LINUX_FUNCVI(sdio_readb) // SDIO only
-// Last parameter of this returns an error code. Must be a zx_status_t (0 or negative).
-LINUX_FUNCVI(sdio_writeb) // SDIO only
-LINUX_FUNCVI(sdio_claim_host) // SDIO only
-LINUX_FUNCVI(sdio_release_host) // SDIO only
-LINUX_FUNCVS(sdio_enable_func)
-LINUX_FUNCVI(sdio_disable_func)
-LINUX_FUNCVI(sdio_claim_irq)
-LINUX_FUNCVI(sdio_release_irq)
-LINUX_FUNCVI(sdio_readl)  // Last param is zx_status_t
-LINUX_FUNCVI(sdio_writel) // Last param is zx_status_t
-LINUX_FUNCVS(sdio_memcpy_fromio)
-LINUX_FUNCVS(sdio_readsb)
-LINUX_FUNCVS(sdio_set_block_size)
 #define SDIO_DEVICE(a,b) (a)
-LINUX_FUNCVS(sdio_register_driver)
-LINUX_FUNCVV(sdio_unregister_driver)
-LINUX_FUNCVI(sdio_f0_writeb)
-LINUX_FUNCVI(sdio_memcpy_toio)
-LINUX_FUNCVI(sdio_f0_readb)
 LINUX_FUNCVI(pm_runtime_allow) // SDIO only
 LINUX_FUNCVI(pm_runtime_forbid) // SDIO only
-LINUX_FUNCII(disable_irq_nosync) // SDIO only
-LINUX_FUNCII(request_irq) // SDIO only
+// Leave enable/disable_irq_wake() NOPs for now. TODO(cphoenix): Use the ZX equivalent.
 LINUX_FUNCII(enable_irq_wake) // SDIO only
 LINUX_FUNCII(disable_irq_wake) // SDIO only
-LINUX_FUNCVI(mmc_set_data_timeout) // SDIO only
-// NOTE: mmc_wait_for_req sets .error fields of mmc_command and mmc_data structs
-// to ENOMEDIUM sometimes.
-LINUX_FUNCVI(mmc_wait_for_req) // SDIO only
 LINUX_FUNCVI(of_device_is_compatible)
 LINUX_FUNCVI(of_property_read_u32)
 LINUX_FUNCVI(of_find_property)
 LINUX_FUNCVI(irq_of_parse_and_map) // OF only
 LINUX_FUNCII(irqd_get_trigger_type) // OF only
 LINUX_FUNCII(irq_get_irq_data) // OF only
-LINUX_FUNCII(free_irq) // PCI & SDIO only
-LINUX_FUNCVI(sg_set_buf)
-LINUX_FUNCVV(sg_next)
-LINUX_FUNCVI(sg_init_table)
-LINUX_FUNCVI(sg_free_table)
-LINUX_FUNCVI(sg_alloc_table)
-LINUX_FUNCII(allow_signal) // SDIO only
-LINUX_FUNCX(kthread_should_stop) // SDIO only
-LINUX_FUNCVS(kthread_run) // SDIO only
-LINUX_FUNCX(wmb) // SDIO only
-LINUX_FUNCX(rmb) // SDIO only
 
 LINUX_FUNCVI(device_release_driver)
 #define module_param_string(a, b, c, d)
@@ -348,7 +236,7 @@ LINUX_FUNCVI(dev_coredumpv)
     pci_config_read32(&pdev->pci_proto, offset, value)
 LINUX_FUNCcVI(pci_enable_msi)
 LINUX_FUNCcVI(pci_disable_msi)
-//LINUX_FUNCII(free_irq) // PCI & SDIO only
+LINUX_FUNCII(free_irq) // PCI
 LINUX_FUNCII(request_threaded_irq) // PCI only
 LINUX_FUNCVV(dma_alloc_coherent) // PCI only
 LINUX_FUNCVV(dma_free_coherent) // PCI only
@@ -363,18 +251,10 @@ LINUX_FUNCVI(dma_unmap_single) // PCI only
                                              a = (void*)0;});1;)
 #define for_each_set_bit(a, b, c) for (({brcmf_err("Calling for_each_set_bit"); a = 0;});1;)
 
-typedef uint64_t phys_addr_t;
-typedef uint64_t pm_message_t;
 #define DEBUG                         // Turns on struct members that debug.c needs
 #define CONFIG_OF                     // Turns on functions that of.c needs
 #define CONFIG_BRCMFMAC_PROTO_MSGBUF  // turns on msgbuf.h
 #define CONFIG_BRCMFMAC_PROTO_BCDC    // Needed to see func defs in bcdc.h
-#define READ_ONCE(a) (a)
-#define BUG_ON(a)
-
-struct linuxwait {
-    void* foo;
-};
 
 #define KBUILD_MODNAME "brcmfmac"
 #define BRCMFMAC_PDATA_NAME ("pdata name")
@@ -386,19 +266,11 @@ enum {
     IEEE80211_P2P_ATTR_GROUP_ID = 0,
     IEEE80211_STYPE_PROBE_REQ = 0,
     IEEE80211_P2P_ATTR_LISTEN_CHANNEL = (57),
-    SDIO_CCCR_INTx = (1),
-    SDIO_DEVICE_ID_BROADCOM_4339 = (2),
-    SDIO_DEVICE_ID_BROADCOM_4335_4339 = (3),
-    SIGTERM = (55),
-    TASK_INTERRUPTIBLE = (0),
-    TASK_RUNNING = (1),
-    GFP_ATOMIC = (1),
-    GFP_KERNEL = (2),
     IFNAMSIZ = (16),
     WLAN_PMKID_LEN = (16),
     WLAN_MAX_KEY_LEN = (128),
     IEEE80211_MAX_SSID_LEN = (32),
-    IRQF_SHARED,
+    IRQF_SHARED, // TODO(cphoenix) - Used only in PCI
     IEEE80211_RATE_SHORT_PREAMBLE,
     WLAN_CIPHER_SUITE_AES_CMAC,
     WLAN_CIPHER_SUITE_CCMP,
@@ -511,45 +383,9 @@ enum {
     BRCMF_H2D_TXFLOWRING_ITEMSIZE,
     NL80211_SCAN_FLAG_RANDOM_ADDR,
     WLAN_AUTH_OPEN,
-    IRQF_TRIGGER_HIGH,
-    SDIO_CCCR_IENx,
-    SSB_IMSTATE_BUSY,
-    SSB_IDLOW_INITIATOR,
-    SSB_TMSHIGH_SERR,
-    SSB_IMSTATE_IBE,
-    SSB_IMSTATE_TO,
-    BCMA_CC_CAP_EXT_AOB_PRESENT,
-    SSB_TMSLOW_FGC,
-    MMC_RSP_SPI_R5,
-    MMC_RSP_R5,
-    MMC_CMD_ADTC,
     WIPHY_VENDOR_CMD_NEED_WDEV,
     WIPHY_VENDOR_CMD_NEED_NETDEV,
-    SDIO_CCCR_ABORT,
-    SDIO_IO_RW_EXTENDED,
-    MMC_DATA_READ,
-    MMC_DATA_WRITE,
     BRCMF_SCAN_IE_LEN_MAX,
-    SD_IO_RW_EXTENDED,
-    SG_MAX_SINGLE_ALLOC,
-    MMC_CAP_NONREMOVABLE,
-    SDIO_VENDOR_ID_BROADCOM,
-    SDIO_DEVICE_ID_BROADCOM_43143,
-    SDIO_DEVICE_ID_BROADCOM_43241,
-    SDIO_DEVICE_ID_BROADCOM_4329,
-    SDIO_DEVICE_ID_BROADCOM_4330,
-    SDIO_DEVICE_ID_BROADCOM_4334,
-    SDIO_DEVICE_ID_BROADCOM_43340,
-    SDIO_DEVICE_ID_BROADCOM_43341,
-    SDIO_DEVICE_ID_BROADCOM_43362,
-    SDIO_DEVICE_ID_BROADCOM_43430,
-    SDIO_DEVICE_ID_BROADCOM_4345,
-    SDIO_DEVICE_ID_BROADCOM_43455,
-    SDIO_DEVICE_ID_BROADCOM_4354,
-    SDIO_DEVICE_ID_BROADCOM_4356,
-    SDIO_DEVICE_ID_CYPRESS_4373,
-    MMC_QUIRK_LENIENT_FN0,
-    DUMP_PREFIX_OFFSET,
 };
 
 typedef enum { IRQ_WAKE_THREAD, IRQ_NONE, IRQ_HANDLED } irqreturn_t;
@@ -613,18 +449,11 @@ enum brcmf_bus_type { BRCMF_BUSTYPE_SDIO, BRCMF_BUSTYPE_USB, BRCMF_BUSTYPE_PCIE 
 #define MODULE_LICENSE(a)
 #define module_param_named(a, b, c, d)
 #define MODULE_PARM_DESC(a, b)
-#define MODULE_DEVICE_TABLE(a, b)
-#define EXPORT_SYMBOL(a)
 #define MODULE_SUPPORTED_DEVICE(a)
 
 #define __iomem            // May want it later
 #define IS_ENABLED(a) (a)  // not in compiler.h
 #define HZ (60)
-
-struct sg_table {
-    void* sgl;
-    int orig_nents;
-};
 
 struct brcmfmac_pd_cc_entry {
     uint8_t* iso3166;
@@ -648,8 +477,6 @@ struct net_device_ops { // Probably all return zx_status_t
 struct ethtool_ops {
     void* get_drvinfo;
 };
-
-void ether_setup(void);
 
 struct ieee80211_channel {
     int hw_value;
@@ -734,7 +561,7 @@ struct wiphy {
     void (*reg_notifier)(struct wiphy*, struct regulatory_request*);
     uint32_t regulatory_flags;
     uint32_t features;
-    struct brcmf_cfg80211_info* priv_info;
+    struct brcmf_cfg80211_info* cfg80211_info;
     struct cfg80211_ops* ops;
     struct brcmf_device* dev;
 };
@@ -748,7 +575,7 @@ struct wireless_dev {
     int iftype;
     uint8_t address[ETH_ALEN];
     struct wiphy* wiphy;
-    void* priv_info;
+    struct brcmf_cfg80211_info* cfg80211_info;
 };
 
 struct cfg80211_ssid {
@@ -796,17 +623,6 @@ struct notifier_block {
 
 struct in6_addr {
     int foo;
-};
-
-struct brcmfmac_sdio_pd {
-    int oob_irq_nr;
-    int sd_sgentry_align;
-    int sd_head_align;
-    int drive_strength;
-    size_t txglomsz;
-    int oob_irq_flags;
-    int oob_irq_supported;
-    int broken_sg_support;
 };
 
 struct seq_file {
@@ -1141,8 +957,6 @@ struct netdev_hw_addr {
     uint8_t addr[ETH_ALEN];
 };
 
-typedef int netdev_tx_t;
-
 struct ethtool_drvinfo {
     void* driver;
     void* version;
@@ -1150,80 +964,9 @@ struct ethtool_drvinfo {
     void* bus_info;
 };
 
-struct mmc_request {
-    void* data;
-    void* cmd;
-    uint32_t arg;
-    uint32_t flags;
-};
-
-struct mmc_command {
-    uint32_t arg;
-    uint32_t flags;
-    zx_status_t error;
-    uint32_t opcode;
-};
-
-struct mmc_data {
-    int sg_len;
-    int blocks;
-    void* sg;
-    int blksz;
-    uint32_t flags;
-    zx_status_t error;
-};
-
-struct usb_ctrlrequest {
-    uint16_t wLength;
-    int bRequest;
-    int wValue;
-    int wIndex;
-    int bRequestType;
-};
-
 struct va_format {
     va_list* va;
     const char* fmt;
 };
-
-struct mmc_host {
-    void* parent;
-    int max_blk_count;
-    int max_req_size;
-    uint32_t caps;
-    int max_segs;
-    int max_seg_size;
-};
-
-struct sdio_device_id {
-    int foo;
-};
-
-struct sdio_driver {
-    void* probe;
-    void* remove;
-    char* name;
-    const void* id_table;
-    struct {
-        void* pm;
-    } drv;
-};
-
-struct dentry {
-    void* foo;
-};
-
-zx_status_t debugfs_create_dir(const char *name, struct dentry* parent,
-                               struct dentry** new_folder_out);
-
-zx_status_t debugfs_create_devm_seqfile(void* dev, const char* fn, struct dentry* parent,
-                                        zx_status_t (*read_fn)(struct seq_file* seq,
-                                                               void* data),
-                                        struct dentry** new_file_out);
-
-zx_status_t debugfs_remove_recursive(struct dentry* dir);
-
-zx_status_t debugfs_create_u32(const char* name, uint32_t permissions, struct dentry* dentry,
-                               uint32_t* console_interval_out);
 
 #endif  // GARNET_DRIVERS_WLAN_THIRD_PARTY_BROADCOM_INCLUDE_LINUXISMS_H_

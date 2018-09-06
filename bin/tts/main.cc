@@ -7,9 +7,9 @@
 #include "garnet/bin/tts/tts_service_impl.h"
 
 int main(int argc, const char** argv) {
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
-  tts::TtsServiceImpl impl(fuchsia::sys::StartupContext::CreateFromStartupInfo());
+  tts::TtsServiceImpl impl(component::StartupContext::CreateFromStartupInfo());
 
   if (impl.Init() != ZX_OK)
     return -1;

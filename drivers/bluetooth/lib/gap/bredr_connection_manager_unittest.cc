@@ -81,7 +81,6 @@ const auto kWritePageScanType = common::CreateStaticByteBuffer(
 const auto kWritePageScanTypeRsp =
     COMMAND_COMPLETE_RSP(hci::kWritePageScanType);
 
-#undef COMMAND_COMPLETE_RSP
 
 #define COMMAND_STATUS_RSP(opcode, statuscode)                       \
   common::CreateStaticByteBuffer(hci::kCommandStatusEventCode, 0x04, \
@@ -96,13 +95,13 @@ class BrEdrConnectionManagerTest : public TestingBase {
 
   void SetUp() override {
     TestingBase::SetUp();
+    InitializeACLDataChannel();
 
     device_cache_ = std::make_unique<RemoteDeviceCache>();
     connection_manager_ = std::make_unique<BrEdrConnectionManager>(
         transport(), device_cache_.get(), true);
 
-    test_device()->StartCmdChannel(test_cmd_chan());
-    test_device()->StartAclChannel(test_acl_chan());
+    StartTestDevice();
   }
 
   void TearDown() override {
@@ -355,10 +354,60 @@ const auto kDisconnectionComplete = common::CreateStaticByteBuffer(
 
 // Test: An incoming connection request should trigger an acceptance and an
 // interrogation to discover capabilities.
+TEST_F(GAP_BrEdrConnectionManagerTest,
+       IncomingConnection_BrokenExtendedPageResponse) {
+  size_t transactions = 0;
+  test_device()->SetTransactionCallback([&transactions] { transactions++; },
+                                        async_get_default_dispatcher());
+
+  test_device()->QueueCommandTransaction(
+      CommandTransaction(kAcceptConnectionRequest,
+                         {&kAcceptConnectionRequestRsp, &kConnectionComplete}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kRemoteNameRequest,
+      {&kRemoteNameRequestRsp, &kRemoteNameRequestComplete}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kReadRemoteVersionInfo,
+      {&kReadRemoteVersionInfoRsp, &kRemoteVersionInfoComplete}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kReadRemoteSupportedFeatures, {&kReadRemoteSupportedFeaturesRsp,
+                                     &kReadRemoteSupportedFeaturesComplete}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kReadRemoteExtended1,
+      {&kReadRemoteExtendedFeaturesRsp, &kReadRemoteExtended1Complete}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kReadRemoteExtended2,
+      {&kReadRemoteExtendedFeaturesRsp, &kReadRemoteExtended1Complete}));
+
+  test_device()->SendCommandChannelPacket(kConnectionRequest);
+
+  RunLoopUntilIdle();
+
+  EXPECT_EQ(6u, transactions);
+
+  // When we deallocate the connection manager next, we should disconnect.
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kDisconnect, {&kDisconnectRsp, &kDisconnectionComplete}));
+
+  // deallocating the connection manager disables connectivity.
+  test_device()->QueueCommandTransaction(
+      CommandTransaction(kReadScanEnable, {&kReadScanEnableRspBoth}));
+  test_device()->QueueCommandTransaction(
+      CommandTransaction(kWriteScanEnableInq, {&kWriteScanEnableRsp}));
+
+  SetConnectionManager(nullptr);
+
+  RunLoopUntilIdle();
+
+  EXPECT_EQ(9u, transactions);
+}
+
+// Test: An incoming connection request should trigger an acceptance and an
+// interrogation to discover capabilities.
 TEST_F(GAP_BrEdrConnectionManagerTest, IncommingConnection) {
   size_t transactions = 0;
-  test_device()->SetTransactionCallback([&transactions]() { transactions++; },
-                                        async_get_default());
+  test_device()->SetTransactionCallback([&transactions] { transactions++; },
+                                        async_get_default_dispatcher());
 
   test_device()->QueueCommandTransaction(
       CommandTransaction(kAcceptConnectionRequest,
@@ -417,8 +466,8 @@ const auto kReadRemoteSupportedFeaturesCompleteFailed =
 //  - We don't query extended features if we don't receive an answer.
 TEST_F(GAP_BrEdrConnectionManagerTest, IncommingConnectionFailedInterrogation) {
   size_t transactions = 0;
-  test_device()->SetTransactionCallback([&transactions]() { transactions++; },
-                                        async_get_default());
+  test_device()->SetTransactionCallback([&transactions] { transactions++; },
+                                        async_get_default_dispatcher());
 
   test_device()->QueueCommandTransaction(
       CommandTransaction(kAcceptConnectionRequest,
@@ -444,6 +493,84 @@ TEST_F(GAP_BrEdrConnectionManagerTest, IncommingConnectionFailedInterrogation) {
   EXPECT_EQ(5u, transactions);
 }
 
+const auto kCapabilitiesRequest = common::CreateStaticByteBuffer(
+    hci::kIOCapabilityRequestEventCode,
+    0x06,                               // parameter_total_size (6 byte payload)
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00  // BD_ADDR (00:00:00:00:00:01)
+);
+
+const auto kCapabilitiesRequestReply = common::CreateStaticByteBuffer(
+    LowerBits(hci::kIOCapabilityRequestReply),
+    UpperBits(hci::kIOCapabilityRequestReply),
+    0x09,                                // parameter_total_size (9 bytes)
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00,  // bd_addr (match request)
+    0x03,                                // No input, No output
+    0x00,                                // No OOB data present
+    0x00                                 // No MITM, No Pairing
+);
+
+const auto kCapabilitiesRequestReplyRsp = common::CreateStaticByteBuffer(
+    hci::kCommandCompleteEventCode, 0x0A, 0xF0,
+    LowerBits(hci::kIOCapabilityRequestReply),
+    UpperBits(hci::kIOCapabilityRequestReply),
+    hci::kSuccess,                      // status
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00  // bd_addr
+);
+
+// Test: sends replies to Capability Requests
+// TODO(jamuraa): returns correct capabilities when we have different
+// requirements.
+TEST_F(GAP_BrEdrConnectionManagerTest, CapabilityRequest) {
+  size_t transactions = 0;
+
+  test_device()->SetTransactionCallback([&transactions] { transactions++; },
+                                        async_get_default_dispatcher());
+
+  test_device()->QueueCommandTransaction(kCapabilitiesRequestReply,
+                                         {&kCapabilitiesRequestReplyRsp});
+
+  test_device()->SendCommandChannelPacket(kCapabilitiesRequest);
+
+  RunLoopUntilIdle();
+
+  EXPECT_EQ(1u, transactions);
+}
+
+const auto kUserConfirmationRequest = common::CreateStaticByteBuffer(
+    hci::kUserConfirmationRequestEventCode,
+    0x0A,  // parameter_total_size (10 byte payload)
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00,  // BD_ADDR (00:00:00:00:00:01)
+    0x00, 0x00, 0x00, 0x00               // numeric value 000000
+);
+
+const auto kConfirmationRequestReply = common::CreateStaticByteBuffer(
+    LowerBits(hci::kUserConfirmationRequestReply),
+    UpperBits(hci::kUserConfirmationRequestReply),
+    0x06,                               // parameter_total_size (9 bytes)
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00  // bd_addr (match request)
+);
+
+const auto kConfirmationRequestReplyRsp =
+    COMMAND_COMPLETE_RSP(hci::kUserConfirmationRequestReply);
+
+// Test: sends replies to Confirmation Requests
+TEST_F(GAP_BrEdrConnectionManagerTest, ConfirmationRequest) {
+  size_t transactions = 0;
+
+  test_device()->SetTransactionCallback([&transactions] { transactions++; },
+                                        async_get_default_dispatcher());
+
+  test_device()->QueueCommandTransaction(kConfirmationRequestReply,
+                                         {&kConfirmationRequestReplyRsp});
+
+  test_device()->SendCommandChannelPacket(kUserConfirmationRequest);
+
+  RunLoopUntilIdle();
+
+  EXPECT_EQ(1u, transactions);
+}
+
+#undef COMMAND_COMPLETE_RSP
 #undef COMMAND_STATUS_RSP
 
 }  // namespace

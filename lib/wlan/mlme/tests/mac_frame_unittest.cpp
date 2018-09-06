@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "test_data.h"
+
+#include <wlan/mlme/client/station.h>
 #include <wlan/mlme/debug.h>
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/wlan.h>
@@ -22,26 +25,30 @@ struct TestHdr1 {
     uint8_t c;
     uint8_t d;
 
-    constexpr size_t len() const { return sizeof(TestHdr1); }
+    constexpr size_t len() const { return sizeof(*this); }
 } __PACKED;
 
 // Dynamic length based on value of field `has_padding`.
 struct TestHdr2 {
-    bool has_padding;
+    bool has_padding = false;
     uint8_t b;
     uint8_t c;
 
-    size_t len() const { return sizeof(TestHdr2) + (has_padding ? k4BytePaddingLen : 0); }
+    size_t len() const { return sizeof(*this) + (has_padding ? k4BytePaddingLen : 0); }
 } __PACKED;
 
 struct TestHdr3 {
     uint16_t a;
     uint16_t b;
 
-    constexpr size_t len() const { return sizeof(TestHdr3); }
+    constexpr size_t len() const { return sizeof(*this); }
 } __PACKED;
 
-using FixedSizedPayload = uint8_t[10];
+struct FixedSizedPayload {
+    uint8_t data[10];
+
+    constexpr size_t len() const { return sizeof(*this); }
+};
 
 // Frame which holds 3 headers and some optional padding and payload.
 template <size_t padding_len, size_t payload_len> struct TripleHdrFrame {
@@ -77,7 +84,8 @@ TEST(ProbeRequest, Validate) {
 
     ASSERT_TRUE(writer.write<SsidElement>("test ssid"));
 
-    std::vector<uint8_t> rates{2, 4, 11, 22};
+    std::vector<SupportedRate> rates{SupportedRate(2), SupportedRate(4), SupportedRate(11),
+                                     SupportedRate(22)};
     ASSERT_TRUE(writer.write<SupportedRatesElement>(rates));
 
     auto probe_request = FromBytes<ProbeRequest>(buf, writer.size());
@@ -88,7 +96,8 @@ TEST(ProbeRequest, OutOfOrderElements) {
     uint8_t buf[128];
     ElementWriter writer(buf, sizeof(buf));
 
-    std::vector<uint8_t> rates{2, 4, 11, 22};
+    std::vector<SupportedRate> rates{SupportedRate(2), SupportedRate(4), SupportedRate(11),
+                                     SupportedRate(22)};
     ASSERT_TRUE(writer.write<SupportedRatesElement>(rates));
 
     ASSERT_TRUE(writer.write<SsidElement>("test ssid"));
@@ -118,7 +127,7 @@ TEST(Frame, General) {
     // Verify frame's accessors and length.
     Frame<TestHdr1> frame(fbl::move(pkt));
     ASSERT_TRUE(frame.HasValidLen());
-    ASSERT_FALSE(frame.IsTaken());
+    ASSERT_FALSE(frame.IsEmpty());
     ASSERT_EQ(frame.len(), DefaultTripleHdrFrame::len());
     ASSERT_EQ(frame.hdr()->a, 42);
     ASSERT_EQ(frame.body_len(), DefaultTripleHdrFrame::body_len());
@@ -135,7 +144,7 @@ TEST(Frame, General_Const_Frame) {
     // Verify a constant frame's accessors and length. Constant accessors differ from regular ones.
     const Frame<TestHdr1> frame(fbl::move(pkt));
     ASSERT_TRUE(frame.HasValidLen());
-    ASSERT_FALSE(frame.IsTaken());
+    ASSERT_FALSE(frame.IsEmpty());
     ASSERT_EQ(frame.len(), DefaultTripleHdrFrame::len());
     ASSERT_EQ(frame.hdr()->a, 42);
     ASSERT_EQ(frame.body_len(), DefaultTripleHdrFrame::body_len());
@@ -154,10 +163,10 @@ TEST(Frame, Take) {
     // ... and take the frame's underlying Packet to construct a new, specialized frame.
     Frame<TestHdr1, TestHdr2> specialized_frame(frame.Take());
     // Verify the first frame is considered "taken" and that the new specialized one is valid.
-    ASSERT_TRUE(frame.IsTaken());
+    ASSERT_TRUE(frame.IsEmpty());
     ASSERT_FALSE(frame.HasValidLen());
     ASSERT_TRUE(specialized_frame.HasValidLen());
-    ASSERT_FALSE(specialized_frame.IsTaken());
+    ASSERT_FALSE(specialized_frame.IsEmpty());
     ASSERT_EQ(specialized_frame.len(), DefaultTripleHdrFrame::len());
     ASSERT_EQ(specialized_frame.hdr()->a, 42);
     ASSERT_EQ(specialized_frame.body_len(), DefaultTripleHdrFrame::body_len());
@@ -172,22 +181,22 @@ TEST(Frame, NextFrame) {
     test_frame->hdr3.a = 42;
 
     // Start with first header.
-    Frame<TestHdr1> frame(fbl::move(pkt));
+    Frame<TestHdr1, TestHdr2> frame(fbl::move(pkt));
 
     // Access second frame with unknown body. Verify correct length and accessors.
     auto second_frame = frame.NextFrame<TestHdr2>();
-    ASSERT_TRUE(frame.IsTaken());
+    ASSERT_TRUE(frame.IsEmpty());
     ASSERT_TRUE(second_frame.HasValidLen());
-    ASSERT_FALSE(second_frame.IsTaken());
+    ASSERT_FALSE(second_frame.IsEmpty());
     ASSERT_EQ(second_frame.len(), DefaultTripleHdrFrame::second_frame_len());
     ASSERT_EQ(second_frame.body_len(), DefaultTripleHdrFrame::second_frame_body_len());
     ASSERT_EQ(second_frame.hdr()->b, 24);
 
     // Access the third frame with unknown body. Verify correct length and accessors.
     auto third_frame = second_frame.NextFrame<TestHdr3>();
-    ASSERT_TRUE(second_frame.IsTaken());
+    ASSERT_TRUE(second_frame.IsEmpty());
     ASSERT_TRUE(third_frame.HasValidLen());
-    ASSERT_FALSE(third_frame.IsTaken());
+    ASSERT_FALSE(third_frame.IsEmpty());
     ASSERT_EQ(third_frame.len(), DefaultTripleHdrFrame::third_frame_len());
     ASSERT_EQ(third_frame.body_len(), DefaultTripleHdrFrame::third_frame_body_len());
     ASSERT_EQ(third_frame.hdr()->a, 42);
@@ -205,9 +214,9 @@ TEST(Frame, NextFrame_FullSpecialized) {
 
     // Access second frame. Verify correct length and accessors.
     auto second_frame = frame.NextFrame<TestHdr2, TestHdr3>();
-    ASSERT_TRUE(frame.IsTaken());
+    ASSERT_TRUE(frame.IsEmpty());
     ASSERT_TRUE(second_frame.HasValidLen());
-    ASSERT_FALSE(second_frame.IsTaken());
+    ASSERT_FALSE(second_frame.IsEmpty());
     ASSERT_EQ(second_frame.len(), DefaultTripleHdrFrame::second_frame_len());
     ASSERT_EQ(second_frame.body_len(), DefaultTripleHdrFrame::second_frame_body_len());
     ASSERT_EQ(second_frame.hdr()->b, 24);
@@ -224,17 +233,17 @@ TEST(Frame, NextFrame_DynamicSized) {
 
     Frame<TestHdr1> frame(fbl::move(pkt));
     auto second_frame = frame.NextFrame<TestHdr2>();
-    ASSERT_TRUE(frame.IsTaken());
+    ASSERT_TRUE(frame.IsEmpty());
     ASSERT_TRUE(second_frame.HasValidLen());
-    ASSERT_FALSE(second_frame.IsTaken());
+    ASSERT_FALSE(second_frame.IsEmpty());
     ASSERT_EQ(second_frame.len(), PaddedTripleHdrFrame::second_frame_len());
     ASSERT_EQ(second_frame.body_len(), PaddedTripleHdrFrame::second_frame_body_len());
 
     // Third frame should be accessible as expected.
     auto third_frame = second_frame.NextFrame<TestHdr3>();
-    ASSERT_TRUE(second_frame.IsTaken());
+    ASSERT_TRUE(second_frame.IsEmpty());
     ASSERT_TRUE(third_frame.HasValidLen());
-    ASSERT_FALSE(third_frame.IsTaken());
+    ASSERT_FALSE(third_frame.IsEmpty());
     ASSERT_EQ(third_frame.len(), PaddedTripleHdrFrame::third_frame_len());
     ASSERT_EQ(third_frame.body_len(), PaddedTripleHdrFrame::third_frame_body_len());
     ASSERT_EQ(third_frame.hdr()->a, 42);
@@ -361,7 +370,7 @@ TEST(Frame, RxInfo_PaddingAlignedBody) {
     // of 24. This will then cause additional padding for 4-byte alignment.
     hdr->fc.set_to_ds(1);
     hdr->fc.set_from_ds(1);
-    ASSERT_EQ(hdr->len(), 30);
+    ASSERT_EQ(hdr->len(), static_cast<size_t>(30));
     // Body should follow after an additional 2 byte padding.
     auto data = pkt->mut_field<uint8_t>(hdr->len() + 2);
     data[0] = 42;
@@ -383,7 +392,7 @@ TEST(Frame, RxInfo_NoPaddingAlignedBody) {
     // and thus directly follow the header.
     hdr->fc.set_to_ds(1);
     hdr->fc.set_from_ds(1);
-    ASSERT_EQ(hdr->len(), 30);
+    ASSERT_EQ(hdr->len(), static_cast<size_t>(30));
     // Body should follow after an additional 2 byte padding.
     auto data = pkt->mut_field<uint8_t>(hdr->len());
     data[0] = 42;
@@ -396,7 +405,7 @@ TEST(Frame, RxInfo_NoPaddingAlignedBody) {
 
 TEST(Frame, ConstructEmptyFrame) {
     Frame<TestHdr1> frame;
-    ASSERT_TRUE(frame.IsTaken());
+    ASSERT_TRUE(frame.IsEmpty());
     ASSERT_FALSE(frame.HasValidLen());
 }
 
@@ -411,8 +420,8 @@ TEST(Frame, Specialize) {
     Frame<TestHdr1> frame(fbl::move(pkt));
     Frame<TestHdr1, TestHdr2> specialized_frame = frame.Specialize<TestHdr2>();
     ASSERT_TRUE(specialized_frame.HasValidLen());
-    ASSERT_FALSE(specialized_frame.IsTaken());
-    ASSERT_TRUE(frame.IsTaken());
+    ASSERT_FALSE(specialized_frame.IsEmpty());
+    ASSERT_TRUE(frame.IsEmpty());
     ASSERT_EQ(specialized_frame.len(), DefaultTripleHdrFrame::len());
     ASSERT_EQ(specialized_frame.hdr()->a, 42);
     ASSERT_EQ(specialized_frame.body_len(), DefaultTripleHdrFrame::body_len());
@@ -432,11 +441,148 @@ TEST(Frame, Specialize_ProgressedFrame) {
     Frame<TestHdr2, UnknownBody> second_frame = frame.NextFrame<TestHdr2>();
     Frame<TestHdr2, TestHdr3> specialized_frame = second_frame.Specialize<TestHdr3>();
     ASSERT_TRUE(specialized_frame.HasValidLen());
-    ASSERT_FALSE(specialized_frame.IsTaken());
-    ASSERT_TRUE(second_frame.IsTaken());
+    ASSERT_FALSE(specialized_frame.IsEmpty());
+    ASSERT_TRUE(second_frame.IsEmpty());
     ASSERT_EQ(specialized_frame.hdr()->b, 24);
     ASSERT_EQ(specialized_frame.body_len(), DefaultTripleHdrFrame::second_frame_body_len());
     ASSERT_EQ(specialized_frame.body()->b, 1337);
+}
+
+TEST(Frame, AdvanceThroughAmsduFrame) {
+    constexpr size_t kPadding = 2;
+
+    auto frame_data = test_data::kAmsduDataFrame;
+    auto pkt = GetPacket(frame_data.size());
+    pkt->CopyFrom(frame_data.data(), frame_data.size(), 0);
+
+    auto opt_data_frame = DataFrameView<>::CheckType(pkt.get());
+    ASSERT_TRUE(opt_data_frame);
+    auto data_frame = opt_data_frame.CheckLength();
+    ASSERT_TRUE(data_frame);
+
+    auto opt_data_amsdu_frame = data_frame.CheckBodyType<AmsduSubframeHeader>();
+    ASSERT_TRUE(opt_data_amsdu_frame);
+    auto data_amsdu_frame = opt_data_amsdu_frame.CheckLength();
+    ASSERT_TRUE(data_amsdu_frame);
+
+    auto amsdu_subframe1 = data_amsdu_frame.SkipHeader();
+    ASSERT_TRUE(amsdu_subframe1);
+    auto opt_amsdu_llc_subframe1 = amsdu_subframe1.CheckBodyType<LlcHeader>();
+    ASSERT_TRUE(opt_amsdu_llc_subframe1);
+    auto amsdu_llc_subframe1 = opt_amsdu_llc_subframe1.CheckLength();
+    ASSERT_TRUE(amsdu_llc_subframe1);
+
+    size_t msdu_len = amsdu_llc_subframe1.hdr()->msdu_len();
+    ASSERT_EQ(msdu_len, static_cast<uint16_t>(116));
+    auto llc_frame = amsdu_llc_subframe1.SkipHeader();
+    ASSERT_TRUE(llc_frame);
+
+    auto opt_amsdu_llc_subframe2 =
+        llc_frame.AdvanceBy(msdu_len + kPadding).As<AmsduSubframeHeader>();
+    ASSERT_TRUE(opt_amsdu_llc_subframe2);
+    auto amsdu_llc_subframe2 = opt_amsdu_llc_subframe2.CheckLength();
+    ASSERT_TRUE(amsdu_llc_subframe2);
+
+    msdu_len = amsdu_llc_subframe2.hdr()->msdu_len();
+    ASSERT_EQ(msdu_len, static_cast<uint16_t>(102));
+}
+
+TEST(Frame, AdvanceThroughEmptyFrame) {
+    MgmtFrameView<> empty_frame;
+    ASSERT_FALSE(empty_frame);
+    ASSERT_FALSE(empty_frame.SkipHeader());
+    ASSERT_FALSE(empty_frame.CheckBodyType<Beacon>());
+    ASSERT_FALSE(empty_frame.AdvanceBy(5));
+    ASSERT_FALSE(empty_frame.As<DataFrameHeader>());
+}
+
+TEST(Frame, AdvanceOutOfBounds) {
+    auto pkt = GetPacket(20);
+    DataFrameView<> frame(pkt.get());
+    ASSERT_TRUE(frame);
+
+    ASSERT_TRUE(frame.AdvanceBy(20));
+    ASSERT_FALSE(frame.AdvanceBy(21));
+}
+
+TEST(Frame, AdvanceThroughEapolFrame) {
+    // The test frame uses padding after it's data header.
+    // Setup a Packet which respects this.
+    auto frame_data = test_data::kDataLlcEapolFrame;
+    auto pkt = GetPacket(frame_data.size());
+    pkt->CopyFrom(frame_data.data(), frame_data.size(), 0);
+    wlan_rx_info_t rx_info{.rx_flags = WLAN_RX_INFO_FLAGS_FRAME_BODY_PADDING_4};
+    pkt->CopyCtrlFrom(rx_info);
+
+    auto opt_data_frame = DataFrameView<>::CheckType(pkt.get());
+    ASSERT_TRUE(opt_data_frame);
+    auto data_frame = opt_data_frame.CheckLength();
+    ASSERT_TRUE(data_frame);
+
+    auto opt_data_llc_frame = data_frame.CheckBodyType<LlcHeader>();
+    ASSERT_TRUE(opt_data_llc_frame);
+    auto data_llc_frame = opt_data_llc_frame.CheckLength();
+    ASSERT_TRUE(data_llc_frame);
+    ASSERT_EQ(be16toh(data_llc_frame.body()->protocol_id), kEapolProtocolId);
+
+    auto llc_frame = data_llc_frame.SkipHeader();
+    ASSERT_TRUE(llc_frame);
+    ASSERT_EQ(be16toh(llc_frame.hdr()->protocol_id), kEapolProtocolId);
+    auto opt_llc_eapol_frame = llc_frame.CheckBodyType<EapolHdr>();
+    ASSERT_TRUE(opt_llc_eapol_frame);
+    auto llc_eapol_frame = opt_llc_eapol_frame.CheckLength();
+    ASSERT_TRUE(llc_eapol_frame);
+
+    auto eapol_frame = llc_eapol_frame.SkipHeader();
+    ASSERT_TRUE(eapol_frame);
+    ASSERT_EQ(eapol_frame.hdr()->packet_type, 0x03);
+}
+
+TEST(Frame, DeaggregateAmsdu) {
+    // Construct AMSDU data frame.
+    auto frame_data = test_data::kAmsduDataFrame;
+    auto pkt = GetPacket(frame_data.size());
+    pkt->CopyFrom(frame_data.data(), frame_data.size(), 0);
+
+    auto data_amsdu_frame = DataFrameView<AmsduSubframeHeader>::CheckType(pkt.get()).CheckLength();
+    ASSERT_TRUE(data_amsdu_frame);
+
+    // Extract all LLC MSDUs from AMSDU frame.
+    std::vector<std::pair<FrameView<LlcHeader>, size_t>> llc_frames;
+    DeaggregateAmsdu(data_amsdu_frame, [&](FrameView<LlcHeader> llc_frame, size_t payload_len) {
+        std::pair<FrameView<LlcHeader>, size_t> e(llc_frame, payload_len);
+        llc_frames.push_back(e);
+    });
+
+    // Verify LLC MSDUs.
+    ASSERT_EQ(llc_frames.size(), static_cast<size_t>(2));
+    ASSERT_EQ(llc_frames[0].first.body()->data[3], static_cast<uint8_t>(0x6c));
+    ASSERT_EQ(llc_frames[0].second, static_cast<size_t>(108));
+    ASSERT_EQ(llc_frames[1].first.body()->data[3], static_cast<uint8_t>(0x5e));
+    ASSERT_EQ(llc_frames[1].second, static_cast<size_t>(94));
+}
+
+TEST(Frame, DdkConversion) {
+    // DDK uint32_t to class CapabilityInfo
+    uint32_t ddk_caps = 0;
+    auto ieee_caps = CapabilityInfo::FromDdk(ddk_caps);
+    EXPECT_EQ(0, ieee_caps.val());
+
+    ddk_caps |= WLAN_CAP_SHORT_PREAMBLE;
+    ieee_caps = CapabilityInfo::FromDdk(ddk_caps);
+    EXPECT_EQ(1, ieee_caps.short_preamble());
+    EXPECT_EQ(0, ieee_caps.spectrum_mgmt());
+    EXPECT_EQ(0, ieee_caps.short_slot_time());
+    EXPECT_EQ(0, ieee_caps.radio_msmt());
+    EXPECT_EQ(0x0020, ieee_caps.val());
+
+    ddk_caps = WLAN_CAP_SHORT_PREAMBLE | WLAN_CAP_SHORT_SLOT_TIME;
+    ieee_caps = CapabilityInfo::FromDdk(ddk_caps);
+    EXPECT_EQ(1, ieee_caps.short_preamble());
+    EXPECT_EQ(0, ieee_caps.spectrum_mgmt());
+    EXPECT_EQ(1, ieee_caps.short_slot_time());
+    EXPECT_EQ(0, ieee_caps.radio_msmt());
+    EXPECT_EQ(0x420, ieee_caps.val());
 }
 
 }  // namespace

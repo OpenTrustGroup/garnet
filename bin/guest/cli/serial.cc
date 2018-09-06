@@ -7,12 +7,11 @@
 #include <poll.h>
 #include <iostream>
 
-#include <lib/fdio/util.h>
 #include <fuchsia/guest/cpp/fidl.h>
 #include <lib/async/cpp/wait.h>
+#include <lib/fdio/util.h>
 #include <lib/fit/function.h>
 
-#include "lib/app/cpp/environment_services.h"
 #include "lib/fsl/socket/socket_drainer.h"
 #include "lib/fsl/tasks/fd_waiter.h"
 #include "lib/fxl/logging.h"
@@ -22,7 +21,7 @@
 // virtio-console).
 class InputReader {
  public:
-  InputReader() : async_(async_get_default()) {}
+  InputReader() : dispatcher_(async_get_default_dispatcher()) {}
 
   void Start(zx_handle_t socket) {
     socket_ = socket;
@@ -54,16 +53,16 @@ class InputReader {
     SendKeyToGuest();
   }
 
-  void SendKeyToGuest() { OnSocketReady(async_, &wait_, ZX_OK, nullptr); }
+  void SendKeyToGuest() { OnSocketReady(dispatcher_, &wait_, ZX_OK, nullptr); }
 
-  void OnSocketReady(async_t* async, async::WaitBase* wait, zx_status_t status,
-                     const zx_packet_signal_t* signal) {
+  void OnSocketReady(async_dispatcher_t* dispatcher, async::WaitBase* wait,
+                     zx_status_t status, const zx_packet_signal_t* signal) {
     if (status != ZX_OK) {
       return;
     }
     status = zx_socket_write(socket_, 0, &pending_key_, 1, nullptr);
     if (status == ZX_ERR_SHOULD_WAIT) {
-      wait->Begin(async);  // ignore errors
+      wait->Begin(dispatcher);  // ignore errors
       return;
     }
     if (status != ZX_OK) {
@@ -77,7 +76,7 @@ class InputReader {
   zx_handle_t socket_ = ZX_HANDLE_INVALID;
   fsl::FDWaiter fd_waiter_;
   char pending_key_;
-  async_t* async_;
+  async_dispatcher_t* dispatcher_;
   async::WaitMethod<InputReader, &InputReader::OnSocketReady> wait_{this};
 };
 
@@ -120,16 +119,15 @@ void SerialConsole::Start(zx::socket socket) {
   output_writer_->Start(std::move(socket));
 }
 
-void handle_serial(uint32_t env_id, uint32_t cid) {
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
-
+void handle_serial(uint32_t env_id, uint32_t cid, async::Loop* loop,
+                   component::StartupContext* context) {
   // Connect to environment.
-  fuchsia::guest::GuestManagerSync2Ptr guestmgr;
-  fuchsia::sys::ConnectToEnvironmentService(guestmgr.NewRequest());
-  fuchsia::guest::GuestEnvironmentSync2Ptr env_ptr;
+  fuchsia::guest::GuestManagerSyncPtr guestmgr;
+  context->ConnectToEnvironmentService(guestmgr.NewRequest());
+  fuchsia::guest::GuestEnvironmentSyncPtr env_ptr;
   guestmgr->ConnectToEnvironment(env_id, env_ptr.NewRequest());
 
-  fuchsia::guest::GuestControllerSync2Ptr guest_controller;
+  fuchsia::guest::GuestControllerSyncPtr guest_controller;
   env_ptr->ConnectToGuest(cid, guest_controller.NewRequest());
 
   // Open the serial service of the guest and process IO.
@@ -139,7 +137,7 @@ void handle_serial(uint32_t env_id, uint32_t cid) {
     std::cerr << "Failed to open serial port\n";
     return;
   }
-  SerialConsole console(&loop);
+  SerialConsole console(loop);
   console.Start(std::move(socket));
-  loop.Run();
+  loop->Run();
 }

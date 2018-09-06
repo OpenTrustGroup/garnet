@@ -22,7 +22,12 @@ TargetImpl::TargetImpl(SystemImpl* system)
       system_(system),
       symbols_(system->GetSymbols()),
       impl_weak_factory_(this) {}
-TargetImpl::~TargetImpl() = default;
+
+TargetImpl::~TargetImpl() {
+  // If the process is still running, make sure we broadcast terminated
+  // notifications before deleting everything.
+  ImplicitlyDetach();
+}
 
 std::unique_ptr<TargetImpl> TargetImpl::Clone(SystemImpl* system) {
   auto result = std::make_unique<TargetImpl>(system);
@@ -38,8 +43,9 @@ void TargetImpl::CreateProcessForTesting(uint64_t koid,
   OnLaunchOrAttachReply(Callback(), Err(), koid, 0, process_name);
 }
 
-void TargetImpl::DestroyProcessForTesting() {
-  OnKillOrDetachReply(Err(), 0, Callback());
+void TargetImpl::ImplicitlyDetach() {
+  if (GetProcess())
+    OnKillOrDetachReply(Err(), 0, Callback());
 }
 
 Target::State TargetImpl::GetState() const { return state_; }
@@ -111,11 +117,11 @@ void TargetImpl::Kill(Callback callback) {
 void TargetImpl::Attach(uint64_t koid, Callback callback) {
   if (state_ != State::kNone) {
     // Avoid reentering caller to dispatch the error.
-    debug_ipc::MessageLoop::Current()->PostTask(
-        [callback, weak_ptr = GetWeakPtr()]() {
-          callback(std::move(weak_ptr), Err(
-              "Can't attach, program is already running or starting."));
-        });
+    debug_ipc::MessageLoop::Current()->PostTask([callback,
+                                                 weak_ptr = GetWeakPtr()]() {
+      callback(std::move(weak_ptr),
+               Err("Can't attach, program is already running or starting."));
+    });
     return;
   }
 

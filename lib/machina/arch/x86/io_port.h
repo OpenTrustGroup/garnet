@@ -5,7 +5,8 @@
 #ifndef GARNET_LIB_MACHINA_ARCH_X86_IO_PORT_H_
 #define GARNET_LIB_MACHINA_ARCH_X86_IO_PORT_H_
 
-#include <fbl/mutex.h>
+#include <mutex>
+
 #include <zircon/compiler.h>
 #include <zircon/types.h>
 
@@ -39,7 +40,7 @@ class Pm1Handler : public IoHandler {
   zx_status_t Write(uint64_t addr, const IoValue& value) override;
 
  private:
-  mutable fbl::Mutex mutex_;
+  mutable std::mutex mutex_;
   uint16_t enable_ __TA_GUARDED(mutex_) = 0;
 };
 
@@ -53,7 +54,7 @@ class CmosHandler : public IoHandler {
  private:
   zx_status_t ReadCmosRegister(uint8_t cmos_index, uint8_t* value) const;
   zx_status_t WriteCmosRegister(uint8_t cmos_index, uint8_t value);
-  mutable fbl::Mutex mutex_;
+  mutable std::mutex mutex_;
   uint8_t index_ __TA_GUARDED(mutex_) = 0;
 };
 
@@ -65,8 +66,16 @@ class I8042Handler : public IoHandler {
   zx_status_t Write(uint64_t addr, const IoValue& value) override;
 
  private:
-  mutable fbl::Mutex mutex_;
+  mutable std::mutex mutex_;
   uint8_t command_ __TA_GUARDED(mutex_) = 0;
+};
+
+class I8237Handler : public IoHandler {
+ public:
+  zx_status_t Init(Guest* guest);
+
+  zx_status_t Read(uint64_t addr, IoValue* value) const override;
+  zx_status_t Write(uint64_t addr, const IoValue& value) override;
 };
 
 class ProcessorInterfaceHandler : public IoHandler {
@@ -91,6 +100,7 @@ class IoPort {
   Pm1Handler pm1_;
   CmosHandler cmos_;
   I8042Handler i8042_;
+  I8237Handler i8237_;
   ProcessorInterfaceHandler proc_iface_;
 };
 

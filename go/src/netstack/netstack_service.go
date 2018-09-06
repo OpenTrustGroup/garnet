@@ -9,13 +9,14 @@ import (
 	"log"
 	"sort"
 	"strings"
-
-	"app/context"
-	"fidl/bindings"
-	"netstack/link/eth"
 	"syscall/zx"
 
-	nsfidl "fidl/fuchsia/netstack"
+	"app/context"
+	"netstack/connectivity"
+	"netstack/fidlconv"
+	"netstack/link/eth"
+
+	"fidl/fuchsia/netstack"
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/network/ipv4"
@@ -24,53 +25,25 @@ import (
 )
 
 type netstackImpl struct {
-	listener nsfidl.NotificationListenerInterface
 }
 
-func toTCPIPAddress(addr nsfidl.NetAddress) tcpip.Address {
-	out := tcpip.Address("")
-	switch addr.Family {
-	case nsfidl.NetAddressFamilyIpv4:
-		out = tcpip.Address(addr.Ipv4.Addr[:])
-	case nsfidl.NetAddressFamilyIpv6:
-		out = tcpip.Address(addr.Ipv6.Addr[:])
-	}
-	return out
-}
-
-func toNetAddress(addr tcpip.Address) nsfidl.NetAddress {
-	out := nsfidl.NetAddress{Family: nsfidl.NetAddressFamilyUnspecified}
-	switch len(addr) {
-	case 4:
-		out.Family = nsfidl.NetAddressFamilyIpv4
-		out.Ipv4 = &nsfidl.Ipv4Address{Addr: [4]uint8{}}
-		copy(out.Ipv4.Addr[:], addr[:])
-	case 16:
-		out.Family = nsfidl.NetAddressFamilyIpv6
-		out.Ipv6 = &nsfidl.Ipv6Address{Addr: [16]uint8{}}
-		copy(out.Ipv6.Addr[:], addr[:])
-	}
-	return out
-}
-
-func toSubnets(addrs []tcpip.Address) []nsfidl.Subnet {
-	out := make([]nsfidl.Subnet, len(addrs))
+func toSubnets(addrs []tcpip.Address) []netstack.Subnet {
+	out := make([]netstack.Subnet, len(addrs))
 	for i := range addrs {
 		// TODO: prefix len?
-		out[i] = nsfidl.Subnet{Addr: toNetAddress(addrs[i]), PrefixLen: 64}
+		out[i] = netstack.Subnet{Addr: fidlconv.ToNetAddress(addrs[i]), PrefixLen: 64}
 	}
 	return out
 }
 
-func getInterfaces() (out []nsfidl.NetInterface) {
+func getInterfaces() (out []netstack.NetInterface) {
 	ns.mu.Lock()
 	defer ns.mu.Unlock()
-
 	for nicid, ifs := range ns.ifStates {
 		// Long-hand for: broadaddr = ifs.nic.Addr | ^ifs.nic.Netmask
 		broadaddr := []byte(ifs.nic.Addr)
 		if len(ifs.nic.Netmask) != len(ifs.nic.Addr) {
-			log.Printf("warning: mismatched netmask and address length for nic: %+v", ifs.nic)
+			log.Printf("warning: mismatched netmask and address length for nic: %+v\n", ifs.nic)
 			continue
 		}
 
@@ -80,41 +53,44 @@ func getInterfaces() (out []nsfidl.NetInterface) {
 
 		var flags uint32
 		if ifs.state == eth.StateStarted {
-			flags |= nsfidl.NetInterfaceFlagUp
+			flags |= netstack.NetInterfaceFlagUp
+		}
+		if ifs.dhcpState.enabled {
+			flags |= netstack.NetInterfaceFlagDhcp
 		}
 
-		outif := nsfidl.NetInterface{
+		var mac []uint8
+		if eth := ifs.eth; eth != nil {
+			mac = eth.MAC[:]
+		}
+
+		outif := netstack.NetInterface{
 			Id:        uint32(nicid),
 			Flags:     flags,
 			Features:  ifs.nic.Features,
 			Name:      ifs.nic.Name,
-			Addr:      toNetAddress(ifs.nic.Addr),
-			Netmask:   toNetAddress(tcpip.Address(ifs.nic.Netmask)),
-			Broadaddr: toNetAddress(tcpip.Address(broadaddr)),
-			Hwaddr:    []uint8(ifs.nic.Mac[:]),
+			Addr:      fidlconv.ToNetAddress(ifs.nic.Addr),
+			Netmask:   fidlconv.ToNetAddress(tcpip.Address(ifs.nic.Netmask)),
+			Broadaddr: fidlconv.ToNetAddress(tcpip.Address(broadaddr)),
+			Hwaddr:    mac,
 			Ipv6addrs: toSubnets(ifs.nic.Ipv6addrs),
 		}
 
 		out = append(out, outif)
 	}
-	sort.Slice(out[:], func(i, j int) bool {
+
+	sort.Slice(out, func(i, j int) bool {
 		return out[i].Id < out[j].Id
 	})
+
 	return out
 }
 
-func (ni *netstackImpl) RegisterListener(listener nsfidl.NotificationListenerInterface) (err error) {
-	if bindings.Proxy(listener).IsValid() {
-		ni.listener = listener
-	}
-	return nil
-}
-
-func (ni *netstackImpl) GetPortForService(service string, protocol nsfidl.Protocol) (port uint16, err error) {
+func (ni *netstackImpl) GetPortForService(service string, protocol netstack.Protocol) (port uint16, err error) {
 	switch protocol {
-	case nsfidl.ProtocolUdp:
+	case netstack.ProtocolUdp:
 		port, err = serviceLookup(service, udp.ProtocolNumber)
-	case nsfidl.ProtocolTcp:
+	case netstack.ProtocolTcp:
 		port, err = serviceLookup(service, tcp.ProtocolNumber)
 	default:
 		port, err = serviceLookup(service, tcp.ProtocolNumber)
@@ -125,31 +101,31 @@ func (ni *netstackImpl) GetPortForService(service string, protocol nsfidl.Protoc
 	return port, err
 }
 
-func (ni *netstackImpl) GetAddress(name string, port uint16) (out []nsfidl.SocketAddress, netErr nsfidl.NetErr, retErr error) {
+func (ni *netstackImpl) GetAddress(name string, port uint16) (out []netstack.SocketAddress, netErr netstack.NetErr, retErr error) {
 	// TODO: This should handle IP address strings, empty strings, "localhost", etc. Pull the logic from
 	// fdio's getaddrinfo into here.
-	addrs, err := ns.dispatcher.dnsClient.LookupIP(name)
+	addrs, err := ns.dnsClient.LookupIP(name)
 	if err == nil {
-		out = make([]nsfidl.SocketAddress, len(addrs))
-		netErr = nsfidl.NetErr{Status: nsfidl.StatusOk}
+		out = make([]netstack.SocketAddress, len(addrs))
+		netErr = netstack.NetErr{Status: netstack.StatusOk}
 		for i, addr := range addrs {
 			switch len(addr) {
 			case 4, 16:
-				out[i].Addr = toNetAddress(addr)
+				out[i].Addr = fidlconv.ToNetAddress(addr)
 				out[i].Port = port
 			}
 		}
 	} else {
-		netErr = nsfidl.NetErr{Status: nsfidl.StatusDnsError, Message: err.Error()}
+		netErr = netstack.NetErr{Status: netstack.StatusDnsError, Message: err.Error()}
 	}
 	return out, netErr, nil
 }
 
-func (ni *netstackImpl) GetInterfaces() (out []nsfidl.NetInterface, err error) {
+func (ni *netstackImpl) GetInterfaces() (out []netstack.NetInterface, err error) {
 	return getInterfaces(), nil
 }
 
-func (ni *netstackImpl) GetRouteTable() (out []nsfidl.RouteTableEntry, err error) {
+func (ni *netstackImpl) GetRouteTable() (out []netstack.RouteTableEntry, err error) {
 	ns.mu.Lock()
 	table := ns.stack.GetRouteTable()
 	ns.mu.Unlock()
@@ -178,23 +154,23 @@ func (ni *netstackImpl) GetRouteTable() (out []nsfidl.RouteTableEntry, err error
 			gateway = tcpip.Address(strings.Repeat("\x00", l))
 		}
 
-		out = append(out, nsfidl.RouteTableEntry{
-			Destination: toNetAddress(dest),
-			Netmask:     toNetAddress(mask),
-			Gateway:     toNetAddress(gateway),
+		out = append(out, netstack.RouteTableEntry{
+			Destination: fidlconv.ToNetAddress(dest),
+			Netmask:     fidlconv.ToNetAddress(mask),
+			Gateway:     fidlconv.ToNetAddress(gateway),
 			Nicid:       uint32(route.NIC),
 		})
 	}
 	return out, nil
 }
 
-func (ni *netstackImpl) SetRouteTable(rt []nsfidl.RouteTableEntry) error {
+func (ni *netstackImpl) SetRouteTable(rt []netstack.RouteTableEntry) error {
 	routes := []tcpip.Route{}
 	for _, r := range rt {
 		route := tcpip.Route{
-			Destination: toTCPIPAddress(r.Destination),
-			Mask:        toTCPIPAddress(r.Netmask),
-			Gateway:     toTCPIPAddress(r.Gateway),
+			Destination: fidlconv.NetAddressToTCPIPAddress(r.Destination),
+			Mask:        fidlconv.NetAddressToTCPIPAddress(r.Netmask),
+			Gateway:     fidlconv.NetAddressToTCPIPAddress(r.Gateway),
 			NIC:         tcpip.NICID(r.Nicid),
 		}
 		routes = append(routes, route)
@@ -207,69 +183,84 @@ func (ni *netstackImpl) SetRouteTable(rt []nsfidl.RouteTableEntry) error {
 	return nil
 }
 
-func toSubnet(address nsfidl.NetAddress, prefixLen uint64) (tcpip.Subnet, error) {
-	// TODO: use tcpip.Address#mask after fuchsia/third_party/netstack and github/third_party/netstack are unified and #mask can be made public.
-	a := []byte(toTCPIPAddress(address))
-	m := tcpip.CIDRMask(int(prefixLen), int(len(a)*8))
-	for i, _ := range a {
-		a[i] = a[i] & m[i]
+func validateInterfaceAddress(nicid uint32, address netstack.NetAddress, prefixLen uint8) (nic tcpip.NICID, protocol tcpip.NetworkProtocolNumber, addr tcpip.Address, retval netstack.NetErr) {
+	switch address.Family {
+	case netstack.NetAddressFamilyIpv4:
+		protocol = ipv4.ProtocolNumber
+	case netstack.NetAddressFamilyIpv6:
+		retval = netstack.NetErr{Status: netstack.StatusIpv4Only, Message: "IPv6 not yet supported"}
+		return
 	}
-	return tcpip.NewSubnet(tcpip.Address(a), m)
+
+	nic = tcpip.NICID(nicid)
+	addr = fidlconv.NetAddressToTCPIPAddress(address)
+
+	if (8 * len(addr)) < int(prefixLen) {
+		retval = netstack.NetErr{Status: netstack.StatusParseError, Message: "Prefix length does not match address"}
+		return
+	}
+
+	retval = netstack.NetErr{Status: netstack.StatusOk, Message: ""}
+	return
 }
 
 // Add address to the given network interface.
-func (ni *netstackImpl) SetInterfaceAddress(nicid uint32, address nsfidl.NetAddress, prefixLen uint64) (result nsfidl.NetErr, endService error) {
+func (ni *netstackImpl) SetInterfaceAddress(nicid uint32, address netstack.NetAddress, prefixLen uint8) (result netstack.NetErr, endService error) {
 	log.Printf("net address %+v", address)
-	var protocol tcpip.NetworkProtocolNumber
-	switch address.Family {
-	case nsfidl.NetAddressFamilyIpv4:
-		protocol = ipv4.ProtocolNumber
-	case nsfidl.NetAddressFamilyIpv6:
-		return nsfidl.NetErr{nsfidl.StatusIpv4Only, "IPv6 not yet supported for SetInterfaceAddress"}, nil
+
+	nic, protocol, addr, neterr := validateInterfaceAddress(nicid, address, prefixLen)
+	if neterr.Status != netstack.StatusOk {
+		return neterr, nil
 	}
 
-	nic := tcpip.NICID(nicid)
-	addr := toTCPIPAddress(address)
-	sn, err := toSubnet(address, prefixLen)
-	if err != nil {
-		result = nsfidl.NetErr{nsfidl.StatusParseError, "Error applying subnet mask to interface address"}
-		return result, nil
+	if err := ns.setInterfaceAddress(nic, protocol, addr, prefixLen); err != nil {
+		return netstack.NetErr{Status: netstack.StatusUnknownError, Message: err.Error()}, nil
 	}
-
-	if err = ns.setInterfaceAddress(nic, protocol, addr, sn); err != nil {
-		return nsfidl.NetErr{nsfidl.StatusUnknownError, err.Error()}, nil
-	}
-	return nsfidl.NetErr{nsfidl.StatusOk, ""}, nil
+	return netstack.NetErr{Status: netstack.StatusOk, Message: ""}, nil
 }
 
-func (ni *netstackImpl) BridgeInterfaces(nicids []uint32) (nsfidl.NetErr, error) {
+func (ni *netstackImpl) RemoveInterfaceAddress(nicid uint32, address netstack.NetAddress, prefixLen uint8) (result netstack.NetErr, endService error) {
+	nic, protocol, addr, neterr := validateInterfaceAddress(nicid, address, prefixLen)
+
+	if neterr.Status != netstack.StatusOk {
+		return neterr, nil
+	}
+
+	if err := ns.removeInterfaceAddress(nic, protocol, addr, prefixLen); err != nil {
+		return netstack.NetErr{Status: netstack.StatusUnknownError, Message: err.Error()}, nil
+	}
+
+	return netstack.NetErr{Status: netstack.StatusOk, Message: ""}, nil
+}
+
+func (ni *netstackImpl) BridgeInterfaces(nicids []uint32) (netstack.NetErr, error) {
 	nics := make([]tcpip.NICID, len(nicids))
 	for i, n := range nicids {
 		nics[i] = tcpip.NICID(n)
 	}
 	err := ns.Bridge(nics)
 	if err != nil {
-		return nsfidl.NetErr{Status: nsfidl.StatusUnknownError}, nil
+		return netstack.NetErr{Status: netstack.StatusUnknownError}, nil
 	}
-	return nsfidl.NetErr{Status: nsfidl.StatusOk}, nil
+	return netstack.NetErr{Status: netstack.StatusOk}, nil
 }
 
-func (ni *netstackImpl) SetFilterStatus(enabled bool) (result nsfidl.NetErr, err error) {
+func (ni *netstackImpl) SetFilterStatus(enabled bool) (result netstack.NetErr, err error) {
 	ns.filter.Enable(enabled)
-	return nsfidl.NetErr{nsfidl.StatusOk, ""}, nil
+	return netstack.NetErr{Status: netstack.StatusOk, Message: ""}, nil
 }
 
 func (ni *netstackImpl) GetFilterStatus() (enabled bool, err error) {
 	return ns.filter.IsEnabled(), nil
 }
 
-func (ni *netstackImpl) GetAggregateStats() (stats nsfidl.AggregateStats, err error) {
+func (ni *netstackImpl) GetAggregateStats() (stats netstack.AggregateStats, err error) {
 	s := ns.stack.Stats()
-	return nsfidl.AggregateStats{
+	return netstack.AggregateStats{
 		UnknownProtocolReceivedPackets: s.UnknownProtocolRcvdPackets,
 		MalformedReceivedPackets:       s.MalformedRcvdPackets,
 		DroppedPackets:                 s.DroppedPackets,
-		IpStats: nsfidl.IpStats{
+		IpStats: netstack.IpStats{
 			PacketsReceived:          s.IP.PacketsReceived,
 			InvalidAddressesReceived: s.IP.InvalidAddressesReceived,
 			PacketsDiscarded:         s.IP.PacketsDiscarded,
@@ -277,7 +268,7 @@ func (ni *netstackImpl) GetAggregateStats() (stats nsfidl.AggregateStats, err er
 			PacketsSent:              s.IP.PacketsSent,
 			OutgoingPacketErrors:     s.IP.OutgoingPacketErrors,
 		},
-		TcpStats: nsfidl.TcpStats{
+		TcpStats: netstack.TcpStats{
 			ActiveConnectionOpenings:  s.TCP.ActiveConnectionOpenings,
 			PassiveConnectionOpenings: s.TCP.PassiveConnectionOpenings,
 			FailedConnectionAttempts:  s.TCP.FailedConnectionAttempts,
@@ -286,7 +277,7 @@ func (ni *netstackImpl) GetAggregateStats() (stats nsfidl.AggregateStats, err er
 			SegmentsSent:              s.TCP.SegmentsSent,
 			ResetsSent:                s.TCP.ResetsSent,
 		},
-		UdpStats: nsfidl.UdpStats{
+		UdpStats: netstack.UdpStats{
 			PacketsReceived:          s.UDP.PacketsReceived,
 			UnknownPortErrors:        s.UDP.UnknownPortErrors,
 			ReceiveBufferErrors:      s.UDP.ReceiveBufferErrors,
@@ -296,13 +287,13 @@ func (ni *netstackImpl) GetAggregateStats() (stats nsfidl.AggregateStats, err er
 	}, nil
 }
 
-func (ni *netstackImpl) GetStats(nicid uint32) (stats nsfidl.NetInterfaceStats, err error) {
+func (ni *netstackImpl) GetStats(nicid uint32) (stats netstack.NetInterfaceStats, err error) {
 	// Pure reading of statistics. No critical section. No lock is needed.
 	ifState, ok := ns.ifStates[tcpip.NICID(nicid)]
 
 	if !ok {
 		// TODO(stijlist): refactor to return NetErr and use StatusUnknownInterface
-		return nsfidl.NetInterfaceStats{}, fmt.Errorf("no such interface id: %d", nicid)
+		return netstack.NetInterfaceStats{}, fmt.Errorf("no such interface id: %d", nicid)
 	}
 
 	return ifState.statsEP.Stats, nil
@@ -325,22 +316,51 @@ func (ni *netstackImpl) SetInterfaceStatus(nicid uint32, enabled bool) (err erro
 	return nil
 }
 
-func (ni *netstackImpl) SetDhcpClientStatus(nicid uint32, enabled bool) (result nsfidl.NetErr, err error) {
+func (ni *netstackImpl) SetDhcpClientStatus(nicid uint32, enabled bool) (result netstack.NetErr, err error) {
 	ifState, ok := ns.ifStates[tcpip.NICID(nicid)]
 	if !ok {
-		return nsfidl.NetErr{nsfidl.StatusUnknownInterface, "unknown interface"}, nil
+		return netstack.NetErr{Status: netstack.StatusUnknownInterface, Message: "unknown interface"}, nil
 	}
+
 	ifState.setDHCPStatus(enabled)
-	return nsfidl.NetErr{nsfidl.StatusOk, ""}, nil
+	return netstack.NetErr{Status: netstack.StatusOk, Message: ""}, nil
 }
 
-func (ni *netstackImpl) onInterfacesChanged(interfaces []nsfidl.NetInterface) {
-	if bindings.Proxy(ni.listener).IsValid() {
-		ni.listener.OnInterfacesChanged(interfaces)
+// TODO(NET-1263): Remove once clients registering with the ResolverAdmin interface
+// does not crash netstack.
+func (ni *netstackImpl) SetNameServers(servers []netstack.NetAddress) error {
+	d := dnsImpl{}
+	return d.SetNameServers(servers)
+}
+
+type dnsImpl struct{}
+
+func (*dnsImpl) SetNameServers(servers []netstack.NetAddress) error {
+	ss := make([]tcpip.Address, len(servers))
+
+	for i, s := range servers {
+		ss[i] = fidlconv.NetAddressToTCPIPAddress(s)
 	}
+
+	ns.dnsClient.SetDefaultServers(ss)
+	return nil
 }
 
-var netstackService *nsfidl.NetstackService
+func (*dnsImpl) GetNameServers() ([]netstack.NetAddress, error) {
+	servers := ns.getDNSServers()
+	out := make([]netstack.NetAddress, len(servers))
+
+	for i, s := range servers {
+		out[i] = fidlconv.ToNetAddress(s)
+	}
+
+	return out, nil
+}
+
+var netstackService *netstack.NetstackService
+
+// TODO(NET-1263): register resolver admin service once clients don't crash netstack
+// var dnsService *netstack.ResolverAdminService
 
 // AddNetstackService registers the NetstackService with the application context,
 // allowing it to respond to FIDL queries.
@@ -348,11 +368,26 @@ func AddNetstackService(ctx *context.Context) error {
 	if netstackService != nil {
 		return fmt.Errorf("AddNetworkService must be called only once")
 	}
-	netstackService = &nsfidl.NetstackService{}
-	ctx.OutgoingService.AddService(nsfidl.NetstackName, func(c zx.Channel) error {
-		_, err := netstackService.Add(&netstackImpl{}, c, nil)
-		return err
+	netstackService = &netstack.NetstackService{}
+	ctx.OutgoingService.AddService(netstack.NetstackName, func(c zx.Channel) error {
+		k, err := netstackService.Add(&netstackImpl{}, c, nil)
+		if err != nil {
+			return err
+		}
+		// Send a synthetic InterfacesChanged event to each client when they join
+		// Prevents clients from having to race GetInterfaces / InterfacesChanged.
+		if p, ok := netstackService.EventProxyFor(k); ok {
+			p.OnInterfacesChanged(getInterfaces())
+		}
+		return nil
 	})
+
+	// TODO(NET-1263): register resolver admin service once clients don't crash netstack
+	// when registering.
+	// ctx.OutgoingService.AddService(netstack.ResolverAdminName, func(c zx.Channel) error {
+	//   _, err := dnsService.Add(&dnsImpl{}, c, nil)
+	//   return err
+	// })
 
 	return nil
 }
@@ -360,12 +395,11 @@ func AddNetstackService(ctx *context.Context) error {
 func OnInterfacesChanged() {
 	if netstackService != nil {
 		interfaces := getInterfaces()
-		for key, client := range netstackService.Bindings {
+		connectivity.InferAndNotify(interfaces)
+		for key := range netstackService.Bindings {
 			if p, ok := netstackService.EventProxyFor(key); ok {
-				p.InterfacesChanged(interfaces)
+				p.OnInterfacesChanged(interfaces)
 			}
-			// TODO(stijlist): port mDNS to use FIDL2 events instead of NotificationListener
-			client.Stub.(*nsfidl.NetstackStub).Impl.(*netstackImpl).onInterfacesChanged(interfaces)
 		}
 	}
 }

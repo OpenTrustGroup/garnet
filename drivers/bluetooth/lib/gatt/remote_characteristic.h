@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GATT_REMOTE_CHARACTERISTIC_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GATT_REMOTE_CHARACTERISTIC_H_
 
 #include <queue>
 #include <unordered_map>
@@ -116,7 +117,7 @@ class RemoteCharacteristic final {
   // (See RemoteService::NotifyCharacteristic in remote_service.h).
   void EnableNotifications(ValueCallback value_callback,
                            NotifyStatusCallback status_callback,
-                           async_t* dispatcher = nullptr);
+                           async_dispatcher_t* dispatcher = nullptr);
   bool DisableNotifications(IdType handler_id);
 
   // Sends a request to disable notifications and indications. Called by
@@ -143,13 +144,13 @@ class RemoteCharacteristic final {
 
   // Represents a pending request to subscribe to notifications or indications.
   struct PendingNotifyRequest {
-    PendingNotifyRequest(async_t* dispatcher, ValueCallback value_callback,
+    PendingNotifyRequest(async_dispatcher_t* dispatcher, ValueCallback value_callback,
                          NotifyStatusCallback status_callback);
 
     PendingNotifyRequest() = default;
     PendingNotifyRequest(PendingNotifyRequest&&) = default;
 
-    async_t* dispatcher;
+    async_dispatcher_t* dispatcher;
     ValueCallback value_callback;
     NotifyStatusCallback status_callback;
   };
@@ -157,13 +158,13 @@ class RemoteCharacteristic final {
 
   // Active notification handlers.
   struct NotifyHandler {
-    NotifyHandler(async_t* dispatcher, ValueCallback callback);
+    NotifyHandler(async_dispatcher_t* dispatcher, ValueCallback callback);
 
     NotifyHandler() = default;
     NotifyHandler(NotifyHandler&&) = default;
     NotifyHandler& operator=(NotifyHandler&&) = default;
 
-    async_t* dispatcher;
+    async_dispatcher_t* dispatcher;
     ValueCallback callback;
   };
   std::unordered_map<IdType, NotifyHandler> notify_handlers_;
@@ -181,3 +182,5 @@ class RemoteCharacteristic final {
 
 }  // namespace gatt
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GATT_REMOTE_CHARACTERISTIC_H_

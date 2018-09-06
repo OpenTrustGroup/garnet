@@ -9,6 +9,7 @@
 
 #include "lib/escher/impl/gpu_mem_slab.h"
 #include "lib/escher/vk/vulkan_context.h"
+#include "lib/fxl/memory/weak_ptr.h"
 
 namespace escher {
 
@@ -48,6 +49,8 @@ class GpuAllocator {
   GpuAllocator(const VulkanContext& context);
   virtual ~GpuAllocator();
 
+  fxl::WeakPtr<GpuAllocator> GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
+
   virtual GpuMemPtr Allocate(vk::MemoryRequirements reqs,
                              vk::MemoryPropertyFlags flags) = 0;
 
@@ -73,14 +76,15 @@ class GpuAllocator {
   void OnSlabDestroyed(vk::DeviceSize slab_size);
   // Notify the GpuAllocator that a sub-allocated range of memory is no longer
   // used within the specified slab.
-  virtual void OnSuballocationDestroyed(GpuMem* slab,
-                                        vk::DeviceSize size,
+  virtual void OnSuballocationDestroyed(GpuMem* slab, vk::DeviceSize size,
                                         vk::DeviceSize offset) = 0;
 
   vk::PhysicalDevice physical_device_;
   vk::Device device_;
   vk::DeviceSize total_slab_bytes_ = 0;
   size_t slab_count_ = 0;
+
+  fxl::WeakPtrFactory<GpuAllocator> weak_factory_;  // must be last
 
   FXL_DISALLOW_COPY_AND_ASSIGN(GpuAllocator);
 };

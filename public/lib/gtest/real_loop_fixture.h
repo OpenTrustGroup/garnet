@@ -52,7 +52,7 @@ class RealLoopFixture : public ::testing::Test {
   ~RealLoopFixture() override;
 
   // Returns the loop's asynchronous dispatch interface.
-  async_t* dispatcher();
+  async_dispatcher_t* dispatcher();
 
   // Runs the loop until it is exited.
   void RunLoop();
@@ -72,10 +72,9 @@ class RealLoopFixture : public ::testing::Test {
   // Runs the loop until the condition returns true or the timeout is reached.
   // Returns |true| if the condition was met, and |false| if the timeout was
   // reached.
-  bool RunLoopWithTimeoutOrUntil(
-      fit::function<bool()> condition,
-      zx::duration timeout = zx::sec(1),
-      zx::duration step = zx::msec(10));
+  bool RunLoopWithTimeoutOrUntil(fit::function<bool()> condition,
+                                 zx::duration timeout = zx::sec(1),
+                                 zx::duration step = zx::msec(10));
 
   // Runs the message loop until idle.
   void RunLoopUntilIdle();

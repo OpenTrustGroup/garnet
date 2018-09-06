@@ -11,7 +11,7 @@
 namespace tracing {
 
 Command::Info ListCategories::Describe() {
-  return Command::Info{[](fuchsia::sys::StartupContext* context) {
+  return Command::Info{[](component::StartupContext* context) {
                          return std::make_unique<ListCategories>(context);
                        },
                        "list-categories",
@@ -19,7 +19,7 @@ Command::Info ListCategories::Describe() {
                        {}};
 }
 
-ListCategories::ListCategories(fuchsia::sys::StartupContext* context)
+ListCategories::ListCategories(component::StartupContext* context)
     : CommandWithTraceController(context) {}
 
 void ListCategories::Start(const fxl::CommandLine& command_line) {
@@ -32,7 +32,8 @@ void ListCategories::Start(const fxl::CommandLine& command_line) {
   }
 
   trace_controller()->GetKnownCategories(
-      [this](fidl::VectorPtr<fuchsia::tracing::KnownCategory> known_categories) {
+      [this](
+          fidl::VectorPtr<fuchsia::tracing::KnownCategory> known_categories) {
         out() << "Known categories" << std::endl;
         for (const auto& it : *known_categories) {
           out() << "  " << it.name.get() << ": " << it.description.get()

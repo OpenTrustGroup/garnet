@@ -13,14 +13,16 @@
 #include "lib/fsl/handles/object_info.h"
 #include "lib/fxl/logging.h"
 
-namespace debugserver {
+namespace inferior_control {
 
 IOLoop::IOLoop(int fd, Delegate* delegate, async::Loop* origin_loop)
     : quit_called_(false),
       fd_(fd),
       delegate_(delegate),
       is_running_(false),
-      origin_loop_(origin_loop) {
+      origin_loop_(origin_loop),
+      read_loop_(&kAsyncLoopConfigNoAttachToThread),
+      write_loop_(&kAsyncLoopConfigNoAttachToThread) {
   // Allow -1 for test purposes. This is a simple test anyway, the caller
   // could pass 314159 and we don't verify it's validity here.
   FXL_DCHECK(fd_ >= -1);
@@ -28,9 +30,7 @@ IOLoop::IOLoop(int fd, Delegate* delegate, async::Loop* origin_loop)
   FXL_DCHECK(origin_loop_);
 }
 
-IOLoop::~IOLoop() {
-  Quit();
-}
+IOLoop::~IOLoop() { Quit(); }
 
 void IOLoop::Run() {
   FXL_DCHECK(!is_running_);
@@ -42,7 +42,8 @@ void IOLoop::Run() {
   // Posts an asynchronous task on to listen for an incoming packet. This
   // initiates a loop that always reads for incoming packets. Called from
   // Run().
-  async::PostTask(read_loop_.async(), fit::bind_member(this, &IOLoop::OnReadTask));
+  async::PostTask(read_loop_.dispatcher(),
+                  fit::bind_member(this, &IOLoop::OnReadTask));
 }
 
 void IOLoop::Quit() {
@@ -63,7 +64,7 @@ void IOLoop::Quit() {
 void IOLoop::PostWriteTask(const fxl::StringView& bytes) {
   // We copy the data into the closure.
   // TODO(armansito): Pass a refptr/weaktpr to |this|?
-  async::PostTask(write_loop_.async(), [this, bytes = bytes.ToString()] {
+  async::PostTask(write_loop_.dispatcher(), [this, bytes = bytes.ToString()] {
     ssize_t bytes_written = write(fd_, bytes.data(), bytes.size());
 
     // This cast isn't really safe, then again it should be virtually
@@ -71,23 +72,24 @@ void IOLoop::PostWriteTask(const fxl::StringView& bytes) {
     // least with the GDB Remote protocol).
     if (bytes_written != static_cast<ssize_t>(bytes.size())) {
       FXL_LOG(ERROR) << "Failed to send bytes"
-                     << ", " << util::ErrnoString(errno);
+                     << ", " << debugger_utils::ErrnoString(errno);
       ReportError();
       return;
     }
-    FXL_VLOG(2) << "<- " << util::EscapeNonPrintableString(bytes);
+    FXL_VLOG(2) << "<- " << debugger_utils::EscapeNonPrintableString(bytes);
   });
 }
 
 void IOLoop::ReportError() {
   // TODO(armansito): Pass a refptr/weaktpr to |this|?
-  async::PostTask(origin_loop_->async(), [this] { delegate_->OnIOError(); });
+  async::PostTask(origin_loop_->dispatcher(),
+                  [this] { delegate_->OnIOError(); });
 }
 
 void IOLoop::ReportDisconnected() {
   // TODO(armansito): Pass a refptr/weaktpr to |this|?
-  async::PostTask(origin_loop_->async(),
+  async::PostTask(origin_loop_->dispatcher(),
                   [this] { delegate_->OnDisconnected(); });
 }
 
-}  // namespace debugserver
+}  // namespace inferior_control

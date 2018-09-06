@@ -15,9 +15,7 @@ namespace ktrace_provider {
 
 LogImporter::LogImporter() = default;
 
-LogImporter::~LogImporter() {
-  Stop();
-}
+LogImporter::~LogImporter() { Stop(); }
 
 void LogImporter::Start() {
   if (log_)
@@ -29,12 +27,12 @@ void LogImporter::Start() {
     return;
   }
 
-  start_ticks_ = zx_ticks_get();
   start_time_ = zx_clock_get(ZX_CLOCK_MONOTONIC);
+  time_scale_ = zx_ticks_per_second() / 1'000'000'000.0;
 
   wait_.set_object(log_.get());
   wait_.set_trigger(ZX_LOG_READABLE);
-  status = wait_.Begin(async_get_default());
+  status = wait_.Begin(async_get_default_dispatcher());
   FXL_CHECK(status == ZX_OK) << "status=" << status;
 }
 
@@ -48,10 +46,8 @@ void LogImporter::Stop() {
   log_.reset();
 }
 
-void LogImporter::Handle(async_t* async,
-                         async::WaitBase* wait,
-                         zx_status_t status,
-                         const zx_packet_signal_t* signal) {
+void LogImporter::Handle(async_dispatcher_t* dispatcher, async::WaitBase* wait,
+                         zx_status_t status, const zx_packet_signal_t* signal) {
   if (status != ZX_OK)
     return;
 
@@ -71,13 +67,13 @@ void LogImporter::Handle(async_t* async,
       trace_thread_ref_t thread_ref =
           trace_make_inline_thread_ref(log_record->pid, log_record->tid);
       trace_context_write_log_record(
-          context, log_record->timestamp - start_time_ + start_ticks_,
-          &thread_ref, log_record->data, log_record->datalen);
+          context, log_record->timestamp * time_scale_, &thread_ref,
+          log_record->data, log_record->datalen);
       trace_release_context(context);
     }
   }
 
-  wait->Begin(async); // ignore errors
+  wait->Begin(dispatcher);  // ignore errors
 }
 
 }  // namespace ktrace_provider

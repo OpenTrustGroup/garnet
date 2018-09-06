@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GATT_FAKE_LAYER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GATT_FAKE_LAYER_H_
 
 #include "garnet/drivers/bluetooth/lib/gatt/gatt.h"
 
@@ -35,8 +36,9 @@ class FakeLayer final : public GATT {
                         std::string peer_id,
                         ::fidl::VectorPtr<uint8_t> value,
                         bool indicate) override;
+  void DiscoverServices(std::string peer_id) override;
   void RegisterRemoteServiceWatcher(RemoteServiceWatcher callback,
-                                    async_t* dispatcher) override;
+                                    async_dispatcher_t* dispatcher) override;
   void ListServices(std::string peer_id,
                     std::vector<common::UUID> uuids,
                     ServiceListCallback callback) override;
@@ -55,3 +57,5 @@ class FakeLayer final : public GATT {
 }  // namespace testing
 }  // namespace gatt
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GATT_FAKE_LAYER_H_

@@ -6,8 +6,7 @@
 
 #include "lib/fxl/logging.h"
 
-namespace debugserver {
-namespace arch {
+namespace inferior_control {
 
 GdbSignal ComputeGdbSignal(const zx_exception_context_t& context) {
   FXL_NOTIMPLEMENTED();
@@ -21,5 +20,4 @@ bool IsSingleStepException(const zx_exception_context_t& context) {
 
 void DumpArch(FILE* out) { FXL_NOTIMPLEMENTED(); }
 
-}  // namespace arch
-}  // namespace debugserver
+}  // namespace inferior_control

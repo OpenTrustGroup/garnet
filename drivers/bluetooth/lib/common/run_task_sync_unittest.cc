@@ -18,9 +18,9 @@ TEST(RunTaskSyncTest, RunTaskSync) {
   constexpr zx::duration kSleepTime = zx::msec(10);
   constexpr int kLoopCount = 10;
 
-  async::Loop loop;
+  async::Loop loop(&kAsyncLoopConfigNoAttachToThread);
   loop.StartThread("RunTaskSyncTest thread");
-  auto dispatcher = loop.async();
+  auto dispatcher = loop.dispatcher();
 
   for (int i = 0; i < kLoopCount; ++i) {
     bool callback_run = false;

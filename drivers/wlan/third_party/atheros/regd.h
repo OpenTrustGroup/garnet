@@ -28,7 +28,8 @@ enum ctl_group {
     CTL_ETSI = 0x30,
 };
 
-#define NO_CTL 0xff
+// clang-format off
+#define NO_CTL                  0xff
 #define SD_NO_CTL               0xE0
 #define NO_CTL                  0xff
 #define CTL_11A                 0
@@ -39,19 +40,20 @@ enum ctl_group {
 #define CTL_2GHT40              7
 #define CTL_5GHT40              8
 
-#define CTRY_DEBUG 0x1ff
-#define CTRY_DEFAULT 0
+#define CTRY_DEBUG              0x1ff
+#define CTRY_DEFAULT            0
 
 #define COUNTRY_ERD_FLAG        0x8000
 #define WORLDWIDE_ROAMING_FLAG  0x4000
 
-#define MULTI_DOMAIN_MASK 0xFF00
+#define MULTI_DOMAIN_MASK       0xFF00
 
 #define WORLD_SKU_MASK          0x00F0
 #define WORLD_SKU_PREFIX        0x0060
 
 #define CHANNEL_HALF_BW         10
 #define CHANNEL_QUARTER_BW      5
+// clang-format on
 
 struct country_code_to_enum_rd {
     uint16_t countryCode;
@@ -253,12 +255,9 @@ bool ath_is_world_regd(struct ath_regulatory* reg);
 bool ath_is_49ghz_allowed(uint16_t redomain);
 uint16_t ath_regd_find_country_by_name(char* alpha2);
 int ath_regd_init(struct ath_regulatory* reg, struct wiphy* wiphy,
-                  void (*reg_notifier)(struct wiphy* wiphy,
-                                       struct regulatory_request* request));
-uint32_t ath_regd_get_band_ctl(struct ath_regulatory* reg,
-                               enum nl80211_band band);
-void ath_reg_notifier_apply(struct wiphy* wiphy,
-                            struct regulatory_request* request,
+                  void (*reg_notifier)(struct wiphy* wiphy, struct regulatory_request* request));
+uint32_t ath_regd_get_band_ctl(struct ath_regulatory* reg, enum nl80211_band band);
+void ath_reg_notifier_apply(struct wiphy* wiphy, struct regulatory_request* request,
                             struct ath_regulatory* reg);
 
 #endif

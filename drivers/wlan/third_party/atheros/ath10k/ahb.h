@@ -18,7 +18,7 @@
 #ifndef _AHB_H_
 #define _AHB_H_
 
-#if 0 // NEEDS PORTING
+#if 0  // NEEDS PORTING
 
 #include <linux/platform_device.h>
 
@@ -44,6 +44,7 @@ struct ath10k_ahb {
 
 #ifdef CONFIG_ATH10K_AHB
 
+// clang-format off
 #define ATH10K_GCC_REG_BASE                  0x1800000
 #define ATH10K_GCC_REG_SIZE                  0x60000
 
@@ -69,6 +70,7 @@ struct ath10k_ahb {
 #define AHB_AXI_BUS_HALT_ACK                 1
 
 #define ATH10K_AHB_CORE_CTRL_CPU_INTR_MASK   1
+// clang-format on
 
 int ath10k_ahb_init(void);
 void ath10k_ahb_exit(void);
@@ -84,6 +86,6 @@ static inline void ath10k_ahb_exit(void) {
 
 #endif /* CONFIG_ATH10K_AHB */
 
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 #endif /* _AHB_H_ */

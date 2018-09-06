@@ -3,23 +3,23 @@
 // found in the LICENSE file.
 
 #include "garnet/lib/ui/gfx/tests/vk_session_test.h"
-#include "lib/ui/scenic/fidl_helpers.h"
+#include "lib/ui/scenic/cpp/commands.h"
 #include "public/lib/escher/test/gtest_vulkan.h"
 
 #include "gtest/gtest.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 namespace test {
 
 using PoseBufferTest = VkSessionTest;
 
 VK_TEST_F(PoseBufferTest, Validation) {
-  const scenic::ResourceId invalid_id = 0;
-  const scenic::ResourceId scene_id = 1;
-  const scenic::ResourceId camera_id = 2;
-  const scenic::ResourceId memory_id = 3;
-  const scenic::ResourceId buffer_id = 4;
+  const ResourceId invalid_id = 0;
+  const ResourceId scene_id = 1;
+  const ResourceId camera_id = 2;
+  const ResourceId memory_id = 3;
+  const ResourceId buffer_id = 4;
 
   ASSERT_TRUE(Apply(scenic::NewCreateSceneCmd(scene_id)));
   ASSERT_TRUE(Apply(scenic::NewCreateCameraCmd(camera_id, scene_id)));
@@ -29,15 +29,15 @@ VK_TEST_F(PoseBufferTest, Validation) {
   zx_status_t status = zx::vmo::create(vmo_size, 0u, &vmo);
   ASSERT_EQ(ZX_OK, status);
 
-  uint64_t base_time = zx::clock::get(ZX_CLOCK_MONOTONIC).get();
+  uint64_t base_time = zx::clock::get_monotonic().get();
   uint64_t time_interval = 1024 * 1024;  // 1 ms
   uint32_t num_entries = 1;
 
   ASSERT_TRUE(Apply(scenic::NewCreateMemoryCmd(
       memory_id, std::move(vmo),
       fuchsia::images::MemoryType::VK_DEVICE_MEMORY)));
-  ASSERT_TRUE(Apply(
-      scenic::NewCreateBufferCmd(buffer_id, memory_id, 0, vmo_size)));
+  ASSERT_TRUE(
+      Apply(scenic::NewCreateBufferCmd(buffer_id, memory_id, 0, vmo_size)));
 
   // Actual Tests
 
@@ -68,4 +68,4 @@ VK_TEST_F(PoseBufferTest, Validation) {
 
 }  // namespace test
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

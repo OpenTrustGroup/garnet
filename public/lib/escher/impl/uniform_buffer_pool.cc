@@ -14,21 +14,26 @@ namespace impl {
 // TODO: obtain max uniform-buffer size from Vulkan.  64kB is typical.
 constexpr vk::DeviceSize kBufferSize = 65536;
 
-UniformBufferPool::UniformBufferPool(Escher* escher, GpuAllocator* allocator,
+UniformBufferPool::UniformBufferPool(EscherWeakPtr escher, size_t ring_size,
+                                     GpuAllocator* allocator,
                                      vk::MemoryPropertyFlags additional_flags)
     : ResourceManager(escher),
       allocator_(allocator ? allocator : escher->gpu_allocator()),
       flags_(additional_flags | vk::MemoryPropertyFlagBits::eHostVisible),
-      buffer_size_(kBufferSize) {}
+      buffer_size_(kBufferSize),
+      ring_size_(ring_size),
+      weak_factory_(this) {
+  FXL_DCHECK(ring_size >= 1 && ring_size <= kMaxRingSize);
+}
 
 UniformBufferPool::~UniformBufferPool() {}
 
 BufferPtr UniformBufferPool::Allocate() {
-  if (free_buffers_.empty()) {
+  if (ring_[0].empty()) {
     InternalAllocate();
   }
-  BufferPtr buf(free_buffers_.back().release());
-  free_buffers_.pop_back();
+  BufferPtr buf(ring_[0].back().release());
+  ring_[0].pop_back();
   return buf;
 }
 
@@ -55,6 +60,11 @@ void UniformBufferPool::InternalAllocate() {
   reqs.size *= kBufferBatchSize;
   auto batch_mem = allocator_->Allocate(reqs, flags_);
 
+  // See below: when OnReceiveOwnable() receives the newly-allocated buffer we
+  // need to know that it is new and can therefore be used immediately instead
+  // added to the back of the ring.
+  is_allocating_ = true;
+
   for (uint32_t i = 0; i < kBufferBatchSize; ++i) {
     // Validation layer complains if we bind a buffer to memory without first
     // querying it's memory requirements.  This shouldn't be necessary, since
@@ -69,13 +79,37 @@ void UniformBufferPool::InternalAllocate() {
     // RefPtr go out of scope immediately; the Buffer will be added to
     // free_buffers_ via OnReceiveOwnable().
     fxl::MakeRefCounted<Buffer>(this, std::move(mem), new_buffers[i],
-                                buffer_size_);
+                                BufferRange(0, buffer_size_));
   }
+
+  is_allocating_ = false;
 }
 
 void UniformBufferPool::OnReceiveOwnable(std::unique_ptr<Resource> resource) {
   FXL_DCHECK(resource->IsKindOf<Buffer>());
-  free_buffers_.emplace_back(static_cast<Buffer*>(resource.release()));
+  size_t ring_index = is_allocating_ ? 0 : ring_size_ - 1;
+  ring_[ring_index].emplace_back(static_cast<Buffer*>(resource.release()));
+}
+
+void UniformBufferPool::BeginFrame() {
+  if (ring_size_ == 1)
+    return;
+
+  // Move all entries from ring_[1] to ring_[0].
+  for (auto& buf : ring_[1]) {
+    ring_[0].push_back(std::move(buf));
+  }
+  ring_[1].clear();
+
+  // The ring cleared above is moved to the back, and all others are moved one
+  // forward.
+  //
+  // TODO(ES-101): This is a constant amount of cache-friendly work per frame
+  // (just swapping pointers in the vectors), so it's probably not a performance
+  // issue, but is worth looking into later.
+  for (size_t i = 2; i < ring_size_; ++i) {
+    std::swap(ring_[i], ring_[i - 1]);
+  }
 }
 
 }  // namespace impl

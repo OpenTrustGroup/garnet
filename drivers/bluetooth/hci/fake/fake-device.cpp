@@ -26,7 +26,8 @@ const DeviceAddress kAddress0(DeviceAddress::Type::kLEPublic,
                               "00:00:00:00:00:01");
 const DeviceAddress kAddress1(DeviceAddress::Type::kBREDR, "00:00:00:00:00:02");
 
-Device::Device(zx_device_t* device) : parent_(device) {}
+Device::Device(zx_device_t* device)
+    : loop_(&kAsyncLoopConfigNoAttachToThread), parent_(device) {}
 
 #define DEV(c) static_cast<Device*>(c)
 static zx_protocol_device_t bthci_fake_device_ops = {
@@ -70,7 +71,7 @@ zx_status_t Device::Bind() {
   }
 
   FakeController::Settings settings;
-  settings.ApplyLEOnlyDefaults();
+  settings.ApplyDualModeDefaults();
   std::lock_guard<std::mutex> lock(device_lock_);
   fake_device_ = fbl::AdoptRef(new FakeController());
   fake_device_->set_settings(settings);
@@ -105,7 +106,7 @@ void Device::Release() { delete this; }
 
 void Device::Unbind() {
   std::lock_guard<std::mutex> lock(device_lock_);
-  async::PostTask(loop_.async(), [loop = &loop_, fake_dev = fake_device_] {
+  async::PostTask(loop_.dispatcher(), [loop = &loop_, fake_dev = fake_device_] {
     fake_dev->Stop();
     loop->Quit();
   });
@@ -137,19 +138,20 @@ zx_status_t Device::OpenChan(Channel chan_type, zx_handle_t* out_channel) {
   zx::channel in, out;
   auto status = zx::channel::create(0, &out, &in);
   if (status != ZX_OK) {
-    printf("bthci-fake: could not create channel (type %i): %d\n", chan_type, status);
+    printf("bthci-fake: could not create channel (type %i): %d\n", chan_type,
+           status);
     return status;
   }
   *out_channel = out.release();
   std::lock_guard<std::mutex> lock(device_lock_);
 
   if (chan_type == Channel::COMMAND) {
-    async::PostTask(loop_.async(),
+    async::PostTask(loop_.dispatcher(),
                     [device = fake_device_, in = std::move(in)]() mutable {
                       device->StartCmdChannel(std::move(in));
                     });
   } else if (chan_type == Channel::ACL) {
-    async::PostTask(loop_.async(),
+    async::PostTask(loop_.dispatcher(),
                     [device = fake_device_, in = std::move(in)]() mutable {
                       device->StartAclChannel(std::move(in));
                     });

@@ -465,7 +465,6 @@ class TbttTimer : public Register<0x01124> {
     WLAN_BIT_FIELD(tbtt_timer, 0, 16);
 };
 
-
 class IntTimerCfg : public Register<0x1128> {
    public:
     WLAN_BIT_FIELD(pre_tbtt_timer, 0, 16);
@@ -846,6 +845,22 @@ class TxStaCnt2 : public Register<0x1714> {
    public:
     WLAN_BIT_FIELD(tx_zero_cnt, 0, 16);
     WLAN_BIT_FIELD(tx_udfl_cnt, 16, 16);
+};
+
+class TxStatFifo : public Register<0x1718> {
+   public:
+    WLAN_BIT_FIELD(txq_vld, 0, 1);
+    WLAN_BIT_FIELD(txq_pid, 1, 4);
+    WLAN_BIT_FIELD(txq_ok, 5, 1);
+    WLAN_BIT_FIELD(txq_agg, 6, 1);
+    WLAN_BIT_FIELD(txq_ackreq, 7, 1);
+    WLAN_BIT_FIELD(txq_wcid, 8, 8);
+    WLAN_BIT_FIELD(txq_rate, 16, 16);
+};
+
+class TxStatFifoExt : public Register<0x1798> {
+   public:
+    WLAN_BIT_FIELD(txq_rty_cnt, 0, 8);
 };
 
 // EEPROM word offsets

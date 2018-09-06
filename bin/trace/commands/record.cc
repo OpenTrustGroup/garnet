@@ -2,14 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <lib/fdio/spawn.h>
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
+#include <lib/fdio/spawn.h>
 #include <zx/time.h>
 
 #include <fstream>
 #include <iostream>
-#include <sstream>
 #include <unordered_set>
 
 #include "garnet/bin/trace/commands/record.h"
@@ -19,6 +18,7 @@
 #include "lib/fxl/files/file.h"
 #include "lib/fxl/files/path.h"
 #include "lib/fxl/logging.h"
+#include "lib/fxl/strings/join_strings.h"
 #include "lib/fxl/strings/split_string.h"
 #include "lib/fxl/strings/string_number_conversions.h"
 
@@ -34,9 +34,21 @@ const char kOutputFile[] = "output-file";
 const char kDuration[] = "duration";
 const char kDetach[] = "detach";
 const char kDecouple[] = "decouple";
-const char kLaunchpad[] = "launchpad";
+const char kLaunchpad[] = "launchpad";  // deprecated
+const char kSpawn[] = "spawn";
 const char kBufferSize[] = "buffer-size";
+const char kBufferingMode[] = "buffering-mode";
 const char kBenchmarkResultsFile[] = "benchmark-results-file";
+const char kTestSuite[] = "test-suite";
+
+const struct {
+  const char* name;
+  fuchsia::tracing::BufferingMode mode;
+} kBufferingModes[] = {
+    {"oneshot", fuchsia::tracing::BufferingMode::ONESHOT},
+    {"circular", fuchsia::tracing::BufferingMode::CIRCULAR},
+    {"streaming", fuchsia::tracing::BufferingMode::STREAMING},
+};
 
 zx_handle_t Launch(const std::vector<std::string>& args) {
   zx_handle_t subprocess = ZX_HANDLE_INVALID;
@@ -82,12 +94,57 @@ bool WaitForExit(zx_handle_t process, int* exit_code) {
   return true;
 }
 
+bool LookupBufferingMode(const std::string& mode_name,
+                         fuchsia::tracing::BufferingMode* out_mode) {
+  for (const auto& mode : kBufferingModes) {
+    if (mode_name == mode.name) {
+      *out_mode = mode.mode;
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ParseBoolean(const fxl::StringView& arg, bool* out_value) {
+  if (arg == "" || arg == "true") {
+    *out_value = true;
+  } else if (arg == "false") {
+    *out_value = false;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+void CheckCommandLineOverride(const char* name, bool present_in_spec) {
+  if (present_in_spec) {
+    FXL_LOG(WARNING) << "The " << name << " passed on the command line"
+                     << "override value(s) from the tspec file.";
+  }
+}
+
+// Helper so call sites don't have to type !!object_as_unique_ptr.
+template<typename T>
+void CheckCommandLineOverride(const char* name, const T& object) {
+  CheckCommandLineOverride(name, !!object);
+}
+
 }  // namespace
 
 bool Record::Options::Setup(const fxl::CommandLine& command_line) {
-  const std::unordered_set<std::string> known_options = {
-      kSpecFile, kCategories, kAppendArgs, kOutputFile, kDuration,
-      kDetach,   kDecouple,   kLaunchpad,  kBufferSize, kBenchmarkResultsFile};
+  const std::unordered_set<std::string> known_options = {kSpecFile,
+                                                         kCategories,
+                                                         kAppendArgs,
+                                                         kOutputFile,
+                                                         kDuration,
+                                                         kDetach,
+                                                         kDecouple,
+                                                         kLaunchpad,
+                                                         kSpawn,
+                                                         kBufferSize,
+                                                         kBufferingMode,
+                                                         kBenchmarkResultsFile,
+                                                         kTestSuite};
 
   for (auto& option : command_line.options()) {
     if (known_options.count(option.name) == 0) {
@@ -96,6 +153,7 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
     }
   }
 
+  Spec spec{};
   size_t index = 0;
   // Read the spec file first. Arguments passed on the command line override the
   // spec.
@@ -113,16 +171,37 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
       return false;
     }
 
-    Spec spec;
     if (!DecodeSpec(content, &spec)) {
       FXL_LOG(ERROR) << "Can't decode " << spec_file_path;
       return false;
     }
-    app = std::move(spec.app);
-    args = std::move(spec.args);
-    categories = std::move(spec.categories);
-    duration = std::move(spec.duration);
-    measurements = std::move(spec.measurements);
+
+    if (spec.test_name)
+      test_name = *spec.test_name;
+    if (spec.app)
+      app = *spec.app;
+    if (spec.args)
+      args = *spec.args;
+    if (spec.spawn)
+      spawn = *spec.spawn;
+    if (spec.categories)
+      categories = *spec.categories;
+    if (spec.buffering_mode) {
+      if (!LookupBufferingMode(*spec.buffering_mode,
+                               &buffering_mode)) {
+        FXL_LOG(ERROR) << "Unknown spec parameter buffering-mode: "
+                       << spec.buffering_mode;
+        return false;
+      }
+    }
+    if (spec.buffer_size_in_mb)
+      buffer_size_megabytes = *spec.buffer_size_in_mb;
+    if (spec.duration)
+      duration = *spec.duration;
+    if (spec.measurements)
+      measurements = *spec.measurements;
+    if (spec.test_suite_name)
+      test_suite = *spec.test_suite_name;
   }
 
   // --categories=<cat1>,<cat2>,...
@@ -130,15 +209,23 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
     categories =
         fxl::SplitStringCopy(command_line.options()[index].value, ",",
                              fxl::kTrimWhitespace, fxl::kSplitWantNonEmpty);
+    CheckCommandLineOverride("categories", spec.categories);
   }
 
   // --append-args=<arg1>,<arg2>,...
-  if (command_line.HasOption(kAppendArgs, &index)) {
-    auto append_args =
-        fxl::SplitStringCopy(command_line.options()[index].value, ",",
-                             fxl::kTrimWhitespace, fxl::kSplitWantNonEmpty);
-    std::move(std::begin(append_args), std::end(append_args),
-              std::back_inserter(args));
+  // This option may be repeated, all args are added in order.
+  // These arguments are added after either of spec.args or the command line
+  // positional args.
+  std::vector<std::string> append_args;
+  if (command_line.HasOption(kAppendArgs, nullptr)) {
+    auto all_append_args = command_line.GetOptionValues(kAppendArgs);
+    for (const auto& arg : all_append_args) {
+      auto args =
+        fxl::SplitStringCopy(arg, ",", fxl::kTrimWhitespace,
+                             fxl::kSplitWantNonEmpty);
+      std::move(std::begin(args), std::end(args),
+                std::back_inserter(append_args));
+    }
   }
 
   // --output-file=<file>
@@ -151,11 +238,12 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
     uint64_t seconds;
     if (!fxl::StringToNumberWithError(command_line.options()[index].value,
                                       &seconds)) {
-      FXL_LOG(ERROR) << "Failed to parse command-line option duration: "
-                     << command_line.options()[index].value;
+      FXL_LOG(ERROR) << "Failed to parse command-line option " << kDuration
+                     << ": " << command_line.options()[index].value;
       return false;
     }
     duration = fxl::TimeDelta::FromSeconds(seconds);
+    CheckCommandLineOverride("duration", spec.duration);
   }
 
   // --detach
@@ -164,19 +252,59 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
   // --decouple
   decouple = command_line.HasOption(kDecouple);
 
-  // --launchpad
-  launchpad = command_line.HasOption(kLaunchpad);
+  // --spawn
+  // --launchpad is a deprecated spelling
+  {
+    size_t spawn_index, launchpad_index;
+    auto have_spawn = command_line.HasOption(kSpawn, &spawn_index);
+    auto have_launchpad = command_line.HasOption(kLaunchpad, &launchpad_index);
+    if (have_spawn && have_launchpad) {
+      FXL_LOG(ERROR) << "Specify only one of " << kSpawn << ", " << kLaunchpad;
+      return false;
+    }
+    if (have_spawn) {
+      auto arg = command_line.options()[spawn_index].value;
+      if (!ParseBoolean(arg, &spawn)) {
+        FXL_LOG(ERROR) << "Failed to parse command-line option " << kSpawn
+                       << ": " << arg;
+      }
+      CheckCommandLineOverride("spawn", spec.spawn);
+    }
+    if (have_launchpad) {
+      FXL_LOG(WARNING) << "Option " << kLaunchpad << " is deprecated"
+                       << ", use " << kSpawn << " instead";
+      auto arg = command_line.options()[launchpad_index].value;
+      if (!ParseBoolean(arg, &spawn)) {
+        FXL_LOG(ERROR) << "Failed to parse command-line option " << kLaunchpad
+                       << ": " << arg;
+      }
+      CheckCommandLineOverride("spawn", spec.spawn);
+    }
+  }
 
   // --buffer-size=<megabytes>
   if (command_line.HasOption(kBufferSize, &index)) {
     uint32_t megabytes;
     if (!fxl::StringToNumberWithError(command_line.options()[index].value,
                                       &megabytes)) {
-      FXL_LOG(ERROR) << "Failed to parse command-line option buffer-size: "
+      FXL_LOG(ERROR) << "Failed to parse command-line option " << kBufferSize
+                     << ": " << command_line.options()[index].value;
+      return false;
+    }
+    buffer_size_megabytes = megabytes;
+    CheckCommandLineOverride("buffer-size", spec.buffer_size_in_mb);
+  }
+
+  // --buffering-mode=oneshot|circular|streaming
+  if (command_line.HasOption(kBufferingMode, &index)) {
+    if (!LookupBufferingMode(command_line.options()[index].value,
+                             &buffering_mode)) {
+      FXL_LOG(ERROR) << "Failed to parse command-line option "
+                     << kBufferingMode << ": "
                      << command_line.options()[index].value;
       return false;
     }
-    buffer_size_megabytes_hint = megabytes;
+    CheckCommandLineOverride("buffering-mode", spec.buffering_mode);
   }
 
   // --benchmark-results-file=<file>
@@ -184,24 +312,31 @@ bool Record::Options::Setup(const fxl::CommandLine& command_line) {
     benchmark_results_file = command_line.options()[index].value;
   }
 
+  // --test-suite=<test-suite-name>
+  if (command_line.HasOption(kTestSuite, &index)) {
+    test_suite = command_line.options()[index].value;
+    CheckCommandLineOverride("test-suite-name", spec.test_suite_name);
+  }
+
   // <command> <args...>
   const auto& positional_args = command_line.positional_args();
   if (!positional_args.empty()) {
-    if (!app.empty() || !args.empty()) {
-      FXL_LOG(WARNING) << "The app and args passed on the command line"
-                       << "override those from the tspec file.";
-    }
     app = positional_args[0];
     args = std::vector<std::string>(positional_args.begin() + 1,
                                     positional_args.end());
+    CheckCommandLineOverride("app,args", spec.app || spec.args);
   }
+
+  // Now that we've processed positional args we can append --append-args args.
+  std::move(std::begin(append_args), std::end(append_args),
+            std::back_inserter(args));
 
   return true;
 }
 
 Command::Info Record::Describe() {
   return Command::Info{
-      [](fuchsia::sys::StartupContext* context) {
+      [](component::StartupContext* context) {
         return std::make_unique<Record>(context);
       },
       "record",
@@ -214,23 +349,31 @@ Command::Info Record::Describe() {
        {"categories=[\"\"]", "Categories that should be enabled for tracing"},
        {"append-args=[\"\"]",
         "Additional args for the app being traced, appended to those from the "
-        "spec file, if any"},
+        "spec file, if any. The value is a comma-separated list of arguments "
+        "to pass. This option may be repeated, arguments are added in order."},
        {"detach=[false]",
         "Don't stop the traced program when tracing finished"},
        {"decouple=[false]", "Don't stop tracing when the traced program exits"},
-       {"launchpad=[false]",
-        "Use launchpad to run a legacy app. Detach will have no effect when "
-        "using this option"},
+       {"spawn=[false]",
+        "Use fdio_spawn to run a legacy app. Detach will have no effect when "
+        "using this option. May also be spelled --launchpad (deprecated)."},
        {"buffer-size=[4]",
         "Maximum size of trace buffer for each provider in megabytes"},
+       {"buffering-mode=oneshot|circular|streaming",
+        "The buffering mode to use"},
        {"benchmark-results-file=[none]",
         "Destination for exported benchmark results"},
+       {"test-suite=[none]",
+        "Test suite name to put into the exported benchmark results file. "
+        "This is used by the Catapult dashboard. This argument is required if "
+        "the results are uploaded to the Catapult dashboard (using "
+        "bin/catapult_converter)"},
        {"[command args]",
         "Run program before starting trace. The program is terminated when "
         "tracing ends unless --detach is specified"}}};
 }
 
-Record::Record(fuchsia::sys::StartupContext* context)
+Record::Record(component::StartupContext* context)
     : CommandWithTraceController(context), weak_ptr_factory_(this) {}
 
 void Record::Start(const fxl::CommandLine& command_line) {
@@ -272,8 +415,9 @@ void Record::Start(const fxl::CommandLine& command_line) {
   fuchsia::tracing::TraceOptions trace_options;
   trace_options.categories =
       fxl::To<fidl::VectorPtr<fidl::StringPtr>>(options_.categories);
-  trace_options.buffer_size_megabytes_hint =
-      options_.buffer_size_megabytes_hint;
+  trace_options.buffer_size_megabytes_hint = options_.buffer_size_megabytes;
+  // TODO(dje): start_timeout_milliseconds
+  trace_options.buffering_mode = options_.buffering_mode;
 
   tracer_->Start(
       std::move(trace_options),
@@ -287,7 +431,7 @@ void Record::Start(const fxl::CommandLine& command_line) {
       [](fbl::String error) { FXL_LOG(ERROR) << error.c_str(); },
       [this] {
         if (!options_.app.empty())
-          options_.launchpad ? LaunchTool() : LaunchApp();
+          options_.spawn ? LaunchTool() : LaunchApp();
         StartTimer();
       },
       [this] { DoneTrace(); });
@@ -359,6 +503,9 @@ void Record::ProcessMeasurements() {
   }
 
   if (!options_.benchmark_results_file.empty()) {
+    for (auto& result : results) {
+      result.test_suite = options_.test_suite;
+    }
     if (!ExportResults(options_.benchmark_results_file, results)) {
       FXL_LOG(ERROR) << "Failed to write benchmark results to "
                      << options_.benchmark_results_file;
@@ -391,7 +538,13 @@ void Record::LaunchApp() {
   launch_info.arguments =
       fxl::To<fidl::VectorPtr<fidl::StringPtr>>(options_.args);
 
-  out() << "Launching " << launch_info.url << std::endl;
+  if (FXL_VLOG_IS_ON(1)) {
+    FXL_VLOG(1) << "Launching: " << launch_info.url << " "
+                << fxl::JoinStrings(options_.args, " ");
+  } else {
+    out() << "Launching: " << launch_info.url << std::endl;
+  }
+
   context()->launcher()->CreateComponent(std::move(launch_info),
                                          component_controller_.NewRequest());
   component_controller_.set_error_handler([this] {
@@ -401,11 +554,14 @@ void Record::LaunchApp() {
       // that case, |StopTrace| below does nothing.
       StopTrace(-1);
   });
-  component_controller_->Wait([this](int32_t return_code) {
-    out() << "Application exited with return code " << return_code << std::endl;
-    if (!options_.decouple)
-      StopTrace(return_code);
-  });
+  component_controller_.events().OnTerminated =
+      [this](int64_t return_code,
+             fuchsia::sys::TerminationReason termination_reason) {
+        out() << "Application exited with return code " << return_code
+              << std::endl;
+        if (!options_.decouple)
+          StopTrace(return_code);
+      };
   if (options_.detach) {
     component_controller_->Detach();
   }
@@ -416,15 +572,9 @@ void Record::LaunchTool() {
   all_args.insert(all_args.end(), options_.args.begin(), options_.args.end());
 
   if (FXL_VLOG_IS_ON(1)) {
-    std::stringstream command;
-    for (size_t i = 0; i < all_args.size(); ++i) {
-      if (i > 0)
-        command << " ";
-      command << all_args[i];
-    }
-    FXL_VLOG(1) << "Launching: " << command.str();
+    FXL_VLOG(1) << "Spawning: " << fxl::JoinStrings(all_args, " ");
   } else {
-    out() << "Launching: " << options_.app << std::endl;
+    out() << "Spawning: " << options_.app << std::endl;
   }
 
   zx_handle_t process = Launch(all_args);
@@ -444,7 +594,7 @@ void Record::LaunchTool() {
 }
 
 void Record::StartTimer() {
-  async::PostDelayedTask(async_get_default(),
+  async::PostDelayedTask(async_get_default_dispatcher(),
                          [weak = weak_ptr_factory_.GetWeakPtr()] {
                            if (weak)
                              weak->StopTrace(0);

@@ -1,7 +1,13 @@
+// Copyright 2018 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+//! Type-safe bindings for Zircon status.
+
 use failure;
+use fuchsia_zircon_sys as sys;
 use std::ffi::NulError;
 use std::io;
-use sys;
 use std::fmt;
 
 /// Status type indicating the result of a Fuchsia syscall.
@@ -83,6 +89,10 @@ assoc_values!(Status, [
 impl Status {
     pub fn into_io_error(self) -> io::Error {
         self.into()
+    }
+
+    pub fn from_result(res: Result<(), Self>) -> Self {
+        res.into()
     }
 }
 
@@ -181,6 +191,15 @@ impl From<Status> for io::Error {
 impl From<NulError> for Status {
     fn from(_error: NulError) -> Status {
         Status::INVALID_ARGS
+    }
+}
+
+impl From<Result<(), Status>> for Status {
+    fn from(res: Result<(), Status>) -> Status {
+        match res {
+            Ok(()) => Self::OK,
+            Err(status) => status,
+        }
     }
 }
 

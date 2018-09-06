@@ -14,17 +14,6 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-//#include <linux/err.h>
-//#include <linux/etherdevice.h>
-//#include <linux/if_ether.h>
-//#include <linux/jiffies.h>
-//#include <linux/module.h>
-//#include <linux/netdevice.h>
-//#include <linux/skbuff.h>
-//#include <linux/spinlock.h>
-//#include <linux/types.h>
-//#include <net/cfg80211.h>
-
 #include "fwsignal.h"
 
 #include <threads.h>
@@ -1283,16 +1272,16 @@ static zx_status_t brcmf_fws_enq(struct brcmf_fws_info* fws, enum brcmf_fws_netb
         /* Position found. Determine what to do */
         if (p_tail == NULL) {
             /* empty list */
-            brcmf_netbuf_add_tail_locked(queue, p);
+            brcmf_netbuf_list_add_tail(queue, p);
         } else {
             fr_compare = brcmf_netbuf_htod_tag_get_field(p_tail, FREERUN);
             if (((fr_new > fr_compare) && ((fr_new - fr_compare) < 128)) ||
                     ((fr_new < fr_compare) && ((fr_compare - fr_new) > 128))) {
                 /* After tail */
-                brcmf_netbuf_add_after_locked(queue, p_tail, p);
+                brcmf_netbuf_list_add_after(queue, p_tail, p);
             } else {
                 /* Before tail */
-                brcmf_netbuf_add_after_locked(queue, p_tail->prev, p);
+                brcmf_netbuf_list_add_after(queue, brcmf_netbuf_list_prev(queue, p_tail), p);
             }
         }
 
@@ -1607,7 +1596,7 @@ static zx_status_t brcmf_fws_notify_bcmc_credit_support(struct brcmf_if* ifp,
 static void brcmf_rxreorder_get_netbuf_list(struct brcmf_ampdu_rx_reorder* rfi, uint8_t start,
                                          uint8_t end, struct brcmf_netbuf_list* netbuf_list) {
     /* initialize return list */
-    brcmf_netbuf_list_init_nonlocked(netbuf_list);
+    brcmf_netbuf_list_init(netbuf_list);
 
     if (rfi->pend_pkts == 0) {
         brcmf_dbg(INFO, "no packets in reorder queue\n");
@@ -1616,7 +1605,7 @@ static void brcmf_rxreorder_get_netbuf_list(struct brcmf_ampdu_rx_reorder* rfi, 
 
     do {
         if (rfi->pktslots[start]) {
-            brcmf_netbuf_add_tail_locked(netbuf_list, rfi->pktslots[start]);
+            brcmf_netbuf_list_add_tail(netbuf_list, rfi->pktslots[start]);
             rfi->pktslots[start] = NULL;
         }
         start++;
@@ -1659,7 +1648,7 @@ void brcmf_fws_rxreorder(struct brcmf_if* ifp, struct brcmf_netbuf* pkt) {
 
         brcmf_rxreorder_get_netbuf_list(rfi, rfi->exp_idx, rfi->exp_idx, &reorder_list);
         /* add the last packet */
-        brcmf_netbuf_add_tail_locked(&reorder_list, pkt);
+        brcmf_netbuf_list_add_tail(&reorder_list, pkt);
         free(rfi);
         ifp->drvr->reorder_flows[flow_id] = NULL;
         goto netif_rx;
@@ -1689,7 +1678,7 @@ void brcmf_fws_rxreorder(struct brcmf_if* ifp, struct brcmf_netbuf* pkt) {
             brcmf_rxreorder_get_netbuf_list(rfi, rfi->exp_idx, rfi->exp_idx, &reorder_list);
             WARN_ON(rfi->pend_pkts);
         } else {
-            brcmf_netbuf_list_init_nonlocked(&reorder_list);
+            brcmf_netbuf_list_init(&reorder_list);
         }
         rfi->cur_idx = reorder_data[BRCMF_RXREORDER_CURIDX_OFFSET];
         rfi->exp_idx = reorder_data[BRCMF_RXREORDER_EXPIDX_OFFSET];
@@ -1757,7 +1746,7 @@ void brcmf_fws_rxreorder(struct brcmf_if* ifp, struct brcmf_netbuf* pkt) {
             brcmf_rxreorder_get_netbuf_list(rfi, rfi->exp_idx, end_idx, &reorder_list);
 
             if (exp_idx == ((cur_idx + 1) % (rfi->max_idx + 1))) {
-                brcmf_netbuf_add_tail_locked(&reorder_list, pkt);
+                brcmf_netbuf_list_add_tail(&reorder_list, pkt);
             } else {
                 rfi->pktslots[cur_idx] = pkt;
                 rfi->pend_pkts++;
@@ -1778,13 +1767,13 @@ void brcmf_fws_rxreorder(struct brcmf_if* ifp, struct brcmf_netbuf* pkt) {
         }
 
         brcmf_rxreorder_get_netbuf_list(rfi, rfi->exp_idx, end_idx, &reorder_list);
-        brcmf_netbuf_add_tail_locked(&reorder_list, pkt);
+        brcmf_netbuf_list_add_tail(&reorder_list, pkt);
         /* set the new expected idx */
         rfi->exp_idx = exp_idx;
     }
 netif_rx:
     brcmf_netbuf_list_for_every_safe(&reorder_list, pkt, pnext) {
-        brcmf_netbuf_list_remove_locked(pkt, &reorder_list);
+        brcmf_netbuf_list_remove(&reorder_list, pkt);
         brcmf_netif_rx(ifp, pkt);
     }
 }
@@ -1803,7 +1792,7 @@ void brcmf_fws_hdrpull(struct brcmf_if* ifp, int16_t siglen, struct brcmf_netbuf
 
     brcmf_dbg(HDRS, "enter: ifidx %d, netbuflen %u, siglen %d\n", ifp->ifidx, netbuf->len, siglen);
 
-    WARN_ON(siglen > netbuf->len);
+    WARN_ON(siglen > (int32_t)netbuf->len);
 
     if (!siglen) {
         return;
@@ -2155,7 +2144,7 @@ static void brcmf_fws_dequeue_worker(struct work_struct* worker) {
     uint32_t ifidx;
     zx_status_t ret;
 
-    fws = container_of(worker, struct brcmf_fws_info, fws_dequeue_work);
+    fws = containerof(worker, struct brcmf_fws_info, fws_dequeue_work);
     drvr = fws->drvr;
 
     brcmf_fws_lock(fws);
@@ -2214,7 +2203,7 @@ static void brcmf_fws_dequeue_worker(struct work_struct* worker) {
 
 #ifdef DEBUG
 static zx_status_t brcmf_debugfs_fws_stats_read(struct seq_file* seq, void* data) {
-    struct brcmf_bus* bus_if = dev_get_drvdata(seq->private);
+    struct brcmf_bus* bus_if = dev_to_bus(seq->private);
     struct brcmf_fws_stats* fwstats = &(drvr_to_fws(bus_if->drvr)->stats);
 
     seq_printf(seq,

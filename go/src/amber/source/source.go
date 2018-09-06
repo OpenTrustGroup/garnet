@@ -37,7 +37,7 @@ type Source interface {
 
 	// TODO(etryzelaar) This is a bit of a hack, but the blob fetcher also
 	// needs an authenticated http.Client. This really ought to be refactored.
-	GetHttpClient() *http.Client
+	GetHttpClient() (*http.Client, error)
 
 	// AvailableUpdates takes a list of packages and returns update metadata
 	// for any updates available for those packages.
@@ -59,7 +59,14 @@ type Source interface {
 	// Equals should return true if the provide Source is the same as the receiver.
 	Equals(s Source) bool
 
+	// Write config to disk.
 	Save() error
+
+	// Delete config from disk, preventing the source from loading on service restart.
+	DeleteConfig() error
+
+	// Delete all state on disk, including the source config (if present).
+	Delete() error
 
 	// Log into the TUF remote server and return the oauth2 device flow
 	// code to complete the authentication process.
@@ -67,4 +74,8 @@ type Source interface {
 
 	// Close any resources we might have open.
 	Close()
+
+	Enabled() bool
+
+	SetEnabled(e bool)
 }

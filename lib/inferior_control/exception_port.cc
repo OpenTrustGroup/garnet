@@ -24,7 +24,7 @@
 using std::lock_guard;
 using std::mutex;
 
-namespace debugserver {
+namespace inferior_control {
 
 namespace {
 
@@ -51,13 +51,14 @@ std::string IOPortPacketTypeToString(const zx_port_packet_t& pkt) {
 // static
 ExceptionPort::Key ExceptionPort::g_key_counter = 0;
 
-ExceptionPort::ExceptionPort(async_t* async)
-  : keep_running_(false), origin_dispatcher_(async) {
+ExceptionPort::ExceptionPort(async_dispatcher_t* dispatcher)
+    : keep_running_(false), origin_dispatcher_(dispatcher) {
   FXL_DCHECK(origin_dispatcher_);
 }
 
 ExceptionPort::~ExceptionPort() {
-  if (eport_handle_) Quit();
+  if (eport_handle_)
+    Quit();
 }
 
 bool ExceptionPort::Run() {
@@ -68,7 +69,7 @@ bool ExceptionPort::Run() {
   zx_status_t status = zx::port::create(0, &eport_handle_);
   if (status < 0) {
     FXL_LOG(ERROR) << "Failed to create the exception port: "
-                   << util::ZxErrorString(status);
+                   << debugger_utils::ZxErrorString(status);
     return false;
   }
 
@@ -117,7 +118,7 @@ ExceptionPort::Key ExceptionPort::Bind(zx_handle_t process_handle,
                          sizeof(info), nullptr, nullptr);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "zx_object_get_info_failed: "
-                   << util::ZxErrorString(status);
+                   << debugger_utils::ZxErrorString(status);
     return 0;
   }
   FXL_DCHECK(info.type == ZX_OBJ_TYPE_PROCESS);
@@ -136,7 +137,7 @@ ExceptionPort::Key ExceptionPort::Bind(zx_handle_t process_handle,
                                        next_key, ZX_EXCEPTION_PORT_DEBUGGER);
   if (status < 0) {
     FXL_LOG(ERROR) << "Failed to bind exception port: "
-                   << util::ZxErrorString(status);
+                   << debugger_utils::ZxErrorString(status);
     return 0;
   }
 
@@ -145,14 +146,15 @@ ExceptionPort::Key ExceptionPort::Bind(zx_handle_t process_handle,
                                 ZX_TASK_TERMINATED, ZX_WAIT_ASYNC_ONCE);
   if (status < 0) {
     FXL_LOG(ERROR) << "Failed to async wait for process: "
-                   << util::ZxErrorString(status);
+                   << debugger_utils::ZxErrorString(status);
     return 0;
   }
 
   // |next_key| should not have been used before.
   FXL_DCHECK(callbacks_.find(next_key) == callbacks_.end());
 
-  callbacks_[next_key] = BindData(process_handle, process_koid, std::move(callback));
+  callbacks_[next_key] =
+      BindData(process_handle, process_koid, std::move(callback));
   ++g_key_counter;
 
   FXL_VLOG(1) << "Exception port bound to process handle " << process_handle
@@ -195,7 +197,7 @@ void ExceptionPort::Worker() {
     zx_status_t status = zx_port_wait(eport, ZX_TIME_INFINITE, &packet);
     if (status < 0) {
       FXL_LOG(ERROR) << "zx_port_wait returned error: "
-                     << util::ZxErrorString(status);
+                     << debugger_utils::ZxErrorString(status);
     }
 
     FXL_VLOG(2) << "IO port packet received - key: " << packet.key
@@ -203,7 +205,7 @@ void ExceptionPort::Worker() {
 
     if (ZX_PKT_IS_EXCEPTION(packet.type)) {
       FXL_VLOG(1) << "Exception received: "
-                  << util::ExceptionName(
+                  << debugger_utils::ExceptionName(
                          static_cast<const zx_excp_type_t>(packet.type))
                   << " (" << packet.type << "), pid: " << packet.exception.pid
                   << ", tid: " << packet.exception.tid;
@@ -278,7 +280,7 @@ void PrintException(FILE* out, const Thread* thread, zx_excp_type_t type,
   if (ZX_EXCP_IS_ARCH(type)) {
     fprintf(out, "Thread %s received exception %s\n",
             thread->GetDebugName().c_str(),
-            util::ExceptionToString(type, context).c_str());
+            debugger_utils::ExceptionToString(type, context).c_str());
     zx_vaddr_t pc = thread->registers()->GetPC();
     fprintf(out, "PC 0x%" PRIxPTR "\n", pc);
   } else {
@@ -302,16 +304,20 @@ void PrintException(FILE* out, const Thread* thread, zx_excp_type_t type,
 
 void PrintSignals(FILE* out, const Thread* thread, zx_signals_t signals) {
   std::string description;
-  if (signals & ZX_THREAD_RUNNING) description += ", running";
-  if (signals & ZX_THREAD_SUSPENDED) description += ", suspended";
-  if (signals & ZX_THREAD_TERMINATED) description += ", terminated";
+  if (signals & ZX_THREAD_RUNNING)
+    description += ", running";
+  if (signals & ZX_THREAD_SUSPENDED)
+    description += ", suspended";
+  if (signals & ZX_THREAD_TERMINATED)
+    description += ", terminated";
   zx_signals_t mask =
       (ZX_THREAD_RUNNING | ZX_THREAD_SUSPENDED | ZX_THREAD_TERMINATED);
   if (signals & ~mask)
     description += fxl::StringPrintf(", unknown (0x%x)", signals & ~mask);
-  if (description.length() == 0) description = ", none";
+  if (description.length() == 0)
+    description = ", none";
   fprintf(out, "Thread %s got signals: %s\n", thread->GetDebugName().c_str(),
           description.c_str() + 2);
 }
 
-}  // namespace debugserver
+}  // namespace inferior_control

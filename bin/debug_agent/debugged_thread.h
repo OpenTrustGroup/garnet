@@ -49,10 +49,11 @@ class DebuggedThread {
 
   void OnException(uint32_t type);
 
-  // Pauses execution of the thread. If it is already stopped, this will be
-  // ignored. Pausing happens asynchronously so the thread will not necessarily
-  // have stopped when this returns.
-  void Pause();
+  // Pauses execution of the thread. Returns true if the pause was successful.
+  // Returns false on error or of the thread was already stopped. Pausing
+  // happens asynchronously so the thread will not necessarily have stopped
+  // when this returns.
+  bool Pause();
 
   // Resumes execution of the thread. The thead should currently be in a
   // stopped state. If it's not stopped, this will be ignored.
@@ -62,7 +63,7 @@ class DebuggedThread {
   void GetBacktrace(std::vector<debug_ipc::StackFrame>* frames) const;
 
   // Fills in the information for the registers of the thread
-  void GetRegisters(std::vector<debug_ipc::Register>* registers) const;
+  void GetRegisters(std::vector<debug_ipc::RegisterCategory>* reg_cats) const;
 
   // Sends a notification to the client about the state of this thread.
   void SendThreadNotification() const;
@@ -71,10 +72,15 @@ class DebuggedThread {
   void WillDeleteProcessBreakpoint(ProcessBreakpoint* bp);
 
  private:
+  enum class OnStop {
+    kIgnore,  // Don't do anything, keep the thread stopped and don't notify.
+    kSendNotification  // Send client notification like normal.
+  };
+
   // Handles a software breakpoint exception, updating the state as necessary.
   // If the address corresponds to a breakpoint we have set, it will call
   // UpdateForHitProcessBreakpoint (see below).
-  void UpdateForSoftwareBreakpoint(
+  OnStop UpdateForSoftwareBreakpoint(
       zx_thread_state_general_regs* regs,
       std::vector<debug_ipc::BreakpointStats>* hit_breakpoints);
 
@@ -85,8 +91,7 @@ class DebuggedThread {
   // WARNING: The ProcessBreakpoint argument could be deleted in this call
   // if it was a one-shot breakpoint.
   void UpdateForHitProcessBreakpoint(
-      ProcessBreakpoint* process_breakpoint,
-      zx_thread_state_general_regs* regs,
+      ProcessBreakpoint* process_breakpoint, zx_thread_state_general_regs* regs,
       std::vector<debug_ipc::BreakpointStats>* hit_breakpoints);
 
   // Resumes the thread according to the current run mode.
@@ -110,11 +115,10 @@ class DebuggedThread {
   uint64_t step_in_range_end_ = 0;
 
   // This is the reason for the thread suspend. This controls how the thread
-  // will be resumed. Note that when a breakpoint is hit and other threads
-  // are suspended, only the thread that hit the breakpoint will have
-  // suspend_reason_ == kBreakpoint. The other threads will be manually
-  // suspended which will be kOther.
+  // will be resumed. SuspendReason::kOther implies the suspend_token_ is
+  // valid.
   SuspendReason suspend_reason_ = SuspendReason::kNone;
+  zx::suspend_token suspend_token_;
 
   // This can be set in two cases:
   // - When suspended after hitting a breakpoint, this will be the breakpoint

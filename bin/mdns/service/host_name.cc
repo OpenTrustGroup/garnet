@@ -10,7 +10,7 @@
 
 #include "garnet/bin/mdns/service/mdns_fidl_util.h"
 #include "garnet/bin/mdns/service/socket_address.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/logging.h"
 
@@ -34,14 +34,14 @@ class NetstackClient {
 
  private:
   NetstackClient()
-      : context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
+      : context_(component::StartupContext::CreateFromStartupInfo()) {
     FXL_DCHECK(context_);
     netstack_ =
         context_->ConnectToEnvironmentService<fuchsia::netstack::Netstack>();
     FXL_DCHECK(netstack_);
   }
 
-  std::unique_ptr<fuchsia::sys::StartupContext> context_;
+  std::unique_ptr<component::StartupContext> context_;
   fuchsia::netstack::NetstackPtr netstack_;
 };
 
@@ -50,8 +50,9 @@ class NetstackClient {
 // address.
 IpAddress GetHostAddress() {
   static IpAddress ip_address;
-  if (ip_address)
+  if (ip_address) {
     return ip_address;
+  }
 
   NetstackClient::GetInterfaces(
       [](const fidl::VectorPtr<fuchsia::netstack::NetInterface>& interfaces) {
@@ -59,12 +60,21 @@ IpAddress GetHostAddress() {
           if (interface.addr.family ==
               fuchsia::netstack::NetAddressFamily::IPV4) {
             ip_address = MdnsFidlUtil::IpAddressFrom(&interface.addr);
-            break;
+            if (ip_address.is_loopback() ||
+                ip_address == IpAddress(0, 0, 0, 0)) {
+              ip_address = IpAddress::kInvalid;
+            } else {
+              break;
+            }
           }
           if (interface.addr.family ==
               fuchsia::netstack::NetAddressFamily::IPV6) {
             ip_address = MdnsFidlUtil::IpAddressFrom(&interface.addr);
-            // Keep looking...v4 is preferred.
+            if (ip_address.is_loopback()) {
+              ip_address = IpAddress::kInvalid;
+            }
+
+            // Keep looking regardless...v4 is preferred.
           }
         }
       });

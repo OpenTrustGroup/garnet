@@ -5,7 +5,7 @@
 #ifndef GARNET_LIB_UI_GFX_RESOURCES_RESOURCE_VISITOR_H_
 #define GARNET_LIB_UI_GFX_RESOURCES_RESOURCE_VISITOR_H_
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 class Import;
@@ -25,6 +25,7 @@ class RectangleShape;
 class RoundedRectangleShape;
 class MeshShape;
 class Material;
+class Compositor;
 class DisplayCompositor;
 class LayerStack;
 class Layer;
@@ -63,6 +64,7 @@ class ResourceVisitor {
   virtual void Visit(Material* r) = 0;
 
   // Layers.
+  virtual void Visit(Compositor* r) = 0;
   virtual void Visit(DisplayCompositor* r) = 0;
   virtual void Visit(LayerStack* r) = 0;
   virtual void Visit(Layer* r) = 0;
@@ -80,6 +82,6 @@ class ResourceVisitor {
 };
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_RESOURCES_RESOURCE_VISITOR_H_

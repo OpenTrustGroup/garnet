@@ -13,14 +13,13 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <zircon/ktrace.h>
+#include <lib/zircon-internal/ktrace.h>
 
 #include "ktrace_reader.h"
 
-namespace debugserver {
-namespace ktrace {
+namespace debugger_utils {
 
-int ReadFile(int fd, RecordReader* reader, void* arg) {
+int KtraceReadFile(int fd, KtraceRecordReader* reader, void* arg) {
   KtraceRecord rec;
   unsigned offset = 0;
 
@@ -44,30 +43,28 @@ int ReadFile(int fd, RecordReader* reader, void* arg) {
     }
 
     int rc = reader(&rec, arg);
-    if (rc) return rc;
+    if (rc)
+      return rc;
   }
 
   return 0;
 }
 
-const char* RecName(uint32_t tag) {
+const char* KtraceRecName(uint32_t tag) {
   // TODO: Remove magic number
   switch (tag & 0xffffff00u) {
 #define KTRACE_DEF(num, type, name, group)     \
   case KTRACE_TAG(num, KTRACE_GRP_##group, 0): \
     return #name;
-#include <zircon/ktrace-def.h>
+#include <lib/zircon-internal/ktrace-def.h>
     default:
       return "UNKNOWN";
   }
 }
 
-}  // namespace ktrace
-}  // namespace debugserver
+}  // namespace debugger_utils
 
 #ifdef TEST
-
-using debugserver::ktrace::KtraceRecord;
 
 struct TestData {
   size_t count;
@@ -88,8 +85,8 @@ static void Dump_NAME(const ktrace_rec_name_t* rec) {
   printf(" name %s", rec->name);
 }
 
-static void DumpRecord(const KtraceRecord* rec) {
-  printf("%s(%x):", debugserver::ktrace::RecName(rec->hdr.tag), rec->hdr.tag);
+static void DumpRecord(const debugger_utils::KtraceRecord* rec) {
+  printf("%s(%x):", debugger_utils::KtraceRecName(rec->hdr.tag), rec->hdr.tag);
 
   // TODO: Remove magic number
   switch (rec->hdr.tag & 0xffffff00u) {
@@ -97,7 +94,7 @@ static void DumpRecord(const KtraceRecord* rec) {
   case KTRACE_TAG(num, KTRACE_GRP_##group, 0): \
     Dump_##type(&rec->r_##type);               \
     break;
-#include <zircon/ktrace-def.h>
+#include <lib/zircon-internal/ktrace-def.h>
     default:
       printf(" ???");
       break;
@@ -106,7 +103,7 @@ static void DumpRecord(const KtraceRecord* rec) {
   printf("\n");
 }
 
-static int ProcessTest(KtraceRecord* rec, void* arg) {
+static int ProcessTest(debugger_utils::KtraceRecord* rec, void* arg) {
   auto data = reinterpret_cast<TestData*>(arg);
 
   ++data->count;
@@ -131,7 +128,7 @@ int main(int argc, char* argv[]) {
 
   TestData data = {};
 
-  int rc = debugserver::ktrace::ReadFile(fd, ProcessTest, &data);
+  int rc = debugger_utils::KtraceReadFile(fd, ProcessTest, &data);
 
   printf("process_test returned %d\n", rc);
   printf("%zu records\n", data.count);

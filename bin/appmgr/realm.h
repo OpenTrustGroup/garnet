@@ -20,9 +20,14 @@
 #include "garnet/bin/appmgr/hub/hub_info.h"
 #include "garnet/bin/appmgr/hub/realm_hub.h"
 #include "garnet/bin/appmgr/namespace.h"
+#include "garnet/bin/appmgr/namespace_builder.h"
+#include "garnet/bin/appmgr/root_loader.h"
 #include "garnet/bin/appmgr/runner_holder.h"
+#include "garnet/bin/appmgr/scheme_map.h"
+#include "garnet/lib/cmx/runtime.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fit/function.h"
+#include "lib/fsl/vmo/file.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/ref_ptr.h"
 #include "lib/fxl/strings/string_view.h"
@@ -32,6 +37,7 @@ namespace component {
 
 struct RealmArgs {
   Realm* parent;
+  const std::shared_ptr<component::Services> environment_services;
   zx::channel host_directory;
   fidl::StringPtr label;
   bool run_virtual_console;
@@ -48,7 +54,13 @@ class Realm : public ComponentContainer<ComponentControllerImpl> {
 
   const fbl::RefPtr<fs::PseudoDir>& hub_dir() const { return hub_.dir(); }
 
+  std::shared_ptr<component::Services> environment_services() const {
+    return environment_services_;
+  }
+
   HubInfo HubInfo();
+
+  zx::job DuplicateJob() const;
 
   void CreateNestedJob(
       zx::channel host_directory,
@@ -81,38 +93,52 @@ class Realm : public ComponentContainer<ComponentControllerImpl> {
       fidl::InterfaceRequest<fuchsia::sys::Environment> environment);
 
   zx_status_t BindSvc(zx::channel channel);
-  void CreateShell(const std::string& path);
+  void CreateShell(const std::string& path, zx::channel svc);
 
  private:
   static uint32_t next_numbered_label_;
 
   RunnerHolder* GetOrCreateRunner(const std::string& runner);
 
-  void CreateComponentFromNetwork(
-      fuchsia::sys::LaunchInfo launch_info,
-      fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
-      fxl::RefPtr<Namespace> ns, ComponentObjectCreatedCallback callback);
+  void CreateComponentWithRunnerForScheme(
+      std::string runner_url, fuchsia::sys::LaunchInfo launch_info,
+      ComponentRequestWrapper component_request,
+      ComponentObjectCreatedCallback callback);
 
-  void CreateComponentWithProcess(
+  void CreateComponentWithProcess(fuchsia::sys::PackagePtr package,
+                                  fuchsia::sys::LaunchInfo launch_info,
+                                  ComponentRequestWrapper component_request,
+                                  fxl::RefPtr<Namespace> ns,
+                                  ComponentObjectCreatedCallback callback);
+
+  void CreateComponentFromPackage(fuchsia::sys::PackagePtr package,
+                                  fuchsia::sys::LaunchInfo launch_info,
+                                  ComponentRequestWrapper component_request,
+                                  fxl::RefPtr<Namespace> ns,
+                                  ComponentObjectCreatedCallback callback);
+
+  void CreateElfBinaryComponentFromPackage(
+      fuchsia::sys::LaunchInfo launch_info, fsl::SizedVmo& app_data,
+      const std::string& app_argv0, ExportedDirType exported_dir_layout,
+      zx::channel loader_service, fdio_flat_namespace_t* flat,
+      ComponentRequestWrapper component_request, fxl::RefPtr<Namespace> ns,
+      ComponentObjectCreatedCallback callback);
+
+  void CreateRunnerComponentFromPackage(
       fuchsia::sys::PackagePtr package, fuchsia::sys::LaunchInfo launch_info,
-      fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
-      fxl::RefPtr<Namespace> ns, ComponentObjectCreatedCallback callback);
+      RuntimeMetadata& runtime, fuchsia::sys::FlatNamespace flat,
+      ComponentRequestWrapper component_request, fxl::RefPtr<Namespace> ns);
 
-  void CreateComponentFromPackage(
-      fuchsia::sys::PackagePtr package, fuchsia::sys::LaunchInfo launch_info,
-      fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller,
-      fxl::RefPtr<Namespace> ns, ComponentObjectCreatedCallback callback);
-
-  zx::channel OpenRootInfoDir();
+  zx::channel OpenInfoDir();
 
   Realm* const parent_;
   fuchsia::sys::LoaderPtr loader_;
   std::string label_;
   std::string koid_;
   const bool run_virtual_console_;
+  std::unique_ptr<RootLoader> root_loader_;
 
   zx::job job_;
-  zx::job job_for_child_;
 
   fxl::RefPtr<Namespace> default_namespace_;
 
@@ -130,6 +156,10 @@ class Realm : public ComponentContainer<ComponentControllerImpl> {
 
   zx::channel svc_channel_client_;
   zx::channel svc_channel_server_;
+
+  SchemeMap scheme_map_;
+
+  const std::shared_ptr<component::Services> environment_services_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Realm);
 };

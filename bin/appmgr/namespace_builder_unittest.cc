@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "garnet/lib/json/json_parser.h"
 #include "gtest/gtest.h"
 #include "third_party/rapidjson/rapidjson/document.h"
 
@@ -23,18 +24,25 @@ TEST(NamespaceBuilder, Control) {
   dev_array.PushBack("class/input", allocator);
   dev_array.PushBack("class/display-controller", allocator);
   document.AddMember("dev", dev_array, allocator);
+  rapidjson::Value services_array(rapidjson::kArrayType);
+  document.AddMember("services", services_array, allocator);
   rapidjson::Value feat_array(rapidjson::kArrayType);
   feat_array.PushBack("vulkan", allocator);
   document.AddMember("features", feat_array, allocator);
   SandboxMetadata sandbox;
 
-  EXPECT_TRUE(sandbox.Parse(document));
+  json::JSONParser parser;
+  EXPECT_TRUE(sandbox.Parse(document, &parser));
 
   NamespaceBuilder builder;
   builder.AddSandbox(sandbox, [] { return zx::channel(); });
 
   fdio_flat_namespace_t* flat = builder.Build();
-  EXPECT_EQ(5u, flat->count);
+  // We might have 4 or 5 namespace entries in different build configurations
+  // due to CP-104. For now, accept either.
+  // TODO(CP-104): Expect exactly 5 entries once we consistently create
+  // namespace entries for empty source directories.
+  EXPECT_TRUE(flat->count == 4u || flat->count == 5u);
 
   std::vector<std::string> paths;
   for (size_t i = 0; i < flat->count; ++i)
@@ -46,10 +54,12 @@ TEST(NamespaceBuilder, Control) {
                         "/dev/class/display-controller") != paths.end());
   EXPECT_TRUE(std::find(paths.begin(), paths.end(), "/dev/class/gpu") !=
               paths.end());
-  EXPECT_TRUE(std::find(paths.begin(), paths.end(), "/system/data/vulkan") !=
-              paths.end());
   EXPECT_TRUE(std::find(paths.begin(), paths.end(), "/system/lib") !=
               paths.end());
+  if (flat->count == 5u) {
+    EXPECT_TRUE(std::find(paths.begin(), paths.end(), "/config/vulkan/icd.d") !=
+                paths.end());
+  }
 
   for (size_t i = 0; i < flat->count; ++i)
     zx_handle_close(flat->handle[i]);
@@ -62,9 +72,12 @@ TEST(NamespaceBuilder, Shell) {
   rapidjson::Value feat_array(rapidjson::kArrayType);
   feat_array.PushBack("shell", allocator);
   document.AddMember("features", feat_array, allocator);
+  rapidjson::Value services_array(rapidjson::kArrayType);
+  document.AddMember("services", services_array, allocator);
   SandboxMetadata sandbox;
 
-  EXPECT_TRUE(sandbox.Parse(document));
+  json::JSONParser parser;
+  EXPECT_TRUE(sandbox.Parse(document, &parser));
 
   NamespaceBuilder builder;
   builder.AddSandbox(sandbox, [] { return zx::channel(); });

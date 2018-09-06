@@ -5,8 +5,10 @@
 #include "legacy_low_energy_advertiser.h"
 
 #include <endian.h>
+#include <zircon/assert.h>
 
 #include "garnet/drivers/bluetooth/lib/common/byte_buffer.h"
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/hci/transport.h"
 #include "garnet/drivers/bluetooth/lib/hci/util.h"
 
@@ -23,7 +25,7 @@ std::unique_ptr<CommandPacket> BuildEnablePacket(GenericEnableParam enable) {
   packet->mutable_view()
       ->mutable_payload<LESetAdvertisingEnableCommandParams>()
       ->advertising_enable = enable;
-  FXL_CHECK(packet);
+  ZX_ASSERT(packet);
   return packet;
 }
 
@@ -119,7 +121,7 @@ uint16_t TimeslicesToMilliseconds(uint16_t timeslices) {
 LegacyLowEnergyAdvertiser::LegacyLowEnergyAdvertiser(fxl::RefPtr<Transport> hci)
     : hci_(hci), starting_(false), connect_callback_(nullptr) {
   hci_cmd_runner_ = std::make_unique<SequentialCommandRunner>(
-      async_get_default(), hci_);
+      async_get_default_dispatcher(), hci_);
 }
 
 LegacyLowEnergyAdvertiser::~LegacyLowEnergyAdvertiser() {
@@ -138,41 +140,39 @@ void LegacyLowEnergyAdvertiser::StartAdvertising(
     uint32_t interval_ms,
     bool anonymous,
     AdvertisingStatusCallback callback) {
-  FXL_DCHECK(callback);
-  FXL_DCHECK(address.type() != common::DeviceAddress::Type::kBREDR);
+  ZX_DEBUG_ASSERT(callback);
+  ZX_DEBUG_ASSERT(address.type() != common::DeviceAddress::Type::kBREDR);
 
   if (anonymous) {
-    FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: anonymous advertising not "
-                   "supported";
+    bt_log(TRACE, "hci-le", "anonymous advertising not supported");
     callback(0, Status(common::HostError::kNotSupported));
     return;
   }
 
   if (advertising()) {
     if (address != advertised_) {
-      FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: already advertising";
+      bt_log(TRACE, "hci-le", "already advertising");
       callback(0, Status(common::HostError::kNotSupported));
       return;
     }
-    FXL_VLOG(1)
-        << "hci: LegacyLowEnergyAdvertiser: updating existing advertisement";
+    bt_log(TRACE, "hci-le", "updating existing advertisement");
   }
 
   if (data.size() > GetSizeLimit()) {
-    FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: advertising data too large";
+    bt_log(TRACE, "hci-le", "advertising data too large");
     callback(0, Status(common::HostError::kInvalidParameters));
     return;
   }
 
   if (scan_rsp.size() > GetSizeLimit()) {
-    FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: scan response too large";
+    bt_log(TRACE, "hci-le", "scan response too large");
     callback(0, Status(common::HostError::kInvalidParameters));
     return;
   }
 
   if (!hci_cmd_runner_->IsReady()) {
     if (starting_) {
-      FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: already starting";
+      bt_log(TRACE, "hci-le", "already starting");
       callback(0, Status(common::HostError::kInProgress));
       return;
     }
@@ -225,28 +225,28 @@ void LegacyLowEnergyAdvertiser::StartAdvertising(
   // Enable advertising.
   hci_cmd_runner_->QueueCommand(BuildEnablePacket(GenericEnableParam::kEnable));
 
-  hci_cmd_runner_->RunCommands([this, address, interval_slices,
-                                callback = std::move(callback),
-                                connect_callback = std::move(connect_callback)](Status status) mutable {
-    FXL_DCHECK(starting_);
-    starting_ = false;
+  hci_cmd_runner_->RunCommands(
+      [this, address, interval_slices, callback = std::move(callback),
+       connect_callback = std::move(connect_callback)](Status status) mutable {
+        ZX_DEBUG_ASSERT(starting_);
+        starting_ = false;
 
-    FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: advertising status: "
-                << status.ToString();
+        bt_log(TRACE, "hci-le", "advertising status: %s",
+               status.ToString().c_str());
 
-    uint16_t interval;
-    if (status) {
-      advertised_ = address;
-      connect_callback_ = std::move(connect_callback);
-      interval = TimeslicesToMilliseconds(interval_slices);
-    } else {
-      // Clear out the advertising data if it partially succeeded.
-      StopAdvertisingInternal();
-      interval = 0;
-    }
+        uint16_t interval;
+        if (status) {
+          advertised_ = address;
+          connect_callback_ = std::move(connect_callback);
+          interval = TimeslicesToMilliseconds(interval_slices);
+        } else {
+          // Clear out the advertising data if it partially succeeded.
+          StopAdvertisingInternal();
+          interval = 0;
+        }
 
-    callback(interval, status);
-  });
+        callback(interval, status);
+      });
 }
 
 bool LegacyLowEnergyAdvertiser::StopAdvertising(
@@ -264,15 +264,15 @@ void LegacyLowEnergyAdvertiser::StopAdvertisingInternal() {
 
   if (!hci_cmd_runner_->IsReady()) {
     if (!starting_) {
-      FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: already stopping";
+      bt_log(TRACE, "hci-le", "already stopping");
 
       // The advertised address must have been cleared in this state.
-      FXL_DCHECK(!advertising());
+      ZX_DEBUG_ASSERT(!advertising());
       return;
     }
 
     // Cancel the pending start
-    FXL_DCHECK(starting_);
+    ZX_DEBUG_ASSERT(starting_);
     hci_cmd_runner_->Cancel();
     starting_ = false;
   }
@@ -299,21 +299,18 @@ void LegacyLowEnergyAdvertiser::StopAdvertisingInternal() {
   hci_cmd_runner_->QueueCommand(std::move(scan_rsp_packet));
 
   hci_cmd_runner_->RunCommands([](Status status) {
-    FXL_VLOG(1) << "gap: LegacyLowEnergyAdvertiser: advertising stopped: "
-                << status.ToString();
+    bt_log(TRACE, "hci-le", "advertising stopped: ", status.ToString().c_str());
   });
 }
 
 void LegacyLowEnergyAdvertiser::OnIncomingConnection(ConnectionPtr link) {
   if (!advertising()) {
-    FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: connection received "
-                   "without advertising!";
+    bt_log(TRACE, "hci-le", "connection received without advertising!");
     return;
   }
 
   if (!connect_callback_) {
-    FXL_VLOG(1) << "hci: LegacyLowEnergyAdvertiser: connection received when "
-                   "not connectable!";
+    bt_log(TRACE, "hci-le", "connection received when not connectable!");
     return;
   }
 

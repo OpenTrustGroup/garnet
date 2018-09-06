@@ -32,14 +32,18 @@ Err AssertRunningTarget(ConsoleContext* context, const char* command_name,
 
 // Validates a command that applies to a stopped thread:
 //
-//  - Only thread and process nouns may be specified.
-//  - The thread on the command must exist and be stopped.
+// The thread on the command must exist and be stopped.
+//
+// If validate_nouns is set, only thread and process nouns may be specified
+// (these are most common for commands that operate on threads).
 //
 // If not, generates an error of the form "<command_name> requires a stopped
 // target".
 Err AssertStoppedThreadCommand(ConsoleContext* context, const Command& cmd,
-                               const char* command_name);
+                               bool validate_nouns, const char* command_name);
 
+[[nodiscard]] Err StringToInt(const std::string& s, int* out);
+[[nodiscard]] Err StringToUint32(const std::string& s, uint32_t* out);
 [[nodiscard]] Err StringToUint64(const std::string& s, uint64_t* out);
 
 // Reads an int64 from the given index of the command args. Returns an error
@@ -74,7 +78,7 @@ std::string DescribeTarget(const ConsoleContext* context, const Target* target);
 std::string DescribeTargetName(const Target* target);
 
 std::string DescribeThread(const ConsoleContext* context, const Thread* thread);
-std::string DescribeFrame(const Frame* frame, int id);
+
 std::string DescribeBreakpoint(const ConsoleContext* context,
                                const Breakpoint* breakpoint);
 

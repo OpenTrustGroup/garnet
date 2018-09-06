@@ -2,19 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GAP_ADAPTER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GAP_ADAPTER_H_
 
 #include <memory>
 #include <string>
 
 #include <lib/async/dispatcher.h>
 #include <lib/fit/function.h>
+#include <zircon/assert.h>
 
 #include "garnet/drivers/bluetooth/lib/gap/adapter_state.h"
 #include "garnet/drivers/bluetooth/lib/gap/remote_device_cache.h"
 #include "garnet/drivers/bluetooth/lib/gatt/gatt.h"
 #include "garnet/drivers/bluetooth/lib/l2cap/l2cap.h"
-#include "lib/fxl/logging.h"
+#include "garnet/drivers/bluetooth/lib/sdp/server.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
 #include "lib/fxl/synchronization/thread_checker.h"
@@ -32,7 +34,7 @@ namespace gap {
 
 class BrEdrConnectionManager;
 class BrEdrDiscoveryManager;
-
+class PairingDelegate;
 class LowEnergyAdvertisingManager;
 class LowEnergyConnectionManager;
 class LowEnergyDiscoveryManager;
@@ -101,31 +103,32 @@ class Adapter final {
 
   // Returns this Adapter's BR/EDR connection manager.
   BrEdrConnectionManager* bredr_connection_manager() const {
-    FXL_DCHECK(bredr_connection_manager_);
     return bredr_connection_manager_.get();
   }
 
   // Returns this Adapter's BR/EDR discovery manager.
   BrEdrDiscoveryManager* bredr_discovery_manager() const {
-    FXL_DCHECK(bredr_discovery_manager_);
     return bredr_discovery_manager_.get();
   }
 
+  // Returns this Adapter's SDP server.
+  sdp::Server* sdp_server() const { return sdp_server_.get(); }
+
   // Returns this Adapter's LE discovery manager.
   LowEnergyDiscoveryManager* le_discovery_manager() const {
-    FXL_DCHECK(le_discovery_manager_);
+    ZX_DEBUG_ASSERT(le_discovery_manager_);
     return le_discovery_manager_.get();
   }
 
   // Returns this Adapter's LE connection manager.
   LowEnergyConnectionManager* le_connection_manager() const {
-    FXL_DCHECK(le_connection_manager_);
+    ZX_DEBUG_ASSERT(le_connection_manager_);
     return le_connection_manager_.get();
   }
 
   // Returns this Adapter's LE advertising manager.
   LowEnergyAdvertisingManager* le_advertising_manager() const {
-    FXL_DCHECK(le_advertising_manager_);
+    ZX_DEBUG_ASSERT(le_advertising_manager_);
     return le_advertising_manager_.get();
   }
 
@@ -133,6 +136,15 @@ class Adapter final {
   RemoteDeviceCache* remote_device_cache() {
     return &device_cache_;
   }
+
+  // Add a bonded device with its priorly generated LTK to the adapter.
+  bool AddBondedDevice(std::string identifier,
+                       const common::DeviceAddress& address, sm::LTK key);
+
+  // Assigns a pairing delegate to this adapter. This PairingDelegate and its
+  // I/O capabilities will be used for all future pairing procedures. Setting a
+  // new PairingDelegate cancels all ongoing pairing procedures.
+  void SetPairingDelegate(fxl::WeakPtr<PairingDelegate> delegate);
 
   // Returns true if any discovery process (LE or BR/EDR) is running on this
   // adapter.
@@ -175,7 +187,7 @@ class Adapter final {
   // Uniquely identifies this adapter on the current system.
   std::string identifier_;
 
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
   fxl::RefPtr<hci::Transport> hci_;
 
   // Callback invoked to notify clients when the underlying transport is closed.
@@ -225,6 +237,8 @@ class Adapter final {
   // Objects that perform BR/EDR procedures.
   std::unique_ptr<BrEdrConnectionManager> bredr_connection_manager_;
   std::unique_ptr<BrEdrDiscoveryManager> bredr_discovery_manager_;
+  std::unique_ptr<sdp::Server> sdp_server_;
+
   fxl::ThreadChecker thread_checker_;
 
   // This must remain the last member to make sure that all weak pointers are
@@ -236,3 +250,5 @@ class Adapter final {
 
 }  // namespace gap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GAP_ADAPTER_H_

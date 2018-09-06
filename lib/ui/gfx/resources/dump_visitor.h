@@ -12,7 +12,7 @@
 
 #include "garnet/lib/ui/gfx/resources/resource_visitor.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 class Node;
@@ -41,6 +41,7 @@ class DumpVisitor : public ResourceVisitor {
   void Visit(RoundedRectangleShape* r) override;
   void Visit(MeshShape* r) override;
   void Visit(Material* r) override;
+  void Visit(Compositor* r) override;
   void Visit(DisplayCompositor* r) override;
   void Visit(LayerStack* r) override;
   void Visit(Layer* r) override;
@@ -73,6 +74,6 @@ class DumpVisitor : public ResourceVisitor {
 };
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_RESOURCES_DUMP_VISITOR_H_

@@ -9,15 +9,15 @@
 #include <memory>
 #include <vector>
 
-#include "garnet/bin/zxdb/client/err.h"
 #include "garnet/bin/zxdb/client/system_impl.h"
+#include "garnet/bin/zxdb/common/err.h"
 #include "garnet/public/lib/fxl/memory/ref_ptr.h"
 #include "garnet/public/lib/fxl/memory/weak_ptr.h"
 
 namespace debug_ipc {
 class BufferedFD;
 class StreamBuffer;
-}
+}  // namespace debug_ipc
 
 namespace zxdb {
 
@@ -25,6 +25,7 @@ class ArchInfo;
 class ProcessImpl;
 class RemoteAPI;
 class RemoteAPIImpl;
+class RemoteAPITest;
 class ThreadImpl;
 
 // The session object manages the connection with the remote debug agent.
@@ -47,8 +48,9 @@ class Session {
   // The RempteAPI for sending messages to the debug_agent.
   RemoteAPI* remote_api() { return remote_api_.get(); }
 
-  // Notification that data is available to be read on the StreamBuffer.
+  // Notification about the stream.
   void OnStreamReadable();
+  void OnStreamError();
 
   // Returns true if there is currently a connection.
   bool IsConnected() const;
@@ -66,6 +68,10 @@ class Session {
   // pending connection. The Connect() callback will still be issued but
   // will indicate failure.
   void Disconnect(std::function<void(const Err&)> callback);
+
+  // Frees all connection-related data. A helper for different modes of
+  // cleanup.
+  void ClearConnectionData();
 
   // Access to the singleton corresponding to the debugged system.
   System& system() { return system_; }
@@ -87,10 +93,18 @@ class Session {
   // connected.
   const ArchInfo* arch_info() const { return arch_info_.get(); }
 
+  // Dispatches these particular notification types from the agent. These are
+  // public since tests will commonly want to synthesize these events.
+  void DispatchNotifyThread(debug_ipc::MsgHeader::Type type,
+                            const debug_ipc::NotifyThread& notify);
+  void DispatchNotifyException(const debug_ipc::NotifyException& notify);
+  void DispatchNotifyModules(const debug_ipc::NotifyModules& notify);
+
  private:
   class PendingConnection;
   friend PendingConnection;
   friend RemoteAPIImpl;
+  friend RemoteAPITest;
 
   // Nonspecific callback type. Implemented by SessionDispatchCallback (with
   // the type-specific parameter pre-bound). The uint32_t is the transaction

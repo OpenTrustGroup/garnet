@@ -2,13 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_STATUS_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_STATUS_H_
+
+#include <stdarg.h>
 
 #include <cstdint>
 #include <string>
 
-#include "lib/fxl/logging.h"
+#include <zircon/assert.h>
+
 #include "lib/fxl/strings/string_printf.h"
+
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 
 namespace btlib {
 namespace common {
@@ -40,6 +46,9 @@ enum class HostError : uint8_t {
 
   // Received an invalid packet from the controller.
   kPacketMalformed,
+
+  // Link was disconnected during operation.
+  kLinkDisconnected,
 
   // Ran out of resources.
   kOutOfMemory,
@@ -75,8 +84,9 @@ class Status {
   // The result will carry a host error. Constructs a success result by default.
   constexpr explicit Status(HostError ecode = HostError::kNoError)
       : error_(ecode) {
-    FXL_DCHECK(ecode != HostError::kProtocolError)
-        << "HostError::kProtocolError not allowed in HostError constructor";
+    ZX_DEBUG_ASSERT_MSG(
+        ecode != HostError::kProtocolError,
+        "HostError::kProtocolError not allowed in HostError constructor");
   }
 
   // Returns true if this is a success result.
@@ -104,6 +114,29 @@ class Status {
             .c_str());
   }
 
+  // Helper that returns true if this status represents an error and prints a
+  // message containing a string representation of the status.
+  bool TestForErrorAndLog(LogSeverity severity, const char* tag,
+                          const char* file, int line,
+                          const std::string& msg) const {
+    bool is_error = !is_success();
+    if (is_error && IsLogLevelEnabled(severity)) {
+      LogMessage(file, line, severity, tag, "%s: %s", msg.c_str(),
+                 ToString().c_str());
+    }
+    return is_error;
+  }
+
+  bool TestForErrorAndLogF(LogSeverity severity, const char* tag,
+                           const char* file, int line, const char* fmt,
+                           ...) const {
+    va_list args;
+    va_start(args, fmt);
+    std::string msg = fxl::StringVPrintf(fmt, args);
+    va_end(args);
+    return TestForErrorAndLog(severity, tag, file, line, msg);
+  }
+
  private:
   HostError error_;
   ProtocolErrorCode protocol_error_;
@@ -111,3 +144,19 @@ class Status {
 
 }  // namespace common
 }  // namespace btlib
+
+// Macro to check and log any non-Success status of an event.
+// Use these like:
+// if (bt_is_error(status, WARN, "gap", "failed to set event mask")) {
+//   ...
+//   return;
+// }
+//
+// It will log with the string prepended to the stringified status if status is
+// a failure. Evaluates to true if the status indicates failure.
+
+#define bt_is_error(status, flag, tag, fmt...)                         \
+  (status.TestForErrorAndLogF(::btlib::common::LogSeverity::flag, tag, \
+                              __FILE__, __LINE__, fmt))
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_STATUS_H_

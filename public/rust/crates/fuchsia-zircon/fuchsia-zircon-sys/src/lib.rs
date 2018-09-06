@@ -8,7 +8,7 @@
 use std::{cmp, fmt};
 
 pub type zx_addr_t = usize;
-pub type zx_duration_t = u64;
+pub type zx_duration_t = i64;
 pub type zx_futex_t = i32;
 pub type zx_handle_t = u32;
 pub type zx_off_t = u64;
@@ -18,10 +18,11 @@ pub type zx_signals_t = u32;
 pub type zx_size_t = usize;
 pub type zx_ssize_t = isize;
 pub type zx_status_t = i32;
-pub type zx_time_t = u64;
+pub type zx_time_t = i64;
 pub type zx_vaddr_t = usize;
 pub type zx_obj_type_t = i32;
 pub type zx_koid_t = u64;
+pub type zx_object_info_topic_t = u32;
 
 // TODO: combine these macros with the bitflags and assoc consts macros below
 // so that we only have to do one macro invocation.
@@ -43,27 +44,36 @@ multiconst!(zx_handle_t, [
 ]);
 
 multiconst!(zx_time_t, [
-    ZX_TIME_INFINITE = ::std::u64::MAX;
+    ZX_TIME_INFINITE = ::std::i64::MAX;
 ]);
 
 multiconst!(zx_rights_t, [
-    ZX_RIGHT_NONE         = 0;
-    ZX_RIGHT_DUPLICATE    = 1 << 0;
-    ZX_RIGHT_TRANSFER     = 1 << 1;
-    ZX_RIGHT_READ         = 1 << 2;
-    ZX_RIGHT_WRITE        = 1 << 3;
-    ZX_RIGHT_EXECUTE      = 1 << 4;
-    ZX_RIGHT_MAP          = 1 << 5;
-    ZX_RIGHT_GET_PROPERTY = 1 << 6;
-    ZX_RIGHT_SET_PROPERTY = 1 << 7;
-    ZX_RIGHT_ENUMERATE    = 1 << 8;
-    ZX_RIGHT_DESTROY      = 1 << 9;
-    ZX_RIGHT_SET_POLICY   = 1 << 10;
-    ZX_RIGHT_GET_POLICY   = 1 << 11;
-    ZX_RIGHT_SIGNAL       = 1 << 12;
-    ZX_RIGHT_SIGNAL_PEER  = 1 << 13;
-    ZX_RIGHT_WAIT         = 1 << 14;
-    ZX_RIGHT_SAME_RIGHTS  = 1 << 31;
+    ZX_RIGHT_NONE           = 0;
+    ZX_RIGHT_DUPLICATE      = 1 << 0;
+    ZX_RIGHT_TRANSFER       = 1 << 1;
+    ZX_RIGHT_READ           = 1 << 2;
+    ZX_RIGHT_WRITE          = 1 << 3;
+    ZX_RIGHT_EXECUTE        = 1 << 4;
+    ZX_RIGHT_MAP            = 1 << 5;
+    ZX_RIGHT_GET_PROPERTY   = 1 << 6;
+    ZX_RIGHT_SET_PROPERTY   = 1 << 7;
+    ZX_RIGHT_ENUMERATE      = 1 << 8;
+    ZX_RIGHT_DESTROY        = 1 << 9;
+    ZX_RIGHT_SET_POLICY     = 1 << 10;
+    ZX_RIGHT_GET_POLICY     = 1 << 11;
+    ZX_RIGHT_SIGNAL         = 1 << 12;
+    ZX_RIGHT_SIGNAL_PEER    = 1 << 13;
+    ZX_RIGHT_WAIT           = 1 << 14;
+    ZX_RIGHT_INSPECT        = 1 << 15;
+    ZX_RIGHT_MANAGE_JOB     = 1 << 16;
+    ZX_RIGHT_MANAGE_PROCESS = 1 << 17;
+    ZX_RIGHT_MANAGE_THREAD  = 1 << 18;
+    ZX_RIGHT_APPLY_PROFILE  = 1 << 19;
+    ZX_RIGHT_SAME_RIGHTS    = 1 << 31;
+]);
+
+multiconst!(u32, [
+    ZX_VMO_NON_RESIZABLE = 1;
 ]);
 
 // TODO: add an alias for this type in the C headers.
@@ -80,16 +90,18 @@ multiconst!(u32, [
 
 // TODO: add an alias for this type in the C headers.
 multiconst!(u32, [
-    ZX_VM_FLAG_PERM_READ          = 1  << 0;
-    ZX_VM_FLAG_PERM_WRITE         = 1  << 1;
-    ZX_VM_FLAG_PERM_EXECUTE       = 1  << 2;
-    ZX_VM_FLAG_COMPACT            = 1  << 3;
-    ZX_VM_FLAG_SPECIFIC           = 1  << 4;
-    ZX_VM_FLAG_SPECIFIC_OVERWRITE = 1  << 5;
-    ZX_VM_FLAG_CAN_MAP_SPECIFIC   = 1  << 6;
-    ZX_VM_FLAG_CAN_MAP_READ       = 1  << 7;
-    ZX_VM_FLAG_CAN_MAP_WRITE      = 1  << 8;
-    ZX_VM_FLAG_CAN_MAP_EXECUTE    = 1  << 9;
+    ZX_VM_FLAG_PERM_READ             = 1 << 0;
+    ZX_VM_FLAG_PERM_WRITE            = 1 << 1;
+    ZX_VM_FLAG_PERM_EXECUTE          = 1 << 2;
+    ZX_VM_FLAG_COMPACT               = 1 << 3;
+    ZX_VM_FLAG_SPECIFIC              = 1 << 4;
+    ZX_VM_FLAG_SPECIFIC_OVERWRITE    = 1 << 5;
+    ZX_VM_FLAG_CAN_MAP_SPECIFIC      = 1 << 6;
+    ZX_VM_FLAG_CAN_MAP_READ          = 1 << 7;
+    ZX_VM_FLAG_CAN_MAP_WRITE         = 1 << 8;
+    ZX_VM_FLAG_CAN_MAP_EXECUTE       = 1 << 9;
+    ZX_VM_FLAG_MAP_RANGE             = 1 << 10;
+    ZX_VM_FLAG_REQUIRE_NON_RESIZABLE = 1 << 11;
 ]);
 
 multiconst!(zx_status_t, [
@@ -257,6 +269,10 @@ pub const ZX_SOCKET_HALF_CLOSE: u32 = 1;
 // VM Object clone flags
 pub const ZX_VMO_CLONE_COPY_ON_WRITE: u32 = 1;
 
+// channel write size constants
+pub const ZX_CHANNEL_MAX_MSG_HANDLES: u32 = 64;
+pub const ZX_CHANNEL_MAX_MSG_BYTES: u32 = 65536;
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum zx_cache_policy_t {
@@ -407,7 +423,7 @@ pub struct zx_guest_io_t {
     data: [u8; 4],
 }
 
-#[cfg(target_arch="aarch64")]
+#[cfg(target_arch = "aarch64")]
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct zx_guest_memory_t {
@@ -417,7 +433,7 @@ pub struct zx_guest_memory_t {
 
 pub const X86_MAX_INST_LEN: usize = 15;
 
-#[cfg(target_arch="x86_64")]
+#[cfg(target_arch = "x86_64")]
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct zx_guest_memory_t {
@@ -454,35 +470,75 @@ pub struct zx_guest_packet_t {
 
 impl fmt::Debug for zx_guest_packet_t {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "zx_guest_packet_t {{ packet_type: {:?}, contents: ", self.packet_type)?;
+        write!(
+            f,
+            "zx_guest_packet_t {{ packet_type: {:?}, contents: ",
+            self.packet_type
+        )?;
         match self.packet_type {
-            zx_guest_packet_t_type::ZX_GUEST_PKT_MEMORY =>
-                write!(f, "zx_guest_packet_t_union {{ memory: {:?} }} }}",
-                    unsafe { self.contents.memory }
-                ),
-            zx_guest_packet_t_type::ZX_GUEST_PKT_IO =>
-                write!(f, "zx_guest_packet_t_union {{ io: {:?} }} }}",
-                    unsafe { self.contents.io }
-                ),
+            zx_guest_packet_t_type::ZX_GUEST_PKT_MEMORY => {
+                write!(f, "zx_guest_packet_t_union {{ memory: {:?} }} }}", unsafe {
+                    self.contents.memory
+                })
+            }
+            zx_guest_packet_t_type::ZX_GUEST_PKT_IO => {
+                write!(f, "zx_guest_packet_t_union {{ io: {:?} }} }}", unsafe {
+                    self.contents.io
+                })
+            }
         }
     }
 }
 
 impl cmp::PartialEq for zx_guest_packet_t {
     fn eq(&self, other: &Self) -> bool {
-        (self.packet_type == other.packet_type) &&
-        match self.packet_type {
-            zx_guest_packet_t_type::ZX_GUEST_PKT_MEMORY =>
-                unsafe { self.contents.memory == other.contents.memory },
-            zx_guest_packet_t_type::ZX_GUEST_PKT_IO =>
-                unsafe { self.contents.io == other.contents.io },
+        (self.packet_type == other.packet_type) && match self.packet_type {
+            zx_guest_packet_t_type::ZX_GUEST_PKT_MEMORY => unsafe {
+                self.contents.memory == other.contents.memory
+            },
+            zx_guest_packet_t_type::ZX_GUEST_PKT_IO => unsafe {
+                self.contents.io == other.contents.io
+            },
         }
     }
 }
 
 impl cmp::Eq for zx_guest_packet_t {}
 
-#[cfg(target_arch="x86_64")]
+multiconst!(zx_object_info_topic_t, [
+    ZX_INFO_NONE                       = 0;
+    ZX_INFO_HANDLE_VALID               = 1;
+    ZX_INFO_HANDLE_BASIC               = 2;  // zx_info_handle_basic_t[1]
+    ZX_INFO_PROCESS                    = 3;  // zx_info_process_t[1]
+    ZX_INFO_PROCESS_THREADS            = 4;  // zx_koid_t[n]
+    ZX_INFO_VMAR                       = 7;  // zx_info_vmar_t[1]
+    ZX_INFO_JOB_CHILDREN               = 8;  // zx_koid_t[n]
+    ZX_INFO_JOB_PROCESSES              = 9;  // zx_koid_t[n]
+    ZX_INFO_THREAD                     = 10; // zx_info_thread_t[1]
+    ZX_INFO_THREAD_EXCEPTION_REPORT    = 11; // zx_exception_report_t[1]
+    ZX_INFO_TASK_STATS                 = 12; // zx_info_task_stats_t[1]
+    ZX_INFO_PROCESS_MAPS               = 13; // zx_info_maps_t[n]
+    ZX_INFO_PROCESS_VMOS               = 14; // zx_info_vmo_t[n]
+    ZX_INFO_THREAD_STATS               = 15; // zx_info_thread_stats_t[1]
+    ZX_INFO_CPU_STATS                  = 16; // zx_info_cpu_stats_t[n]
+    ZX_INFO_KMEM_STATS                 = 17; // zx_info_kmem_stats_t[1]
+    ZX_INFO_RESOURCE                   = 18; // zx_info_resource_t[1]
+    ZX_INFO_HANDLE_COUNT               = 19; // zx_info_handle_count_t[1]
+    ZX_INFO_BTI                        = 20; // zx_info_bti_t[1]
+    ZX_INFO_PROCESS_HANDLE_STATS       = 21; // zx_info_process_handle_stats_t[1]
+]);
+
+#[repr(C)]
+#[derive(Copy, Clone, Default)]
+pub struct zx_info_handle_basic_t {
+    pub koid: zx_koid_t,
+    pub rights: zx_rights_t,
+    pub type_: u32,
+    pub related_koid: zx_koid_t,
+    pub props: u32,
+}
+
+#[cfg(target_arch = "x86_64")]
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct zx_vcpu_create_args_t {
@@ -491,7 +547,7 @@ pub struct zx_vcpu_create_args_t {
     pub apic_vmo: zx_handle_t,
 }
 
-#[cfg(not(target_arch="x86_64"))]
+#[cfg(not(target_arch = "x86_64"))]
 #[repr(C)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct zx_vcpu_create_args_t {

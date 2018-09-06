@@ -43,6 +43,7 @@ struct MsgHeader {
     kNotifyThreadStarting,
     kNotifyThreadExiting,
     kNotifyException,
+    kNotifyModules,
 
     kNumMessages
   };
@@ -131,9 +132,10 @@ struct ResumeRequest {
   // If 0, all threads of all debugged processes will be continued.
   uint64_t process_koid = 0;
 
-  // If 0, all threads in the given process will be continued. Not compatible
-  // with kStepInRange.
-  uint64_t thread_koid = 0;
+  // If empty, all threads in the given process will be continued. If nonempty,
+  // the threads with listed koids will be resumed. kStepInRange may only be
+  // used with a single thread.
+  std::vector<uint64_t> thread_koids;
 
   How how = How::kContinue;
 
@@ -222,7 +224,7 @@ struct RegistersRequest {
   uint32_t thread_koid = 0;
 };
 struct RegistersReply {
-  std::vector<Register> registers;
+  std::vector<RegisterCategory> categories;
 };
 
 // Notifications ---------------------------------------------------------------
@@ -244,7 +246,13 @@ struct NotifyThread {
 struct NotifyException {
   enum class Type : uint32_t {
     kGeneral = 0,
+
+    // Hardware breakpoints are issues by the CPU. These generally correspond
+    // to a single-step completion.
     kHardware,
+
+    // Software breakpoint. This will be issued when a breakpoint is hit and
+    // when the debugged program manually issues a breakpoint instruction.
     kSoftware,
 
     kLast  // Not an actual exception type, for range checking.
@@ -255,8 +263,10 @@ struct NotifyException {
 
   Type type = Type::kGeneral;
 
-  // The frame of the top of the stack.
-  StackFrame frame;
+  // The frames of the top of the stack. This will contain the top 2 frames
+  // (the current one and the caller) if they are available. It will always
+  // contain at least one frame which contains the current IP.
+  std::vector<StackFrame> frames;
 
   // When the stop was caused by hitting a breakpoint, this vector will contain
   // the post-hit stats of every hit breakpoint (since there can be more than
@@ -265,6 +275,18 @@ struct NotifyException {
   // Be sure to check should_delete on each of these and update local state as
   // necessary.
   std::vector<BreakpointStats> hit_breakpoints;
+};
+
+// Indicates the loaded modules may have changed. The entire list of current
+// modules is sent every time.
+struct NotifyModules {
+  uint64_t process_koid = 0;
+  std::vector<Module> modules;
+
+  // The list of threads in the process stopped automatically as a result of
+  // the module load. The client will want to resume these threads once it has
+  // processed the load.
+  std::vector<uint64_t> stopped_thread_koids;
 };
 
 #pragma pack(pop)

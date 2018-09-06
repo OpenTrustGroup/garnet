@@ -36,7 +36,16 @@ extern "C" {
 #define MAGMA_CACHE_POLICY_WRITE_COMBINING 1
 #define MAGMA_CACHE_POLICY_UNCACHED 2
 
+#define MAGMA_DUMP_TYPE_NORMAL (1 << 0)
+// Dump current perf counters and disable them
+#define MAGMA_DUMP_TYPE_PERF_COUNTERS (1 << 1)
+// Start perf counter recording
+#define MAGMA_DUMP_TYPE_PERF_COUNTER_ENABLE (1 << 2)
+
 typedef int32_t magma_status_t;
+
+// Normal bool doesn't have to be a particular size.
+typedef uint8_t magma_bool_t;
 
 typedef uint32_t magma_cache_operation_t;
 
@@ -54,9 +63,9 @@ struct magma_connection_t {
 // in an exec resource. The 32 bit word at offset in the buffer will be overwritten with
 // the GPU virtual address of the 32 bit word at target_offset in target_buffer.
 struct magma_system_relocation_entry {
-    uint32_t offset;                 // offset in the batch buffer
-    uint32_t target_resource_index;  // resource index of the buffer to be relocated
-    uint32_t target_offset;          // offset in the target buffer
+    uint32_t offset;                // offset in the batch buffer
+    uint32_t target_resource_index; // resource index of the buffer to be relocated
+    uint32_t target_offset;         // offset in the target buffer
 };
 
 // a buffer plus its associated relocations referenced by a command buffer
@@ -105,4 +114,4 @@ enum MAGMA_GPU_MAP_FLAGS {
 }
 #endif
 
-#endif  // GARNET_LIB_MAGMA_INCLUDE_MAGMA_ABI_MAGMA_COMMON_DEFS_H_
+#endif // GARNET_LIB_MAGMA_INCLUDE_MAGMA_ABI_MAGMA_COMMON_DEFS_H_

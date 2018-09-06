@@ -33,7 +33,7 @@ the app subsequently exits.
 
 Focusing on this example's media-specific setup and asynchronous tasks, the
 highest-level description of events (shown in `MediaApp::Run`) is as follows:
-1. Open the primary FIDL interface to the audio subsystem (AudioRenderer2);
+1. Open the primary FIDL interface to the audio subsystem (AudioRenderer);
 2. Set the audio playback format;
 3. Map a shared memory section through which we transport audio to the renderer;
 4. Write audio data into that memory (in this case a looping sine wave);
@@ -48,12 +48,12 @@ Below is a more detailed account of the steps taken, and why each is necessary.
 ##### Open FIDL interfaces
 
 With the provided StartupContext, we obtain an Audio interface pointer to, and
-use that to obtain interface pointers to AudioRenderer2. At that point we no
+use that to obtain interface pointers to AudioRenderer. At that point we no
 longer need our Audio interface and can allow it to go out of scope (and hence
 be automatically closed).
 
-We use the AudioRenderer2 interface to _set playback format_ and start
-playback. If we so desired, we could also use AudioRenderer2 to set output
+We use the AudioRenderer interface to _set playback format_ and start
+playback. If we so desired, we could also use AudioRenderer to set output
 gain for our audio stream (not shown in this example).
 
 We must **set_error_handler** on each asynchronous interface before using it.
@@ -64,7 +64,7 @@ shutdown process.
 
 ##### Set Playback Format
 
-We populate an `AudioPcmFormat` struct with the appropriate number of channels,
+We populate an `AudioStreamType` struct with the appropriate number of channels,
 sample rate, and sample format. This example uses 32-bit floating-point format,
 playing a 1-channel signal at 48 kHz.
 
@@ -81,7 +81,7 @@ be writable and readable.
 
 This example uses the VMO mapper object from FBL, to create and map this memory
 section, before instructing the audio renderer to use this section via the
-`SetPayloadBuffer` call.
+`AddPayloadBuffer` call.
 
 ##### Write Audio Data Into the Shared Buffer
 
@@ -174,5 +174,5 @@ Our Shutdown function unmaps our section of shared memory and closes (resets)
 our VMO object. It also posts a Quit task to our message loop thread, allowing
 it to exit its "dutiful" wait (and immediately thereafter, the app). Once the
 main function exits, our MediaApp object is destroyed, and at this point any
-remaining FIDL interface (`AudioRenderer2`, in case of normal shutdown) is
+remaining FIDL interface (`AudioRenderer`, in case of normal shutdown) is
 released.

@@ -6,13 +6,14 @@
 #define GARNET_EXAMPLES_MEDIA_SIMPLE_SINE_SYNC_SIMPLE_SINE_SYNC_H_
 
 #include <fuchsia/media/cpp/fidl.h>
-#include <lib/vmo-utils/vmo_mapper.h>
+#include <lib/fzl/vmo-mapper.h>
+#include "lib/component/cpp/startup_context.h"
 
 namespace examples {
 
 class MediaApp {
  public:
-  MediaApp();
+  MediaApp(std::unique_ptr<component::StartupContext> context);
   ~MediaApp();
 
   void set_verbose(bool verbose) { verbose_ = verbose; }
@@ -28,7 +29,7 @@ class MediaApp {
 
  private:
   bool AcquireRenderer();
-  void SetMediaType();
+  void SetStreamType();
 
   zx_status_t CreateMemoryMapping();
 
@@ -36,14 +37,15 @@ class MediaApp {
 
   bool RefillBuffer();
 
-  fuchsia::media::AudioPacket CreateAudioPacket(size_t payload_num);
-  bool SendAudioPacket(fuchsia::media::AudioPacket packet);
+  fuchsia::media::StreamPacket CreateAudioPacket(size_t payload_num);
+  bool SendAudioPacket(fuchsia::media::StreamPacket packet);
 
   void WaitForPackets(size_t num_packets);
 
-  fuchsia::media::AudioRenderer2Sync2Ptr audio_renderer_;
+  fuchsia::media::AudioOutSyncPtr audio_renderer_;
 
-  vmo_utils::VmoMapper payload_buffer_;
+  std::unique_ptr<component::StartupContext> context_;
+  fzl::VmoMapper payload_buffer_;
   size_t sample_size_;
   size_t payload_size_;
   size_t total_mapping_size_;

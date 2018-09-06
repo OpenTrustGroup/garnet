@@ -4,6 +4,7 @@
 
 #include <wlan/mlme/mac_frame.h>
 
+#include <wlan/mlme/debug.h>
 #include <wlan/mlme/packet.h>
 
 #include <fbl/algorithm.h>
@@ -12,20 +13,22 @@
 namespace wlan {
 
 template <typename Body>
-zx_status_t BuildMgmtFrame(MgmtFrame<Body>* out_frame, size_t body_payload_len, bool has_ht_ctrl) {
-    size_t hdr_len = sizeof(MgmtFrameHeader) + (has_ht_ctrl ? kHtCtrlLen : 0);
-    size_t body_len = sizeof(Body) + body_payload_len;
-    size_t frame_len = hdr_len + body_len;
+zx_status_t CreateMgmtFrame(MgmtFrame<Body>* out_frame, size_t body_payload_len, bool has_ht_ctrl) {
+    size_t max_frame_len = MgmtFrameHeader::max_len() + Body::max_len() + body_payload_len;
 
-    auto pkt = Packet::CreateWlanPacket(frame_len);
-    if (pkt == nullptr) { return ZX_ERR_NO_RESOURCES; }
+    auto buffer = GetBuffer(max_frame_len);
+    if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
+
+    auto packet = fbl::make_unique<Packet>(fbl::move(buffer), max_frame_len);
+    packet->set_peer(Packet::Peer::kWlan);
 
     // Zero out the packet buffer by default for the management frame.
-    pkt->clear();
+    packet->clear();
 
-    MgmtFrame<Body> frame(fbl::move(pkt));
+    MgmtFrame<Body> frame(fbl::move(packet));
     if (!frame.HasValidLen()) { return ZX_ERR_BUFFER_TOO_SMALL; }
 
+    frame.hdr()->fc.set_type(FrameType::kManagement);
     frame.hdr()->fc.set_subtype(Body::Subtype());
     if (has_ht_ctrl) { frame.hdr()->fc.set_htc_order(1); }
 
@@ -34,8 +37,8 @@ zx_status_t BuildMgmtFrame(MgmtFrame<Body>* out_frame, size_t body_payload_len, 
 }
 
 #define DECLARE_BUILD_MGMTFRAME(bodytype)                                                    \
-    template zx_status_t BuildMgmtFrame(MgmtFrame<bodytype>* frame, size_t body_payload_len, \
-                                        bool has_ht_ctrl)
+    template zx_status_t CreateMgmtFrame(MgmtFrame<bodytype>* frame, size_t reserved_ie_len, \
+                                         bool has_ht_ctrl)
 
 DECLARE_BUILD_MGMTFRAME(ProbeRequest);
 DECLARE_BUILD_MGMTFRAME(ProbeResponse);
@@ -45,8 +48,7 @@ DECLARE_BUILD_MGMTFRAME(Deauthentication);
 DECLARE_BUILD_MGMTFRAME(AssociationRequest);
 DECLARE_BUILD_MGMTFRAME(AssociationResponse);
 DECLARE_BUILD_MGMTFRAME(Disassociation);
-DECLARE_BUILD_MGMTFRAME(AddBaRequestFrame);
-DECLARE_BUILD_MGMTFRAME(AddBaResponseFrame);
+DECLARE_BUILD_MGMTFRAME(ActionFrame);
 
 // IEEE Std 802.11-2016, 10.3.2.11.2 Table 10-3 SNS1
 seq_t NextSeqNo(const MgmtFrameHeader& hdr, Sequence* seq) {
@@ -101,6 +103,36 @@ void SetSeqNo(DataFrameHeader* hdr, Sequence* seq) {
     ZX_DEBUG_ASSERT(hdr != nullptr && seq != nullptr);
     seq_t seq_no = NextSeqNo(*hdr, seq);
     hdr->sc.set_seq(seq_no);
+}
+
+zx_status_t DeaggregateAmsdu(const DataFrameView<AmsduSubframeHeader>& data_amsdu_frame, MsduCallback cb) {
+    auto amsdu_subframe = data_amsdu_frame.SkipHeader();
+    while (amsdu_subframe) {
+        finspect("amsdu subframe: %s\n", debug::Describe(*amsdu_subframe.hdr()).c_str());
+        finspect("amsdu subframe dump: %s\n",
+                 debug::HexDump(amsdu_subframe.data(), amsdu_subframe.len()).c_str());
+
+        // Note: msdu_len == 0 is valid
+        size_t msdu_len = amsdu_subframe.hdr()->msdu_len();
+        if (msdu_len > 0) {
+            if (auto llc_frame =
+                    amsdu_subframe.CheckBodyType<LlcHeader>().CheckLength().SkipHeader()) {
+                size_t payload_len = msdu_len - llc_frame.hdr()->len();
+                cb(llc_frame, payload_len);
+            } else {
+                errorf("malformed A-MSDU subframe: amsdu_len %zu, msdu_len %zu\n",
+                       amsdu_subframe.len(), msdu_len);
+                return ZX_ERR_IO;
+            }
+        }
+
+        // Advance to next AMSDU subframe by skipping AMSDU header, MSDU and an optional padding.
+        size_t base_len = amsdu_subframe.hdr()->len() + msdu_len;
+        size_t padded_len = fbl::round_up(base_len, 4u);
+        amsdu_subframe = amsdu_subframe.AdvanceBy(padded_len).As<AmsduSubframeHeader>().CheckLength();
+    }
+
+    return ZX_OK;
 }
 
 }  // namespace wlan

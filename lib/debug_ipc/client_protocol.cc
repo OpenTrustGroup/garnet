@@ -66,11 +66,20 @@ bool Deserialize(MessageReader* reader, Module* module) {
 };
 
 bool Deserialize(MessageReader* reader, Register* reg) {
-  if (!reader->ReadString(&reg->name))
+  if (!reader->ReadUint32(reinterpret_cast<uint32_t*>(&reg->id)))
     return false;
-  if (!reader->ReadUint64(&reg->value))
+  // Length is sent implicitly.
+  uint32_t length;
+  if (!reader->ReadUint32(&length))
     return false;
-  return true;
+  reg->data.resize(length);
+  return reader->ReadBytes(length, &reg->data[0]);
+}
+
+bool Deserialize(MessageReader* reader, RegisterCategory* reg_cat) {
+  if (!reader->ReadUint32(reinterpret_cast<uint32_t*>(&reg_cat->type)))
+    return false;
+  return Deserialize(reader, &reg_cat->registers);
 }
 
 bool Deserialize(MessageReader* reader, StackFrame* frame) {
@@ -239,7 +248,7 @@ void WriteRequest(const ResumeRequest& request, uint32_t transaction_id,
                   MessageWriter* writer) {
   writer->WriteHeader(MsgHeader::Type::kResume, transaction_id);
   writer->WriteUint64(request.process_koid);
-  writer->WriteUint64(request.thread_koid);
+  Serialize(request.thread_koids, writer);
   writer->WriteUint32(static_cast<uint32_t>(request.how));
   writer->WriteUint64(request.range_begin);
   writer->WriteUint64(request.range_end);
@@ -322,7 +331,7 @@ bool ReadReply(MessageReader* reader, RegistersReply* reply,
     return false;
 
   *transaction_id = header.transaction_id;
-  return Deserialize(reader, &reply->registers);
+  return Deserialize(reader, &reply->categories);
 }
 
 // AddOrChangeBreakpoint -------------------------------------------------------
@@ -454,9 +463,21 @@ bool ReadNotifyException(MessageReader* reader, NotifyException* notify) {
     return false;
   notify->type = static_cast<NotifyException::Type>(type);
 
-  if (!Deserialize(reader, &notify->frame))
+  if (!Deserialize(reader, &notify->frames))
     return false;
   return Deserialize(reader, &notify->hit_breakpoints);
+}
+
+bool ReadNotifyModules(MessageReader* reader, NotifyModules* notify) {
+  MsgHeader header;
+  if (!reader->ReadHeader(&header))
+    return false;
+  if (!reader->ReadUint64(&notify->process_koid))
+    return false;
+
+  if (!Deserialize(reader, &notify->modules))
+    return false;
+  return Deserialize(reader, &notify->stopped_thread_koids);
 }
 
 }  // namespace debug_ipc

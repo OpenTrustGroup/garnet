@@ -19,11 +19,11 @@ class GpuResource;
 class GpuScanout {
  public:
   GpuScanout() = default;
-  GpuScanout(GpuBitmap surface) : surface_(fbl::move(surface)) {}
+  GpuScanout(GpuBitmap surface) : surface_(std::move(surface)) {}
 
   virtual ~GpuScanout() = default;
 
-  void SetBitmap(GpuBitmap bitmap) { surface_ = fbl::move(bitmap); }
+  void SetBitmap(GpuBitmap bitmap) { surface_ = std::move(bitmap); }
 
   uint32_t width() const { return surface_.width(); }
   uint32_t height() const { return surface_.height(); }
@@ -35,8 +35,6 @@ class GpuScanout {
 
   // Called whenever the scanout bitmap has been redrawn.
   virtual void InvalidateRegion(const GpuRect& rect) {}
-
-  void Draw(const GpuResource& res, const GpuRect& src, const GpuRect& dest);
 
   virtual void SetResource(GpuResource* res,
                            const virtio_gpu_set_scanout_t* request);

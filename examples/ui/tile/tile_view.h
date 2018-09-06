@@ -9,10 +9,10 @@
 #include <memory>
 
 #include <fuchsia/sys/cpp/fidl.h>
-#include <fuchsia/ui/views_v1/cpp/fidl.h>
 #include <fuchsia/ui/policy/cpp/fidl.h>
+#include <fuchsia/ui/viewsv1/cpp/fidl.h>
 #include "garnet/examples/ui/tile/tile_params.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
 #include "lib/svc/cpp/service_provider_bridge.h"
@@ -21,12 +21,13 @@
 
 namespace examples {
 
-class TileView : public mozart::BaseView, public fuchsia::ui::policy::Presenter {
+class TileView : public mozart::BaseView,
+                 public fuchsia::ui::policy::Presenter {
  public:
-  TileView(::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-           fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+  TileView(::fuchsia::ui::viewsv1::ViewManagerPtr view_manager,
+           fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
                view_owner_request,
-           fuchsia::sys::StartupContext* startup_context,
+           component::StartupContext* startup_context,
            const TileParams& tile_params);
 
   ~TileView() override;
@@ -42,24 +43,25 @@ class TileView : public mozart::BaseView, public fuchsia::ui::policy::Presenter 
     const uint32_t key;
     fuchsia::sys::ComponentControllerPtr controller;
     scenic::EntityNode host_node;
+    scenic::ShapeNode clip_shape_node;
 
-    ::fuchsia::ui::views_v1::ViewProperties view_properties;
-    ::fuchsia::ui::views_v1::ViewInfo view_info;
+    ::fuchsia::ui::viewsv1::ViewProperties view_properties;
+    ::fuchsia::ui::viewsv1::ViewInfo view_info;
   };
 
   // |BaseView|:
   void OnChildAttached(
       uint32_t child_key,
-      ::fuchsia::ui::views_v1::ViewInfo child_view_info) override;
+      ::fuchsia::ui::viewsv1::ViewInfo child_view_info) override;
   void OnChildUnavailable(uint32_t child_key) override;
   void OnSceneInvalidated(
       fuchsia::images::PresentationInfo presentation_info) override;
 
   // |Presenter|:
   void Present(
-      fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner>
-          view_owner,
-      fidl::InterfaceRequest<fuchsia::ui::policy::Presentation> presentation) override;
+      fidl::InterfaceHandle<::fuchsia::ui::viewsv1token::ViewOwner> view_owner,
+      fidl::InterfaceRequest<fuchsia::ui::policy::Presentation> presentation)
+      override;
   void HACK_SetRendererParams(
       bool enable_clipping,
       ::fidl::VectorPtr<fuchsia::ui::gfx::RendererParam> params) override{};
@@ -72,19 +74,18 @@ class TileView : public mozart::BaseView, public fuchsia::ui::policy::Presenter 
   void ConnectViews();
 
   void AddChildView(
-      fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner>
-          view_owner,
+      fidl::InterfaceHandle<::fuchsia::ui::viewsv1token::ViewOwner> view_owner,
       const std::string& url, fuchsia::sys::ComponentControllerPtr);
   void RemoveChildView(uint32_t child_key);
 
   // Nested environment within which the apps started by TileView will run.
   fuchsia::sys::EnvironmentPtr env_;
   fuchsia::sys::EnvironmentControllerPtr env_controller_;
-  fuchsia::sys::ServiceProviderBridge service_provider_bridge_;
+  component::ServiceProviderBridge service_provider_bridge_;
   fuchsia::sys::LauncherPtr env_launcher_;
 
   // Context inherited when TileView is launched.
-  fuchsia::sys::StartupContext* startup_context_;
+  component::StartupContext* startup_context_;
 
   // Parsed command-line parameters for this program.
   TileParams params_;

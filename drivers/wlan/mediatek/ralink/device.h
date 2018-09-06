@@ -4,14 +4,15 @@
 
 #pragma once
 
+#include <ddk/device.h>
 #include <ddk/driver.h>
-#include <ddk/usb-request.h>
-#include <driver/usb.h>
+#include <ddk/protocol/usb.h>
+#include <ddk/usb/usb.h>
 #include <fbl/unique_ptr.h>
 #include <lib/fit/function.h>
 #include <lib/zx/time.h>
-#include <wlan/async/dispatcher.h>
 #include <wlan/protocol/mac.h>
+#include <wlan/protocol/phy-impl.h>
 #include <zircon/compiler.h>
 
 #include <fuchsia/wlan/device/cpp/fidl.h>
@@ -45,8 +46,9 @@ class WlanmacIfcProxy {
     void CompleteTx(wlan_tx_packet_t* pkt, zx_status_t status) {
         ifc_->complete_tx(cookie_, pkt, status);
     }
-    void Indication(uint32_t ind) {
-        ifc_->indication(cookie_, ind);
+    void Indication(uint32_t ind) { ifc_->indication(cookie_, ind); }
+    void ReportTxStatus(const wlan_tx_status_t* tx_status) {
+        ifc_->report_tx_status(cookie_, tx_status);
     }
 
    private:
@@ -54,7 +56,7 @@ class WlanmacIfcProxy {
     void* cookie_;
 };
 
-class Device : public ::fuchsia::wlan::device::Phy {
+class Device {
    public:
     Device(zx_device_t* device, usb_protocol_t usb, uint8_t bulk_in,
            std::vector<uint8_t>&& bulk_out);
@@ -63,12 +65,15 @@ class Device : public ::fuchsia::wlan::device::Phy {
     zx_status_t Bind();
 
     // ddk device methods
-    void Unbind();
-    void Release();
-    zx_status_t Ioctl(uint32_t op, const void* in_buf, size_t in_len, void* out_buf, size_t out_len,
-                      size_t* out_actual);
+    void PhyUnbind();
+    void PhyRelease();
     void MacUnbind();
     void MacRelease();
+
+    // ddk wlanphy_protocol_ops
+    zx_status_t PhyQuery(wlanphy_info_t* info);
+    zx_status_t CreateIface(uint16_t role, uint16_t* id);
+    zx_status_t DestroyIface(uint16_t id);
 
     // ddk wlanmac_protocol_ops methods
     zx_status_t WlanmacQuery(uint32_t options, wlanmac_info_t* info);
@@ -81,11 +86,7 @@ class Device : public ::fuchsia::wlan::device::Phy {
     zx_status_t WlanmacConfigureBeacon(uint32_t options, wlan_tx_packet_t* pkt);
     zx_status_t WlanmacSetKey(uint32_t options, wlan_key_config_t* key_config);
 
-    virtual void Query(QueryCallback callback) override;
-    virtual void CreateIface(::fuchsia::wlan::device::CreateIfaceRequest req,
-                             CreateIfaceCallback callback) override;
-    virtual void DestroyIface(::fuchsia::wlan::device::DestroyIfaceRequest req,
-                              DestroyIfaceCallback callback) override;
+    zx_status_t Query(wlan_info_t* info);
 
    private:
     struct TxCalibrationValues {
@@ -129,8 +130,6 @@ class Device : public ::fuchsia::wlan::device::Phy {
 
     zx_status_t AddPhyDevice();
     zx_status_t AddMacDevice();
-
-    zx_status_t Connect(const void* buf, size_t len);
 
     // read and write general registers
     zx_status_t ReadRegister(uint16_t offset, uint32_t* value);
@@ -182,12 +181,16 @@ class Device : public ::fuchsia::wlan::device::Phy {
     // resets all security aspects for a given WCID and shared key as well as their keys.
     zx_status_t ResetWcid(uint8_t wcid, uint8_t skey, uint8_t key_type);
 
+    // interrupt routines
+    zx_status_t OnTxReportInterruptTimer();
+    zx_status_t OnTbttInterruptTimer();
+    zx_status_t InterruptWorker();
+
     // initialization functions
     zx_status_t LoadFirmware();
     zx_status_t EnableRadio();
     zx_status_t StartInterruptPolling();
     void StopInterruptPolling();
-    zx_status_t InterruptWorker();
     zx_status_t InitRegisters();
     zx_status_t InitBbp();
     zx_status_t InitBbp5592();
@@ -220,7 +223,10 @@ class Device : public ::fuchsia::wlan::device::Phy {
     void HandleRxComplete(usb_request_t* request);
     void HandleTxComplete(usb_request_t* request);
 
-    zx_status_t FillAggregation(BulkoutAggregation* aggr, wlan_tx_packet_t* wlan_pkt,
+    wlan_tx_status ReadTxStatsFifoEntry(int packet_id) __TA_REQUIRES(lock_);
+    int WriteTxStatsFifoEntry(const wlan_tx_packet_t& wlan_pkt);
+
+    zx_status_t FillAggregation(BulkoutAggregation* aggr, wlan_tx_packet_t* wlan_pkt, int packet_id,
                                 size_t aggr_payload_len);
     uint8_t LookupTxWcid(const uint8_t* addr1, bool protected_frame);
 
@@ -242,16 +248,21 @@ class Device : public ::fuchsia::wlan::device::Phy {
     size_t GetL2PadLen(const wlan_tx_packet_t& wlan_pkt);
     zx_device_t* parent_ = nullptr;
     zx_device_t* zxdev_ = nullptr;
-    zx_device_t* wlanmac_dev_ = nullptr;
+    zx_device_t* wlanmac_dev_ __TA_GUARDED(lock_) = nullptr;
     usb_protocol_t usb_;
 
     uint8_t rx_endpt_ = 0;
     std::vector<uint8_t> tx_endpts_;
 
     std::mutex lock_;
-    bool dead_ __TA_GUARDED(lock_) = false;
+    enum { PHY_RUNNING, PHY_DESTROYING } phy_state_ __TA_GUARDED(lock_) = PHY_RUNNING;
+    enum {
+        IFC_NONE,
+        IFC_CREATING,
+        IFC_RUNNING,
+        IFC_DESTROYING
+    } iface_state_ __TA_GUARDED(lock_) = IFC_NONE;
     fbl::unique_ptr<WlanmacIfcProxy> wlanmac_proxy_ __TA_GUARDED(lock_);
-    wlan::async::Dispatcher<::fuchsia::wlan::device::Phy> dispatcher_;
 
     constexpr static size_t kEepromSize = 0x0100;
     std::array<uint16_t, kEepromSize> eeprom_ = {};
@@ -288,18 +299,32 @@ class Device : public ::fuchsia::wlan::device::Phy {
     uint8_t bssid_[6];
 
     std::vector<usb_request_t*> free_write_reqs_ __TA_GUARDED(lock_);
-    uint16_t iface_id_ = 0;
-    uint16_t iface_role_ = 0;
+    uint16_t iface_id_ __TA_GUARDED(lock_) = 0;
+    uint16_t iface_role_ __TA_GUARDED(lock_) = 0;
+
+    // TX statistics reporting
+    struct TxStatsFifoEntry {
+        // Destination mac address, or addr1 in packet header.
+        uint8_t peer_addr[6] = {};
+        // Used by Minstrel as an index into its rate table.
+        uint16_t rate_idx = 0;
+        // True iff this FIFO entry is in use.
+        bool in_use = false;
+    };
+    static constexpr int kTxStatsFifoSize = 16;
+    TxStatsFifoEntry tx_stats_fifo_[kTxStatsFifoSize] __TA_GUARDED(lock_);
+    int tx_stats_fifo_counter_ __TA_GUARDED(lock_) = 0;
 
     // Thread which periodically reads interrupt registers.
     // Required because the device doesn't support USB interrupt endpoints.
-    constexpr static zx::duration kInterruptReadTimeout = zx::msec(1);
-    constexpr static zx::duration kPreTbttLeadTime = zx::msec(6);
-    // Message which will shut down the currently running interrupt thread.
-    static constexpr uint64_t kIntPortPktShutdown = 1;
     std::thread interrupt_thrd_;
     zx::port interrupt_port_;
-    zx::timer interrupt_timer_;
+
+    // Timer which handles asynchronous TX reports.
+    zx::timer async_tx_interrupt_timer_;
+
+    // Timer which handles TBTT interrupts for 802.11 beacon frames.
+    zx::timer tbtt_interrupt_timer_;
 };
 
 }  // namespace ralink

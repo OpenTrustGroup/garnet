@@ -11,11 +11,11 @@
 
 #include <fuchsia/ui/input/cpp/fidl.h>
 #include <fuchsia/ui/policy/cpp/fidl.h>
-#include <fuchsia/ui/views_v1/cpp/fidl.h>
+#include <fuchsia/ui/viewsv1/cpp/fidl.h>
 #include "garnet/bin/ui/input_reader/input_reader.h"
-#include "garnet/bin/ui/root_presenter/presentation_new.h"
-#include "garnet/bin/ui/root_presenter/presentation_old.h"
-#include "lib/app/cpp/startup_context.h"
+#include "garnet/bin/ui/root_presenter/presentation1.h"
+#include "garnet/bin/ui/root_presenter/presentation2.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/macros.h"
@@ -24,7 +24,7 @@
 
 namespace root_presenter {
 
-class PresentationOld;
+class Presentation1;
 
 // The presenter provides a |fuchsia::ui::policy::Presenter| service which
 // displays UI by attaching the provided view to the root of a new view tree
@@ -47,10 +47,10 @@ class App : public fuchsia::ui::policy::Presenter,
 
  private:
   // |Presenter|
-  void Present(fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner>
-                   view_owner,
-               fidl::InterfaceRequest<fuchsia::ui::policy::Presentation>
-                   presentation_request) override;
+  void Present(
+      fidl::InterfaceHandle<::fuchsia::ui::viewsv1token::ViewOwner> view_owner,
+      fidl::InterfaceRequest<fuchsia::ui::policy::Presentation>
+          presentation_request) override;
 
   // |Presenter|
   void HACK_SetRendererParams(
@@ -79,17 +79,26 @@ class App : public fuchsia::ui::policy::Presenter,
   Presentation::ShutdownCallback GetShutdownCallback(
       Presentation* presentation);
 
-  std::unique_ptr<fuchsia::sys::StartupContext> startup_context_;
+  std::unique_ptr<component::StartupContext> startup_context_;
   fidl::BindingSet<fuchsia::ui::policy::Presenter> presenter_bindings_;
   fidl::BindingSet<fuchsia::ui::policy::Presenter2> presenter2_bindings_;
   fidl::BindingSet<fuchsia::ui::input::InputDeviceRegistry>
       input_receiver_bindings_;
   mozart::InputReader input_reader_;
 
-  ::fuchsia::ui::views_v1::ViewManagerPtr view_manager_;
+  ::fuchsia::ui::viewsv1::ViewManagerPtr view_manager_;
   fuchsia::ui::scenic::ScenicPtr scenic_;
 
   std::unique_ptr<scenic::Session> session_;
+  // Today, we have a global, singleton compositor, and it is managed solely by
+  // a root presenter. Hence, a single resource ID is sufficient to identify it.
+  // Additionally, it is a system invariant that any compositor is created and
+  // managed by a root presenter. We may relax these constraints in the
+  // following order:
+  // * Root presenter creates multiple compositors. Here, a resource ID for each
+  //   compositor would still be sufficient to uniquely identify it.
+  // * Root presenter delegates the creation of compositors. Here, we would
+  //   need to generalize the identifier to include the delegate's session ID.
   std::unique_ptr<scenic::DisplayCompositor> compositor_;
   std::unique_ptr<scenic::LayerStack> layer_stack_;
 

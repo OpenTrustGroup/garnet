@@ -10,16 +10,17 @@
 
 #include <utility>
 
+#include "garnet/bin/appmgr/job_provider_impl.h"
 #include "garnet/bin/appmgr/realm.h"
 #include "garnet/bin/appmgr/util.h"
-#include "lib/app/cpp/environment_services.h"
 
 namespace component {
 
 Namespace::Namespace(fxl::RefPtr<Namespace> parent, Realm* realm,
-                     fuchsia::sys::ServiceListPtr service_list)
-    : vfs_(async_get_default()),
+                     fuchsia::sys::ServiceListPtr additional_services)
+    : vfs_(async_get_default_dispatcher()),
       services_(fbl::AdoptRef(new ServiceProviderDirImpl())),
+      job_provider_(fbl::AdoptRef(new JobProviderImpl(realm))),
       parent_(parent),
       realm_(realm) {
   if (parent_) {
@@ -43,16 +44,16 @@ Namespace::Namespace(fxl::RefPtr<Namespace> parent, Realm* realm,
       Launcher::Name_);
   services_->AddService(
       fbl::AdoptRef(new fs::Service([this](zx::channel channel) {
-        fuchsia::sys::ConnectToEnvironmentService(
+        realm_->environment_services()->ConnectToService(
             fidl::InterfaceRequest<fuchsia::process::Launcher>(
                 std::move(channel)));
         return ZX_OK;
       })),
       fuchsia::process::Launcher::Name_);
 
-  if (service_list) {
-    auto& names = service_list->names;
-    additional_services_ = service_list->provider.Bind();
+  if (additional_services) {
+    auto& names = additional_services->names;
+    additional_services_ = additional_services->provider.Bind();
     for (auto& name : *names) {
       services_->AddService(
           fbl::AdoptRef(new fs::Service([this, name](zx::channel channel) {
@@ -101,6 +102,10 @@ void Namespace::CreateComponent(
 
 zx::channel Namespace::OpenServicesAsDirectory() {
   return Util::OpenAsDirectory(&vfs_, services_);
+}
+
+void Namespace::SetServicesWhitelist(const std::vector<std::string>& services) {
+  services_->SetServicesWhitelist(services);
 }
 
 }  // namespace component

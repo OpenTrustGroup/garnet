@@ -12,8 +12,8 @@
 #include <lib/async/default.h>
 #include <zx/time.h>
 
-#include "lib/app/cpp/connect.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/connect.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/log_settings.h"
@@ -35,7 +35,7 @@ class InputApp {
  public:
   InputApp(async::Loop* loop)
       : loop_(loop),
-        startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
+        startup_context_(component::StartupContext::CreateFromStartupInfo()) {
     registry_ = startup_context_->ConnectToEnvironmentService<
         fuchsia::ui::input::InputDeviceRegistry>();
   }
@@ -259,7 +259,7 @@ class InputApp {
 
     zx::duration delta = zx::msec(duration_ms);
     async::PostDelayedTask(
-        async_get_default(),
+        async_get_default_dispatcher(),
         fxl::MakeCopyable([this, device = std::move(input_device)]() mutable {
           // UP
           fuchsia::ui::input::TouchscreenReportPtr touchscreen =
@@ -292,7 +292,7 @@ class InputApp {
 
     zx::duration delta = zx::msec(duration_ms);
     async::PostDelayedTask(
-        async_get_default(),
+        async_get_default_dispatcher(),
         fxl::MakeCopyable([this, device = std::move(input_device)]() mutable {
           // RELEASED
           fuchsia::ui::input::KeyboardReportPtr keyboard =
@@ -328,7 +328,7 @@ class InputApp {
 
     zx::duration delta = zx::msec(duration_ms);
     async::PostDelayedTask(
-        async_get_default(),
+        async_get_default_dispatcher(),
         fxl::MakeCopyable(
             [this, device = std::move(input_device), x1, y1]() mutable {
               // MOVE
@@ -362,7 +362,7 @@ class InputApp {
   }
 
   async::Loop* const loop_;
-  std::unique_ptr<fuchsia::sys::StartupContext> startup_context_;
+  std::unique_ptr<component::StartupContext> startup_context_;
   fidl::InterfacePtr<fuchsia::ui::input::InputDeviceRegistry> registry_;
 };
 }  // namespace input
@@ -372,9 +372,9 @@ int main(int argc, char** argv) {
   if (!fxl::SetLogSettingsFromCommandLine(command_line))
     return 1;
 
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
   input::InputApp app(&loop);
-  async::PostTask(loop.async(),
+  async::PostTask(loop.dispatcher(),
                   [&app, command_line] { app.Run(command_line); });
   loop.Run();
   return 0;

@@ -6,14 +6,14 @@
 
 #include <ddk/device.h>
 #include <fuchsia/wlan/tap/cpp/fidl.h>
-#include <zx/channel.h>
 #include <lib/async/dispatcher.h>
 #include <wlan/protocol/wlantap.h>
+#include <zx/channel.h>
 
 namespace wlan {
 
 zx_status_t CreatePhy(zx_device_t* wlantapctl, zx::channel user_channel,
                       std::unique_ptr<::fuchsia::wlan::tap::WlantapPhyConfig> ioctl_in,
-                      async_t* loop);
+                      async_dispatcher_t* loop);
 
-} // namespace wlan
+}  // namespace wlan

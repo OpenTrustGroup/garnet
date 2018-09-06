@@ -24,7 +24,9 @@
 
 namespace debug_agent {
 
-DebugAgent::DebugAgent(debug_ipc::StreamBuffer* stream) : stream_(stream) {}
+DebugAgent::DebugAgent(debug_ipc::StreamBuffer* stream,
+                       std::shared_ptr<component::Services> services)
+    : stream_(stream), services_(services) {}
 
 DebugAgent::~DebugAgent() {}
 
@@ -50,7 +52,7 @@ void DebugAgent::OnHello(const debug_ipc::HelloRequest& request,
 
 void DebugAgent::OnLaunch(const debug_ipc::LaunchRequest& request,
                           debug_ipc::LaunchReply* reply) {
-  Launcher launcher;
+  Launcher launcher(services_);
   reply->status = launcher.Setup(request.argv);
   if (reply->status != ZX_OK)
     return;
@@ -111,9 +113,20 @@ void DebugAgent::OnAttach(std::vector<char> serialized) {
   debug_ipc::WriteReply(reply, transaction_id, &writer);
   stream()->Write(writer.MessageComplete());
 
-  // For valid attaches, follow up with the current thread list.
-  if (new_process)
+  // For valid attaches, follow up with the current module and thread lists.
+  if (new_process) {
     new_process->PopulateCurrentThreads();
+
+    if (new_process->RegisterDebugState()) {
+      // Suspend all threads while the module list is being sent. The client
+      // will resume the threads once it's loaded symbols and processed
+      // breakpoints (this may take a while and we'd like to get any
+      // breakpoints as early as possible).
+      std::vector<uint64_t> paused_thread_koids;
+      new_process->PauseAll(&paused_thread_koids);
+      new_process->SendModuleNotification(std::move(paused_thread_koids));
+    }
+  }
 }
 
 void DebugAgent::OnDetach(const debug_ipc::DetachRequest& request,
@@ -160,7 +173,7 @@ void DebugAgent::OnModules(const debug_ipc::ModulesRequest& request,
                            debug_ipc::ModulesReply* reply) {
   DebuggedProcess* proc = GetDebuggedProcess(request.process_koid);
   if (proc)
-    GetModulesForProcess(proc->process(), &reply->modules);
+    proc->OnModules(reply);
 }
 
 void DebugAgent::OnProcessTree(const debug_ipc::ProcessTreeRequest& request,
@@ -183,13 +196,12 @@ void DebugAgent::OnReadMemory(const debug_ipc::ReadMemoryRequest& request,
     proc->OnReadMemory(request, reply);
 }
 
-void DebugAgent::OnRegisters(
-    const debug_ipc::RegistersRequest& request,
-    debug_ipc::RegistersReply* reply) {
-  DebuggedThread *thread = GetDebuggedThread(request.process_koid,
-                                             request.thread_koid);
+void DebugAgent::OnRegisters(const debug_ipc::RegistersRequest& request,
+                             debug_ipc::RegistersReply* reply) {
+  DebuggedThread* thread =
+      GetDebuggedThread(request.process_koid, request.thread_koid);
   if (thread)
-    thread->GetRegisters(&reply->registers);
+    thread->GetRegisters(&reply->categories);
 }
 
 void DebugAgent::OnAddOrChangeBreakpoint(

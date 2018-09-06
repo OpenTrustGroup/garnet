@@ -5,21 +5,25 @@
 #ifndef LIB_ESCHER_FORWARD_DECLARATIONS_H_
 #define LIB_ESCHER_FORWARD_DECLARATIONS_H_
 
-namespace fxl {
-template <typename T>
-class RefPtr;
-}  // namespace fxl
+#include "lib/fxl/memory/ref_ptr.h"
+#include "lib/fxl/memory/weak_ptr.h"
 
 namespace escher {
 
+class BatchGpuUploader;
+class BlockAllocator;
 class Buffer;
+class BufferCache;
 class Camera;
+struct ClipPlanes;
 class CommandBuffer;
+class DefaultShaderProgramFactory;
 class Escher;
 class Frame;
 class Framebuffer;
 class GpuAllocator;
 class GpuMem;
+class HackFilesystem;
 class Image;
 class ImageFactory;
 class ImageView;
@@ -34,11 +38,13 @@ class Object;
 // a PipelineLayout in impl/vk.
 class PipelineLayout;
 class PaperRenderer;
+class PaperRenderQueue;
 class Resource;
 class ResourceRecycler;
 class Renderer;
 class RenderPass;
 struct RenderPassInfo;
+struct RenderQueueItem;
 class Semaphore;
 class ShaderProgram;
 class ShadowMap;
@@ -48,16 +54,18 @@ class Stage;
 class Texture;
 class Timestamper;
 class TimestampProfiler;
+struct UniformAllocation;
 class ViewingVolume;
 struct VulkanContext;
 struct VulkanSwapchain;
 
 typedef fxl::RefPtr<Buffer> BufferPtr;
 typedef fxl::RefPtr<CommandBuffer> CommandBufferPtr;
-typedef fxl::RefPtr<Escher> EscherPtr;
+typedef fxl::WeakPtr<Escher> EscherWeakPtr;
 typedef fxl::RefPtr<Frame> FramePtr;
 typedef fxl::RefPtr<Framebuffer> FramebufferPtr;
 typedef fxl::RefPtr<GpuMem> GpuMemPtr;
+typedef fxl::RefPtr<HackFilesystem> HackFilesystemPtr;
 typedef fxl::RefPtr<Image> ImagePtr;
 typedef fxl::RefPtr<ImageView> ImageViewPtr;
 typedef fxl::RefPtr<Material> MaterialPtr;
@@ -83,6 +91,7 @@ class CommandBuffer;
 class CommandBufferPool;
 class CommandBufferSequencer;
 class ComputeShader;
+class FrameManager;
 class GlslToSpirvCompiler;
 class GpuUploader;
 class ImageCache;
@@ -98,6 +107,7 @@ class Pipeline;
 class PipelineCache;
 class SsdoAccelerator;
 class SsdoSampler;
+class UniformBufferPool;
 
 typedef fxl::RefPtr<ModelData> ModelDataPtr;
 typedef fxl::RefPtr<ModelDisplayList> ModelDisplayListPtr;
@@ -105,6 +115,7 @@ typedef fxl::RefPtr<ModelPipelineCache> ModelPipelineCachePtr;
 typedef fxl::RefPtr<ModelRenderer> ModelRendererPtr;
 typedef fxl::RefPtr<ModelRenderPass> ModelRenderPassPtr;
 typedef fxl::RefPtr<Pipeline> PipelinePtr;
+typedef fxl::WeakPtr<UniformBufferPool> UniformBufferPoolWeakPtr;
 
 // From escher/vk/impl
 class DescriptorSetAllocator;

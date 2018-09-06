@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_HCI_SEQUENTIAL_COMMAND_RUNNER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_HCI_SEQUENTIAL_COMMAND_RUNNER_H_
 
 #include <queue>
 
@@ -58,7 +59,7 @@ class Transport;
 // SequentialCommandRunner is being constructed.
 class SequentialCommandRunner final {
  public:
-  SequentialCommandRunner(async_t* dispatcher,
+  SequentialCommandRunner(async_dispatcher_t* dispatcher,
                           fxl::RefPtr<Transport> transport);
   ~SequentialCommandRunner();
 
@@ -122,7 +123,7 @@ class SequentialCommandRunner final {
   void Reset();
   void NotifyStatusAndReset(Status status);
 
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
   fxl::RefPtr<Transport> transport_;
 
   struct QueuedCommand {
@@ -157,3 +158,5 @@ class SequentialCommandRunner final {
 
 }  // namespace hci
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_HCI_SEQUENTIAL_COMMAND_RUNNER_H_

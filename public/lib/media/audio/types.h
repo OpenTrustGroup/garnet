@@ -11,40 +11,11 @@
 
 namespace media {
 
-// Template struct for determining traits of sample types.
-template <typename Sample>
-struct SampleTypeTraits;
-
-template <>
-struct SampleTypeTraits<uint8_t> {
-  static constexpr fuchsia::media::AudioSampleFormat kSampleFormat =
-      fuchsia::media::AudioSampleFormat::UNSIGNED_8;
-};
-
-template <>
-struct SampleTypeTraits<int16_t> {
-  static constexpr fuchsia::media::AudioSampleFormat kSampleFormat =
-      fuchsia::media::AudioSampleFormat::SIGNED_16;
-};
-
-template <>
-struct SampleTypeTraits<int32_t> {
-  static constexpr fuchsia::media::AudioSampleFormat kSampleFormat =
-      fuchsia::media::AudioSampleFormat::SIGNED_24_IN_32;
-};
-
-template <>
-struct SampleTypeTraits<float> {
-  static constexpr fuchsia::media::AudioSampleFormat kSampleFormat =
-      fuchsia::media::AudioSampleFormat::FLOAT;
-};
-
 // Returns the size in bytes of samples of the specified format.
 uint32_t BytesPerSample(fuchsia::media::AudioSampleFormat format);
 
-// Creates a |MediaType| for LPCM audio.
-// TODO(dalesat): Need to add channel configuration.
-fuchsia::media::MediaType CreateLpcmMediaType(
+// Creates an |AudioStreamType| for LPCM audio. |channel_count| may not be zero.
+fuchsia::media::AudioStreamType CreateAudioStreamType(
     fuchsia::media::AudioSampleFormat sample_format, uint32_t channel_count,
     uint32_t frames_per_second);
 

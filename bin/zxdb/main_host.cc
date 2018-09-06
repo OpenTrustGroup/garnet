@@ -6,10 +6,32 @@
 
 #include "garnet/bin/zxdb/client/session.h"
 #include "garnet/bin/zxdb/console/console.h"
+#include "garnet/bin/zxdb/console/flags.h"
+#include "garnet/bin/zxdb/console/output_buffer.h"
 #include "garnet/lib/debug_ipc/helper/buffered_fd.h"
 #include "garnet/lib/debug_ipc/helper/message_loop_poll.h"
+#include "garnet/public/lib/fxl/command_line.h"
+#include "garnet/public/lib/fxl/strings/string_printf.h"
+
+// Defined below. Main should be on top.
+void ScheduleActions(zxdb::Session&, zxdb::Console&,
+                     std::vector<zxdb::Action>&&);
 
 int main(int argc, char* argv[]) {
+  // Process the cmd line and get any actions required to run at startup.
+  std::vector<zxdb::Action> actions;
+  zxdb::Err err;
+  fxl::CommandLine cmd_line = fxl::CommandLineFromArgcArgv(argc, argv);
+  zxdb::FlagProcessResult flag_res =
+      zxdb::ProcessCommandLine(cmd_line, &err, &actions);
+  if (flag_res == zxdb::FlagProcessResult::kError) {
+    fprintf(stderr, "Error parsing command line flags: %s\n",
+            err.msg().c_str());
+    return 1;
+  } else if (flag_res == zxdb::FlagProcessResult::kQuit) {
+    return 0;
+  }
+
   debug_ipc::MessageLoopPoll loop;
   loop.Init();
 
@@ -21,10 +43,26 @@ int main(int argc, char* argv[]) {
     // Route data from buffer -> session.
     zxdb::Session session;
     buffer.set_data_available_callback(
-        [&session](){ session.OnStreamReadable(); });
+        [&session]() { session.OnStreamReadable(); });
 
     zxdb::Console console(&session);
-    console.Init();
+
+    if (flag_res == zxdb::FlagProcessResult::kActions) {
+      ScheduleActions(session, console, std::move(actions));
+    } else {
+      // Interactive mode is the default mode.
+      console.Init();
+
+      // Tip for connecting when run interactively.
+      zxdb::OutputBuffer help;
+      help.Append(zxdb::Syntax::kWarning, "👉 ");
+      help.Append(
+          zxdb::Syntax::kComment,
+          "Please \"connect <ip>:<port>\" matching what you passed to\n   "
+          "\"debug_agent --port=<port>\" on the target system. Or try "
+          "\"help\".");
+      console.Output(std::move(help));
+    }
 
     loop.Run();
   }
@@ -32,4 +70,26 @@ int main(int argc, char* argv[]) {
   loop.Cleanup();
 
   return 0;
+}
+
+void ScheduleActions(zxdb::Session& session, zxdb::Console& console,
+                     std::vector<zxdb::Action>&& actions) {
+  auto callback = [&](zxdb::Err err) {
+    std::string msg;
+    if (!err.has_error()) {
+      msg = "All actions were executed successfully.";
+    } else if (err.type() == zxdb::ErrType::kCanceled) {
+      msg = "Action processing was cancelled.";
+    } else {
+      msg = fxl::StringPrintf("Error executing actions: %s", err.msg().c_str());
+    }
+    // We go into interactive mode.
+    console.Init();
+  };
+
+  // This will add the actions to the MessageLoop and oversee that all the
+  // actions run or the flow is interrupted if one of them fails.
+  // Actions run on a singleton ActionFlow instance.
+  zxdb::ActionFlow& flow = zxdb::ActionFlow::Singleton();
+  flow.ScheduleActions(std::move(actions), &session, &console, callback);
 }

@@ -17,14 +17,13 @@ class ParameterizedWrapper final : public ReceiveMode {
  public:
   ParameterizedWrapper() : mode_(reliability_and_ordering) {}
 
-  bool Begin(uint64_t seq, StatusCallback ready) override {
-    return mode_.Begin(seq, std::move(ready));
+  void Begin(uint64_t seq, BeginCallback ready) override {
+    mode_.Begin(seq, std::move(ready));
   }
-  bool Completed(uint64_t seq, const Status& status) override {
-    return mode_.Completed(seq, status);
+  void Completed(uint64_t seq, const Status& status) override {
+    mode_.Completed(seq, status);
   }
-  AckFrame GenerateAck() const override { return mode_.GenerateAck(); }
-  uint64_t WindowBase() const override { return mode_.WindowBase(); }
+  void Close(const Status& status) override { mode_.Close(status); }
 
  private:
   ParameterizedReceiveMode mode_;
@@ -33,7 +32,7 @@ class ParameterizedWrapper final : public ReceiveMode {
 template <class Type>
 class ReceiveModeTest : public ::testing::Test {
  public:
-  bool Begin(uint64_t seq) {
+  void Begin(uint64_t seq) {
     auto cb = StatusCallback(ALLOCATED_CALLBACK, [=](const Status& status) {
       auto it = expected_begin_cbs_.find(seq);
       if (it == expected_begin_cbs_.end()) {
@@ -47,7 +46,7 @@ class ReceiveModeTest : public ::testing::Test {
       }
       expected_begin_cbs_.erase(it);
     });
-    return type_.Begin(seq, std::move(cb));
+    type_.Begin(seq, std::move(cb));
   }
 
   void ExpectBegin(uint64_t seq, StatusCode expect) {
@@ -55,11 +54,9 @@ class ReceiveModeTest : public ::testing::Test {
     expected_begin_cbs_[seq] = expect;
   }
 
-  bool Completed(uint64_t seq, const Status& status) {
-    return type_.Completed(seq, status);
+  void Completed(uint64_t seq, const Status& status) {
+    type_.Completed(seq, status);
   }
-
-  AckFrame GenerateAck() { return type_.GenerateAck(); }
 
   ~ReceiveModeTest() {
     for (auto exp : expected_begin_cbs_) {
@@ -88,17 +85,12 @@ typedef ::testing::Types<
     ReceiveModeTypes;
 TYPED_TEST_CASE(ReceiveModeTest, ReceiveModeTypes);
 
-TYPED_TEST(ReceiveModeTest, InitialAck) {
-  EXPECT_EQ(AckFrame(1, 0, 0, {}), this->GenerateAck());
-}
-
 TYPED_TEST(ReceiveModeTest, SimpleInSeq) {
   for (uint64_t i = 1u; i <= 10u; i++) {
     this->ExpectBegin(i, StatusCode::OK);
     this->Begin(i);
     this->Completed(i, Status::Ok());
   }
-  EXPECT_EQ(AckFrame(11, 0, 0, {}), this->GenerateAck());
 }
 
 TYPED_TEST(ReceiveModeTest, SmallBatchInSeq) {
@@ -145,8 +137,7 @@ typedef ::testing::Types<
 TYPED_TEST_CASE(ReliableOrderedTest, ReliableOrderedTypes);
 
 TYPED_TEST(ReliableOrderedTest, MissedOneThenGotIt) {
-  EXPECT_TRUE(this->Begin(2));
-  EXPECT_EQ(AckFrame(1, 0, 0, {1}), this->GenerateAck());
+  this->Begin(2);
   this->ExpectBegin(1, StatusCode::OK);
   this->Begin(1);
   this->ExpectBegin(2, StatusCode::OK);
@@ -167,8 +158,7 @@ TYPED_TEST_CASE(ReliableUnorderedTest, ReliableUnorderedTypes);
 
 TYPED_TEST(ReliableUnorderedTest, MissedOneThenGotIt) {
   this->ExpectBegin(2, StatusCode::OK);
-  EXPECT_TRUE(this->Begin(2));
-  EXPECT_EQ(AckFrame(1, 0, 0, {1}), this->GenerateAck());
+  this->Begin(2);
   this->ExpectBegin(1, StatusCode::OK);
   this->Begin(1);
   this->Completed(1, Status::Ok());
@@ -246,10 +236,6 @@ TYPED_TEST(ErrorTest, BeginAlwaysFails) {
   }
 }
 
-TYPED_TEST(ErrorTest, ErrorInitialAck) {
-  EXPECT_EQ(AckFrame(1, 0, 0, {}), this->GenerateAck());
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 // Fuzzer found failures
 //
@@ -262,140 +248,176 @@ TYPED_TEST(ErrorTest, ErrorInitialAck) {
 TEST(ReceiveModeFuzzed, _18dd797d7734fe115b89e72e79a26713c480096c) {
   receive_mode::ParameterizedReceiveMode m(
       static_cast<ReliabilityAndOrdering>(1));
-  m.GenerateAck();
   m.Begin(112ull, StatusCallback([](const Status&) {}));
-  m.GenerateAck();
   m.Begin(1125899905794047ull, StatusCallback([](const Status&) {}));
-  m.GenerateAck();
 }
 
 // Originally led to an out of range index into a bitset
 TEST(ReceiveModeFuzzed, _0ea3e010446b0d18d1a08efc4e7f028372140b81) {
   receive_mode::ParameterizedReceiveMode m(
       static_cast<ReliabilityAndOrdering>(3));
-  m.GenerateAck();
   m.Begin(450ull, StatusCallback([](const Status&) {}));
-  m.GenerateAck();
 }
 
 // Originally led to an OOM generating nacks
 TEST(ReceiveModeFuzzed, _feac8b7a55c39b0d70f86f40d340888a25ea69b8) {
   receive_mode::ParameterizedReceiveMode m(
       static_cast<ReliabilityAndOrdering>(4));
-  m.GenerateAck();
   m.Begin(1ull, StatusCallback([](const Status&) {}));
-  m.GenerateAck();
   m.Begin(143547839805374333ull, StatusCallback([](const Status&) {}));
-  m.GenerateAck();
   m.Begin(139044205818265471ull, StatusCallback([](const Status&) {}));
-  m.GenerateAck();
   m.Begin(0ull, StatusCallback([](const Status&) {}));
-  m.GenerateAck();
 }
 
 // Originally led to a crash
 TEST(ReceiveModeFuzzed, _75079e04acd10ecdf49c97c714f344c811e870dd) {
   receive_mode::Fuzzer m(3);
   m.Step();
-  if (!m.Begin(3ull)) return;
+  if (!m.Begin(3ull))
+    return;
   m.Step();
-  if (!m.Begin(33ull)) return;
+  if (!m.Begin(33ull))
+    return;
   m.Step();
-  if (!m.Begin(255ull)) return;
+  if (!m.Begin(255ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(89ull)) return;
+  if (!m.Begin(89ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(2ull)) return;
+  if (!m.Begin(2ull))
+    return;
   m.Step();
-  if (!m.Completed(1ull, 0)) return;
+  if (!m.Completed(1ull, 0))
+    return;
   m.Step();
-  if (!m.Begin(112ull)) return;
+  if (!m.Begin(112ull))
+    return;
   m.Step();
-  if (!m.Begin(0ull)) return;
+  if (!m.Begin(0ull))
+    return;
   m.Step();
-  if (!m.Begin(3ull)) return;
+  if (!m.Begin(3ull))
+    return;
   m.Step();
-  if (!m.Begin(3ull)) return;
+  if (!m.Begin(3ull))
+    return;
   m.Step();
-  if (!m.Begin(33ull)) return;  // Crash occurred here, rest of test clipped.
+  if (!m.Begin(33ull))
+    return;  // Crash occurred here, rest of test clipped.
 }
 
 TEST(ReceiveModeFuzzed, _6b1d71bc2330430a1719c9774a7408bbd3aa7f29) {
   receive_mode::Fuzzer m(2);
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Completed(1ull, 1)) return;
+  if (!m.Completed(1ull, 1))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(2ull)) return;
+  if (!m.Begin(2ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(3ull)) return;
+  if (!m.Begin(3ull))
+    return;
   m.Step();
-  if (!m.Begin(3ull)) return;
+  if (!m.Begin(3ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(112ull)) return;
+  if (!m.Begin(112ull))
+    return;
   m.Step();
-  if (!m.Begin(0ull)) return;
+  if (!m.Begin(0ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Completed(1ull, 0)) return;
+  if (!m.Completed(1ull, 0))
+    return;
   m.Step();
-  if (!m.Begin(30331092862ull)) return;
+  if (!m.Begin(30331092862ull))
+    return;
   m.Step();
-  if (!m.Begin(68ull)) return;
+  if (!m.Begin(68ull))
+    return;
   m.Step();
-  if (!m.Begin(10737418235ull)) return;
+  if (!m.Begin(10737418235ull))
+    return;
   m.Step();
-  if (!m.Begin(112ull)) return;
+  if (!m.Begin(112ull))
+    return;
   m.Step();
-  if (!m.Begin(0ull)) return;
+  if (!m.Begin(0ull))
+    return;
   m.Step();
-  if (!m.Begin(34357641211ull)) return;
+  if (!m.Begin(34357641211ull))
+    return;
   m.Step();
-  if (!m.Begin(268435451ull)) return;
+  if (!m.Begin(268435451ull))
+    return;
   m.Step();
-  if (!m.Begin(10737418235ull)) return;
+  if (!m.Begin(10737418235ull))
+    return;
   m.Step();
-  if (!m.Begin(112ull)) return;  // Crash occurred here, rest of test clipped.
+  if (!m.Begin(112ull))
+    return;  // Crash occurred here, rest of test clipped.
 }
 
 TEST(ReceiveModeFuzzed, _d7c39af715153bc0ca5dcfd96c38a0774f73967b) {
   receive_mode::Fuzzer m(3);
   m.Step();
-  if (!m.Begin(0ull)) return;
+  if (!m.Begin(0ull))
+    return;
   m.Step();
-  if (!m.Begin(18446744073709551615ull)) return;
+  if (!m.Begin(18446744073709551615ull))
+    return;
   m.Step();
 }
 
@@ -403,80 +425,115 @@ TEST(ReceiveModeFuzzed, _d7c39af715153bc0ca5dcfd96c38a0774f73967b) {
 TEST(ReceiveModeFuzzed, _b26f6446c4a821539edb0e106c30f50bff6ad176) {
   receive_mode::Fuzzer m(3);
   m.Step();
-  if (!m.Begin(64ull)) return;
+  if (!m.Begin(64ull))
+    return;
   m.Step();
-  if (!m.Begin(40ull)) return;
+  if (!m.Begin(40ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(41ull)) return;
+  if (!m.Begin(41ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(0ull)) return;
+  if (!m.Begin(0ull))
+    return;
   m.Step();
-  if (!m.Begin(496667600076670ull)) return;
+  if (!m.Begin(496667600076670ull))
+    return;
   m.Step();
-  if (!m.Begin(68ull)) return;
+  if (!m.Begin(68ull))
+    return;
   m.Step();
-  if (!m.Begin(8796084633595ull)) return;
+  if (!m.Begin(8796084633595ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(9ull)) return;
+  if (!m.Begin(9ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(139044205818265471ull)) return;
+  if (!m.Begin(139044205818265471ull))
+    return;
   m.Step();
-  if (!m.Begin(18446744073709551615ull)) return;
+  if (!m.Begin(18446744073709551615ull))
+    return;
   m.Step();
-  if (!m.Begin(229ull)) return;
+  if (!m.Begin(229ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(16383ull)) return;
+  if (!m.Begin(16383ull))
+    return;
   m.Step();
-  if (!m.Begin(4088538316667ull)) return;
+  if (!m.Begin(4088538316667ull))
+    return;
   m.Step();
-  if (!m.Begin(246ull)) return;
+  if (!m.Begin(246ull))
+    return;
   m.Step();
-  if (!m.Begin(18446744073709551615ull)) return;
+  if (!m.Begin(18446744073709551615ull))
+    return;
   m.Step();
-  if (!m.Begin(229ull)) return;
+  if (!m.Begin(229ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(1ull)) return;
+  if (!m.Begin(1ull))
+    return;
   m.Step();
-  if (!m.Begin(16383ull)) return;
+  if (!m.Begin(16383ull))
+    return;
   m.Step();
-  if (!m.Begin(562949408145275ull)) return;
+  if (!m.Begin(562949408145275ull))
+    return;
   m.Step();
-  if (!m.Begin(10737418235ull)) return;
+  if (!m.Begin(10737418235ull))
+    return;
   m.Step();
-  if (!m.Begin(112ull)) return;
+  if (!m.Begin(112ull))
+    return;
   m.Step();
-  if (!m.Begin(0ull)) return;
+  if (!m.Begin(0ull))
+    return;
   m.Step();
 }
 
 TEST(ReceiveModeFuzzed, _c5e4ebd8acd50abb27258f73956647303d781a45) {
   receive_mode::Fuzzer m(1);
   m.Step();
-  if (!m.Begin(18446744073709551615ull)) return;
+  if (!m.Begin(18446744073709551615ull))
+    return;
   m.Step();
-  if (!m.Completed(18446744073709551615ull, 0)) return;
+  if (!m.Completed(18446744073709551615ull, 0))
+    return;
   m.Step();
 }
 

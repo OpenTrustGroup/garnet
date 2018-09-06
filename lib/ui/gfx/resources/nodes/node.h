@@ -6,19 +6,25 @@
 #define GARNET_LIB_UI_GFX_RESOURCES_NODES_NODE_H_
 
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "garnet/lib/ui/gfx/resources/nodes/variable_binding.h"
 #include "garnet/lib/ui/gfx/resources/resource.h"
 #include "garnet/lib/ui/gfx/resources/variable.h"
 #include "lib/escher/geometry/transform.h"
+#include "lib/fxl/memory/ref_ptr.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 class Node;
+class Scene;
 class View;
+class ViewHolder;
+
 using NodePtr = fxl::RefPtr<Node>;
+using ViewHolderPtr = fxl::RefPtr<ViewHolder>;
 
 // Node is an abstract base class for all the concrete node types listed in
 // scene/services/nodes.fidl.
@@ -29,8 +35,11 @@ class Node : public Resource {
   virtual ~Node() override;
 
   bool AddChild(NodePtr child_node);
-  bool DetachChildren();
   bool AddPart(NodePtr part_node);
+  bool DetachChildren();
+
+  bool AddViewHolder(ViewHolderPtr view_holder);
+  void EraseViewHolder(ViewHolderPtr view_holder);
 
   bool SetTagValue(uint32_t tag_value);
   uint32_t tag_value() const { return tag_value_; }
@@ -72,13 +81,20 @@ class Node : public Resource {
 
   Node* parent() const { return parent_; }
 
-  View* view() const { return view_; }
+  // Each Node caches its containing Scene.  This is nullptr if the Node is not
+  // part of a Scene.
+  Scene* scene() const { return scene_; }
 
-  void set_view(View* view) { view_ = view; }
+  // Each Node which is the direct child of a View caches its parent.
+  View* view() const { return view_; }
 
   const std::vector<NodePtr>& children() const { return children_; }
 
   const std::vector<NodePtr>& parts() const { return parts_; }
+
+  const std::unordered_set<ViewHolderPtr>& view_holders() const {
+    return view_holders_;
+  }
 
   bool SetEventMask(uint32_t event_mask) override;
 
@@ -97,29 +113,53 @@ class Node : public Resource {
   virtual bool GetIntersection(const escher::ray4& ray,
                                float* out_distance) const;
 
+  // Walk up tree until we find the responsible View; otherwise return nullptr.
+  // N.B. Typically the view and node are in the same session, but it's possible
+  // to have them inhabit different sessions.
+  View* FindOwningView() const;
+
  protected:
-  Node(Session* session, scenic::ResourceId node_id,
+  Node(Session* session, ResourceId node_id,
        const ResourceTypeInfo& type_info);
 
  private:
-  void InvalidateGlobalTransform();
-  void ComputeGlobalTransform() const;
-
-  void ErasePart(Node* part);
-  void EraseChild(Node* child);
-
   // Describes the manner in which a node is related to its parent.
   enum class ParentRelation { kNone, kChild, kPart, kImportDelegate };
 
-  // Identifies a specific property.
+  // Identifies a specific spatial property.
   enum NodeProperty { kTranslation, kScale, kRotation, kAnchor };
 
+  void InvalidateGlobalTransform();
+  void ComputeGlobalTransform() const;
+
+  void SetParent(Node* parent, ParentRelation relation);
+  void EraseChild(Node* part);
+  void ErasePart(Node* part);
+
+  // Reset the parent and any dependent properties like scene and global
+  // transform.  This allows "detaching" from the parent without affecting the
+  // parent itself or firing the on_detached callback (which affects the
+  // containing View).
+  //
+  // Only called internally by the Node on its children, never externally.
+  void DetachInternal();
+  void RefreshScene(Scene* new_scene);
+
+  // Called by View in order to set itself as a parent.
+  // TODO(SCN-820): Remove when parent-child relationships are split out of Node
+  // and View.
+  void set_view(View* view) { view_ = view; }
+
   uint32_t tag_value_ = 0u;
+
   Node* parent_ = nullptr;
+  Scene* scene_ = nullptr;
   View* view_ = nullptr;
   ParentRelation parent_relation_ = ParentRelation::kNone;
+
   std::vector<NodePtr> children_;
   std::vector<NodePtr> parts_;
+  std::unordered_set<ViewHolderPtr> view_holders_;
 
   std::unordered_map<NodeProperty, std::unique_ptr<VariableBinding>>
       bound_variables_;
@@ -131,6 +171,11 @@ class Node : public Resource {
   ::fuchsia::ui::gfx::HitTestBehavior hit_test_behavior_ =
       ::fuchsia::ui::gfx::HitTestBehavior::kDefault;
   ::fuchsia::ui::gfx::Metrics reported_metrics_;
+
+  // Used for |set_view|.
+  // TODO(SCN-820): Remove when parent-child relationships are split out of Node
+  // and View.
+  friend class View;
 };
 
 // Inline functions.
@@ -144,6 +189,6 @@ inline const escher::mat4& Node::GetGlobalTransform() const {
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_RESOURCES_NODES_NODE_H_

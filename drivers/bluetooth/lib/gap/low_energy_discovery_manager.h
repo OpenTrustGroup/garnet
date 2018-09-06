@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GAP_LOW_ENERGY_DISCOVERY_MANAGER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GAP_LOW_ENERGY_DISCOVERY_MANAGER_H_
 
 #include <memory>
 #include <queue>
@@ -219,7 +220,7 @@ class LowEnergyDiscoveryManager final : public hci::LowEnergyScanner::Delegate {
   void StartScan();
 
   // The dispatcher that we use for invoking callbacks asynchronously.
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
 
   // The device cache that we use for storing and looking up scan results. We
   // hold a raw pointer as we expect this to out-live us.
@@ -262,3 +263,5 @@ class LowEnergyDiscoveryManager final : public hci::LowEnergyScanner::Delegate {
 
 }  // namespace gap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GAP_LOW_ENERGY_DISCOVERY_MANAGER_H_

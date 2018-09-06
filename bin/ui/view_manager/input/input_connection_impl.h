@@ -6,7 +6,7 @@
 #define GARNET_BIN_UI_VIEW_MANAGER_INPUT_INPUT_CONNECTION_IMPL_H_
 
 #include <fuchsia/ui/input/cpp/fidl.h>
-#include <fuchsia/ui/views_v1/cpp/fidl.h>
+#include <fuchsia/ui/viewsv1/cpp/fidl.h>
 #include <lib/fit/function.h>
 
 #include "lib/fidl/cpp/binding.h"
@@ -28,11 +28,11 @@ class InputConnectionImpl : public fuchsia::ui::input::InputConnection,
  public:
   InputConnectionImpl(
       ViewInspector* inspector, InputOwner* owner,
-      ::fuchsia::ui::views_v1_token::ViewToken view_token,
+      ::fuchsia::ui::viewsv1token::ViewToken view_token,
       fidl::InterfaceRequest<fuchsia::ui::input::InputConnection> request);
   ~InputConnectionImpl() override;
 
-  ::fuchsia::ui::views_v1_token::ViewToken view_token() const {
+  ::fuchsia::ui::viewsv1token::ViewToken view_token() const {
     return view_token_;
   }
 
@@ -50,6 +50,8 @@ class InputConnectionImpl : public fuchsia::ui::input::InputConnection,
       fidl::InterfaceHandle<fuchsia::ui::input::InputMethodEditorClient> client,
       fidl::InterfaceRequest<fuchsia::ui::input::InputMethodEditor> editor)
       override;
+  void ShowKeyboard() override;
+  void HideKeyboard() override;
 
   // |fuchsia::ui::input::InputMethodEditor|
   void SetState(fuchsia::ui::input::TextInputState state) override;
@@ -76,7 +78,7 @@ class InputConnectionImpl : public fuchsia::ui::input::InputConnection,
 
   ViewInspector* const inspector_;
   InputOwner* const owner_;
-  ::fuchsia::ui::views_v1_token::ViewToken view_token_;
+  ::fuchsia::ui::viewsv1token::ViewToken view_token_;
   fuchsia::ui::input::InputListenerPtr event_listener_;
 
   fidl::Binding<fuchsia::ui::input::InputConnection> binding_;
@@ -89,7 +91,6 @@ class InputConnectionImpl : public fuchsia::ui::input::InputConnection,
   fidl::Binding<fuchsia::ui::input::InputMethodEditorClient> client_binding_;
   fuchsia::ui::input::InputMethodEditorPtr editor_;
 
-  fuchsia::ui::input::SoftKeyboardContainerPtr container_;
   fuchsia::ui::input::ImeServicePtr ime_service_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(InputConnectionImpl);

@@ -5,7 +5,7 @@
     <import remote="https://fuchsia.googlesource.com/third_party/boringssl"
             manifest="manifest"
             name="third_party/boringssl"
-            revision="ae7c2e833919e755b02ba411fd45dec118f66c0a"/>
+            revision="7ae3682570b4547e3a9b8ff41de5c69e0253fd49"/>
     <import remote="https://review.gerrithub.io/OpenTrustGroup/manifest"
             remotebranch="gzos"
             manifest="gzos"
@@ -21,7 +21,7 @@
     <project name="external/github.com/catapult-project/catapult"
              path="third_party/catapult"
              remote="https://chromium.googlesource.com/catapult"
-             revision="34f0d7e2e45f3c8796b6f37fd99ea1117f6218b2"/>
+             revision="0b0c562ad76ab04814ac17bb4259ad115593210a"/>
     <project name="libc-tests"
              path="third_party/libc-tests"
              remote="https://fuchsia.googlesource.com/libc-tests"
@@ -48,11 +48,6 @@
              remote="https://fuchsia.googlesource.com/third_party/asio"
              gerrithost="https://fuchsia-review.googlesource.com"
              revision="b7b0aeca406bb60e981c20e6a9af1d0aae31fc48"/>
-    <project name="third_party/benchmark"
-             path="third_party/benchmark"
-             remote="https://fuchsia.googlesource.com/third_party/benchmark"
-             gerrithost="https://fuchsia-review.googlesource.com"
-             revision="21f1eb3fe269ea43eba862bf6b699cde46587ade"/>
     <project name="third_party/cares"
              path="third_party/cares"
              remote="https://fuchsia.googlesource.com/third_party/c-ares"
@@ -61,17 +56,17 @@
     <project name="cobalt"
              path="third_party/cobalt"
              remote="https://fuchsia.googlesource.com/cobalt"
-             revision="182c4f8c894593f925f081299c70ffa579e0812b"
+             revision="8476c92346dd4cca6a351d5a2d400c712007d85b"
              gerrithost="https://fuchsia-review.googlesource.com"/>
     <project name="cobalt_config"
              path="third_party/cobalt_config"
              remote="https://cobalt-analytics.googlesource.com/config"
-             revision="c6d9ede885cd6a1d0419be8f598438e1ce76228b"
+             revision="b25e0919147aab8031fc0c2f1553c76c2de2ac3f"
              gerrithost="https://cobalt-analytics-review.googlesource.com"/>
     <project name="third_party/crashpad"
              path="third_party/crashpad"
              remote="https://chromium.googlesource.com/crashpad/crashpad"
-             revision="2771ebf805aed81c95bf1d8dc9ee404b603df025"
+             revision="f8b0538406ea35cd19beb33f1f9c48807c670014"
              gerrithost="https://fuchsia-review.googlesource.com"/>
     <project name="third_party/curl"
              path="third_party/curl"
@@ -120,10 +115,10 @@
     <project name="third_party/go"
              remote="https://fuchsia.googlesource.com/third_party/go"
              gerrithost="https://fuchsia-review.googlesource.com"
-             revision="a207fddc3b389a1f7a33028281482cabbaec2098"
+             revision="24a2483ad1fb3ee0af0cbf655a278881a04c53aa"
              path="third_party/go"/>
-    <project name="go_x_crypto"
-             path="third_party/golang/crypto"
+    <project name="third_party/golibs/golang.org/x/crypto"
+             path="third_party/golibs/golang.org/x/crypto"
              remote="https://fuchsia.googlesource.com/third_party/golang/crypto"
              gerrithost="https://fuchsia-review.googlesource.com"
              revision="c78caca803c95773f48a844d3dcab04b9bc4d6dd"/>
@@ -141,7 +136,7 @@
              path="third_party/golibs/github.com/rjw57/oauth2device"
              remote="https://fuchsia.googlesource.com/third_party/github.com/rjw57/oauth2device"
              gerrithost="https://fuchsia-review.googlesource.com"
-             revision="b258d5df36ce010053017146a79f287d8a31e874"/>
+             revision="bdda779088fb7d541bfc2b682a7949061817eb46"/>
     <project name="third_party/golibs/github.com/google/subcommands"
              path="third_party/golibs/github.com/google/subcommands"
              remote="https://fuchsia.googlesource.com/third_party/github.com/google/subcommands"
@@ -176,7 +171,7 @@
              path="third_party/golibs/github.com/golang/protobuf"
              remote="https://fuchsia.googlesource.com/third_party/github.com/golang/protobuf"
              gerrithost="https://fuchsia-review.googlesource.com"
-             revision="82b9a4b6ce577ceea38bd1c60d1d7a793eac6e9d"/>
+             revision="a8c86c1ebfbf816a3a824ea4472ba69149e2efac"/>
     <project name="third_party/googletest"
              path="third_party/googletest"
              remote="https://fuchsia.googlesource.com/third_party/googletest"
@@ -197,7 +192,7 @@
              path="third_party/icu"
              remote="https://fuchsia.googlesource.com/third_party/icu"
              gerrithost="https://fuchsia-review.googlesource.com"
-             revision="8894665e5662b64e05386efdbaedcbc6095ca970"/>
+             revision="15006476e9d2f5c7d6691f3658fecff4929aaf68"/>
     <project name="third_party/iperf"
              path="third_party/iperf"
              remote="https://fuchsia.googlesource.com/third_party/iperf"
@@ -221,7 +216,7 @@
     <project name="third_party/mesa"
              path="third_party/mesa"
              remote="https://fuchsia.googlesource.com/third_party/mesa"
-             revision="21602aa6ba545baeaca0783cef4c38442debd1f5"
+             revision="20a71578dc2349dcb36226aa6cb964fe0f0489ec"
              gerrithost="https://fuchsia-review.googlesource.com"/>
     <project name="third_party/mini_chromium"
              path="third_party/crashpad/third_party/mini_chromium/mini_chromium"
@@ -229,9 +224,9 @@
              revision="5544d67ab99a7e14c98142ed4dc50ecff7fb37bc"
              gerrithost="https://fuchsia-review.googlesource.com"/>
     <project name="third_party/netstack"
-             path="third_party/netstack"
+             path="third_party/golibs/github.com/google/netstack"
              remote="https://fuchsia.googlesource.com/third_party/netstack"
-             revision="7120fac20a0811e662e74d6c209052966beae6d4"
+             revision="fec645892d75353b1eac2a3ab7bcf103b3bfa25b"
              gerrithost="https://fuchsia-review.googlesource.com"/>
     <project name="third_party/processor-trace"
              path="third_party/processor-trace"
@@ -252,7 +247,7 @@
     <project name="rust-crates"
              path="third_party/rust-crates"
              remote="https://fuchsia.googlesource.com/third_party/rust-crates"
-             revision="65d17ec270c4ea62c2f3259ce51cfcdcfbd9be54"
+             revision="636593008780030311a2bb648de40364a0112805"
              gerrithost="https://fuchsia-review.googlesource.com"/>
     <project name="third_party/cargo-vendor"
              path="third_party/rust-mirrors/cargo-vendor"
@@ -272,18 +267,23 @@
     <project name="third_party/xi-editor"
              path="third_party/rust-mirrors/xi-editor"
              remote="https://fuchsia.googlesource.com/third_party/xi-editor"
-             revision="2100f968cb9a5f9e55f96962ec72a0f6e4147cfb"
+             revision="9e86a2a9a2b099805cc048fc1a164b2da4ac283b"
              gerrithost="https://fuchsia-review.googlesource.com"/>
     <project name="third_party/rust-mirrors/rand"
              path="third_party/rust-mirrors/rand"
              remote="https://fuchsia.googlesource.com/third_party/rust-mirrors/rand"
              gerrithost="https://fuchsia-review.googlesource.com"
              revision="90bcc0d682d3527105e92dfbef8213058c700f96"/>
+    <project name="third_party/rust-mirrors/rust-crypto"
+             path="third_party/rust-mirrors/rust-crypto"
+             remote="https://fuchsia.googlesource.com/third_party/rust-mirrors/rust-crypto"
+             gerrithost="https://fuchsia-review.googlesource.com"
+             revision="5a39bcd25c4157c64298294de2a53ce3f9ab79c8"/>
     <project name="third_party/rust-mirrors/rustyline"
              path="third_party/rust-mirrors/rustyline"
              remote="https://fuchsia.googlesource.com/third_party/rust-mirrors/rustyline"
              gerrithost="https://fuchsia-review.googlesource.com"
-             revision="3b94c073fadb64e35a9ba6e7fe6b622b0c357771"/>
+             revision="e8637c254e1f5b643dace774ceec268bcee1cb14"/>
     <project name="third_party/sbase"
              path="third_party/sbase"
              remote="https://fuchsia.googlesource.com/third_party/sbase"
@@ -318,7 +318,7 @@
              path="third_party/syzkaller"
              remote="https://fuchsia.googlesource.com/third_party/syzkaller"
              gerrithost="https://fuchsia-review.googlesource.com"
-             revision="f618e0a94bb6cb44b9dda3439af9da822a04c958"/>
+             revision="a11f6eb4e31a474c1d54e9ff9846227be88bb797"/>
     <project name="third_party/openssh-portable"
              path="third_party/openssh-portable"
              remote="https://fuchsia.googlesource.com/third_party/openssh-portable"
@@ -333,11 +333,11 @@
              path="third_party/vulkan-cts"
              remote="https://fuchsia.googlesource.com/third_party/vulkan-cts"
              gerrithost="https://fuchsia-review.googlesource.com"
-             revision="ffe9d5e815f7d87709062726cd14317054aa8ad0"/>
+             revision="89f1c06b31f72615817b8cb69e4c835de1f800d0"/>
     <project name="third_party/vulkan_loader_and_validation_layers"
              path="third_party/vulkan_loader_and_validation_layers"
              remote="https://fuchsia.googlesource.com/third_party/vulkan_loader_and_validation_layers"
-             revision="94f5691c800c55bab144d1bbf11847a4dab8d0ea"
+             revision="fdfa431aa1381f85717cf005df30e34002dded0c"
              gerrithost="https://fuchsia-review.googlesource.com"/>
     <project name="third_party/yasm"
              path="third_party/yasm"
@@ -350,7 +350,6 @@
              gerrithost="https://fuchsia-review.googlesource.com"
              revision="5a6d2ed866da7e104c6e79fc2f2a9d5e0738cb98"/>
 
-    <!-- TODO(INTK-60) should supersede the need for this, as it will be delivered by cipd instead -->
     <project name="third_party/vboot_reference"
              path="third_party/vboot_reference"
              remote="https://fuchsia.googlesource.com/third_party/vboot_reference"
@@ -360,14 +359,6 @@
     <!-- TODO(abarth): These projects have the wrong names. The names should
          match the path under fuchsia.googlesource.com -->
 
-    <project name="glog"
-             path="garnet/go/src/thinfs/vendor/github.com/golang/glog"
-             remote="https://fuchsia.googlesource.com/third_party/golang/glog"
-             revision="23def4e6c14b4da8ac2ed8007337bc5eb5007998"/>
-    <project name="errors"
-             path="garnet/go/src/thinfs/vendor/github.com/pkg/errors"
-             remote="https://fuchsia.googlesource.com/third_party/pkg/errors"
-             revision="839d9e913e063e28dfd0e6c7b7512793e0a48be9"/>
     <project name="goleveldb"
              path="third_party/golibs/github.com/syndtr/goleveldb"
              remote="https://fuchsia.googlesource.com/third_party/goleveldb"
@@ -397,7 +388,7 @@
              path="third_party/golibs/github.com/flynn/go-tuf"
              remote="https://fuchsia.googlesource.com/third_party/go-tuf"
              gerrithost="https://fuchsia-review.googlesource.com"
-             revision="17fe7131b429f3f6144c0ee91f2f0c4cebc779ca"/>
+             revision="18c41c82ff2cbcd22d24b4c96e3d25e3863ce53f"/>
     <project name="go-cmp"
              path="third_party/golibs/github.com/google/go-cmp"
              remote="https://fuchsia.googlesource.com/third_party/github.com/google/go-cmp"

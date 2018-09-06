@@ -15,8 +15,8 @@ namespace escher {
 
 FenceListener::FenceListener(zx::event fence)
     : fence_(std::move(fence)),
-      waiter_(fence_.get(),         // handle
-              kFenceSignalled)      // trigger
+      waiter_(fence_.get(),     // handle
+              kFenceSignalled)  // trigger
 {
   FXL_DCHECK(fence_);
 }
@@ -50,20 +50,19 @@ void FenceListener::WaitReadyAsync(fxl::Closure ready_callback) {
   FXL_DCHECK(!ready_callback_);
 
   if (ready_) {
-    async::PostTask(async_get_default(), std::move(ready_callback));
+    async::PostTask(async_get_default_dispatcher(), std::move(ready_callback));
     return;
   }
 
   waiter_.set_handler(std::bind(&FenceListener::OnFenceSignalled, this,
                                 std::placeholders::_3, std::placeholders::_4));
-  zx_status_t status = waiter_.Begin(async_get_default());
+  zx_status_t status = waiter_.Begin(async_get_default_dispatcher());
   FXL_CHECK(status == ZX_OK);
   ready_callback_ = std::move(ready_callback);
 }
 
-void FenceListener::OnFenceSignalled(
-    zx_status_t status,
-    const zx_packet_signal* signal) {
+void FenceListener::OnFenceSignalled(zx_status_t status,
+                                     const zx_packet_signal* signal) {
   if (status == ZX_OK) {
     zx_signals_t pending = signal->observed;
     FXL_DCHECK(pending & kFenceSignalled);

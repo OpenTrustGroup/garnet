@@ -3,12 +3,17 @@
 # found in the LICENSE file.
 
 import("//build/rust/rustc_library.gni")
+import("//build/package.gni")
 
 rustc_library("wlan-rsn") {
   name = "wlan_rsn"
+  version = "0.1.0"
+  edition = "2018"
+  with_unit_tests = true
 
   deps = [
     "//garnet/lib/rust/crates/eapol",
+    "//garnet/public/rust/crates/mundane",
     "//third_party/rust-crates/rustc_deps:bitfield",
     "//third_party/rust-crates/rustc_deps:byteorder",
     "//third_party/rust-crates/rustc_deps:bytes",
@@ -23,3 +28,12 @@ rustc_library("wlan-rsn") {
   ]
 }
 
+package("wlan-rsn-tests") {
+  testonly = true
+
+  deps = [
+    ":wlan-rsn"
+  ]
+
+  tests = [ { name = "wlan_rsn_lib_test_rustc" } ]
+}

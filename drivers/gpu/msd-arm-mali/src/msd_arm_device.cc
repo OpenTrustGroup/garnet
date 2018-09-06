@@ -4,20 +4,20 @@
 
 #include "msd_arm_device.h"
 
+#include <fbl/string_printf.h>
+
 #include <bitset>
 #include <cinttypes>
 #include <cstdio>
 #include <string>
 
 #include "job_scheduler.h"
-#include "lib/fxl/arraysize.h"
-#include "lib/fxl/strings/string_printf.h"
 #include "magma_util/dlog.h"
 #include "magma_util/macros.h"
 #include "magma_vendor_queries.h"
+#include "platform_barriers.h"
 #include "platform_port.h"
 #include "platform_trace.h"
-#include <ddk/debug.h>
 
 #include "registers.h"
 
@@ -86,6 +86,19 @@ protected:
     }
 
     std::weak_ptr<MsdArmConnection> connection_;
+};
+
+class MsdArmDevice::PerfCounterRequest : public DeviceRequest {
+public:
+    PerfCounterRequest(uint32_t type) : type_(type) {}
+
+protected:
+    magma::Status Process(MsdArmDevice* device) override
+    {
+        return device->ProcessPerfCounterRequest(type_);
+    }
+
+    uint32_t type_;
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -197,6 +210,8 @@ bool MsdArmDevice::Init(void* device_handle)
     enabled_cores = gpu_features_.shader_present;
 #endif
     power_manager_->EnableCores(register_io_.get(), enabled_cores);
+    perf_counters_ = std::make_unique<PerformanceCounters>(this);
+
     return true;
 }
 
@@ -312,6 +327,17 @@ magma::Status MsdArmDevice::ProcessGpuInterrupt()
             enable_reg.WriteTo(register_io_.get());
         }
     }
+    if (irq_status.performance_counter_sample_completed().get()) {
+        uint64_t duration_ms = 0;
+        std::vector<uint32_t> perf_result = perf_counters_->ReadCompleted(&duration_ms);
+
+        magma::log(magma::LOG_INFO, "Performance counter read complete, duration %lu ms:\n",
+                   duration_ms);
+        for (uint32_t i = 0; i < perf_result.size(); ++i) {
+            magma::log(magma::LOG_INFO, "Performance counter %d: %u\n", i, perf_result[i]);
+        }
+        irq_status.performance_counter_sample_completed().set(0);
+    }
 
     if (irq_status.reg_value()) {
         magma::log(magma::LOG_WARNING, "Got unexpected GPU IRQ %d\n", irq_status.reg_value());
@@ -347,6 +373,7 @@ static bool IsHardwareResultCode(uint32_t result)
 {
     switch (result) {
         case kArmMaliResultSuccess:
+        case kArmMaliResultSoftStopped:
         case kArmMaliResultAtomTerminated:
 
         case kArmMaliResultConfigFault:
@@ -384,12 +411,7 @@ magma::Status MsdArmDevice::ProcessJobInterrupt()
         clear_flags.WriteTo(register_io_.get());
         DLOG("Processing job interrupt status %x", irq_status.reg_value());
 
-        if (irq_status.failed_slots().get()) {
-            magma::log(magma::LOG_WARNING, "Got unexpected failed slots %x\n",
-                       irq_status.failed_slots().get());
-            ProcessDumpStatusToLog();
-        }
-
+        bool dumped_on_failure = false;
         uint32_t failed = irq_status.failed_slots().get();
         while (failed) {
             uint32_t slot = __builtin_ffs(failed) - 1;
@@ -398,14 +420,25 @@ magma::Status MsdArmDevice::ProcessJobInterrupt()
 
             if (!IsHardwareResultCode(result))
                 result = kArmMaliResultUnknownFault;
-            scheduler_->JobCompleted(slot, static_cast<ArmMaliResultCode>(result));
+
+            // Soft stopping isn't counted as an actual failure.
+            if (result != kArmMaliResultSoftStopped && !dumped_on_failure) {
+                magma::log(magma::LOG_WARNING, "Got unexpected failed slots %x\n",
+                           irq_status.failed_slots().get());
+                ProcessDumpStatusToLog();
+                dumped_on_failure = true;
+            }
+
+            uint64_t job_tail = regs.Tail().ReadFrom(register_io_.get()).reg_value();
+
+            scheduler_->JobCompleted(slot, static_cast<ArmMaliResultCode>(result), job_tail);
             failed &= ~(1 << slot);
         }
 
         uint32_t finished = irq_status.finished_slots().get();
         while (finished) {
             uint32_t slot = __builtin_ffs(finished) - 1;
-            scheduler_->JobCompleted(slot, kArmMaliResultSuccess);
+            scheduler_->JobCompleted(slot, kArmMaliResultSuccess, 0u);
             finished &= ~(1 << slot);
         }
     }
@@ -603,8 +636,8 @@ void MsdArmDevice::DumpRegisters(const GpuFeatures& features, magma::RegisterIo*
         {"Ready", registers::CoreReadyState::StatusType::kReady},
         {"Transitioning", registers::CoreReadyState::StatusType::kPowerTransitioning},
         {"Power active", registers::CoreReadyState::StatusType::kPowerActive}};
-    for (size_t i = 0; i < arraysize(core_types); i++) {
-        for (size_t j = 0; j < arraysize(status_types); j++) {
+    for (size_t i = 0; i < countof(core_types); i++) {
+        for (size_t j = 0; j < countof(status_types); j++) {
             uint64_t bitmask = registers::CoreReadyState::ReadBitmask(io, core_types[i].type,
                                                                       status_types[j].type);
             dump_state->power_states.push_back({core_types[i].name, status_types[j].name, bitmask});
@@ -662,27 +695,33 @@ void MsdArmDevice::FormatDump(DumpState& dump_state, std::string& dump_string)
 {
     dump_string.append("Core power states\n");
     for (auto& state : dump_state.power_states) {
-        fxl::StringAppendf(&dump_string, "Core type %s state %s bitmap: 0x%lx\n", state.core_type,
-                           state.status_type, state.bitmask);
+        dump_string += fbl::StringPrintf("Core type %s state %s bitmap: 0x%lx\n", state.core_type,
+                                         state.status_type, state.bitmask)
+                           .c_str();
     }
-    fxl::StringAppendf(&dump_string, "Total ms %" PRIu64 " Active ms %" PRIu64 "\n",
-                       dump_state.total_time_ms, dump_state.active_time_ms);
-    fxl::StringAppendf(&dump_string, "Gpu fault status 0x%x, address 0x%lx\n",
-                       dump_state.gpu_fault_status, dump_state.gpu_fault_address);
-    fxl::StringAppendf(&dump_string, "Gpu status 0x%x\n", dump_state.gpu_status);
-    fxl::StringAppendf(&dump_string, "Gpu cycle count %ld, timestamp %ld\n", dump_state.cycle_count,
-                       dump_state.timestamp);
+    dump_string += fbl::StringPrintf("Total ms %" PRIu64 " Active ms %" PRIu64 "\n",
+                                     dump_state.total_time_ms, dump_state.active_time_ms)
+                       .c_str();
+    dump_string += fbl::StringPrintf("Gpu fault status 0x%x, address 0x%lx\n",
+                                     dump_state.gpu_fault_status, dump_state.gpu_fault_address)
+                       .c_str();
+    dump_string += fbl::StringPrintf("Gpu status 0x%x\n", dump_state.gpu_status).c_str();
+    dump_string += fbl::StringPrintf("Gpu cycle count %ld, timestamp %ld\n", dump_state.cycle_count,
+                                     dump_state.timestamp)
+                       .c_str();
     for (size_t i = 0; i < dump_state.job_slot_status.size(); i++) {
         auto* status = &dump_state.job_slot_status[i];
-        fxl::StringAppendf(&dump_string,
-                           "Job slot %zu status 0x%x head 0x%lx tail 0x%lx config 0x%x\n", i,
-                           status->status, status->head, status->tail, status->config);
+        dump_string +=
+            fbl::StringPrintf("Job slot %zu status 0x%x head 0x%lx tail 0x%lx config 0x%x\n", i,
+                              status->status, status->head, status->tail, status->config)
+                .c_str();
     }
     for (size_t i = 0; i < dump_state.address_space_status.size(); i++) {
         auto* status = &dump_state.address_space_status[i];
-        fxl::StringAppendf(&dump_string,
-                           "AS %zu status 0x%x fault status 0x%x fault address 0x%lx\n", i,
-                           status->status, status->fault_status, status->fault_address);
+        dump_string +=
+            fbl::StringPrintf("AS %zu status 0x%x fault status 0x%x fault address 0x%lx\n", i,
+                              status->status, status->fault_status, status->fault_address)
+                .c_str();
     }
 }
 
@@ -728,18 +767,23 @@ void MsdArmDevice::ExecuteAtomOnDevice(MsdArmAtom* atom, magma::RegisterIo* regi
 
     // Skip atom if address space can't be assigned.
     if (!address_manager_->AssignAddressSpace(atom)) {
-        scheduler_->JobCompleted(atom->slot(), kArmMaliResultAtomTerminated);
+        scheduler_->JobCompleted(atom->slot(), kArmMaliResultAtomTerminated, 0u);
         return;
     }
     if (atom->require_cycle_counter()) {
         DASSERT(!atom->using_cycle_counter());
-        atom->set_using_cycle_counter();
+        atom->set_using_cycle_counter(true);
 
         if (++cycle_counter_refcount_ == 1) {
             register_io_->Write32(registers::GpuCommand::kOffset,
                                   registers::GpuCommand::kCmdCycleCountStart);
         }
     }
+
+    // Ensure the client's writes/cache flushes to the job chain are complete
+    // before scheduling. Unlikely to be an issue since several thread and
+    // process hops already happened.
+    magma::barriers::WriteBarrier();
 
     registers::JobSlotRegisters slot(atom->slot());
     slot.HeadNext().FromValue(atom->gpu_address()).WriteTo(register_io);
@@ -772,11 +816,19 @@ void MsdArmDevice::AtomCompleted(MsdArmAtom* atom, ArmMaliResultCode result)
             register_io_->Write32(registers::GpuCommand::kOffset,
                                   registers::GpuCommand::kCmdCycleCountStop);
         }
+        atom->set_using_cycle_counter(false);
     }
-    atom->set_result_code(result);
-    auto connection = atom->connection().lock();
-    if (connection)
-        connection->SendNotificationData(atom, result);
+    // Soft stopped atoms will be retried, so this result shouldn't be reported.
+    if (result != kArmMaliResultSoftStopped) {
+        atom->set_result_code(result);
+        auto connection = atom->connection().lock();
+        // Ensure any client writes/reads from memory happen after the mmio access saying memory is
+        // read. In practice unlikely to be an issue due to data dependencies and the thread/process
+        // hops.
+        magma::barriers::Barrier();
+        if (connection)
+            connection->SendNotificationData(atom, result);
+    }
 }
 
 void MsdArmDevice::HardStopAtom(MsdArmAtom* atom)
@@ -786,6 +838,15 @@ void MsdArmDevice::HardStopAtom(MsdArmAtom* atom)
     DLOG("Hard stopping atom slot %d\n", atom->slot());
     slot.Command()
         .FromValue(registers::JobSlotCommand::kCommandHardStop)
+        .WriteTo(register_io_.get());
+}
+
+void MsdArmDevice::SoftStopAtom(MsdArmAtom* atom)
+{
+    registers::JobSlotRegisters slot(atom->slot());
+    DLOG("Soft stopping atom slot %d\n", atom->slot());
+    slot.Command()
+        .FromValue(registers::JobSlotCommand::kCommandSoftStop)
         .WriteTo(register_io_.get());
 }
 
@@ -852,6 +913,29 @@ magma_status_t MsdArmDevice::QueryInfo(uint64_t id, uint64_t* value_out)
     }
 }
 
+void MsdArmDevice::RequestPerfCounterOperation(uint32_t type)
+{
+    EnqueueDeviceRequest(std::make_unique<PerfCounterRequest>(type));
+}
+
+magma::Status MsdArmDevice::ProcessPerfCounterRequest(uint32_t type)
+{
+    if (type == (MAGMA_DUMP_TYPE_PERF_COUNTER_ENABLE | MAGMA_DUMP_TYPE_PERF_COUNTERS)) {
+        if (!perf_counters_->TriggerRead(true))
+            return MAGMA_STATUS_INVALID_ARGS;
+    } else if (type == MAGMA_DUMP_TYPE_PERF_COUNTERS) {
+        if (!perf_counters_->TriggerRead(false))
+            return MAGMA_STATUS_INVALID_ARGS;
+    } else if (type == MAGMA_DUMP_TYPE_PERF_COUNTER_ENABLE) {
+        if (!perf_counters_->Enable())
+            return MAGMA_STATUS_INVALID_ARGS;
+    } else {
+        DASSERT(false);
+        return MAGMA_STATUS_INVALID_ARGS;
+    }
+    return MAGMA_STATUS_OK;
+}
+
 //////////////////////////////////////////////////////////////////////////////////////////////////
 
 msd_connection_t* msd_device_open(msd_device_t* dev, msd_client_id_t client_id)
@@ -869,4 +953,14 @@ magma_status_t msd_device_query(msd_device_t* device, uint64_t id, uint64_t* val
     return MsdArmDevice::cast(device)->QueryInfo(id, value_out);
 }
 
-void msd_device_dump_status(msd_device_t* device) { MsdArmDevice::cast(device)->DumpStatusToLog(); }
+void msd_device_dump_status(msd_device_t* device, uint32_t dump_type)
+{
+    uint32_t perf_dump_type =
+        dump_type & (MAGMA_DUMP_TYPE_PERF_COUNTER_ENABLE | MAGMA_DUMP_TYPE_PERF_COUNTERS);
+    if (perf_dump_type) {
+        MsdArmDevice::cast(device)->RequestPerfCounterOperation(perf_dump_type);
+    }
+    if (!dump_type || (dump_type & MAGMA_DUMP_TYPE_NORMAL)) {
+        MsdArmDevice::cast(device)->DumpStatusToLog();
+    }
+}

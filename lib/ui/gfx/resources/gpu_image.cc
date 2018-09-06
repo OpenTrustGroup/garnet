@@ -9,14 +9,14 @@
 #include "garnet/lib/ui/gfx/resources/host_memory.h"
 #include "lib/escher/util/image_utils.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 const ResourceTypeInfo GpuImage::kTypeInfo = {
     ResourceType::kGpuImage | ResourceType::kImage | ResourceType::kImageBase,
     "GpuImage"};
 
-GpuImage::GpuImage(Session* session, scenic::ResourceId id, GpuMemoryPtr memory,
+GpuImage::GpuImage(Session* session, ResourceId id, GpuMemoryPtr memory,
                    uint64_t memory_offset, escher::ImageInfo image_info,
                    vk::Image vk_image)
     : Image(session, id, GpuImage::kTypeInfo), memory_(std::move(memory)) {
@@ -26,7 +26,7 @@ GpuImage::GpuImage(Session* session, scenic::ResourceId id, GpuMemoryPtr memory,
   FXL_CHECK(image_);
 }
 
-GpuImagePtr GpuImage::New(Session* session, scenic::ResourceId id,
+GpuImagePtr GpuImage::New(Session* session, ResourceId id,
                           GpuMemoryPtr memory,
                           const fuchsia::images::ImageInfo& image_info,
                           uint64_t memory_offset,
@@ -41,6 +41,7 @@ GpuImagePtr GpuImage::New(Session* session, scenic::ResourceId id,
       pixel_alignment = 4u;
       break;
     case fuchsia::images::PixelFormat::YUY2:
+    case fuchsia::images::PixelFormat::NV12:
       error_reporter->ERROR()
           << "GpuImage::CreateFromMemory(): PixelFormat must be BGRA_8.";
       return nullptr;
@@ -110,4 +111,4 @@ GpuImagePtr GpuImage::New(Session* session, scenic::ResourceId id,
 bool GpuImage::UpdatePixels() { return false; }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

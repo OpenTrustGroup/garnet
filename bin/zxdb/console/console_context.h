@@ -9,6 +9,7 @@
 #include "garnet/bin/zxdb/client/system_observer.h"
 #include "garnet/bin/zxdb/client/target_observer.h"
 #include "garnet/bin/zxdb/client/thread_observer.h"
+#include "garnet/bin/zxdb/console/command.h"
 
 namespace zxdb {
 
@@ -64,6 +65,15 @@ class ConsoleContext : public ProcessObserver,
   int GetActiveBreakpointId() const;
   Breakpoint* GetActiveBreakpoint() const;
 
+  // Each thread maintains a source affinity which was the last command that
+  // implies either source code or disassembly viewing. This is used to control
+  // what gets displayed by default for the next stop of that thread. Defaults
+  // to kSource for new and unknown threads. Setting SourceAffinity::kNone does
+  // nothing so calling code can unconditionally call for all commands.
+  SourceAffinity GetSourceAffinityForThread(const Thread* thread) const;
+  void SetSourceAffinityForThread(const Thread* thread,
+                                  SourceAffinity source_affinity);
+
   // Fills the current effective process, thread, etc. into the given Command
   // structure based on what the command specifies and the current context.
   // Returns an error if any of the referenced IDs are invalid.
@@ -72,7 +82,13 @@ class ConsoleContext : public ProcessObserver,
  private:
   struct ThreadRecord {
     Thread* thread = nullptr;
+
+    // This isn't necessarily valid since the frames could have been changed
+    // out from under us. Be sure to range check before use.
     int active_frame_id = 0;
+
+    // Default to showing source code for thread stops.
+    SourceAffinity source_affinity = SourceAffinity::kSource;
   };
 
   struct TargetRecord {
@@ -108,8 +124,9 @@ class ConsoleContext : public ProcessObserver,
   void OnSymbolLoadFailure(Process* process, const Err& err) override;
 
   // ThreadObserver implementation:
-  void OnThreadStopped(Thread* thread,
-                       debug_ipc::NotifyException::Type type) override;
+  void OnThreadStopped(
+      Thread* thread, debug_ipc::NotifyException::Type type,
+      std::vector<fxl::WeakPtr<Breakpoint>> hit_breakpoints) override;
   void OnThreadFramesInvalidated(Thread* thread) override;
 
   // Returns the record for the given target, or null (+ assertion) if not
@@ -117,8 +134,10 @@ class ConsoleContext : public ProcessObserver,
   TargetRecord* GetTargetRecord(int target_id);
   const TargetRecord* GetTargetRecord(int target_id) const;
   TargetRecord* GetTargetRecord(const Target* target);
+  const TargetRecord* GetTargetRecord(const Target* target) const;
 
   ThreadRecord* GetThreadRecord(const Thread* thread);
+  const ThreadRecord* GetThreadRecord(const Thread* thread) const;
 
   // Backends for parts of FillOutCommand.
   //
@@ -133,6 +152,10 @@ class ConsoleContext : public ProcessObserver,
                     ThreadRecord const** out_thread_record) const;
   Err FillOutFrame(Command* cmd, const ThreadRecord* thread_record) const;
   Err FillOutBreakpoint(Command* cmd) const;
+
+  // Generates a string describing the breakpoints that were hit.
+  std::string DescribeHitBreakpoints(
+      const std::vector<fxl::WeakPtr<Breakpoint>>& hits) const;
 
   Session* const session_;
 

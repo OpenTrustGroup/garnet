@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_LIB_WLAN_COMMON_INCLUDE_WLAN_COMMON_LOGGING_H_
+#define GARNET_LIB_WLAN_COMMON_INCLUDE_WLAN_COMMON_LOGGING_H_
 
 #include <cstdint>
 #include <cstdio>
@@ -36,12 +37,16 @@ LOG_CATEGORY(kLogFinspect, 23);  // Packet decoder log
 LOG_CATEGORY(kLogBss, 24);
 LOG_CATEGORY(kLogPs, 25);
 LOG_CATEGORY(kLogClt, 26);
+LOG_CATEGORY(kLogBuffer, 27);
+LOG_CATEGORY(kLogScan, 28);
+LOG_CATEGORY(kLogMinstrel, 29);
 
 #undef LOG_CATEGORY
 
 // Set this to tune log output
 constexpr uint64_t kLogLevel = kLogInfos;
 constexpr bool kFinspectEnabled = kLogLevel & kLogFinspect;
+constexpr bool kBufferDebugEnabled = kLogLevel & kLogBuffer;
 
 #define finspect(args...) wlogf(wlan::kLogFinspect, "[finspect] ", args)
 
@@ -65,9 +70,14 @@ constexpr bool kFinspectEnabled = kLogLevel & kLogFinspect;
 #define debugps(args...)  wlogf(wlan::kLogPs, "[V:PS  ] ", args)
 #define debugclt(args...)  wlogf(wlan::kLogClt, "[V:clt ] ", args)
 #define debugfhandler(args...)  wlogf(wlan::kLogFrameHandlerTrace, "[V:fhdl] ", args)
+#define debugbuf(args...)  wlogf(wlan::kLogBuffer, "[V:buf ]", args)
+#define debugscan(args...)  wlogf(wlan::kLogScan, "[V:scan]", args)
+#define debugmstl(args...)  wlogf(wlan::kLogMinstrel, "[V:mstl] ", args)
 // clang-format on
 
 #define MAC_ADDR_FMT "%02x:%02x:%02x:%02x:%02x:%02x"
 #define MAC_ADDR_ARGS(a) ((a)[0]), ((a)[1]), ((a)[2]), ((a)[3]), ((a)[4]), ((a)[5])
 
 }  // namespace wlan
+
+#endif  // GARNET_LIB_WLAN_COMMON_INCLUDE_WLAN_COMMON_LOGGING_H_

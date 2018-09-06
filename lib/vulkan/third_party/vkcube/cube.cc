@@ -1160,7 +1160,7 @@ static void demo_prepare_textures(struct demo* demo) {
       demo_set_image_layout(
           demo, demo->textures[i].image, VK_IMAGE_ASPECT_COLOR_BIT,
           VK_IMAGE_LAYOUT_PREINITIALIZED, demo->textures[i].imageLayout,
-          VK_ACCESS_HOST_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+          VK_ACCESS_HOST_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,
           VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
       demo->staging_texture.image = 0;
     } else if (props.optimalTilingFeatures &
@@ -1182,13 +1182,13 @@ static void demo_prepare_textures(struct demo* demo) {
       demo_set_image_layout(
           demo, demo->staging_texture.image, VK_IMAGE_ASPECT_COLOR_BIT,
           VK_IMAGE_LAYOUT_PREINITIALIZED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-          VK_ACCESS_HOST_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+          VK_ACCESS_HOST_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,
           VK_PIPELINE_STAGE_TRANSFER_BIT);
 
       demo_set_image_layout(
           demo, demo->textures[i].image, VK_IMAGE_ASPECT_COLOR_BIT,
           VK_IMAGE_LAYOUT_PREINITIALIZED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-          VK_ACCESS_HOST_WRITE_BIT, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+          VK_ACCESS_HOST_WRITE_BIT, VK_PIPELINE_STAGE_HOST_BIT,
           VK_PIPELINE_STAGE_TRANSFER_BIT);
 
       VkImageCopy copy_region = {
@@ -1259,7 +1259,7 @@ static void demo_prepare_textures(struct demo* demo) {
         .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
         .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
         .mipLodBias = 0.0f,
-        .anisotropyEnable = VK_TRUE,
+        .anisotropyEnable = VK_FALSE,
         .maxAnisotropy = 1,
         .compareOp = VK_COMPARE_OP_NEVER,
         .minLod = 0.0f,
@@ -2707,8 +2707,6 @@ void demo_init_vk_swapchain(struct demo* demo) {
       .sType = VK_STRUCTURE_TYPE_MAGMA_SURFACE_CREATE_INFO_KHR,
 #if defined(CUBE_USE_IMAGE_PIPE)
       .imagePipeHandle = demo->fuchsia_state->image_pipe_handle,
-      .width = demo->width,
-      .height = demo->height,
 #endif
       .pNext = nullptr,
     };
@@ -2970,32 +2968,30 @@ void demo_run_image_pipe(struct demo* demo, int argc, char** argv) {
   demo->fuchsia_state->t0 = std::chrono::high_resolution_clock::now();
 
 #ifdef MAGMA_ENABLE_TRACING
-  trace::TraceProvider trace_provider(demo->fuchsia_state->loop.async());
+  trace::TraceProvider trace_provider(demo->fuchsia_state->loop.dispatcher());
 #endif
 
-  auto startup_context_ = fuchsia::sys::StartupContext::CreateFromStartupInfo();
+  auto startup_context_ = component::StartupContext::CreateFromStartupInfo();
 
   demo->fuchsia_state->view_provider_service =
       std::make_unique<mozart::ViewProviderService>(
           startup_context_.get(), [demo](mozart::ViewContext view_context) {
-            auto resize_callback =
-                [demo](float width, float height,
-                       fidl::InterfaceHandle<fuchsia::images::ImagePipe>
-                           interface_handle) {
-                  demo->width = width;
-                  demo->height = height;
-                  demo->fuchsia_state->image_pipe_handle =
-                      interface_handle.TakeChannel().release();
-                  if (demo->prepared) {
-                    demo_resize(demo);
-                  } else {
-                    demo_init_vk_swapchain(demo);
-                    demo_prepare(demo);
-                  }
-                };
-            return std::make_unique<VkCubeView>(
+            auto resize_callback = [demo](float width, float height) {
+              demo->width = width;
+              demo->height = height;
+              if (demo->prepared) {
+                demo_resize(demo);
+              } else {
+                demo_prepare(demo);
+              }
+            };
+            auto view = std::make_unique<VkCubeView>(
                 std::move(view_context.view_manager),
                 std::move(view_context.view_owner_request), resize_callback);
+            demo->fuchsia_state->image_pipe_handle =
+                view->TakeImagePipeChannel().release();
+            demo_init_vk_swapchain(demo);
+            return view;
           });
 
   while (!demo->quit) {
@@ -3056,9 +3052,9 @@ int test_vk_cube(int argc, char** argv) {
   VulkanShimInit();
 #endif
 #if defined(MAGMA_ENABLE_TRACING)
-  async::Loop loop;
+  async::Loop loop(&kAsyncLoopConfigNoAttachToThread);
   loop.StartThread();
-  trace::TraceProvider trace_provider(loop.async());
+  trace::TraceProvider trace_provider(loop.dispatcher());
 #endif
   return cube_main(argc, argv);
 }

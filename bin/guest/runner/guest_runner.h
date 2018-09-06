@@ -7,7 +7,7 @@
 
 #include <fuchsia/sys/cpp/fidl.h>
 
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/macros.h"
 
@@ -25,8 +25,8 @@ class GuestRunner : public fuchsia::sys::Runner {
       ::fidl::InterfaceRequest<fuchsia::sys::ComponentController> controller)
       override;
 
-  fuchsia::sys::LauncherSync2Ptr launcher_;
-  std::unique_ptr<fuchsia::sys::StartupContext> context_;
+  fuchsia::sys::LauncherSyncPtr launcher_;
+  std::unique_ptr<component::StartupContext> context_;
   fidl::BindingSet<fuchsia::sys::Runner> bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(GuestRunner);

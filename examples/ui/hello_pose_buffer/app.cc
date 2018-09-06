@@ -23,16 +23,15 @@
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/task.h>
 
-#include "lib/app/cpp/connect.h"
+#include "lib/component/cpp/connect.h"
 #include "lib/escher/util/image_utils.h"
 
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 
 #include "lib/escher/hmd/pose_buffer.h"
+#include "lib/ui/scenic/cpp/commands.h"
 #include "lib/ui/scenic/cpp/host_memory.h"
-#include "lib/ui/scenic/fidl_helpers.h"
-#include "lib/ui/scenic/types.h"
 
 using namespace scenic;
 
@@ -44,7 +43,7 @@ static constexpr float kEdgeLength = 900;
 static constexpr uint64_t kBillion = 1000000000;
 
 App::App(async::Loop* loop)
-    : startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()),
+    : startup_context_(component::StartupContext::CreateFromStartupInfo()),
       loop_(loop) {
   // Connect to the Mozart service.
   scenic_ = startup_context_
@@ -140,7 +139,7 @@ void App::CreateExampleScene(float display_width, float display_height) {
   status = pose_buffer_vmo_.duplicate(ZX_RIGHT_SAME_RIGHTS, &vmo);
   FXL_DCHECK(status == ZX_OK);
 
-  uint64_t base_time = zx::clock::get(ZX_CLOCK_MONOTONIC).get();
+  uint64_t base_time = zx::clock::get_monotonic().get();
   uint64_t time_interval = 1024 * 1024 * 60 / 3.0;  // 16.67 ms
   uint32_t num_entries = 1;
 
@@ -163,7 +162,8 @@ void App::Init(fuchsia::ui::gfx::DisplayInfo display_info) {
 
   // Wait kSessionDuration seconds, and close the session.
   constexpr zx::duration kSessionDuration = zx::sec(40);
-  async::PostDelayedTask(loop_->async(), [this] { ReleaseSessionResources(); },
+  async::PostDelayedTask(loop_->dispatcher(),
+                         [this] { ReleaseSessionResources(); },
                          kSessionDuration);
 
   // Set up initial scene.

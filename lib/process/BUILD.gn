@@ -11,12 +11,12 @@ source_set("process") {
   ]
 
   public_deps = [
-    "//zircon/public/fidl/process",
+    "//zircon/public/fidl/fuchsia-process",
     "//zircon/public/lib/zx",
   ]
 
   deps = [
-    "//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/component/cpp",
     "//zircon/public/lib/fdio",
   ]
 }
@@ -31,6 +31,7 @@ executable("unittests") {
 
   deps = [
     ":process",
+    "//garnet/public/lib/component/cpp/testing",
     "//third_party/googletest:gtest_main",
   ]
 }

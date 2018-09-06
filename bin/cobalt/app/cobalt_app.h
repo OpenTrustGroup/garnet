@@ -18,7 +18,7 @@
 #include "garnet/bin/cobalt/app/cobalt_encoder_factory_impl.h"
 #include "garnet/bin/cobalt/app/cobalt_encoder_impl.h"
 #include "garnet/bin/cobalt/app/timer_manager.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/network_wrapper/network_wrapper_impl.h"
 #include "third_party/cobalt/encoder/client_secret.h"
 #include "third_party/cobalt/encoder/send_retryer.h"
@@ -29,7 +29,7 @@ namespace cobalt {
 
 class CobaltApp {
  public:
-  // |async| The async_t to be used for all asynchronous operations.
+  // |dispatcher| The async_t to be used for all asynchronous operations.
   //
   // |schedule_interval| The scheduling interval provided to
   //                     ShippingManager::ScheduleParams.
@@ -39,7 +39,8 @@ class CobaltApp {
   //
   // |product_name| A product name to override the one used in the
   //                ObservationMetadata.
-  CobaltApp(async_t* async, std::chrono::seconds schedule_interval,
+  CobaltApp(async_dispatcher_t* dispatcher,
+            std::chrono::seconds schedule_interval,
             std::chrono::seconds min_interval, const std::string& product_name);
 
  private:
@@ -47,21 +48,25 @@ class CobaltApp {
 
   encoder::SystemData system_data_;
 
-  std::unique_ptr<fuchsia::sys::StartupContext> context_;
+  std::unique_ptr<component::StartupContext> context_;
 
   encoder::ShufflerClient shuffler_client_;
   encoder::send_retryer::SendRetryer send_retryer_;
   network_wrapper::NetworkWrapperImpl network_wrapper_;
+  encoder::ObservationStoreDispatcher store_dispatcher_;
+  util::EncryptedMessageMaker encrypt_to_analyzer_;
   encoder::ShippingDispatcher shipping_dispatcher_;
+  util::EncryptedMessageMaker encrypt_to_shuffler_;
   TimerManager timer_manager_;
 
   std::shared_ptr<config::ClientConfig> client_config_;
 
-  std::unique_ptr<fuchsia::cobalt::CobaltController> controller_impl_;
-  fidl::BindingSet<fuchsia::cobalt::CobaltController> controller_bindings_;
+  std::unique_ptr<fuchsia::cobalt::Controller> controller_impl_;
+  fidl::BindingSet<fuchsia::cobalt::Controller> controller_bindings_;
 
-  std::unique_ptr<fuchsia::cobalt::CobaltEncoderFactory> factory_impl_;
-  fidl::BindingSet<fuchsia::cobalt::CobaltEncoderFactory> factory_bindings_;
+  std::unique_ptr<encoder::CobaltEncoderFactoryImpl> factory_impl_;
+  fidl::BindingSet<fuchsia::cobalt::EncoderFactory> encoder_factory_bindings_;
+  fidl::BindingSet<fuchsia::cobalt::LoggerFactory> logger_factory_bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(CobaltApp);
 };

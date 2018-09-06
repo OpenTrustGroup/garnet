@@ -20,7 +20,7 @@
 #include "lib/fxl/memory/ref_ptr.h"
 #include "lib/fxl/tasks/task_runner.h"
 
-namespace debugserver {
+namespace inferior_control {
 
 class Thread;
 
@@ -38,7 +38,7 @@ class ExceptionPort final {
   using Callback = fit::function<void(const zx_port_packet_t& packet,
                                       const zx_exception_context_t& context)>;
 
-  explicit ExceptionPort(async_t* async);
+  explicit ExceptionPort(async_dispatcher_t* dispatcher);
   ~ExceptionPort();
 
   // Creates an exception port and starts waiting for events on it in a special
@@ -91,7 +91,7 @@ class ExceptionPort final {
 
   // The origin dispatcher to post observer callback events to the thread
   // that created this object.
-  async_t* const origin_dispatcher_;
+  async_dispatcher_t* const origin_dispatcher_;
 
   // The exception port handle and a mutex for synchronizing access to it.
   // |io_thread_| only ever reads from |eport_handle_| but a call to Quit() can
@@ -123,4 +123,4 @@ void PrintException(FILE* out, const Thread* thread, zx_excp_type_t type,
 // This doesn't have a better place at the moment.
 void PrintSignal(FILE* out, const Thread* thread, zx_signals_t signals);
 
-}  // namespace debugserver
+}  // namespace inferior_control

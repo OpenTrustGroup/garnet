@@ -20,8 +20,11 @@ static constexpr uint32_t kFliteBytesPerFrame = 2;
 static constexpr uint32_t kLowWaterBytes =
     (kFliteFrameRate * kLowWaterMsec * kFliteBytesPerFrame) / 1000;
 
-TtsSpeaker::TtsSpeaker(async_t* async)
-    : master_async_(async), abort_playback_(false), synthesis_complete_(false) {
+TtsSpeaker::TtsSpeaker(async_dispatcher_t* dispatcher)
+    : engine_loop_(&kAsyncLoopConfigNoAttachToThread),
+      master_dispatcher_(dispatcher),
+      abort_playback_(false),
+      synthesis_complete_(false) {
   engine_loop_.StartThread();
 }
 
@@ -30,14 +33,14 @@ zx_status_t TtsSpeaker::Speak(fidl::StringPtr words,
   words_ = std::move(words);
   speak_complete_cbk_ = std::move(speak_complete_cbk);
 
-  async::PostTask(engine_loop_.async(),
+  async::PostTask(engine_loop_.dispatcher(),
                   [thiz = shared_from_this()]() { thiz->DoSpeak(); });
 
   return ZX_OK;
 }
 
 zx_status_t TtsSpeaker::Init(
-    const std::unique_ptr<fuchsia::sys::StartupContext>& startup_context) {
+    const std::unique_ptr<component::StartupContext>& startup_context) {
   zx_status_t res;
 
   if (wakeup_event_.is_valid()) {
@@ -65,15 +68,15 @@ zx_status_t TtsSpeaker::Init(
   auto audio =
       startup_context->ConnectToEnvironmentService<fuchsia::media::Audio>();
 
-  audio->CreateRendererV2(audio_renderer_.NewRequest());
+  audio->CreateAudioOut(audio_renderer_.NewRequest());
 
-  fuchsia::media::AudioPcmFormat format;
+  fuchsia::media::AudioStreamType format;
   format.sample_format = kFliteSampleFormat;
   format.channels = kFliteChannelCount;
   format.frames_per_second = kFliteFrameRate;
 
-  audio_renderer_->SetPcmFormat(std::move(format));
-  audio_renderer_->SetPayloadBuffer(std::move(shared_vmo));
+  audio_renderer_->SetPcmStreamType(std::move(format));
+  audio_renderer_->AddPayloadBuffer(0, std::move(shared_vmo));
 
   return ZX_OK;
 }
@@ -127,7 +130,7 @@ void TtsSpeaker::SendPendingAudio() {
       todo = bytes_till_low_water;
     }
 
-    fuchsia::media::AudioPacket pkt;
+    fuchsia::media::StreamPacket pkt;
     pkt.payload_offset = tx_ptr_;
     pkt.payload_size = todo;
 
@@ -162,8 +165,8 @@ void TtsSpeaker::SendPendingAudio() {
   }
 
   if (!clock_started_) {
-    audio_renderer_->PlayNoReply(fuchsia::media::kNoTimestamp,
-                                 fuchsia::media::kNoTimestamp);
+    audio_renderer_->PlayNoReply(fuchsia::media::NO_TIMESTAMP,
+                                 fuchsia::media::NO_TIMESTAMP);
     clock_started_ = true;
   }
 }
@@ -229,7 +232,7 @@ int TtsSpeaker::ProduceAudioCbk(const cst_wave* wave, int start, int sz,
 
     // Looks like we need to wait for there to be some space.  Before we do so,
     // let the master thread know it needs to send the data we just produced.
-    async::PostTask(master_async_, [thiz = shared_from_this()]() {
+    async::PostTask(master_dispatcher_, [thiz = shared_from_this()]() {
       thiz->SendPendingAudio();
     });
 
@@ -247,7 +250,7 @@ int TtsSpeaker::ProduceAudioCbk(const cst_wave* wave, int start, int sz,
   // of our synthesized audio right now.
   if (last) {
     synthesis_complete_.store(true);
-    async::PostTask(master_async_, [thiz = shared_from_this()]() {
+    async::PostTask(master_dispatcher_, [thiz = shared_from_this()]() {
       thiz->SendPendingAudio();
     });
   }
@@ -268,7 +271,7 @@ void TtsSpeaker::DoSpeak() {
   delete_voice(vox);
 
   if (abort_playback_.load()) {
-    async::PostTask(master_async_,
+    async::PostTask(master_dispatcher_,
                     [speak_complete_cbk = std::move(speak_complete_cbk_)]() {
                       speak_complete_cbk();
                     });

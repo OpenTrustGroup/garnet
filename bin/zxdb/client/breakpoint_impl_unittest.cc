@@ -6,12 +6,11 @@
 
 #include "garnet/bin/zxdb/client/breakpoint_impl.h"
 #include "garnet/bin/zxdb/client/process_impl.h"
-#include "garnet/bin/zxdb/client/remote_api.h"
+#include "garnet/bin/zxdb/client/remote_api_test.h"
 #include "garnet/bin/zxdb/client/session.h"
 #include "garnet/bin/zxdb/client/symbols/mock_module_symbols.h"
 #include "garnet/bin/zxdb/client/target_impl.h"
 #include "garnet/lib/debug_ipc/helper/platform_message_loop.h"
-#include "garnet/lib/debug_ipc/helper/test_stream_buffer.h"
 #include "gtest/gtest.h"
 
 namespace zxdb {
@@ -53,17 +52,10 @@ class BreakpointSink : public RemoteAPI {
   std::vector<RemovePair> removes;
 };
 
-class BreakpointImplTest : public testing::Test {
+class BreakpointImplTest : public RemoteAPITest {
  public:
-  BreakpointImplTest() {
-    loop_.Init();
-    sink_ = new BreakpointSink;
-    session_ = std::make_unique<Session>(std::unique_ptr<RemoteAPI>(sink_));
-  }
-  ~BreakpointImplTest() {
-    session_.reset();
-    loop_.Cleanup();
-  }
+  BreakpointImplTest() = default;
+  ~BreakpointImplTest() override = default;
 
   // Emulates a synchronous call to SetSettings on a breakpoint.
   Err SyncSetSettings(Breakpoint& bp, const BreakpointSettings& settings) {
@@ -76,24 +68,23 @@ class BreakpointImplTest : public testing::Test {
     return out_err;
   }
 
-  debug_ipc::PlatformMessageLoop& loop() { return loop_; }
-  debug_ipc::TestStreamBuffer& stream() { return stream_; }
   BreakpointSink& sink() { return *sink_; }
-  Session& session() { return *session_; }
+
+ protected:
+  std::unique_ptr<RemoteAPI> GetRemoteAPIImpl() override {
+    auto sink = std::make_unique<BreakpointSink>();
+    sink_ = sink.get();
+    return std::move(sink);
+  }
 
  private:
-  debug_ipc::PlatformMessageLoop loop_;
-  debug_ipc::TestStreamBuffer stream_;
-
-  BreakpointSink* sink_;  // Owned by the session_.
-
-  std::unique_ptr<Session> session_;
+  BreakpointSink* sink_;  // Owned by the session.
 };
 
 }  // namespace
 
 TEST_F(BreakpointImplTest, DynamicLoading) {
-  BreakpointImpl bp(&session());
+  BreakpointImpl bp(&session(), false);
 
   // Make a disabled symbolic breakpoint.
   const std::string kFunctionName = "DoThings";
@@ -123,15 +114,17 @@ TEST_F(BreakpointImplTest, DynamicLoading) {
   ASSERT_TRUE(sink().adds.empty());
 
   // Make two fake modules. The first will resolve the function to two
-  // locations, the second will resolve nothing.
-  const uint64_t kRelAddress1 = 0x78456345;
-  const uint64_t kRelAddress2 = 0x12345678;
+  // locations, the second will resolve nothing. They must be larger than the
+  // module base.
+  const uint64_t kModule1Base = 0x1000000;
+  const uint64_t kAddress1 = 0x78456345;
+  const uint64_t kAddress2 = 0x12345678;
   std::unique_ptr<MockModuleSymbols> module1 =
       std::make_unique<MockModuleSymbols>("myfile1.so");
   std::unique_ptr<MockModuleSymbols> module2 =
       std::make_unique<MockModuleSymbols>("myfile2.so");
   module1->AddSymbol(kFunctionName,
-                     std::vector<uint64_t>{kRelAddress1, kRelAddress2});
+                     std::vector<uint64_t>{kAddress1, kAddress2});
 
   // Cause the process to load the module. We have to keep the module_ref
   // alive for this to stay cached in the SystemSymbols.
@@ -145,12 +138,13 @@ TEST_F(BreakpointImplTest, DynamicLoading) {
           kBuildID2, std::move(module2));
 
   // Cause the process to load module 1.
-  const uint64_t kModule1Base = 0x1000000;
+  std::vector<debug_ipc::Module> modules;
   debug_ipc::Module load1;
   load1.name = "test";
   load1.base = kModule1Base;
   load1.build_id = kBuildID1;
-  target->process()->NotifyModuleLoaded(load1);
+  modules.push_back(load1);
+  target->process()->OnModules(modules, std::vector<uint64_t>());
 
   // That should have notified the breakpoint which should have added the two
   // addresses to the backend.
@@ -167,8 +161,6 @@ TEST_F(BreakpointImplTest, DynamicLoading) {
   EXPECT_EQ(0u, out.breakpoint.locations[1].thread_koid);
 
   // Addresses could be in either order. They should be absolute.
-  const uint64_t kAddress1 = kModule1Base + kRelAddress1;
-  const uint64_t kAddress2 = kModule1Base + kRelAddress2;
   EXPECT_TRUE((out.breakpoint.locations[0].address == kAddress1 &&
                out.breakpoint.locations[1].address == kAddress2) ||
               (out.breakpoint.locations[0].address == kAddress2 &&
@@ -181,7 +173,8 @@ TEST_F(BreakpointImplTest, DynamicLoading) {
   load2.name = "test2";
   load2.base = kModule2Base;
   load2.build_id = kBuildID2;
-  target->process()->NotifyModuleLoaded(load2);
+  modules.push_back(load2);
+  target->process()->OnModules(modules, std::vector<uint64_t>());
   ASSERT_TRUE(sink().adds.empty());
 
   // Disabling should send the delete message.
@@ -205,7 +198,7 @@ TEST_F(BreakpointImplTest, Address) {
   const uint64_t kProcessKoid = 6789;
   target->CreateProcessForTesting(kProcessKoid, "test");
 
-  BreakpointImpl bp(&session());
+  BreakpointImpl bp(&session(), false);
 
   const uint64_t kAddress = 0x123456780;
   BreakpointSettings in;
@@ -224,7 +217,6 @@ TEST_F(BreakpointImplTest, Address) {
   EXPECT_FALSE(out.breakpoint.one_shot);
   EXPECT_EQ(debug_ipc::Stop::kAll, out.breakpoint.stop);
   EXPECT_EQ(1u, out.breakpoint.locations.size());
-  // EXPECT_EQ(, out.breakpoint.locations[0].process_koid);
 }
 
 }  // namespace zxdb

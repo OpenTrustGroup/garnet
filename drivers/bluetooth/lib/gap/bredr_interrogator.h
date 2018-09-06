@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GAP_BREDR_INTERROGATOR_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GAP_BREDR_INTERROGATOR_H_
 
 #include <memory>
 
@@ -43,7 +44,7 @@ class BrEdrInterrogator {
  public:
   // |cache| must live longer than this object.
   BrEdrInterrogator(RemoteDeviceCache* cache, fxl::RefPtr<hci::Transport> hci,
-                    async_t* dispatcher);
+                    async_dispatcher_t* dispatcher);
 
   // Will cancel all uncompleted interrogations.
   ~BrEdrInterrogator();
@@ -106,7 +107,7 @@ class BrEdrInterrogator {
   fxl::RefPtr<hci::Transport> hci_;
 
   // The dispatcher we use.
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
 
   // Cache to retrieve devices from.
   RemoteDeviceCache* cache_;
@@ -123,3 +124,5 @@ class BrEdrInterrogator {
 
 }  // namespace gap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GAP_BREDR_INTERROGATOR_H_

@@ -7,11 +7,18 @@
 #include <lib/async/default.h>
 #include <lib/fdio/util.h>
 #include "lib/fxl/logging.h"
+#include "lib/fxl/strings/substitute.h"
 
 namespace component {
 
+namespace {
+constexpr char kSandboxDocUrl[] =
+    "https://fuchsia.googlesource.com/docs/+/master/the-book/"
+    "sandboxing.md#services";
+}  // namespace
+
 ServiceProviderDirImpl::ServiceProviderDirImpl()
-    : vfs_(async_get_default()),
+    : vfs_(async_get_default_dispatcher()),
       root_(fbl::AdoptRef(new fs::PseudoDir())),
       weak_factory_(this) {}
 
@@ -22,6 +29,12 @@ void ServiceProviderDirImpl::AddService(fbl::RefPtr<fs::Service> service,
   root_->AddEntry(service_name, std::move(service));
 }
 
+void ServiceProviderDirImpl::SetServicesWhitelist(
+    const std::vector<std::string>& services) {
+  has_services_whitelist_ = true;
+  services_whitelist_.insert(services.begin(), services.end());
+}
+
 void ServiceProviderDirImpl::AddBinding(
     fidl::InterfaceRequest<fuchsia::sys::ServiceProvider> request) {
   bindings_.AddBinding(this, std::move(request));
@@ -29,6 +42,16 @@ void ServiceProviderDirImpl::AddBinding(
 
 void ServiceProviderDirImpl::ConnectToService(fidl::StringPtr service_name,
                                               zx::channel channel) {
+  if (has_services_whitelist_ &&
+      services_whitelist_.count(service_name.get()) == 0) {
+    const std::string msg = fxl::Substitute(
+        "Component $0 is not allowed to connect to $1 because this service "
+        "is not present in the component's sandbox.\nRefer to $2 for more "
+        "information.",
+        component_url_, service_name.get(), kSandboxDocUrl);
+    FXL_LOG(WARNING) << msg;
+    return;
+  }
   fbl::RefPtr<fs::Vnode> child;
   zx_status_t status = root_->Lookup(&child, service_name.get());
   if (status == ZX_OK) {
@@ -51,6 +74,8 @@ zx_status_t ServiceProviderDirImpl::Getattr(vnattr_t* a) {
 zx_status_t ServiceProviderDirImpl::Readdir(fs::vdircookie_t* cookie,
                                             void* dirents, size_t len,
                                             size_t* out_actual) {
+  // TODO(CP-25): Filter services according to the whitelist. In general,
+  // fix readdir so that it returns all services, not just the ones under root_.
   return root_->Readdir(cookie, dirents, len, out_actual);
 }
 

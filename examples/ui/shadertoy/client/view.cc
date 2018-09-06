@@ -18,7 +18,9 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include "garnet/examples/ui/shadertoy/client/glsl_strings.h"
-#include "lib/ui/scenic/fidl_helpers.h"
+#include "lib/fxl/logging.h"
+#include "lib/ui/input/cpp/formatting.h"
+#include "lib/ui/scenic/cpp/commands.h"
 
 namespace shadertoy_client {
 
@@ -27,7 +29,7 @@ constexpr uint32_t kShapeWidth = 384;
 constexpr uint32_t kShapeHeight = 288;
 }  // namespace
 
-ViewImpl::ViewImpl(fuchsia::sys::StartupContext* startup_context,
+ViewImpl::ViewImpl(component::StartupContext* startup_context,
                    scenic::Session* sess, scenic::EntityNode* parnt_node)
     : startup_context_(startup_context),
       session_(sess),
@@ -77,8 +79,8 @@ ViewImpl::ViewImpl(fuchsia::sys::StartupContext* startup_context,
   session()->ReleaseResource(image_pipe_id);
 
   // Create a rounded-rect shape to display the Shadertoy image on.
-  scenic::RoundedRectangle shape(session(), kShapeWidth, kShapeHeight, 80,
-                                     80, 80, 80);
+  scenic::RoundedRectangle shape(session(), kShapeWidth, kShapeHeight, 80, 80,
+                                 80, 80);
 
   constexpr size_t kNodeCount = 16;
   for (size_t i = 0; i < kNodeCount; ++i) {
@@ -158,7 +160,7 @@ bool ViewImpl::PointerDown() {
     default:
       // This will never happen, because we checked above that we're not
       // in a transitional state.
-      FXL_DCHECK(false) << "already in transition.";
+      FXL_NOTREACHED() << "already in transition.";
   }
   return true;
 }
@@ -190,22 +192,19 @@ float ViewImpl::UpdateTransition(zx_time_t presentation_time) {
 }
 
 void ViewImpl::QuitLoop() {
-  async_loop_quit(async_loop_from_dispatcher(async_get_default()));
+  async_loop_quit(async_loop_from_dispatcher(async_get_default_dispatcher()));
 }
 
-OldView::OldView(
-    fuchsia::sys::StartupContext* startup_context,
-    ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
-        view_owner_request)
+OldView::OldView(component::StartupContext* startup_context,
+                 ::fuchsia::ui::viewsv1::ViewManagerPtr view_manager,
+                 fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
+                     view_owner_request)
     : mozart::BaseView(std::move(view_manager), std::move(view_owner_request),
                        "Shadertoy Example"),
       root_node_(session()),
       impl_(startup_context, session(), &root_node_) {
   parent_node().AddChild(root_node_);
 }
-
-OldView::~OldView() = default;
 
 void OldView::OnSceneInvalidated(
     fuchsia::images::PresentationInfo presentation_info) {
@@ -237,15 +236,8 @@ NewView::NewView(scenic::ViewFactoryArgs args, const std::string& debug_name)
       impl_(args.startup_context, session(), &root_node_) {
   view().AddChild(root_node_);
 
-  // TODO(SCN-804): This makes rectangles animate by default, which is not
-  // desired.  Until input events are available from Scenic, there is not other
-  // way to enter this mode.  Delete once input works.
-  impl_.PointerDown();
-
   InvalidateScene();
 }
-
-NewView::~NewView() = default;
 
 void NewView::OnSceneInvalidated(
     fuchsia::images::PresentationInfo presentation_info) {
@@ -255,9 +247,7 @@ void NewView::OnSceneInvalidated(
   impl_.OnSceneInvalidated(std::move(presentation_info),
                            {logical_size().x, logical_size().y});
 
-  if (impl_.IsAnimating()) {
-    InvalidateScene();
-  }
+  InvalidateScene();
 }
 
 void NewView::OnPropertiesChanged(
@@ -265,7 +255,34 @@ void NewView::OnPropertiesChanged(
   InvalidateScene();
 }
 
-void NewView::OnError(::fidl::StringPtr error) {
+void NewView::OnInputEvent(fuchsia::ui::input::InputEvent event) {
+  switch (event.Which()) {
+    case ::fuchsia::ui::input::InputEvent::Tag::kFocus: {
+      focused_ = event.focus().focused;
+      break;
+    }
+    case ::fuchsia::ui::input::InputEvent::Tag::kPointer: {
+      const auto& pointer = event.pointer();
+      switch (pointer.phase) {
+        case ::fuchsia::ui::input::PointerEventPhase::DOWN: {
+          if (focused_) {
+            impl_.PointerDown();
+          }
+          break;
+        }
+        default:
+          break;  // Ignore all other pointer phases.
+      }
+      break;
+    }
+    case ::fuchsia::ui::input::InputEvent::Tag::kKeyboard:
+      break;
+    case ::fuchsia::ui::input::InputEvent::Tag::Invalid:
+      break;
+  }
+}
+
+void NewView::OnScenicError(::fidl::StringPtr error) {
   FXL_LOG(ERROR) << "Received Scenic Session error: " << error;
 }
 

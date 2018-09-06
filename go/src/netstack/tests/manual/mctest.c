@@ -66,7 +66,8 @@ int client(const char* if_address, const char* mc_address,
   char message[1024];
   memset(message, 0, sizeof(message));
   while (fgets(message, sizeof(message), stdin)) {
-    if (message[0] == '\n') break;
+    if (message[0] == '\n')
+      break;
 
     int nsendto;
     nsendto = sendto(s, message, strlen(message), 0, (struct sockaddr*)&addr,
@@ -111,27 +112,46 @@ int server(const char* if_address, const char* mc_address,
     return -1;
   }
 
-  struct ip_mreq mc_req;
-  mc_req.imr_multiaddr.s_addr = inet_addr(mc_address);
-  mc_req.imr_interface.s_addr = inet_addr(if_address);
+  struct ip_mreqn mc_reqn;
 
-  if (setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mc_req, sizeof(mc_req)) <
-      0) {
+  // optlen is set to either sizeof(struct ip_mreq) or sizeof(struct ip_mreqn)
+  // depending on how we can parse if_address.
+  size_t optlen = sizeof(struct ip_mreqn);
+
+  if (!inet_aton(mc_address, &(mc_reqn.imr_multiaddr))) {
+    printf("Invalid multicast_address: %s\n", mc_address);
+    return -1;
+  }
+
+  // First try parsing |if_address| as an integer NIC ID. If it fails then parse
+  // it as an IP address.
+  char* end;
+  mc_reqn.imr_ifindex = strtol(if_address, &end, 10);
+  if (*end != '\0') {
+    mc_reqn.imr_ifindex = 0;
+    optlen = sizeof(struct ip_mreq);
+    if (!inet_aton(if_address, &(mc_reqn.imr_address))) {
+      // If if_address isn't an IP address then try parsing it as an integer and
+      // pass it as NIC address in struct mc_reqn.
+      printf("Invalid if_address: %s\n", if_address);
+      return -1;
+    }
+  }
+
+  if (setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mc_reqn, optlen) != 0) {
     printf("setsockopt: IP_ADD_MEMBERSHIP failed (errno = %d)\n", errno);
     close(s);
     return -1;
   }
 
-  if (setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mc_req, sizeof(mc_req)) ==
-      0) {
+  if (setsockopt(s, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mc_reqn, optlen) == 0) {
     printf(
         "setsockopt: duplicate IP_ADD_MEMBERSHIP succeeded when it should have "
         "failed\n");
   }
 
-#define NTIMES 4
-
-  for (int i = 0; i < NTIMES; i++) {
+  const int kIterations = 4;
+  for (int i = 0; i < kIterations; i++) {
     printf("waiting %s:%d...\n", mc_address, port);
 
     char buf[128];
@@ -148,15 +168,13 @@ int server(const char* if_address, const char* mc_address,
            sa_to_str((struct sockaddr*)&addr, str, sizeof(str)));
   }
 
-  if (setsockopt(s, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mc_req, sizeof(mc_req)) <
-      0) {
+  if (setsockopt(s, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mc_reqn, optlen) != 0) {
     printf("setsockopt: IP_DROP_MEMBERSHIP failed (errno = %d)\n", errno);
     close(s);
     return -1;
   }
 
-  if (setsockopt(s, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mc_req, sizeof(mc_req)) ==
-      0) {
+  if (setsockopt(s, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mc_reqn, optlen) == 0) {
     printf(
         "setsockopt: duplicate IP_DROP_MEMBERSHIP succeeded when it should "
         "have failed\n");
@@ -167,8 +185,9 @@ int server(const char* if_address, const char* mc_address,
 }
 
 void usage(void) {
-  printf("usage: mctest server if_address [multicast_address port]\n");
-  printf("       mctest client if_address [multicast_address port]\n");
+  printf(
+      "usage: mctest server (if_address|nic_index) [multicast_address port]\n"
+      "       mctest client if_address [multicast_address port]\n");
 }
 
 int main(int argc, char** argv) {

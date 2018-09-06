@@ -8,10 +8,10 @@
 #include <algorithm>
 #include <vector>
 
-#include "garnet/bin/zxdb/client/err.h"
 #include "garnet/bin/zxdb/client/process.h"
 #include "garnet/bin/zxdb/client/session.h"
 #include "garnet/bin/zxdb/client/target.h"
+#include "garnet/bin/zxdb/common/err.h"
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/command_utils.h"
 #include "garnet/bin/zxdb/console/console.h"
@@ -41,8 +41,12 @@ Err AssertRunnableTarget(Target* target) {
 
 // Callback for "run", "attach", "detach" and "stop". The verb affects the
 // message printed to the screen.
+// Since now Verbs commands can take in a callback and Process commands call
+// this callback, we optionally pass that callback here to be called in a long
+// merry string of callbacks.
 void ProcessCommandCallback(const char* verb, fxl::WeakPtr<Target> target,
-                            bool display_message_on_success, const Err& err) {
+                            bool display_message_on_success, const Err& err,
+                            CommandCallback callback = nullptr) {
   if (!display_message_on_success && !err.has_error())
     return;
 
@@ -61,6 +65,10 @@ void ProcessCommandCallback(const char* verb, fxl::WeakPtr<Target> target,
   }
 
   console->Output(std::move(out));
+
+  if (callback) {
+    callback(err);
+  }
 }
 
 // new -------------------------------------------------------------------------
@@ -116,7 +124,7 @@ Err DoNew(ConsoleContext* context, const Command& cmd) {
 
 const char kRunShortHelp[] = "run / r: Run the program.";
 const char kRunHelp[] =
-    R"(run [ <program name> ]
+    R"(run [ <program name> <program args>* ]
 
   Alias: "r"
 
@@ -135,11 +143,16 @@ Hints
 Examples
 
   run
-  run chrome
   process 2 run
+      Runs a process that's already been configured with a binary name.
+
+  run /boot/bin/ps
+  run chrome --no-sandbox http://www.google.com/
+      Runs the given process.
 )";
 
-Err DoRun(ConsoleContext* context, const Command& cmd) {
+Err DoRun(ConsoleContext* context, const Command& cmd,
+          CommandCallback callback = nullptr) {
   // Only a process can be run.
   Err err = cmd.ValidateNouns({Noun::kProcess});
   if (err.has_error())
@@ -149,10 +162,6 @@ Err DoRun(ConsoleContext* context, const Command& cmd) {
   if (err.has_error())
     return err;
 
-  // TODO(brettw) figure out how argument passing should work. From a user
-  // perspective it would be nicest to pass everything after "run" to the
-  // app. But this means we can't have any switches to "run". LLDB requires
-  // using "--" for this case to mark the end of switches.
   if (cmd.args().empty()) {
     // Use the args already set on the target.
     if (cmd.target()->GetArgs().empty())
@@ -161,8 +170,8 @@ Err DoRun(ConsoleContext* context, const Command& cmd) {
     cmd.target()->SetArgs(cmd.args());
   }
 
-  cmd.target()->Launch([](fxl::WeakPtr<Target> target, const Err& err) {
-    ProcessCommandCallback("launch", target, true, err);
+  cmd.target()->Launch([callback](fxl::WeakPtr<Target> target, const Err& err) {
+    ProcessCommandCallback("launch", target, true, err, callback);
   });
   return Err();
 }
@@ -186,16 +195,17 @@ Examples
   process 4 kill
       Kills process 4.
 )";
-Err DoKill(ConsoleContext* context, const Command& cmd) {
+Err DoKill(ConsoleContext* context, const Command& cmd,
+           CommandCallback callback = nullptr) {
   // Only a process can be detached.
   Err err = cmd.ValidateNouns({Noun::kProcess});
   if (err.has_error())
     return err;
 
-  cmd.target()->Detach([](fxl::WeakPtr<Target> target, const Err& err) {
+  cmd.target()->Detach([callback](fxl::WeakPtr<Target> target, const Err& err) {
     // The ConsoleContext displays messages for stopped processes, so don't
     // display messages when successfully killing.
-    ProcessCommandCallback("kill", target, false, err);
+    ProcessCommandCallback("kill", target, false, err, callback);
   });
   return Err();
 }
@@ -221,7 +231,8 @@ Examples
   process 4 attach 2371
       Attaches process context 4 to the process with koid 2371.
 )";
-Err DoAttach(ConsoleContext* context, const Command& cmd) {
+Err DoAttach(ConsoleContext* context, const Command& cmd,
+             CommandCallback callback = nullptr) {
   // Only a process can be attached.
   Err err = cmd.ValidateNouns({Noun::kProcess});
   if (err.has_error())
@@ -237,9 +248,10 @@ Err DoAttach(ConsoleContext* context, const Command& cmd) {
   if (err.has_error())
     return err;
 
-  cmd.target()->Attach(koid, [](fxl::WeakPtr<Target> target, const Err& err) {
-    ProcessCommandCallback("attach", target, true, err);
-  });
+  cmd.target()->Attach(
+      koid, [callback](fxl::WeakPtr<Target> target, const Err& err) {
+        ProcessCommandCallback("attach", target, true, err, callback);
+      });
   return Err();
 }
 
@@ -265,7 +277,8 @@ Examples
   process 4 detach
       Detaches from process context 4.
 )";
-Err DoDetach(ConsoleContext* context, const Command& cmd) {
+Err DoDetach(ConsoleContext* context, const Command& cmd,
+             CommandCallback callback = nullptr) {
   // Only a process can be detached.
   Err err = cmd.ValidateNouns({Noun::kProcess});
   if (err.has_error())
@@ -277,10 +290,10 @@ Err DoDetach(ConsoleContext* context, const Command& cmd) {
   // Only print something when there was an error detaching. The console
   // context will watch for Process destruction and print messages for each one
   // in the success case.
-  cmd.target()->Detach([](fxl::WeakPtr<Target> target, const Err& err) {
+  cmd.target()->Detach([callback](fxl::WeakPtr<Target> target, const Err& err) {
     // The ConsoleContext displays messages for stopped processes, so don't
     // display messages when successfully detaching.
-    ProcessCommandCallback("detach", target, false, err);
+    ProcessCommandCallback("detach", target, false, err, callback);
   });
   return Err();
 }
@@ -363,8 +376,7 @@ std::string PrintRegionSize(uint64_t size) {
 }
 
 std::string PrintRegionName(uint64_t depth, const std::string& name) {
-  return fxl::StringPrintf("%*c%s", static_cast<int>(depth * 2), ' ',
-                           name.c_str());
+  return std::string(depth * 2, ' ') + name;
 }
 
 const char kAspaceShortHelp[] =
@@ -445,19 +457,21 @@ Err DoAspace(ConsoleContext* context, const Command& cmd) {
 }  // namespace
 
 void AppendProcessVerbs(std::map<Verb, VerbRecord>* verbs) {
-  (*verbs)[Verb::kNew] = VerbRecord(&DoNew, {"new"}, kNewShortHelp, kNewHelp);
-  (*verbs)[Verb::kRun] =
-      VerbRecord(&DoRun, {"run", "r"}, kRunShortHelp, kRunHelp);
-  (*verbs)[Verb::kKill] =
-      VerbRecord(&DoKill, {"kill", "k"}, kKillShortHelp, kKillHelp);
-  (*verbs)[Verb::kAttach] =
-      VerbRecord(&DoAttach, {"attach"}, kAttachShortHelp, kAttachHelp);
-  (*verbs)[Verb::kDetach] =
-      VerbRecord(&DoDetach, {"detach"}, kDetachShortHelp, kDetachHelp);
-  (*verbs)[Verb::kLibs] =
-      VerbRecord(&DoLibs, {"libs"}, kLibsShortHelp, kLibsHelp);
+  (*verbs)[Verb::kNew] = VerbRecord(&DoNew, {"new"}, kNewShortHelp, kNewHelp,
+                                    CommandGroup::kProcess);
+  (*verbs)[Verb::kRun] = VerbRecord(&DoRun, {"run", "r"}, kRunShortHelp,
+                                    kRunHelp, CommandGroup::kProcess);
+  (*verbs)[Verb::kKill] = VerbRecord(&DoKill, {"kill", "k"}, kKillShortHelp,
+                                     kKillHelp, CommandGroup::kProcess);
+  (*verbs)[Verb::kAttach] = VerbRecord(&DoAttach, {"attach"}, kAttachShortHelp,
+                                       kAttachHelp, CommandGroup::kProcess);
+  (*verbs)[Verb::kDetach] = VerbRecord(&DoDetach, {"detach"}, kDetachShortHelp,
+                                       kDetachHelp, CommandGroup::kProcess);
+  (*verbs)[Verb::kLibs] = VerbRecord(&DoLibs, {"libs"}, kLibsShortHelp,
+                                     kLibsHelp, CommandGroup::kQuery);
   (*verbs)[Verb::kAspace] =
-      VerbRecord(&DoAspace, {"aspace", "as"}, kAspaceShortHelp, kAspaceHelp);
+      VerbRecord(&DoAspace, {"aspace", "as"}, kAspaceShortHelp, kAspaceHelp,
+                 CommandGroup::kQuery);
 }
 
 }  // namespace zxdb

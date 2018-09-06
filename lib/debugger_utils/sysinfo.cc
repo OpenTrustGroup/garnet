@@ -14,8 +14,7 @@
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/logging.h"
 
-namespace debugserver {
-namespace util {
+namespace debugger_utils {
 
 const char kSysinfoDevice[] = "/dev/misc/sysinfo";
 
@@ -40,5 +39,4 @@ zx::job GetRootJob() {
   return zx::job(root_job);
 }
 
-}  // namespace util
-}  // namespace debugserver
+}  // namespace debugger_utils

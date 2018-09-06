@@ -7,14 +7,9 @@
 
 #![deny(warnings)]
 
-#[macro_use]
-extern crate bitflags;
-extern crate failure;
-pub extern crate fuchsia_zircon_sys as sys;
-
-#[deprecated(note="use fuchsia_zircon::sys::ZX_CPRNG_DRAW_MAX_LEN instead")]
-#[doc(hidden)]
-pub use sys::ZX_CPRNG_DRAW_MAX_LEN;
+pub mod sys {
+    pub use fuchsia_zircon_sys::*;
+}
 
 // Implements the HandleBased traits for a Handle newtype struct
 macro_rules! impl_handle_based {
@@ -97,28 +92,28 @@ mod thread;
 mod vmar;
 mod vmo;
 
-pub use channel::*;
-pub use cprng::*;
-pub use event::*;
-pub use eventpair::*;
-pub use fifo::*;
-pub use handle::*;
-pub use job::*;
-pub use port::*;
-pub use process::*;
-pub use rights::*;
-pub use socket::*;
-pub use signals::*;
-pub use status::*;
-pub use thread::*;
-pub use time::*;
-pub use vmar::*;
-pub use vmo::*;
+pub use self::channel::*;
+pub use self::cprng::*;
+pub use self::event::*;
+pub use self::eventpair::*;
+pub use self::fifo::*;
+pub use self::handle::*;
+pub use self::job::*;
+pub use self::port::*;
+pub use self::process::*;
+pub use self::rights::*;
+pub use self::socket::*;
+pub use self::signals::*;
+pub use self::status::*;
+pub use self::thread::*;
+pub use self::time::*;
+pub use self::vmar::*;
+pub use self::vmo::*;
 
 /// Prelude containing common utility traits.
 /// Designed for use like `use fuchsia_zircon::prelude::*;`
 pub mod prelude {
-    pub use {
+    pub use crate::{
         AsHandleRef,
         Cookied,
         DurationNum,
@@ -176,7 +171,7 @@ pub enum ClockId {
 /// syscall.
 pub fn object_wait_many(items: &mut [WaitItem], deadline: Time) -> Result<bool, Status>
 {
-    let len = try!(usize_into_u32(items.len()).map_err(|_| Status::OUT_OF_RANGE));
+    let len = usize_into_u32(items.len()).map_err(|_| Status::OUT_OF_RANGE)?;
     let items_ptr = items.as_mut_ptr() as *mut sys::zx_wait_item_t;
     let status = unsafe { sys::zx_object_wait_many( items_ptr, len, deadline.nanos()) };
     if status == sys::ZX_ERR_CANCELED {
@@ -231,7 +226,7 @@ mod tests {
         let ticks2 = ticks_get();
 
         // The number of ticks should have increased by at least 1 ms worth
-        let sleep_ticks = sleep_time.millis() * ticks_per_second() / 1000;
+        let sleep_ticks = (sleep_time.millis() as u64) * ticks_per_second() / 1000;
         assert!(ticks2 >= (ticks1 + sleep_ticks));
     }
 

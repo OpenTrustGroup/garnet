@@ -5,9 +5,9 @@
 #include "garnet/lib/ui/gfx/engine/session_handler.h"
 
 #include "garnet/lib/ui/scenic/session.h"
-#include "lib/ui/scenic/fidl_helpers.h"
+#include "lib/ui/scenic/cpp/commands.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 SessionHandler::SessionHandler(CommandDispatcherContext dispatcher_context,
@@ -18,7 +18,7 @@ SessionHandler::SessionHandler(CommandDispatcherContext dispatcher_context,
       session_manager_(engine->session_manager()),
       event_reporter_(event_reporter),
       error_reporter_(error_reporter),
-      session_(::fxl::MakeRefCounted<scenic::gfx::Session>(
+      session_(::fxl::MakeRefCounted<scenic_impl::gfx::Session>(
           session_id, engine, event_reporter, error_reporter)) {
   FXL_DCHECK(engine);
 }
@@ -31,7 +31,8 @@ void SessionHandler::Present(
     fuchsia::ui::scenic::Session::PresentCallback callback) {
   if (!session_->ScheduleUpdate(
           presentation_time, std::move(buffered_commands_),
-          std::move(acquire_fences), std::move(release_fences), std::move(callback))) {
+          std::move(acquire_fences), std::move(release_fences),
+          std::move(callback))) {
     BeginTearDown();
   }
   buffered_commands_.clear();
@@ -72,4 +73,4 @@ void SessionHandler::TearDown() {
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

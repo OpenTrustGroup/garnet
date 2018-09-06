@@ -21,6 +21,9 @@ const char kRootSchema[] = R"({
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "test_name": {
+      "type": "string"
+    },
     "app": {
       "type": "string"
     },
@@ -30,11 +33,21 @@ const char kRootSchema[] = R"({
         "type": "string"
       }
     },
+    "spawn": {
+      "type": "boolean"
+    },
     "categories": {
       "type": "array",
       "items": {
         "type": "string"
       }
+    },
+    "buffering_mode": {
+      "type": "string"
+    },
+    "buffer_size_in_mb": {
+      "type": "integer",
+      "minimum": 1
     },
     "duration": {
       "type": "integer",
@@ -68,10 +81,15 @@ const char kRootSchema[] = R"({
     }
   }
 })";
+
+const char kTestNameKey[] = "test_name";
 const char kAppKey[] = "app";
 const char kArgsKey[] = "args";
+const char kSpawnKey[] = "spawn";
 const char kDurationKey[] = "duration";
 const char kCategoriesKey[] = "categories";
+const char kBufferingModeKey[] = "buffering_mode";
+const char kBufferSizeInMbKey[] = "buffer_size_in_mb";
 const char kMeasurementsKey[] = "measure";
 const char kTypeKey[] = "type";
 const char kSplitSamplesAtKey[] = "split_samples_at";
@@ -245,7 +263,7 @@ bool DecodeSpec(const std::string& json, Spec* spec) {
 
   Spec result;
   rapidjson::Document document;
-  document.Parse(json.c_str(), json.size());
+  document.Parse<rapidjson::kParseCommentsFlag>(json.c_str(), json.size());
   if (document.HasParseError()) {
     auto offset = document.GetErrorOffset();
     auto code = document.GetParseError();
@@ -257,34 +275,58 @@ bool DecodeSpec(const std::string& json, Spec* spec) {
     return false;
   }
 
+  if (document.HasMember(kTestNameKey)) {
+    result.test_name = std::make_unique<std::string>(
+        document[kTestNameKey].GetString());
+  }
+
   if (document.HasMember(kAppKey)) {
-    result.app = document[kAppKey].GetString();
+    result.app = std::make_unique<std::string>(document[kAppKey].GetString());
   }
 
   if (document.HasMember(kArgsKey)) {
+    result.args = std::make_unique<std::vector<std::string>>();
     for (auto& arg_value : document[kArgsKey].GetArray()) {
-      result.args.push_back(arg_value.GetString());
+      result.args->push_back(arg_value.GetString());
     }
   }
+
+  if (document.HasMember(kSpawnKey)) {
+    result.spawn = std::make_unique<bool>(document[kSpawnKey].GetBool());
+  }
+
   if (document.HasMember(kCategoriesKey)) {
+    result.categories = std::make_unique<std::vector<std::string>>();
     for (auto& arg_value : document[kCategoriesKey].GetArray()) {
-      result.categories.push_back(arg_value.GetString());
+      result.categories->push_back(arg_value.GetString());
     }
+  }
+
+  if (document.HasMember(kBufferingModeKey)) {
+    result.buffering_mode = std::make_unique<std::string>(
+        document[kBufferingModeKey].GetString());
+  }
+
+  if (document.HasMember(kBufferSizeInMbKey)) {
+    result.buffer_size_in_mb = std::make_unique<size_t>(
+        document[kBufferSizeInMbKey].GetUint());
   }
 
   if (document.HasMember(kDurationKey)) {
-    result.duration =
-        fxl::TimeDelta::FromSeconds(document[kDurationKey].GetUint());
+    result.duration = std::make_unique<fxl::TimeDelta>(
+        fxl::TimeDelta::FromSeconds(document[kDurationKey].GetUint()));
   }
 
   if (document.HasMember(kTestSuiteNameKey)) {
-    result.test_suite_name = document[kTestSuiteNameKey].GetString();
+    result.test_suite_name = std::make_unique<std::string>(
+      document[kTestSuiteNameKey].GetString());
   }
 
   if (!document.HasMember(kMeasurementsKey)) {
-    *spec = result;
+    *spec = std::move(result);
     return true;
   }
+  result.measurements = std::make_unique<measure::Measurements>();
 
   // Used to assign a unique id to each measurement, in the order they were
   // defined.
@@ -299,7 +341,7 @@ bool DecodeSpec(const std::string& json, Spec* spec) {
           !DecodeMeasureDuration(measurement, &spec)) {
         return false;
       }
-      result.measurements.duration.push_back(std::move(spec));
+      result.measurements->duration.push_back(std::move(spec));
     } else if (type == kMeasureTimeBetweenType) {
       measure::TimeBetweenSpec spec;
       spec.id = counter;
@@ -307,7 +349,7 @@ bool DecodeSpec(const std::string& json, Spec* spec) {
           !DecodeMeasureTimeBetween(measurement, &spec)) {
         return false;
       }
-      result.measurements.time_between.push_back(std::move(spec));
+      result.measurements->time_between.push_back(std::move(spec));
     } else if (type == kMeasureArgumentValueType) {
       measure::ArgumentValueSpec spec;
       spec.id = counter;
@@ -315,7 +357,7 @@ bool DecodeSpec(const std::string& json, Spec* spec) {
           !DecodeMeasureArgumentValue(measurement, &spec)) {
         return false;
       }
-      result.measurements.argument_value.push_back(std::move(spec));
+      result.measurements->argument_value.push_back(std::move(spec));
     } else {
       FXL_LOG(ERROR) << "Unrecognized measurement type: " << type;
       return false;
@@ -323,26 +365,26 @@ bool DecodeSpec(const std::string& json, Spec* spec) {
 
     if (measurement.HasMember(kSplitSamplesAtKey)) {
       for (auto& value : measurement[kSplitSamplesAtKey].GetArray()) {
-        if (!result.measurements.split_samples_at[counter].empty() &&
+        if (!result.measurements->split_samples_at[counter].empty() &&
             value.GetUint() <=
-                result.measurements.split_samples_at[counter].back()) {
+                result.measurements->split_samples_at[counter].back()) {
           FXL_LOG(ERROR)
               << "Incorrect split samples at values - not strictly increasing.";
           return false;
         }
-        result.measurements.split_samples_at[counter].push_back(
+        result.measurements->split_samples_at[counter].push_back(
             value.GetUint());
       }
     }
 
     if (measurement.HasMember(kExpectedSampleCountKey)) {
-      result.measurements.expected_sample_count[counter] =
+      result.measurements->expected_sample_count[counter] =
           measurement[kExpectedSampleCountKey].GetUint();
     }
 
     counter++;
   }
-  *spec = result;
+  *spec = std::move(result);
   return true;
 }
 }  // namespace tracing

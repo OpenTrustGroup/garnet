@@ -13,13 +13,11 @@
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/ref_counted.h"
 
-namespace fuchsia {
-namespace sys {
+namespace component {
 class StartupContext;
-}  // namespace sys
-}  // namespace fuchsia
+}  // namespace component
 
-namespace scenic {
+namespace scenic_impl {
 
 class Clock;
 class Session;
@@ -28,17 +26,17 @@ class Session;
 // exposing the system's host (typically a Scenic, except for testing).
 class SystemContext final {
  public:
-  explicit SystemContext(fuchsia::sys::StartupContext* app_context,
+  explicit SystemContext(component::StartupContext* app_context,
                          fit::closure quit_callback);
   SystemContext(SystemContext&& context);
 
-  fuchsia::sys::StartupContext* app_context() const { return app_context_; }
+  component::StartupContext* app_context() const { return app_context_; }
 
   // Calls quit on the associated message loop.
   void Quit() { quit_callback_(); }
 
  private:
-  fuchsia::sys::StartupContext* const app_context_;
+  component::StartupContext* const app_context_;
   fit::closure quit_callback_;
 };
 
@@ -54,10 +52,11 @@ class System {
  public:
   enum TypeId {
     kGfx = 0,
-    kViews = 1,
-    kSketchy = 2,
-    kDummySystem = 3,
-    kMaxSystems = 4,
+    kSketchy = 1,
+    kVectorial = 2,
+    kInput = 3,
+    kDummySystem = 4,
+    kMaxSystems = 5,
     kInvalid = kMaxSystems,
   };
 
@@ -82,6 +81,7 @@ class System {
   }
 
  protected:
+  // TODO(SCN-906): Remove/refactor this under-used deferred-init logic.
   bool initialized_ = true;
 
   // Marks this system as initialized and invokes callback if it's set.
@@ -105,7 +105,8 @@ class TempSystemDelegate : public System {
   virtual void TakeScreenshot(
       fuchsia::ui::scenic::Scenic::TakeScreenshotCallback callback) = 0;
   virtual void GetDisplayOwnershipEvent(
-      fuchsia::ui::scenic::Scenic::GetDisplayOwnershipEventCallback callback) = 0;
+      fuchsia::ui::scenic::Scenic::GetDisplayOwnershipEventCallback
+          callback) = 0;
 };
 
 // Return the system type that knows how to handle the specified command.
@@ -115,13 +116,15 @@ inline System::TypeId SystemTypeForCmd(
   switch (command.Which()) {
     case fuchsia::ui::scenic::Command::Tag::kGfx:
       return System::TypeId::kGfx;
-    case fuchsia::ui::scenic::Command::Tag::kViews:
-      return System::TypeId::kViews;
+    case fuchsia::ui::scenic::Command::Tag::kInput:
+      return System::TypeId::kInput;
+    case fuchsia::ui::scenic::Command::Tag::kVectorial:
+      return System::TypeId::kVectorial;
     default:
       return System::TypeId::kInvalid;
   }
 }
 
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_SCENIC_SYSTEM_H_

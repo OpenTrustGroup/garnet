@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_SM_SMP_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_SM_SMP_H_
 
 #include <cstdint>
 
@@ -17,6 +18,17 @@
 namespace btlib {
 namespace sm {
 
+// v5.0, Vol 3, Part H, 3.2
+constexpr uint16_t kLEMTU = 23;
+constexpr uint16_t kBREDRMTU = 65;
+
+// SMP Timeout in seconds (Vol 3, Part H, 3.4)
+constexpr uint64_t kPairingTimeout = 30;
+
+// The supported encryption key sizes (Vol 3, Part H, 2.3.4).
+constexpr uint8_t kMinEncryptionKeySize = 7;
+constexpr uint8_t kMaxEncryptionKeySize = 16;
+
 // The field that identifies the type of a command.
 using Code = uint8_t;
 
@@ -29,8 +41,11 @@ enum class PairingMethod {
   // Unauthenticated
   kJustWorks,
 
-  // Authenticated
-  kPasskeyEntry,
+  // Local host inputs passkey. Authenticated.
+  kPasskeyEntryInput,
+
+  // Local host displays passkey. Authenticated.
+  kPasskeyEntryDisplay,
 
   // Authenticated, LE Secure Connections only.
   kNumericComparison,
@@ -103,7 +118,9 @@ using KeyDistGenField = uint8_t;
 
 // Possible failure reason codes used in the "Pairing Failed" command.
 // (Vol 3, Part H, 3.5.5).
-enum class PairingFailReason : uint8_t {
+enum class ErrorCode : uint8_t {
+  kNoError = 0x00,
+
   // User input of passkey failed, e.g. due to cancelation.
   kPasskeyEntryFailed = 0x01,
 
@@ -186,7 +203,7 @@ struct PairingRequestParams {
   // The requested security properties (Vol 3, Part H, 2.3.1).
   AuthReqField auth_req;
 
-  // Maxomum encryption key size supported. Valid values are 7-16.
+  // Maximum encryption key size supported. Valid values are 7-16.
   uint8_t max_encryption_key_size;
 
   // The keys that the initiator requests to distribute/generate.
@@ -214,13 +231,12 @@ using PairingRandomValue = common::UInt128;
 // =====================================
 // Pairing Failed (Vol 3, Part H, 3.5.5)
 constexpr Code kPairingFailed = 0x05;
-
-// See enum PairingFailReason above for parameters.
+using PairingFailedParams = ErrorCode;
 
 // =============================================
 // Encryption Information (LE Legacy Pairing only; Vol 3, Part H, 3.6.2)
 constexpr Code kEncryptionInformation = 0x06;
-using LTK = common::UInt128;
+using EncryptionInformationParams = common::UInt128;
 
 // ====================================================================
 // Master Identification (LE Legacy Pairing only; Vol 3, Part H, 3.6.3)
@@ -232,20 +248,20 @@ struct MasterIdentificationParams {
 
 // ===========================================
 // Identity Information (Vol 3, Part H, 3.6.4)
-constexpr Code kIdentityInfo = 0x08;
+constexpr Code kIdentityInformation = 0x08;
 using IRK = common::UInt128;
 
 // ===================================================
 // Identity Address Information (Vol 3, Part H, 3.6.5)
-constexpr Code kIdentityAddressInfo = 0x09;
-struct IdentityAddressInfoParams {
+constexpr Code kIdentityAddressInformation = 0x09;
+struct IdentityAddressInformationParams {
   AddressType type;
   common::DeviceAddressBytes bd_addr;
 } __PACKED;
 
 // ==========================================
 // Signing Information (Vol 3, Part H, 3.6.6)
-constexpr Code kSigningInfo = 0x0A;
+constexpr Code kSigningInformation = 0x0A;
 using CSRK = common::UInt128;
 
 // =======================================
@@ -275,3 +291,5 @@ constexpr Code kKeypressNotification = 0x0E;
 
 }  // namespace sm
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_SM_SMP_H_

@@ -11,15 +11,21 @@
 
 #include <zircon/compiler.h>
 
+#include "lib/fxl/macros.h"
+
 namespace btlib {
 namespace l2cap {
 
-// L2CAP channel identifier uniquely identifies fixed and connection-oriented channels over a
-// logical link.
+// L2CAP channel identifier uniquely identifies fixed and connection-oriented
+// channels over a logical link.
+// (see Core Spec v5.0, Vol 3, Part A, Section 2.1)
 using ChannelId = uint16_t;
 
-// Fixed channel identifiers used in BR/EDR & AMP (i.e. ACL-U, ASB-U, and AMP-U logical links)
-// (see Core Spec v5.0, Vol 3, Part A, Section 2.1)
+// Null ID, "never be used as a destination endpoint"
+constexpr ChannelId kInvalidChannelId = 0x0000;
+
+// Fixed channel identifiers used in BR/EDR & AMP (i.e. ACL-U, ASB-U, and AMP-U
+// logical links)
 constexpr ChannelId kSignalingChannelId = 0x0001;
 constexpr ChannelId kConnectionlessChannelId = 0x0002;
 constexpr ChannelId kAMPManagerChannelId = 0x0003;
@@ -27,7 +33,6 @@ constexpr ChannelId kSMPChannelId = 0x0007;
 constexpr ChannelId kAMPTestManagerChannelId = 0x003F;
 
 // Fixed channel identifiers used in LE
-// (see Core Spec v5.0, Vol 3, Part A, Section 2.1)
 constexpr ChannelId kATTChannelId = 0x0004;
 constexpr ChannelId kLESignalingChannelId = 0x0005;
 constexpr ChannelId kLESMPChannelId = 0x0006;
@@ -147,6 +152,28 @@ enum class LECreditBasedConnectionResult : uint16_t {
   kUnacceptableParameters = 0x000B,
 };
 
+// Type used for all Protocol and Service Multiplexer (PSM) identifiers,
+// including those dynamically-assigned/-obtained
+using PSM = uint16_t;
+
+// Well-known Protocol and Service Multiplexer values defined by the Bluetooth
+// SIG in Logical Link Control Assigned Numbers
+// https://www.bluetooth.com/specifications/assigned-numbers/logical-link-control
+constexpr PSM kSDP = 0x0001;
+constexpr PSM kRFCOMM = 0x0003;
+constexpr PSM kTCSBIN = 0x0005; // Telephony Control Specification
+constexpr PSM kTCSBINCordless = 0x0007;
+constexpr PSM kBNEP = 0x0009; // Bluetooth Network Encapsulation Protocol
+constexpr PSM kHIDControl = 0x0011; // Human Interface Device
+constexpr PSM kHIDInteerup = 0x0013; // Human Interface Device
+constexpr PSM kAVCTP = 0x0017; // Audio/Video Control Transport Protocol
+constexpr PSM kAVDTP = 0x0019; // Audio/Video Distribution Transport Protocol
+constexpr PSM kAVCTP_Browse = 0x001B; // Audio/Video Remote Control Profile (Browsing)
+constexpr PSM kATT = 0x001F; // ATT
+constexpr PSM k3DSP = 0x0021; // 3D Synchronization Profile
+constexpr PSM kLE_IPSP = 0x0023; // Internet Protocol Support Profile
+constexpr PSM kOTS = 0x0025; // Object Transfer Service
+
 // Identifier assigned to each signaling transaction. This is used to match each
 // signaling channel request with a response.
 using CommandId = uint8_t;
@@ -164,11 +191,13 @@ struct CommandHeader {
 constexpr CommandCode kCommandRejectCode = 0x01;
 constexpr size_t kCommandRejectMaxDataLength = 4;
 struct CommandRejectPayload {
+  FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(CommandRejectPayload);
+
   // See RejectReason for possible values.
   uint16_t reason;
 
   // Up to 4 octets of optional data (see Vol 3, Part A, Section 4.1)
-  uint8_t data[kCommandRejectMaxDataLength];
+  uint8_t data[];
 } __PACKED;
 
 // ACL-U
@@ -193,38 +222,48 @@ constexpr size_t kConfigurationOptionMaxDataLength = 22;
 
 // Element of configuration payload data (see Vol 3, Part A, Section 5)
 struct ConfigurationOption {
+  FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(ConfigurationOption);
+
   uint8_t type;
   uint8_t length;
-  uint8_t data[kConfigurationOptionMaxDataLength];
+
+  // Up to 22 octets of data
+  uint8_t data[];
 } __PACKED;
 
 struct ConfigurationRequestPayload {
+  FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(ConfigurationRequestPayload);
+
   ChannelId dst_cid;
   uint16_t flags;
 
   // Followed by zero or more configuration options of varying length
+  uint8_t data[];
 } __PACKED;
 
 // ACL-U
 constexpr CommandCode kConfigurationResponse = 0x05;
 struct ConfigurationResponsePayload {
+  FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(ConfigurationResponsePayload);
+
   ChannelId src_cid;
   uint16_t flags;
   ConfigurationResult result;
 
   // Followed by zero or more configuration options of varying length
+  uint8_t data[];
 } __PACKED;
 
 // ACL-U & LE-U
-constexpr CommandCode kDisconnectRequest = 0x06;
-struct DisconnectRequestPayload {
+constexpr CommandCode kDisconnectionRequest = 0x06;
+struct DisconnectionRequestPayload {
   ChannelId dst_cid;
   ChannelId src_cid;
 } __PACKED;
 
 // ACL-U & LE-U
-constexpr CommandCode kDisconnectResponse = 0x07;
-struct DisconnectResponsePayload {
+constexpr CommandCode kDisconnectionResponse = 0x07;
+struct DisconnectionResponsePayload {
   ChannelId dst_cid;
   ChannelId src_cid;
 } __PACKED;
@@ -245,11 +284,13 @@ struct InformationRequestPayload {
 constexpr CommandCode kInformationResponse = 0x0B;
 constexpr size_t kInformationResponseMaxDataLength = 8;
 struct InformationResponsePayload {
+  FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(InformationResponsePayload);
+
   InformationType type;
   InformationResult result;
 
   // Up to 8 octets of optional data (see Vol 3, Part A, Section 4.11)
-  uint8_t data[kInformationResponseMaxDataLength];
+  uint8_t data[];
 } __PACKED;
 
 // LE-U

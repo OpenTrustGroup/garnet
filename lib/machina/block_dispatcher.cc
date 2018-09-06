@@ -10,7 +10,6 @@
 
 #include <block-client/client.h>
 #include <fbl/auto_call.h>
-#include <fbl/auto_lock.h>
 #include <fbl/unique_fd.h>
 #include <fbl/unique_ptr.h>
 #include <lib/fdio/watcher.h>
@@ -33,32 +32,19 @@ static constexpr char kBlockDirPath[] = "/dev/class/block";
 // (ex: read/write to a file descriptor).
 class FdioBlockDispatcher : public BlockDispatcher {
  public:
-  static zx_status_t Create(int fd, size_t size, bool read_only,
-                            fbl::unique_ptr<BlockDispatcher>* out) {
-    fbl::AllocChecker ac;
-    auto dispatcher =
-        fbl::make_unique_checked<FdioBlockDispatcher>(&ac, size, read_only, fd);
-    if (!ac.check()) {
-      return ZX_ERR_NO_MEMORY;
-    }
-
-    *out = fbl::move(dispatcher);
-    return ZX_OK;
-  }
-
   FdioBlockDispatcher(size_t size, bool read_only, int fd)
       : BlockDispatcher(size, read_only), fd_(fd) {}
 
   zx_status_t Flush() override {
-    fbl::AutoLock lock(&file_mutex_);
+    std::lock_guard<std::mutex> lock(file_mutex_);
     return fsync(fd_) == 0 ? ZX_OK : ZX_ERR_IO;
   }
 
   zx_status_t Read(off_t disk_offset, void* buf, size_t size) override {
-    TRACE_DURATION("machina", "io_block_read", "offset", disk_offset, "buf",
-                   buf, "size", size);
+    TRACE_DURATION("machina", "block_read", "offset", disk_offset, "buf", buf,
+                   "size", size);
 
-    fbl::AutoLock lock(&file_mutex_);
+    std::lock_guard<std::mutex> lock(file_mutex_);
 
     off_t off = lseek(fd_, disk_offset, SEEK_SET);
     if (off < 0) {
@@ -73,10 +59,10 @@ class FdioBlockDispatcher : public BlockDispatcher {
   }
 
   zx_status_t Write(off_t disk_offset, const void* buf, size_t size) override {
-    TRACE_DURATION("machina", "io_block_write", "offset", disk_offset, "buf",
-                   buf, "size", size);
+    TRACE_DURATION("machina", "block_write", "offset", disk_offset, "buf", buf,
+                   "size", size);
 
-    fbl::AutoLock lock(&file_mutex_);
+    std::lock_guard<std::mutex> lock(file_mutex_);
 
     off_t off = lseek(fd_, disk_offset, SEEK_SET);
     if (off < 0) {
@@ -96,13 +82,13 @@ class FdioBlockDispatcher : public BlockDispatcher {
   }
 
  private:
-  fbl::Mutex file_mutex_;
+  std::mutex file_mutex_;
   int fd_;
 };
 
 zx_status_t BlockDispatcher::CreateFromPath(
     const char* path, Mode mode, DataPlane data_plane, const PhysMem& phys_mem,
-    fbl::unique_ptr<BlockDispatcher>* dispatcher) {
+    std::unique_ptr<BlockDispatcher>* dispatcher) {
   bool read_only = mode == Mode::RO;
   int fd = open(path, read_only ? O_RDONLY : O_RDWR);
   if (fd < 0) {
@@ -153,7 +139,7 @@ static zx_status_t MatchBlockDeviceToGuid(int dirfd, int event, const char* fn,
 
 zx_status_t BlockDispatcher::CreateFromGuid(
     const Guid& guid, zx_duration_t timeout, Mode mode, DataPlane data_plane,
-    const PhysMem& phys_mem, fbl::unique_ptr<BlockDispatcher>* dispatcher) {
+    const PhysMem& phys_mem, std::unique_ptr<BlockDispatcher>* dispatcher) {
   GuidLookupArgs args = {-1, mode, guid, nullptr};
   switch (guid.type) {
     case GuidType::GPT_PARTITION_GUID:
@@ -181,7 +167,7 @@ zx_status_t BlockDispatcher::CreateFromGuid(
 
 zx_status_t BlockDispatcher::CreateFromFd(
     int fd, Mode mode, DataPlane data_plane, const PhysMem& phys_mem,
-    fbl::unique_ptr<BlockDispatcher>* dispatcher) {
+    std::unique_ptr<BlockDispatcher>* dispatcher) {
   off_t file_size = lseek(fd, 0, SEEK_END);
   if (file_size < 0) {
     FXL_LOG(ERROR) << "Failed to read size of block device";
@@ -191,7 +177,9 @@ zx_status_t BlockDispatcher::CreateFromFd(
   bool read_only = mode == Mode::RO;
   switch (data_plane) {
     case DataPlane::FDIO:
-      return FdioBlockDispatcher::Create(fd, file_size, read_only, dispatcher);
+      *dispatcher =
+          std::make_unique<FdioBlockDispatcher>(file_size, read_only, fd);
+      return ZX_OK;
     case DataPlane::QCOW:
       return QcowDispatcher::Create(fd, read_only, dispatcher);
     default:
@@ -201,9 +189,9 @@ zx_status_t BlockDispatcher::CreateFromFd(
 }
 
 zx_status_t BlockDispatcher::CreateVolatileWrapper(
-    fbl::unique_ptr<BlockDispatcher> dispatcher,
-    fbl::unique_ptr<BlockDispatcher>* out) {
-  return VolatileWriteBlockDispatcher::Create(fbl::move(dispatcher), out);
+    std::unique_ptr<BlockDispatcher> dispatcher,
+    std::unique_ptr<BlockDispatcher>* out) {
+  return VolatileWriteBlockDispatcher::Create(std::move(dispatcher), out);
 }
 
 }  // namespace machina

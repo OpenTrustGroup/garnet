@@ -58,67 +58,23 @@ zx_status_t HandleDataPacket(fbl::unique_ptr<Packet> packet, FrameHandler* targe
     case DataSubtype::kNull:
         // Fall-through
     case DataSubtype::kQosnull: {
-        auto null_frame = data_frame.Specialize<NilHeader>();
+        auto null_frame = data_frame.Specialize<NullDataHdr>();
         return target->HandleFrame(null_frame);
     }
     case DataSubtype::kDataSubtype:
         // Fall-through
-    case DataSubtype::kQosdata:
-        break;
-    default:
-        warnf("unsupported data subtype %02x\n", hdr->fc.subtype());
-        return ZX_OK;
-    }
-
-    auto llc_frame = data_frame.Specialize<LlcHeader>();
-    if (!llc_frame.HasValidLen()) {
-        errorf("short data packet len=%zu\n", llc_frame.len());
-        return ZX_ERR_IO;
-    }
-    return target->HandleFrame(llc_frame);
-}
-
-zx_status_t HandleActionPacket(MgmtFrame<ActionFrame> action_frame, FrameHandler* target) {
-    if (action_frame.body()->category != action::Category::kBlockAck) {
-        verbosef("Rxed Action frame with category %d. Not handled.\n",
-                 action_frame.body()->category);
-        return ZX_OK;
-    }
-
-    auto ba_frame = action_frame.Specialize<ActionFrameBlockAck>();
-    if (!ba_frame.HasValidLen()) {
-        errorf("bloackack packet too small (len=%zd)\n", ba_frame.len());
-        return ZX_ERR_IO;
-    }
-
-    switch (ba_frame.body()->action) {
-    case action::BaAction::kAddBaRequest: {
-        auto addbar = ba_frame.Specialize<AddBaRequestFrame>();
-        if (!addbar.HasValidLen()) {
-            errorf("addbar packet too small (len=%zd)\n", addbar.len());
+    case DataSubtype::kQosdata: {
+        auto llc_frame = data_frame.Specialize<LlcHeader>();
+        if (!llc_frame.HasValidLen()) {
+            errorf("short data packet len=%zu\n", llc_frame.len());
             return ZX_ERR_IO;
         }
-
-        // TODO(porce): Support AddBar. Work with lower mac.
-        // TODO(porce): Make this conditional depending on the hardware capability.
-
-        return target->HandleFrame(addbar);
+        return target->HandleFrame(llc_frame);
     }
-    case action::BaAction::kAddBaResponse: {
-        auto addba_resp = ba_frame.Specialize<AddBaResponseFrame>();
-        if (!addba_resp.HasValidLen()) {
-            errorf("addba_resp packet too small (len=%zd)\n", addba_resp.len());
-            return ZX_ERR_IO;
-        }
-        return target->HandleFrame(addba_resp);
-    }
-    case action::BaAction::kDelBa:
-    // fall-through
     default:
-        warnf("BlockAck action frame with action %u not handled.\n", ba_frame.body()->action);
-        break;
+        // No support of PCF / HCCA
+        return ZX_OK;
     }
-    return ZX_OK;
 }
 
 zx_status_t HandleMgmtPacket(fbl::unique_ptr<Packet> packet, FrameHandler* target) {
@@ -213,11 +169,7 @@ zx_status_t HandleMgmtPacket(fbl::unique_ptr<Packet> packet, FrameHandler* targe
             errorf("action packet too small (len=%zd)\n", frame.len());
             return ZX_ERR_IO;
         }
-        if (!frame.hdr()->IsAction()) {
-            errorf("action packet is not an action\n");
-            return ZX_ERR_IO;
-        }
-        HandleActionPacket(fbl::move(frame), target);
+        return target->HandleFrame(frame);
     }
     default:
         if (!dst.IsBcast()) {
@@ -241,40 +193,6 @@ zx_status_t HandleEthPacket(fbl::unique_ptr<Packet> packet, FrameHandler* target
 }
 
 }  // namespace
-
-zx_status_t DispatchMlmeMsg(const BaseMlmeMsg& msg, FrameHandler* target) {
-    ZX_DEBUG_ASSERT(target != nullptr);
-    if (target == nullptr) { return ZX_ERR_INVALID_ARGS; }
-
-    if (auto reset_req = msg.As<wlan_mlme::ResetRequest>()) {
-        target->HandleFrame(*reset_req);
-    } else if (auto start_req = msg.As<wlan_mlme::StartRequest>()) {
-        target->HandleFrame(*start_req);
-    } else if (auto stop_req = msg.As<wlan_mlme::StopRequest>()) {
-        target->HandleFrame(*stop_req);
-    } else if (auto scan_req = msg.As<wlan_mlme::ScanRequest>()) {
-        target->HandleFrame(*scan_req);
-    } else if (auto join_req = msg.As<wlan_mlme::JoinRequest>()) {
-        target->HandleFrame(*join_req);
-    } else if (auto auth_req = msg.As<wlan_mlme::AuthenticateRequest>()) {
-        target->HandleFrame(*auth_req);
-    } else if (auto auth_resp = msg.As<wlan_mlme::AuthenticateResponse>()) {
-        target->HandleFrame(*auth_resp);
-    } else if (auto deauth_req = msg.As<wlan_mlme::DeauthenticateRequest>()) {
-        target->HandleFrame(*deauth_req);
-    } else if (auto assoc_req = msg.As<wlan_mlme::AssociateRequest>()) {
-        target->HandleFrame(*assoc_req);
-    } else if (auto assoc_resp = msg.As<wlan_mlme::AssociateResponse>()) {
-        target->HandleFrame(*assoc_resp);
-    } else if (auto eapol_req = msg.As<wlan_mlme::EapolRequest>()) {
-        target->HandleFrame(*eapol_req);
-    } else if (auto setkeys_req = msg.As<wlan_mlme::SetKeysRequest>()) {
-        target->HandleFrame(*setkeys_req);
-    } else {
-        ZX_DEBUG_ASSERT(false);
-    }
-    return ZX_OK;
-}
 
 zx_status_t DispatchFramePacket(fbl::unique_ptr<Packet> packet, FrameHandler* target) {
     debugfn();

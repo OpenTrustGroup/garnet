@@ -14,12 +14,6 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-//#include <linux/firmware.h>
-//#include <linux/kernel.h>
-//#include <linux/module.h>
-//#include <linux/netdevice.h>
-//#include <linux/string.h>
-
 #include "common.h"
 
 #include <stdarg.h>
@@ -431,7 +425,13 @@ struct brcmf_mp_device* brcmf_get_module_param(struct brcmf_device* dev,
 #endif
 
     if (bus_type == BRCMF_BUSTYPE_SDIO) {
+        // TODO(cphoenix): Do we really want to use default? (If so, delete =0 lines because calloc)
+        settings->bus.sdio.sd_sgentry_align = 0; // Use default
+        settings->bus.sdio.sd_head_align = 0; // Use default
+        settings->bus.sdio.drive_strength = 0; // Use default
         settings->bus.sdio.txglomsz = brcmf_sdiod_txglomsz;
+        settings->bus.sdio.oob_irq_supported = true;    // TODO(cphoenix): Always?
+        settings->bus.sdio.oob_irq_flags = 0; // TODO(cphoenix): Maybe IRQ_FLAG_LEVEL_HIGH
     }
 #ifdef USE_PLATFORM_DATA
 // TODO(NET-831): Do we need to do this?
@@ -496,7 +496,7 @@ zx_status_t brcmfmac_module_init(zx_device_t* device) {
         async_loop_destroy(async_loop);
         return err;
     }
-    default_async = async_loop_get_dispatcher(async_loop);
+    default_dispatcher = async_loop_get_dispatcher(async_loop);
 
     /* Initialize global module paramaters */
     brcmf_mp_attach();
@@ -512,8 +512,8 @@ zx_status_t brcmfmac_module_init(zx_device_t* device) {
 
 static void brcmfmac_module_exit(void) {
     brcmf_core_exit();
-    if (default_async != NULL) {
-        async_loop_destroy(async_loop_from_dispatcher(default_async));
+    if (default_dispatcher != NULL) {
+        async_loop_destroy(async_loop_from_dispatcher(default_dispatcher));
     }
     brcmf_debugfs_exit();
 }

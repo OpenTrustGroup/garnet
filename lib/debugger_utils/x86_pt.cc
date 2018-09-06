@@ -12,9 +12,7 @@
 
 #include "x86_cpuid.h"
 
-namespace debugserver {
-namespace arch {
-namespace x86 {
+namespace debugger_utils {
 
 /* Trick to get a 1 of the right size */
 #define ONE(x) (1 + ((x) - (x)))
@@ -22,26 +20,28 @@ namespace x86 {
 #define BITS_SHIFT(x, high, low) \
   (((x) >> (low)) & ((ONE(x) << ((high) - (low) + 1)) - 1))
 
-static ProcessorTraceFeatures pt_features;  // TODO(dje): guard annotation
-static bool initialized = false;            // TODO(dje): guard annotation
+static X86ProcessorTraceFeatures pt_features;  // TODO(dje): guard annotation
+static bool initialized = false;               // TODO(dje): guard annotation
 static std::mutex cpuid_mutex;
 
-bool HaveProcessorTrace() {
-  const ProcessorTraceFeatures* ptf = GetProcessorTraceFeatures();
+bool X86HaveProcessorTrace() {
+  const X86ProcessorTraceFeatures* ptf = X86GetProcessorTraceFeatures();
   return ptf->have_pt;
 }
 
-const ProcessorTraceFeatures* GetProcessorTraceFeatures() {
+const X86ProcessorTraceFeatures* X86GetProcessorTraceFeatures() {
   std::lock_guard<std::mutex> lock(cpuid_mutex);
 
-  ProcessorTraceFeatures* pt = &pt_features;
+  X86ProcessorTraceFeatures* pt = &pt_features;
 
-  if (initialized) return pt;
+  if (initialized)
+    return pt;
 
   memset(pt, 0, sizeof(*pt));
   initialized = true;
 
-  if (!x86_feature_test(X86_FEATURE_PT)) return pt;
+  if (!x86_feature_test(X86_FEATURE_PT))
+    return pt;
 
   unsigned a, b, c, d;
   unsigned max_leaf = __get_cpuid_max(0, nullptr);
@@ -49,7 +49,8 @@ const ProcessorTraceFeatures* GetProcessorTraceFeatures() {
   pt->have_pt = true;
 
   __cpuid_count(0x14, 0, a, b, c, d);
-  if (BIT(b, 2)) pt->addr_cfg_max = 2;
+  if (BIT(b, 2))
+    pt->addr_cfg_max = 2;
   if (BIT(b, 1) && a >= 1) {
     unsigned a1, b1, c1, d1;
     __cpuid_count(0x14, 1, a1, b1, c1, d1);
@@ -85,6 +86,4 @@ const ProcessorTraceFeatures* GetProcessorTraceFeatures() {
   return pt;
 }
 
-}  // namespace x86
-}  // namespace arch
-}  // namespace debugserver
+}  // namespace debugger_utils

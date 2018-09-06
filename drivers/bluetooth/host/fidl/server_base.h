@@ -2,15 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_SERVER_BASE_H_
+#define GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_SERVER_BASE_H_
 
 #include <fbl/ref_ptr.h>
 #include <lib/fit/function.h>
+#include <zircon/assert.h>
 
 #include "lib/fidl/cpp/binding.h"
+#include "lib/fidl/cpp/interface_request.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
-#include "lib/fidl/cpp/interface_request.h"
 
 namespace btlib {
 
@@ -46,7 +48,7 @@ class ServerBase : public Server, public Interface {
   // Constructs a FIDL server by binding a zx::channel.
   ServerBase(Interface* impl, zx::channel channel)
       : binding_(impl, std::move(channel)) {
-    FXL_DCHECK(binding_.is_bound());
+    ZX_DEBUG_ASSERT(binding_.is_bound());
   }
 
   ~ServerBase() override = default;
@@ -70,16 +72,14 @@ class ServerBase : public Server, public Interface {
 template <typename Interface>
 class AdapterServerBase : public ServerBase<Interface> {
  public:
-  AdapterServerBase(fxl::WeakPtr<btlib::gap::Adapter> adapter,
-                    Interface* impl,
+  AdapterServerBase(fxl::WeakPtr<btlib::gap::Adapter> adapter, Interface* impl,
                     fidl::InterfaceRequest<Interface> request)
       : AdapterServerBase(adapter, impl, request.TakeChannel()) {}
 
-  AdapterServerBase(fxl::WeakPtr<btlib::gap::Adapter> adapter,
-                    Interface* impl,
+  AdapterServerBase(fxl::WeakPtr<btlib::gap::Adapter> adapter, Interface* impl,
                     zx::channel channel)
       : ServerBase<Interface>(impl, std::move(channel)), adapter_(adapter) {
-    FXL_DCHECK(adapter_);
+    ZX_DEBUG_ASSERT(adapter_);
   }
 
   ~AdapterServerBase() override = default;
@@ -98,11 +98,10 @@ class AdapterServerBase : public ServerBase<Interface> {
 template <typename Interface>
 class GattServerBase : public ServerBase<Interface> {
  public:
-  GattServerBase(fbl::RefPtr<btlib::gatt::GATT> gatt,
-                 Interface* impl,
+  GattServerBase(fbl::RefPtr<btlib::gatt::GATT> gatt, Interface* impl,
                  fidl::InterfaceRequest<Interface> request)
       : ServerBase<Interface>(impl, std::move(request)), gatt_(gatt) {
-    FXL_DCHECK(gatt_);
+    ZX_DEBUG_ASSERT(gatt_);
   }
 
   ~GattServerBase() override = default;
@@ -117,3 +116,5 @@ class GattServerBase : public ServerBase<Interface> {
 };
 
 }  // namespace bthost
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_SERVER_BASE_H_

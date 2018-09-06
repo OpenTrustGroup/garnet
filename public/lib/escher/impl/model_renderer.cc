@@ -29,18 +29,20 @@
 namespace escher {
 namespace impl {
 
-ModelRendererPtr ModelRenderer::New(Escher* escher, ModelDataPtr model_data) {
-  return fxl::AdoptRef(new ModelRenderer(escher, std::move(model_data)));
+ModelRendererPtr ModelRenderer::New(EscherWeakPtr weak_escher,
+                                    ModelDataPtr model_data) {
+  return fxl::AdoptRef(
+      new ModelRenderer(std::move(weak_escher), std::move(model_data)));
 }
 
-ModelRenderer::ModelRenderer(Escher* escher, ModelDataPtr model_data)
-    : escher_(escher),
-      device_(escher->vk_device()),
-      resource_recycler_(escher->resource_recycler()),
+ModelRenderer::ModelRenderer(EscherWeakPtr weak_escher, ModelDataPtr model_data)
+    : escher_(std::move(weak_escher)),
+      device_(escher_->vk_device()),
+      resource_recycler_(escher_->resource_recycler()),
       model_data_(std::move(model_data)) {
   rectangle_ = CreateRectangle();
   circle_ = CreateCircle();
-  white_texture_ = CreateWhiteTexture(escher);
+  white_texture_ = CreateWhiteTexture(escher_.get());
 }
 
 ModelRenderer::~ModelRenderer() {}
@@ -137,10 +139,10 @@ void ModelRenderer::Draw(const Stage& stage,
   vk::CommandBuffer vk_command_buffer = command_buffer->vk();
 
   for (const TexturePtr& texture : display_list->textures()) {
-    // TODO: it would be nice if Resource::TakeWaitSemaphore() were virtual
-    // so that we could say texture->TakeWaitSemaphore(), instead of needing
-    // to know that the image is really the thing that we might need to wait
-    // for.  Another approach would be for the Texture constructor to say
+    // TODO(ES-104): it would be nice if Resource::TakeWaitSemaphore() were
+    // virtual so that we could say texture->TakeWaitSemaphore(), instead of
+    // needing to know that the image is really the thing that we might need to
+    // wait for.  Another approach would be for the Texture constructor to say
     // SetWaitSemaphore(image->TakeWaitSemaphore()), but this isn't a
     // bulletproof solution... what if someone else made a Texture with the
     // same image, and used that one first.  Of course, in general we want

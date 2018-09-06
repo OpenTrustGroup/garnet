@@ -16,6 +16,8 @@ namespace escher {
 // any padding bytes, their value will be undefined, and therefore the resulting
 // hash value will also be undefined.  All types that are hashed by
 // HashMapHasher should be added to hash_unittest.cc
+//
+// TODO(ES-107): Guarantee the padding assertion at compile time.
 template <typename T, class Enable = void>
 struct HashMapHasher {
   inline size_t operator()(const T& hashee) const {
@@ -27,9 +29,8 @@ struct HashMapHasher {
 // Use SFINAE to provide a specialized implementation for any type that declares
 // a HashMapHasher type.
 template <typename T>
-struct HashMapHasher<T,
-                     typename std::enable_if<std::is_class<
-                         typename T::HashMapHasher>::value>::type> {
+struct HashMapHasher<T, typename std::enable_if<std::is_class<
+                            typename T::HashMapHasher>::value>::type> {
   inline size_t operator()(const T& hashee) const {
     typename T::HashMapHasher h;
     return h(hashee);

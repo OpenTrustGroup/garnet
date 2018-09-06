@@ -5,9 +5,22 @@
 #ifndef LIB_ESCHER_UTIL_BIT_OPS_H_
 #define LIB_ESCHER_UTIL_BIT_OPS_H_
 
+#include <cmath>
 #include <cstdint>
+#include <limits>
+#include <type_traits>
 
 namespace escher {
+
+// Rotate the value the specified number of bits to the left.  In other words,
+// this is a bit-shift where any high-order bits that are "shifted out" are
+// "rotated in" as the low-order bytes instead of being discarded.
+template <typename IntT>
+constexpr IntT RotateLeft(IntT val, size_t len) {
+  static_assert(std::is_unsigned<IntT>::value,
+                "RotateLeft only makes sense for unsigned types.");
+  return (val << len) | (val >> (std::numeric_limits<IntT>::digits - len));
+}
 
 // Use compiler built-ins, if available.
 #if defined(__clang__) || defined(__GCC__)
@@ -16,6 +29,9 @@ inline int32_t CountLeadingZeros(uint32_t value) {
 }
 inline int32_t CountTrailingZeros(uint32_t value) {
   return value == 0 ? 32 : __builtin_ctz(value);
+}
+inline uint32_t CountOnes(uint32_t value) {
+  return uint32_t(__builtin_popcount(value));
 }
 #else
 inline int32_t CountLeadingZeros(uint32_t value) {
@@ -40,6 +56,14 @@ inline int32_t CountTrailingZeros(uint32_t value) {
     value = value >> 1;
   }
   return 32;
+}
+inline uint32_t CountOnes(uint32_t value) {
+  uint32_t count = 0;
+  while (value != 0) {
+    count += value & 1;
+    value = value >> 1;
+  }
+  return count;
 }
 #endif  // #if defined(__clang__) || defined(__GCC__)
 

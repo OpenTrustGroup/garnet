@@ -14,15 +14,10 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-//#include <linux/netdevice.h>
-//#include <linux/slab.h>
-//#include <net/cfg80211.h>
-
-#include "linuxisms.h"
+#include "btcoex.h"
 
 #include "brcmu_utils.h"
 #include "brcmu_wifi.h"
-#include "btcoex.h"
 #include "cfg80211.h"
 #include "core.h"
 #include "debug.h"
@@ -30,6 +25,7 @@
 #include "device.h"
 #include "fwil.h"
 #include "fwil_types.h"
+#include "linuxisms.h"
 #include "p2p.h"
 #include "workqueue.h"
 
@@ -283,7 +279,7 @@ static void brcmf_btcoex_timerfunc(void* data) {
  */
 static void brcmf_btcoex_handler(struct work_struct* work) {
     struct brcmf_btcoex_info* btci;
-    btci = container_of(work, struct brcmf_btcoex_info, work);
+    btci = containerof(work, struct brcmf_btcoex_info, work);
     if (btci->timer_on) {
         btci->timer_on = false;
         brcmf_timer_stop(&btci->timer);
@@ -341,7 +337,7 @@ idle:
     btci->bt_state = BRCMF_BT_DHCP_IDLE;
     btci->timer_on = false;
     brcmf_btcoex_boost_wifi(btci, false);
-    cfg80211_crit_proto_stopped(&btci->vif->wdev, GFP_KERNEL);
+    cfg80211_crit_proto_stopped(&btci->vif->wdev);
     brcmf_btcoex_restore_part1(btci);
     btci->vif = NULL;
 }

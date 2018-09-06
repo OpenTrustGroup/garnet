@@ -19,7 +19,8 @@ namespace escher {
 namespace impl {
 
 namespace {
-// TODO: should be queried from device.
+
+// TODO(ES-102): should be queried from device.
 constexpr vk::DeviceSize kMinUniformBufferOffsetAlignment = 256;
 
 }  // namespace
@@ -68,7 +69,7 @@ ModelDisplayListBuilder::ModelDisplayListBuilder(
   PrepareUniformBufferForWriteOfSize(sizeof(ModelData::PerModel),
                                      kMinUniformBufferOffsetAlignment);
   auto per_model = reinterpret_cast<ModelData::PerModel*>(
-      &(uniform_buffer_->ptr()[uniform_buffer_write_index_]));
+      &(uniform_buffer_->host_ptr()[uniform_buffer_write_index_]));
   per_model->frag_coord_to_uv_multiplier =
       vec2(1.f / volume_.width(), 1.f / volume_.height());
   per_model->ambient_light_intensity = ambient_light_intensity;
@@ -125,18 +126,20 @@ ModelDisplayListBuilder::ModelDisplayListBuilder(
   uint32_t vp_uniform_buffer_offset = 0;
   if (camera.pose_buffer()) {
     // If the camera has a pose buffer bind the output of the late latching
-    // shader to the VP uniform
+    // shader to the VP uniform.
     vp_uniform_buffer = camera.latched_pose_buffer();
     // Pose buffer latching shader writes the latched pose before the VP matrix
     // so we need to offset past it.
     vp_uniform_buffer_offset = sizeof(hmd::Pose);
+    // Keep the latched pose buffer alive for the lifetime of the display list.
+    resources_.push_back(camera.latched_pose_buffer());
   } else {
     // If the camera does not have a pose buffer obtain a uniform buffer
     // in the usual way and write the ViewProjection data into it directly.
     PrepareUniformBufferForWriteOfSize(sizeof(ModelData::ViewProjection),
                                        kMinUniformBufferOffsetAlignment);
     auto view_projection = reinterpret_cast<ModelData::ViewProjection*>(
-        &(uniform_buffer_->ptr()[uniform_buffer_write_index_]));
+        &(uniform_buffer_->host_ptr()[uniform_buffer_write_index_]));
     view_projection->vp_matrix = projection_transform_ * view_transform_;
     vp_uniform_buffer = uniform_buffer_;
     vp_uniform_buffer_offset = uniform_buffer_write_index_;
@@ -306,7 +309,7 @@ void ModelDisplayListBuilder::AddObject(const Object& object) {
 void ModelDisplayListBuilder::UpdateDescriptorSetForObject(
     const Object& object, vk::DescriptorSet descriptor_set) {
   auto per_object = reinterpret_cast<ModelData::PerObject*>(
-      &(uniform_buffer_->ptr()[uniform_buffer_write_index_]));
+      &(uniform_buffer_->host_ptr()[uniform_buffer_write_index_]));
   *per_object = ModelData::PerObject();  // initialize with default values
 
   auto& mat = object.material();
@@ -399,6 +402,11 @@ ModelDisplayListPtr ModelDisplayListBuilder::Build(
 
     // The display list still needs to retain the buffer, and since it no
     // longer needs special treatment, add it in with the other resources.
+    //
+    // NOTE: see comment in ModelData constructor... at some point there will
+    // probably be an Escher-wide UniformBufferPool that will use a per-Frame
+    // resource management strategy.  ModelDisplayListBuilder will not be around
+    // for long enough to make updating it worthwhile.
     resources_.push_back(std::move(uniform_buffer));
   }
   uniform_buffers_.clear();

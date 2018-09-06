@@ -5,7 +5,9 @@
 #include "local_service_manager.h"
 
 #include <endian.h>
+#include <zircon/assert.h>
 
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/gatt/gatt_defs.h"
 
 #include "lib/fxl/memory/weak_ptr.h"
@@ -21,28 +23,28 @@ att::Handle InsertCharacteristicAttributes(
     const Characteristic& chrc,
     att::Attribute::ReadHandler read_handler,
     att::Attribute::WriteHandler write_handler) {
-  FXL_DCHECK(grouping);
-  FXL_DCHECK(!grouping->complete());
-  FXL_DCHECK(read_handler);
-  FXL_DCHECK(write_handler);
+  ZX_DEBUG_ASSERT(grouping);
+  ZX_DEBUG_ASSERT(!grouping->complete());
+  ZX_DEBUG_ASSERT(read_handler);
+  ZX_DEBUG_ASSERT(write_handler);
 
   // Characteristic Declaration (Vol 3, Part G, 3.3.1).
   auto* decl_attr = grouping->AddAttribute(
       types::kCharacteristicDeclaration,
       att::AccessRequirements(false, false, false),  // read (no security)
       att::AccessRequirements());                    // write (not allowed)
-  FXL_DCHECK(decl_attr);
+  ZX_DEBUG_ASSERT(decl_attr);
 
   // Characteristic Value Declaration (Vol 3, Part G, 3.3.2)
   auto* value_attr = grouping->AddAttribute(
       chrc.type(), chrc.read_permissions(), chrc.write_permissions());
-  FXL_DCHECK(value_attr);
+  ZX_DEBUG_ASSERT(value_attr);
 
   value_attr->set_read_handler(std::move(read_handler));
   value_attr->set_write_handler(std::move(write_handler));
 
   size_t uuid_size = chrc.type().CompactSize(false /* allow_32bit */);
-  FXL_DCHECK(uuid_size == 2 || uuid_size == 16);
+  ZX_DEBUG_ASSERT(uuid_size == 2 || uuid_size == 16);
 
   // The characteristic declaration value contains:
   // 1 octet: properties
@@ -68,14 +70,14 @@ void InsertDescriptorAttribute(
     const att::AccessRequirements& write_reqs,
     att::Attribute::ReadHandler read_handler,
     att::Attribute::WriteHandler write_handler) {
-  FXL_DCHECK(grouping);
-  FXL_DCHECK(!grouping->complete());
-  FXL_DCHECK(read_handler);
-  FXL_DCHECK(write_handler);
+  ZX_DEBUG_ASSERT(grouping);
+  ZX_DEBUG_ASSERT(!grouping->complete());
+  ZX_DEBUG_ASSERT(read_handler);
+  ZX_DEBUG_ASSERT(write_handler);
 
   // There is no special declaration attribute type for descriptors.
   auto* attr = grouping->AddAttribute(type, read_reqs, write_reqs);
-  FXL_DCHECK(attr);
+  ZX_DEBUG_ASSERT(attr);
 
   attr->set_read_handler(std::move(read_handler));
   attr->set_write_handler(std::move(write_handler));
@@ -85,13 +87,13 @@ void InsertDescriptorAttribute(
 // Returns the number of attributes that will be in the service attribute group
 // (exluding the service declaration) in |out_attrs|.
 bool ValidateService(const Service& service, size_t* out_attr_count) {
-  FXL_DCHECK(out_attr_count);
+  ZX_DEBUG_ASSERT(out_attr_count);
 
   size_t attr_count = 0u;
   std::unordered_set<IdType> ids;
   for (const auto& chrc_ptr : service.characteristics()) {
     if (ids.count(chrc_ptr->id()) != 0u) {
-      FXL_VLOG(2) << "gatt: server: Repeated ID: " << chrc_ptr->id();
+      bt_log(SPEW, "gatt", "server: repeated ID: %u", chrc_ptr->id());
       return false;
     }
 
@@ -110,7 +112,7 @@ bool ValidateService(const Service& service, size_t* out_attr_count) {
 
     for (const auto& desc_ptr : chrc_ptr->descriptors()) {
       if (ids.count(desc_ptr->id()) != 0u) {
-        FXL_VLOG(2) << "gatt: server: Repeated ID: " << desc_ptr->id();
+        bt_log(SPEW, "gatt", "server: repeated ID: %u", desc_ptr->id());
         return false;
       }
 
@@ -118,8 +120,8 @@ bool ValidateService(const Service& service, size_t* out_attr_count) {
       if (desc_ptr->type() == types::kClientCharacteristicConfig ||
           desc_ptr->type() == types::kCharacteristicExtProperties ||
           desc_ptr->type() == types::kServerCharacteristicConfig) {
-        FXL_VLOG(2) << "gatt: server: Disallowed descriptor type: "
-                    << desc_ptr->type().ToString();
+        bt_log(SPEW, "gatt", "server: disallowed descriptor type: %s",
+               desc_ptr->type().ToString().c_str());
         return false;
       }
 
@@ -153,10 +155,10 @@ class LocalServiceManager::ServiceData final {
         write_handler_(std::forward<WriteHandler>(write_handler)),
         ccc_callback_(std::forward<ClientConfigCallback>(ccc_callback)),
         weak_ptr_factory_(this) {
-    FXL_DCHECK(read_handler_);
-    FXL_DCHECK(write_handler_);
-    FXL_DCHECK(ccc_callback_);
-    FXL_DCHECK(grouping);
+    ZX_DEBUG_ASSERT(read_handler_);
+    ZX_DEBUG_ASSERT(write_handler_);
+    ZX_DEBUG_ASSERT(ccc_callback_);
+    ZX_DEBUG_ASSERT(grouping);
 
     start_handle_ = grouping->start_handle();
     end_handle_ = grouping->end_handle();
@@ -180,7 +182,7 @@ class LocalServiceManager::ServiceData final {
   bool GetCharacteristicConfig(IdType chrc_id,
                                const std::string& peer_id,
                                ClientCharacteristicConfig* out_config) {
-    FXL_DCHECK(out_config);
+    ZX_DEBUG_ASSERT(out_config);
 
     auto iter = chrc_configs_.find(chrc_id);
     if (iter == chrc_configs_.end())
@@ -378,7 +380,7 @@ class LocalServiceManager::ServiceData final {
           types::kCharacteristicExtProperties,
           att::AccessRequirements(false, false, false),  // read (no security)
           att::AccessRequirements());                    // write (not allowed)
-      FXL_DCHECK(decl_attr);
+      ZX_DEBUG_ASSERT(decl_attr);
       decl_attr->SetValue(common::CreateStaticByteBuffer(
           (uint8_t)(ext_props & 0x00FF), (uint8_t)((ext_props & 0xFF00) >> 8)));
     }
@@ -438,7 +440,7 @@ class LocalServiceManager::ServiceData final {
   void AddCCCDescriptor(att::AttributeGrouping* grouping,
                         const Characteristic& chrc,
                         att::Handle chrc_handle) {
-    FXL_DCHECK(chrc.update_permissions().allowed());
+    ZX_DEBUG_ASSERT(chrc.update_permissions().allowed());
 
     // Readable with no authentication or authorization (Vol 3, Part G,
     // 3.3.3.3). We let the service determine the encryption permission.
@@ -497,7 +499,7 @@ class LocalServiceManager::ServiceData final {
 
 LocalServiceManager::LocalServiceManager()
     : db_(att::Database::Create()), next_service_id_(1ull) {
-  FXL_DCHECK(db_);
+  ZX_DEBUG_ASSERT(db_);
 }
 
 LocalServiceManager::~LocalServiceManager() {}
@@ -506,13 +508,13 @@ IdType LocalServiceManager::RegisterService(ServicePtr service,
                                             ReadHandler read_handler,
                                             WriteHandler write_handler,
                                             ClientConfigCallback ccc_callback) {
-  FXL_DCHECK(service);
-  FXL_DCHECK(read_handler);
-  FXL_DCHECK(write_handler);
-  FXL_DCHECK(ccc_callback);
+  ZX_DEBUG_ASSERT(service);
+  ZX_DEBUG_ASSERT(read_handler);
+  ZX_DEBUG_ASSERT(write_handler);
+  ZX_DEBUG_ASSERT(ccc_callback);
 
   if (services_.find(next_service_id_) != services_.end()) {
-    FXL_VLOG(2) << "gatt: server: Ran out of service IDs";
+    bt_log(SPEW, "gatt", "server: Ran out of service IDs");
     return kInvalidId;
   }
 
@@ -531,8 +533,8 @@ IdType LocalServiceManager::RegisterService(ServicePtr service,
       service->primary() ? types::kPrimaryService : types::kSecondaryService,
       attr_count, service_decl_value);
   if (!grouping) {
-    FXL_VLOG(1)
-        << "gatt: server: Failed to allocate attribute grouping for service";
+    bt_log(TRACE, "gatt",
+           "server: Failed to allocate attribute grouping for service");
     return kInvalidId;
   }
 
@@ -540,7 +542,7 @@ IdType LocalServiceManager::RegisterService(ServicePtr service,
   auto service_data = std::make_unique<ServiceData>(
       next_service_id_, grouping, service.get(), std::move(read_handler),
       std::move(write_handler), std::move(ccc_callback));
-  FXL_DCHECK(grouping->complete());
+  ZX_DEBUG_ASSERT(grouping->complete());
   grouping->set_active(true);
 
   // TODO(armansito): Handle potential 64-bit unsigned overflow?
@@ -575,7 +577,7 @@ bool LocalServiceManager::GetCharacteristicConfig(
     IdType chrc_id,
     const std::string& peer_id,
     ClientCharacteristicConfig* out_config) {
-  FXL_DCHECK(out_config);
+  ZX_DEBUG_ASSERT(out_config);
 
   auto iter = services_.find(service_id);
   if (iter == services_.end())

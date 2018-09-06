@@ -6,10 +6,10 @@
 
 #include <limits>
 
-#include "garnet/bin/zxdb/client/file_util.h"
-#include "garnet/bin/zxdb/client/string_util.h"
 #include "garnet/bin/zxdb/client/symbols/dwarf_die_decoder.h"
 #include "garnet/bin/zxdb/client/symbols/module_symbol_index_node.h"
+#include "garnet/bin/zxdb/common/file_util.h"
+#include "garnet/bin/zxdb/common/string_util.h"
 #include "garnet/public/lib/fxl/logging.h"
 #include "llvm/DebugInfo/DWARF/DWARFCompileUnit.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
@@ -81,6 +81,13 @@ bool AbbrevHasCode(const llvm::DWARFAbbreviationDeclaration* abbrev) {
       return true;
   }
   return false;
+}
+
+size_t RecursiveCountFunctionDies(const ModuleSymbolIndexNode& node) {
+  size_t result = node.function_dies().size();
+  for (const auto& pair : node.sub())
+    result += RecursiveCountFunctionDies(pair.second);
+  return result;
 }
 
 // Step 1 of the algorithm above. Fills the function_impls array with the
@@ -275,8 +282,7 @@ ModuleSymbolIndex::ModuleSymbolIndex() = default;
 ModuleSymbolIndex::~ModuleSymbolIndex() = default;
 
 void ModuleSymbolIndex::CreateIndex(llvm::object::ObjectFile* object_file) {
-  std::unique_ptr<llvm::DWARFContext> context =
-      llvm::DWARFContext::create(
+  std::unique_ptr<llvm::DWARFContext> context = llvm::DWARFContext::create(
       *object_file, nullptr, llvm::DWARFContext::defaultErrorHandler);
 
   llvm::DWARFUnitSection<llvm::DWARFCompileUnit> compile_units;
@@ -292,6 +298,10 @@ void ModuleSymbolIndex::CreateIndex(llvm::object::ObjectFile* object_file) {
   }
 
   IndexFileNames();
+}
+
+size_t ModuleSymbolIndex::CountSymbolsIndexed() const {
+  return RecursiveCountFunctionDies(root_);
 }
 
 const std::vector<ModuleSymbolIndexNode::DieRef>&
@@ -388,7 +398,8 @@ void ModuleSymbolIndex::IndexCompileUnit(llvm::DWARFContext* context,
 }
 
 void ModuleSymbolIndex::IndexCompileUnitSourceFiles(
-    llvm::DWARFContext* context, llvm::DWARFCompileUnit* unit, unsigned unit_index) {
+    llvm::DWARFContext* context, llvm::DWARFCompileUnit* unit,
+    unsigned unit_index) {
   const llvm::DWARFDebugLine::LineTable* line_table =
       context->getLineTableForUnit(unit);
   const char* compilation_dir = unit->getCompilationDir();

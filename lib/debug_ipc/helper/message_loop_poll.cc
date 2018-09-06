@@ -18,17 +18,23 @@ namespace {
 #if !defined(OS_LINUX)
 bool SetCloseOnExec(int fd) {
   const int flags = fcntl(fd, F_GETFD);
-  if (flags == -1) return false;
-  if (flags & FD_CLOEXEC) return true;
-  if (HANDLE_EINTR(fcntl(fd, F_SETFD, flags | FD_CLOEXEC)) == -1) return false;
+  if (flags == -1)
+    return false;
+  if (flags & FD_CLOEXEC)
+    return true;
+  if (HANDLE_EINTR(fcntl(fd, F_SETFD, flags | FD_CLOEXEC)) == -1)
+    return false;
   return true;
 }
 
 bool SetNonBlocking(int fd) {
   const int flags = fcntl(fd, F_GETFL);
-  if (flags == -1) return false;
-  if (flags & O_NONBLOCK) return true;
-  if (HANDLE_EINTR(fcntl(fd, F_SETFL, flags | O_NONBLOCK)) == -1) return false;
+  if (flags == -1)
+    return false;
+  if (flags & O_NONBLOCK)
+    return true;
+  if (HANDLE_EINTR(fcntl(fd, F_SETFL, flags | O_NONBLOCK)) == -1)
+    return false;
   return true;
 }
 #endif
@@ -38,20 +44,26 @@ bool SetNonBlocking(int fd) {
 bool CreateLocalNonBlockingPipe(fxl::UniqueFD* out_end, fxl::UniqueFD* in_end) {
 #if defined(OS_LINUX)
   int fds[2];
-  if (pipe2(fds, O_CLOEXEC | O_NONBLOCK) != 0) return false;
+  if (pipe2(fds, O_CLOEXEC | O_NONBLOCK) != 0)
+    return false;
   out_end->reset(fds[0]);
   in_end->reset(fds[1]);
   return true;
 #else
   int fds[2];
-  if (pipe(fds) != 0) return false;
+  if (pipe(fds) != 0)
+    return false;
 
   fxl::UniqueFD fd_out(fds[0]);
   fxl::UniqueFD fd_in(fds[1]);
-  if (!SetCloseOnExec(fd_out.get())) return false;
-  if (!SetCloseOnExec(fd_in.get())) return false;
-  if (!SetNonBlocking(fd_out.get())) return false;
-  if (!SetNonBlocking(fd_in.get())) return false;
+  if (!SetCloseOnExec(fd_out.get()))
+    return false;
+  if (!SetCloseOnExec(fd_in.get()))
+    return false;
+  if (!SetNonBlocking(fd_out.get()))
+    return false;
+  if (!SetNonBlocking(fd_in.get()))
+    return false;
 
   *out_end = std::move(fd_out);
   *in_end = std::move(fd_in);
@@ -149,7 +161,8 @@ void MessageLoopPoll::OnFDReadable(int fd) {
 
   // ProcessPendingTask must be called with the lock held.
   std::lock_guard<std::mutex> guard(mutex_);
-  if (ProcessPendingTask()) SetHasTasks();
+  if (ProcessPendingTask())
+    SetHasTasks();
 }
 
 void MessageLoopPoll::SetHasTasks() {
@@ -201,21 +214,45 @@ void MessageLoopPoll::OnHandleSignaled(int fd, short events, int watch_id) {
   }
   FXL_DCHECK(fd == found->second.fd);
 
+  // Since notifications can cause the watcher to be removed, this flag tracks
+  // if anything has been issued and therefore we should re-check the watcher
+  // registration before dereferencing anything.
+  bool sent_notification = false;
+
   if (events & POLLIN) {
     FXL_DCHECK(found->second.mode == WatchMode::kRead ||
                found->second.mode == WatchMode::kReadWrite);
     found->second.watcher->OnFDReadable(fd);
+    sent_notification = true;
   }
 
-  found = watches_.find(watch_id);
-  if (found == watches_.end()) {
-    // Could have been closed in response to "readable" call.
-    return;
-  }
   if (events & POLLOUT) {
+    if (sent_notification) {
+      found = watches_.find(watch_id);
+      if (found == watches_.end())
+        return;
+    }
     FXL_DCHECK(found->second.mode == WatchMode::kWrite ||
                found->second.mode == WatchMode::kReadWrite);
     found->second.watcher->OnFDWritable(fd);
+    sent_notification = true;
+  }
+
+  if (sent_notification)
+    return;  // ERASEME
+
+  if ((events & POLLERR) || (events & POLLHUP) || (events & POLLNVAL)
+#if defined(POLLRDHUP)  // Mac doesn't have this.
+      || (events & POLLRDHUP)
+#endif
+  ) {
+    if (sent_notification) {
+      found = watches_.find(watch_id);
+      if (found == watches_.end())
+        return;
+    }
+    found->second.watcher->OnFDError(fd);
+    sent_notification = true;
   }
 }
 

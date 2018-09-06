@@ -5,18 +5,18 @@
 #include "garnet/lib/ui/gfx/resources/nodes/entity_node.h"
 #include "garnet/lib/ui/gfx/resources/nodes/shape_node.h"
 #include "garnet/lib/ui/gfx/tests/session_test.h"
-#include "lib/ui/scenic/fidl_helpers.h"
+#include "lib/ui/scenic/cpp/commands.h"
 
 #include "gtest/gtest.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 namespace test {
 
 using NodeTest = SessionTest;
 
 TEST_F(NodeTest, Tagging) {
-  const scenic::ResourceId kNodeId = 1;
+  const ResourceId kNodeId = 1;
 
   EXPECT_TRUE(Apply(scenic::NewCreateShapeNodeCmd(kNodeId)));
   auto shape_node = FindResource<ShapeNode>(kNodeId);
@@ -28,15 +28,14 @@ TEST_F(NodeTest, Tagging) {
 }
 
 TEST_F(NodeTest, ShapeNodeMaterialAndShape) {
-  const scenic::ResourceId kNodeId = 1;
-  const scenic::ResourceId kMaterialId = 2;
-  const scenic::ResourceId kShapeId = 3;
+  const ResourceId kNodeId = 1;
+  const ResourceId kMaterialId = 2;
+  const ResourceId kShapeId = 3;
 
   EXPECT_TRUE(Apply(scenic::NewCreateShapeNodeCmd(kNodeId)));
   EXPECT_TRUE(Apply(scenic::NewCreateMaterialCmd(kMaterialId)));
   EXPECT_TRUE(Apply(scenic::NewSetTextureCmd(kMaterialId, 0)));
-  EXPECT_TRUE(
-      Apply(scenic::NewSetColorCmd(kMaterialId, 255, 100, 100, 255)));
+  EXPECT_TRUE(Apply(scenic::NewSetColorCmd(kMaterialId, 255, 100, 100, 255)));
   EXPECT_TRUE(Apply(scenic::NewCreateCircleCmd(kShapeId, 50.f)));
   EXPECT_TRUE(Apply(scenic::NewSetMaterialCmd(kNodeId, kMaterialId)));
   EXPECT_TRUE(Apply(scenic::NewSetShapeCmd(kNodeId, kShapeId)));
@@ -52,16 +51,16 @@ TEST_F(NodeTest, ShapeNodeMaterialAndShape) {
 
 TEST_F(NodeTest, NodesWithChildren) {
   // Child node that we will attach to various types of nodes.
-  const scenic::ResourceId kChildNodeId = 1;
+  const ResourceId kChildNodeId = 1;
   EXPECT_TRUE(Apply(scenic::NewCreateShapeNodeCmd(kChildNodeId)));
   auto child_node = FindResource<Node>(kChildNodeId);
 
   // OK to detach a child that hasn't been attached.
   EXPECT_TRUE(Apply(scenic::NewDetachCmd(kChildNodeId)));
 
-  const scenic::ResourceId kEntityNodeId = 10;
-  const scenic::ResourceId kShapeNodeId = 11;
-  // TODO: const scenic::ResourceId kClipNodeId = 12;
+  const ResourceId kEntityNodeId = 10;
+  const ResourceId kShapeNodeId = 11;
+  // TODO: const ResourceId kClipNodeId = 12;
   EXPECT_TRUE(Apply(scenic::NewCreateEntityNodeCmd(kEntityNodeId)));
   EXPECT_TRUE(Apply(scenic::NewCreateShapeNodeCmd(kShapeNodeId)));
   // TODO:
@@ -71,8 +70,7 @@ TEST_F(NodeTest, NodesWithChildren) {
   // auto clip_node = FindResource<ClipNode>(kClipNodeId);
 
   // We expect to be able to add children to these types.
-  EXPECT_TRUE(
-      Apply(scenic::NewAddChildCmd(kEntityNodeId, kChildNodeId)));
+  EXPECT_TRUE(Apply(scenic::NewAddChildCmd(kEntityNodeId, kChildNodeId)));
   EXPECT_EQ(entity_node.get(), child_node->parent());
   EXPECT_TRUE(Apply(scenic::NewDetachCmd(kChildNodeId)));
   // EXPECT_TRUE(Apply(scenic::NewDetachCmd(kChildNodeId)));
@@ -82,13 +80,12 @@ TEST_F(NodeTest, NodesWithChildren) {
   // EXPECT_FALSE(Apply(scenic::NewAddChildCmd(kClipNodeId,
   // kChildNodeId))); EXPECT_EQ(nullptr, child_node->parent());
   // EXPECT_EQ(nullptr, child_node->parent());
-  EXPECT_FALSE(
-      Apply(scenic::NewAddChildCmd(kShapeNodeId, kChildNodeId)));
+  EXPECT_FALSE(Apply(scenic::NewAddChildCmd(kShapeNodeId, kChildNodeId)));
   EXPECT_EQ(nullptr, child_node->parent());
 }
 
 TEST_F(NodeTest, SettingHitTestBehavior) {
-  const scenic::ResourceId kNodeId = 1;
+  const ResourceId kNodeId = 1;
 
   EXPECT_TRUE(Apply(scenic::NewCreateShapeNodeCmd(kNodeId)));
 
@@ -104,4 +101,4 @@ TEST_F(NodeTest, SettingHitTestBehavior) {
 
 }  // namespace test
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

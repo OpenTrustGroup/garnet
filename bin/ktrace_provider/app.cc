@@ -66,8 +66,9 @@ void IoctlKtraceStart(int fd, uint32_t group_mask) {
 }  // namespace
 
 App::App(const fxl::CommandLine& command_line)
-    : startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
-  trace_observer_.Start(async_get_default(), [this] { UpdateState(); });
+    : startup_context_(component::StartupContext::CreateFromStartupInfo()) {
+  trace_observer_.Start(async_get_default_dispatcher(),
+                        [this] { UpdateState(); });
 }
 
 App::~App() {}
@@ -76,13 +77,18 @@ void App::UpdateState() {
   uint32_t group_mask = 0;
   bool capture_log = false;
   if (trace_state() == TRACE_STARTED) {
+    size_t num_enabled_categories = 0;
     for (size_t i = 0; i < arraysize(kGroupCategories); i++) {
       auto& category = kGroupCategories[i];
       if (trace_is_category_enabled(category.name)) {
         group_mask |= category.group;
+        ++num_enabled_categories;
       }
     }
-    capture_log = trace_is_category_enabled(kLogCategory);
+    // Avoid capturing log traces in the default case by detecting whether all
+    // categories are enabled or not.
+    capture_log = trace_is_category_enabled(kLogCategory) &&
+                  num_enabled_categories != arraysize(kGroupCategories);
   }
 
   if (current_group_mask_ != group_mask) {
@@ -110,7 +116,7 @@ void App::StartKTrace(uint32_t group_mask) {
     return;
   }
 
-  context_ = trace_acquire_context();
+  context_ = trace_acquire_prolonged_context();
   if (!context_) {
     // Tracing was disabled in the meantime.
     return;
@@ -136,13 +142,17 @@ void App::StopKTrace() {
     IoctlKtraceStop(fd.get());
   }
 
+  // Acquire a context for writing to the trace buffer.
+  auto buffer_context = trace_acquire_context();
+
   Reader reader;
-  Importer importer(context_);
+  Importer importer(buffer_context);
   if (!importer.Import(reader)) {
     FXL_LOG(ERROR) << "Errors encountered while importing ktrace data";
   }
 
-  trace_release_context(context_);
+  trace_release_context(buffer_context);
+  trace_release_prolonged_context(context_);
   context_ = nullptr;
   current_group_mask_ = 0u;
 }

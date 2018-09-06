@@ -17,7 +17,6 @@
 #include "lib/fxl/strings/string_printf.h"
 
 namespace debugserver {
-namespace util {
 
 std::string BuildErrorPacket(ErrorCode error_code) {
   std::string errstr =
@@ -27,10 +26,8 @@ std::string BuildErrorPacket(ErrorCode error_code) {
   return "E" + errstr;
 }
 
-bool ParseThreadId(const fxl::StringView& bytes,
-                   bool* out_has_pid,
-                   int64_t* out_pid,
-                   int64_t* out_tid) {
+bool ParseThreadId(const fxl::StringView& bytes, bool* out_has_pid,
+                   int64_t* out_pid, int64_t* out_tid) {
   FXL_DCHECK(out_tid);
   FXL_DCHECK(out_has_pid);
   FXL_DCHECK(out_pid);
@@ -79,8 +76,7 @@ std::string EncodeThreadId(zx_koid_t pid, zx_koid_t tid) {
   return fxl::StringPrintf("p%s.%s", pid_string.c_str(), tid_string.c_str());
 }
 
-bool FindUnescapedChar(const char val,
-                       const fxl::StringView& packet,
+bool FindUnescapedChar(const char val, const fxl::StringView& packet,
                        size_t* out_index) {
   FXL_DCHECK(out_index);
 
@@ -163,7 +159,8 @@ bool VerifyPacket(fxl::StringView packet, fxl::StringView* out_packet_data) {
   // TODO(armansito): Ignore the checksum if we're in no-acknowledgment mode.
 
   uint8_t received_checksum;
-  if (!util::DecodeByteString(packet.data() + pound + 1, &received_checksum)) {
+  if (!debugger_utils::DecodeByteString(packet.data() + pound + 1,
+                                        &received_checksum)) {
     FXL_LOG(ERROR) << "Malformed packet checksum received";
     return false;
   }
@@ -208,5 +205,4 @@ void ExtractParameters(const fxl::StringView& packet,
       colon + 1, packet.size() == colon ? 0 : packet.size() - colon - 1);
 }
 
-}  // namespace util
 }  // namespace debugserver

@@ -16,7 +16,6 @@
 #include "lib/fxl/strings/string_view.h"
 
 namespace debugserver {
-namespace util {
 
 // The escape character used in the GDB Remote Protocol.
 constexpr char kEscapeChar = '}';
@@ -71,10 +70,8 @@ std::string BuildErrorPacket(ErrorCode error_code);
 // (See
 // https://sourceware.org/gdb/current/onlinedocs/gdb/Packets.html#thread%2did%20syntax
 // for reference).
-bool ParseThreadId(const fxl::StringView& bytes,
-                   bool* out_has_pid,
-                   int64_t* out_pid,
-                   int64_t* out_tid);
+bool ParseThreadId(const fxl::StringView& bytes, bool* out_has_pid,
+                   int64_t* out_pid, int64_t* out_tid);
 
 // Encodes the given thread and process IDs using the GDB remote protocol thread
 // ID syntax
@@ -85,8 +82,7 @@ std::string EncodeThreadId(zx_koid_t pid, zx_koid_t tid);
 
 // Finds and returns the index of the first occurence of |val| within |packet|,
 // such that it is not preceded by an escape character.
-bool FindUnescapedChar(const char val,
-                       const fxl::StringView& packet,
+bool FindUnescapedChar(const char val, const fxl::StringView& packet,
                        size_t* out_index);
 
 // Verifies that the given command is formatted correctly and that the checksum
@@ -108,5 +104,4 @@ void ExtractParameters(const fxl::StringView& packet,
                        fxl::StringView* out_prefix,
                        fxl::StringView* out_params);
 
-}  // namespace util
 }  // namespace debugserver

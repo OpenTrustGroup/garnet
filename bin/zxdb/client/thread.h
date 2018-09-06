@@ -6,12 +6,15 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <functional>
 #include <string>
 
 #include "garnet/bin/zxdb/client/client_object.h"
 #include "garnet/bin/zxdb/client/thread_observer.h"
 #include "garnet/lib/debug_ipc/protocol.h"
 #include "garnet/public/lib/fxl/macros.h"
+#include "garnet/public/lib/fxl/memory/weak_ptr.h"
 #include "garnet/public/lib/fxl/observer_list.h"
 
 namespace zxdb {
@@ -19,7 +22,12 @@ namespace zxdb {
 class Err;
 class Frame;
 class Process;
+class RegisterSet;
+class ThreadController;
 
+// The flow control commands on this object (Pause, Continue, Step...) apply
+// only to this thread (other threads will continue to run or not run
+// as they were previously).
 class Thread : public ClientObject {
  public:
   explicit Thread(Session* session);
@@ -27,6 +35,8 @@ class Thread : public ClientObject {
 
   void AddObserver(ThreadObserver* observer);
   void RemoveObserver(ThreadObserver* observer);
+
+  fxl::WeakPtr<Thread> GetWeakPtr();
 
   // Guaranteed non-null.
   virtual Process* GetProcess() const = 0;
@@ -39,19 +49,38 @@ class Thread : public ClientObject {
   // To make sure this is up-to-date, call Process::SyncThreads().
   virtual debug_ipc::ThreadRecord::State GetState() const = 0;
 
-  // Applies only to this thread (other threads will continue to run or not run
-  // as they were previously).
   virtual void Pause() = 0;
   virtual void Continue() = 0;
-  virtual Err Step() = 0;
+
+  // Continues the thread using the given ThreadController. This is used
+  // to implement the more complex forms of stepping.
+  //
+  // The on_continue callback does NOT indicate that the thread stopped again.
+  // This is because many thread controllers may need to do asynchronous setup
+  // that could fail. It is issued when the thread is actually resumed or when
+  // the resumption fails.
+  //
+  // The on_continue callback may be issued reentrantly from within the stack
+  // of the ContinueWith call if the controller was ready synchronously.
+  //
+  // On failure the ThreadController will be removed and the thread will not
+  // be continued.
+  virtual void ContinueWith(std::unique_ptr<ThreadController> controller,
+                            std::function<void(const Err&)> on_continue) = 0;
+
+  // Notification from a ThreadController that it has completed its job. The
+  // thread controller should be removed from this thread and deleted.
+  virtual void NotifyControllerDone(ThreadController* controller) = 0;
+
   virtual void StepInstruction() = 0;
 
   // Access to the stack frames for this thread at its current stopped
   // position. If a thread is running, the stack frames are not available.
   //
-  // When a thread is stopped, it will have only its first frame available
-  // by default (the current IP and stack position). So stopped threads will
-  // always have at least one result in the vector returned by GetFrames().
+  // When a thread is stopped, it will have its 0th frame available (the
+  // current IP and stack position) and the 1st (the calling frame) if
+  // possible. So stopped threads will always have at least one result in the
+  // vector returned by GetFrames(), and normally two.
   //
   // If the full backtrace is needed, SyncFrames() can be called which will
   // compute the full backtrace and issue the callback when complete. This
@@ -61,15 +90,17 @@ class Thread : public ClientObject {
   //
   // Since the running/stopped state of a thread isn't available synchronously
   // in a non-racy manner, you can always request a Sync of the frames if the
-  // frames are not all available. If the thread is running when the request
-  // is processed, the callback will be issued. A subsequent call to
-  // GetFrames() will return an empty vector and HasAllFrames() will return
-  // false.
+  // frames are not all available. If the thread is destroyed before the backtrace can be issued, the callback will not be executed.
   //
-  // The vector returned by GetFrames will be an internal one that will change
-  // when the thread is resumed. The pointers in the vector can be cached if
-  // the code listens for ThreadObserver::OnThreadFramesInvalidated() and
-  // clears the cache at that point.
+  // If the thread is running when the request is processed, the callback will
+  // be issued but a subsequent call to GetFrames() will return an empty vector
+  // and HasAllFrames() will return false. This call can race with other
+  // requests to resume a thread, so you can't make any assumptions about the
+  // availability of the stack from the callback.
+  //
+  // The pointers in the vector returned by GetFrames() can be cached if the
+  // code listens for ThreadObserver::OnThreadFramesInvalidated() and clears
+  // the cache at that point.
   virtual std::vector<Frame*> GetFrames() const = 0;
   virtual bool HasAllFrames() const = 0;
   virtual void SyncFrames(std::function<void()> callback) = 0;
@@ -80,13 +111,14 @@ class Thread : public ClientObject {
   // The returned structures are architecture independent, but the contents
   // will be dependent on the architecture the target is running on.
   virtual void GetRegisters(
-      std::function<void(const Err&, std::vector<debug_ipc::Register>)>) = 0;
+      std::function<void(const Err&, const RegisterSet&)>) = 0;
 
  protected:
   fxl::ObserverList<ThreadObserver>& observers() { return observers_; }
 
  private:
   fxl::ObserverList<ThreadObserver> observers_;
+  fxl::WeakPtrFactory<Thread> weak_factory_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Thread);
 };

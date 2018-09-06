@@ -16,8 +16,8 @@ namespace {
 
 using ::btlib::testing::CommandTransaction;
 
-using common::UpperBits;
 using common::LowerBits;
+using common::UpperBits;
 
 using TestingBase =
     ::btlib::testing::FakeControllerTest<::btlib::testing::TestController>;
@@ -30,8 +30,7 @@ class BrEdrDiscoveryManagerTest : public TestingBase {
   void SetUp() override {
     TestingBase::SetUp();
 
-    discovery_manager_ =
-        std::make_unique<BrEdrDiscoveryManager>(transport(), &device_cache_);
+    NewDiscoveryManager(hci::InquiryMode::kStandard);
 
     test_device()->StartCmdChannel(test_cmd_chan());
     test_device()->StartAclChannel(test_acl_chan());
@@ -42,6 +41,13 @@ class BrEdrDiscoveryManagerTest : public TestingBase {
     test_device()->Stop();
     TestingBase::TearDown();
   }
+
+  void NewDiscoveryManager(hci::InquiryMode mode) {
+    discovery_manager_ = std::make_unique<BrEdrDiscoveryManager>(
+        transport(), mode, &device_cache_);
+  }
+
+  const RemoteDeviceCache* device_cache() const { return &device_cache_; }
 
  protected:
   BrEdrDiscoveryManager* discovery_manager() const {
@@ -58,6 +64,16 @@ class BrEdrDiscoveryManagerTest : public TestingBase {
 using GAP_BrEdrDiscoveryManagerTest = BrEdrDiscoveryManagerTest;
 
 // clang-format off
+#define COMMAND_COMPLETE_RSP(opcode)                                         \
+  common::CreateStaticByteBuffer(hci::kCommandCompleteEventCode, 0x04, 0xF0, \
+                                 LowerBits((opcode)), UpperBits((opcode)),   \
+                                 hci::kSuccess);
+
+#define COMMAND_STATUS_RSP(opcode, statuscode)                       \
+  common::CreateStaticByteBuffer(hci::kCommandStatusEventCode, 0x04, \
+                                 (statuscode), 0xF0,                 \
+                                 LowerBits((opcode)), UpperBits((opcode)));
+
 const auto kInquiry = common::CreateStaticByteBuffer(
   LowerBits(hci::kInquiry), UpperBits(hci::kInquiry),
   0x05, // Paramreter total size
@@ -66,19 +82,9 @@ const auto kInquiry = common::CreateStaticByteBuffer(
   0x00 // Unlimited responses
 );
 
-const auto kInquiry_rsp = common::CreateStaticByteBuffer(
-  hci::kCommandStatusEventCode,
-  0x04, // parameter_total_size (4 bytes)
-  hci::kSuccess, 0xF0, // success, num_hci_command_packets (240)
-  LowerBits(hci::kInquiry), UpperBits(hci::kInquiry) // HCI_Inquiry opcode
-);
+const auto kInquiryRsp = COMMAND_STATUS_RSP(hci::kInquiry, hci::kSuccess);
 
-const auto kInquiry_rsperror = common::CreateStaticByteBuffer(
-  hci::kCommandStatusEventCode,
-  0x04, // parameter_total_size (4 bytes)
-  hci::kHardwareFailure, 0xF0, // success, num_hci_command_packets (240)
-  LowerBits(hci::kInquiry), UpperBits(hci::kInquiry) // HCI_Inquiry opcode
-);
+const auto kInquiryRspError = COMMAND_STATUS_RSP(hci::kInquiry, hci::kHardwareFailure);
 
 const auto kInquiryComplete = common::CreateStaticByteBuffer(
   hci::kInquiryCompleteEventCode,
@@ -104,17 +110,98 @@ const auto kInquiryResult = common::CreateStaticByteBuffer(
   0x00, 0x00 // clock_offset[0]
 );
 
+const auto kRSSIInquiryResult = common::CreateStaticByteBuffer(
+  hci::kInquiryResultWithRSSIEventCode,
+  0x10, // parameter_total_size (16 bytes)
+  0x01, // num_responses
+  0x02, 0x00, 0x00, 0x00, 0x00, 0x00, // bd_addr[0]
+  0x00, // page_scan_repetition_mode[0] (R0)
+  0x00, // unused / reserved
+  0x00, // unused / reserved
+  0x00, 0x1F, 0x00, // class_of_device[0] (unspecified)
+  0x00, 0x00, // clock_offset[0]
+  0xEC // RSSI (-20dBm)
+);
+
+#define REMOTE_NAME_REQUEST(addr1) common::CreateStaticByteBuffer( \
+    LowerBits(hci::kRemoteNameRequest), UpperBits(hci::kRemoteNameRequest), \
+    0x0a, /* parameter_total_size (10 bytes) */ \
+    (addr1),  0x00, 0x00, 0x00, 0x00, 0x00,  /* BD_ADDR */ \
+    0x00, 0x00, 0x00, 0x80 /* page_scan_repetition_mode, 0, clock_offset */ \
+);
+
+const auto kRemoteNameRequest1 = REMOTE_NAME_REQUEST(0x01);
+const auto kRemoteNameRequest2 = REMOTE_NAME_REQUEST(0x02);
+const auto kRemoteNameRequest3 = REMOTE_NAME_REQUEST(0x03);
+
+const auto kRemoteNameRequestRsp =
+    COMMAND_STATUS_RSP(hci::kRemoteNameRequest, hci::StatusCode::kSuccess);
+
+const auto kRemoteNameRequestComplete1 = common::CreateStaticByteBuffer(
+    hci::kRemoteNameRequestCompleteEventCode,
+    0x20,                                // parameter_total_size (32)
+    hci::StatusCode::kSuccess,           // status
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00,  // BD_ADDR (00:00:00:00:00:01)
+    'F', 'u', 'c', 'h', 's', 'i', 'a', 0xF0, 0x9F, 0x92, 0x96, 0x00, 0x14, 0x15,
+    0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20
+    // remote name (Fuchsia 💖)
+    // Everything after the 0x00 should be ignored.
+);
+const auto kRemoteNameRequestComplete2 = common::CreateStaticByteBuffer(
+    hci::kRemoteNameRequestCompleteEventCode,
+    0x10,                                // parameter_total_size (16)
+    hci::StatusCode::kSuccess,           // status
+    0x02, 0x00, 0x00, 0x00, 0x00, 0x00,  // BD_ADDR (00:00:00:00:00:01)
+    'S', 'a', 'p', 'p', 'h', 'i', 'r', 'e', 0x00 // remote name (Sapphire)
+);
+
+const auto kExtendedInquiryResult = common::CreateStaticByteBuffer(
+  hci::kExtendedInquiryResultEventCode,
+  0xFF, // parameter_total_size (255 bytes)
+  0x01, // num_responses
+  0x03, 0x00, 0x00, 0x00, 0x00, 0x00, // bd_addr
+  0x00, // page_scan_repetition_mode (R0)
+  0x00, // unused / reserved
+  0x00, 0x1F, 0x00, // class_of_device (unspecified)
+  0x00, 0x00, // clock_offset
+  0xEC, // RSSI (-20dBm)
+  // Extended Inquiry Response (240 bytes total)
+  // Complete Local Name (12 bytes): Fuchsia 💖
+  0x0C, 0x09, 'F', 'u', 'c', 'h', 's', 'i', 'a', 0xF0, 0x9F, 0x92, 0x96,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+);
+
 const auto kInqCancel = common::CreateStaticByteBuffer(
   LowerBits(hci::kInquiryCancel), UpperBits(hci::kInquiryCancel),  // opcode
   0x00                                   // parameter_total_size
 );
 
-#define COMMAND_COMPLETE_RSP(opcode)                                         \
-  common::CreateStaticByteBuffer(hci::kCommandCompleteEventCode, 0x04, 0xF0, \
-                                 LowerBits((opcode)), UpperBits((opcode)),   \
-                                 hci::kSuccess);
-
 const auto kInqCancelRsp = COMMAND_COMPLETE_RSP(hci::kInquiryCancel);
+
+const auto kSetExtendedMode = common::CreateStaticByteBuffer(
+    LowerBits(hci::kWriteInquiryMode), UpperBits(hci::kWriteInquiryMode),
+    0x01, // parameter_total_size
+    0x02 // Extended Inquiry Result or Inquiry Result with RSSI
+);
+
+const auto kSetExtendedModeRsp = COMMAND_COMPLETE_RSP(hci::kWriteInquiryMode);
 
 const auto kReadScanEnable = common::CreateStaticByteBuffer(
     LowerBits(hci::kReadScanEnable), UpperBits(hci::kReadScanEnable),
@@ -161,7 +248,10 @@ const auto kWriteScanEnableRsp = COMMAND_COMPLETE_RSP(hci::kWriteScanEnable);
 // discarded.
 TEST_F(GAP_BrEdrDiscoveryManagerTest, RequestDiscoveryAndDrop) {
   test_device()->QueueCommandTransaction(
-      CommandTransaction(kInquiry, {&kInquiry_rsp, &kInquiryResult}));
+      CommandTransaction(kInquiry, {&kInquiryRsp, &kInquiryResult}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kRemoteNameRequest1,
+      {&kRemoteNameRequestRsp, &kRemoteNameRequestComplete1}));
 
   std::unique_ptr<BrEdrDiscoverySession> session;
   size_t devices_found = 0u;
@@ -182,7 +272,7 @@ TEST_F(GAP_BrEdrDiscoveryManagerTest, RequestDiscoveryAndDrop) {
   EXPECT_TRUE(discovery_manager()->discovering());
 
   test_device()->QueueCommandTransaction(
-      CommandTransaction(kInquiry, {&kInquiry_rsp, &kInquiryResult}));
+      CommandTransaction(kInquiry, {&kInquiryRsp, &kInquiryResult}));
 
   test_device()->SendCommandChannelPacket(kInquiryComplete);
 
@@ -209,7 +299,10 @@ TEST_F(GAP_BrEdrDiscoveryManagerTest, RequestDiscoveryAndDrop) {
 // Test: starting two sessions at once should only start inquiry once
 TEST_F(GAP_BrEdrDiscoveryManagerTest, MultipleRequests) {
   test_device()->QueueCommandTransaction(
-      CommandTransaction(kInquiry, {&kInquiry_rsp, &kInquiryResult}));
+      CommandTransaction(kInquiry, {&kInquiryRsp, &kInquiryResult}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kRemoteNameRequest1,
+      {&kRemoteNameRequestRsp, &kRemoteNameRequestComplete1}));
 
   std::unique_ptr<BrEdrDiscoverySession> session1;
   size_t devices_found1 = 0u;
@@ -283,9 +376,14 @@ TEST_F(GAP_BrEdrDiscoveryManagerTest, MultipleRequests) {
 
 // Test: starting a session "while" the other one is stopping a session should
 // restart the session
+// Test: we should only request a device's name if it's the first time we
+// encounter it.
 TEST_F(GAP_BrEdrDiscoveryManagerTest, RequestDiscoveryWhileStop) {
   test_device()->QueueCommandTransaction(
-      CommandTransaction(kInquiry, {&kInquiry_rsp, &kInquiryResult}));
+      CommandTransaction(kInquiry, {&kInquiryRsp, &kInquiryResult}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kRemoteNameRequest1,
+      {&kRemoteNameRequestRsp, &kRemoteNameRequestComplete1}));
 
   std::unique_ptr<BrEdrDiscoverySession> session1;
   size_t devices_found1 = 0u;
@@ -311,7 +409,7 @@ TEST_F(GAP_BrEdrDiscoveryManagerTest, RequestDiscoveryWhileStop) {
 
   // TODO(jamuraa, NET-619): test InquiryCancel when it is implemented
   test_device()->QueueCommandTransaction(
-      CommandTransaction(kInquiry, {&kInquiry_rsp, &kInquiryResult}));
+      CommandTransaction(kInquiry, {&kInquiryRsp, &kInquiryResult}));
 
   session1 = nullptr;
   discovery_manager()->RequestDiscovery(
@@ -355,7 +453,10 @@ TEST_F(GAP_BrEdrDiscoveryManagerTest, RequestDiscoveryWhileStop) {
 // Test: When Inquiry Fails to start, we report this back to the requester.
 TEST_F(GAP_BrEdrDiscoveryManagerTest, RequestDiscoveryError) {
   test_device()->QueueCommandTransaction(
-      CommandTransaction(kInquiry, {&kInquiry_rsperror, &kInquiryResult}));
+      CommandTransaction(kInquiry, {&kInquiryRspError, &kInquiryResult}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kRemoteNameRequest1,
+      {&kRemoteNameRequestRsp, &kRemoteNameRequestComplete1}));
 
   std::unique_ptr<BrEdrDiscoverySession> session;
   size_t devices_found = 0u;
@@ -379,7 +480,10 @@ TEST_F(GAP_BrEdrDiscoveryManagerTest, RequestDiscoveryError) {
 // sessions.
 TEST_F(GAP_BrEdrDiscoveryManagerTest, ContinuingDiscoveryError) {
   test_device()->QueueCommandTransaction(
-      CommandTransaction(kInquiry, {&kInquiry_rsp, &kInquiryResult}));
+      CommandTransaction(kInquiry, {&kInquiryRsp, &kInquiryResult}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kRemoteNameRequest1,
+      {&kRemoteNameRequestRsp, &kRemoteNameRequestComplete1}));
 
   std::unique_ptr<BrEdrDiscoverySession> session;
   size_t devices_found = 0u;
@@ -535,6 +639,63 @@ TEST_F(GAP_BrEdrDiscoveryManagerTest, DiscoverableRequestWhileStopping) {
 
   EXPECT_FALSE(discovery_manager()->discoverable());
 }
+
+// Test: non-standard inquiry modes mean before the first discovery, the
+// inquiry mode is set.
+// Test: extended inquiry is stored in the remote device
+TEST_F(GAP_BrEdrDiscoveryManagerTest, ExtendedInquiry) {
+  NewDiscoveryManager(hci::InquiryMode::kExtended);
+
+  test_device()->QueueCommandTransaction(
+      CommandTransaction(kSetExtendedMode, {&kSetExtendedModeRsp}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kInquiry, {&kInquiryRsp, &kExtendedInquiryResult, &kRSSIInquiryResult}));
+  test_device()->QueueCommandTransaction(CommandTransaction(
+      kRemoteNameRequest2,
+      {&kRemoteNameRequestRsp, &kRemoteNameRequestComplete2}));
+
+  std::unique_ptr<BrEdrDiscoverySession> session1;
+  size_t devices_found1 = 0u;
+
+  discovery_manager()->RequestDiscovery(
+      [&session1, &devices_found1](auto status, auto cb_session) {
+        EXPECT_TRUE(status);
+        cb_session->set_result_callback(
+            [&devices_found1](const auto& device) { devices_found1++; });
+        session1 = std::move(cb_session);
+      });
+
+  EXPECT_FALSE(discovery_manager()->discovering());
+
+  RunLoopUntilIdle();
+
+  EXPECT_TRUE(session1);
+  EXPECT_EQ(2u, devices_found1);
+  EXPECT_TRUE(discovery_manager()->discovering());
+  session1 = nullptr;
+
+  RemoteDevice* device1 =
+      device_cache()->FindDeviceByAddress(common::DeviceAddress(
+          common::DeviceAddress::Type::kBREDR, "00:00:00:00:00:02"));
+  EXPECT_TRUE(device1);
+  EXPECT_EQ(-20, device1->rssi());
+
+  RemoteDevice* device2 =
+      device_cache()->FindDeviceByAddress(common::DeviceAddress(
+          common::DeviceAddress::Type::kBREDR, "00:00:00:00:00:03"));
+
+  EXPECT_TRUE(device2);
+  ASSERT_TRUE(device2->name());
+  EXPECT_EQ("Fuchsia💖", *device2->name());
+
+  test_device()->SendCommandChannelPacket(kInquiryComplete);
+
+  RunLoopUntilIdle();
+
+  EXPECT_FALSE(discovery_manager()->discovering());
+}
+
+#undef COMMAND_STATUS_RSP
 
 }  // namespace
 }  // namespace gap

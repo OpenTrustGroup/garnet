@@ -10,22 +10,23 @@
 
 namespace escher {
 
+class BatchGpuUploader;
 class BufferFactory;
 
 class RoundedRectFactory : private ResourceRecycler {
  public:
-  explicit RoundedRectFactory(Escher* escher);
+  explicit RoundedRectFactory(EscherWeakPtr escher);
   ~RoundedRectFactory() override;
 
-  MeshPtr NewRoundedRect(const RoundedRectSpec& spec,
-                         const MeshSpec& mesh_spec);
+  MeshPtr NewRoundedRect(const RoundedRectSpec& spec, const MeshSpec& mesh_spec,
+                         BatchGpuUploader* gpu_uploader);
 
  private:
   BufferPtr GetIndexBuffer(const RoundedRectSpec& spec,
-                           const MeshSpec& mesh_spec);
+                           const MeshSpec& mesh_spec,
+                           BatchGpuUploader* gpu_uploader);
 
   std::unique_ptr<BufferFactory> buffer_factory_;
-  impl::GpuUploader* const uploader_;
 
   BufferPtr index_buffer_;
 };

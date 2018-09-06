@@ -4,23 +4,22 @@
 
 #include "garnet/lib/machina/virtio_console.h"
 
-#include <virtio/virtio_ids.h>
-
 #include <fcntl.h>
 #include <string.h>
 
-#include "lib/fxl/logging.h"
+#include <lib/fxl/logging.h>
+#include <virtio/virtio_ids.h>
 
 namespace machina {
 
 // Represents an single, unidirectional serial stream.
 class Stream {
  public:
-  Stream(async_t* async, VirtioQueue* queue, zx_handle_t socket)
-      : async_(async),
+  Stream(async_dispatcher_t* dispatcher, VirtioQueue* queue, zx_handle_t socket)
+      : dispatcher_(dispatcher),
         socket_(socket),
         queue_(queue),
-        queue_wait_(async, queue,
+        queue_wait_(dispatcher, queue,
                     fit::bind_member(this, &Stream::OnQueueReady)) {}
 
   zx_status_t Start() { return WaitOnQueue(); }
@@ -53,11 +52,11 @@ class Stream {
     signals |= desc_.writable ? ZX_SOCKET_READABLE : ZX_SOCKET_WRITABLE;
     socket_wait_.set_object(socket_);
     socket_wait_.set_trigger(signals);
-    return socket_wait_.Begin(async_);
+    return socket_wait_.Begin(dispatcher_);
   }
 
-  void OnSocketReady(async_t* async, async::WaitBase* wait, zx_status_t status,
-                     const zx_packet_signal_t* signal) {
+  void OnSocketReady(async_dispatcher_t* dispatcher, async::WaitBase* wait,
+                     zx_status_t status, const zx_packet_signal_t* signal) {
     if (status != ZX_OK) {
       status = queue_->Return(head_, 0);
       if (status != ZX_OK) {
@@ -86,9 +85,9 @@ class Stream {
       }
     }
     if (status == ZX_ERR_SHOULD_WAIT || short_write) {
-      status = wait->Begin(async);
+      status = wait->Begin(dispatcher);
       if (status != ZX_OK) {
-        OnStreamClosed(status, "async wait on socket");
+        OnStreamClosed(status, "dispatcher wait on socket");
       }
       return;
     }
@@ -112,22 +111,22 @@ class Stream {
                    << ")";
   }
 
-  async_t* async_;
+  async_dispatcher_t* dispatcher_;
   zx_handle_t socket_;
   VirtioQueue* queue_;
   VirtioQueueWaiter queue_wait_;
   async::WaitMethod<Stream, &Stream::OnSocketReady> socket_wait_{this};
   uint16_t head_;
-  virtio_desc_t desc_;
+  VirtioDescriptor desc_;
 };
 
 class VirtioConsole::Port {
  public:
-  Port(async_t* async, VirtioQueue* rx_queue, VirtioQueue* tx_queue,
-       zx::socket socket)
-      : socket_(fbl::move(socket)),
-        rx_stream_(async, rx_queue, socket_.get()),
-        tx_stream_(async, tx_queue, socket_.get()) {}
+  Port(async_dispatcher_t* dispatcher, VirtioQueue* rx_queue,
+       VirtioQueue* tx_queue, zx::socket socket)
+      : socket_(std::move(socket)),
+        rx_stream_(dispatcher, rx_queue, socket_.get()),
+        tx_stream_(dispatcher, tx_queue, socket_.get()) {}
 
   zx_status_t Start() {
     zx_status_t status = rx_stream_.Start();
@@ -143,21 +142,21 @@ class VirtioConsole::Port {
   Stream tx_stream_;
 };
 
-VirtioConsole::VirtioConsole(const PhysMem& phys_mem, async_t* async,
-                             zx::socket socket)
-    : VirtioDeviceBase(phys_mem) {
+VirtioConsole::VirtioConsole(const PhysMem& phys_mem,
+                             async_dispatcher_t* dispatcher, zx::socket socket)
+    : VirtioDevice(phys_mem, 0 /* device_features */) {
   {
-    fbl::AutoLock lock(&config_mutex_);
+    std::lock_guard<std::mutex> lock(device_config_.mutex);
     config_.max_nr_ports = kVirtioConsoleMaxNumPorts;
   }
   ports_[0] =
-      std::make_unique<Port>(async, queue(0), queue(1), std::move(socket));
+      std::make_unique<Port>(dispatcher, queue(0), queue(1), std::move(socket));
 }
 
 VirtioConsole::~VirtioConsole() = default;
 
 zx_status_t VirtioConsole::Start() {
-  fbl::AutoLock lock(&mutex_);
+  std::lock_guard<std::mutex> lock(mutex_);
   return ports_[0]->Start();
 }
 

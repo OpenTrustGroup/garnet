@@ -7,9 +7,15 @@ import("//build/package.gni")
 
 rustc_binary("bin") {
   name = "dhcpd"
-  with_unit_tests = true
+  edition = "2018"
+
   deps = [
-    "//third_party/rust-crates/rustc_deps:byteorder",
+    "//garnet/lib/rust/crates/dhcp",
+    "//garnet/public/rust/crates/fuchsia-async",
+    "//garnet/public/rust/crates/fuchsia-zircon",
+    "//third_party/rust-crates/rustc_deps:failure",
+    "//third_party/rust-crates/rustc_deps:futures-preview",
+    "//third_party/rust-crates/rustc_deps:getopts",
   ]
 }
 
@@ -17,21 +23,18 @@ package("dhcpd") {
   deps = [
     ":bin",
   ]
-
+  meta = [
+      {
+        path = rebase_path("meta/dhcpd.cmx")
+        dest = "dhcpd.cmx"
+      }
+  ]
+  resources = [
+    {
+      path = rebase_path("data/test_server_config.json")
+      dest = "config.json"
+    }
+  ]
   binary = "rust_crates/dhcpd"
 }
 
-package("dhcpd-tests") {
-  testonly = true
-
-  deps = [
-    ":bin"
-  ]
-
-  tests = [
-    {
-      name = "dhcpd_bin_test_rustc"
-      dest = "dhcpd_bin_test_rustc"
-    }
-  ]
-}

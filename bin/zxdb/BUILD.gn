@@ -27,7 +27,9 @@ if (current_toolchain == host_toolchain) {
 
     deps = [
       "//garnet/bin/zxdb/client:tests",
+      "//garnet/bin/zxdb/common:tests",
       "//garnet/bin/zxdb/console:tests",
+      "//garnet/bin/zxdb/expr:tests",
       "//garnet/lib/debug_ipc:tests",
       "//garnet/lib/debug_ipc/helper:tests",
       "//third_party/googletest:gtest_main",
@@ -42,16 +44,5 @@ install_host_tools("zxdb_host") {
   ]
   outputs = [
     "zxdb"
-  ]
-}
-
-
-install_host_tools("zxdb_tests_host") {
-  testonly = true
-  deps = [
-    ":zxdb_tests",
-  ]
-  outputs = [
-    "zxdb_tests",
   ]
 }

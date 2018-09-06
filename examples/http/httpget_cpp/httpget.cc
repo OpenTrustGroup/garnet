@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <lib/async-loop/cpp/loop.h>
 #include <fuchsia/net/oldhttp/cpp/fidl.h>
+#include <lib/async-loop/cpp/loop.h>
 
-#include "lib/app/cpp/connect.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/connect.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/macros.h"
 
@@ -75,9 +75,8 @@ class WGetApp {
  public:
   WGetApp(async::Loop* loop)
       : loop_(loop),
-        context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
-    http_service_ =
-        context_->ConnectToEnvironmentService<http::HttpService>();
+        context_(component::StartupContext::CreateFromStartupInfo()) {
+    http_service_ = context_->ConnectToEnvironmentService<http::HttpService>();
     FXL_DCHECK(http_service_);
   }
 
@@ -99,17 +98,16 @@ class WGetApp {
     request.method = "GET";
     request.auto_follow_redirects = true;
 
-    url_loader_->Start(std::move(request),
-                       [this](http::URLResponse response) {
-                         ResponsePrinter printer;
-                         printer.Run(loop_, std::move(response));
-                       });
+    url_loader_->Start(std::move(request), [this](http::URLResponse response) {
+      ResponsePrinter printer;
+      printer.Run(loop_, std::move(response));
+    });
     return true;
   }
 
  private:
   async::Loop* const loop_;
-  std::unique_ptr<fuchsia::sys::StartupContext> context_;
+  std::unique_ptr<component::StartupContext> context_;
 
   http::HttpServicePtr http_service_;
   http::URLLoaderPtr url_loader_;
@@ -119,7 +117,7 @@ class WGetApp {
 
 int main(int argc, const char** argv) {
   std::vector<std::string> args(argv, argv + argc);
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
   examples::WGetApp app(&loop);
   if (app.Start(args))

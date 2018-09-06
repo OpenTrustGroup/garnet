@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_LOW_ENERGY_PERIPHERAL_SERVER_H_
+#define GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_LOW_ENERGY_PERIPHERAL_SERVER_H_
 
 #include <memory>
 #include <unordered_map>
@@ -33,7 +34,8 @@ class LowEnergyPeripheralServer
   class InstanceData final {
    public:
     InstanceData() = default;
-    InstanceData(const std::string& id, fxl::WeakPtr<LowEnergyPeripheralServer> owner);
+    InstanceData(const std::string& id,
+                 fxl::WeakPtr<LowEnergyPeripheralServer> owner);
 
     InstanceData(InstanceData&& other) = default;
     InstanceData& operator=(InstanceData&& other) = default;
@@ -54,7 +56,7 @@ class LowEnergyPeripheralServer
     ConnectionRefPtr conn_ref_;
     // The object that created and owns this InstanceData.
     // |owner_| must outlive the InstanceData.
-    fxl::WeakPtr<LowEnergyPeripheralServer> owner_; // weak
+    fxl::WeakPtr<LowEnergyPeripheralServer> owner_;  // weak
 
     FXL_DISALLOW_COPY_AND_ASSIGN(InstanceData);
   };
@@ -62,9 +64,8 @@ class LowEnergyPeripheralServer
   // fuchsia::bluetooth::le::Peripheral overrides:
   void StartAdvertising(
       fuchsia::bluetooth::le::AdvertisingData advertising_data,
-      fuchsia::bluetooth::le::AdvertisingDataPtr scan_result,
-      uint32_t interval, bool anonymous,
-      StartAdvertisingCallback callback) override;
+      fuchsia::bluetooth::le::AdvertisingDataPtr scan_result, uint32_t interval,
+      bool anonymous, StartAdvertisingCallback callback) override;
 
   void StopAdvertising(::fidl::StringPtr advertisement_id,
                        StopAdvertisingCallback callback) override;
@@ -86,3 +87,5 @@ class LowEnergyPeripheralServer
 };
 
 }  // namespace bthost
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_LOW_ENERGY_PERIPHERAL_SERVER_H_

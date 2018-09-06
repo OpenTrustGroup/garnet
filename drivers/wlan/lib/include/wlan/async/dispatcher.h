@@ -17,20 +17,17 @@
 namespace wlan {
 namespace async {
 
-template <typename I>
-class Dispatcher {
+template <typename I> class Dispatcher {
    public:
-    Dispatcher(async_t* async) : async_(async) {}
+    Dispatcher(async_dispatcher_t* dispatcher) : dispatcher_(dispatcher) {}
 
     // Start serving requests on the given channel.
     // Fails if shutdown has been initiated.
     zx_status_t AddBinding(zx::channel chan, I* intf) {
         std::lock_guard<std::mutex> shutdown_guard(lock_);
-        if (shutdown_initiated_) {
-            return ZX_ERR_PEER_CLOSED;
-        }
+        if (shutdown_initiated_) { return ZX_ERR_PEER_CLOSED; }
         fidl::InterfaceRequest<I> request(std::move(chan));
-        bindings_.AddBinding(intf, std::move(request), async_);
+        bindings_.AddBinding(intf, std::move(request), dispatcher_);
         return ZX_OK;
     }
 
@@ -43,9 +40,7 @@ class Dispatcher {
     void InitiateShutdown(fit::closure ready_callback) {
         {
             std::lock_guard<std::mutex> guard(lock_);
-            if (shutdown_initiated_) {
-                return;
-            }
+            if (shutdown_initiated_) { return; }
             shutdown_initiated_ = true;
         }
 
@@ -56,16 +51,16 @@ class Dispatcher {
         // Submit a sentinel task. Since the event loop in our async_t is single-threaded,
         // the execution of this task will guarantee that all in-flight requests have finished.
         if (ready_callback) {
-            zx_status_t status = ::async::PostTask(async_, std::move(ready_callback));
+            zx_status_t status = ::async::PostTask(dispatcher_, std::move(ready_callback));
             ZX_DEBUG_ASSERT(status == ZX_OK);
         }
     }
 
    private:
     fidl::ThreadSafeBindingSet<I> bindings_;
-    async_t* async_;
+    async_dispatcher_t* dispatcher_;
     std::mutex lock_;
-    bool shutdown_initiated_ __TA_GUARDED(lock_) { false };
+    bool shutdown_initiated_ __TA_GUARDED(lock_){false};
 };
 
 }  // namespace async

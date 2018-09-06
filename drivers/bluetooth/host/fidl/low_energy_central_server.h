@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_LOW_ENERGY_CENTRAL_SERVER_H_
+#define GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_LOW_ENERGY_CENTRAL_SERVER_H_
 
 #include <memory>
 #include <unordered_map>
@@ -41,9 +42,8 @@ class LowEnergyCentralServer
       ::fidl::StringPtr identifier,
       ::fidl::InterfaceRequest<fuchsia::bluetooth::gatt::Client> client_request,
       ConnectPeripheralCallback callback) override;
-  void DisconnectPeripheral(
-      ::fidl::StringPtr identifier,
-      DisconnectPeripheralCallback callback) override;
+  void DisconnectPeripheral(::fidl::StringPtr identifier,
+                            DisconnectPeripheralCallback callback) override;
 
   // Called by |scan_session_| when a device is discovered.
   void OnScanResult(const ::btlib::gap::RemoteDevice& remote_device);
@@ -79,3 +79,5 @@ class LowEnergyCentralServer
 };
 
 }  // namespace bthost
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_LOW_ENERGY_CENTRAL_SERVER_H_

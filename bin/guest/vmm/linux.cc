@@ -5,7 +5,6 @@
 #include "garnet/bin/guest/vmm/linux.h"
 
 #include <endian.h>
-#include <fbl/unique_fd.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -15,6 +14,10 @@
 #include <unistd.h>
 #include <array>
 
+#include <fbl/unique_fd.h>
+#include <zircon/boot/e820.h>
+
+#include "garnet/bin/guest/vmm/guest_config.h"
 #include "garnet/bin/guest/vmm/kernel.h"
 #include "garnet/lib/machina/address.h"
 #include "garnet/lib/machina/bits.h"
@@ -61,16 +64,6 @@ static constexpr uintptr_t kDtbOffset = kRamdiskOffset - PAGE_SIZE;
 static constexpr uintptr_t kDtbOverlayOffset = kDtbOffset - PAGE_SIZE;
 static constexpr uintptr_t kDtbBootParamsOffset =
     kDtbOffset + sizeof(SetupData);
-
-struct MemRange {
-  uint32_t addr;
-  uint32_t size;
-};
-static constexpr std::array<MemRange, 3> kMemoryHoles = {
-    MemRange{machina::kPl031PhysBase, 0x10000},         // 4kb hole for RTC.
-    MemRange{machina::kPciMmioBarPhysBase, 0x1000000},  // 16mb hole for MMIO.
-    MemRange{machina::kPciEcamPhysBase, 0x1000000},     // 16mb hole for ECAM.
-};
 
 // clang-format off
 
@@ -283,9 +276,7 @@ static zx_status_t write_boot_params(const machina::PhysMem& phys_mem,
     bp(phys_mem, SETUP_DATA) = kDtbOffset;
   }
 
-#if __aarch64__
-  return ZX_OK;
-#elif __x86_64__
+#if __x86_64__
   // Setup e820 memory map.
   size_t e820_entries = machina::e820_entries(phys_mem.size());
   if (e820_entries > kMaxE820Entries) {
@@ -293,9 +284,12 @@ static zx_status_t write_boot_params(const machina::PhysMem& phys_mem,
     return ZX_ERR_BAD_STATE;
   }
   bp(phys_mem, E820_COUNT) = static_cast<uint8_t>(e820_entries);
-
-  return machina::create_e820(phys_mem, kKernelOffset + kE820MapOffset);
+  const size_t e820_size = e820_entries * sizeof(e820entry_t);
+  void* e820_addr =
+      phys_mem.as<void>(kKernelOffset + kE820MapOffset, e820_size);
+  machina::create_e820(e820_addr, phys_mem.size());
 #endif
+  return ZX_OK;
 }
 
 static zx_status_t read_mz(const machina::PhysMem& phys_mem,
@@ -314,11 +308,11 @@ static void device_tree_error_msg(const char* property_name) {
                  << "tree, space must be reserved in the device tree";
 }
 
-static zx_status_t add_memory_entry(void* dtb, int memory_off, MemRange range) {
-  // TODO(PD-125): Use 64bit values here.
-  uint32_t entry[2];
-  entry[0] = htobe32(range.addr);
-  entry[1] = htobe32(range.size);
+static zx_status_t add_memory_entry(void* dtb, int memory_off, zx_gpaddr_t addr,
+                                    size_t size) {
+  uint64_t entry[2];
+  entry[0] = htobe64(addr);
+  entry[1] = htobe64(size);
   int ret = fdt_appendprop(dtb, memory_off, "reg", entry, sizeof(entry));
   if (ret < 0) {
     device_tree_error_msg("reg");
@@ -332,7 +326,7 @@ static zx_status_t load_device_tree(const int dtb_fd,
                                     const std::string& cmdline,
                                     const int dtb_overlay_fd,
                                     const size_t initrd_size,
-                                    uint8_t num_cpus) {
+                                    const GuestConfig& cfg) {
   void* dtb;
   size_t dtb_size;
   zx_status_t status = read_device_tree(dtb_fd, phys_mem, kDtbOffset,
@@ -392,7 +386,7 @@ static zx_status_t load_device_tree(const int dtb_fd,
     FXL_LOG(ERROR) << "Failed to find \"/cpus\" in device tree";
     return ZX_ERR_BAD_STATE;
   }
-  for (uint8_t cpu = 0; cpu != num_cpus; ++cpu) {
+  for (uint8_t cpu = 0; cpu != cfg.num_cpus(); ++cpu) {
     char subnode_name[10];
     sprintf(subnode_name, "cpu@%u", cpu);
     int cpu_off = fdt_add_subnode(dtb, cpus_off, subnode_name);
@@ -422,45 +416,70 @@ static zx_status_t load_device_tree(const int dtb_fd,
     }
   }
 
+  // Add memory to device tree.
   int memory_off = fdt_path_offset(dtb, "/memory@0");
   if (memory_off < 0) {
     FXL_LOG(ERROR) << "Failed to find \"/memory\" in device tree";
     return ZX_ERR_BAD_STATE;
   }
-  // NOTE: The following assumes that kMemoryHoles is non-overlapping.
-  std::vector<MemRange> memory_map = {
-      {0, static_cast<uint32_t>(phys_mem.size())},
-  };
-  for (auto hole : kMemoryHoles) {
-    auto entry =
-        std::find_if(memory_map.begin(), memory_map.end(), [hole](auto range) {
-          return range.addr < hole.addr + hole.size &&
-                 range.addr + range.size > hole.addr;
-        });
-    if (entry == memory_map.end()) {
-      continue;
+  status = add_memory_entry(dtb, memory_off, 0, phys_mem.size());
+  if (status != ZX_OK) {
+    return status;
+  }
+
+#if __aarch64__
+  int gic_off = fdt_path_offset(dtb, "/interrupt-controller@800000000");
+  if (gic_off < 0) {
+    FXL_LOG(ERROR) << "Failed to find \"/interrupt-controller\" in device tree";
+    return ZX_ERR_BAD_STATE;
+  }
+  if (cfg.gic_version() == machina::GicVersion::V2) {
+    ret = fdt_setprop_string(dtb, gic_off, "compatible", "arm,gic-400");
+    if (ret != 0) {
+      device_tree_error_msg("compatible");
+      return ZX_ERR_BAD_STATE;
     }
-    uint32_t entry_end = entry->addr + entry->size;
-    uint32_t hole_end = hole.addr + hole.size;
-    if (hole.addr == entry->addr) {
-      // The current entry is now degenerate (has size of 0), so we construct
-      // our new entry by modifying the current entry.
-      entry->addr = hole_end;
-      entry->size = entry_end - hole_end;
-      continue;
+    // GICD memory map
+    status = add_memory_entry(dtb, gic_off, machina::kGicv2DistributorPhysBase,
+                              machina::kGicv2DistributorSize);
+    if (status != ZX_OK) {
+      return status;
     }
-    entry->size = hole.addr - entry->addr;
-    if (hole_end < entry_end) {
-      // Insert the new entry directly after the current entry to preserve the
-      // order of the memory map. This way it will be written to the device
-      // tree in the correct order.
-      memory_map.emplace(
-          entry + 1, MemRange{.addr = hole_end, .size = entry_end - hole_end});
+    // GICC memory map
+    status = add_memory_entry(
+        dtb, gic_off,
+        machina::kGicv2DistributorPhysBase + machina::kGicv2DistributorSize,
+        0x2000);
+    if (status != ZX_OK) {
+      return status;
+    }
+  } else {
+    ret = fdt_setprop_string(dtb, gic_off, "compatible", "arm,gic-v3");
+    if (ret != 0) {
+      device_tree_error_msg("compatible");
+      return ZX_ERR_BAD_STATE;
+    }
+    // GICD memory map
+    status = add_memory_entry(dtb, gic_off, machina::kGicv3DistributorPhysBase,
+                              machina::kGicv3DistributorSize);
+    if (status != ZX_OK) {
+      return status;
+    }
+    ret = fdt_setprop_u32(dtb, gic_off, "#redistributor-regions", 1);
+    if (ret != 0) {
+      device_tree_error_msg("#redistributor-regions");
+      return ZX_ERR_BAD_STATE;
+    }
+    // GICR memory map
+    uint32_t gicr_size = static_cast<uint32_t>(
+        machina::kGicv3RedistributorStride * cfg.num_cpus());
+    status = add_memory_entry(dtb, gic_off,
+                              machina::kGicv3RedistributorPhysBase, gicr_size);
+    if (status != ZX_OK) {
+      return status;
     }
   }
-  for (auto entry : memory_map) {
-    add_memory_entry(dtb, memory_off, entry);
-  }
+#endif  // __aarch64__
 
   return ZX_OK;
 }
@@ -474,8 +493,12 @@ static std::string linux_cmdline(std::string cmdline) {
 #endif
 }
 
-zx_status_t setup_linux(const GuestConfig cfg, const machina::PhysMem& phys_mem,
-                        uintptr_t* guest_ip, uintptr_t* boot_ptr) {
+// NOTE(abdulla): dev_mem is currently unused, but will be used in the future to
+// modify the e820 or DTS memory map.
+zx_status_t setup_linux(const GuestConfig& cfg,
+                        const machina::PhysMem& phys_mem,
+                        const machina::DevMem& dev_mem, uintptr_t* guest_ip,
+                        uintptr_t* boot_ptr) {
   // Read the kernel image.
   zx_status_t status = load_kernel(cfg.kernel_path(), phys_mem, kKernelOffset);
   if (status != ZX_OK) {
@@ -531,9 +554,8 @@ zx_status_t setup_linux(const GuestConfig cfg, const machina::PhysMem& phys_mem,
       FXL_LOG(ERROR) << "Failed to open device tree " << kDtbPath;
       return ZX_ERR_IO;
     }
-    status =
-        load_device_tree(dtb_fd.get(), phys_mem, cmdline, dtb_overlay_fd.get(),
-                         initrd_size, cfg.num_cpus());
+    status = load_device_tree(dtb_fd.get(), phys_mem, cmdline,
+                              dtb_overlay_fd.get(), initrd_size, cfg);
     if (status != ZX_OK) {
       return status;
     }

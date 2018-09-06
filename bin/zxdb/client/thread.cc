@@ -6,7 +6,7 @@
 
 namespace zxdb {
 
-Thread::Thread(Session* session) : ClientObject(session) {}
+Thread::Thread(Session* session) : ClientObject(session), weak_factory_(this) {}
 Thread::~Thread() = default;
 
 void Thread::AddObserver(ThreadObserver* observer) {
@@ -16,5 +16,7 @@ void Thread::AddObserver(ThreadObserver* observer) {
 void Thread::RemoveObserver(ThreadObserver* observer) {
   observers_.RemoveObserver(observer);
 }
+
+fxl::WeakPtr<Thread> Thread::GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
 }  // namespace zxdb

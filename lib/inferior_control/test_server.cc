@@ -21,13 +21,16 @@
 
 #include "gtest/gtest.h"
 
+#include "lib/component/cpp/environment_services_helper.h"
 #include "lib/fxl/arraysize.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/string_printf.h"
 
-namespace debugserver {
+namespace inferior_control {
 
-TestServer::TestServer() : Server(util::GetRootJob(), util::GetDefaultJob()) {}
+TestServer::TestServer()
+    : Server(debugger_utils::GetRootJob(), debugger_utils::GetDefaultJob()),
+      services_(component::GetEnvironmentServices()) {}
 
 void TestServer::SetUp() {
   ASSERT_TRUE(exception_port_.Run());
@@ -55,7 +58,7 @@ bool TestServer::Run() {
 }
 
 bool TestServer::SetupInferior(const std::vector<std::string>& argv) {
-  auto inferior = new debugserver::Process(this, this);
+  auto inferior = new Process(this, this, services_);
   inferior->set_argv(argv);
   // We take over ownership of |inferior| here.
   set_current_process(inferior);
@@ -64,14 +67,14 @@ bool TestServer::SetupInferior(const std::vector<std::string>& argv) {
 
 bool TestServer::RunHelperProgram(zx::channel channel) {
   Process* process = current_process();
-  const util::Argv& argv = process->argv();
+  const debugger_utils::Argv& argv = process->argv();
 
   FXL_LOG(INFO) << "Starting program: " << argv[0];
 
   if (channel.is_valid()) {
     process->AddStartupHandle({
-      .id = PA_HND(PA_USER0, 0),
-      .handle = std::move(channel),
+        .id = PA_HND(PA_USER0, 0),
+        .handle = std::move(channel),
     });
   }
 
@@ -182,4 +185,4 @@ void TestServer::OnSyntheticException(Process* process, Thread* thread,
   QuitMessageLoop(true);
 }
 
-}  // namespace debugserver
+}  // namespace inferior_control

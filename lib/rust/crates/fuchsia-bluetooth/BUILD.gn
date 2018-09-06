@@ -6,9 +6,10 @@ import("//build/rust/rustc_library.gni")
 
 rustc_library("fuchsia-bluetooth") {
   name = "fuchsia_bluetooth"
+  edition = "2018"
   deps = [
-    "//garnet/public/lib/bluetooth/fidl/common:common-rustc",
-    "//garnet/public/lib/bluetooth/fidl/control:control-rustc",
+    "//garnet/public/fidl/fuchsia.bluetooth:fuchsia.bluetooth-rustc",
+    "//garnet/public/fidl/fuchsia.bluetooth.control:fuchsia.bluetooth.control-rustc",
     "//garnet/public/rust/crates/fdio",
     "//garnet/public/rust/crates/fuchsia-zircon",
     "//third_party/rust-crates/rustc_deps:failure",

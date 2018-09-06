@@ -3,12 +3,14 @@
 // found in the LICENSE file.
 
 use byteorder::{BigEndian, ByteOrder};
-use crypto::aes::{self, KeySize};
-use crypto::blockmodes;
-use crypto::buffer::{self, WriteBuffer, ReadBuffer};
-use crypto::symmetriccipher::{BlockDecryptor, BlockEncryptor};
-use keywrap::Algorithm;
-use {Error, Result};
+use crypto::aes::KeySize;
+use crypto::aessafe;
+use crypto::blockmodes::{self, EcbEncryptor, EcbDecryptor, PaddingProcessor};
+use crypto::buffer;
+use crypto::symmetriccipher::{Decryptor, Encryptor};
+use failure::{self, bail, ensure, format_err};
+use crate::keywrap::Algorithm;
+use crate::Error;
 
 // Implementation of RFC 3394 - Advanced Encryption Standard (AES) Key Wrap Algorithm
 // RFC 3394, 2.2.3
@@ -18,23 +20,67 @@ const BLOCK_SIZE: usize = 16;
 pub struct NistAes;
 
 impl NistAes {
-    fn keysize(key_len: usize) -> Result<KeySize> {
+    fn keysize(key_len: usize) -> Result<KeySize, failure::Error> {
         match key_len {
             16 => Ok(KeySize::KeySize128),
             24 => Ok(KeySize::KeySize192),
             32 => Ok(KeySize::KeySize256),
-            _ => Err(Error::InvalidAesKeywrapKeySize(key_len)),
+            _ => bail!(Error::InvalidAesKeywrapKeySize(key_len)),
+        }
+    }
+}
+
+pub fn ecb_encryptor<X: PaddingProcessor + Send + 'static>(
+    key_size: KeySize,
+    key: &[u8],
+    padding: X) -> Box<Encryptor> {
+    match key_size {
+        KeySize::KeySize128 => {
+            let aes_enc = aessafe::AesSafe128Encryptor::new(key);
+            let enc = Box::new(EcbEncryptor::new(aes_enc, padding));
+            enc
+        }
+        KeySize::KeySize192 => {
+            let aes_enc = aessafe::AesSafe192Encryptor::new(key);
+            let enc = Box::new(EcbEncryptor::new(aes_enc, padding));
+            enc
+        }
+        KeySize::KeySize256 => {
+            let aes_enc = aessafe::AesSafe256Encryptor::new(key);
+            let enc = Box::new(EcbEncryptor::new(aes_enc, padding));
+            enc
+        }
+    }
+}
+
+pub fn ecb_decryptor<X: PaddingProcessor + Send + 'static>(
+    key_size: KeySize,
+    key: &[u8],
+    padding: X) -> Box<Decryptor> {
+    match key_size {
+        KeySize::KeySize128 => {
+            let aes_dec = aessafe::AesSafe128Decryptor::new(key);
+            let dec = Box::new(EcbDecryptor::new(aes_dec, padding));
+            dec
+        }
+        KeySize::KeySize192 => {
+            let aes_dec = aessafe::AesSafe192Decryptor::new(key);
+            let dec = Box::new(EcbDecryptor::new(aes_dec, padding));
+            dec
+        }
+        KeySize::KeySize256 => {
+            let aes_dec = aessafe::AesSafe256Decryptor::new(key);
+            let dec = Box::new(EcbDecryptor::new(aes_dec, padding));
+            dec
         }
     }
 }
 
 impl Algorithm for NistAes {
     // RFC 3394, 2.2.1 - Uses index based wrapping
-    fn wrap(&self, key: &[u8], p: &[u8]) -> Result<Vec<u8>> {
+    fn wrap(&self, key: &[u8], p: &[u8]) -> Result<Vec<u8>, failure::Error> {
         let n = p.len() / 8;
-        if p.len() % 8 != 0 || n < 2 {
-            return Err(Error::InvalidAesKeywrapDataLength(p.len()));
-        }
+        ensure!(p.len() % 8 == 0 && n >= 2, Error::InvalidAesKeywrapDataLength(p.len()));
 
         let keysize = NistAes::keysize(key.len())?;
         let mut b = vec![0u8; BLOCK_SIZE];
@@ -57,11 +103,12 @@ impl Algorithm for NistAes {
                     {
                         let mut read_buf = buffer::RefReadBuffer::new(&aes_block[..]);
                         let mut write_buf = buffer::RefWriteBuffer::new(&mut b[..]);
-                        let mut cipher = aes::ecb_encryptor(
+                        let mut cipher = ecb_encryptor(
                             keysize,
                             key,
                             blockmodes::NoPadding);
-                        cipher.encrypt(&mut read_buf, &mut write_buf, true);
+                        cipher.encrypt(&mut read_buf, &mut write_buf, true)
+                            .map_err(|e| format_err!("AES keywrap encryption error: {:?}", e))?;
                     }
                     let t = (n * j + i) as u64;
                     BigEndian::write_u64(&mut aes_block, BigEndian::read_u64(&b[..8]) ^ t);
@@ -78,11 +125,9 @@ impl Algorithm for NistAes {
     }
 
     // RFC 3394, 2.2.2 - uses index based unwrapping
-    fn unwrap(&self, key: &[u8], c: &[u8]) -> Result<Vec<u8>> {
+    fn unwrap(&self, key: &[u8], c: &[u8]) -> Result<Vec<u8>, failure::Error> {
         let n = c.len() / 8 - 1;
-        if c.len() % 8 != 0 || n < 2 {
-            return Err(Error::InvalidAesKeywrapDataLength(c.len()));
-        }
+        ensure!(c.len() % 8 == 0 && n >= 2, Error::InvalidAesKeywrapDataLength(c.len()));
 
         let keysize = NistAes::keysize(key.len())?;
         let mut b = vec![0u8; BLOCK_SIZE];
@@ -107,11 +152,12 @@ impl Algorithm for NistAes {
                 {
                     let mut read_buf = buffer::RefReadBuffer::new(&aes_block[..]);
                     let mut write_buf = buffer::RefWriteBuffer::new(&mut b[..]);
-                    let mut cipher = aes::ecb_decryptor(
+                    let mut cipher = ecb_decryptor(
                         keysize,
                         key,
                         blockmodes::NoPadding);
-                    cipher.decrypt(&mut read_buf, &mut write_buf, true);
+                    cipher.decrypt(&mut read_buf, &mut write_buf, true)
+                        .map_err(|e| format_err!("AES keywrap decryption error: {:?}", e))?;
                 }
 
                 &aes_block[..8].copy_from_slice(&b[..8]);
@@ -120,9 +166,8 @@ impl Algorithm for NistAes {
         }
 
         // 3) Output the results
-        if &aes_block[..8] != DEFAULT_IV {
-            return Err(Error::WrongAesKeywrapKey);
-        }
+        ensure!(&aes_block[..8] == DEFAULT_IV, Error::WrongAesKeywrapKey);
+
         Ok(r)
     }
 }

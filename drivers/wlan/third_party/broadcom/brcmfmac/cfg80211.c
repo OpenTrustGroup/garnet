@@ -16,12 +16,6 @@
 
 /* Toplevel file. Relies on dhd_linux.c to send commands to the dongle. */
 
-//#include <linux/etherdevice.h>
-//#include <linux/kernel.h>
-//#include <linux/module.h>
-//#include <linux/vmalloc.h>
-//#include <net/cfg80211.h>
-//#include <net/netlink.h>
 #include "cfg80211.h"
 
 #include <zircon/status.h>
@@ -433,7 +427,7 @@ static zx_status_t brcmf_vif_change_validate(struct brcmf_cfg80211_info* cfg,
         .num_different_channels = 1,
     };
 
-    list_for_each_entry(pos, &cfg->vif_list, list) {
+    list_for_every_entry(&cfg->vif_list, pos, struct brcmf_cfg80211_vif, list) {
         if (pos == vif) {
             params.iftype_num[new_type]++;
         } else {
@@ -457,7 +451,9 @@ static zx_status_t brcmf_vif_add_validate(struct brcmf_cfg80211_info* cfg,
         .num_different_channels = 1,
     };
 
-    list_for_each_entry(pos, &cfg->vif_list, list) params.iftype_num[pos->wdev.iftype]++;
+    list_for_every_entry(&cfg->vif_list, pos, struct brcmf_cfg80211_vif, list) {
+        params.iftype_num[pos->wdev.iftype]++;
+    }
 
     params.iftype_num[new_type]++;
     return cfg80211_check_combinations(cfg->wiphy, &params);
@@ -495,7 +491,7 @@ static void brcmf_cfg80211_update_proto_addr_mode(struct wireless_dev* wdev) {
     struct brcmf_cfg80211_vif* vif;
     struct brcmf_if* ifp;
 
-    vif = container_of(wdev, struct brcmf_cfg80211_vif, wdev);
+    vif = containerof(wdev, struct brcmf_cfg80211_vif, wdev);
     ifp = vif->ifp;
 
     if ((wdev->iftype == NL80211_IFTYPE_ADHOC) || (wdev->iftype == NL80211_IFTYPE_AP) ||
@@ -1025,7 +1021,7 @@ static zx_status_t brcmf_run_escan(struct brcmf_cfg80211_info* cfg, struct brcmf
         err = ZX_ERR_NO_MEMORY;
         goto exit;
     }
-    BUG_ON(params_size + sizeof("escan") >= BRCMF_DCMD_MEDLEN);
+    ZX_ASSERT(params_size + sizeof("escan") >= BRCMF_DCMD_MEDLEN);
     brcmf_escan_prep(cfg, &params->params_le, request);
     params->version = BRCMF_ESCAN_REQ_VERSION;
     params->action = WL_ESCAN_ACTION_START;
@@ -1075,7 +1071,7 @@ zx_status_t brcmf_cfg80211_scan(struct wiphy* wiphy, struct cfg80211_scan_reques
     zx_status_t err = ZX_OK;
 
     brcmf_dbg(TRACE, "Enter\n");
-    vif = container_of(request->wdev, struct brcmf_cfg80211_vif, wdev);
+    vif = containerof(request->wdev, struct brcmf_cfg80211_vif, wdev);
     if (!check_vif_up(vif)) {
         brcmf_dbg(TEMP, "Vif not up");
         return ZX_ERR_IO;
@@ -1274,7 +1270,7 @@ static void brcmf_link_down(struct brcmf_cfg80211_vif* vif, uint16_t reason) {
         }
         if ((vif->wdev.iftype == NL80211_IFTYPE_STATION) ||
                 (vif->wdev.iftype == NL80211_IFTYPE_P2P_CLIENT)) {
-            cfg80211_disconnected(vif->wdev.netdev, reason, NULL, 0, true, GFP_KERNEL);
+            cfg80211_disconnected(vif->wdev.netdev, reason, NULL, 0, true);
         }
     }
     brcmf_clear_bit_in_array(BRCMF_VIF_STATUS_CONNECTING, &vif->sme_state);
@@ -2056,7 +2052,7 @@ static zx_status_t brcmf_cfg80211_disconnect(struct wiphy* wiphy, struct net_dev
 
     brcmf_clear_bit_in_array(BRCMF_VIF_STATUS_CONNECTED, &ifp->vif->sme_state);
     brcmf_clear_bit_in_array(BRCMF_VIF_STATUS_CONNECTING, &ifp->vif->sme_state);
-    cfg80211_disconnected(ndev, reason_code, NULL, 0, true, GFP_KERNEL);
+    cfg80211_disconnected(ndev, reason_code, NULL, 0, true);
 
     memcpy(&scbval.ea, &profile->bssid, ETH_ALEN);
     scbval.val = reason_code;
@@ -2787,7 +2783,7 @@ static zx_status_t brcmf_inform_single_bss(struct brcmf_cfg80211_info* cfg,
     brcmf_dbg(TEMP, " * * Would have called cfg80211_inform_bss() and cfg80211_put_bss()");
 /*    bss = cfg80211_inform_bss(wiphy, notify_channel, CFG80211_BSS_FTYPE_UNKNOWN,
                               (const uint8_t*)bi->BSSID, 0, notify_capability, notify_interval,
-                              notify_ie, notify_ielen, notify_signal, GFP_KERNEL);
+                              notify_ie, notify_ielen, notify_signal);
     if (!bss) {
         return ZX_ERR_NO_MEMORY;
     }
@@ -2888,7 +2884,7 @@ static zx_status_t brcmf_inform_ibss(struct brcmf_cfg80211_info* cfg, struct net
 
     bss = cfg80211_inform_bss(wiphy, notify_channel, CFG80211_BSS_FTYPE_UNKNOWN, bssid, 0,
                               notify_capability, notify_interval, notify_ie, notify_ielen,
-                              notify_signal, GFP_KERNEL);
+                              notify_signal);
 
     if (!bss) {
         err = ZX_ERR_NO_MEMORY;
@@ -2974,7 +2970,7 @@ void brcmf_abort_scanning(struct brcmf_cfg80211_info* cfg) {
 
 static void brcmf_cfg80211_escan_timeout_worker(struct work_struct* work) {
     struct brcmf_cfg80211_info* cfg =
-        container_of(work, struct brcmf_cfg80211_info, escan_timeout_work);
+        containerof(work, struct brcmf_cfg80211_info, escan_timeout_work);
 
     brcmf_inform_bss(cfg);
     brcmf_notify_escan_complete(cfg, cfg->escan_info.ifp, true, true);
@@ -3448,7 +3444,7 @@ static zx_status_t brcmf_wowl_nd_results(struct brcmf_if* ifp, const struct brcm
     cfg->wowl.nd_info->matches[0] = cfg->wowl.nd;
 
     /* Inform (the resume task) that the net detect information was recvd */
-    completion_signal(&cfg->wowl.nd_data_wait);
+    sync_completion_signal(&cfg->wowl.nd_data_wait);
 
     return ZX_OK;
 }
@@ -3502,7 +3498,7 @@ static void brcmf_report_wowl_wakeind(struct wiphy* wiphy, struct brcmf_if* ifp)
         }
         if (wakeind & BRCMF_WOWL_PFN_FOUND) {
             brcmf_dbg(INFO, "WOWL Wake indicator: BRCMF_WOWL_PFN_FOUND\n");
-            err = completion_wait(&cfg->wowl.nd_data_wait, ZX_MSEC(BRCMF_ND_INFO_TIMEOUT_MSEC));
+            err = sync_completion_wait(&cfg->wowl.nd_data_wait, ZX_MSEC(BRCMF_ND_INFO_TIMEOUT_MSEC));
             if (err != ZX_OK) {
                 brcmf_err("No result for wowl net detect\n");
             } else {
@@ -3516,7 +3512,7 @@ static void brcmf_report_wowl_wakeind(struct wiphy* wiphy, struct brcmf_if* ifp)
     } else {
         wakeup = NULL;
     }
-    cfg80211_report_wowlan_wakeup(&ifp->vif->wdev, wakeup, GFP_KERNEL);
+    cfg80211_report_wowlan_wakeup(&ifp->vif->wdev, wakeup);
 }
 
 #else
@@ -3585,7 +3581,7 @@ static void brcmf_configure_wowl(struct brcmf_cfg80211_info* cfg, struct brcmf_i
         brcmf_cfg80211_sched_scan_start(cfg->wiphy, ifp->ndev, wowl->nd_config);
         wowl_config |= BRCMF_WOWL_PFN_FOUND;
 
-        completion_reset(&cfg->wowl.nd_data_wait);
+        sync_completion_reset(&cfg->wowl.nd_data_wait);
         cfg->wowl.nd_enabled = true;
         /* Now reroute the event for PFN to the wowl function. */
         brcmf_fweh_unregister(cfg->pub, BRCMF_E_PFN_NET_FOUND);
@@ -3633,7 +3629,7 @@ static zx_status_t brcmf_cfg80211_suspend(struct wiphy* wiphy, struct cfg80211_w
 
     if (wowl == NULL) {
         brcmf_bus_wowl_config(cfg->pub->bus_if, false);
-        list_for_each_entry(vif, &cfg->vif_list, list) {
+        list_for_every_entry(&cfg->vif_list, vif, struct brcmf_cfg80211_vif, list) {
             if (!brcmf_test_bit_in_array(BRCMF_VIF_STATUS_READY, &vif->sme_state)) {
                 continue;
             }
@@ -4113,9 +4109,9 @@ static uint32_t brcmf_vndr_ie(uint8_t* iebuf, int32_t pktflag, uint8_t* ie_ptr, 
     strncpy((char*)iebuf, (char*)add_del_cmd, VNDR_IE_CMD_LEN - 1);
     iebuf[VNDR_IE_CMD_LEN - 1] = '\0';
 
-    put_unaligned_le32(1, &iebuf[VNDR_IE_COUNT_OFFSET]);
+    *(uint32_t*)&iebuf[VNDR_IE_COUNT_OFFSET] = 1;
 
-    put_unaligned_le32(pktflag, &iebuf[VNDR_IE_PKTFLAG_OFFSET]);
+    *(uint32_t*)&iebuf[VNDR_IE_PKTFLAG_OFFSET] = pktflag;
 
     memcpy(&iebuf[VNDR_IE_VSIE_OFFSET], ie_ptr, ie_len);
 
@@ -4674,7 +4670,7 @@ static void brcmf_cfg80211_mgmt_frame_register(struct wiphy* wiphy, struct wirel
     brcmf_dbg(TRACE, "Enter, frame_type %04x, reg=%d\n", frame_type, reg);
 
     mgmt_type = (frame_type & IEEE80211_FCTL_STYPE) >> 4;
-    vif = container_of(wdev, struct brcmf_cfg80211_vif, wdev);
+    vif = containerof(wdev, struct brcmf_cfg80211_vif, wdev);
     if (reg) {
         vif->mgmt_rx_reg |= BIT(mgmt_type);
     } else {
@@ -4711,7 +4707,7 @@ static zx_status_t brcmf_cfg80211_mgmt_tx(struct wiphy* wiphy, struct wireless_d
         return ZX_ERR_WRONG_TYPE;
     }
 
-    vif = container_of(wdev, struct brcmf_cfg80211_vif, wdev);
+    vif = containerof(wdev, struct brcmf_cfg80211_vif, wdev);
 
     if (ieee80211_is_probe_resp(mgmt->frame_control)) {
         /* Right now the only reason to get a probe response */
@@ -4731,7 +4727,7 @@ static zx_status_t brcmf_cfg80211_mgmt_tx(struct wiphy* wiphy, struct wireless_d
             vif = cfg->p2p.bss_idx[P2PAPI_BSSCFG_DEVICE].vif;
         }
         err = brcmf_vif_set_mgmt_ie(vif, BRCMF_VNDR_IE_PRBRSP_FLAG, &buf[ie_offset], ie_len);
-        cfg80211_mgmt_tx_status(wdev, *cookie, buf, len, true, GFP_KERNEL);
+        cfg80211_mgmt_tx_status(wdev, *cookie, buf, len, true);
     } else if (ieee80211_is_action(mgmt->frame_control)) {
         if (len > BRCMF_FIL_ACTION_FRAME_SIZE + DOT11_MGMT_HDR_LEN) {
             brcmf_err("invalid action frame length\n");
@@ -4770,7 +4766,7 @@ static zx_status_t brcmf_cfg80211_mgmt_tx(struct wiphy* wiphy, struct wireless_d
 
         ack = brcmf_p2p_send_action_frame(cfg, cfg_to_ndev(cfg), af_params);
 
-        cfg80211_mgmt_tx_status(wdev, *cookie, buf, len, ack, GFP_KERNEL);
+        cfg80211_mgmt_tx_status(wdev, *cookie, buf, len, ack);
         free(af_params);
     } else {
         brcmf_dbg(TRACE, "Unhandled, fc=%04x!!\n", mgmt->frame_control);
@@ -4869,7 +4865,7 @@ static zx_status_t brcmf_cfg80211_crit_proto_start(struct wiphy* wiphy, struct w
     struct brcmf_cfg80211_info* cfg = wiphy_to_cfg(wiphy);
     struct brcmf_cfg80211_vif* vif;
 
-    vif = container_of(wdev, struct brcmf_cfg80211_vif, wdev);
+    vif = containerof(wdev, struct brcmf_cfg80211_vif, wdev);
 
     /* only DHCP support for now */
     if (proto != NL80211_CRIT_PROTO_DHCP) {
@@ -4887,7 +4883,7 @@ static void brcmf_cfg80211_crit_proto_stop(struct wiphy* wiphy, struct wireless_
     struct brcmf_cfg80211_info* cfg = wiphy_to_cfg(wiphy);
     struct brcmf_cfg80211_vif* vif;
 
-    vif = container_of(wdev, struct brcmf_cfg80211_vif, wdev);
+    vif = containerof(wdev, struct brcmf_cfg80211_vif, wdev);
 
     brcmf_btcoex_set_mode(vif, BRCMF_BTCOEX_ENABLED, 0);
     brcmf_clear_bit_in_array(BRCMF_SCAN_STATUS_SUPPRESS, &cfg->scan_status);
@@ -5102,7 +5098,7 @@ zx_status_t brcmf_alloc_vif(struct brcmf_cfg80211_info* cfg, enum nl80211_iftype
 
     if (type == NL80211_IFTYPE_AP) {
         mbss = false;
-        list_for_each_entry(vif_walk, &cfg->vif_list, list) {
+        list_for_every_entry(&cfg->vif_list, vif_walk, struct brcmf_cfg80211_vif, list) {
             if (vif_walk->wdev.iftype == NL80211_IFTYPE_AP) {
                 mbss = true;
                 break;
@@ -5119,7 +5115,7 @@ zx_status_t brcmf_alloc_vif(struct brcmf_cfg80211_info* cfg, enum nl80211_iftype
 }
 
 void brcmf_free_vif(struct brcmf_cfg80211_vif* vif) {
-    list_del(&vif->list);
+    list_delete(&vif->list);
     free(vif);
 }
 
@@ -5312,7 +5308,7 @@ done:
     roam_info.resp_ie = conn_info->resp_ie;
     roam_info.resp_ie_len = conn_info->resp_ie_len;
 
-    cfg80211_roamed(ndev, &roam_info, GFP_KERNEL);
+    cfg80211_roamed(ndev, &roam_info);
     brcmf_dbg(CONN, "Report roaming result\n");
 
     brcmf_set_bit_in_array(BRCMF_VIF_STATUS_CONNECTED, &ifp->vif->sme_state);
@@ -5344,7 +5340,7 @@ static zx_status_t brcmf_bss_connect_done(struct brcmf_cfg80211_info* cfg, struc
         conn_params.req_ie_len = conn_info->req_ie_len;
         conn_params.resp_ie = conn_info->resp_ie;
         conn_params.resp_ie_len = conn_info->resp_ie_len;
-        cfg80211_connect_done(ndev, &conn_params, GFP_KERNEL);
+        cfg80211_connect_done(ndev, &conn_params);
         brcmf_dbg(CONN, "Report connect result - connection %s\n",
                   completed ? "succeeded" : "failed");
     }
@@ -5364,7 +5360,7 @@ static zx_status_t brcmf_notify_connect_status_ap(struct brcmf_cfg80211_info* cf
     if (event == BRCMF_E_LINK && reason == BRCMF_E_REASON_LINK_BSSCFG_DIS &&
             ndev != cfg_to_ndev(cfg)) {
         brcmf_dbg(CONN, "AP mode link down\n");
-        completion_signal(&cfg->vif_disabled);
+        sync_completion_signal(&cfg->vif_disabled);
         return ZX_OK;
     }
 
@@ -5379,10 +5375,10 @@ static zx_status_t brcmf_notify_connect_status_ap(struct brcmf_cfg80211_info* cf
         sinfo.assoc_req_ies_len = e->datalen;
         generation++;
         sinfo.generation = generation;
-        cfg80211_new_sta(ndev, e->addr, &sinfo, GFP_KERNEL);
+        cfg80211_new_sta(ndev, e->addr, &sinfo);
     } else if ((event == BRCMF_E_DISASSOC_IND) || (event == BRCMF_E_DEAUTH_IND) ||
                (event == BRCMF_E_DEAUTH)) {
-        cfg80211_del_sta(ndev, e->addr, GFP_KERNEL);
+        cfg80211_del_sta(ndev, e->addr);
     }
     return ZX_OK;
 }
@@ -5409,7 +5405,7 @@ static zx_status_t brcmf_notify_connect_status(struct brcmf_if* ifp,
             brcmf_inform_ibss(cfg, ndev, e->addr);
             chan = ieee80211_get_channel(cfg->wiphy, cfg->channel);
             memcpy(profile->bssid, e->addr, ETH_ALEN);
-            cfg80211_ibss_joined(ndev, e->addr, chan, GFP_KERNEL);
+            cfg80211_ibss_joined(ndev, e->addr, chan);
             brcmf_clear_bit_in_array(BRCMF_VIF_STATUS_CONNECTING, &ifp->vif->sme_state);
             brcmf_set_bit_in_array(BRCMF_VIF_STATUS_CONNECTED, &ifp->vif->sme_state);
         } else {
@@ -5423,7 +5419,7 @@ static zx_status_t brcmf_notify_connect_status(struct brcmf_if* ifp,
             brcmf_link_down(ifp->vif, brcmf_map_fw_linkdown_reason(e));
             brcmf_init_prof(ndev_to_prof(ndev));
             if (ndev != cfg_to_ndev(cfg)) {
-                completion_signal(&cfg->vif_disabled);
+                sync_completion_signal(&cfg->vif_disabled);
             }
             brcmf_net_setcarrier(ifp, false);
         }
@@ -5467,7 +5463,7 @@ static zx_status_t brcmf_notify_mic_status(struct brcmf_if* ifp, const struct br
         key_type = NL80211_KEYTYPE_PAIRWISE;
     }
 
-    cfg80211_michael_mic_failure(ifp->ndev, (uint8_t*)&e->addr, key_type, -1, NULL, GFP_KERNEL);
+    cfg80211_michael_mic_failure(ifp->ndev, (uint8_t*)&e->addr, key_type, -1, NULL);
 
     return ZX_OK;
 }
@@ -5502,7 +5498,7 @@ static zx_status_t brcmf_notify_vif_event(struct brcmf_if* ifp, const struct brc
         }
         mtx_unlock(&event->vif_event_lock);
         if (event->action == cfg->vif_event_pending_action) {
-            completion_signal(&event->vif_event_wait);
+            sync_completion_signal(&event->vif_event_wait);
         }
         return ZX_OK;
 
@@ -5510,14 +5506,14 @@ static zx_status_t brcmf_notify_vif_event(struct brcmf_if* ifp, const struct brc
         mtx_unlock(&event->vif_event_lock);
         /* event may not be upon user request */
         if (brcmf_cfg80211_vif_event_armed(cfg) && event->action == cfg->vif_event_pending_action) {
-            completion_signal(&event->vif_event_wait);
+            sync_completion_signal(&event->vif_event_wait);
         }
         return ZX_OK;
 
     case BRCMF_E_IF_CHANGE:
         mtx_unlock(&event->vif_event_lock);
         if (event->action == cfg->vif_event_pending_action) {
-            completion_signal(&event->vif_event_wait);
+            sync_completion_signal(&event->vif_event_wait);
         }
         return ZX_OK;
 
@@ -5616,7 +5612,7 @@ static zx_status_t wl_init_priv(struct brcmf_cfg80211_info* cfg) {
     mtx_init(&cfg->usr_sync, mtx_plain);
     brcmf_init_escan(cfg);
     brcmf_init_conf(cfg->conf);
-    cfg->vif_disabled = COMPLETION_INIT;
+    cfg->vif_disabled = SYNC_COMPLETION_INIT;
     return err;
 }
 
@@ -5627,7 +5623,7 @@ static void wl_deinit_priv(struct brcmf_cfg80211_info* cfg) {
 }
 
 static void init_vif_event(struct brcmf_cfg80211_vif_event* event) {
-    event->vif_event_wait = COMPLETION_INIT;
+    event->vif_event_wait = SYNC_COMPLETION_INIT;
     mtx_init(&event->vif_event_lock, mtx_plain);
 }
 
@@ -6276,7 +6272,7 @@ static void brcmf_wiphy_wowl_params(struct wiphy* wiphy, struct brcmf_if* ifp) {
         if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_WOWL_ND)) {
             wowl->flags |= WIPHY_WOWLAN_NET_DETECT;
             wowl->max_nd_match_sets = BRCMF_PNO_MAX_PFN_COUNT;
-            cfg->wowl.nd_data_wait = COMPLETION_INIT;
+            cfg->wowl.nd_data_wait = SYNC_COMPLETION_INIT;
         }
     }
     if (brcmf_feat_is_enabled(ifp, BRCMF_FEAT_WOWL_GTK)) {
@@ -6515,7 +6511,7 @@ enum nl80211_iftype brcmf_cfg80211_get_iftype(struct brcmf_if* ifp) {
 bool brcmf_get_vif_state_any(struct brcmf_cfg80211_info* cfg, unsigned long state) {
     struct brcmf_cfg80211_vif* vif;
 
-    list_for_each_entry(vif, &cfg->vif_list, list) {
+    list_for_every_entry(&cfg->vif_list, vif, struct brcmf_cfg80211_vif, list) {
         if (brcmf_test_bit_in_array(state, &vif->sme_state)) {
             return true;
         }
@@ -6530,7 +6526,7 @@ void brcmf_cfg80211_arm_vif_event(struct brcmf_cfg80211_info* cfg, struct brcmf_
     mtx_lock(&event->vif_event_lock);
     event->vif = vif;
     event->action = 0;
-    completion_reset(&event->vif_event_wait);
+    sync_completion_reset(&event->vif_event_wait);
     cfg->vif_event_pending_action = pending_action;
     mtx_unlock(&event->vif_event_lock);
 }
@@ -6558,7 +6554,7 @@ bool brcmf_cfg80211_vif_event_armed(struct brcmf_cfg80211_info* cfg) {
 zx_status_t brcmf_cfg80211_wait_vif_event(struct brcmf_cfg80211_info* cfg, zx_duration_t timeout) {
     struct brcmf_cfg80211_vif_event* event = &cfg->vif_event;
 
-    return completion_wait(&event->vif_event_wait, timeout);
+    return sync_completion_wait(&event->vif_event_wait, timeout);
 }
 
 static zx_status_t brcmf_translate_country_code(struct brcmf_pub* drvr, char alpha2[2],
@@ -6711,8 +6707,8 @@ struct brcmf_cfg80211_info* brcmf_cfg80211_attach(struct brcmf_pub* drvr,
         goto ops_out;
     }
     wiphy->ops = ops;
-    wiphy->priv_info = malloc(sizeof(struct brcmf_cfg80211_info));
-    if (wiphy->priv_info == NULL) {
+    wiphy->cfg80211_info = malloc(sizeof(struct brcmf_cfg80211_info));
+    if (wiphy->cfg80211_info == NULL) {
         free(wiphy);
         goto ops_out;
     }
@@ -6724,7 +6720,7 @@ struct brcmf_cfg80211_info* brcmf_cfg80211_attach(struct brcmf_pub* drvr,
     cfg->ops = ops;
     cfg->pub = drvr;
     init_vif_event(&cfg->vif_event);
-    INIT_LIST_HEAD(&cfg->vif_list);
+    list_initialize(&cfg->vif_list);
 
     err = brcmf_alloc_vif(cfg, NL80211_IFTYPE_STATION, &vif);
     if (err != ZX_OK) {

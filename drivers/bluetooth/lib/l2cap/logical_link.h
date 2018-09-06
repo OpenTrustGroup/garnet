@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_LOGICAL_LINK_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_LOGICAL_LINK_H_
 
 #include <list>
 #include <memory>
@@ -41,10 +42,8 @@ class SignalingChannel;
 // Instances are created and owned by a ChannelManager.
 class LogicalLink final {
  public:
-  LogicalLink(hci::ConnectionHandle handle,
-              hci::Connection::LinkType type,
-              hci::Connection::Role role,
-              async_t* dispatcher,
+  LogicalLink(hci::ConnectionHandle handle, hci::Connection::LinkType type,
+              hci::Connection::Role role, async_dispatcher_t* dispatcher,
               fxl::RefPtr<hci::Transport> hci);
 
   // When a logical link is destroyed it notifies all of its channels to close
@@ -62,19 +61,22 @@ class LogicalLink final {
   void HandleRxPacket(hci::ACLDataPacketPtr packet);
 
   // Sends a B-frame PDU out over the ACL data channel, where |payload| is the
-  // B-frame information payload. |id| identifies the L2CAP channel that this
-  // frame is coming from. This must be called on the creation thread.
-  void SendBasicFrame(ChannelId id, const common::ByteBuffer& payload);
+  // B-frame information payload. |remote_id| identifies the destination peer's
+  // L2CAP channel endpoint for this frame. This must be called on the creation
+  // thread.
+  void SendBasicFrame(ChannelId remote_id, const common::ByteBuffer& payload);
 
   // Assigns the link error callback to be invoked when a channel signals a link
   // error.
-  void set_error_callback(fit::closure callback, async_t* dispatcher);
+  void set_error_callback(fit::closure callback,
+                          async_dispatcher_t* dispatcher);
 
   // Returns the dispatcher that this LogicalLink operates on.
-  async_t* dispatcher() const { return dispatcher_; }
+  async_dispatcher_t* dispatcher() const { return dispatcher_; }
 
   hci::Connection::LinkType type() const { return type_; }
   hci::Connection::Role role() const { return role_; }
+  hci::ConnectionHandle handle() const { return handle_; }
 
   // Returns the LE signaling channel implementation or nullptr if this is not a
   // LE-U link.
@@ -97,7 +99,7 @@ class LogicalLink final {
   void Close();
 
   fxl::RefPtr<hci::Transport> hci_;
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
 
   // Information about the underlying controller logical link.
   hci::ConnectionHandle handle_;
@@ -105,7 +107,7 @@ class LogicalLink final {
   hci::Connection::Role role_;
 
   fit::closure link_error_cb_;
-  async_t* link_error_dispatcher_;
+  async_dispatcher_t* link_error_dispatcher_;
 
   // Owns and manages the L2CAP signaling channel on this logical link.
   // Depending on |type_| this will either implement the LE or BR/EDR signaling
@@ -136,3 +138,5 @@ class LogicalLink final {
 }  // namespace internal
 }  // namespace l2cap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_LOGICAL_LINK_H_

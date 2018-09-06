@@ -17,8 +17,7 @@
 #ifndef BRCMFMAC_SDIO_H
 #define BRCMFMAC_SDIO_H
 
-//#include <linux/firmware.h>
-//#include <linux/skbuff.h>
+#include <ddk/protocol/sdio.h>
 
 #include "defs.h"
 #include "device.h"
@@ -63,6 +62,11 @@
 #define SDIO_CCCR_BRCM_SEPINT_MASK BIT(0)
 #define SDIO_CCCR_BRCM_SEPINT_OE BIT(1)
 #define SDIO_CCCR_BRCM_SEPINT_ACT_HI BIT(2)
+
+// TODO(cphoenix): Clean up all these names to make it clearer what's an address vs. a value.
+#define SDIO_CCCR_INT_ENABLE  0x04
+#define SDIO_CCCR_INTx        0x05
+#define SDIO_CCCR_ABORT_RESET 0x06
 
 /* function 1 miscellaneous registers */
 
@@ -152,6 +156,11 @@
 /* watchdog polling interval */
 #define BRCMF_WD_POLL_MSEC (10)
 
+/* A couple of SDIO device IDs that need special handling */
+#define SDIO_DEVICE_ID_BROADCOM_4339      0x4339
+#define SDIO_DEVICE_ID_BROADCOM_4335_4339 0x4335
+
+
 /**
  * enum brcmf_sdiod_state - the state of the bus.
  *
@@ -170,41 +179,22 @@ struct brcmf_sdreg {
 struct brcmf_sdio;
 struct brcmf_sdiod_freezer;
 
-struct sdio_func {
-    uint32_t class;
-    uint32_t vendor;
-    int cur_blksize;
-    int enable_timeout;
-    int device;
-    struct brcmf_device dev;
-    int num;
-    struct {
-        struct mmc_host* host;
-        uint32_t quirks;
-        void** sdio_func;
-    } * card;
-};
-
 struct brcmf_sdio_dev {
-    struct sdio_func* func1;
-    struct sdio_func* func2;
+    uint32_t manufacturer_id;
+    uint32_t product_id;
+    sdio_protocol_t* sdio_proto;
+    zx_handle_t irq_handle;
+    thrd_t isr_thread;
+    struct brcmf_device dev;
     uint32_t sbwad;             /* Save backplane window address */
     struct brcmf_core* cc_core; /* chipcommon core info struct */
     struct brcmf_sdio* bus;
-    struct brcmf_device* dev;
     struct brcmf_bus* bus_if;
     struct brcmf_mp_device* settings;
     bool oob_irq_requested;
     bool sd_irq_requested;
-    bool irq_en; /* irq enable flags */
-    //spinlock_t irq_en_lock;
     bool irq_wake; /* irq wake enable flags */
-    bool sg_support;
-    uint max_request_size;
-    ushort max_segment_count;
-    uint max_segment_size;
     uint txglomsz;
-    struct sg_table sgtable;
     char fw_name[BRCMF_FW_NAME_LEN];
     char nvram_name[BRCMF_FW_NAME_LEN];
     bool wowl_enabled;
@@ -305,21 +295,40 @@ struct sdpcmd_regs {
 zx_status_t brcmf_sdiod_intr_register(struct brcmf_sdio_dev* sdiodev);
 void brcmf_sdiod_intr_unregister(struct brcmf_sdio_dev* sdiodev);
 
-/* SDIO device register access interface */
-/* Accessors for SDIO Function 0 */
-#define brcmf_sdiod_func0_rb(sdiodev, addr, r) sdio_f0_readb((sdiodev)->func1, (addr), (r))
+/* SDIO device register access interface for func0 and func1.
+ * rb, rl - read byte / word and return value.
+ * wb, wl - write byte / word.
+ * Success is returned in result_out which may be NULL.
+ */
+uint8_t brcmf_sdiod_func0_rb(struct brcmf_sdio_dev* sdiodev, uint32_t addr,
+                             zx_status_t *result_out);
 
-#define brcmf_sdiod_func0_wb(sdiodev, addr, v, ret) \
-    sdio_f0_writeb((sdiodev)->func1, (v), (addr), (ret))
+void brcmf_sdiod_func0_wb(struct brcmf_sdio_dev* sdiodev, uint32_t addr, uint8_t value,
+                          zx_status_t *result_out);
 
-/* Accessors for SDIO Function 1 */
-#define brcmf_sdiod_readb(sdiodev, addr, r) sdio_readb((sdiodev)->func1, (addr), (r))
+uint8_t brcmf_sdiod_func1_rb(struct brcmf_sdio_dev* sdiodev, uint32_t addr,
+                             zx_status_t *result_out);
 
-#define brcmf_sdiod_writeb(sdiodev, addr, v, ret) sdio_writeb((sdiodev)->func1, (v), (addr), (ret))
+void brcmf_sdiod_func1_wb(struct brcmf_sdio_dev* sdiodev, uint32_t addr, uint8_t value,
+                          zx_status_t *result_out);
 
-uint32_t brcmf_sdiod_readl(struct brcmf_sdio_dev* sdiodev, uint32_t addr, zx_status_t* ret);
-void brcmf_sdiod_writel(struct brcmf_sdio_dev* sdiodev, uint32_t addr, uint32_t data,
-                        zx_status_t* ret);
+uint32_t brcmf_sdiod_func1_rl(struct brcmf_sdio_dev* sdiodev, uint32_t addr,
+                              zx_status_t* result_out);
+
+void brcmf_sdiod_func1_wl(struct brcmf_sdio_dev* sdiodev, uint32_t addr, uint32_t data,
+                          zx_status_t* result_out);
+
+/* SDIO buffer transfer functions. Returns status.
+ * _fifo means read repeatedly from the same address (don't increment).
+ */
+zx_status_t brcmf_sdiod_read(struct brcmf_sdio_dev* sdiodev, uint8_t func, uint32_t addr,
+                             void* data, size_t size);
+
+zx_status_t brcmf_sdiod_write(struct brcmf_sdio_dev* sdiodev, uint8_t func, uint32_t addr,
+                              void* data, size_t size);
+
+zx_status_t brcmf_sdiod_read_fifo(struct brcmf_sdio_dev* sdiodev, uint8_t func, uint32_t addr,
+                                  void* data, size_t size);
 
 /* Buffer transfer to/from device (client) core via cmd53.
  *   fn:       function number
@@ -359,9 +368,8 @@ zx_status_t brcmf_sdiod_ramrw(struct brcmf_sdio_dev* sdiodev, bool write, uint32
 // TODO(cphoenix): Expand "uint" to "unsigned int" everywhere.
 
 /* Issue an abort to the specified function */
-int brcmf_sdiod_abort(struct brcmf_sdio_dev* sdiodev, struct sdio_func* func);
+int brcmf_sdiod_abort(struct brcmf_sdio_dev* sdiodev, uint32_t func);
 
-void brcmf_sdiod_sgtable_alloc(struct brcmf_sdio_dev* sdiodev);
 void brcmf_sdiod_change_state(struct brcmf_sdio_dev* sdiodev, enum brcmf_sdiod_state state);
 #ifdef CONFIG_PM_SLEEP
 bool brcmf_sdiod_freezing(struct brcmf_sdio_dev* sdiodev);

@@ -64,8 +64,15 @@ void Serialize(const Module& module, MessageWriter* writer) {
 }
 
 void Serialize(const Register& reg, MessageWriter* writer) {
-  writer->WriteString(reg.name);
-  writer->WriteUint64(reg.value);
+  writer->WriteUint32(*reinterpret_cast<const uint32_t*>(&reg.id));
+  // We send the length before serializing the actual data.
+  writer->WriteUint32(reg.data.size());
+  writer->WriteBytes(&reg.data[0], reg.data.size());
+}
+
+void Serialize(const RegisterCategory& reg_cat, MessageWriter* writer) {
+  writer->WriteUint32(*reinterpret_cast<const uint32_t*>(&reg_cat.type));
+  Serialize(reg_cat.registers, writer);
 }
 
 void Serialize(const StackFrame& frame, MessageWriter* writer) {
@@ -204,7 +211,7 @@ bool ReadRequest(MessageReader* reader, ResumeRequest* request,
   *transaction_id = header.transaction_id;
   if (!reader->ReadUint64(&request->process_koid))
     return false;
-  if (!reader->ReadUint64(&request->thread_koid))
+  if (!Deserialize(reader, &request->thread_koids))
     return false;
 
   uint32_t how;
@@ -345,7 +352,7 @@ void WriteReply(const ModulesReply& reply, uint32_t transaction_id,
   Serialize(reply.modules, writer);
 }
 
-// Registers ---------------------------------------------------------------------
+// Registers -------------------------------------------------------------------
 
 bool ReadRequest(MessageReader* reader, RegistersRequest* request,
                  uint32_t* transaction_id) {
@@ -359,7 +366,7 @@ bool ReadRequest(MessageReader* reader, RegistersRequest* request,
 void WriteReply(const RegistersReply& reply, uint32_t transaction_id,
                 MessageWriter* writer) {
   writer->WriteHeader(MsgHeader::Type::kRegisters, transaction_id);
-  Serialize(reply.registers, writer);
+  Serialize(reply.categories, writer);
 }
 
 // Address space ---------------------------------------------------------------
@@ -400,8 +407,15 @@ void WriteNotifyException(const NotifyException& notify,
   writer->WriteUint64(notify.process_koid);
   Serialize(notify.thread, writer);
   writer->WriteUint32(static_cast<uint32_t>(notify.type));
-  Serialize(notify.frame, writer);
+  Serialize(notify.frames, writer);
   Serialize(notify.hit_breakpoints, writer);
+}
+
+void WriteNotifyModules(const NotifyModules& notify, MessageWriter* writer) {
+  writer->WriteHeader(MsgHeader::Type::kNotifyModules, 0);
+  writer->WriteUint64(notify.process_koid);
+  Serialize(notify.modules, writer);
+  Serialize(notify.stopped_thread_koids, writer);
 }
 
 }  // namespace debug_ipc

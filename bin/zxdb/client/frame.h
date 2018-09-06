@@ -7,10 +7,13 @@
 #include <stdint.h>
 
 #include "garnet/bin/zxdb/client/client_object.h"
+#include "garnet/bin/zxdb/client/symbols/symbol_data_provider.h"
 #include "garnet/public/lib/fxl/macros.h"
+#include "garnet/public/lib/fxl/memory/weak_ptr.h"
 
 namespace zxdb {
 
+class ExprEvalContext;
 class Location;
 class Thread;
 
@@ -18,6 +21,8 @@ class Frame : public ClientObject {
  public:
   explicit Frame(Session* session);
   virtual ~Frame();
+
+  fxl::WeakPtr<Frame> GetWeakPtr();
 
   // Guaranteed non-null.
   virtual Thread* GetThread() const = 0;
@@ -29,7 +34,23 @@ class Frame : public ClientObject {
   // GetLocation().address() since it doesn't need to be symbolized.
   virtual uint64_t GetAddress() const = 0;
 
+  // Returns the frame base pointer.
+  virtual uint64_t GetBasePointer() const = 0;
+
+  // Returns the stack pointer at this location.
+  virtual uint64_t GetStackPointer() const = 0;
+
+  // Returns the SymbolDataProvider that can be used to evaluate symbols
+  // in the context of this frame.
+  virtual fxl::RefPtr<SymbolDataProvider> GetSymbolDataProvider() const = 0;
+
+  // Returns the ExprEvalContext that can be used to evaluate expressions in
+  // the context of this frame.
+  virtual fxl::RefPtr<ExprEvalContext> GetExprEvalContext() const = 0;
+
  private:
+  fxl::WeakPtrFactory<Frame> weak_factory_;
+
   FXL_DISALLOW_COPY_AND_ASSIGN(Frame);
 };
 

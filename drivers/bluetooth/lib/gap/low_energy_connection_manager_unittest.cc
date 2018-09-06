@@ -7,6 +7,8 @@
 #include <memory>
 #include <vector>
 
+#include <zircon/assert.h>
+
 #include "garnet/drivers/bluetooth/lib/gap/remote_device.h"
 #include "garnet/drivers/bluetooth/lib/gap/remote_device_cache.h"
 #include "garnet/drivers/bluetooth/lib/gatt/fake_layer.h"
@@ -43,6 +45,8 @@ class LowEnergyConnectionManagerTest : public TestingBase {
  protected:
   void SetUp() override {
     TestingBase::SetUp();
+
+    // Initialize with LE buffers only.
     TestingBase::InitializeACLDataChannel(
         hci::DataBufferInfo(),
         hci::DataBufferInfo(hci::kMaxACLPayloadSize, 10));
@@ -57,7 +61,7 @@ class LowEnergyConnectionManagerTest : public TestingBase {
 
     // TODO(armansito): Pass a fake connector here.
     connector_ = std::make_unique<hci::LowEnergyConnector>(
-        transport(), dispatcher(),
+        transport(), kAddress0, dispatcher(),
         [this](auto link) { OnIncomingConnection(std::move(link)); });
 
     conn_mgr_ = std::make_unique<LowEnergyConnectionManager>(
@@ -68,9 +72,7 @@ class LowEnergyConnectionManagerTest : public TestingBase {
         fit::bind_member(
             this, &LowEnergyConnectionManagerTest::OnConnectionStateChanged),
         dispatcher());
-
-    test_device()->StartCmdChannel(test_cmd_chan());
-    test_device()->StartAclChannel(test_acl_chan());
+    StartTestDevice();
   }
 
   void TearDown() override {
@@ -112,16 +114,19 @@ class LowEnergyConnectionManagerTest : public TestingBase {
   void OnConnectionStateChanged(const common::DeviceAddress& address,
                                 bool connected,
                                 bool canceled) {
-    FXL_VLOG(3) << "OnConnectionStateChanged: " << address << " is "
-                << (connected ? "connected " : "")
-                << (canceled ? "canceled " : "");
+    bt_log(SPEW, "gap-test",
+           "OnConnectionStateChanged: %s connected: %s, canceled %s",
+           address.ToString().c_str(), connected ? "true" : "false",
+           canceled ? "true" : "false");
     if (canceled) {
       canceled_devices_.insert(address);
     } else if (connected) {
-      FXL_DCHECK(connected_devices_.find(address) == connected_devices_.end());
+      ZX_DEBUG_ASSERT(connected_devices_.find(address) ==
+                      connected_devices_.end());
       connected_devices_.insert(address);
     } else {
-      FXL_DCHECK(connected_devices_.find(address) != connected_devices_.end());
+      ZX_DEBUG_ASSERT(connected_devices_.find(address) !=
+                      connected_devices_.end());
       connected_devices_.erase(address);
     }
   }
@@ -232,12 +237,7 @@ TEST_F(GAP_LowEnergyConnectionManagerTest, ConnectSingleDeviceTimeout) {
   EXPECT_EQ(RemoteDevice::ConnectionState::kInitializing,
             dev->le_connection_state());
 
-  // Make sure the first HCI transaction completes before advancing the fake
-  // clock.
-  RunLoopUntilIdle();
-
-  AdvanceTimeBy(zx::msec(kTestRequestTimeoutMs));
-  RunLoopUntilIdle();
+  RunLoopFor(zx::msec(kTestRequestTimeoutMs));
 
   EXPECT_FALSE(status);
   EXPECT_EQ(common::HostError::kTimedOut, status.error()) << status.ToString();
@@ -284,7 +284,7 @@ TEST_F(GAP_LowEnergyConnectionManagerTest, ConnectSingleDevice) {
 
 struct TestObject final : fbl::RefCounted<TestObject> {
   explicit TestObject(bool* d) : deleted(d) {
-    FXL_DCHECK(deleted);
+    ZX_DEBUG_ASSERT(deleted);
     *deleted = false;
   }
 

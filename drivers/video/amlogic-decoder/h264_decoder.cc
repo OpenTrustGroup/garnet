@@ -3,10 +3,15 @@
 // found in the LICENSE file.
 
 #include "h264_decoder.h"
+
 #include <zx/vmo.h>
 
+#include "codec_frame.h"
+#include "codec_packet.h"
 #include "firmware_blob.h"
 #include "macros.h"
+#include "memory_barriers.h"
+#include "pts_manager.h"
 
 static const uint32_t kBufferAlignShift = 4 + 12;
 
@@ -20,6 +25,18 @@ class StreamInfo
   DEF_BIT(31, mv_size_flag);
 
   static auto Get() { return AddrType(0x09c1 * 4); }
+};
+
+// AvScratch6
+class CropInfo : public TypedRegisterBase<DosRegisterIo, CropInfo, uint32_t> {
+ public:
+  // All quantities are the number of pixels to be cropped from each side.
+  DEF_FIELD(7, 0, bottom);
+  DEF_FIELD(15, 8, top);  // Ignored
+  DEF_FIELD(23, 16, right);
+  DEF_FIELD(31, 24, left);  // Ignored
+
+  static auto Get() { return AddrType(0x09c6 * 4); }
 };
 
 // AvScratchF
@@ -110,10 +127,15 @@ static uint32_t GetMaxDpbSize(uint32_t level_idc, uint32_t width_in_mbs,
 H264Decoder::~H264Decoder() {
   owner_->core()->StopDecoding();
   owner_->core()->WaitForIdle();
+  BarrierBeforeRelease();
   io_buffer_release(&reference_mv_buffer_);
   io_buffer_release(&codec_data_);
   io_buffer_release(&sei_data_buffer_);
   io_buffer_release(&secondary_firmware_);
+  for (auto& frame : video_frames_) {
+    owner_->FreeCanvas(std::move(frame.y_canvas));
+    owner_->FreeCanvas(std::move(frame.uv_canvas));
+  }
 }
 
 zx_status_t H264Decoder::ResetHardware() {
@@ -229,6 +251,8 @@ zx_status_t H264Decoder::Initialize() {
     kBufferStartAddressOffset = 0x1000000,
   };
 
+  BarrierAfterFlush();  // For codec_data and secondary_firmware_
+
   // This may wrap if the address is less than the buffer start offset.
   uint32_t buffer_offset =
       truncate_to_32(io_buffer_phys(&codec_data_)) - kBufferStartAddressOffset;
@@ -262,7 +286,10 @@ zx_status_t H264Decoder::Initialize() {
     DECODE_ERROR("Failed to make sei data buffer: %d", status);
     return status;
   }
+  io_buffer_cache_flush(&sei_data_buffer_, 0,
+                        io_buffer_size(&sei_data_buffer_, 0));
 
+  BarrierAfterFlush();
   AvScratchI::Get()
       .FromValue(truncate_to_32(io_buffer_phys(&sei_data_buffer_)) -
                  buffer_offset)
@@ -278,47 +305,170 @@ void H264Decoder::SetFrameReadyNotifier(FrameReadyNotifier notifier) {
   notifier_ = notifier;
 }
 
+void H264Decoder::SetInitializeFramesHandler(InitializeFramesHandler handler) {
+  initialize_frames_handler_ = handler;
+}
+
+void H264Decoder::SetErrorHandler(fit::closure error_handler) {
+  error_handler_ = std::move(error_handler);
+}
+
 zx_status_t H264Decoder::InitializeFrames(uint32_t frame_count, uint32_t width,
-                                          uint32_t height) {
-  // TODO: Hold onto frames that are pending in a client (if the stream is
-  // currently switching).
+                                          uint32_t height,
+                                          uint32_t display_width,
+                                          uint32_t display_height) {
+  for (auto& frame : video_frames_) {
+    owner_->FreeCanvas(std::move(frame.y_canvas));
+    owner_->FreeCanvas(std::move(frame.uv_canvas));
+  }
   video_frames_.clear();
+  returned_frames_.clear();
+
+  uint64_t frame_vmo_bytes = width * height * 3 / 2;
+
+  // Regardless of local allocation of VMOs or remote allocation of VMOs, we
+  // first represent the frames this way.  This representation conveys the
+  // potentially-non-zero offset into the VMO, and allows sharing code further
+  // down.
+  std::vector<CodecFrame> frames;
+  if (initialize_frames_handler_) {
+    ::zx::bti duplicated_bti;
+    zx_status_t dup_result =
+        ::zx::unowned_bti(owner_->bti())
+            ->duplicate(ZX_RIGHT_SAME_RIGHTS, &duplicated_bti);
+    if (dup_result != ZX_OK) {
+      DECODE_ERROR("Failed to duplicate BTI - status: %d\n", dup_result);
+      return dup_result;
+    }
+    zx_status_t initialize_result = initialize_frames_handler_(
+        std::move(duplicated_bti), frame_count, width, height, width,
+        display_width, display_height, &frames);
+    if (initialize_result != ZX_OK) {
+      if (initialize_result != ZX_ERR_STOP) {
+        DECODE_ERROR("initialize_frames_handler_() failed - status: %d\n",
+                     initialize_result);
+      }
+      return initialize_result;
+    }
+  } else {
+    for (uint32_t i = 0; i < frame_count; ++i) {
+      // aml_canvas_config() requires contiguous VMOs, and will validate that
+      // each frame VMO is actually physically contiguous.  So create with
+      // zx_vmo_create_contiguous() here.
+      ::zx::vmo frame_vmo;
+      zx_status_t vmo_create_result = zx_vmo_create_contiguous(
+          owner_->bti(), frame_vmo_bytes, 0, frame_vmo.reset_and_get_address());
+      if (vmo_create_result != ZX_OK) {
+        DECODE_ERROR("H264Decoder::InitializeFrames() failed - status: %d\n",
+                     vmo_create_result);
+        return vmo_create_result;
+      }
+      fuchsia::mediacodec::CodecBufferData codec_buffer_data;
+      codec_buffer_data.set_vmo(fuchsia::mediacodec::CodecBufferDataVmo{
+          .vmo_handle = std::move(frame_vmo),
+          .vmo_usable_start = 0,
+          .vmo_usable_size = frame_vmo_bytes,
+      });
+      frames.emplace_back(CodecFrame{
+          .codec_buffer =
+              fuchsia::mediacodec::CodecBuffer{
+                  .buffer_lifetime_ordinal =
+                      next_non_codec_buffer_lifetime_ordinal_,
+                  .buffer_index = i,
+                  .data = std::move(codec_buffer_data),
+              },
+          .codec_packet = nullptr,
+      });
+    }
+    next_non_codec_buffer_lifetime_ordinal_++;
+  }
+
   for (uint32_t i = 0; i < frame_count; ++i) {
-    // Try to avoid overlapping with any framebuffers.
-    // TODO(ZX-2154): Use canvas driver to allocate indices.
-    constexpr uint32_t kCanvasOffset = 5;
-    uint32_t y_index = i * 2 + kCanvasOffset;
-    uint32_t uv_index = y_index + 1;
-    auto frame = std::make_unique<VideoFrame>();
-    zx_status_t status =
-        io_buffer_init(&frame->buffer, owner_->bti(), width * height * 3 / 2,
-                       IO_BUFFER_RW | IO_BUFFER_CONTIG);
+    auto frame = std::make_shared<VideoFrame>();
+    // While we'd like to pass in IO_BUFFER_CONTIG, since we know the VMO was
+    // allocated with zx_vmo_create_contiguous(), the io_buffer_init_vmo()
+    // treats that flag as an invalid argument, so instead we have to pretend as
+    // if it's a non-contiguous VMO, then validate that the VMO is actually
+    // contiguous later in aml_canvas_config() called by
+    // owner_->ConfigureCanvas() below.
+    zx_status_t status = io_buffer_init_vmo(
+        &frame->buffer, owner_->bti(),
+        frames[i].codec_buffer.data.vmo().vmo_handle.get(), 0, IO_BUFFER_RW);
     if (status != ZX_OK) {
-      DECODE_ERROR("Failed to make frame: %d\n", status);
+      DECODE_ERROR("Failed to io_buffer_init_vmo() for frame - status: %d\n",
+                   status);
       return status;
     }
+    io_buffer_cache_flush(&frame->buffer, 0, io_buffer_size(&frame->buffer, 0));
+
+    BarrierAfterFlush();
 
     frame->uv_plane_offset = width * height;
     frame->stride = width;
     frame->width = width;
     frame->height = height;
+    frame->display_width = display_width;
+    frame->display_height = display_height;
+    frame->index = i;
 
-    uint32_t y_addr = truncate_to_32(io_buffer_phys(&frame->buffer));
-    uint32_t uv_addr = y_addr + frame->uv_plane_offset;
+    // can be nullptr
+    frame->codec_packet = frames[i].codec_packet;
+    if (frames[i].codec_packet) {
+      frames[i].codec_packet->SetVideoFrame(frame);
+    }
 
-    owner_->ConfigureCanvas(y_index, y_addr, frame->stride, frame->height, 0,
-                            0);
-    owner_->ConfigureCanvas(uv_index, uv_addr, frame->stride, frame->height / 2,
-                            0, 0);
+    // The ConfigureCanvas() calls validate that the VMO is physically
+    // contiguous, regardless of how the VMO was created.
+    auto y_canvas = owner_->ConfigureCanvas(&frame->buffer, 0, frame->stride,
+                                            frame->height, 0, 0);
+    auto uv_canvas =
+        owner_->ConfigureCanvas(&frame->buffer, frame->uv_plane_offset,
+                                frame->stride, frame->height / 2, 0, 0);
+    if (!y_canvas || !uv_canvas) {
+      return ZX_ERR_NO_MEMORY;
+    }
+
     AncNCanvasAddr::Get(i)
-        .FromValue((uv_index << 16) | (uv_index << 8) | (y_index))
+        .FromValue((uv_canvas->index() << 16) | (uv_canvas->index() << 8) |
+                   (y_canvas->index()))
         .WriteTo(owner_->dosbus());
-    video_frames_.push_back(std::move(frame));
+    video_frames_.push_back(
+        {std::move(frame), std::move(y_canvas), std::move(uv_canvas)});
   }
   return ZX_OK;
 }
 
-void H264Decoder::InitializeStream() {
+void H264Decoder::ReturnFrame(std::shared_ptr<VideoFrame> video_frame) {
+  returned_frames_.push_back(video_frame);
+  TryReturnFrames();
+}
+
+void H264Decoder::TryReturnFrames() {
+  while (!returned_frames_.empty()) {
+    std::shared_ptr<VideoFrame> frame = returned_frames_.back();
+    if (frame->index >= video_frames_.size() ||
+        frame != video_frames_[frame->index].frame) {
+      // Possible if the stream size changed.
+      returned_frames_.pop_back();
+      continue;
+    }
+    if (AvScratch7::Get().ReadFrom(owner_->dosbus()).reg_value() == 0) {
+      AvScratch7::Get().FromValue(frame->index + 1).WriteTo(owner_->dosbus());
+    } else if (AvScratch8::Get().ReadFrom(owner_->dosbus()).reg_value() == 0) {
+      AvScratch8::Get().FromValue(frame->index + 1).WriteTo(owner_->dosbus());
+    } else {
+      // Neither return slot is free, so give up for now. An interrupt
+      // signaling completion of a frame should cause this to be tried again.
+      // TODO: Try returning frames again after a delay, to ensure this won't
+      // hang forever.
+      return;
+    }
+    returned_frames_.pop_back();
+  }
+}
+
+zx_status_t H264Decoder::InitializeStream() {
+  BarrierBeforeRelease();  // For reference_mv_buffer_
   if (io_buffer_is_valid(&reference_mv_buffer_))
     io_buffer_release(&reference_mv_buffer_);
   auto stream_info = StreamInfo::Get().ReadFrom(owner_->dosbus());
@@ -329,13 +479,11 @@ void H264Decoder::InitializeStream() {
     mb_width = 256;
   if (!mb_width) {
     DECODE_ERROR("Width is 0 macroblocks\n");
-    return;
+    // Not returning ZX_ERR_IO_DATA_INTEGRITY, because this isn't an explicit
+    // integrity check.
+    return ZX_ERR_INTERNAL;
   }
   uint32_t mb_height = stream_info.total_mbs() / mb_width;
-
-  mb_width = fbl::round_up(mb_width, 4u);
-  mb_height = fbl::round_up(mb_height, 4u);
-  uint32_t mb_total = mb_width * mb_height;
 
   constexpr uint32_t kActualDPBSize = 24;
   uint32_t max_dpb_size = GetMaxDpbSize(level_idc, mb_width, mb_height);
@@ -349,16 +497,23 @@ void H264Decoder::InitializeStream() {
   max_dpb_size = std::max(max_reference_size, max_dpb_size);
   max_reference_size++;
 
-  uint32_t mv_buffer_size = mb_total * mb_mv_byte * max_reference_size;
+  // Rounding to 4 macroblocks is for matching the linux driver, in case the
+  // hardware happens to round up as well.
+  uint32_t mv_buffer_size = fbl::round_up(mb_height, 4u) *
+                            fbl::round_up(mb_width, 4u) * mb_mv_byte *
+                            max_reference_size;
 
   zx_status_t status =
       io_buffer_init(&reference_mv_buffer_, owner_->bti(), mv_buffer_size,
                      IO_BUFFER_RW | IO_BUFFER_CONTIG);
   if (status != ZX_OK) {
     DECODE_ERROR("Couldn't allocate reference mv buffer\n");
-    return;
+    return status;
   }
+  io_buffer_cache_flush(&reference_mv_buffer_, 0,
+                        io_buffer_size(&reference_mv_buffer_, 0));
 
+  BarrierAfterFlush();
   AvScratch1::Get()
       .FromValue(truncate_to_32(io_buffer_phys(&reference_mv_buffer_)))
       .WriteTo(owner_->dosbus());
@@ -370,17 +525,40 @@ void H264Decoder::InitializeStream() {
                  mv_buffer_size)
       .WriteTo(owner_->dosbus());
 
-  InitializeFrames(kActualDPBSize, mb_width * 16, mb_height * 16);
+  auto crop_info = CropInfo::Get().ReadFrom(owner_->dosbus());
+  uint32_t display_width = mb_width * 16 - crop_info.right();
+  uint32_t display_height = mb_height * 16 - crop_info.bottom();
+
+  // Canvas width must be a multiple of 32 bytes.
+  uint32_t frame_width = fbl::round_up(mb_width * 16, 32u);
+  uint32_t frame_height = mb_height * 16;
+
+  // TODO(dustingreen): Plumb min and max frame counts, with max at least
+  // kActualDPBSize (24 or higher if possible), and min sufficient to allow
+  // decode to proceed without tending to leave the decoder idle for long if the
+  // client immediately releases each frame (just barely enough to decode as
+  // long as the client never camps on even one frame).
+  status = InitializeFrames(kActualDPBSize, frame_width, frame_height,
+                            display_width, display_height);
+  if (status != ZX_OK) {
+    if (status != ZX_ERR_STOP) {
+      DECODE_ERROR("InitializeFrames() failed\n");
+    }
+    return status;
+  }
 
   AvScratch0::Get()
       .FromValue((max_reference_size << 24) | (kActualDPBSize << 16) |
                  (max_dpb_size << 8))
       .WriteTo(owner_->dosbus());
+
+  return ZX_OK;
 }
 
 void H264Decoder::ReceivedFrames(uint32_t frame_count) {
   uint32_t error_count =
       AvScratchD::Get().ReadFrom(owner_->dosbus()).reg_value();
+  // This hit_eos is _not_ the same as the is_end_of_stream in PtsOut below.
   bool hit_eos = false;
   for (uint32_t i = 0; i < frame_count && !hit_eos; i++) {
     auto pic_info = PicInfo::Get(i).ReadFrom(owner_->dosbus());
@@ -391,16 +569,32 @@ void H264Decoder::ReceivedFrames(uint32_t frame_count) {
     if (pic_info.eos())
       hit_eos = true;
 
+    // TODO(dustingreen): We'll need to bit-extend (nearest wins to allow for
+    // re-ordering) this value to uint64_t, so that PTSs for frames after 4GiB
+    // still work.
+    uint32_t stream_byte_offset = pic_info.stream_offset();
+    stream_byte_offset |=
+        ((AvScratch::Get(0xa + i / 2).ReadFrom(owner_->dosbus()).reg_value() >>
+          ((i % 2) * 16)) &
+         0xffff)
+        << 16;
+
+    PtsManager::LookupResult pts_result =
+        owner_->pts_manager()->Lookup(stream_byte_offset);
+    video_frames_[buffer_index].frame->has_pts = pts_result.has_pts();
+    video_frames_[buffer_index].frame->pts = pts_result.pts();
+    if (pts_result.is_end_of_stream()) {
+      // TODO(dustingreen): Handle this once we're able to detect this way.  For
+      // now, ignore but print an obvious message.
+      printf("##### UNHANDLED END OF STREAM DETECTED #####\n");
+      break;
+    }
+
     if (notifier_)
-      notifier_(video_frames_[buffer_index].get());
+      notifier_(video_frames_[buffer_index].frame);
     DLOG("Got buffer %d error %d error_count %d slice_type %d offset %x\n",
          buffer_index, pic_info.error(), error_count, slice_type,
          pic_info.stream_offset());
-    if (AvScratch7::Get().ReadFrom(owner_->dosbus()).reg_value() == 0) {
-      AvScratch7::Get().FromValue(buffer_index + 1).WriteTo(owner_->dosbus());
-    } else if (AvScratch8::Get().ReadFrom(owner_->dosbus()).reg_value() == 0) {
-      AvScratch8::Get().FromValue(buffer_index + 1).WriteTo(owner_->dosbus());
-    }
   }
   AvScratch0::Get().FromValue(0).WriteTo(owner_->dosbus());
 }
@@ -429,6 +623,11 @@ void H264Decoder::HandleInterrupt() {
     return;
 
   VdecAssistMbox1ClrReg::Get().FromValue(1).WriteTo(owner_->dosbus());
+
+  // Some returned frames may have been buffered up earlier, so try to return
+  // them now that the firmware had a chance to do some work.
+  TryReturnFrames();
+
   // The core signals the main processor what command to run using AvScratch0.
   // The main processor returns a result using AvScratch0 to trigger the decoder
   // to continue (possibly 0, if no result is needed).
@@ -436,9 +635,16 @@ void H264Decoder::HandleInterrupt() {
   DLOG("Got command: %x\n", scratch0.reg_value());
   uint32_t cpu_command = scratch0.reg_value() & 0xff;
   switch (cpu_command) {
-    case kCommandInitializeStream:
-      InitializeStream();
-      break;
+    case kCommandInitializeStream: {
+      // For now, this can block for a while until buffers are allocated, or
+      // until it fails. One of the ways it can fail is if the Codec client
+      // closes the current stream at the Codec interface level (not exactly the
+      // same thing as "stream" here).
+      zx_status_t status = InitializeStream();
+      if (status != ZX_OK) {
+        OnFatalError();
+      }
+    } break;
 
     case kCommandNewFrames:
       ReceivedFrames((scratch0.reg_value() >> 8) & 0xff);
@@ -452,7 +658,7 @@ void H264Decoder::HandleInterrupt() {
       auto error_count =
           AvScratchD::Get().ReadFrom(owner_->dosbus()).reg_value();
       DECODE_ERROR("Decoder fatal error %d\n", error_count);
-      fatal_error_ = true;
+      OnFatalError();
       // Don't write to AvScratch0, so the decoder won't continue.
       break;
     }
@@ -475,5 +681,14 @@ void H264Decoder::HandleInterrupt() {
   if (sei_itu35_flags & (1 << 15)) {
     DLOG("Got Supplemental Enhancement Information buffer");
     AvScratchJ::Get().FromValue(0).WriteTo(owner_->dosbus());
+  }
+}
+
+void H264Decoder::OnFatalError() {
+  if (!fatal_error_) {
+    fatal_error_ = true;
+    if (error_handler_) {
+      error_handler_();
+    }
   }
 }

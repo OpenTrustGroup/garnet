@@ -12,6 +12,8 @@ source_set("definitions") {
 
 static_library("l2cap") {
   sources = [
+    "bredr_command_handler.cc",
+    "bredr_command_handler.h",
     "bredr_signaling_channel.cc",
     "bredr_signaling_channel.h",
     "channel.cc",
@@ -55,13 +57,14 @@ source_set("testing") {
     "fake_channel_test.h",
     "fake_layer.cc",
     "fake_layer.h",
+    "fake_signaling_channel.cc",
+    "fake_signaling_channel.h",
   ]
 
   public_deps = [
     ":l2cap",
     "//garnet/drivers/bluetooth/lib/common",
     "//garnet/drivers/bluetooth/lib/hci",
-    "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/gtest",
     "//third_party/googletest:gtest",
@@ -72,12 +75,14 @@ source_set("tests") {
   testonly = true
 
   sources = [
+    "bredr_command_handler_unittest.cc",
     "bredr_signaling_channel_unittest.cc",
     "channel_manager_unittest.cc",
     "fragmenter_unittest.cc",
     "le_signaling_channel_unittest.cc",
     "pdu_unittest.cc",
     "recombiner_unittest.cc",
+    "scoped_channel_unittest.cc",
     "signaling_channel_unittest.cc",
   ]
 

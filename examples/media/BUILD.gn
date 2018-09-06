@@ -6,29 +6,20 @@ import("//build/fidl/fidl.gni")
 import("//build/package.gni")
 
 package("media") {
-  deprecated_system_image = true
   package_name = "media_examples"
+  deprecated_system_image = true
 
   deps = [
-    "audio_player",
-    "audio_player_rust",
     "fx",
     "simple_sine",
     "simple_sine_sync",
     "tones",
     "tts",
-    "use_aac_decoder",
-    "wav_record",
+    "use_media_decoder",
+    "wav_recorder",
   ]
 
   binaries = [
-    {
-      name = "audio_player"
-    },
-    {
-      name = "rust_crates/audio_player_rust"
-      dest = "audio_player_rust"
-    },
     {
       name = "fx"
     },
@@ -45,24 +36,22 @@ package("media") {
       name = "tts"
     },
     {
-      name = "use_aac_decoder"
+      name = "use_media_decoder"
     },
     {
-      name = "wav_record"
+      name = "wav_recorder"
     },
   ]
 }
 
+# Tests that run on CQ
 package("tests") {
   testonly = true
-
-  # TODO(dustingreen) - do we need this to make a test package work?:
-  deprecated_system_image = true
 
   package_name = "media_examples_tests"
 
   deps = [
-    "//garnet/examples/media/use_aac_decoder:test",
+    "//garnet/examples/media/use_media_decoder:use_aac_decoder_test",
   ]
 
   tests = [
@@ -73,8 +62,34 @@ package("tests") {
 
   resources = [
     {
-      path = rebase_path("use_aac_decoder/test/test_audio.adts")
+      path = rebase_path("use_media_decoder/test/test_audio.adts")
       dest = "media_test_data/test_audio.adts"
+    },
+  ]
+}
+
+# Tests that don't run on CQ
+package("manual_tests") {
+  testonly = true
+
+  package_name = "media_examples_manual_tests"
+
+  deps = [
+    "//garnet/examples/media/use_media_decoder:use_h264_decoder_test",
+  ]
+
+  tests = [
+    {
+      # Should pass when run manually on VIM2, fails otherwise.
+      name = "use_h264_decoder_test"
+    },
+  ]
+
+  resources = [
+    {
+      path = rebase_path(
+              "../../test_data/media/third_party/chromium_media_test_data/bear.h264")
+      dest = "media_test_data/bear.h264"
     },
   ]
 }

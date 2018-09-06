@@ -6,19 +6,18 @@
 
 #include <fuchsia/guest/cpp/fidl.h>
 #include <fuchsia/ui/policy/cpp/fidl.h>
-#include <fuchsia/ui/views_v1/cpp/fidl.h>
+#include <fuchsia/ui/viewsv1/cpp/fidl.h>
 
 #include "garnet/bin/guest/cli/serial.h"
-#include "lib/app/cpp/environment_services.h"
 #include "lib/svc/cpp/services.h"
 
-void handle_launch(int argc, const char* argv[]) {
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
-
+void handle_launch(int argc, const char* argv[], async::Loop* loop,
+                   component::StartupContext* context) {
   // Create environment.
-  fuchsia::guest::GuestManagerSync2Ptr guestmgr;
-  fuchsia::sys::ConnectToEnvironmentService(guestmgr.NewRequest());
-  fuchsia::guest::GuestEnvironmentSync2Ptr guest_env;
+  fuchsia::guest::GuestManagerSyncPtr guestmgr;
+
+  context->ConnectToEnvironmentService(guestmgr.NewRequest());
+  fuchsia::guest::GuestEnvironmentSyncPtr guest_env;
   guestmgr->CreateEnvironment(argv[0], guest_env.NewRequest());
 
   // Launch guest.
@@ -31,30 +30,28 @@ void handle_launch(int argc, const char* argv[]) {
   fuchsia::guest::GuestInfo guest_info;
   guest_env->LaunchGuest(std::move(launch_info), guest_controller.NewRequest(),
                          &guest_info);
-  guest_controller.set_error_handler([&loop] { loop.Shutdown(); });
+  guest_controller.set_error_handler([loop] { loop->Shutdown(); });
 
   // Create the framebuffer view.
-  guest_controller->GetViewProvider(
-      [](auto view_provider) {
-        if (!view_provider.is_valid()) {
-          return;
-        }
-        auto view_provider_ptr = view_provider.Bind();
+  guest_controller->GetViewProvider([context](auto view_provider) {
+    if (!view_provider.is_valid()) {
+      return;
+    }
+    auto view_provider_ptr = view_provider.Bind();
 
-        fidl::InterfaceHandle<fuchsia::ui::views_v1_token::ViewOwner>
-            view_owner;
-        view_provider_ptr->CreateView(view_owner.NewRequest(), nullptr);
+    fidl::InterfaceHandle<fuchsia::ui::viewsv1token::ViewOwner> view_owner;
+    view_provider_ptr->CreateView(view_owner.NewRequest(), nullptr);
 
-        // Ask the presenter to display it.
-        fuchsia::ui::policy::PresenterSync2Ptr presenter;
-        fuchsia::sys::ConnectToEnvironmentService(presenter.NewRequest());
-        presenter->Present(std::move(view_owner), nullptr);
-      });
+    // Ask the presenter to display it.
+    fuchsia::ui::policy::PresenterSyncPtr presenter;
+    context->ConnectToEnvironmentService(presenter.NewRequest());
+    presenter->Present(std::move(view_owner), nullptr);
+  });
 
   // Open the serial service of the guest and process IO.
   zx::socket socket;
-  SerialConsole console(&loop);
+  SerialConsole console(loop);
   guest_controller->GetSerial(
       [&console](zx::socket socket) { console.Start(std::move(socket)); });
-  loop.Run();
+  loop->Run();
 }

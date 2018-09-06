@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_HELPERS_H_
+#define GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_HELPERS_H_
 
 #include <fuchsia/bluetooth/control/cpp/fidl.h>
 #include <fuchsia/bluetooth/cpp/fidl.h>
@@ -58,6 +59,15 @@ fuchsia::bluetooth::Status StatusToFidl(
   return fidl_status;
 }
 
+// Functions that convert FIDL types to library objects
+btlib::sm::SecurityProperties NewSecurityLevel(
+    const fuchsia::bluetooth::control::SecurityProperties& sec_prop);
+btlib::common::DeviceAddress::Type NewAddrType(
+    const fuchsia::bluetooth::control::AddressType& type);
+btlib::sm::IOCapability NewIoCapability(
+    const fuchsia::bluetooth::control::InputCapabilityType,
+    const fuchsia::bluetooth::control::OutputCapabilityType);
+
 // Functions to convert host library objects into FIDL types.
 
 fuchsia::bluetooth::control::AdapterInfo NewAdapterInfo(
@@ -85,6 +95,10 @@ bool PopulateDiscoveryFilter(
 
 // fxl::TypeConverter specializations for common::ByteBuffer and friends.
 template <>
-struct fxl::TypeConverter<fidl::VectorPtr<uint8_t>, ::btlib::common::ByteBuffer> {
-  static fidl::VectorPtr<uint8_t> Convert(const ::btlib::common::ByteBuffer& from);
+struct fxl::TypeConverter<fidl::VectorPtr<uint8_t>,
+                          ::btlib::common::ByteBuffer> {
+  static fidl::VectorPtr<uint8_t> Convert(
+      const ::btlib::common::ByteBuffer& from);
 };
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_HELPERS_H_

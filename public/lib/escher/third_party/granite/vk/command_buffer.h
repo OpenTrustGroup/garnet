@@ -69,12 +69,14 @@ using CommandBufferPtr = fxl::RefPtr<CommandBuffer>;
 // Not thread safe.
 class CommandBuffer : public Reffable {
  public:
+  enum class Type { kGraphics = 0, kCompute, kTransfer, kEnumCount };
+
   // Constructors.
+  static CommandBufferPtr NewForType(Escher* escher, Type type);
   static CommandBufferPtr NewForGraphics(Escher* escher);
   static CommandBufferPtr NewForCompute(Escher* escher);
   static CommandBufferPtr NewForTransfer(Escher* escher);
 
-  enum class Type { kGraphics = 0, kCompute, kTransfer, kEnumCount };
   Type type() const { return type_; }
 
   vk::CommandBuffer vk() const { return vk_; }
@@ -113,24 +115,37 @@ class CommandBuffer : public Reffable {
   void BindUniformBuffer(uint32_t set, uint32_t binding,
                          const BufferPtr& buffer, vk::DeviceSize offset,
                          vk::DeviceSize range);
+  void BindUniformBuffer(uint32_t set, uint32_t binding, Buffer* buffer,
+                         vk::DeviceSize offset, vk::DeviceSize range);
 
   // Set/dirty a texture binding that will later be flushed, causing descriptor
   // sets to be written/bound as necessary.  Keeps |texture| alive while command
   // buffer is pending.
-  void BindTexture(unsigned set, unsigned binding, const TexturePtr& texture);
+  void BindTexture(unsigned set, unsigned binding, Texture* texture);
+  void BindTexture(unsigned set, unsigned binding, const TexturePtr& texture) {
+    BindTexture(set, binding, texture.get());
+  }
 
   // Set/dirty a vertex buffer binding that will later be flushed, causing
   // descriptor sets to be written/bound as necessary.  Keeps |buffer| alive
   // while command buffer is pending.
   void BindVertices(
-      uint32_t binding, const BufferPtr& buffer, vk::DeviceSize offset,
+      uint32_t binding, Buffer* buffer, vk::DeviceSize offset,
       vk::DeviceSize stride,
       vk::VertexInputRate step_rate = vk::VertexInputRate::eVertex);
+  void BindVertices(
+      uint32_t binding, const BufferPtr& buffer, vk::DeviceSize offset,
+      vk::DeviceSize stride,
+      vk::VertexInputRate step_rate = vk::VertexInputRate::eVertex) {
+    BindVertices(binding, buffer.get(), offset, stride, step_rate);
+  }
 
   // Sets the current index buffer binding; this happens immediately because
   // index buffer changes never require descriptor sets to be written or new
-  // pipelines to be generated.  Keeps |buffer| alive while command buffer is
-  // pending.
+  // pipelines to be generated.
+  void BindIndices(vk::Buffer buffer, vk::DeviceSize offset,
+                   vk::IndexType index_type);
+  // This variant keeps |buffer| alive while command buffer is pending.
   void BindIndices(const BufferPtr& buffer, vk::DeviceSize offset,
                    vk::IndexType index_type);
 
@@ -163,7 +178,16 @@ class CommandBuffer : public Reffable {
 
   // Set the ShaderProgram that will be used to obtain the VkPipeline to be used
   // by the next draw-call or compute dispatch.
-  void SetShaderProgram(const ShaderProgramPtr& program);
+  void SetShaderProgram(ShaderProgram* program);
+  void SetShaderProgram(const ShaderProgramPtr& program) {
+    SetShaderProgram(program.get());
+  }
+
+  // Set the viewport.  Must be called within a render pass.
+  void SetViewport(const vk::Viewport& viewport);
+
+  // Set the scissor rect.  Must be called within a render pass.
+  void SetScissor(const vk::Rect2D& rect);
 
   // The following functions set static state that might result in generation of
   // a new pipeline variant.
@@ -308,6 +332,9 @@ class CommandBuffer : public Reffable {
     DynamicState dynamic_state;
   };
 
+  void SaveState(SavedStateFlags flags, SavedState* state) const;
+  void RestoreState(const CommandBuffer::SavedState& state);
+
  private:
   friend class VulkanTester;
 
@@ -331,7 +358,9 @@ class CommandBuffer : public Reffable {
   };
   using DirtyFlags = uint32_t;
 
-  CommandBuffer(Escher* escher, Type type);
+  // TODO(ES-83): impl::CommandBuffer is deprecated from the get-go.
+  CommandBuffer(EscherWeakPtr escher, Type type,
+                impl::CommandBuffer* command_buffer);
 
   // Sets all flags to dirty, and zeros out DescriptorSetBindings uids.
   void BeginGraphicsOrComputeContext();
@@ -405,14 +434,13 @@ class CommandBuffer : public Reffable {
     return &(set_bindings->infos[binding_index]);
   }
 
-  Escher* const escher_;
+  EscherWeakPtr const escher_;
+  Type type_;
 
   // TODO(ES-83): deprecated from the get-go.
   impl::CommandBuffer* const impl_;
   vk::CommandBuffer vk_;
   vk::Device vk_device_;
-
-  Type type_;
 
   DirtyFlags dirty_ = ~0u;
   uint32_t dirty_descriptor_sets_ = 0;
@@ -434,7 +462,8 @@ class CommandBuffer : public Reffable {
 
   vk::Viewport viewport_ = {};
   vk::Rect2D scissor_ = {};
-};
+
+};  // namespace escher
 
 // Inline function definitions.
 
@@ -475,6 +504,26 @@ class CommandBuffer : public Reffable {
       SetDirty(flags);                   \
     }                                    \
   } while (0)
+
+inline void CommandBuffer::SetViewport(const vk::Viewport& viewport) {
+  // Must be called in render pass, because BeginRenderPass() sets the scissor
+  // region, and confusion might result if a client didn't realize this and
+  // tried to set it outside of a render pass.
+  FXL_DCHECK(IsInRenderPass());
+  viewport_ = viewport;
+  SetDirty(kDirtyViewportBit);
+}
+
+inline void CommandBuffer::SetScissor(const vk::Rect2D& rect) {
+  // Must be called in render pass, because BeginRenderPass() sets the viewport,
+  // and confusion might result if a client didn't realize this and tried to
+  // set it outside of a render pass.
+  FXL_DCHECK(IsInRenderPass());
+  FXL_DCHECK(rect.offset.x >= 0);
+  FXL_DCHECK(rect.offset.y >= 0);
+  scissor_ = rect;
+  SetDirty(kDirtyScissorBit);
+}
 
 inline void CommandBuffer::SetDepthTestAndWrite(bool depth_test,
                                                 bool depth_write) {

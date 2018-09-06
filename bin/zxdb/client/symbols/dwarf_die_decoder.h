@@ -14,10 +14,11 @@
 #include "llvm/DebugInfo/DWARF/DWARFDataExtractor.h"
 
 namespace llvm {
-class DWARFCompileUnit;
+class DWARFUnit;
 class DWARFContext;
 class DWARFDataExtractor;
 class DWARFDebugInfoEntry;
+class DWARFDie;
 class DWARFFormValue;
 }  // namespace llvm
 
@@ -31,8 +32,20 @@ namespace zxdb {
 // Decode().
 class DwarfDieDecoder {
  public:
+  // DW_AT_high_pc is special: If it is of class "address", it's an address,
+  // and if it's of class "constant" it's an unsigned integer offset from the
+  // low PC. This struct encodes whether it was a constant or not in the
+  // output. Use with AddHighPC().
+  struct HighPC {
+    HighPC() = default;
+    HighPC(bool c, uint64_t v) : is_constant(c), value(v) {}
+
+    bool is_constant = false;
+    uint64_t value = 0;
+  };
+
   // The context and unit must outlive this class.
-  DwarfDieDecoder(llvm::DWARFContext* context, llvm::DWARFCompileUnit* unit);
+  DwarfDieDecoder(llvm::DWARFContext* context, llvm::DWARFUnit* unit);
   ~DwarfDieDecoder();
 
   // Adds a check for the given attribute. If the attribute is encountered,
@@ -51,8 +64,13 @@ class DwarfDieDecoder {
   //
   // The output pointers must remain valid until the last call to Decode()
   // has returned.
+  void AddUnsignedConstant(llvm::dwarf::Attribute attribute,
+                           llvm::Optional<uint64_t>* output);
+  void AddSignedConstant(llvm::dwarf::Attribute attribute,
+                         llvm::Optional<int64_t>* output);
   void AddAddress(llvm::dwarf::Attribute attribute,
                   llvm::Optional<uint64_t>* output);
+  void AddHighPC(llvm::Optional<HighPC>* output);
   void AddCString(llvm::dwarf::Attribute attribute,
                   llvm::Optional<const char*>* output);
   void AddLineTableFile(llvm::dwarf::Attribute attribute,
@@ -62,16 +80,37 @@ class DwarfDieDecoder {
   // unit (byte offsets, not DIE indices), or from within the object file.
   // To accomodate both, this function will fill in the corresponding output
   // variable according to the storage form of the attribute.
+  //
+  // See also the DIE wrapper below.
   void AddReference(llvm::dwarf::Attribute attribute,
                     llvm::Optional<uint64_t>* unit_offset,
                     llvm::Optional<uint64_t>* global_offset);
 
-  // Decode one info entry. Returns true if any attributes were decoded. THe
-  // outputs for each encountered attribute will be set.
+  // Variant ot the above AddReference that automatically converts a reference
+  // to an actual DIE. If the attribute doesn't exist or is invalid, this DIE
+  // will be !isValid().
+  void AddReference(llvm::dwarf::Attribute attribute, llvm::DWARFDie* output);
+
+  // Extract a file name. File names (e.g. for DW_AT_decl_file) are not
+  // strings but rather indices into the file name table for the corresponding
+  // unit. This accessor resolves the string automatically.
+  void AddFile(llvm::dwarf::Attribute attribute,
+               llvm::Optional<std::string>* output);
+
+  // Extracts data with a custom callback. When the attribute is encountered,
+  // the callback is executed with the associated form value. This can be used
+  // to cover attributes that could be encoded using multiple different
+  // encodings.
+  void AddCustom(llvm::dwarf::Attribute attribute,
+                 std::function<void(const llvm::DWARFFormValue&)> callback);
+
+  // Decode one info entry. Returns true on success, false means the DIE
+  // was corrupt. The outputs for each encountered attribute will be set.
   //
   // A return value of false means either that the entry was a null one (which
   // is used as a placeholder internally), or that it contained none of the
   // attributes that were requested.
+  bool Decode(const llvm::DWARFDie& die);
   bool Decode(const llvm::DWARFDebugInfoEntry& die);
 
  public:
@@ -79,11 +118,11 @@ class DwarfDieDecoder {
                              std::function<void(const llvm::DWARFFormValue&)>>;
 
   llvm::DWARFContext* context_;
-  llvm::DWARFCompileUnit* unit_;
+  llvm::DWARFUnit* unit_;
   llvm::DWARFDataExtractor extractor_;
 
-  // Normally there will only be several attributes and a brute-force search
-  // through a contiguous array will be faster than a map lookup.
+  // Normally there will be few attributes and a brute-force search through a
+  // contiguous array will be faster than a map lookup.
   std::vector<Dispatch> attrs_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(DwarfDieDecoder);

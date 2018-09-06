@@ -17,6 +17,9 @@ typedef fxl::RefPtr<Buffer> BufferPtr;
 struct BufferRange {
   vk::DeviceSize offset;
   vk::DeviceSize size;
+
+  BufferRange(vk::DeviceSize _offset, vk::DeviceSize _size)
+      : offset(_offset), size(_size) {}
 };
 
 // Escher's standard interface to Vulkan buffer objects.
@@ -27,14 +30,15 @@ class Buffer : public WaitableResource {
 
   static BufferPtr New(ResourceManager* manager, GpuAllocator* allocator,
                        vk::DeviceSize size, vk::BufferUsageFlags usage_flags,
-                       vk::MemoryPropertyFlags memory_property_flags);
+                       vk::MemoryPropertyFlags memory_property_flags,
+                       vk::DeviceSize offset = 0);
 
   static BufferPtr New(ResourceManager* manager, GpuMemPtr mem,
                        vk::BufferUsageFlags usage_flags, vk::DeviceSize size,
                        vk::DeviceSize offset = 0);
 
   Buffer(ResourceManager* manager, GpuMemPtr mem, vk::Buffer buffer,
-         vk::DeviceSize size, vk::DeviceSize offset = 0);
+         BufferRange range);
 
   ~Buffer() override;
 
@@ -42,11 +46,11 @@ class Buffer : public WaitableResource {
   vk::Buffer vk() { return buffer_; }
 
   // Return the size of the buffer.
-  vk::DeviceSize size() const { return size_; }
+  vk::DeviceSize size() const { return range_.size; }
 
   // If the buffer is host-accessible, then this returns a direct pointer to
   // cache-coherent device memory.  Otherwise, returns nullptr.
-  uint8_t* ptr() const { return ptr_; }
+  uint8_t* host_ptr() const { return host_ptr_; }
 
   const GpuMemPtr& mem() const { return mem_; }
 
@@ -55,9 +59,9 @@ class Buffer : public WaitableResource {
   // Underlying Vulkan buffer object.
   vk::Buffer buffer_;
   // Size of the buffer.
-  vk::DeviceSize size_;
+  BufferRange range_;
   // Pointer to mapped, cache-coherent, host-accessible memory.  Or nullptr.
-  uint8_t* ptr_;
+  uint8_t* host_ptr_;
 };
 
 }  // namespace escher

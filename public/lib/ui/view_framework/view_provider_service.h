@@ -8,8 +8,8 @@
 #include <functional>
 #include <vector>
 
-#include <fuchsia/ui/views_v1/cpp/fidl.h>
-#include "lib/app/cpp/startup_context.h"
+#include <fuchsia/ui/viewsv1/cpp/fidl.h>
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/macros.h"
 #include "lib/ui/view_framework/base_view.h"
@@ -18,9 +18,9 @@ namespace mozart {
 
 // Parameters for creating a view.
 struct ViewContext {
-  fuchsia::sys::StartupContext* startup_context;
-  ::fuchsia::ui::views_v1::ViewManagerPtr view_manager;
-  fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+  component::StartupContext* startup_context;
+  ::fuchsia::ui::viewsv1::ViewManagerPtr view_manager;
+  fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
       view_owner_request;
   fidl::InterfaceRequest<fuchsia::sys::ServiceProvider> outgoing_services;
 };
@@ -35,21 +35,20 @@ using ViewFactory =
 // when the view provider itself is destroyed.
 //
 // This is only intended to be used for simple example programs.
-class ViewProviderService : public ::fuchsia::ui::views_v1::ViewProvider {
+class ViewProviderService : public ::fuchsia::ui::viewsv1::ViewProvider {
  public:
-  explicit ViewProviderService(fuchsia::sys::StartupContext* startup_context,
+  explicit ViewProviderService(component::StartupContext* startup_context,
                                ViewFactory factory);
   ~ViewProviderService();
 
   // |ViewProvider|
-  void CreateView(
-      fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
-          view_owner_request,
-      fidl::InterfaceRequest<fuchsia::sys::ServiceProvider> view_services)
-      override;
+  void CreateView(fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
+                      view_owner_request,
+                  fidl::InterfaceRequest<fuchsia::sys::ServiceProvider>
+                      view_services) override;
 
  private:
-  fuchsia::sys::StartupContext* startup_context_;
+  component::StartupContext* startup_context_;
   ViewFactory view_factory_;
 
   fidl::BindingSet<ViewProvider> bindings_;

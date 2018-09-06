@@ -4,6 +4,7 @@
 
 #include "gatt_server_server.h"
 
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/common/uuid.h"
 #include "garnet/drivers/bluetooth/lib/gap/low_energy_connection_manager.h"
 #include "garnet/drivers/bluetooth/lib/gatt/connection.h"
@@ -60,8 +61,7 @@ namespace {
 
 // Carries a either a successful Result or an error message that can be sent as
 // a FIDL response.
-template <typename Result,
-          typename Error = std::string,
+template <typename Result, typename Error = std::string,
           typename = std::enable_if_t<!std::is_same<Result, Error>::value>>
 struct MaybeResult final {
   explicit MaybeResult(Result&& result)
@@ -119,7 +119,7 @@ CharacteristicResult NewCharacteristic(const Characteristic& fidl_chrc) {
       fidl_chrc.id, type, props, ext_props, read_reqs, write_reqs, update_reqs);
   if (fidl_chrc.descriptors && !fidl_chrc.descriptors->empty()) {
     for (const auto& fidl_desc : *fidl_chrc.descriptors) {
-        auto desc_result = NewDescriptor(fidl_desc);
+      auto desc_result = NewDescriptor(fidl_desc);
       if (desc_result.is_error()) {
         return CharacteristicResult(std::move(desc_result.error));
       }
@@ -138,16 +138,15 @@ CharacteristicResult NewCharacteristic(const Characteristic& fidl_chrc) {
 class GattServerServer::LocalServiceImpl
     : public GattServerBase<fuchsia::bluetooth::gatt::LocalService> {
  public:
-  LocalServiceImpl(GattServerServer* owner,
-                   uint64_t id,
+  LocalServiceImpl(GattServerServer* owner, uint64_t id,
                    LocalServiceDelegatePtr delegate,
                    ::fidl::InterfaceRequest<LocalService> request)
       : GattServerBase(owner->gatt(), this, std::move(request)),
         owner_(owner),
         id_(id),
         delegate_(std::move(delegate)) {
-    FXL_DCHECK(owner_);
-    FXL_DCHECK(delegate_);
+    ZX_DEBUG_ASSERT(owner_);
+    ZX_DEBUG_ASSERT(delegate_);
   }
 
   // The destructor removes the GATT service
@@ -169,10 +168,8 @@ class GattServerServer::LocalServiceImpl
     owner_->RemoveService(id_);
   }
 
-  void NotifyValue(uint64_t characteristic_id,
-                   ::fidl::StringPtr peer_id,
-                   ::fidl::VectorPtr<uint8_t> value,
-                   bool confirm) override {
+  void NotifyValue(uint64_t characteristic_id, ::fidl::StringPtr peer_id,
+                   ::fidl::VectorPtr<uint8_t> value, bool confirm) override {
     gatt()->SendNotification(id_, characteristic_id, peer_id, std::move(value),
                              confirm);
   }
@@ -207,9 +204,9 @@ GattServerServer::~GattServerServer() {
 
 void GattServerServer::RemoveService(uint64_t id) {
   if (services_.erase(id)) {
-    FXL_VLOG(1) << "GattServerServer: service removed (id: " << id << ")";
+    bt_log(TRACE, "bt-host", "service removed (id: %u)", id);
   } else {
-    FXL_VLOG(1) << "GattServerServer: service id not found: " << id;
+    bt_log(TRACE, "bt-host", "service id not found: %u", id);
   }
 }
 
@@ -299,12 +296,12 @@ void GattServerServer::PublishService(
       return;
     }
 
-    FXL_DCHECK(self->services_.find(id) == self->services_.end());
+    ZX_DEBUG_ASSERT(self->services_.find(id) == self->services_.end());
 
     // This will be called if either the delegate or the service connection
     // closes.
     auto connection_error_cb = [self, id] {
-      FXL_VLOG(1) << "Removing GATT service (id: " << id << ")";
+      bt_log(TRACE, "bt-host", "removing GATT service (id: %u)", id);
       if (self)
         self->RemoveService(id);
     };
@@ -325,11 +322,9 @@ void GattServerServer::PublishService(
                           std::move(ccc_callback));
 }
 
-void GattServerServer::OnReadRequest(
-    ::btlib::gatt::IdType service_id,
-    ::btlib::gatt::IdType id,
-    uint16_t offset,
-    ::btlib::gatt::ReadResponder responder) {
+void GattServerServer::OnReadRequest(::btlib::gatt::IdType service_id,
+                                     ::btlib::gatt::IdType id, uint16_t offset,
+                                     ::btlib::gatt::ReadResponder responder) {
   auto iter = services_.find(service_id);
   if (iter == services_.end()) {
     responder(::btlib::att::ErrorCode::kUnlikelyError,
@@ -337,22 +332,21 @@ void GattServerServer::OnReadRequest(
     return;
   }
 
-  auto cb = [responder = std::move(responder)](fidl::VectorPtr<uint8_t> value, auto error_code) {
+  auto cb = [responder = std::move(responder)](fidl::VectorPtr<uint8_t> value,
+                                               auto error_code) {
     responder(GattErrorCodeFromFidl(error_code, true /* is_read */),
               ::btlib::common::BufferView(value->data(), value->size()));
   };
 
   auto* delegate = iter->second->delegate();
-  FXL_DCHECK(delegate);
+  ZX_DEBUG_ASSERT(delegate);
   delegate->OnReadValue(id, offset, fxl::MakeCopyable(std::move(cb)));
 }
 
-void GattServerServer::OnWriteRequest(
-    ::btlib::gatt::IdType service_id,
-    ::btlib::gatt::IdType id,
-    uint16_t offset,
-    const ::btlib::common::ByteBuffer& value,
-    ::btlib::gatt::WriteResponder responder) {
+void GattServerServer::OnWriteRequest(::btlib::gatt::IdType service_id,
+                                      ::btlib::gatt::IdType id, uint16_t offset,
+                                      const ::btlib::common::ByteBuffer& value,
+                                      ::btlib::gatt::WriteResponder responder) {
   auto iter = services_.find(service_id);
   if (iter == services_.end()) {
     responder(::btlib::att::ErrorCode::kUnlikelyError);
@@ -361,7 +355,7 @@ void GattServerServer::OnWriteRequest(
 
   auto fidl_value = fxl::To<fidl::VectorPtr<uint8_t>>(value);
   auto* delegate = iter->second->delegate();
-  FXL_DCHECK(delegate);
+  ZX_DEBUG_ASSERT(delegate);
 
   if (!responder) {
     delegate->OnWriteWithoutResponse(id, offset, std::move(fidl_value));
@@ -373,18 +367,17 @@ void GattServerServer::OnWriteRequest(
   };
 
   delegate->OnWriteValue(id, offset, std::move(fidl_value),
-      fxl::MakeCopyable(std::move(cb)));
+                         fxl::MakeCopyable(std::move(cb)));
 }
 
 void GattServerServer::OnCharacteristicConfig(::btlib::gatt::IdType service_id,
                                               ::btlib::gatt::IdType chrc_id,
                                               const std::string& peer_id,
-                                              bool notify,
-                                              bool indicate) {
+                                              bool notify, bool indicate) {
   auto iter = services_.find(service_id);
   if (iter != services_.end()) {
     auto* delegate = iter->second->delegate();
-    FXL_DCHECK(delegate);
+    ZX_DEBUG_ASSERT(delegate);
     delegate->OnCharacteristicConfiguration(chrc_id, peer_id, notify, indicate);
   }
 }

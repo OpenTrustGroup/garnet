@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_FAKE_CHANNEL_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_FAKE_CHANNEL_H_
 
 #include <memory>
 
@@ -24,8 +25,7 @@ namespace testing {
 // channel.
 class FakeChannel : public Channel {
  public:
-  FakeChannel(ChannelId id,
-              hci::ConnectionHandle handle,
+  FakeChannel(ChannelId id, ChannelId remote_id, hci::ConnectionHandle handle,
               hci::Connection::LinkType link_type);
   ~FakeChannel() override = default;
 
@@ -36,14 +36,14 @@ class FakeChannel : public Channel {
   // Sets a delegate to notify when a frame was sent over the channel.
   using SendCallback =
       fit::function<void(std::unique_ptr<const common::ByteBuffer>)>;
-  void SetSendCallback(SendCallback callback, async_t* dispatcher);
+  void SetSendCallback(SendCallback callback, async_dispatcher_t* dispatcher);
 
   // Sets a callback to emulate the result of "SignalLinkError()". In
   // production, this callback is invoked by the link. This will be internally
   // set up for FakeChannels that are obtained from a
   // l2cap::testing::FakeLayer.
   void SetLinkErrorCallback(L2CAP::LinkErrorCallback callback,
-                            async_t* dispatcher);
+                            async_dispatcher_t* dispatcher);
 
   // Emulates channel closure.
   void Close();
@@ -52,6 +52,8 @@ class FakeChannel : public Channel {
     return weak_ptr_factory_.GetWeakPtr();
   }
 
+  void set_remote_id(ChannelId id) { Channel::remote_id_ = id; }
+
   // Activate() always fails if true.
   void set_activate_fails(bool value) { activate_fails_ = value; }
 
@@ -59,39 +61,35 @@ class FakeChannel : public Channel {
   bool link_error() const { return link_error_; }
 
   // True if Deactivate has yet not been called after Activate.
-  bool activated() const { return dispatcher_ != nullptr; }
+  bool activated() const { return static_cast<bool>(rx_cb_); }
 
- protected:
   // Channel overrides:
-  bool Activate(RxCallback rx_callback,
-                ClosedCallback closed_callback,
-                async_t* dispatcher) override;
+  bool Activate(RxCallback rx_callback, ClosedCallback closed_callback,
+                async_dispatcher_t* dispatcher) override;
   void Deactivate() override;
   void SignalLinkError() override;
   bool Send(std::unique_ptr<const common::ByteBuffer> sdu) override;
 
  private:
-  void set_peer(fxl::WeakPtr<FakeChannel> peer) { peer_ = peer; }
-
   hci::ConnectionHandle handle_;
   Fragmenter fragmenter_;
 
   ClosedCallback closed_cb_;
   RxCallback rx_cb_;
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
 
   SendCallback send_cb_;
-  async_t* send_dispatcher_;
+  async_dispatcher_t* send_dispatcher_;
 
   L2CAP::LinkErrorCallback link_err_cb_;
-  async_t* link_err_dispatcher_;
+  async_dispatcher_t* link_err_dispatcher_;
 
   bool activate_fails_;
   bool link_error_;
 
-  // Another fake channel that this was paired with, if any. Paired channels
-  // bounce packets between eachother.
-  fxl::WeakPtr<FakeChannel> peer_;
+  // The pending SDUs on this channel. Received PDUs are buffered if |rx_cb_| is
+  // currently not set.
+  std::queue<SDU> pending_rx_sdus_;
 
   fxl::WeakPtrFactory<FakeChannel> weak_ptr_factory_;
 
@@ -101,3 +99,5 @@ class FakeChannel : public Channel {
 }  // namespace testing
 }  // namespace l2cap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_FAKE_CHANNEL_H_

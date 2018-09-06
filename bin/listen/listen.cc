@@ -4,18 +4,17 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
-#include <lib/fdio/io.h>
-#include <lib/fdio/spawn.h>
-#include <lib/fdio/util.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/wait.h>
 #include <lib/async/default.h>
+#include <lib/fdio/io.h>
+#include <lib/fdio/spawn.h>
+#include <lib/fdio/util.h>
 #include <lib/zx/job.h>
 #include <lib/zx/process.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -23,15 +22,19 @@
 #include <zircon/process.h>
 #include <zircon/processargs.h>
 
-#include <map>
+#include <iostream>
 #include <memory>
-#include <thread>
 #include <vector>
 
 #include "lib/fsl/tasks/fd_waiter.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/strings/string_printf.h"
+
+// Only commands & args in this whitelist may be launched (see CP-72)
+const std::vector<std::vector<std::string>> kCommandWhitelist = {
+    {"/system/bin/sshd", "-ire"},
+};
 
 constexpr zx_rights_t kChildJobRights =
     ZX_RIGHTS_BASIC | ZX_RIGHTS_IO | ZX_RIGHT_DESTROY | ZX_RIGHT_MANAGE_JOB;
@@ -60,7 +63,8 @@ class Service {
       exit(1);
     }
 
-    FXL_CHECK(zx::job::create(zx_job_default(), 0, &job_) == ZX_OK);
+    FXL_CHECK(zx::job::create(*zx::unowned<zx::job>(zx::job::default_job()), 0,
+                              &job_) == ZX_OK);
     std::string job_name = fxl::StringPrintf("tcp:%d", port);
     FXL_CHECK(job_.set_property(ZX_PROP_NAME, job_name.data(),
                                 job_name.size()) == ZX_OK);
@@ -113,7 +117,7 @@ class Service {
   void Launch(int conn, const std::string& peer_name) {
     // Create a new job to run the child in.
     zx::job child_job;
-    FXL_CHECK(zx::job::create(job_.get(), 0, &child_job) == ZX_OK);
+    FXL_CHECK(zx::job::create(job_, 0, &child_job) == ZX_OK);
     FXL_CHECK(child_job.set_property(ZX_PROP_NAME, peer_name.data(),
                                      peer_name.size()) == ZX_OK);
     FXL_CHECK(child_job.replace(kChildJobRights, &child_job) == ZX_OK);
@@ -151,11 +155,11 @@ class Service {
         std::make_unique<async::Wait>(process.get(), ZX_PROCESS_TERMINATED);
     waiter->set_handler(
         [this, process = std::move(process), job = std::move(child_job)](
-            async_t*, async::Wait*, zx_status_t status,
+            async_dispatcher_t*, async::Wait*, zx_status_t status,
             const zx_packet_signal_t* signal) mutable {
           ProcessTerminated(std::move(process), std::move(job));
         });
-    waiter->Begin(async_get_default());
+    waiter->Begin(async_get_default_dispatcher());
     process_waiters_.push_back(std::move(waiter));
   }
 
@@ -184,9 +188,22 @@ class Service {
   std::vector<std::unique_ptr<async::Wait>> process_waiters_;
 };
 
+bool is_whitelisted(int argc, const char** argv) {
+  std::vector<std::string> args(argv, argv + argc);
+  auto it = std::find(kCommandWhitelist.begin(), kCommandWhitelist.end(), args);
+  if (it == kCommandWhitelist.end()) {
+    std::cerr << "Command not whitelisted: ";
+    for (auto it2 = args.begin(); it2 != args.end(); it2++) {
+      std::cerr << " " << *it2;
+    }
+    std::cerr << std::endl;
+    return false;
+  }
+  return true;
+}
+
 void usage(const char* command) {
-  fprintf(stderr, "%s <port> <command> [<args>...]\n", command);
-  exit(1);
+  std::cerr << command << " <port> <command> [<args>...]" << std::endl;
 }
 
 int main(int argc, const char** argv) {
@@ -198,22 +215,28 @@ int main(int argc, const char** argv) {
   // introspection services for debugging.
   zx_handle_close(zx_take_startup_handle(PA_DIRECTORY_REQUEST));
 
-  async::Loop loop;
-  async_set_default(loop.async());
+  async::Loop loop(&kAsyncLoopConfigNoAttachToThread);
+  async_set_default_dispatcher(loop.dispatcher());
 
-  if (argc < 2) {
+  if (argc < 3) {
     usage(argv[0]);
+    return 1;
   }
 
   char* end;
   int port = strtod(argv[1], &end);
   if (port == 0 || end == argv[1] || *end != '\0') {
     usage(argv[0]);
+    return 1;
+  }
+
+  if (!is_whitelisted(argc - 2, argv + 2)) {
+    return 1;
   }
 
   Service service(port, argv + 2);
 
   loop.Run();
-  async_set_default(NULL);
+  async_set_default_dispatcher(NULL);
   return 0;
 }

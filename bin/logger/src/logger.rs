@@ -2,15 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use async;
 use byteorder::{ByteOrder, LittleEndian};
 use fidl_fuchsia_logger::LogMessage;
+use fuchsia_async as fasync;
+use fuchsia_zircon as zx;
 use futures::io;
 use futures::prelude::*;
+use futures::ready;
 use libc::{c_char, c_int, uint32_t, uint64_t, uint8_t};
 use std::cell::RefCell;
-use std::{mem, str};
-use zx;
+use std::marker::Unpin;
+use std::mem::{self, PinMut};
+use std::str;
 
 type FxLogSeverityT = c_int;
 type ZxKoid = uint64_t;
@@ -24,7 +27,7 @@ pub const FX_LOG_MAX_TAG_LEN: usize = 64;
 pub struct fx_log_metadata_t {
     pub pid: ZxKoid,
     pub tid: ZxKoid,
-    pub time: ZxKoid,
+    pub time: zx::sys::zx_time_t,
     pub severity: FxLogSeverityT,
     pub dropped_logs: uint32_t,
 }
@@ -52,8 +55,10 @@ impl Default for fx_log_packet_t {
 
 #[must_use = "futures/streams"]
 pub struct LoggerStream {
-    socket: async::Socket,
+    socket: fasync::Socket,
 }
+
+impl Unpin for LoggerStream {}
 
 thread_local! {
     pub static BUFFER:
@@ -64,7 +69,7 @@ impl LoggerStream {
     /// Creates a new `LoggerStream` for given `socket`.
     pub fn new(socket: zx::Socket) -> Result<LoggerStream, io::Error> {
         let l = LoggerStream {
-            socket: async::Socket::from_socket(socket)?,
+            socket: fasync::Socket::from_socket(socket)?,
         };
         Ok(l)
     }
@@ -79,7 +84,7 @@ fn convert_to_log_message(bytes: &[u8]) -> Option<(LogMessage, usize)> {
     let mut l = LogMessage {
         pid: LittleEndian::read_u64(&bytes[0..8]),
         tid: LittleEndian::read_u64(&bytes[8..16]),
-        time: LittleEndian::read_u64(&bytes[16..24]),
+        time: LittleEndian::read_i64(&bytes[16..24]),
         severity: LittleEndian::read_i32(&bytes[24..28]),
         dropped_logs: LittleEndian::read_u32(&bytes[28..METADATA_SIZE]),
         tags: Vec::new(),
@@ -137,17 +142,16 @@ impl Stream for LoggerStream {
     /// It returns log message and the size of the packet received.
     /// The size does not include the metadata size taken by
     /// LogMessage data structure.
-    type Item = (LogMessage, usize);
-    type Error = io::Error;
+    type Item = io::Result<(LogMessage, usize)>;
 
-    fn poll_next(&mut self, cx: &mut task::Context) -> Poll<Option<Self::Item>, Self::Error> {
+    fn poll_next(mut self: PinMut<Self>, cx: &mut task::Context) -> Poll<Option<Self::Item>> {
         BUFFER.with(|b| {
             let mut b = b.borrow_mut();
-            let len = try_ready!(self.socket.poll_read(cx, &mut *b));
+            let len = ready!(self.socket.poll_read(cx, &mut *b)?);
             if len == 0 {
-                return Ok(Async::Ready(None));
+                return Poll::Ready(None);
             }
-            Ok(Async::Ready(convert_to_log_message(&b[0..len])))
+            Poll::Ready(convert_to_log_message(&b[0..len]).map(Ok))
         })
     }
 }
@@ -159,13 +163,13 @@ mod tests {
     use std::slice;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use zx::prelude::*;
+    use fuchsia_zircon::prelude::*;
 
     #[repr(C, packed)]
     pub struct fx_log_metadata_t_packed {
         pub pid: ZxKoid,
         pub tid: ZxKoid,
-        pub time: ZxKoid,
+        pub time: zx::sys::zx_time_t,
         pub severity: FxLogSeverityT,
         pub dropped_logs: uint32_t,
     }
@@ -220,7 +224,7 @@ mod tests {
 
     #[test]
     fn logger_stream_test() {
-        let mut executor = async::Executor::new().unwrap();
+        let mut executor = fasync::Executor::new().unwrap();
         let (sin, sout) = zx::Socket::create(zx::SocketOpts::DATAGRAM).unwrap();
         let mut p: fx_log_packet_t = Default::default();
         p.metadata.pid = 1;
@@ -242,14 +246,13 @@ mod tests {
         expected_p.tags.push(String::from("AAAAA"));
         let calltimes = Arc::new(AtomicUsize::new(0));
         let c = calltimes.clone();
-        let f = ls.for_each(move |(msg, s)| {
+        let f = ls.map_ok(move |(msg, s)| {
             assert_eq!(msg, expected_p);
             assert_eq!(s, METADATA_SIZE + 6 /* tag */+ 6 /* msg */);
             c.fetch_add(1, Ordering::Relaxed);
-            Ok(())
-        }).map(|_s| ());
+        }).try_collect::<()>();
 
-        async::spawn(f.recover(|e| {
+        fasync::spawn(f.unwrap_or_else(|e| {
             panic!("test fail {:?}", e);
         }));
 
@@ -258,8 +261,8 @@ mod tests {
             if calltimes.load(Ordering::Relaxed) == 1 {
                 break;
             }
-            let timeout = async::Timer::<()>::new(100.millis().after_now());
-            executor.run(timeout, 2).unwrap();
+            let timeout = fasync::Timer::new(100.millis().after_now());
+            executor.run(timeout, 2);
         }
         assert_eq!(1, calltimes.load(Ordering::Relaxed));
 
@@ -270,8 +273,8 @@ mod tests {
             if calltimes.load(Ordering::Relaxed) == 2 {
                 break;
             }
-            let timeout = async::Timer::<()>::new(100.millis().after_now());
-            executor.run(timeout, 2).unwrap();
+            let timeout = fasync::Timer::new(100.millis().after_now());
+            executor.run(timeout, 2);
         }
         assert_eq!(2, calltimes.load(Ordering::Relaxed));
     }

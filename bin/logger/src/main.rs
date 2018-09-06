@@ -2,37 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#![feature(futures_api, pin, arbitrary_self_types)]
 #![deny(warnings)]
 
-extern crate byteorder;
-extern crate failure;
-extern crate fidl;
-extern crate fidl_fuchsia_logger;
-extern crate fuchsia_app as app;
-extern crate fuchsia_async as async;
-extern crate fuchsia_zircon as zx;
-extern crate libc;
-extern crate parking_lot;
-
-#[macro_use]
-extern crate futures;
-
-use app::server::ServicesServer;
+use fuchsia_app::server::ServicesServer;
+use fuchsia_async as fasync;
+use fuchsia_zircon as zx;
 use failure::{Error, ResultExt};
-use fidl::endpoints2::{ClientEnd, ServiceMarker};
-use futures::future::ok as fok;
-use futures::prelude::Never;
-use futures::Future;
-use futures::FutureExt;
-use futures::StreamExt;
+use fidl::endpoints2::{ClientEnd, RequestStream, ServiceMarker};
+use futures::{TryFutureExt, TryStreamExt};
 use parking_lot::Mutex;
 use std::collections::HashSet;
 use std::collections::{vec_deque, VecDeque};
 use std::sync::Arc;
 
-use fidl_fuchsia_logger::{Log, LogFilterOptions, LogImpl, LogLevelFilter, LogListenerMarker,
-                          LogListenerProxy, LogMarker, LogMessage, LogSink, LogSinkImpl,
-                          LogSinkMarker};
+use fidl_fuchsia_logger::{LogFilterOptions, LogLevelFilter, LogListenerMarker, LogListenerProxy,
+                          LogMarker, LogMessage, LogRequest, LogRequestStream, LogSinkMarker,
+                          LogSinkRequest, LogSinkRequestStream};
 
 mod klogger;
 mod logger;
@@ -184,15 +170,15 @@ fn run_listeners(listeners: &mut Vec<ListenerWrapper>, log_message: &mut LogMess
 }
 
 fn log_manager_helper(
-    state: &mut LogManager, log_listener: ClientEnd<LogListenerMarker>,
+    state: &LogManager, log_listener: ClientEnd<LogListenerMarker>,
     options: Option<Box<LogFilterOptions>>, dump_logs: bool,
-) -> impl Future<Item = (), Error = Never> {
+) {
     let ll = match log_listener.into_proxy() {
         Ok(ll) => ll,
         Err(e) => {
             eprintln!("Logger: Error getting listener proxy: {:?}", e);
             // TODO: close channel
-            return fok(());
+            return;
         }
     };
 
@@ -208,12 +194,12 @@ fn log_manager_helper(
         lw.tags = options.tags.drain(..).collect();
         if lw.tags.len() > fidl_fuchsia_logger::MAX_TAGS as usize {
             // TODO: close channel
-            return fok(());
+            return;
         }
         for tag in &lw.tags {
-            if tag.len() > fidl_fuchsia_logger::MAX_TAG_LEN as usize {
+            if tag.len() > fidl_fuchsia_logger::MAX_TAG_LEN_BYTES as usize {
                 // TODO: close channel
-                return fok(());
+                return;
             }
         }
         if options.filter_by_pid {
@@ -234,9 +220,9 @@ fn log_manager_helper(
         let mut v = vec![];
         for (msg, s) in shared_members.log_msg_buffer.iter_mut() {
             if lw.filter(msg) {
-                if log_length + s > fidl_fuchsia_logger::MAX_LOG_MANY_SIZE as usize {
+                if log_length + s > fidl_fuchsia_logger::MAX_LOG_MANY_SIZE_BYTES as usize {
                     if ListenerStatus::Fine != lw.send_filtered_logs(&mut v) {
-                        return fok(());
+                        return;
                     }
                     v.clear();
                     log_length = 0;
@@ -247,7 +233,7 @@ fn log_manager_helper(
         }
         if v.len() > 0 {
             if ListenerStatus::Fine != lw.send_filtered_logs(&mut v) {
-                return fok(());
+                return;
             }
         }
     }
@@ -257,22 +243,29 @@ fn log_manager_helper(
     } else {
         let _ = lw.listener.done();
     }
-    fok(())
 }
 
-fn spawn_log_manager(state: LogManager, chan: async::Channel) {
-    async::spawn(
-        LogImpl {
-            state,
-            on_open: |_, _| fok(()),
-            dump_logs: |state, log_listener, options, _controller| {
-                log_manager_helper(state, log_listener, options, true)
-            },
-            listen: |state, log_listener, options, _controller| {
-                log_manager_helper(state, log_listener, options, false)
-            },
-        }.serve(chan)
-            .recover(|e| eprintln!("Log manager failed: {:?}", e)),
+fn spawn_log_manager(state: LogManager, chan: fasync::Channel) {
+    let state = Arc::new(state);
+    fasync::spawn(
+        LogRequestStream::from_channel(chan)
+            .map_ok(move |req| {
+                let state = state.clone();
+                match req {
+                    LogRequest::Listen {
+                        log_listener,
+                        options,
+                        ..
+                    } => log_manager_helper(&state, log_listener, options, false),
+                    LogRequest::DumpLogs {
+                        log_listener,
+                        options,
+                        ..
+                    } => log_manager_helper(&state, log_listener, options, true),
+                }
+            })
+            .try_collect::<()>()
+            .unwrap_or_else(|e| eprintln!("Log manager failed: {:?}", e)),
     )
 }
 
@@ -282,35 +275,35 @@ fn process_log(shared_members: Arc<Mutex<LogManagerShared>>, mut log_msg: LogMes
     shared_members.log_msg_buffer.push(log_msg, size);
 }
 
-fn spawn_log_sink(state: LogManager, chan: async::Channel) {
-    async::spawn(
-        LogSinkImpl {
-            state,
-            on_open: |_, _| fok(()),
-            connect: |state, socket, _controller| {
+fn spawn_log_sink(state: LogManager, chan: fasync::Channel) {
+    let state = Arc::new(state);
+    fasync::spawn(
+        LogSinkRequestStream::from_channel(chan)
+            .map_ok(move |req| {
+                let state = state.clone();
+                let LogSinkRequest::Connect { socket, .. } = req;
                 let ls = match logger::LoggerStream::new(socket) {
                     Err(e) => {
                         eprintln!("Logger: Failed to create tokio socket: {:?}", e);
                         // TODO: close channel
-                        return fok(());
+                        return;
                     }
                     Ok(ls) => ls,
                 };
 
                 let shared_members = state.shared_members.clone();
-                let f = ls.for_each(move |(log_msg, size)| {
-                    process_log(shared_members.clone(), log_msg, size);
-                    Ok(())
-                }).map(|_s| ());
+                let f = ls
+                    .map_ok(move |(log_msg, size)| {
+                        process_log(shared_members.clone(), log_msg, size);
+                    })
+                    .try_collect::<()>();
 
-                async::spawn(f.recover(|e| {
+                fasync::spawn(f.unwrap_or_else(|e| {
                     eprintln!("Logger: Stream failed {:?}", e);
                 }));
-
-                fok(())
-            },
-        }.serve(chan)
-            .recover(|e| eprintln!("Log sink failed: {:?}", e)),
+            })
+            .try_collect::<()>()
+            .unwrap_or_else(|e| eprintln!("Log sink failed: {:?}", e)),
     )
 }
 
@@ -321,7 +314,7 @@ fn main() {
 }
 
 fn main_wrapper() -> Result<(), Error> {
-    let mut executor = async::Executor::new().context("unable to create executor")?;
+    let mut executor = fasync::Executor::new().context("unable to create executor")?;
     let shared_members = Arc::new(Mutex::new(LogManagerShared {
         listeners: Vec::new(),
         log_msg_buffer: MemoryBoundedBuffer::new(OLD_MSGS_BUF_SIZE),
@@ -362,10 +355,10 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use fidl::encoding2::OutOfLine;
-    use fidl_fuchsia_logger::{LogFilterOptions, LogListener, LogListenerImpl, LogListenerMarker,
-                              LogProxy, LogSinkProxy};
-    use logger::fx_log_packet_t;
-    use zx::prelude::*;
+    use fidl_fuchsia_logger::{LogFilterOptions, LogListenerMarker, LogListenerRequest,
+                              LogListenerRequestStream, LogProxy, LogSinkProxy};
+    use crate::logger::fx_log_packet_t;
+    use fuchsia_zircon::prelude::*;
 
     mod memory_bounded_buffer {
         use super::*;
@@ -459,34 +452,36 @@ mod tests {
             .for_each(|x| *x = value);
     }
 
-    fn spawn_log_listener(ll: LogListenerState, chan: async::Channel) {
-        async::spawn(
-            LogListenerImpl {
-                state: ll,
-                on_open: |_, _| fok(()),
-                done: |ll, _| {
-                    println!("DEBUG: {}: done called", ll.test_name);
-                    ll.closed.store(true, Ordering::Relaxed);
-                    fok(())
-                },
-                log: |ll, msg, _controller| {
-                    println!("DEBUG: {}: log called", ll.test_name);
-                    ll.log(msg);
-                    fok(())
-                },
-                log_many: |ll, msgs, _controller| {
-                    println!(
-                        "DEBUG: {}: logMany called, msgs.len(): {}",
-                        ll.test_name,
-                        msgs.len()
-                    );
-                    for msg in msgs {
-                        ll.log(msg);
+    fn spawn_log_listener(ll: LogListenerState, chan: fasync::Channel) {
+        let state = Arc::new(Mutex::new(ll));
+        fasync::spawn(
+            LogListenerRequestStream::from_channel(chan)
+                .map_ok(move |req| {
+                    let state = state.clone();
+                    let mut state = state.lock();
+                    match req {
+                        LogListenerRequest::Log { log, .. } => {
+                            println!("DEBUG: {}: log called", state.test_name);
+                            state.log(log);
+                        }
+                        LogListenerRequest::LogMany { log, .. } => {
+                            println!(
+                                "DEBUG: {}: logMany called, msgs.len(): {}",
+                                state.test_name,
+                                log.len()
+                            );
+                            for msg in log {
+                                state.log(msg);
+                            }
+                        }
+                        LogListenerRequest::Done { .. } => {
+                            println!("DEBUG: {}: done called", state.test_name);
+                            state.closed.store(true, Ordering::Relaxed);
+                        }
                     }
-                    fok(())
-                },
-            }.serve(chan)
-                .recover(|e| panic!("test fail {:?}", e)),
+                })
+                .try_collect::<()>()
+                .unwrap_or_else(|e| panic!("test fail {:?}", e)),
         )
     }
 
@@ -496,7 +491,7 @@ mod tests {
     ) {
         let (remote, local) = zx::Channel::create().expect("failed to create zx channel");
         let remote_ptr = fidl::endpoints2::ClientEnd::<LogListenerMarker>::new(remote);
-        let local = async::Channel::from_channel(local).expect("failed to make async channel");
+        let local = fasync::Channel::from_channel(local).expect("failed to make async channel");
         spawn_log_listener(ll, local);
 
         let filter_options = filter_options.map(OutOfLine);
@@ -511,13 +506,13 @@ mod tests {
     }
 
     fn setup_test() -> (
-        async::Executor,
+        fasync::Executor,
         LogProxy,
         LogSinkProxy,
         zx::Socket,
         zx::Socket,
     ) {
-        let executor = async::Executor::new().expect("unable to create executor");
+        let executor = fasync::Executor::new().expect("unable to create executor");
         let (sin, sout) = zx::Socket::create(zx::SocketOpts::DATAGRAM).unwrap();
         let shared_members = Arc::new(Mutex::new(LogManagerShared {
             listeners: Vec::new(),
@@ -529,15 +524,15 @@ mod tests {
         };
 
         let (client_end, server_end) = zx::Channel::create().expect("unable to create channel");
-        let client_end = async::Channel::from_channel(client_end).unwrap();
+        let client_end = fasync::Channel::from_channel(client_end).unwrap();
         let log_proxy = LogProxy::new(client_end);
-        let server_end = async::Channel::from_channel(server_end).expect("unable to asyncify");
+        let server_end = fasync::Channel::from_channel(server_end).expect("unable to asyncify");
         spawn_log_manager(lm.clone(), server_end);
 
         let (client_end, server_end) = zx::Channel::create().expect("unable to create channel");
-        let client_end = async::Channel::from_channel(client_end).unwrap();
+        let client_end = fasync::Channel::from_channel(client_end).unwrap();
         let log_sink_proxy = LogSinkProxy::new(client_end);
-        let server_end = async::Channel::from_channel(server_end).expect("unable to asyncify");
+        let server_end = fasync::Channel::from_channel(server_end).expect("unable to asyncify");
         spawn_log_sink(lm.clone(), server_end);
 
         (executor, log_proxy, log_sink_proxy, sin, sout)
@@ -595,8 +590,8 @@ mod tests {
             if done.load(Ordering::Relaxed) || (test_dump_logs && closed.load(Ordering::Relaxed)) {
                 break;
             }
-            let timeout = async::Timer::<()>::new(100.millis().after_now());
-            executor.run(timeout, 2).unwrap();
+            let timeout = fasync::Timer::new(100.millis().after_now());
+            executor.run(timeout, 2);
         }
 
         if test_dump_logs {
@@ -650,9 +645,9 @@ mod tests {
             if done.load(Ordering::Relaxed) {
                 break;
             }
-            let timeout = async::Timer::<()>::new(100.millis().after_now());
+            let timeout = fasync::Timer::new(100.millis().after_now());
             println!("DEBUG: {}: wait on executor", test_name);
-            executor.run(timeout, 2).unwrap();
+            executor.run(timeout, 2);
             println!("DEBUG: {}: executor returned", test_name);
         }
         assert!(

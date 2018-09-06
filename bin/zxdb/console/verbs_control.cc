@@ -6,12 +6,13 @@
 
 #include <algorithm>
 
-#include "garnet/bin/zxdb/client/err.h"
 #include "garnet/bin/zxdb/client/session.h"
+#include "garnet/bin/zxdb/common/err.h"
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/command_utils.h"
 #include "garnet/bin/zxdb/console/console.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
+#include "garnet/public/lib/fxl/functional/auto_call.h"
 
 namespace zxdb {
 
@@ -19,8 +20,7 @@ namespace {
 
 // help ------------------------------------------------------------------------
 
-const char kHelpShortHelp[] =
-    R"(help / h: Help.)";
+const char kHelpShortHelp[] = R"(help / h: Help.)";
 const char kHelpHelp[] =
     R"(help
 
@@ -55,24 +55,46 @@ Command syntax
           thread or process.
 )";
 
+std::string FormatGroupHelp(const char* heading,
+                            std::vector<std::string>* items) {
+  std::sort(items->begin(), items->end());
+
+  std::string help("\n");
+  help.append(heading);
+  help.append("\n");
+  for (const auto& line : *items)
+    help += "    " + line + "\n";
+  return help;
+}
+
 std::string GetReference() {
   std::string help = kHelpIntro;
 
+  // Group all verbs by their CommandGroup. Add nouns to this since people
+  // will expect, for example, "breakpoint" to be in the breakpoints section.
+  std::map<CommandGroup, std::vector<std::string>> groups;
+
+  // Get the separate noun reference and add to the groups.
   help += "\nNouns\n";
   std::vector<std::string> noun_lines;
-  for (const auto& pair : GetNouns())
+  for (const auto& pair : GetNouns()) {
     noun_lines.push_back(pair.second.short_help);
+    groups[pair.second.command_group].push_back(pair.second.short_help);
+  }
   std::sort(noun_lines.begin(), noun_lines.end());
   for (const auto& line : noun_lines)
     help += "    " + line + "\n";
 
-  help += "\nVerbs\n";
-  std::vector<std::string> verb_lines;
+  // Add in verbs.
   for (const auto& pair : GetVerbs())
-    verb_lines.push_back(pair.second.short_help);
-  std::sort(verb_lines.begin(), verb_lines.end());
-  for (const auto& line : verb_lines)
-    help += "    " + line + "\n";
+    groups[pair.second.command_group].push_back(pair.second.short_help);
+
+  help += FormatGroupHelp("General", &groups[CommandGroup::kGeneral]);
+  help += FormatGroupHelp("Process", &groups[CommandGroup::kProcess]);
+  help += FormatGroupHelp("Assembly", &groups[CommandGroup::kAssembly]);
+  help += FormatGroupHelp("Breakpoint", &groups[CommandGroup::kBreakpoint]);
+  help += FormatGroupHelp("Query", &groups[CommandGroup::kQuery]);
+  help += FormatGroupHelp("Step", &groups[CommandGroup::kStep]);
 
   return help;
 }
@@ -82,7 +104,7 @@ Err DoHelp(ConsoleContext* context, const Command& cmd) {
 
   if (cmd.args().empty()) {
     // Generic help, list topics and quick reference.
-    out.FormatHelp(GetReference() + "\n");
+    out.FormatHelp(GetReference());
     Console::get()->Output(std::move(out));
     return Err();
   }
@@ -107,8 +129,9 @@ Err DoHelp(ConsoleContext* context, const Command& cmd) {
       help = verbs.find(found_string_verb->second)->second.help;
     } else {
       // Not a valid command.
-      out.OutputErr(Err("\"" + on_what + "\" is not a valid command.\n"
-                                         "Try just \"help\" to get a list."));
+      out.OutputErr(Err("\"" + on_what +
+                        "\" is not a valid command.\n"
+                        "Try just \"help\" to get a list."));
       Console::get()->Output(std::move(out));
       return Err();
     }
@@ -121,8 +144,7 @@ Err DoHelp(ConsoleContext* context, const Command& cmd) {
 
 // quit ------------------------------------------------------------------------
 
-const char kQuitShortHelp[] =
-    R"(quit / q: Quits the debugger.)";
+const char kQuitShortHelp[] = R"(quit / q: Quits the debugger.)";
 const char kQuitHelp[] =
     R"(quit
 
@@ -163,7 +185,8 @@ Examples
   connect [1234:5678::9abc]:1234
 )";
 
-Err DoConnect(ConsoleContext* context, const Command& cmd) {
+Err DoConnect(ConsoleContext* context, const Command& cmd,
+              CommandCallback callback = nullptr) {
   // Can accept either one or two arg forms.
   std::string host;
   uint16_t port = 0;
@@ -182,14 +205,28 @@ Err DoConnect(ConsoleContext* context, const Command& cmd) {
     return Err(ErrType::kInput, "Too many arguments.");
   }
 
-  context->session()->Connect(host, port, [](const Err& err) {
+  context->session()->Connect(host, port, [callback](const Err& err) {
     if (err.has_error()) {
       // Don't display error message if they canceled the connection.
       if (err.type() != ErrType::kCanceled)
         Console::get()->Output(err);
     } else {
-      Console::get()->Output("Connected successfully.");
+      OutputBuffer msg;
+      msg.Append("Connected successfully.\n");
+
+      // Assume if there's a callback this is not being run interactively.
+      // Otherwise, show the usage tip.
+      if (!callback) {
+        msg.Append(Syntax::kWarning, "👉 ");
+        msg.Append(Syntax::kComment,
+                   "Normally you will \"run <program path>\" or \"attach "
+                   "<process koid>\".");
+      }
+      Console::get()->Output(std::move(msg));
     }
+
+    if (callback)
+      callback(err);
   });
   Console::get()->Output("Connecting (use \"disconnect\" to cancel)...\n");
 
@@ -203,34 +240,69 @@ const char kDisconnectShortHelp[] =
 const char kDisconnectHelp[] =
     R"(disconnect
 
-  Disconnects from the remote system. There are no arguments.
+  Disconnects from the remote system, or cancels an in-progress connection if
+  there is one.
+
+  There are no arguments.
 )";
 
-Err DoDisconnect(ConsoleContext* context, const Command& cmd) {
+Err DoDisconnect(ConsoleContext* context, const Command& cmd,
+                 CommandCallback callback = nullptr) {
   if (!cmd.args().empty())
     return Err(ErrType::kInput, "\"disconnect\" takes no arguments.");
 
-  context->session()->Disconnect([](const Err& err) {
+  context->session()->Disconnect([callback](const Err& err) {
     if (err.has_error())
       Console::get()->Output(err);
     else
       Console::get()->Output("Disconnected successfully.");
+
+    // We call the given callbasck
+    if (callback)
+      callback(err);
   });
 
+  return Err();
+}
+
+// cls -------------------------------------------------------------------------
+
+const char kClsShortHelp[] = "cls: clear screen.";
+const char kClsHelp[] =
+    R"(cls
+
+  Clears the contents of the console. Similar to "clear" on a shell.
+
+  There are no arguments.
+)";
+
+Err DoCls(ConsoleContext* context, const Command& cmd,
+          CommandCallback callback = nullptr) {
+  if (!cmd.args().empty())
+    return Err(ErrType::kInput, "\"cls\" takes no arguments.");
+
+  Console::get()->Clear();
+
+  if (callback)
+    callback(Err());
   return Err();
 }
 
 }  // namespace
 
 void AppendControlVerbs(std::map<Verb, VerbRecord>* verbs) {
-  (*verbs)[Verb::kHelp] =
-      VerbRecord(&DoHelp, {"help", "h"}, kHelpShortHelp, kHelpHelp);
-  (*verbs)[Verb::kQuit] =
-      VerbRecord(&DoQuit, {"quit", "q"}, kQuitShortHelp, kQuitHelp);
+  (*verbs)[Verb::kHelp] = VerbRecord(&DoHelp, {"help", "h"}, kHelpShortHelp,
+                                     kHelpHelp, CommandGroup::kGeneral);
+  (*verbs)[Verb::kQuit] = VerbRecord(&DoQuit, {"quit", "q"}, kQuitShortHelp,
+                                     kQuitHelp, CommandGroup::kGeneral);
   (*verbs)[Verb::kConnect] =
-      VerbRecord(&DoConnect, {"connect"}, kConnectShortHelp, kConnectHelp);
-  (*verbs)[Verb::kDisconnect] = VerbRecord(
-      &DoDisconnect, {"disconnect"}, kDisconnectShortHelp, kDisconnectHelp);
+      VerbRecord(&DoConnect, {"connect"}, kConnectShortHelp, kConnectHelp,
+                 CommandGroup::kGeneral);
+  (*verbs)[Verb::kDisconnect] =
+      VerbRecord(&DoDisconnect, {"disconnect"}, kDisconnectShortHelp,
+                 kDisconnectHelp, CommandGroup::kGeneral);
+  (*verbs)[Verb::kCls] = VerbRecord(&DoCls, {"cls"}, kClsShortHelp, kClsHelp,
+                                    CommandGroup::kGeneral);
 }
 
 }  // namespace zxdb

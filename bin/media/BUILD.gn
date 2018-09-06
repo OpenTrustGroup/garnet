@@ -7,8 +7,6 @@ import("//build/package.gni")
 group("services") {
   public_deps = [
     "//garnet/bin/media/codec_factory",
-    "//garnet/bin/media/media_player",
-    "//garnet/bin/media/net_media_service",
   ]
 }
 
@@ -19,17 +17,25 @@ group("tools") {
   ]
 }
 
-package("audio_server") {
+package("audio_core") {
   deps = [
-    "//garnet/bin/media/audio_server",
+    "//garnet/bin/media/audio_core",
+    "//garnet/bin/media/audio_core/audiofx",
   ]
 
-  binary = "audio_server"
+  binary = "audio_core"
+
+  loadable_modules = [
+    {
+      # This audio processing library is hosted in the audio_core process.
+      name = "audiofx.so"
+    },
+  ]
 
   meta = [
     {
-      path = rebase_path("audio_server/meta/audio_server.cmx")
-      dest = "audio_server.cmx"
+      path = rebase_path("audio_core/meta/audio_core.cmx")
+      dest = "audio_core.cmx"
     },
   ]
 }
@@ -74,28 +80,32 @@ package("tests") {
   package_name = "media_tests"
 
   deps = [
-    "//garnet/bin/media/audio_server:tests",
-    "//garnet/bin/media/audio_server/mixer:tests",
-    "//garnet/bin/media/media_player:tests",
-    "//garnet/bin/media/media_player/demux:tests",
-    "//garnet/bin/media/media_player/player:tests",
-    "//garnet/bin/media/media_player/util:tests",
-    "//garnet/bin/media/net_media_service:tests",
+    "//garnet/bin/media/audio_core:tests",
+    "//garnet/bin/media/audio_core/mixer:tests",
+    "//garnet/public/lib/media/audio_dfx",
+    "//garnet/public/lib/media/audio_dfx:tests",
     "//garnet/public/lib/media/timeline:tests",
     "//garnet/public/lib/media/transport:tests",
   ]
 
+  loadable_modules = [
+    {
+      # This test-only library is hosted in the audio_dfx_tests process.
+      name = "audio_dfx.so"
+    },
+  ]
+
   tests = [
     {
+      name = "audio_core_tests"
+    },
+
+    {
+      name = "audio_dfx_tests"
+    },
+
+    {
       name = "audio_mixer_tests"
-    },
-
-    {
-      name = "audio_server_tests"
-    },
-
-    {
-      name = "media_demux_tests"
     },
 
     {
@@ -104,22 +114,6 @@ package("tests") {
 
     {
       name = "media_lib_transport_tests"
-    },
-
-    {
-      name = "media_player_tests"
-    },
-
-    {
-      name = "media_util_tests"
-    },
-
-    {
-      name = "net_media_service_tests"
-    },
-
-    {
-      name = "player_tests"
     },
   ]
 }

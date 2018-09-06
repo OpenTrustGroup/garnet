@@ -20,9 +20,9 @@
 
 #include <ddk/protocol/pci.h>
 
-#include "hw.h"
-#include "ce.h"
 #include "ahb.h"
+#include "ce.h"
+#include "hw.h"
 
 /*
  * maximum number of bytes that can be
@@ -84,7 +84,7 @@ struct pcie_state {
 };
 
 /* PCIE_CONFIG_FLAG definitions */
-#define PCIE_CONFIG_FLAG_ENABLE_L1  0x0000001
+#define PCIE_CONFIG_FLAG_ENABLE_L1 0x0000001
 
 /* Host software's Copy Engine configuration. */
 #define CE_ATTR_FLAGS 0
@@ -116,10 +116,12 @@ struct ce_pipe_config {
  * Target since things that are "PIPEDIR_OUT" are coming IN to the Target
  * over the interconnect.
  */
+// clang-format off
 #define PIPEDIR_NONE    0
 #define PIPEDIR_IN      1  /* Target-->Host, WiFi Rx direction */
 #define PIPEDIR_OUT     2  /* Host->Target, WiFi Tx direction */
 #define PIPEDIR_INOUT   3  /* bidirectional */
+// clang-format on
 
 /* Establish a mapping between a service/direction and a pipe. */
 struct service_to_pipe {
@@ -209,7 +211,7 @@ struct ath10k_pci {
      */
     unsigned long ps_wake_refcount;
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     /* Waking up takes some time (up to 2ms in some cases) so it can be bad
      * for latency. To mitigate this the device isn't immediately allowed
      * to sleep after all references are undone - instead there's a grace
@@ -219,7 +221,7 @@ struct ath10k_pci {
      * Also see comments on ATH10K_PCI_SLEEP_GRACE_PERIOD_MSEC.
      */
     struct timer_list ps_timer;
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     /* MMIO registers are used to communicate with the device. With
      * intensive traffic accessing powersave register would be a bit
@@ -248,23 +250,24 @@ struct ath10k_pci {
      */
     zx_status_t (*targ_cpu_to_ce_addr)(struct ath10k* ar, uint32_t addr, uint32_t* ce_addr);
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     /* Keep this entry in the last, memory for struct ath10k_ahb is
      * allocated (ahb support enabled case) in the continuation of
      * this struct.
      */
     struct ath10k_ahb ahb[0];
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 };
 
 static inline struct ath10k_pci* ath10k_pci_priv(struct ath10k* ar) {
     return (struct ath10k_pci*)ar->drv_priv;
 }
 
+// clang-format off
 #define ATH10K_PCI_RX_POST_RETRY_MS 50
-#define ATH_PCI_RESET_WAIT_MAX 10 /* ms */
-#define PCIE_WAKE_TIMEOUT 30000 /* 30ms */
-#define PCIE_WAKE_LATE_US 10000 /* 10ms */
+#define ATH_PCI_RESET_WAIT_MAX      10 /* ms */
+#define PCIE_WAKE_TIMEOUT           30000 /* 30ms */
+#define PCIE_WAKE_LATE_US           10000 /* 10ms */
 
 #define BAR_NUM 0
 
@@ -273,6 +276,7 @@ static inline struct ath10k_pci* ath10k_pci_priv(struct ath10k* ar) {
 
 /* Wait up to this many Ms for a Diagnostic Access CE operation to complete */
 #define DIAG_ACCESS_CE_TIMEOUT_MS 10
+// clang-format on
 
 void ath10k_pci_write32(struct ath10k* ar, uint32_t offset, uint32_t value);
 void ath10k_pci_soc_write32(struct ath10k* ar, uint32_t addr, uint32_t val);
@@ -286,16 +290,14 @@ zx_status_t ath10k_pci_hif_tx_sg(struct ath10k* ar, uint8_t pipe_id,
                                  struct ath10k_hif_sg_item* items, int n_items);
 zx_status_t ath10k_pci_hif_diag_read(struct ath10k* ar, uint32_t address, void* buf,
                                      size_t buf_len);
-zx_status_t ath10k_pci_diag_write_mem(struct ath10k* ar, uint32_t address,
-                                      const void* data, int nbytes);
+zx_status_t ath10k_pci_diag_write_mem(struct ath10k* ar, uint32_t address, const void* data,
+                                      int nbytes);
 zx_status_t ath10k_pci_hif_exchange_bmi_msg(struct ath10k* ar, void* req, uint32_t req_len,
                                             void* resp, uint32_t* resp_len);
 zx_status_t ath10k_pci_hif_map_service_to_pipe(struct ath10k* ar, uint16_t service_id,
                                                uint8_t* ul_pipe, uint8_t* dl_pipe);
-void ath10k_pci_hif_get_default_pipe(struct ath10k* ar, uint8_t* ul_pipe,
-                                     uint8_t* dl_pipe);
-void ath10k_pci_hif_send_complete_check(struct ath10k* ar, uint8_t pipe,
-                                        int force);
+void ath10k_pci_hif_get_default_pipe(struct ath10k* ar, uint8_t* ul_pipe, uint8_t* dl_pipe);
+void ath10k_pci_hif_send_complete_check(struct ath10k* ar, uint8_t pipe, int force);
 uint16_t ath10k_pci_hif_get_free_queue_number(struct ath10k* ar, uint8_t pipe);
 void ath10k_pci_hif_power_down(struct ath10k* ar);
 zx_status_t ath10k_pci_alloc_pipes(struct ath10k* ar);
@@ -313,6 +315,9 @@ void ath10k_pci_irq_msi_fw_mask(struct ath10k* ar);
 zx_status_t ath10k_pci_wait_for_target_init(struct ath10k* ar);
 zx_status_t ath10k_pci_setup_resource(struct ath10k* ar);
 void ath10k_pci_release_resource(struct ath10k* ar);
+void ath10k_pci_fill_wlan_info(struct ath10k* ar, wlan_info_t* ifc_info);
+
+extern wlanmac_protocol_ops_t wlanmac_ops;
 
 /* QCA6174 is known to have Tx/Rx issues when SOC_WAKE register is poked too
  * frequently. To avoid this put SoC to sleep after a very conservative grace

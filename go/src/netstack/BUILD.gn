@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/go/go_binary.gni")
+import("//build/go/go_library.gni")
 import("//build/go/go_test.gni")
 import("//build/go/toolchain.gni")
 import("//build/package.gni")
@@ -54,12 +55,15 @@ package("netstack_tools") {
 
 package("netstack_gotests") {
   testonly = true
-  deprecated_system_image = true
 
   deps = [
+    ":netstack_connectivity_test",
+    ":netstack_fidlconv_test",
     ":netstack_filter_test",
+    ":netstack_link_eth_test",
     ":netstack_netiface_test",
     "netstack_service_test",
+    "//garnet/go/src/netstack/ifconfig:netstack_ifconfig_test",
     "//garnet/go/src/netstack/netstat:netstack_netstat_test",
   ]
 
@@ -71,7 +75,19 @@ package("netstack_gotests") {
 
   tests = [
     {
+      name = "netstack_connectivity_test"
+    },
+    {
+      name = "netstack_fidlconv_test"
+    },
+    {
       name = "netstack_filter_test"
+    },
+    {
+      name = "netstack_ifconfig_test"
+    },
+    {
+      name = "netstack_link_eth_test"
     },
     {
       name = "netstack_netiface_test"
@@ -82,55 +98,61 @@ package("netstack_gotests") {
   ]
 }
 
+go_library("netstack_lib") {
+  name = "netstack"
+
+  deps = [
+    "//garnet/public/fidl/fuchsia.devicesettings($go_toolchain)",
+    "//garnet/public/fidl/fuchsia.netstack($go_toolchain)",
+    "//garnet/public/fidl/fuchsia.sys($go_toolchain)",
+    "//garnet/public/go/third_party:github.com/google/netstack",
+    "//garnet/public/lib/component/go/src/app",
+    "//zircon/public/fidl/fuchsia-net($go_toolchain)",
+    "//zircon/public/fidl/fuchsia-net-stack($go_toolchain)",
+    "//zircon/public/fidl/zircon-ethernet($go_toolchain)",
+  ]
+}
+
 go_binary("netstack_bin") {
   output_name = "netstack"
 
   gopackage = "netstack"
-
-  go_dependencies = [
-    {
-      package = "netstack"
-      source = "//garnet/go/src/netstack"
-    },
-    {
-      package = "github.com/google/netstack"
-      source = "//third_party/netstack"
-    },
-  ]
-
-  extra_dependencies = [
-    "//garnet/public/lib/app/fidl($go_toolchain)",
-    "//garnet/public/lib/netstack/fidl($go_toolchain)",
-    "//garnet/public/lib/device_settings/fidl($go_toolchain)",
-    "//garnet/public/lib/app/go/src/app",
-    "//garnet/public/lib/fidl/go/src/fidl/bindings",
+  deps = [
+    ":netstack_lib",
   ]
 }
 
-go_test("netstack_netiface_test") {
-  gopackage = "netstack/netiface"
-  go_dependencies = [
-    {
-      package = "netstack"
-      source = "//garnet/go/src/netstack"
-    },
-    {
-      package = "github.com/google/netstack"
-      source = "//third_party/netstack"
-    },
+go_test("netstack_connectivity_test") {
+  gopackage = "netstack/connectivity"
+  deps = [
+    ":netstack_lib",
+  ]
+}
+
+go_test("netstack_fidlconv_test") {
+  gopackage = "netstack/fidlconv"
+  deps = [
+    ":netstack_lib",
   ]
 }
 
 go_test("netstack_filter_test") {
   gopackage = "netstack/filter"
-  go_dependencies = [
-    {
-      package = "netstack"
-      source = "//garnet/go/src/netstack"
-    },
-    {
-      package = "github.com/google/netstack"
-      source = "//third_party/netstack"
-    },
+  deps = [
+    ":netstack_lib",
+  ]
+}
+
+go_test("netstack_link_eth_test") {
+  gopackage = "netstack/link/eth"
+  deps = [
+    ":netstack_lib",
+  ]
+}
+
+go_test("netstack_netiface_test") {
+  gopackage = "netstack/netiface"
+  deps = [
+    ":netstack_lib",
   ]
 }

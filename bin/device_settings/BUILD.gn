@@ -8,20 +8,19 @@ import("//build/package.gni")
 rustc_binary("bin") {
   name = "device_settings_manager"
   with_unit_tests = true
+  edition = "2018"
 
   deps = [
-    "//garnet/public/lib/device_settings/fidl:fidl-rustc",
+    "//garnet/public/fidl/fuchsia.devicesettings:fuchsia.devicesettings-rustc",
     "//garnet/public/lib/fidl/rust/fidl",
     "//garnet/public/rust/crates/fdio",
     "//garnet/public/rust/crates/fuchsia-app",
     "//garnet/public/rust/crates/fuchsia-async",
     "//garnet/public/rust/crates/fuchsia-syslog",
     "//garnet/public/rust/crates/fuchsia-zircon",
-    "//garnet/public/rust/crates/mxruntime",
-    "//garnet/public/rust/crates/mxruntime/mxruntime-sys",
     "//third_party/rust-crates/rustc_deps:bytes",
     "//third_party/rust-crates/rustc_deps:failure",
-    "//third_party/rust-crates/rustc_deps:futures",
+    "//third_party/rust-crates/rustc_deps:futures-preview",
     "//third_party/rust-crates/rustc_deps:parking_lot",
     "//third_party/rust-crates/rustc_deps:tempdir",
   ]
@@ -43,7 +42,6 @@ package("device_settings_manager") {
 }
 
 package("device_settings_manager_tests") {
-  deprecated_system_image = true
   testonly = true
 
   deps = [

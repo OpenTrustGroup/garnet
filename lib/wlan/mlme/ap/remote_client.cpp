@@ -5,6 +5,7 @@
 #include <wlan/mlme/ap/remote_client.h>
 
 #include <wlan/mlme/debug.h>
+#include <wlan/mlme/frame_dispatcher.h>
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/packet.h>
 #include <wlan/mlme/service.h>
@@ -271,7 +272,7 @@ zx_status_t AssociatedState::HandlePsPollFrame(const CtrlFrame<PsPollFrame>& fra
     debugbss("[client] [%s] no more BU available\n", client_->addr().ToString().c_str());
     // There are no frames buffered for the client.
     // Respond with a null data frame and report the situation.
-    size_t len = sizeof(DataFrameHeader);
+    size_t len = DataFrameHeader::max_len();
     fbl::unique_ptr<Buffer> buffer = GetBuffer(len);
     if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
@@ -326,17 +327,6 @@ zx_status_t AssociatedState::HandleDataFrame(const DataFrameHeader& hdr) {
 }
 
 zx_status_t AssociatedState::HandleDataFrame(const DataFrame<LlcHeader>& frame) {
-    // Filter unsupported Data frame types.
-    switch (frame.hdr()->fc.subtype()) {
-    case DataSubtype::kDataSubtype:
-    // Fall-through
-    case DataSubtype::kQosdata:  // For data frames within BlockAck session.
-        break;
-    default:
-        warnf("unsupported data subtype %02x\n", frame.hdr()->fc.subtype());
-        return ZX_OK;
-    }
-
     if (frame.hdr()->fc.to_ds() == 0 || frame.hdr()->fc.from_ds() == 1) {
         warnf(
             "received unsupported data frame from %s with to_ds/from_ds "
@@ -346,22 +336,15 @@ zx_status_t AssociatedState::HandleDataFrame(const DataFrame<LlcHeader>& frame) 
         return ZX_OK;
     }
 
-    auto hdr = frame.hdr();
-    auto llc = frame.body();
+    auto data_llc_frame = frame.View();
+    auto data_hdr = data_llc_frame.hdr();
 
     // Forward EAPOL frames to SME.
-    size_t payload_len = frame.body_len() - sizeof(LlcHeader);
-    if (be16toh(llc->protocol_id) == kEapolProtocolId) {
-        if (payload_len < sizeof(EapolFrame)) {
-            warnf("short EAPOL frame; len = %zu", payload_len);
-            return ZX_OK;
-        }
-
-        auto eapol = reinterpret_cast<const EapolFrame*>(llc->payload);
-        uint16_t actual_body_len = payload_len;
-        uint16_t expected_body_len = be16toh(eapol->packet_body_length);
-        if (actual_body_len != expected_body_len) {
-            return service::SendEapolIndication(client_->device(), *eapol, hdr->addr2, hdr->addr3);
+    auto llc_frame = data_llc_frame.SkipHeader();
+    if (auto eapol_frame = llc_frame.CheckBodyType<EapolHdr>().CheckLength().SkipHeader()) {
+        if (eapol_frame.body_len() == eapol_frame.hdr()->get_packet_body_length()) {
+            return service::SendEapolIndication(client_->device(), *eapol_frame.hdr(),
+                                                data_hdr->addr2, data_hdr->addr3);
         }
         return ZX_OK;
     }
@@ -370,7 +353,7 @@ zx_status_t AssociatedState::HandleDataFrame(const DataFrame<LlcHeader>& frame) 
     // yet.
     if (eapol_controlled_port_ != eapol::PortState::kOpen) { return ZX_OK; }
 
-    const size_t eth_len = sizeof(EthernetII) + payload_len;
+    const size_t eth_len = EthernetII::max_len() + llc_frame.body_len();
     auto buffer = GetBuffer(eth_len);
     if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
@@ -379,10 +362,10 @@ zx_status_t AssociatedState::HandleDataFrame(const DataFrame<LlcHeader>& frame) 
     eth_packet->set_peer(Packet::Peer::kEthernet);
 
     auto eth = eth_packet->mut_field<EthernetII>(0);
-    eth->dest = hdr->addr3;
-    eth->src = hdr->addr2;
-    eth->ether_type = llc->protocol_id;
-    std::memcpy(eth->payload, llc->payload, payload_len - sizeof(LlcHeader));
+    eth->dest = data_hdr->addr3;
+    eth->src = data_hdr->addr2;
+    eth->ether_type = llc_frame.hdr()->protocol_id;
+    std::memcpy(eth->payload, llc_frame.body()->data, llc_frame.body_len());
 
     auto status = client_->bss()->SendEthFrame(std::move(eth_packet));
     if (status != ZX_OK) {
@@ -446,7 +429,7 @@ void AssociatedState::UpdatePowerSaveMode(const FrameControl& fc) {
 }
 
 zx_status_t AssociatedState::HandleMlmeEapolReq(const MlmeMsg<wlan_mlme::EapolRequest>& req) {
-    size_t len = sizeof(DataFrameHeader) + sizeof(LlcHeader) + req.body()->data->size();
+    size_t len = DataFrameHeader::max_len() + LlcHeader::max_len() + req.body()->data->size();
     auto buffer = GetBuffer(len);
     if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
@@ -462,7 +445,7 @@ zx_status_t AssociatedState::HandleMlmeEapolReq(const MlmeMsg<wlan_mlme::EapolRe
     hdr->addr3.Set(req.body()->src_addr.data());
     hdr->sc.set_seq(client_->bss()->NextSeq(*hdr));
 
-    auto llc = packet->mut_field<LlcHeader>(sizeof(DataFrameHeader));
+    auto llc = packet->mut_field<LlcHeader>(hdr->len());
     llc->dsap = kLlcSnapExtension;
     llc->ssap = kLlcSnapExtension;
     llc->control = kLlcUnnumberedInformation;
@@ -538,15 +521,43 @@ zx_status_t AssociatedState::SendNextBu() {
     return client_->bss()->SendDataFrame(fbl::move(data_packet));
 }
 
-zx_status_t AssociatedState::HandleAddBaRequestFrame(const MgmtFrame<AddBaRequestFrame>& frame) {
+zx_status_t AssociatedState::HandleActionFrame(const MgmtFrame<ActionFrame>& frame) {
     debugfn();
-    return client_->SendAddBaResponse(frame);
-}
 
-zx_status_t AssociatedState::HandleAddBaResponseFrame(const MgmtFrame<AddBaResponseFrame>& frame) {
-    debugfn();
-    // TODO(porce): Keep the result of negotiation.
-    return ZX_OK;
+    // TODO(porce): Handle AddBaResponses and keep the result of negotiation.
+
+    // TODO(hahnr): We need to use a FrameView until frames are moved rather than passed by const
+    // reference.
+    auto mgmt_frame = frame.View();
+
+    // TODO(hahnr): Frame::NextFrame should do the validation and return an empty frame on error.
+    // Remove the validation here once we merged the new validation framework for frames.
+    if (mgmt_frame.body()->category != ActionFrameBlockAck::ActionCategory()) {
+        return ZX_ERR_NOT_SUPPORTED;
+    }
+    auto action_frame = mgmt_frame.NextFrame();
+    if (action_frame.body_len() < sizeof(ActionFrameBlockAck)) { return ZX_ERR_NOT_SUPPORTED; }
+
+    auto ba_frame = action_frame.NextFrame<ActionFrameBlockAck>();
+    if (ba_frame.hdr()->action == AddBaResponseFrame::BlockAckAction()) {
+        if (ba_frame.body_len() < sizeof(AddBaResponseFrame)) { return ZX_ERR_NOT_SUPPORTED; }
+
+        auto addbarresp_frame = ba_frame.NextFrame<AddBaResponseFrame>();
+        auto addbarresp = addbarresp_frame.hdr();
+        finspect("Inbound ADDBA Resp frame: len %zu\n", addbarresp_frame.len());
+        finspect("  addba resp: %s\n", debug::Describe(*addbarresp).c_str());
+        return ZX_OK;
+    } else if (ba_frame.hdr()->action == AddBaRequestFrame::BlockAckAction()) {
+        if (ba_frame.body_len() < sizeof(AddBaRequestFrame)) { return ZX_ERR_NOT_SUPPORTED; }
+
+        auto addbarreq_frame = ba_frame.NextFrame<AddBaRequestFrame>();
+        auto addbarreq = addbarreq_frame.hdr();
+        finspect("Inbound ADDBA Req frame: len %zu\n", addbarreq_frame.len());
+        finspect("  addba req: %s\n", debug::Describe(*addbarreq).c_str());
+        return ZX_ERR_NOT_SUPPORTED;
+    }
+
+    return ZX_ERR_NOT_SUPPORTED;
 }
 
 // RemoteClient implementation.
@@ -590,33 +601,9 @@ void RemoteClient::HandleTimeout() {
     state_->HandleTimeout();
 }
 
-zx_status_t RemoteClient::HandleEthFrame(const EthFrame& frame) {
-    ForwardCurrentFrameTo(state_.get());
-    return ZX_OK;
-}
-
-zx_status_t RemoteClient::HandleDataFrame(const DataFrameHeader& hdr) {
-    ZX_DEBUG_ASSERT(hdr.addr2 == addr_);
-    if (hdr.addr2 != addr_) { return ZX_ERR_STOP; }
-
-    ForwardCurrentFrameTo(state_.get());
-    return ZX_OK;
-}
-
-zx_status_t RemoteClient::HandleMgmtFrame(const MgmtFrameHeader& hdr) {
-    ZX_DEBUG_ASSERT(hdr.addr2 == addr_);
-    if (hdr.addr2 != addr_) { return ZX_ERR_STOP; }
-
-    ForwardCurrentFrameTo(state_.get());
-    return ZX_OK;
-}
-
-zx_status_t RemoteClient::HandlePsPollFrame(const CtrlFrame<PsPollFrame>& frame) {
-    ZX_DEBUG_ASSERT(frame.hdr()->ta == addr_);
-    if (frame.hdr()->ta != addr_) { return ZX_ERR_STOP; }
-
-    ForwardCurrentFrameTo(state_.get());
-    return ZX_OK;
+zx_status_t RemoteClient::HandleAnyFrame(fbl::unique_ptr<Packet> pkt) {
+    // TODO(hahnr): forward directly to state rather than using dispatcher.
+    return DispatchFramePacket(fbl::move(pkt), state_.get());
 }
 
 zx_status_t RemoteClient::StartTimer(zx::time deadline) {
@@ -641,7 +628,7 @@ zx_status_t RemoteClient::SendAuthentication(status_code::StatusCode result) {
     debugbss("[client] [%s] sending Authentication response\n", addr_.ToString().c_str());
 
     MgmtFrame<Authentication> frame;
-    auto status = BuildMgmtFrame(&frame);
+    auto status = CreateMgmtFrame(&frame);
     if (status != ZX_OK) { return status; }
 
     frame.FillTxInfo();
@@ -671,9 +658,9 @@ zx_status_t RemoteClient::SendAssociationResponse(aid_t aid, status_code::Status
     debugfn();
     debugbss("[client] [%s] sending Association Response\n", addr_.ToString().c_str());
 
-    size_t body_payload_len = 256;
+    size_t reserved_ie_len = 256;
     MgmtFrame<AssociationResponse> frame;
-    auto status = BuildMgmtFrame(&frame, body_payload_len);
+    auto status = CreateMgmtFrame(&frame, reserved_ie_len);
     if (status != ZX_OK) { return status; }
 
     auto hdr = frame.hdr();
@@ -691,10 +678,11 @@ zx_status_t RemoteClient::SendAssociationResponse(aid_t aid, status_code::Status
     assoc->cap.set_short_preamble(1);
 
     // Write elements.
-    ElementWriter w(assoc->elements, body_payload_len);
+    ElementWriter w(assoc->elements, reserved_ie_len);
 
-    // Rates (in Mbps): 6(B), 9, 12(B), 18, 24(B), 36, 48, 54
-    std::vector<uint8_t> rates = {0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c};
+    std::vector<SupportedRate> rates = {
+        SupportedRate::basic(12), SupportedRate(18), SupportedRate::basic(24), SupportedRate(36),
+        SupportedRate::basic(48), SupportedRate(72), SupportedRate(96),        SupportedRate(108)};
     if (!w.write<SupportedRatesElement>(std::move(rates))) {
         errorf("[client] [%s] could not write supported rates\n", addr_.ToString().c_str());
         return ZX_ERR_IO;
@@ -713,7 +701,7 @@ zx_status_t RemoteClient::SendAssociationResponse(aid_t aid, status_code::Status
     // Validate the request in debug mode.
     ZX_DEBUG_ASSERT(assoc->Validate(w.size()));
 
-    size_t body_len = sizeof(AssociationResponse) + w.size();
+    size_t body_len = frame.body()->len() + w.size();
     status = frame.set_body_len(body_len);
     if (status != ZX_OK) {
         errorf("[client] [%s] could not set assocresp length to %zu: %d\n",
@@ -734,7 +722,7 @@ zx_status_t RemoteClient::SendDeauthentication(reason_code::ReasonCode reason_co
     debugbss("[client] [%s] sending Deauthentication\n", addr_.ToString().c_str());
 
     MgmtFrame<Deauthentication> frame;
-    auto status = BuildMgmtFrame(&frame);
+    auto status = CreateMgmtFrame(&frame);
     if (status != ZX_OK) { return status; }
 
     auto hdr = frame.hdr();
@@ -814,7 +802,7 @@ zx_status_t RemoteClient::WriteHtCapabilities(ElementWriter* w) {
 zx_status_t RemoteClient::WriteHtOperation(ElementWriter* w) {
     auto chan = bss_->Chan();
     HtOperation hto = bss_->BuildHtOperation(chan);
-    if (!w->write<HtOperation>(hto.primary_chan, hto.head, hto.tail, hto.mcs_set)) {
+    if (!w->write<HtOperation>(hto.primary_chan, hto.head, hto.tail, hto.basic_mcs_set)) {
         errorf("[client] [%s] could not write HtOperation\n", addr_.ToString().c_str());
         return ZX_ERR_IO;
     }
@@ -832,8 +820,9 @@ zx_status_t RemoteClient::SendAddBaRequest() {
 
     debugbss("[client] [%s] sending AddBaRequest\n", addr_.ToString().c_str());
 
-    MgmtFrame<AddBaRequestFrame> tx_frame;
-    auto status = BuildMgmtFrame(&tx_frame);
+    MgmtFrame<ActionFrame> tx_frame;
+    size_t body_payload_len = ActionFrameBlockAck::max_len() + AddBaRequestFrame::max_len();
+    auto status = CreateMgmtFrame(&tx_frame, body_payload_len);
     if (status != ZX_OK) { return status; }
 
     auto hdr = tx_frame.hdr();
@@ -843,26 +832,30 @@ zx_status_t RemoteClient::SendAddBaRequest() {
     hdr->sc.set_seq(bss_->NextSeq(*hdr));
     tx_frame.FillTxInfo();
 
-    auto req = tx_frame.body();
-    req->category = action::Category::kBlockAck;
-    req->action = action::BaAction::kAddBaRequest;
+    auto action_hdr = tx_frame.body();
+    action_hdr->category = ActionFrameBlockAck::ActionCategory();
+
+    auto ba_frame = tx_frame.NextFrame<ActionFrameBlockAck>();
+    ba_frame.hdr()->action = AddBaRequestFrame::BlockAckAction();
+
+    auto addbareq_frame = ba_frame.NextFrame<AddBaRequestFrame>();
+    auto addbareq = addbareq_frame.hdr();
     // It appears there is no particular rule to choose the value for
     // dialog_token. See IEEE Std 802.11-2016, 9.6.5.2.
-    req->dialog_token = 0x01;
-    req->params.set_amsdu(0);
-    req->params.set_policy(BlockAckParameters::BlockAckPolicy::kImmediate);
-    req->params.set_tid(GetTid());  // TODO(NET-599): Communicate this with lower MAC.
+    addbareq->dialog_token = 0x01;
+    addbareq->params.set_amsdu(0);
+    addbareq->params.set_policy(BlockAckParameters::BlockAckPolicy::kImmediate);
+    addbareq->params.set_tid(GetTid());  // TODO(NET-599): Communicate this with lower MAC.
     // TODO(porce): Fix the discrepancy of this value from the Ralink's TXWI ba_win_size setting
-    req->params.set_buffer_size(64);
-    req->timeout = 0;               // Disables the timeout
-    req->seq_ctrl.set_fragment(0);  // TODO(NET-599): Send this down to the lower MAC
-    req->seq_ctrl.set_starting_seq(1);
+    addbareq->params.set_buffer_size(64);
+    addbareq->timeout = 0;               // Disables the timeout
+    addbareq->seq_ctrl.set_fragment(0);  // TODO(NET-599): Send this down to the lower MAC
+    addbareq->seq_ctrl.set_starting_seq(1);
 
-    finspect("Outbound ADDBA Req frame: len %zu\n", tx_frame.len());
-    finspect("  addba req: %s\n", debug::Describe(*req).c_str());
-    finspect("Outbound Mgmt Frame(ADDBA Req): %s\n", debug::Describe(*hdr).c_str());
+    finspect("Outbound ADDBA Req frame: len %zu\n", addbareq_frame.len());
+    finspect("  addba req: %s\n", debug::Describe(*addbareq).c_str());
 
-    status = bss_->SendMgmtFrame(tx_frame.Take());
+    status = bss_->SendMgmtFrame(addbareq_frame.Take());
     if (status != ZX_OK) {
         errorf("[client] [%s] could not send AddbaRequest: %d\n", addr_.ToString().c_str(), status);
     }
@@ -870,9 +863,10 @@ zx_status_t RemoteClient::SendAddBaRequest() {
     return ZX_OK;
 }
 
-zx_status_t RemoteClient::SendAddBaResponse(const MgmtFrame<AddBaRequestFrame>& rx_frame) {
-    MgmtFrame<AddBaResponseFrame> tx_frame;
-    auto status = BuildMgmtFrame(&tx_frame);
+zx_status_t RemoteClient::SendAddBaResponse(const AddBaRequestFrame& req) {
+    MgmtFrame<ActionFrame> tx_frame;
+    size_t body_payload_len = ActionFrameBlockAck::max_len() + AddBaRequestFrame::max_len();
+    auto status = CreateMgmtFrame(&tx_frame, body_payload_len);
     if (status != ZX_OK) { return status; }
 
     auto hdr = tx_frame.hdr();
@@ -882,66 +876,42 @@ zx_status_t RemoteClient::SendAddBaResponse(const MgmtFrame<AddBaRequestFrame>& 
     hdr->sc.set_seq(bss_->NextSeq(*hdr));
     tx_frame.FillTxInfo();
 
-    auto resp = tx_frame.body();
-    resp->category = action::Category::kBlockAck;
-    resp->action = action::BaAction::kAddBaResponse;
-    auto req = rx_frame.body();
-    resp->dialog_token = req->dialog_token;
+    auto action_frame = tx_frame.body();
+    action_frame->category = ActionFrameBlockAck::ActionCategory();
+
+    auto ba_frame = tx_frame.NextFrame<ActionFrameBlockAck>();
+    ba_frame.hdr()->action = AddBaResponseFrame::BlockAckAction();
+
+    auto addbaresp_frame = ba_frame.NextFrame<AddBaResponseFrame>();
+    auto addbaresp = addbaresp_frame.hdr();
+    addbaresp->dialog_token = req.dialog_token;
 
     // TODO(porce): Implement DelBa as a response to AddBar for decline
 
-    resp->status_code = status_code::kSuccess;
+    addbaresp->status_code = status_code::kSuccess;
 
     // TODO(NET-567): Use the outcome of the association negotiation
-    resp->params.set_amsdu(0);
-    resp->params.set_policy(BlockAckParameters::kImmediate);
-    resp->params.set_tid(req->params.tid());
+    addbaresp->params.set_amsdu(0);
+    addbaresp->params.set_policy(BlockAckParameters::kImmediate);
+    addbaresp->params.set_tid(req.params.tid());
 
     // TODO(NET-565, NET-567): Use the chipset's buffer_size
-    auto buffer_size_ap = req->params.buffer_size();
+    auto buffer_size_ap = req.params.buffer_size();
     constexpr size_t buffer_size_ralink = 64;
     auto buffer_size = (buffer_size_ap <= buffer_size_ralink) ? buffer_size_ap : buffer_size_ralink;
-    resp->params.set_buffer_size(buffer_size);
+    addbaresp->params.set_buffer_size(buffer_size);
 
-    resp->timeout = req->timeout;
+    addbaresp->timeout = req.timeout;
 
-    finspect("Outbound ADDBA Resp frame: len %zu\n", tx_frame.len());
-    finspect("Outbound Mgmt Frame(ADDBA Resp): %s\n", debug::Describe(*hdr).c_str());
+    finspect("Outbound ADDBA Resp frame: len %zu\n", addbaresp_frame.len());
+    finspect("Outbound Mgmt Frame(ADDBA Resp): %s\n", debug::Describe(*addbaresp).c_str());
 
-    status = bss_->SendMgmtFrame(tx_frame.Take());
+    status = bss_->SendMgmtFrame(addbaresp_frame.Take());
     if (status != ZX_OK) {
         errorf("[client] [%s] could not send AddBaResponse: %d\n", addr_.ToString().c_str(),
                status);
         return status;
     }
-
-    return ZX_OK;
-}
-
-zx_status_t RemoteClient::HandleAddBaRequestFrame(const MgmtFrame<AddBaRequestFrame>& rx_frame) {
-    debugfn();
-    debugbss("[Ap] rxed addbar request from %s\n", addr_.ToString().c_str());
-
-    ZX_DEBUG_ASSERT(rx_frame.hdr()->addr2 == addr_);
-
-    auto req = rx_frame.body();
-    finspect("Inbound ADDBA Req frame: len %zu\n", rx_frame.body_len());
-    finspect("  addba req: %s\n", debug::Describe(*req).c_str());
-
-    return ZX_OK;
-}
-
-zx_status_t RemoteClient::HandleAddBaResponseFrame(const MgmtFrame<AddBaResponseFrame>& rx_frame) {
-    debugfn();
-    ZX_DEBUG_ASSERT(rx_frame.hdr()->addr2 == addr_);
-    ZX_DEBUG_ASSERT(rx_frame.hdr()->fc.subtype() == ManagementSubtype::kAction);
-    ZX_DEBUG_ASSERT(rx_frame.body()->category == action::Category::kBlockAck);
-    ZX_DEBUG_ASSERT(rx_frame.body()->action == action::BaAction::kAddBaResponse);
-
-    auto hdr = rx_frame.hdr();
-    auto resp = rx_frame.body();
-    finspect("Inbound ADDBA Resp frame: len %zu\n", hdr->len() + rx_frame.body_len());
-    finspect("  addba resp: %s\n", debug::Describe(*resp).c_str());
 
     return ZX_OK;
 }

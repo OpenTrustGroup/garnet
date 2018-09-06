@@ -20,7 +20,7 @@
 #include "lib/fsl/vmo/vector.h"
 #include "lib/fxl/functional/make_copyable.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 // static
@@ -100,12 +100,13 @@ void Screenshotter::TakeScreenshot(
   vk::Queue queue = escher->command_buffer_pool()->queue();
   auto* command_buffer = escher->command_buffer_pool()->GetCommandBuffer();
 
-  command_buffer->Submit(queue, fxl::MakeCopyable([
-    image, width, height, device = escher->vk_device(),
-    done_callback = std::move(done_callback)
-  ]() mutable {
-    OnCommandBufferDone(image, width, height, device, std::move(done_callback));
-  }));
+  command_buffer->Submit(
+      queue,
+      fxl::MakeCopyable([image, width, height, device = escher->vk_device(),
+                         done_callback = std::move(done_callback)]() mutable {
+        OnCommandBufferDone(image, width, height, device,
+                            std::move(done_callback));
+      }));
   // Force the command buffer to retire so that the submitted commands will run.
   // TODO(SCN-211): Make this a proper wait instead of spinning.
   while (!escher->command_buffer_pool()->Cleanup()) {
@@ -114,4 +115,4 @@ void Screenshotter::TakeScreenshot(
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

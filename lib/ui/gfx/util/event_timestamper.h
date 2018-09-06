@@ -14,7 +14,7 @@
 #include "lib/fxl/logging.h"
 #include "lib/fxl/macros.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 // EventTimestamper uses a background thread to watch for signals specified
@@ -73,7 +73,7 @@ class EventTimestamper {
    public:
     enum class State { STARTED, STOPPED, ABANDONED };
 
-    Waiter(async_t* dispatcher, zx::event event, zx_status_t trigger,
+    Waiter(async_dispatcher_t* dispatcher, zx::event event, zx_status_t trigger,
            Callback callback);
     ~Waiter();
 
@@ -84,10 +84,10 @@ class EventTimestamper {
     const zx::event& event() const { return event_; }
 
    private:
-    void Handle(async_t* async, async::WaitBase* wait, zx_status_t status,
-                const zx_packet_signal_t* signal);
+    void Handle(async_dispatcher_t* dispatcher, async::WaitBase* wait,
+                zx_status_t status, const zx_packet_signal_t* signal);
 
-    async_t* const dispatcher_;
+    async_dispatcher_t* const dispatcher_;
     zx::event event_;
     Callback callback_;
     State state_ = State::STOPPED;
@@ -103,7 +103,7 @@ class EventTimestamper {
   // Also see MG-940 and MG-1032.
   void IncreaseBackgroundThreadPriority();
 
-  async_t* const main_dispatcher_;
+  async_dispatcher_t* const main_dispatcher_;
   async::Loop background_loop_;
   async::TaskClosure task_;
 #ifndef NDEBUG
@@ -114,6 +114,6 @@ class EventTimestamper {
 };
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_UTIL_EVENT_TIMESTAMPER_H_

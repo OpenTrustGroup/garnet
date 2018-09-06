@@ -4,14 +4,15 @@
 
 #include "garnet/bin/zxdb/client/thread_impl.h"
 
-#include <inttypes.h>  // ERSASEMME(brettw)
 #include <iostream>
+#include <limits>
 
+#include "garnet/bin/zxdb/client/breakpoint.h"
 #include "garnet/bin/zxdb/client/frame_impl.h"
 #include "garnet/bin/zxdb/client/process_impl.h"
 #include "garnet/bin/zxdb/client/remote_api.h"
 #include "garnet/bin/zxdb/client/session.h"
-#include "garnet/bin/zxdb/client/symbols/line_details.h"
+#include "garnet/bin/zxdb/client/thread_controller.h"
 #include "garnet/public/lib/fxl/logging.h"
 
 namespace zxdb {
@@ -46,41 +47,78 @@ void ThreadImpl::Pause() {
 void ThreadImpl::Continue() {
   debug_ipc::ResumeRequest request;
   request.process_koid = process_->GetKoid();
-  request.thread_koid = koid_;
-  request.how = debug_ipc::ResumeRequest::How::kContinue;
+  request.thread_koids.push_back(koid_);
+
+  if (controllers_.empty()) {
+    request.how = debug_ipc::ResumeRequest::How::kContinue;
+  } else {
+    // When there are thread controllers, ask the most recent one for how to
+    // continue.
+    //
+    // Theoretically we're running with all controllers at once and we want to
+    // stop at the first one that triggers, which means we want to compute the
+    // most restrictive intersection of all of them.
+    //
+    // This is annoying to implement and it's difficult to construct a
+    // situation where this would be required. The controller that doesn't
+    // involve breakpoints is "step in range" and generally ranges refer to
+    // code lines that will align. Things like "until" are implemented with
+    // breakpoints so can overlap arbitrarily with other operations with no
+    // problem.
+    //
+    // A case where this might show up:
+    //  1. Do "step into" which steps through a range of instructions.
+    //  2. In the middle of that range is a breakpoint that's hit.
+    //  3. The user does "finish." We'll ask the finish controller what to do
+    //     and it will say "continue" and the range from step 1 is lost.
+    // However, in this case probably does want to end up one stack frame
+    // back rather than several instructions after the breakpoint due to the
+    // original "step into" command, so even when "wrong" this current behavior
+    // isn't necessarily bad.
+    ThreadController::ContinueOp op = controllers_.back()->GetContinueOp();
+    request.how = op.how;
+    request.range_begin = op.range_begin;
+    request.range_end = op.range_end;
+  }
+
   session()->remote_api()->Resume(
       request, [](const Err& err, debug_ipc::ResumeReply) {});
 }
 
-Err ThreadImpl::Step() {
-  if (frames_.empty())
-    return Err("Thread has no current address to step.");
+void ThreadImpl::ContinueWith(std::unique_ptr<ThreadController> controller,
+                              std::function<void(const Err&)> on_continue) {
+  ThreadController* controller_ptr = controller.get();
 
-  debug_ipc::ResumeRequest request;
-  request.process_koid = process_->GetKoid();
-  request.thread_koid = koid_;
-  request.how = debug_ipc::ResumeRequest::How::kStepInRange;
+  // Add it first so that its presence will be noted by anything its
+  // initialization function does.
+  controllers_.push_back(std::move(controller));
 
-  LineDetails line_details =
-      process_->GetSymbols()->LineDetailsForAddress(frames_[0]->GetAddress());
-  if (line_details.entries().empty()) {
-    // When there are no symbols, fall back to step instruction.
-    StepInstruction();
-    return Err();
+  controller_ptr->InitWithThread(
+      this, [ this, controller_ptr,
+              on_continue = std::move(on_continue) ](const Err& err) {
+        if (err.has_error())
+          NotifyControllerDone(controller_ptr);  // Remove the controller.
+        else
+          Continue();
+        on_continue(err);
+      });
+}
+
+void ThreadImpl::NotifyControllerDone(ThreadController* controller) {
+  // We expect to have few controllers so brute-force is sufficient.
+  for (auto cur = controllers_.begin(); cur != controllers_.end(); ++cur) {
+    if (cur->get() == controller) {
+      controllers_.erase(cur);
+      return;
+    }
   }
-
-  request.range_begin = line_details.entries()[0].range.begin();
-  request.range_end = line_details.entries().back().range.end();
-
-  session()->remote_api()->Resume(
-      request, [](const Err& err, debug_ipc::ResumeReply) {});
-  return Err();
+  FXL_NOTREACHED();  // Notification for unknown controller.
 }
 
 void ThreadImpl::StepInstruction() {
   debug_ipc::ResumeRequest request;
   request.process_koid = process_->GetKoid();
-  request.thread_koid = koid_;
+  request.thread_koids.push_back(koid_);
   request.how = debug_ipc::ResumeRequest::How::kStepInstruction;
   session()->remote_api()->Resume(
       request, [](const Err& err, debug_ipc::ResumeReply) {});
@@ -101,21 +139,31 @@ void ThreadImpl::SyncFrames(std::function<void()> callback) {
   request.process_koid = process_->GetKoid();
   request.thread_koid = koid_;
 
-  ClearFrames();
-
   session()->remote_api()->Backtrace(
-      request, [callback, thread = weak_factory_.GetWeakPtr()](
+      request, [ callback, thread = weak_factory_.GetWeakPtr() ](
                    const Err& err, debug_ipc::BacktraceReply reply) {
         if (!thread)
           return;
+        thread->SaveFrames(reply.frames, true);
+        if (callback)
+          callback();
+      });
+}
 
-        thread->HaveFrames(reply.frames, [thread, callback]() {
-          // HaveFrames will only issue the callback if the ThreadImpl is
-          // still in scope so we don't need a weak pointer here.
-          thread->has_all_frames_ = true;
-          if (callback)
-            callback();
-        });
+void ThreadImpl::GetRegisters(
+    std::function<void(const Err&, const RegisterSet&)> callback) {
+  debug_ipc::RegistersRequest request;
+  request.process_koid = process_->GetKoid();
+  request.thread_koid = koid_;
+
+  session()->remote_api()->Registers(
+      request, [ thread = weak_factory_.GetWeakPtr(), callback ](
+                   const Err& err, debug_ipc::RegistersReply reply) {
+        thread->registers_ = std::make_unique<RegisterSet>(
+            thread->session()->arch(), std::move(reply.categories));
+
+        if (callback)
+          callback(err, *thread->registers_.get());
       });
 }
 
@@ -136,40 +184,112 @@ void ThreadImpl::SetMetadata(const debug_ipc::ThreadRecord& record) {
     ClearFrames();
 }
 
-void ThreadImpl::OnException(const debug_ipc::NotifyException& notify) {
-  // Symbolize the stack frame before broadcasting the state change.
-  std::vector<debug_ipc::StackFrame> frame;
-  frame.push_back(notify.frame);
-  // HaveFrames will only issue the callback if the ThreadImpl is still in
-  // scope so we don't need a weak pointer here.
-  HaveFrames(frame, [notify, thread = this]() {
-    thread->SetMetadata(notify.thread);
+void ThreadImpl::SetMetadataFromException(
+    const debug_ipc::NotifyException& notify) {
+  SetMetadata(notify.thread);
 
-    // After an exception the thread should be blocked.
-    FXL_DCHECK(thread->state_ == debug_ipc::ThreadRecord::State::kBlocked);
+  // After an exception the thread should be blocked.
+  FXL_DCHECK(state_ == debug_ipc::ThreadRecord::State::kBlocked);
 
-    thread->has_all_frames_ = false;
-    ;
-    for (auto& observer : thread->observers())
-      observer.OnThreadStopped(thread, notify.type);
-  });
+  FXL_DCHECK(!notify.frames.empty());
+  SaveFrames(notify.frames, false);
 }
 
-void ThreadImpl::HaveFrames(const std::vector<debug_ipc::StackFrame>& frames,
-                            std::function<void()> callback) {
-  // TODO(brettw) need to preserve stack frames that haven't changed.
-  std::vector<uint64_t> addresses;
-  for (const auto& frame : frames)
-    addresses.push_back(frame.ip);
+void ThreadImpl::OnException(
+    debug_ipc::NotifyException::Type type,
+    const std::vector<fxl::WeakPtr<Breakpoint>>& hit_breakpoints) {
+  bool should_stop;
+  if (controllers_.empty()) {
+    // When there are no controllers, all stops are effective.
+    should_stop = true;
+  } else {
+    // Ask all controllers and continue only if all controllers agree the
+    // thread should continue. Multiple controllers should say "stop" at the
+    // same time and we need to be able to delete all that no longer apply
+    // (say you did "finish", hit a breakpoint, and then "finish" again, both
+    // finish commands would be active and you would want them both to be
+    // completed when the current frame actually finishes).
+    should_stop = false;
+    // Don't use iterators since the map is mutated in the loop.
+    for (int i = 0; i < static_cast<int>(controllers_.size()); i++) {
+      switch (controllers_[i]->OnThreadStop(type, hit_breakpoints)) {
+        case ThreadController::kContinue:
+          // Try the next controller.
+          continue;
+        case ThreadController::kStop:
+          // Once a controller tells us to stop, we assume the controller no
+          // longer applies and delete it.
+          controllers_.erase(controllers_.begin() + i);
+          should_stop = true;
+          i--;
+          break;
+      }
+    }
+  }
+
+  // The existance of any non-internal breakpoints being hit means the thread
+  // should always stop. This check happens after notifying the controllers so
+  // if a controller triggers, it's counted as a "hit" (otherwise, doing
+  // "run until" to a line with a normal breakpoint on it would keep the "run
+  // until" operation active even after it was hit).
+  //
+  // Also, filter out internal breakpoints in the notification sent to the
+  // observers.
+  std::vector<fxl::WeakPtr<Breakpoint>> external_breakpoints;
+  for (auto& hit : hit_breakpoints) {
+    if (!hit)
+      continue;
+
+    if (!hit->IsInternal()) {
+      external_breakpoints.push_back(hit);
+      should_stop = true;
+      break;
+    }
+  }
+
+  // Non-debug exceptions also mean the thread should always stop (check this
+  // after running the controllers for the same reason as the breakpoint check
+  // above).
+  if (type == debug_ipc::NotifyException::Type::kGeneral)
+    should_stop = true;
+
+  if (should_stop) {
+    // Stay stopped and notify the observers.
+    for (auto& observer : observers())
+      observer.OnThreadStopped(this, type, external_breakpoints);
+  } else {
+    // Controllers all say to continue.
+    Continue();
+  }
+}
+
+void ThreadImpl::SaveFrames(const std::vector<debug_ipc::StackFrame>& frames,
+                            bool have_all) {
+  // The goal is to preserve pointer identity for frames. If a frame is the
+  // same, weak pointers to it should remain valid.
+  using IpSp = std::pair<uint64_t, uint64_t>;
+  std::map<IpSp, std::unique_ptr<FrameImpl>> existing;
+  for (auto& cur : frames_) {
+    IpSp key(cur->GetAddress(), cur->GetStackPointer());
+    existing[key] = std::move(cur);
+  }
 
   frames_.clear();
   for (size_t i = 0; i < frames.size(); i++) {
-    frames_.push_back(std::make_unique<FrameImpl>(
-        this, frames[i], Location(Location::State::kAddress, frames[i].ip)));
+    IpSp key(frames[i].ip, frames[i].sp);
+    auto found = existing.find(key);
+    if (found == existing.end()) {
+      // New frame we haven't seen.
+      frames_.push_back(std::make_unique<FrameImpl>(
+          this, frames[i], Location(Location::State::kAddress, frames[i].ip)));
+    } else {
+      // Can re-use existing pointer.
+      frames_.push_back(std::move(found->second));
+      existing.erase(found);
+    }
   }
 
-  if (callback)
-    callback();
+  has_all_frames_ = have_all;
 }
 
 void ThreadImpl::ClearFrames() {
@@ -181,21 +301,6 @@ void ThreadImpl::ClearFrames() {
   frames_.clear();
   for (auto& observer : observers())
     observer.OnThreadFramesInvalidated(this);
-}
-
-void ThreadImpl::GetRegisters(
-    std::function<void(const Err&, std::vector<debug_ipc::Register>)>
-        callback) {
-  debug_ipc::RegistersRequest request;
-  request.process_koid = process_->GetKoid();
-  request.thread_koid = koid_;
-
-  session()->remote_api()->Registers(
-      request, [process = weak_factory_.GetWeakPtr(), callback](
-                   const Err& err, debug_ipc::RegistersReply reply) {
-        if (callback)
-          callback(err, std::move(reply.registers));
-      });
 }
 
 }  // namespace zxdb

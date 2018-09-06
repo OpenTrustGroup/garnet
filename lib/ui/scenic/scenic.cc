@@ -4,11 +4,11 @@
 
 #include "garnet/lib/ui/scenic/scenic.h"
 
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 
-namespace scenic {
+namespace scenic_impl {
 
-Scenic::Scenic(fuchsia::sys::StartupContext* app_context,
+Scenic::Scenic(component::StartupContext* app_context,
                fit::closure quit_callback)
     : app_context_(app_context), quit_callback_(std::move(quit_callback)) {
   FXL_DCHECK(app_context_);
@@ -101,4 +101,4 @@ void Scenic::GetDisplayOwnershipEvent(
   delegate->GetDisplayOwnershipEvent(std::move(callback));
 }
 
-}  // namespace scenic
+}  // namespace scenic_impl

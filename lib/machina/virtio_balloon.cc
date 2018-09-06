@@ -4,7 +4,6 @@
 
 #include "garnet/lib/machina/virtio_balloon.h"
 
-#include <fbl/auto_lock.h>
 #include <zircon/syscalls.h>
 
 namespace machina {
@@ -82,9 +81,9 @@ static zx_status_t queue_range_op(void* addr, uint32_t len, uint16_t flags,
   return ZX_OK;
 }
 
-zx_status_t VirtioBalloon::HandleDescriptor(uint16_t queue_sel) {
+zx_status_t VirtioBalloon::HandleDescriptor(uint16_t queue) {
   queue_ctx_t ctx;
-  switch (queue_sel) {
+  switch (queue) {
     case VIRTIO_BALLOON_Q_STATSQ:
       return ZX_OK;
     case VIRTIO_BALLOON_Q_INFLATEQ:
@@ -99,23 +98,25 @@ zx_status_t VirtioBalloon::HandleDescriptor(uint16_t queue_sel) {
     default:
       return ZX_ERR_INVALID_ARGS;
   }
-  ctx.vmo = phys_mem().vmo().get();
-  return queue(queue_sel)->HandleDescriptor(&queue_range_op, &ctx);
+  ctx.vmo = phys_mem_.vmo().get();
+  return queues_[queue].HandleDescriptor(&queue_range_op, &ctx);
 }
 
-zx_status_t VirtioBalloon::HandleQueueNotify(uint16_t queue_sel) {
+zx_status_t VirtioBalloon::HandleQueueNotify(uint16_t queue) {
   zx_status_t status;
   do {
-    status = HandleDescriptor(queue_sel);
+    status = HandleDescriptor(queue);
   } while (status == ZX_ERR_NEXT);
-  return status;
+  if (status != ZX_OK) {
+    return status;
+  }
+  return NotifyQueue(queue);
 }
 
 VirtioBalloon::VirtioBalloon(const PhysMem& phys_mem)
-    : VirtioDeviceBase(phys_mem) {
-  add_device_features(VIRTIO_BALLOON_F_STATS_VQ |
-                      VIRTIO_BALLOON_F_DEFLATE_ON_OOM);
-}
+    : VirtioDevice(phys_mem,
+                   VIRTIO_BALLOON_F_STATS_VQ | VIRTIO_BALLOON_F_DEFLATE_ON_OOM,
+                   fit::bind_member(this, &VirtioBalloon::HandleQueueNotify)) {}
 
 void VirtioBalloon::WaitForStatsBuffer(VirtioQueue* stats_queue) {
   if (!stats_.has_buffer) {
@@ -130,7 +131,7 @@ zx_status_t VirtioBalloon::RequestStats(StatsHandler handler) {
   // stats.mutex needs to be held during the entire time the guest is
   // processing the buffer since we need to make sure no other threads
   // can grab the returned stats buffer before we process it.
-  fbl::AutoLock lock(&stats_.mutex);
+  std::lock_guard<std::mutex> lock(stats_.mutex);
 
   // We need an initial buffer we can return to return to the device to
   // request stats from the device. This should be immediately available in
@@ -146,7 +147,7 @@ zx_status_t VirtioBalloon::RequestStats(StatsHandler handler) {
   }
   WaitForStatsBuffer(stats_queue);
 
-  virtio_desc_t desc;
+  VirtioDescriptor desc;
   status = stats_queue->ReadDesc(stats_.desc_index, &desc);
   if (status != ZX_OK) {
     return status;
@@ -168,17 +169,16 @@ zx_status_t VirtioBalloon::RequestStats(StatsHandler handler) {
 
 zx_status_t VirtioBalloon::UpdateNumPages(uint32_t num_pages) {
   {
-    fbl::AutoLock lock(&config_mutex_);
+    std::lock_guard<std::mutex> lock(device_config_.mutex);
     config_.num_pages = num_pages;
   }
 
   // Send a config change interrupt to the guest.
-  add_isr_flags(VirtioDevice::VIRTIO_ISR_DEVICE);
-  return NotifyGuest();
+  return Interrupt(VirtioQueue::SET_CONFIG | VirtioQueue::TRY_INTERRUPT);
 }
 
 uint32_t VirtioBalloon::num_pages() {
-  fbl::AutoLock lock(&config_mutex_);
+  std::lock_guard<std::mutex> lock(device_config_.mutex);
   return config_.num_pages;
 }
 

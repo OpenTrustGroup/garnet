@@ -23,13 +23,13 @@
 #include <zircon/syscalls/hypervisor.h>
 
 #include "garnet/bin/guest/vmm/guest_config.h"
+#include "garnet/bin/guest/vmm/guest_controller_impl.h"
 #include "garnet/bin/guest/vmm/guest_view.h"
 #include "garnet/bin/guest/vmm/linux.h"
 #include "garnet/bin/guest/vmm/zircon.h"
 #include "garnet/lib/machina/address.h"
 #include "garnet/lib/machina/framebuffer_scanout.h"
 #include "garnet/lib/machina/guest.h"
-#include "garnet/lib/machina/guest_controller_impl.h"
 #include "garnet/lib/machina/hid_event_source.h"
 #include "garnet/lib/machina/input_dispatcher.h"
 #include "garnet/lib/machina/interrupt_controller.h"
@@ -44,7 +44,7 @@
 #include "garnet/lib/machina/virtio_net.h"
 #include "garnet/lib/machina/virtio_vsock.h"
 #include "garnet/public/lib/fxl/files/file.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 
 #if __aarch64__
 #include "garnet/lib/machina/arch/arm64/pl031.h"
@@ -58,7 +58,6 @@ static constexpr uint64_t kUartBases[kNumUarts] = {
 #include "garnet/lib/machina/arch/x86/acpi.h"
 #include "garnet/lib/machina/arch/x86/io_port.h"
 #include "garnet/lib/machina/arch/x86/page_table.h"
-#include "garnet/lib/machina/arch/x86/tpm.h"
 
 static constexpr char kDsdtPath[] = "/pkg/data/dsdt.aml";
 static constexpr char kMcfgPath[] = "/pkg/data/mcfg.aml";
@@ -94,7 +93,8 @@ static void balloon_stats_handler(machina::VirtioBalloon* balloon,
                   << " -> " << std::hex << target_pages;
     zx_status_t status = balloon->UpdateNumPages(target_pages);
     if (status != ZX_OK) {
-      FXL_LOG(ERROR) << "Error " << status << " updating balloon size";
+      FXL_LOG(ERROR) << "Error " << status << " updating balloon size "
+                     << status;
     }
     return;
   }
@@ -154,9 +154,9 @@ static zx_status_t setup_zircon_framebuffer(
 }
 
 static zx_status_t setup_scenic_framebuffer(
-    fuchsia::sys::StartupContext* startup_context, machina::VirtioGpu* gpu,
+    component::StartupContext* startup_context, machina::VirtioGpu* gpu,
     machina::InputDispatcher* input_dispatcher,
-    machina::GuestControllerImpl* guest_controller,
+    GuestControllerImpl* guest_controller,
     fbl::unique_ptr<machina::GpuScanout>* scanout) {
   fbl::unique_ptr<ScenicScanout> scenic_scanout;
   zx_status_t status =
@@ -183,10 +183,10 @@ static zx_status_t read_guest_cfg(const char* cfg_path, int argc, char** argv,
 }
 
 int main(int argc, char** argv) {
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
-  trace::TraceProvider trace_provider(loop.async());
-  std::unique_ptr<fuchsia::sys::StartupContext> startup_context =
-      fuchsia::sys::StartupContext::CreateFromStartupInfo();
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
+  trace::TraceProvider trace_provider(loop.dispatcher());
+  std::unique_ptr<component::StartupContext> startup_context =
+      component::StartupContext::CreateFromStartupInfo();
 
   GuestConfig cfg;
   zx_status_t status =
@@ -202,102 +202,35 @@ int main(int argc, char** argv) {
   }
 
   // Instantiate the controller service.
-  machina::GuestControllerImpl guest_controller(startup_context.get(),
-                                                guest.phys_mem());
-
-#if __x86_64__
-  status = machina::create_page_table(guest.phys_mem());
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to create page table";
-    return status;
-  }
-
-  machina::AcpiConfig acpi_cfg = {
-      .dsdt_path = kDsdtPath,
-      .mcfg_path = kMcfgPath,
-      .io_apic_addr = machina::kIoApicPhysBase,
-      .num_cpus = cfg.num_cpus(),
-  };
-  status = machina::create_acpi_table(acpi_cfg, guest.phys_mem());
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to create ACPI table";
-    return status;
-  }
-#endif  // __x86_64__
-
-  // Setup kernel.
-  uintptr_t guest_ip = 0;
-  uintptr_t boot_ptr = 0;
-  switch (cfg.kernel()) {
-    case Kernel::ZIRCON:
-      status = setup_zircon(cfg, guest.phys_mem(), &guest_ip, &boot_ptr);
-      break;
-    case Kernel::LINUX:
-      status = setup_linux(cfg, guest.phys_mem(), &guest_ip, &boot_ptr);
-      break;
-    default:
-      FXL_LOG(ERROR) << "Unknown kernel";
-      return ZX_ERR_INVALID_ARGS;
-  }
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to load kernel " << cfg.kernel_path();
-    return status;
-  }
+  GuestControllerImpl guest_controller(startup_context.get(), guest.phys_mem());
 
   // Setup UARTs.
   machina::Uart uart[kNumUarts];
   for (size_t i = 0; i < kNumUarts; i++) {
     status = uart[i].Init(&guest, kUartBases[i]);
     if (status != ZX_OK) {
-      FXL_LOG(ERROR) << "Failed to create UART at " << std::hex
-                     << kUartBases[i];
+      FXL_LOG(ERROR) << "Failed to create UART at " << std::hex << kUartBases[i]
+                     << " " << status;
       return status;
     }
   }
   // Setup interrupt controller.
   machina::InterruptController interrupt_controller;
 #if __aarch64__
-  status = interrupt_controller.Init(&guest, cfg.gic_version());
+  status = interrupt_controller.Init(&guest, cfg.gic_version(), cfg.num_cpus());
 #elif __x86_64__
   status = interrupt_controller.Init(&guest);
 #endif
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to create interrupt controller";
+    FXL_LOG(ERROR) << "Failed to create interrupt controller " << status;
     return status;
   }
-
-  auto initialize_vcpu = [boot_ptr, &interrupt_controller](
-                             machina::Guest* guest, uintptr_t guest_ip,
-                             uint64_t id, machina::Vcpu* vcpu) {
-    zx_status_t status = vcpu->Create(guest, guest_ip, id);
-    if (status != ZX_OK) {
-      FXL_LOG(ERROR) << "Failed to create VCPU";
-      return status;
-    }
-    // Register VCPU with ID 0.
-    status = interrupt_controller.RegisterVcpu(id, vcpu);
-    if (status != ZX_OK) {
-      FXL_LOG(ERROR) << "Failed to register VCPU with interrupt controller";
-      return status;
-    }
-    // Setup initial VCPU state.
-    zx_vcpu_state_t vcpu_state = {};
-#if __aarch64__
-    vcpu_state.x[0] = boot_ptr;
-#elif __x86_64__
-    vcpu_state.rsi = boot_ptr;
-#endif
-    // Begin VCPU execution.
-    return vcpu->Start(&vcpu_state);
-  };
-
-  guest.RegisterVcpuFactory(initialize_vcpu);
 
 #if __aarch64__
   machina::Pl031 pl031;
   status = pl031.Init(&guest);
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to create PL031 RTC";
+    FXL_LOG(ERROR) << "Failed to create PL031 RTC " << status;
     return status;
   }
 #elif __x86_64__
@@ -305,14 +238,7 @@ int main(int argc, char** argv) {
   machina::IoPort io_port;
   status = io_port.Init(&guest);
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to create IO ports";
-    return status;
-  }
-  // Setup TPM
-  machina::Tpm tpm;
-  status = tpm.Init(&guest);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to create TPM";
+    FXL_LOG(ERROR) << "Failed to create IO ports " << status;
     return status;
   }
 #endif
@@ -321,7 +247,7 @@ int main(int argc, char** argv) {
   machina::PciBus bus(&guest, &interrupt_controller);
   status = bus.Init();
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to create PCI bus";
+    FXL_LOG(ERROR) << "Failed to create PCI bus " << status;
     return status;
   }
 
@@ -337,9 +263,9 @@ int main(int argc, char** argv) {
   }
 
   // Setup block device.
-  std::vector<fbl::unique_ptr<machina::VirtioBlock>> block_devices;
+  std::vector<std::unique_ptr<machina::VirtioBlock>> block_devices;
   for (const auto& block_spec : cfg.block_devices()) {
-    fbl::unique_ptr<machina::BlockDispatcher> dispatcher;
+    std::unique_ptr<machina::BlockDispatcher> dispatcher;
     if (!block_spec.path.empty()) {
       status = machina::BlockDispatcher::CreateFromPath(
           block_spec.path.c_str(), block_spec.mode, block_spec.data_plane,
@@ -350,7 +276,7 @@ int main(int argc, char** argv) {
           block_spec.mode, block_spec.data_plane, guest.phys_mem(),
           &dispatcher);
     } else {
-      FXL_LOG(ERROR) << "Block spec missing path or GUID attributes";
+      FXL_LOG(ERROR) << "Block spec missing path or GUID attributes " << status;
       return ZX_ERR_INVALID_ARGS;
     }
     if (status != ZX_OK) {
@@ -359,19 +285,16 @@ int main(int argc, char** argv) {
     }
     if (block_spec.volatile_writes) {
       status = machina::BlockDispatcher::CreateVolatileWrapper(
-          fbl::move(dispatcher), &dispatcher);
+          std::move(dispatcher), &dispatcher);
       if (status != ZX_OK) {
-        FXL_LOG(ERROR) << "Failed to create volatile block dispatcher";
+        FXL_LOG(ERROR) << "Failed to create volatile block dispatcher "
+                       << status;
         return status;
       }
     }
 
-    auto block = fbl::make_unique<machina::VirtioBlock>(guest.phys_mem());
-    status = block->SetDispatcher(fbl::move(dispatcher));
-    if (status != ZX_OK) {
-      FXL_LOG(ERROR) << "Failed to set block dispatcher " << status;
-      return status;
-    }
+    auto block = std::make_unique<machina::VirtioBlock>(guest.phys_mem(),
+                                                        std::move(dispatcher));
     status = block->Start();
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "Failed to start block device " << status;
@@ -381,11 +304,11 @@ int main(int argc, char** argv) {
     if (status != ZX_OK) {
       return status;
     }
-    block_devices.push_back(fbl::move(block));
+    block_devices.push_back(std::move(block));
   }
 
   // Setup console
-  machina::VirtioConsole console(guest.phys_mem(), guest.device_async(),
+  machina::VirtioConsole console(guest.phys_mem(), guest.device_dispatcher(),
                                  guest_controller.TakeSocket());
   status = console.Start();
   if (status != ZX_OK) {
@@ -407,7 +330,7 @@ int main(int argc, char** argv) {
   machina::VirtioAbsolutePointer touch(
       input_dispatcher.Touch(), guest.phys_mem(), "machina-touch",
       "serial-number", kGuestViewDisplayWidth, kGuestViewDisplayHeight);
-  machina::VirtioGpu gpu(guest.phys_mem(), guest.device_async());
+  machina::VirtioGpu gpu(guest.phys_mem(), guest.device_dispatcher());
   fbl::unique_ptr<machina::GpuScanout> gpu_scanout;
 
   if (cfg.display() != GuestDisplay::NONE) {
@@ -477,25 +400,99 @@ int main(int argc, char** argv) {
   }
 
   // Setup net device.
-  machina::VirtioNet net(guest.phys_mem(), guest.device_async());
-  status = net.Start("/dev/class/ethernet/000");
-  if (status == ZX_OK) {
-    // If we started the net device, then connect to the PCI bus.
-    status = bus.Connect(net.pci_device());
-    if (status != ZX_OK) {
-      return status;
+  machina::VirtioNet net(guest.phys_mem(), guest.device_dispatcher());
+  if (cfg.network()) {
+    status = net.Start("/dev/class/ethernet/000");
+    if (status == ZX_OK) {
+      // If we started the net device, then connect to the PCI bus.
+      status = bus.Connect(net.pci_device());
+      if (status != ZX_OK) {
+        return status;
+      }
+    } else {
+      FXL_LOG(INFO) << "Could not open Ethernet device";
     }
-  } else {
-    FXL_LOG(INFO) << "Could not open Ethernet device";
   }
 
   // Setup vsock device.
   machina::VirtioVsock vsock(startup_context.get(), guest.phys_mem(),
-                             guest.device_async());
+                             guest.device_dispatcher());
   status = bus.Connect(vsock.pci_device());
   if (status != ZX_OK) {
     return status;
   }
+
+#if __x86_64__
+  status = machina::create_page_table(guest.phys_mem());
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to create page table " << status;
+    return status;
+  }
+
+  machina::AcpiConfig acpi_cfg = {
+      .dsdt_path = kDsdtPath,
+      .mcfg_path = kMcfgPath,
+      .io_apic_addr = machina::kIoApicPhysBase,
+      .num_cpus = cfg.num_cpus(),
+  };
+  status = machina::create_acpi_table(acpi_cfg, guest.phys_mem());
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to create ACPI table " << status;
+    return status;
+  }
+#endif  // __x86_64__
+
+  // Setup kernel.
+  machina::DevMem dev_mem;
+  uintptr_t guest_ip = 0;
+  uintptr_t boot_ptr = 0;
+  switch (cfg.kernel()) {
+    case Kernel::ZIRCON:
+      status =
+          setup_zircon(cfg, guest.phys_mem(), dev_mem, &guest_ip, &boot_ptr);
+      break;
+    case Kernel::LINUX:
+      status =
+          setup_linux(cfg, guest.phys_mem(), dev_mem, &guest_ip, &boot_ptr);
+      break;
+    default:
+      FXL_LOG(ERROR) << "Unknown kernel";
+      return ZX_ERR_INVALID_ARGS;
+  }
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to load kernel " << cfg.kernel_path() << " "
+                   << status;
+    return status;
+  }
+
+  // Setup VCPUs.
+  auto initialize_vcpu = [boot_ptr, &interrupt_controller](
+                             machina::Guest* guest, uintptr_t guest_ip,
+                             uint64_t id, machina::Vcpu* vcpu) {
+    zx_status_t status = vcpu->Create(guest, guest_ip, id);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to create VCPU " << status;
+      return status;
+    }
+    // Register VCPU with interrupt controller.
+    status = interrupt_controller.RegisterVcpu(id, vcpu);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to register VCPU with interrupt controller "
+                     << status;
+      return status;
+    }
+    // Setup initial VCPU state.
+    zx_vcpu_state_t vcpu_state = {};
+#if __aarch64__
+    vcpu_state.x[0] = boot_ptr;
+#elif __x86_64__
+    vcpu_state.rsi = boot_ptr;
+#endif
+    // Begin VCPU execution.
+    return vcpu->Start(&vcpu_state);
+  };
+
+  guest.RegisterVcpuFactory(initialize_vcpu);
 
   // GPU back-ends can take some time to initialize. Wait for them to be
   // created before starting the VCPU so that we can ensure we have the
@@ -508,8 +505,9 @@ int main(int argc, char** argv) {
     }
   };
   if (gpu_scanout) {
-    gpu_scanout->WhenReady(
-        [&loop, &start_task] { async::PostTask(loop.async(), start_task); });
+    gpu_scanout->WhenReady([&loop, &start_task] {
+      async::PostTask(loop.dispatcher(), start_task);
+    });
 
   } else {
     start_task();

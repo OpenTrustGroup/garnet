@@ -14,13 +14,15 @@ namespace examples {
 class SpinningSquareView : public mozart::BaseView {
  public:
   SpinningSquareView(
-      ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-      fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner> view_owner_request);
+      ::fuchsia::ui::viewsv1::ViewManagerPtr view_manager,
+      fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
+          view_owner_request);
   ~SpinningSquareView() override;
 
  private:
   // |BaseView|:
-  void OnSceneInvalidated(fuchsia::images::PresentationInfo presentation_info) override;
+  void OnSceneInvalidated(
+      fuchsia::images::PresentationInfo presentation_info) override;
 
   scenic::ShapeNode background_node_;
   scenic::ShapeNode square_node_;

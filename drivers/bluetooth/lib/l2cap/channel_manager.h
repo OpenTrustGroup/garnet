@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_CHANNEL_MANAGER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_CHANNEL_MANAGER_H_
 
 #include <memory>
 #include <mutex>
@@ -53,7 +54,7 @@ class ChannelManager final {
  public:
   using LinkErrorCallback = fit::closure;
 
-  ChannelManager(fxl::RefPtr<hci::Transport> hci, async_t* l2cap_dispatcher);
+  ChannelManager(fxl::RefPtr<hci::Transport> hci, async_dispatcher_t* l2cap_dispatcher);
   ~ChannelManager();
 
   // Registers the ACL connection with the L2CAP layer. L2CAP channels can be
@@ -68,7 +69,7 @@ class ChannelManager final {
   void RegisterACL(hci::ConnectionHandle handle,
                    hci::Connection::Role role,
                    LinkErrorCallback link_error_callback,
-                   async_t* dispatcher);
+                   async_dispatcher_t* dispatcher);
 
   // Registers a LE connection with the L2CAP layer. L2CAP channels can be
   // opened on the logical link represented by |handle| after a call to this
@@ -90,7 +91,7 @@ class ChannelManager final {
                   hci::Connection::Role role,
                   LEConnectionParameterUpdateCallback conn_param_callback,
                   LinkErrorCallback link_error_callback,
-                  async_t* dispatcher);
+                  async_dispatcher_t* dispatcher);
 
   // Removes a previously registered connection. All corresponding Channels will
   // be closed and all incoming data packets on this link will be dropped.
@@ -119,7 +120,7 @@ class ChannelManager final {
                                           hci::Connection::Role role);
 
   fxl::RefPtr<hci::Transport> hci_;
-  async_t* l2cap_dispatcher_;
+  async_dispatcher_t* l2cap_dispatcher_;
 
   using LinkMap = std::unordered_map<hci::ConnectionHandle,
                                      std::unique_ptr<internal::LogicalLink>>;
@@ -140,3 +141,5 @@ class ChannelManager final {
 
 }  // namespace l2cap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_CHANNEL_MANAGER_H_

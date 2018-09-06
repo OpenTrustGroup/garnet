@@ -18,16 +18,12 @@
  * For certain dcmd codes, the dongle interprets string data from the host.
  ******************************************************************************/
 
-//#include <linux/etherdevice.h>
-//#include <linux/netdevice.h>
-//#include <linux/types.h>
-
 #include "msgbuf.h"
 
 #include <stdatomic.h>
 #include <threads.h>
 
-#include <sync/completion.h>
+#include <lib/sync/completion.h>
 
 #include "brcmu_utils.h"
 #include "brcmu_wifi.h"
@@ -255,7 +251,7 @@ struct brcmf_msgbuf {
     uint16_t data_seq_no;
     uint16_t ioctl_seq_no;
     uint32_t reqid;
-    completion_t ioctl_resp_wait;
+    sync_completion_t ioctl_resp_wait;
 
     struct brcmf_msgbuf_pktids* tx_pktids;
     struct brcmf_msgbuf_pktids* rx_pktids;
@@ -457,11 +453,11 @@ static zx_status_t brcmf_msgbuf_tx_ioctl(struct brcmf_pub* drvr, int ifidx, uint
 }
 
 static zx_status_t brcmf_msgbuf_ioctl_resp_wait(struct brcmf_msgbuf* msgbuf) {
-    return completion_wait(&msgbuf->ioctl_resp_wait, ZX_MSEC(MSGBUF_IOCTL_RESP_TIMEOUT_MSEC));
+    return sync_completion_wait(&msgbuf->ioctl_resp_wait, ZX_MSEC(MSGBUF_IOCTL_RESP_TIMEOUT_MSEC));
 }
 
 static void brcmf_msgbuf_ioctl_resp_wake(struct brcmf_msgbuf* msgbuf) {
-    completion_signal(&msgbuf->ioctl_resp_wait);
+    sync_completion_signal(&msgbuf->ioctl_resp_wait);
 }
 
 static zx_status_t brcmf_msgbuf_query_dcmd(struct brcmf_pub* drvr, int ifidx, uint cmd, void* buf,
@@ -472,7 +468,7 @@ static zx_status_t brcmf_msgbuf_query_dcmd(struct brcmf_pub* drvr, int ifidx, ui
 
     brcmf_dbg(MSGBUF, "ifidx=%d, cmd=%d, len=%d\n", ifidx, cmd, len);
     *fwerr = ZX_OK;
-    completion_reset(&msgbuf->ioctl_resp_wait);
+    sync_completion_reset(&msgbuf->ioctl_resp_wait);
     err = brcmf_msgbuf_tx_ioctl(drvr, ifidx, cmd, buf, len);
     if (err != ZX_OK) {
         return err;
@@ -531,9 +527,9 @@ static struct brcmf_msgbuf_work_item* brcmf_msgbuf_dequeue_work(struct brcmf_msg
 
     //spin_lock_irqsave(&msgbuf->flowring_work_lock, flags);
     pthread_mutex_lock(&irq_callback_lock);
-    if (!list_empty(&msgbuf->work_queue)) {
-        work = list_first_entry(&msgbuf->work_queue, struct brcmf_msgbuf_work_item, queue);
-        list_del(&work->queue);
+    if (!list_is_empty(&msgbuf->work_queue)) {
+        work = list_peek_head_type(&msgbuf->work_queue, struct brcmf_msgbuf_work_item, queue);
+        list_delete(&work->queue);
     }
     //spin_unlock_irqrestore(&msgbuf->flowring_work_lock, flags);
     pthread_mutex_unlock(&irq_callback_lock);
@@ -555,7 +551,7 @@ static uint32_t brcmf_msgbuf_flowring_create_worker(struct brcmf_msgbuf* msgbuf,
     flowid = work->flowid;
     dma_sz = BRCMF_H2D_TXFLOWRING_MAX_ITEM * BRCMF_H2D_TXFLOWRING_ITEMSIZE;
     dma_buf = dma_alloc_coherent(msgbuf->drvr->bus_if->dev, dma_sz,
-                                 &msgbuf->flowring_dma_handle[flowid], GFP_KERNEL);
+                                 &msgbuf->flowring_dma_handle[flowid]);
     if (!dma_buf) {
         brcmf_err("dma_alloc_coherent failed\n");
         brcmf_flowring_delete(msgbuf->flow, flowid);
@@ -607,7 +603,7 @@ static void brcmf_msgbuf_flowring_worker(struct work_struct* work) {
     struct brcmf_msgbuf* msgbuf;
     struct brcmf_msgbuf_work_item* create;
 
-    msgbuf = container_of(work, struct brcmf_msgbuf, flowring_work);
+    msgbuf = containerof(work, struct brcmf_msgbuf, flowring_work);
 
     while ((create = brcmf_msgbuf_dequeue_work(msgbuf))) {
         brcmf_msgbuf_flowring_create_worker(msgbuf, create);
@@ -718,7 +714,7 @@ static void brcmf_msgbuf_txflow_worker(struct work_struct* worker) {
     struct brcmf_msgbuf* msgbuf;
     uint32_t flowid;
 
-    msgbuf = container_of(worker, struct brcmf_msgbuf, txflow_work);
+    msgbuf = containerof(worker, struct brcmf_msgbuf, txflow_work);
     for_each_set_bit(flowid, msgbuf->flow_map, msgbuf->max_flowrings) {
         brcmf_clear_bit_in_array(flowid, msgbuf->flow_map);
         brcmf_msgbuf_txflow(msgbuf, flowid);
@@ -1188,7 +1184,7 @@ again:
 }
 
 zx_status_t brcmf_proto_msgbuf_rx_trigger(struct brcmf_device* dev) {
-    struct brcmf_bus* bus_if = dev_get_drvdata(dev);
+    struct brcmf_bus* bus_if = dev_to_bus(dev);
     struct brcmf_pub* drvr = bus_if->drvr;
     struct brcmf_msgbuf* msgbuf = (struct brcmf_msgbuf*)drvr->proto->pd;
     struct brcmf_commonring* commonring;
@@ -1258,7 +1254,7 @@ void brcmf_msgbuf_delete_flowring(struct brcmf_pub* drvr, uint16_t flowid) {
 
 #ifdef DEBUG
 static zx_status_t brcmf_msgbuf_stats_read(struct seq_file* seq, void* data) {
-    struct brcmf_bus* bus_if = dev_get_drvdata(seq->private);
+    struct brcmf_bus* bus_if = dev_to_bus(seq->private);
     struct brcmf_pub* drvr = bus_if->drvr;
     struct brcmf_msgbuf* msgbuf = (struct brcmf_msgbuf*)drvr->proto->pd;
     struct brcmf_commonring* commonring;
@@ -1350,7 +1346,7 @@ zx_status_t brcmf_proto_msgbuf_attach(struct brcmf_pub* drvr) {
 
     msgbuf->drvr = drvr;
     msgbuf->ioctbuf = dma_alloc_coherent(drvr->bus_if->dev, BRCMF_TX_IOCTL_MAX_MSG_SIZE,
-                                         &msgbuf->ioctbuf_handle, GFP_KERNEL);
+                                         &msgbuf->ioctbuf_handle);
     if (!msgbuf->ioctbuf) {
         goto fail;
     }
@@ -1368,7 +1364,7 @@ zx_status_t brcmf_proto_msgbuf_attach(struct brcmf_pub* drvr) {
     drvr->proto->rxreorder = brcmf_msgbuf_rxreorder;
     drvr->proto->pd = msgbuf;
 
-    msgbuf->ioctl_resp_wait = COMPLETION_INIT;
+    msgbuf->ioctl_resp_wait = SYNC_COMPLETION_INIT;
 
     msgbuf->commonrings = (struct brcmf_commonring**)if_msgbuf->commonrings;
     msgbuf->flowrings = (struct brcmf_commonring**)if_msgbuf->flowrings;
@@ -1416,7 +1412,7 @@ zx_status_t brcmf_proto_msgbuf_attach(struct brcmf_pub* drvr) {
 
     workqueue_init_work(&msgbuf->flowring_work, brcmf_msgbuf_flowring_worker);
     //spin_lock_init(&msgbuf->flowring_work_lock);
-    INIT_LIST_HEAD(&msgbuf->work_queue);
+    list_initialize(&msgbuf->work_queue);
 
     brcmf_debugfs_add_entry(drvr, "msgbuf_stats", brcmf_msgbuf_stats_read);
 
@@ -1444,9 +1440,9 @@ void brcmf_proto_msgbuf_detach(struct brcmf_pub* drvr) {
     if (drvr->proto->pd) {
         msgbuf = (struct brcmf_msgbuf*)drvr->proto->pd;
         workqueue_cancel_work(&msgbuf->flowring_work);
-        while (!list_empty(&msgbuf->work_queue)) {
-            work = list_first_entry(&msgbuf->work_queue, struct brcmf_msgbuf_work_item, queue);
-            list_del(&work->queue);
+        while (!list_is_empty(&msgbuf->work_queue)) {
+            work = list_peek_head_type(&msgbuf->work_queue, struct brcmf_msgbuf_work_item, queue);
+            list_delete(&work->queue);
             free(work);
         }
         free(msgbuf->flow_map);

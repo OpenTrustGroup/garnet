@@ -6,18 +6,17 @@
 
 #include "garnet/lib/ui/gfx/tests/mocks.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 namespace test {
 
 void SessionTest::SetUp() {
   engine_ = std::unique_ptr<Engine>(CreateEngine());
-  session_ = fxl::MakeRefCounted<SessionForTest>(1, engine_.get(), this, this);
+  session_ = fxl::MakeRefCounted<SessionForTest>(1, engine_.get(), this,
+                                                 error_reporter());
 }
 
-// ::testing::Test virtual method.
 void SessionTest::TearDown() {
-  reported_errors_.clear();
   session_->TearDown();
   session_ = nullptr;
   engine_.reset();
@@ -27,33 +26,24 @@ std::unique_ptr<Engine> SessionTest::CreateEngine() {
   return std::make_unique<EngineForTest>(&display_manager_, nullptr);
 }
 
-void SessionTest::ReportError(fxl::LogSeverity severity,
-                              std::string error_string) {
-// Typically, we don't want to log expected errors when running the tests.
-// However, it is useful to print these errors while writing the tests.
-#if 0
-  switch (severity) {
-    case ::fxl::LOG_INFO:
-      FXL_LOG(INFO) << error_string;
-      break;
-    case ::fxl::LOG_WARNING:
-      FXL_LOG(WARNING) << error_string;
-      break;
-    case ::fxl::LOG_ERROR:
-      FXL_LOG(ERROR) << error_string;
-      break;
-    case ::fxl::LOG_FATAL:
-      FXL_LOG(FATAL) << error_string;
-      break;
-  }
-#endif
-  reported_errors_.push_back(error_string);
+void SessionTest::EnqueueEvent(fuchsia::ui::gfx::Event event) {
+  fuchsia::ui::scenic::Event scenic_event;
+  scenic_event.set_gfx(std::move(event));
+  events_.push_back(std::move(scenic_event));
 }
 
-void SessionTest::EnqueueEvent(fuchsia::ui::scenic::Event event) {
-  events_.push_back(std::move(event));
+void SessionTest::EnqueueEvent(fuchsia::ui::input::InputEvent event) {
+  fuchsia::ui::scenic::Event scenic_event;
+  scenic_event.set_input(std::move(event));
+  events_.push_back(std::move(scenic_event));
+}
+
+void SessionTest::EnqueueEvent(fuchsia::ui::scenic::Command unhandled) {
+  fuchsia::ui::scenic::Event scenic_event;
+  scenic_event.set_unhandled(std::move(unhandled));
+  events_.push_back(std::move(scenic_event));
 }
 
 }  // namespace test
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

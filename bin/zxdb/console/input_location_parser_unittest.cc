@@ -3,33 +3,16 @@
 // found in the LICENSE file.
 
 #include "garnet/bin/zxdb/console/input_location_parser.h"
-#include "garnet/bin/zxdb/client/frame.h"
+#include "garnet/bin/zxdb/client/mock_frame.h"
 #include "garnet/bin/zxdb/client/symbols/location.h"
 #include "gtest/gtest.h"
 
 namespace zxdb {
 
-namespace {
-
-// Implements only the location getter since that's all that's needed for
-// breakpoint resolving.
-class DummyFrame : public Frame {
- public:
-  explicit DummyFrame(const Location& loc) : Frame(nullptr), location_(loc) {}
-  ~DummyFrame() override {}
-
-  Thread* GetThread() const override { return nullptr; }
-  const Location& GetLocation() const override { return location_; }
-  uint64_t GetAddress() const override { return location_.address(); }
-
- private:
-  Location location_;
-};
-
-}  // namespace
-
 TEST(InputLocationParser, Parse) {
   InputLocation location;
+
+  SymbolContext relative_context = SymbolContext::ForRelativeAddresses();
 
   // Valid symbol (including colons).
   Err err = ParseInputLocation(nullptr, "Foo::Bar", &location);
@@ -68,14 +51,19 @@ TEST(InputLocationParser, Parse) {
   EXPECT_TRUE(err.has_error());
 
   // Implicit file name and valid frame but the location has no file name.
-  DummyFrame frame_no_file(Location(0x1234, FileLine(), 0, "Func"));
+  debug_ipc::StackFrame stack_frame = {0x1234, 0x12345678};
+  MockFrame frame_no_file(
+      nullptr, nullptr, stack_frame,
+      Location(0x1234, FileLine(), 0, relative_context, LazySymbol()));
   location = InputLocation();
   err = ParseInputLocation(&frame_no_file, "21", &location);
   EXPECT_TRUE(err.has_error());
 
   // Valid implicit file name.
   std::string file = "foo.cc";
-  DummyFrame frame_valid(Location(0x1234, FileLine(file, 12), 0, "Func"));
+  MockFrame frame_valid(
+      nullptr, nullptr, stack_frame,
+      Location(0x1234, FileLine(file, 12), 0, relative_context, LazySymbol()));
   location = InputLocation();
   err = ParseInputLocation(&frame_valid, "21", &location);
   EXPECT_FALSE(err.has_error()) << err.msg();

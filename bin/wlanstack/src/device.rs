@@ -2,33 +2,42 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use async::TimeoutExt;
-use device_watch::{self, NewIfaceDevice};
-use failure::Error;
-use fidl_mlme::{self, DeviceQueryConfirm, MlmeEventStream};
+use failure::{bail, Error, format_err, ResultExt};
+use fidl_fuchsia_wlan_device as fidl_wlan_dev;
+use fidl_fuchsia_wlan_mlme::{self as fidl_mlme, DeviceQueryConfirm, MlmeEventStream};
+use fuchsia_async::Timer;
+use fuchsia_wlan_dev as wlan_dev;
+use fuchsia_zircon::prelude::*;
 use futures::prelude::*;
-use futures::{stream, channel::mpsc};
-use station;
-use stats_scheduler::{self, StatsScheduler};
+use futures::channel::mpsc;
+use futures::select;
+use log::{error, info, log, warn};
+use pin_utils::pin_mut;
 use std::collections::HashSet;
-use watchable_map::WatchableMap;
-use wlan;
-use wlan_dev;
-use wlan_sme;
-use zx::prelude::*;
-
+use std::future::FutureObj;
+use std::marker::Unpin;
 use std::sync::Arc;
+use wlan_sme;
+
+use crate::device_watch::{self, NewIfaceDevice};
+use crate::future_util::ConcurrentTasks;
+use crate::Never;
+use crate::station;
+use crate::stats_scheduler::{self, StatsScheduler};
+use crate::telemetry::CobaltSender;
+use crate::watchable_map::WatchableMap;
 
 pub struct PhyDevice {
-    pub proxy: wlan::PhyProxy,
+    pub proxy: fidl_wlan_dev::PhyProxy,
     pub device: wlan_dev::Device,
 }
 
-pub type ClientSmeServer = mpsc::UnboundedSender<super::station::ClientSmeEndpoint>;
+pub type ClientSmeServer = mpsc::UnboundedSender<super::station::client::Endpoint>;
+pub type ApSmeServer = mpsc::UnboundedSender<super::station::ap::Endpoint>;
 
 pub enum SmeServer {
     Client(ClientSmeServer),
-    _Ap,
+    Ap(ApSmeServer),
 }
 
 pub struct IfaceDevice {
@@ -40,147 +49,161 @@ pub struct IfaceDevice {
 pub type PhyMap = WatchableMap<u16, PhyDevice>;
 pub type IfaceMap = WatchableMap<u16, IfaceDevice>;
 
-pub fn serve_phys(phys: Arc<PhyMap>)
-    -> Result<impl Future<Item = (), Error = Error>, Error>
-{
-    Ok(device_watch::watch_phy_devices()?
-        .err_into()
-        .chain(stream::once(Err(format_err!("phy watcher stream unexpectedly finished"))))
-        .for_each_concurrent(move |new_phy| serve_phy(phys.clone(), new_phy))
-        .map(|_| ()))
+pub async fn serve_phys(phys: Arc<PhyMap>) -> Result<Never, Error> {
+    let mut new_phys = device_watch::watch_phy_devices()?;
+    let mut active_phys = ConcurrentTasks::new();
+    loop {
+        let mut new_phy = new_phys.next();
+        select! {
+            new_phy => match new_phy {
+                None => bail!("new phy stream unexpectedly finished"),
+                Some(Err(e)) => bail!("new phy stream returned an error: {}", e),
+                Some(Ok(new_phy)) => {
+                    let fut = serve_phy(&phys, new_phy);
+                    active_phys.add(fut);
+                }
+            },
+            active_phys => active_phys.into_any(),
+        }
+    }
 }
 
-fn serve_phy(phys: Arc<PhyMap>,
-             new_phy: device_watch::NewPhyDevice)
-    -> impl Future<Item = (), Error = Error>
-{
-    println!("new phy #{}: {}", new_phy.id, new_phy.device.path().to_string_lossy());
+async fn serve_phy(phys: &PhyMap, new_phy: device_watch::NewPhyDevice) {
+    info!("new phy #{}: {}", new_phy.id, new_phy.device.path().to_string_lossy());
     let id = new_phy.id;
     let event_stream = new_phy.proxy.take_event_stream();
     phys.insert(id, PhyDevice {
         proxy: new_phy.proxy,
         device: new_phy.device,
     });
-    event_stream
-        .for_each(|_| Ok(()))
-        .then(move |r| {
-            println!("phy removed: {}", id);
-            phys.remove(&id);
-            r.map(|_| ()).map_err(|e| e.into())
-        })
+    let r = await!(event_stream.map_ok(|_| ()).try_collect::<()>());
+    phys.remove(&id);
+    if let Err(e) = r {
+        error!("error reading from the FIDL channel of phy #{}: {}", id, e);
+    }
+    info!("phy removed: #{}", id);
 }
 
-pub fn serve_ifaces(ifaces: Arc<IfaceMap>)
-    -> Result<impl Future<Item = (), Error = Error>, Error>
-{
-    Ok(device_watch::watch_iface_devices()?
-        .err_into()
-        .chain(stream::once(Err(format_err!("iface watcher stream unexpectedly finished"))))
-        .for_each_concurrent(move |new_iface| {
-            let ifaces = ifaces.clone();
-            query_iface(new_iface)
-                .and_then(move |(new_iface, event_stream, query_resp)|
-                    serve_iface(ifaces, new_iface, event_stream, query_resp))
-                .recover(|e| eprintln!("{}", e))
-        })
-        .map(|_| ()))
-}
-
-fn query_iface(new_iface: NewIfaceDevice)
-    -> impl Future<Item = (NewIfaceDevice, MlmeEventStream, DeviceQueryConfirm), Error = Error>
-{
-    let query_req = &mut fidl_mlme::DeviceQueryRequest{
-        foo: 0,
-    };
-    let event_stream = new_iface.proxy.take_event_stream();
-    new_iface.proxy.device_query_req(query_req)
-        .into_future()
-        .err_into::<Error>()
-        .map_err(|e| e.context("Failed to add new iface").into())
-        .and_then(move |()|
-            event_stream
-                .filter_map(|event| Ok(match event {
-                    fidl_mlme::MlmeEvent::DeviceQueryConf{ resp } => Some(resp),
-                    other => {
-                        eprintln!("Unexpected message from MLME while waiting for \
-                                  device query response: {:?}", other);
-                        None
-                    }
-                }))
-                .next()
-                .map_err(|(e, _)| e)
-                .err_into::<Error>()
-        )
-        .on_timeout(5.seconds().after_now(), || Err(format_err!("timed out")))
-        .expect("failed to set timeout")
-        .then(|r| match r {
-            Ok((Some(query_resp), stream)) => {
-                let event_stream = stream.into_inner();
-                Ok((new_iface, event_stream, query_resp))
+pub async fn serve_ifaces(ifaces: Arc<IfaceMap>, cobalt_sender: CobaltSender) -> Result<Never, Error> {
+    let mut new_ifaces = device_watch::watch_iface_devices()?;
+    let mut active_ifaces = ConcurrentTasks::new();
+    loop {
+        let mut new_iface = new_ifaces.next();
+        select! {
+            new_iface => match new_iface {
+                None => bail!("new iface stream unexpectedly finished"),
+                Some(Err(e)) => bail!("new iface stream returned an error: {}", e),
+                Some(Ok(new_iface)) => {
+                    let fut = query_and_serve_iface(new_iface, &ifaces, cobalt_sender.clone());
+                    active_ifaces.add(fut);
+                }
             },
-            Ok((None, _)) =>
-                Err(format_err!("New iface '{}' closed the channel before returning query response",
-                        new_iface.device.path().display())),
-            Err(e) => Err(e.context(format!("Failed to query new iface '{}'",
-                                    new_iface.device.path().display())).into()),
-        })
-}
-
-fn serve_iface(ifaces: Arc<IfaceMap>,
-               new_iface: NewIfaceDevice,
-               event_stream: MlmeEventStream,
-               query_resp: DeviceQueryConfirm)
-    -> impl Future<Item = (), Error = Error>
-{
-    let NewIfaceDevice{ id, proxy, device } = new_iface;
-    let (stats_sched, stats_requests) = stats_scheduler::create_scheduler();
-    let ifaces_two = ifaces.clone();
-    serve_sme(proxy, event_stream, query_resp, stats_requests)
-        .into_future()
-        .and_then(move |(sme_server, fut)| {
-            println!("new iface #{}: {}", id, device.path().to_string_lossy());
-            ifaces.insert(id, IfaceDevice {
-                sme_server,
-                stats_sched,
-                device,
-            });
-            fut
-        })
-        .map_err(move |e| e.context(format!("Error serving station for iface #{}", id)).into())
-        .then(move |r| {
-            println!("iface removed: {}", id);
-            ifaces_two.remove(&id);
-            r
-        })
-}
-
-fn serve_sme<S>(proxy: fidl_mlme::MlmeProxy,
-                event_stream: fidl_mlme::MlmeEventStream,
-                query_resp: DeviceQueryConfirm,
-                stats_requests: S)
-    -> Result<(SmeServer, impl Future<Item = (), Error = Error>), Error>
-    where S: Stream<Item = stats_scheduler::StatsRequest, Error = Never>
-{
-    let device_caps = convert_device_caps(&query_resp);
-    match query_resp.role {
-        fidl_mlme::MacRole::Client => {
-            let (sender, receiver) = mpsc::unbounded();
-            let fut = station::serve_client_sme(
-                proxy, device_caps, event_stream, receiver, stats_requests);
-            Ok((SmeServer::Client(sender), fut))
-        },
-        fidl_mlme::MacRole::Ap => {
-            Err(format_err!("Access point SME is not implemented"))
+            active_ifaces => active_ifaces.into_any(),
         }
     }
 }
 
-fn convert_device_caps(query_resp: &DeviceQueryConfirm) -> wlan_sme::DeviceCapabilities {
+async fn query_and_serve_iface(new_iface: NewIfaceDevice, ifaces: &IfaceMap, cobalt_sender: CobaltSender) {
+    let NewIfaceDevice { id, device, proxy } = new_iface;
+    let mut event_stream = proxy.take_event_stream();
+    let query_resp = match await!(query_iface(proxy.clone(), &mut event_stream)) {
+        Ok(x) => x,
+        Err(e) => {
+            error!("Failed to query new iface '{}': {}", device.path().display(), e);
+            return;
+        }
+    };
+    let (stats_sched, stats_reqs) = stats_scheduler::create_scheduler();
+    let role = query_resp.role;
+    let (sme, sme_fut) = match create_sme(proxy, event_stream, query_resp, stats_reqs, cobalt_sender) {
+        Ok(x) => x,
+        Err(e) => {
+            error!("Failed to create SME for new iface '{}': {}",
+                   device.path().display(), e);
+            return;
+        }
+    };
+
+    info!("new iface #{} with role '{:?}': {}", id, role, device.path().to_string_lossy());
+    ifaces.insert(id, IfaceDevice {
+        sme_server: sme,
+        stats_sched,
+        device,
+    });
+
+    let r = await!(sme_fut);
+    if let Err(e) = r {
+        error!("Error serving station for iface #{}: {}", id, e);
+    }
+    ifaces.remove(&id);
+    info!("iface removed: {}", id);
+}
+
+async fn query_iface(proxy: fidl_mlme::MlmeProxy, event_stream: &mut MlmeEventStream)
+    -> Result<DeviceQueryConfirm, Error>
+{
+    let query_req = &mut fidl_mlme::DeviceQueryRequest{
+        foo: 0,
+    };
+    proxy.device_query_req(query_req)
+        .context("failed to send request to device")?;
+    let query_conf = wait_for_query_conf(event_stream);
+    pin_mut!(query_conf);
+    let mut timeout = Timer::new(5.seconds().after_now());
+    select! {
+        query_conf => query_conf,
+        timeout => bail!("query request timed out"),
+    }
+}
+
+async fn wait_for_query_conf(event_stream: &mut MlmeEventStream)
+    -> Result<DeviceQueryConfirm, Error>
+{
+    while let Some(event) = await!(event_stream.next()) {
+        match event {
+            Ok(fidl_mlme::MlmeEvent::DeviceQueryConf { resp }) => return Ok(resp),
+            Ok(other) => {
+                warn!("Unexpected message from MLME while waiting for \
+                               device query response: {:?}", other);
+            },
+            Err(e) => bail!("error reading from FIDL channel: {}", e),
+        }
+    }
+    return Err(format_err!("device closed the channel before returning query response"));
+}
+
+fn create_sme<S>(proxy: fidl_mlme::MlmeProxy,
+                 event_stream: fidl_mlme::MlmeEventStream,
+                 query_resp: DeviceQueryConfirm,
+                 stats_requests: S,
+                 cobalt_sender: CobaltSender)
+    -> Result<(SmeServer, impl Future<Output = Result<(), Error>>), Error>
+    where S: Stream<Item = stats_scheduler::StatsRequest> + Send + Unpin + 'static
+{
+    let device_info = convert_device_info(&query_resp);
+    match query_resp.role {
+        fidl_mlme::MacRole::Client => {
+            let (sender, receiver) = mpsc::unbounded();
+            let fut = station::client::serve(
+                proxy, device_info, event_stream, receiver, stats_requests, cobalt_sender);
+            Ok((SmeServer::Client(sender), FutureObj::new(Box::new(fut))))
+        },
+        fidl_mlme::MacRole::Ap => {
+            let (sender, receiver) = mpsc::unbounded();
+            let fut = station::ap::serve(
+                proxy, event_stream, receiver, stats_requests);
+            Ok((SmeServer::Ap(sender), FutureObj::new(Box::new(fut))))
+        }
+    }
+}
+
+fn convert_device_info(query_resp: &DeviceQueryConfirm) -> wlan_sme::DeviceInfo {
     let mut supported_channels = HashSet::new();
     for band in &query_resp.bands {
         supported_channels.extend(&band.channels);
     }
-    wlan_sme::DeviceCapabilities {
-        supported_channels
+    wlan_sme::DeviceInfo {
+        supported_channels,
+        addr: query_resp.mac_addr,
     }
 }

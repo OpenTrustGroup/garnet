@@ -6,6 +6,7 @@
 
 #include <zircon/status.h>
 
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/hci/device_wrapper.h"
 #include "garnet/lib/bluetooth/c/bt_host.h"
 
@@ -13,8 +14,9 @@
 
 namespace bthost {
 
-HostDevice::HostDevice(zx_device_t* device) : dev_(nullptr), parent_(device) {
-  FXL_DCHECK(parent_);
+HostDevice::HostDevice(zx_device_t* device)
+    : dev_(nullptr), parent_(device), loop_(&kAsyncLoopConfigNoAttachToThread) {
+  ZX_DEBUG_ASSERT(parent_);
 
   dev_proto_.version = DEVICE_OPS_VERSION;
   dev_proto_.unbind = &HostDevice::DdkUnbind;
@@ -23,7 +25,7 @@ HostDevice::HostDevice(zx_device_t* device) : dev_(nullptr), parent_(device) {
 }
 
 zx_status_t HostDevice::Bind() {
-  FXL_VLOG(1) << "bt-host: bind";
+  bt_log(TRACE, "bt-host", "bind");
 
   std::lock_guard<std::mutex> lock(mtx_);
 
@@ -31,28 +33,28 @@ zx_status_t HostDevice::Bind() {
   zx_status_t status =
       device_get_protocol(parent_, ZX_PROTOCOL_BT_HCI, &hci_proto);
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "bt-host: Failed to obtain bt-hci protocol ops: "
-                   << zx_status_get_string(status);
+    bt_log(ERROR, "bt-host", "failed to obtain bt-hci protocol ops: %s",
+           zx_status_get_string(status));
     return status;
   }
 
   if (!hci_proto.ops) {
-    FXL_LOG(ERROR) << "bt-host: bt-hci device ops required!";
+    bt_log(ERROR, "bt-host", "bt-hci device ops required!");
     return ZX_ERR_NOT_SUPPORTED;
   }
 
   if (!hci_proto.ops->open_command_channel) {
-    FXL_LOG(ERROR) << "bt-host: bt-hci op required: open_command_channel";
+    bt_log(ERROR, "bt-host", "bt-hci op required: open_command_channel");
     return ZX_ERR_NOT_SUPPORTED;
   }
 
   if (!hci_proto.ops->open_acl_data_channel) {
-    FXL_LOG(ERROR) << "bt-host: bt-hci op required: open_acl_data_channel";
+    bt_log(ERROR, "bt-host", "bt-hci op required: open_acl_data_channel");
     return ZX_ERR_NOT_SUPPORTED;
   }
 
   if (!hci_proto.ops->open_snoop_channel) {
-    FXL_LOG(ERROR) << "bt-host: bt-hci op required: open_snoop_channel";
+    bt_log(ERROR, "bt-host", "bt-hci op required: open_snoop_channel");
     return ZX_ERR_NOT_SUPPORTED;
   }
 
@@ -71,8 +73,8 @@ zx_status_t HostDevice::Bind() {
 
   status = device_add(parent_, &args, &dev_);
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "bt-host: Failed to publish device: "
-                   << zx_status_get_string(status);
+    bt_log(ERROR, "bt-host", "Failed to publish device: %s",
+           zx_status_get_string(status));
     return status;
   }
 
@@ -80,8 +82,8 @@ zx_status_t HostDevice::Bind() {
 
   // Send the bootstrap message to Host. The Host object can only be accessed on
   // the Host thread.
-  async::PostTask(loop_.async(), [hci_proto, this] {
-    FXL_VLOG(2) << "bt-host: host thread start";
+  async::PostTask(loop_.dispatcher(), [hci_proto, this] {
+    bt_log(SPEW, "bt-host", "host thread start");
 
     std::lock_guard<std::mutex> lock(mtx_);
     host_ = fxl::MakeRefCounted<Host>(hci_proto);
@@ -94,14 +96,14 @@ zx_status_t HostDevice::Bind() {
           return;
 
         if (success) {
-          FXL_VLOG(1) << "bt-host: Adapter initialized; make device visible";
+          bt_log(TRACE, "bt-host", "adapter initialized; make device visible");
           host_->gatt_host()->SetRemoteServiceWatcher(
               fit::bind_member(this, &HostDevice::OnRemoteGattServiceAdded));
           device_make_visible(dev_);
           return;
         }
 
-        FXL_LOG(ERROR) << "bt-host: Failed to initialize adapter";
+        bt_log(ERROR, "bt-host", "failed to initialize adapter");
         CleanUp();
       }
 
@@ -114,7 +116,7 @@ zx_status_t HostDevice::Bind() {
 }
 
 void HostDevice::Unbind() {
-  FXL_VLOG(1) << "bt-host: unbind";
+  bt_log(TRACE, "bt-host", "unbind");
 
   std::lock_guard<std::mutex> lock(mtx_);
 
@@ -124,7 +126,7 @@ void HostDevice::Unbind() {
   // Do this immediately to stop receiving new service callbacks.
   host_->gatt_host()->SetRemoteServiceWatcher({});
 
-  async::PostTask(loop_.async(), [this, host = host_] {
+  async::PostTask(loop_.dispatcher(), [this, host = host_] {
     host->ShutDown();
     loop_.Quit();
   });
@@ -136,17 +138,14 @@ void HostDevice::Unbind() {
 }
 
 void HostDevice::Release() {
-  FXL_VLOG(1) << "bt-host: release";
+  bt_log(TRACE, "bt-host", "release");
   delete this;
 }
 
-zx_status_t HostDevice::Ioctl(uint32_t op,
-                              const void* in_buf,
-                              size_t in_len,
-                              void* out_buf,
-                              size_t out_len,
+zx_status_t HostDevice::Ioctl(uint32_t op, const void* in_buf, size_t in_len,
+                              void* out_buf, size_t out_len,
                               size_t* out_actual) {
-  FXL_VLOG(1) << "bt-host: ioctl";
+  bt_log(TRACE, "bt-host", "ioctl");
 
   if (!out_buf)
     return ZX_ERR_INVALID_ARGS;
@@ -162,14 +161,14 @@ zx_status_t HostDevice::Ioctl(uint32_t op,
   if (status != ZX_OK)
     return status;
 
-  FXL_DCHECK(local);
-  FXL_DCHECK(remote);
+  ZX_DEBUG_ASSERT(local);
+  ZX_DEBUG_ASSERT(remote);
 
   std::lock_guard<std::mutex> lock(mtx_);
 
   // Tell Host to start processing messages on this handle.
-  FXL_DCHECK(host_);
-  async::PostTask(loop_.async(),
+  ZX_DEBUG_ASSERT(host_);
+  async::PostTask(loop_.dispatcher(),
                   [host = host_, chan = std::move(local)]() mutable {
                     host->BindHostInterface(std::move(chan));
                   });
@@ -184,13 +183,27 @@ zx_status_t HostDevice::Ioctl(uint32_t op,
 void HostDevice::OnRemoteGattServiceAdded(
     const std::string& peer_id,
     fbl::RefPtr<btlib::gatt::RemoteService> service) {
-  // TODO(armansito): Publish a bt-gatt-svc device attached to |service|.
+  auto gatt_device =
+      std::make_unique<GattRemoteServiceDevice>(dev_, peer_id, service);
+  auto gatt_device_ptr = gatt_device.get();
+
+  zx_status_t status = gatt_device->Bind();
+  if (status != ZX_OK)
+    return;
+
+  gatt_devices_[gatt_device_ptr] = std::move(gatt_device);
+
+  service->AddRemovedHandler(
+      [this, gatt_device_ptr] { gatt_devices_.erase(gatt_device_ptr); });
 }
 
 void HostDevice::CleanUp() {
   host_ = nullptr;
 
+  // Removing the devices explictly instead of letting unbind handle it for us.
+  gatt_devices_.clear();
   device_remove(dev_);
+
   dev_ = nullptr;
 }
 

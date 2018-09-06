@@ -1,0 +1,92 @@
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/test.gni")
+
+source_set("use_media_decoder_source_set") {
+  sources = [
+    "codec_buffer.cc",
+    "codec_buffer.h",
+    "codec_client.cc",
+    "codec_client.h",
+    "codec_output.cc",
+    "codec_output.h",
+    "frame_sink.cc",
+    "frame_sink.h",
+    "frame_sink_view.cc",
+    "frame_sink_view.h",
+    "use_aac_decoder.cc",
+    "use_aac_decoder.h",
+    "use_h264_decoder.cc",
+    "use_h264_decoder.h",
+    "util.cc",
+    "util.h",
+  ]
+
+  public_deps = [
+    "//garnet/public/fidl/fuchsia.mediacodec",
+    "//third_party/boringssl:crypto",
+    "//zircon/public/lib/async",
+    "//zircon/public/lib/async-cpp",
+    "//zircon/public/lib/async-loop-cpp",
+  ]
+
+  deps = [
+    "//garnet/lib/media/raw_video_writer:raw_video_writer",
+    "//garnet/lib/media/wav_writer:wav_writer",
+    "//garnet/public/lib/component/cpp",
+    "//garnet/public/lib/ui/scenic/cpp",
+    "//garnet/public/lib/ui/view_framework:view_provider",
+  ]
+}
+
+executable("use_media_decoder") {
+  sources = [
+    "main.cc",
+  ]
+
+  deps = [
+    ":use_media_decoder_source_set",
+    "//garnet/public/lib/component/cpp",
+    "//zircon/public/lib/async-loop-cpp",
+  ]
+}
+
+# This test target uses the AAC decoder the same way as the example program and
+# then also verifies the output data (without writing an output file).
+test("use_aac_decoder_test") {
+  testonly = true
+
+  output_name = "use_aac_decoder_test"
+
+  sources = [
+    "test/use_aac_decoder_test.cc",
+  ]
+
+  deps = [
+    ":use_media_decoder_source_set",
+    "//garnet/bin/appmgr:appmgr_for_test",
+    "//garnet/public/lib/component/cpp",
+    "//zircon/public/lib/async-loop-cpp",
+  ]
+}
+
+# This test target uses the AAC decoder the same way as the example program and
+# then also verifies the output data (without writing an output file).
+test("use_h264_decoder_test") {
+  testonly = true
+
+  output_name = "use_h264_decoder_test"
+
+  sources = [
+    "test/use_h264_decoder_test.cc",
+  ]
+
+  deps = [
+    ":use_media_decoder_source_set",
+    "//garnet/bin/appmgr:appmgr_for_test",
+    "//garnet/public/lib/component/cpp",
+    "//zircon/public/lib/async-loop-cpp",
+  ]
+}

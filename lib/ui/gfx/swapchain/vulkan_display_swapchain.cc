@@ -15,14 +15,21 @@
 #include "lib/escher/util/fuchsia_utils.h"
 #include "lib/escher/vk/gpu_mem.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 namespace {
 
 #define VK_CHECK_RESULT(XXX) FXL_CHECK(XXX.result == vk::Result::eSuccess)
 
+#if SCENIC_IGNORE_VSYNC
+// The display will only release the currently-drawing frame on vsync, so
+// without at least 3 images this can only render at an even division of the
+// vsync rate.
+const uint32_t kDesiredSwapchainImageCount = 3;
+#else
 const uint32_t kDesiredSwapchainImageCount = 2;
+#endif
 
 }  // namespace
 
@@ -289,15 +296,20 @@ bool VulkanDisplaySwapchain::DrawAndPresentFrame(
   }
   // TODO: Wait for sema before triggering callbacks. This class is only used
   // for debugging, so the precise timestamps don't matter as much.
-  async::PostTask(async_get_default(), [frame_timings, timing_index] {
-    frame_timings->OnFrameRendered(timing_index,
-                                   zx_clock_get(ZX_CLOCK_MONOTONIC));
-    frame_timings->OnFramePresented(timing_index,
-                                    zx_clock_get(ZX_CLOCK_MONOTONIC));
-  });
+  async::PostTask(async_get_default_dispatcher(),
+                  [frame_timings, timing_index] {
+                    frame_timings->OnFrameRendered(
+                        timing_index, zx_clock_get(ZX_CLOCK_MONOTONIC));
+                    // Emit an event called "VSYNC", which is by convention the
+                    // event that Trace Viewer looks for in its "Highlight
+                    // VSync" feature.
+                    TRACE_INSTANT("gfx", "VSYNC", TRACE_SCOPE_THREAD);
+                    frame_timings->OnFramePresented(
+                        timing_index, zx_clock_get(ZX_CLOCK_MONOTONIC));
+                  });
 
   return true;
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

@@ -14,10 +14,6 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-//#include <linux/init.h>
-//#include <linux/of.h>
-//#include <linux/of_irq.h>
-
 #include "of.h"
 
 #include "common.h"
@@ -57,6 +53,5 @@ void brcmf_of_probe(struct brcmf_device* dev, enum brcmf_bus_type bus_type,
     irqf = irqd_get_trigger_type(irq_get_irq_data(irq));
 
     sdio->oob_irq_supported = true;
-    sdio->oob_irq_nr = irq;
     sdio->oob_irq_flags = irqf;
 }

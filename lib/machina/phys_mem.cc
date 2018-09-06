@@ -12,25 +12,29 @@ static constexpr uint32_t kMapFlags =
 
 namespace machina {
 
+zx_status_t PhysMem::Init(zx::vmo vmo) {
+  vmo_ = std::move(vmo);
+
+  zx_status_t status = vmo_.get_size(&vmo_size_);
+  if (status != ZX_OK) {
+    return status;
+  }
+
+  return zx::vmar::root_self()->map(0, vmo_, 0, vmo_size_, kMapFlags, &addr_);
+}
+
 zx_status_t PhysMem::Init(size_t size) {
-  zx_status_t status = zx::vmo::create(size, 0, &vmo_);
+  zx::vmo vmo;
+  zx_status_t status = zx::vmo::create(size, ZX_VMO_NON_RESIZABLE, &vmo);
   if (status != ZX_OK) {
     return status;
   }
-
-  status = zx::vmar::root_self().map(0, vmo_, 0, size, kMapFlags, &addr_);
-  if (status != ZX_OK) {
-    vmo_.reset();
-    return status;
-  }
-
-  vmo_size_ = size;
-  return ZX_OK;
+  return Init(std::move(vmo));
 }
 
 PhysMem::~PhysMem() {
   if (addr_ != 0) {
-    zx::vmar::root_self().unmap(addr_, vmo_size_);
+    zx::vmar::root_self()->unmap(addr_, vmo_size_);
   }
 }
 

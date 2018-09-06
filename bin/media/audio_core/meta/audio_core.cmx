@@ -1,0 +1,10 @@
+{
+    "program": {
+        "binary": "bin/app"
+    },
+    "sandbox": {
+        "dev": [ "class/audio-input", "class/audio-output" ],
+        "features": [ "deprecated-all-services", "system-temp", "persistent-storage" ],
+        "system": [ "data/media" ]
+    }
+}

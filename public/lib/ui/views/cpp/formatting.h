@@ -7,36 +7,54 @@
 
 #include <iosfwd>
 
-#include <fuchsia/ui/views_v1/cpp/fidl.h>
+#include <fuchsia/ui/viewsv1/cpp/fidl.h>
 #include "lib/ui/geometry/cpp/formatting.h"
 
 namespace fuchsia {
 namespace ui {
-namespace views_v1 {
+namespace viewsv1 {
+
+// NOTE:
+// //garnet/public/lib/fostr/fidl/fuchsia.ui.viewsv1 generates ostream
+// formatters for this library *except* those formatters that are listed here.
+// The code generator knows which formatters to exclude from the generated code
+// by consulting the 'amendments.json' file in that directory.
+//
+// If you add or remove formatters from this file, please be sure that the
+// amendments.json file is updated accordingly.
 
 std::ostream& operator<<(std::ostream& os,
-                         const ::fuchsia::ui::views_v1::ViewTreeToken& value);
+                         const ::fuchsia::ui::viewsv1::ViewTreeToken& value);
 
 std::ostream& operator<<(std::ostream& os,
-                         const ::fuchsia::ui::views_v1::ViewInfo& value);
+                         const ::fuchsia::ui::viewsv1::ViewInfo& value);
 
 std::ostream& operator<<(std::ostream& os,
-                         const ::fuchsia::ui::views_v1::ViewProperties& value);
+                         const ::fuchsia::ui::viewsv1::ViewProperties& value);
 std::ostream& operator<<(std::ostream& os,
-                         const ::fuchsia::ui::views_v1::ViewLayout& value);
+                         const ::fuchsia::ui::viewsv1::ViewLayout& value);
 
-}  // namespace views_v1
+}  // namespace viewsv1
 }  // namespace ui
 }  // namespace fuchsia
 
 namespace fuchsia {
 namespace ui {
-namespace views_v1_token {
+namespace viewsv1token {
+
+// NOTE:
+// //garnet/public/lib/fostr/fidl/fuchsia.ui.viewsv1token generates ostream
+// formatters for this library *except* those formatters that are listed here.
+// The code generator knows which formatters to exclude from the generated code
+// by consulting the 'amendments.json' file in that directory.
+//
+// If you add or remove formatters from this file, please be sure that the
+// amendments.json file is updated accordingly.
 
 std::ostream& operator<<(std::ostream& os,
-                         const ::fuchsia::ui::views_v1_token::ViewToken& value);
+                         const ::fuchsia::ui::viewsv1token::ViewToken& value);
 
-}  // namespace views_v1_token
+}  // namespace viewsv1token
 }  // namespace ui
 }  // namespace fuchsia
 

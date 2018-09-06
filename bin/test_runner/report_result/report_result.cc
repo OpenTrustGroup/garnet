@@ -7,14 +7,14 @@
 #include <iostream>
 #include <sstream>
 
+#include <fuchsia/testing/runner/cpp/fidl.h>
+#include <lib/async-loop/cpp/loop.h>
 #include <lib/fdio/io.h>
 #include <lib/fdio/spawn.h>
-#include <lib/async-loop/cpp/loop.h>
-#include <fuchsia/testing/runner/cpp/fidl.h>
 #include <zircon/processargs.h>
 #include <zircon/syscalls/object.h>
 
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fxl/time/stopwatch.h"
 
 using fuchsia::testing::runner::TestResult;
@@ -33,8 +33,7 @@ static zx_status_t AddPipe(int target_fd, int* local_fd,
 
 class Reporter {
  public:
-  Reporter(async::Loop* loop, const std::string& name,
-           TestRunner* test_runner)
+  Reporter(async::Loop* loop, const std::string& name, TestRunner* test_runner)
       : loop_(loop), name_(name), test_runner_(test_runner) {}
 
   ~Reporter() {}
@@ -85,10 +84,9 @@ int main(int argc, char** argv) {
     name = "report_result";
   }
 
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
-  auto app_context = fuchsia::sys::StartupContext::CreateFromStartupInfo();
-  auto test_runner =
-      app_context->ConnectToEnvironmentService<TestRunner>();
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
+  auto app_context = component::StartupContext::CreateFromStartupInfo();
+  auto test_runner = app_context->ConnectToEnvironmentService<TestRunner>();
   Reporter reporter(&loop, name, test_runner.get());
 
   if (!command_provided) {

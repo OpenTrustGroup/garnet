@@ -6,7 +6,12 @@ Bluetooth Host Subsystem (5.0+) supporting a framework for developing Low Energy
 and Traditional profiles.
 
 Source code shortcuts:
-- [Public API](../../public/lib/bluetooth/fidl)
+- Public API: 
+  * [shared](../../public/fidl/fuchsia.bluetooth)
+  * [BR/EDR](../../public/fidl/fuchsia.bluetooth.bredr)
+  * [Control](../../public/fidl/fuchsia.bluetooth.control)
+  * [GATT](../../public/fidl/fuchsia.bluetooth.gatt)
+  * [LE](../../public/fidl/fuchsia.bluetooth.le)
 - [Private API](../../lib/bluetooth/fidl)
 - [Tools](tools/)
 - [Host Library](../../drivers/bluetooth/lib)
@@ -38,7 +43,7 @@ and [`ble_battery_service`](../../examples/bluetooth/ble_battery_service) exampl
 ### Control API
 
 Dual-mode (LE + Classic) GAP operations that are typically exposed to privileged
-clients are performed using the [control.fidl](../../public/lib/bluetooth/fidl/control.fidl)
+clients are performed using the [control.fidl](../../public/fidl/fuchsia.bluetooth.control/control.fidl)
 API. This API is intended for managing local adapters, device discovery & discoverability,
 pairing/bonding, and other settings.
 
@@ -72,27 +77,40 @@ defined in the [tests BUILD file](tests/BUILD.gn).
 Host subsystem tests are compiled into a single [GoogleTest](https://github.com/google/googletest) binary,
 which gets installed at `/system/test/bluetooth_unittests`.
 
-To run all tests:
+##### Running on real hardware
+* Run all the tests:
+  ```
+  $ runtests -t bt-host-unittests
+  ```
 
-```
-$ /system/test/bt-host-unittests
-```
 
-Use the `--gtest_filter`
-[flag](https://github.com/google/googletest/blob/master/googletest/docs/AdvancedGuide.md#running-a-subset-of-the-tests)
-to run a subset of the tests:
+* Or use the `--gtest_filter`
+[flag](https://github.com/google/googletest/blob/master/googletest/docs/advanced.md#running-a-subset-of-the-tests) to run a subset of the tests:
 
-```
-# This only runs the L2CAP unit tests.
-$ /system/test/bluetooth_unittests --gtest_filter=L2CAP_*
-```
+  ```
+  # This only runs the L2CAP unit tests.
+  $ /pkgfs/packages/bluetooth_tests/0/test/bt-host-unittests --gtest_filter=L2CAP_*
+  ```
+  (We specify the full path in this case, because runtests doesn't allow us to pass through arbitrary arguments to the test binary.)
 
-Use the `--verbose` flag to set log verbosity:
 
-```
-# This logs all messages logged using FXL_VLOG (up to level 2)
-$ /system/test/bluetooth_unittests --verbose=2
-```
+* And use the `--verbose` flag to set log verbosity:
+
+  ```
+  # This logs all messages logged using FXL_VLOG (up to level 2)
+  $ /pkgfs/packages/bluetooth_tests/0/test/bt-host-unittests --verbose=2
+  ```
+
+##### Running on QEMU
+If you don't have physical hardware available, you can run the tests in QEMU using the same commands as above. A couple of tips will help run the tests a little more quickly.
+
+* Run the VM with hardware virtualization support: `fx run -k`
+* Disable unnecessary logging for the tests:
+  ```
+  $ /pkgfs/packages/bluetooth_tests/0/test/bt-host-unittests --quiet=10
+  ```
+
+With these two tips, the full bt-host-unittests suite runs in ~2 seconds.
 
 #### Integration Tests
 TODO(armansito): Describe integration tests

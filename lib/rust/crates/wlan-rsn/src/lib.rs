@@ -1,40 +1,27 @@
 // Copyright 2018 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
 #![feature(test)]
 #![feature(drain_filter)]
+#![deny(warnings)]
 
-#[macro_use] extern crate bitfield;
-extern crate byteorder;
-extern crate bytes;
-extern crate crypto;
-extern crate eapol;
-#[macro_use] extern crate failure;
-extern crate hex;
-#[macro_use] extern crate nom;
-extern crate num;
-extern crate rand;
-extern crate test;
-extern crate time;
+use failure::Fail;
 
 pub mod akm;
-mod auth;
+pub mod auth;
 pub mod cipher;
 mod crypto_utils;
 mod integrity;
-mod key;
+pub mod key;
 mod key_data;
 mod keywrap;
 mod pmkid;
-mod rsna;
+pub mod rsna;
 pub mod rsne;
 pub mod suite_selector;
 
-use key::exchange::handshake::fourway::MessageNumber;
-use rsna::Role;
-use std::result;
-
-pub type Result<T> = result::Result<T, Error>;
+use crate::key::exchange::handshake::fourway::MessageNumber;
 
 #[derive(Debug, Fail)]
 pub enum Error {
@@ -62,6 +49,8 @@ pub enum Error {
     PtkHierarchyUnsupportedAkmError,
     #[fail(display = "error deriving PTK; unsupported cipher suite")]
     PtkHierarchyUnsupportedCipherError,
+    #[fail(display = "error deriving GTK; unsupported cipher suite")]
+    GtkHierarchyUnsupportedCipherError,
     #[fail(display = "error invalid key size for AES keywrap: {}", _0)]
     InvalidAesKeywrapKeySize(usize),
     #[fail(display = "error data must be a multiple of 64-bit blocks and at least 128 bits: {}",
@@ -88,26 +77,38 @@ pub enum Error {
     InvalidKeyDescriptor(u8, eapol::KeyDescriptor),
     #[fail(display = "unsupported Key Descriptor Version: {:?}", _0)]
     UnsupportedKeyDescriptorVersion(u16),
-    #[fail(display = "only PTK derivation is supported")]
+    #[fail(display = "only PTK and GTK derivation is supported")]
     UnsupportedKeyDerivation,
     #[fail(display = "unexpected message: {:?}", _0)]
     Unexpected4WayHandshakeMessage(MessageNumber),
-    #[fail(display = "invalid install bit value")]
-    InvalidInstallBitValue,
-    #[fail(display = "invalid key_ack bit value")]
-    InvalidKeyAckBitValue,
-    #[fail(display = "invalid key_mic bit value")]
-    InvalidKeyMicBitValue,
-    #[fail(display = "invalid key_mic bit value")]
-    InvalidSecureBitValue,
-    #[fail(display = "invalid error bit value")]
-    InvalidErrorBitValue,
-    #[fail(display = "invalid request bit value")]
-    InvalidRequestBitValue,
+    #[fail(display = "invalid install bit value; message: {:?}", _0)]
+    InvalidInstallBitValue(MessageNumber),
+    #[fail(display = "error, install bit set for Group-/SMK-Handshake")]
+    InvalidInstallBitGroupSmkHandshake,
+    #[fail(display = "invalid key_ack bit value; message: {:?}", _0)]
+    InvalidKeyAckBitValue(MessageNumber),
+    #[fail(display = "invalid key_mic bit value; message: {:?}", _0)]
+    InvalidKeyMicBitValue(MessageNumber),
+    #[fail(display = "invalid key_mic bit value; message: {:?}", _0)]
+    InvalidSecureBitValue(MessageNumber),
+    #[fail(display = "error, secure bit set by Authenticator before PTK is known")]
+    SecureBitWithUnknownPtk,
+    #[fail(display = "error, secure bit set must be set by Supplicant once PTK and GTK are known")]
+    SecureBitNotSetWithKnownPtkGtk,
+    #[fail(display = "invalid error bit value; message: {:?}", _0)]
+    InvalidErrorBitValue(MessageNumber),
+    #[fail(display = "invalid request bit value; message: {:?}", _0)]
+    InvalidRequestBitValue(MessageNumber),
+    #[fail(display = "error, Authenticator set request bit")]
+    InvalidRequestBitAuthenticator,
+    #[fail(display = "error, Authenticator set error bit")]
+    InvalidErrorBitAuthenticator,
+    #[fail(display = "error, Supplicant set key_ack bit")]
+    InvalidKeyAckBitSupplicant,
     #[fail(display = "invalid encrypted_key_data bit value")]
-    InvalidEncryptedKeyDataBitValue,
-    #[fail(display = "invalid pairwise key length {:?}; expected {:?}", _0, _1)]
-    InvalidPairwiseKeyLength(u16, u16),
+    InvalidEncryptedKeyDataBitValue(MessageNumber),
+    #[fail(display = "invalid key length {:?}; expected {:?}", _0, _1)]
+    InvalidKeyLength(u16, u16),
     #[fail(display = "unsupported cipher suite")]
     UnsupportedCipherSuite,
     #[fail(display = "unsupported AKM suite")]
@@ -115,11 +116,11 @@ pub enum Error {
     #[fail(display = "invalid MIC size")]
     InvalidMicSize,
     #[fail(display = "invalid Nonce; expected to be non-zero")]
-    InvalidNonce,
+    InvalidNonce(MessageNumber),
     #[fail(display = "invalid RSC; expected to be zero")]
-    InvalidRsc,
+    InvalidRsc(MessageNumber),
     #[fail(display = "invalid key data; must not be zero")]
-    EmptyKeyData,
+    EmptyKeyData(MessageNumber),
     #[fail(display = "invalid key data")]
     InvalidKeyDataContent,
     #[fail(display = "invalid key data length; doesn't match with key data")]
@@ -130,12 +131,12 @@ pub enum Error {
     InvalidMic,
     #[fail(display = "cannot decrypt key data; PTK not yet derived")]
     UnexpectedEncryptedKeyData,
-    #[fail(display = "invalid key replay counter")]
-    InvalidKeyReplayCounter,
+    #[fail(display = "invalid key replay counter {:?}; expected counter to be > {:?}", _0, _1)]
+    InvalidKeyReplayCounter(u64, u64),
     #[fail(display = "invalid nonce; nonce must match nonce from 1st message")]
     ErrorNonceDoesntMatch,
-    #[fail(display = "invalid IV; expected zeroed IV")]
-    InvalidIv,
+    #[fail(display = "invalid IV; EAPOL protocol version: {:?}; message: {:?}", _0, _1)]
+    InvalidIv(u8, MessageNumber),
     #[fail(display = "PMKSA was not yet established")]
     PmksaNotEstablished,
     #[fail(display = "invalid nonce size; expected 32 bytes, found: {:?}", _0)]
@@ -144,6 +145,10 @@ pub enum Error {
     InvalidKeyDataRsne,
     #[fail(display = "buffer too small; required: {}, available: {}", _0, _1)]
     BufferTooSmall(usize, usize),
+    #[fail(display = "error, SMK-Handshake is not supported")]
+    SmkHandshakeNotSupported,
+    #[fail(display = "error, negotiated RSNE is invalid")]
+    InvalidNegotiatedRsne,
 }
 
 impl From<std::io::Error> for Error {

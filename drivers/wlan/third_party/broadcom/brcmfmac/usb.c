@@ -14,17 +14,11 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-//#include <linux/firmware.h>
-//#include <linux/kernel.h>
-//#include <linux/module.h>
-//#include <linux/usb.h>
-//#include <linux/vmalloc.h>
-
 #include "usb.h"
 
 #include <ddk/protocol/usb.h>
-#include <driver/usb.h>
-#include <sync/completion.h>
+#include <ddk/usb/usb.h>
+#include <lib/sync/completion.h>
 #include <zircon/status.h>
 
 #include <threads.h>
@@ -175,7 +169,7 @@ struct brcmf_usbdev_info {
     usb_setup_t ctl_read;
     uint32_t ctl_urb_actual_length;
     int ctl_urb_status;
-    completion_t ioctl_resp_wait;
+    sync_completion_t ioctl_resp_wait;
     atomic_ulong ctl_op;
     uint8_t ifnum;
 
@@ -211,7 +205,10 @@ void brcmf_usb_free_urb(struct brcmf_urb* urb) {
     if (urb == NULL) {
         return;
     }
-    usb_request_release(urb->zxurb);
+    if (urb->devinfo == NULL) {
+        return;
+    }
+    usb_req_release(urb->devinfo->protocol, urb->zxurb);
     free(urb);
 }
 
@@ -239,7 +236,7 @@ static void brcmf_usb_init_urb(struct brcmf_urb* urb, struct brcmf_usbdev_info* 
     zxurb->header.send_zlp = zero_packet;
     if (out) {
         if (size > 0) {
-            usb_request_copyto(zxurb, buf, size, 0);
+            usb_req_copy_to(devinfo->protocol, zxurb, buf, size, 0);
         }
         urb->recv_buffer = 0;
         urb->desired_length = 0;
@@ -279,7 +276,7 @@ zx_status_t brcmf_usb_queue_urb(struct brcmf_urb* urb) {
 static void brcmf_usb_rx_refill(struct brcmf_usbdev_info* devinfo, struct brcmf_usbreq* req);
 
 static struct brcmf_usbdev* brcmf_usb_get_buspub(struct brcmf_device* dev) {
-    struct brcmf_bus* bus_if = dev_get_drvdata(dev);
+    struct brcmf_bus* bus_if = dev_to_bus(dev);
     return bus_if->bus_priv.usb;
 }
 
@@ -288,11 +285,11 @@ static struct brcmf_usbdev_info* brcmf_usb_get_businfo(struct brcmf_device* dev)
 }
 
 static zx_status_t brcmf_usb_ioctl_resp_wait(struct brcmf_usbdev_info* devinfo) {
-    return completion_wait(&devinfo->ioctl_resp_wait, ZX_MSEC(IOCTL_RESP_TIMEOUT_MSEC));
+    return sync_completion_wait(&devinfo->ioctl_resp_wait, ZX_MSEC(IOCTL_RESP_TIMEOUT_MSEC));
 }
 
 static void brcmf_usb_ioctl_resp_wake(struct brcmf_usbdev_info* devinfo) {
-    completion_signal(&devinfo->ioctl_resp_wait);
+    sync_completion_signal(&devinfo->ioctl_resp_wait);
 }
 
 static void brcmf_usb_ctl_complete(struct brcmf_usbdev_info* devinfo, int type, int status) {
@@ -335,7 +332,7 @@ static void brcmf_usb_ctlread_complete(usb_request_t* zxurb, struct brcmf_urb* u
         }
         // TODO(cphoenix): At least some transfers malloc a buffer and copy to/from it, which
         // is unnecessary given we're in userspace and already copying here. Clean that up.
-        usb_request_copyfrom(zxurb, urb->recv_buffer, urb->actual_length, 0);
+        usb_req_copy_from(devinfo->protocol, zxurb, urb->recv_buffer, urb->actual_length, 0);
     }
 
     pthread_mutex_lock(&irq_callback_lock);
@@ -421,7 +418,7 @@ static zx_status_t brcmf_usb_tx_ctlpkt(struct brcmf_device* dev, uint8_t* buf, u
         return ZX_ERR_IO;
     }
 
-    completion_reset(&devinfo->ioctl_resp_wait);
+    sync_completion_reset(&devinfo->ioctl_resp_wait);
     err = brcmf_usb_send_ctl(devinfo, buf, len);
     if (err != ZX_OK) {
         brcmf_err("fail %d bytes: %d\n", err, len);
@@ -452,7 +449,7 @@ static zx_status_t brcmf_usb_rx_ctlpkt(struct brcmf_device* dev, uint8_t* buf, u
         return ZX_ERR_IO;
     }
 
-    completion_reset(&devinfo->ioctl_resp_wait);
+    sync_completion_reset(&devinfo->ioctl_resp_wait);
     err = brcmf_usb_recv_ctl(devinfo, buf, len);
     if (err != ZX_OK) {
         brcmf_err("fail %d bytes: %d\n", err, len);
@@ -481,13 +478,15 @@ static struct brcmf_usbreq* brcmf_usb_deq(struct brcmf_usbdev_info* devinfo, str
     struct brcmf_usbreq* req;
     //spin_lock_irqsave(&devinfo->qlock, flags);
     pthread_mutex_lock(&irq_callback_lock);
-    if (list_empty(q)) {
+    if (list_is_empty(q)) {
         //spin_unlock_irqrestore(&devinfo->qlock, flags);
         pthread_mutex_unlock(&irq_callback_lock);
         return NULL;
     }
-    req = list_entry(q->next, struct brcmf_usbreq, list);
-    list_del_init(q->next);
+    req = containerof(q->next, struct brcmf_usbreq, list);
+    struct list_node* next = q->next;
+    list_delete(next);
+    list_initialize(next);
     if (counter) {
         (*counter)--;
     }
@@ -533,12 +532,12 @@ static struct brcmf_usbreq* brcmf_usbdev_qinit(struct brcmf_usbdev_info* devinfo
     return reqs;
 fail:
     brcmf_err("fail!\n");
-    while (!list_empty(q)) {
-        req = list_entry(q->next, struct brcmf_usbreq, list);
+    while (!list_is_empty(q)) {
+        req = containerof(q->next, struct brcmf_usbreq, list);
         if (req) {
             brcmf_usb_free_urb(req->urb);
         }
-        list_del(q->next);
+        list_delete(q->next);
     }
     free(reqs);
     return NULL;
@@ -548,7 +547,7 @@ static void brcmf_usb_free_q(struct brcmf_usbdev_info* devinfo, struct list_node
     struct brcmf_usbreq* req;
     struct brcmf_usbreq* next;
 
-    list_for_each_entry_safe(req, next, q, list) {
+    list_for_every_entry_safe(q, req, next, struct brcmf_usbreq, list) {
         if (!req->urb) {
             brcmf_err("bad req\n");
             break; // TODO(cphoenix): Should this be a "continue"?
@@ -557,7 +556,8 @@ static void brcmf_usb_free_q(struct brcmf_usbdev_info* devinfo, struct list_node
             usb_cancel_all(devinfo->protocol, req->urb->zxurb->header.ep_address);
         } else {
             brcmf_usb_free_urb(req->urb);
-            list_del_init(&req->list);
+            list_delete(&req->list);
+            list_initialize(&req->list);
         }
     }
 }
@@ -565,7 +565,8 @@ static void brcmf_usb_free_q(struct brcmf_usbdev_info* devinfo, struct list_node
 static void brcmf_usb_del_fromq(struct brcmf_usbdev_info* devinfo, struct brcmf_usbreq* req) {
     //spin_lock_irqsave(&devinfo->qlock, flags);
     pthread_mutex_lock(&irq_callback_lock);
-    list_del_init(&req->list);
+    list_delete(&req->list);
+    list_initialize(&req->list);
     //spin_unlock_irqrestore(&devinfo->qlock, flags);
     pthread_mutex_unlock(&irq_callback_lock);
 }
@@ -619,7 +620,7 @@ static void brcmf_usb_rx_complete(usb_request_t* zxurb, struct brcmf_urb* urb) {
                     urb->desired_length);
             urb->actual_length = urb->desired_length;
         }
-        usb_request_copyfrom(zxurb, urb->recv_buffer, urb->actual_length, 0);
+        usb_req_copy_from(devinfo->protocol, zxurb, urb->recv_buffer, urb->actual_length, 0);
     }
 
     /* zero length packets indicate usb "failure". Do not refill */
@@ -826,7 +827,7 @@ static void brcmf_usb_sync_complete(usb_request_t* zxurb, struct brcmf_urb* urb)
                     urb->desired_length);
             urb->actual_length = urb->desired_length;
         }
-        usb_request_copyfrom(zxurb, urb->recv_buffer, urb->actual_length, 0);
+        usb_req_copy_from(devinfo->protocol, zxurb, urb->recv_buffer, urb->actual_length, 0);
     }
 
     brcmf_usb_ioctl_resp_wake(devinfo);
@@ -857,7 +858,7 @@ static zx_status_t brcmf_usb_dl_cmd(struct brcmf_usbdev_info* devinfo, uint8_t c
     brcmf_usb_init_control_urb(devinfo->ctl_urb, devinfo, &devinfo->ctl_read, (void*)tmpbuf, size,
                                (usb_request_complete_cb)brcmf_usb_sync_complete, devinfo);
 
-    completion_reset(&devinfo->ioctl_resp_wait);
+    sync_completion_reset(&devinfo->ioctl_resp_wait);
     ret = brcmf_usb_queue_urb(devinfo->ctl_urb);
     if (ret != ZX_OK) {
         brcmf_err("usb_queue_urb failed %d\n", ret);
@@ -979,7 +980,7 @@ static zx_status_t brcmf_usb_dl_send_bulk(struct brcmf_usbdev_info* devinfo, voi
     brcmf_usb_init_bulk_urb(devinfo->bulk_urb, devinfo, devinfo->tx_endpoint, buffer, len, true,
                        (usb_request_complete_cb)brcmf_usb_sync_complete, devinfo);
 
-    completion_reset(&devinfo->ioctl_resp_wait);
+    sync_completion_reset(&devinfo->ioctl_resp_wait);
     ret = brcmf_usb_queue_urb(devinfo->bulk_urb);
     if (ret != ZX_OK) {
         brcmf_err("usb_queue_urb failed %d\n", ret);
@@ -1217,17 +1218,17 @@ static struct brcmf_usbdev* brcmf_usb_attach(struct brcmf_usbdev_info* devinfo, 
     devinfo->bus_pub.bus_mtu = BRCMF_USB_MAX_PKT_SIZE;
 
     /* Initialize other structure content */
-    devinfo->ioctl_resp_wait = COMPLETION_INIT;
+    devinfo->ioctl_resp_wait = SYNC_COMPLETION_INIT;
 
     /* Initialize the spinlocks */
     //spin_lock_init(&devinfo->qlock);
     //spin_lock_init(&devinfo->tx_flowblock_lock);
 
-    INIT_LIST_HEAD(&devinfo->rx_freeq);
-    INIT_LIST_HEAD(&devinfo->rx_postq);
+    list_initialize(&devinfo->rx_freeq);
+    list_initialize(&devinfo->rx_postq);
 
-    INIT_LIST_HEAD(&devinfo->tx_freeq);
-    INIT_LIST_HEAD(&devinfo->tx_postq);
+    list_initialize(&devinfo->tx_freeq);
+    list_initialize(&devinfo->tx_postq);
 
     devinfo->tx_flowblock = false;
 
@@ -1294,6 +1295,10 @@ static const struct brcmf_bus_ops brcmf_usb_bus_ops = {
     .get_fwname = brcmf_usb_get_fwname,
 };
 
+// TODO(cphoenix): Remove the code inside TRY_TEMP_SCAN once we have an end-to-end integrated
+// system that can be tested. For now, uncomment the next line to test whether scanning works.
+//#define TRY_TEMP_SCAN
+#ifdef TRY_TEMP_SCAN
 #include "cfg80211.h" // Temp, for call to Scan
 
 static uint8_t* brcmf_fill_ie(uint8_t* ieptr, uint8_t ie_num, void* ie_data, size_t ie_len) {
@@ -1306,6 +1311,7 @@ static uint8_t* brcmf_fill_ie(uint8_t* ieptr, uint8_t ie_num, void* ie_data, siz
     memcpy(ieptr + 2, ie_data, ie_len);
     return ieptr + 2 + ie_len;
 }
+#endif
 
 static zx_status_t brcmf_usb_bus_setup(struct brcmf_usbdev_info* devinfo) {
     zx_status_t ret;
@@ -1326,9 +1332,10 @@ static zx_status_t brcmf_usb_bus_setup(struct brcmf_usbdev_info* devinfo) {
     if (ret != ZX_OK) {
         goto fail;
     }
+#ifdef TRY_TEMP_SCAN
     brcmf_dbg(TEMP, "Starting scan prepare");
     PAUSE;
-    struct brcmf_bus* bus_if = dev_get_drvdata(devinfo->dev);
+    struct brcmf_bus* bus_if = dev_to_bus(devinfo->dev);
     struct wiphy* wiphy = bus_if->drvr->config->wiphy;
     struct cfg80211_scan_request request;
     memset(&request, 0, sizeof(request));
@@ -1343,7 +1350,9 @@ static zx_status_t brcmf_usb_bus_setup(struct brcmf_usbdev_info* devinfo) {
     brcmf_dbg(TEMP, "Survived netdev_open");
     PAUSE;
     for (int i = 0; i < 11; i++) {
-        channels[i].center_freq = i+1; // TODO(cphoenix): Fix this hack along with ieee80211_frequency_to_channel() hack in device.h
+        // TODO(cphoenix): Fix this hack along with ieee80211_frequency_to_channel() hack
+        // in device.h
+        channels[i].center_freq = i+1;
         channels[i].hw_value = i+1;
         request.channels[i] = &channels[i];
     }
@@ -1400,6 +1409,7 @@ static zx_status_t brcmf_usb_bus_setup(struct brcmf_usbdev_info* devinfo) {
     brcmf_dbg(TEMP, "Back from connect, about to sleep 10 seconds....");
     msleep(10000);
     brcmf_dbg(TEMP, "Back from sleep, all done!");
+#endif // TRY_TEMP_SCAN
     return ZX_OK;
 fail:
     brcmf_detach(devinfo->dev);
@@ -1408,7 +1418,7 @@ fail:
 
 static void brcmf_usb_probe_phase2(struct brcmf_device* dev, zx_status_t ret,
                                    const struct brcmf_firmware* fw, void* nvram, uint32_t nvlen) {
-    struct brcmf_bus* bus = dev_get_drvdata(dev);
+    struct brcmf_bus* bus = dev_to_bus(dev);
     struct brcmf_usbdev_info* devinfo = bus->bus_priv.usb->devinfo;
 
     if (ret != ZX_OK) {
@@ -1466,7 +1476,7 @@ static zx_status_t brcmf_usb_probe_cb(struct brcmf_usbdev_info* devinfo) {
     bus->dev = dev;
     bus_pub->bus = bus;
     bus->bus_priv.usb = bus_pub;
-    dev_set_drvdata(dev, bus);
+    dev->bus = bus;
     bus->ops = &brcmf_usb_bus_ops;
     bus->proto_type = BRCMF_PROTO_BCDC;
     bus->always_use_fws_queue = true;
@@ -1660,7 +1670,7 @@ done:
  * only need to signal the bus being down and update the state.
  */
 // Was used in struct usb_driver.suspend
-static zx_status_t brcmf_usb_suspend(struct brcmf_usb_interface* intf, pm_message_t state) {
+static zx_status_t brcmf_usb_suspend(struct brcmf_usb_interface* intf, uint64_t state) {
     struct brcmf_usb_device* usb = intf_to_usbdev(intf);
     struct brcmf_usbdev_info* devinfo = brcmf_usb_get_businfo(&usb->dev);
 
@@ -1706,6 +1716,7 @@ static zx_status_t brcmf_usb_reset_resume(struct brcmf_usb_interface* intf) {
     return brcmf_fw_get_firmwares(&usb->dev, 0, devinfo->fw_name, NULL, brcmf_usb_probe_phase2);
 }
 
+#ifdef TODO_ADD_USB_IDS
 #define BROADCOM_USB_DEVICE(dev_id) \
     { .idVendor=BRCM_USB_VENDOR_ID_BROADCOM, .idProduct=dev_id }
 
@@ -1733,8 +1744,7 @@ static const struct brcmf_usb_device_id brcmf_usb_devid_table[] = {
     CYPRESS_USB_DEVICE(BRCM_USB_BCMFW_DEVICE_ID),
     {/* end: all zeroes */}
 };
-
-MODULE_DEVICE_TABLE(usb, brcmf_usb_devid_table);
+#endif // TODO_ADD_USB_IDS
 
 static zx_status_t brcmf_usb_reset_device(struct brcmf_device* dev, void* notused) {
     /* device past is the usb interface so we
@@ -1762,7 +1772,7 @@ struct brcmf_usb_driver brcmf_usbdrvr = {
     .reset = brcmf_usb_reset_device,
     .resume = brcmf_usb_resume,
     .reset_resume = brcmf_usb_reset_resume,
-    .id_table = brcmf_usb_devid_table,
+    //.id_table = brcmf_usb_devid_table,
 };
 
 void brcmf_usb_exit(void) {

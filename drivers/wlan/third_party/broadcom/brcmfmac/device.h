@@ -21,12 +21,12 @@
 #include <ddk/protocol/pci.h>
 #include <ddk/protocol/usb.h>
 #include <lib/async-loop/loop.h> // to start the worker thread
-#include <lib/async/default.h>  // for async_get_default()
+#include <lib/async/default.h>  // for async_get_default_dispatcher()
 #include <lib/async/task.h>     // for async_post_task()
 #include <lib/async/time.h>     // for async_now()
 #include <pthread.h>
 #include <string.h>
-#include <sync/completion.h>
+#include <lib/sync/completion.h>
 #include <threads.h>
 #include <zircon/listnode.h>
 #include <zircon/types.h>
@@ -62,9 +62,12 @@
 
 #define BRCMF_ERR_FIRMWARE_UNSUPPORTED (-23)
 
+/* For use in oob_irq_flags */
+#define IRQ_FLAG_LEVEL_HIGH 0x1
+
 #define max(a, b) ((a)>(b)?(a):(b))
 
-extern async_t* default_async;
+extern async_dispatcher_t* default_dispatcher;
 
 // This is the function that timer users write to receive callbacks.
 typedef void (brcmf_timer_callback_t)(void* data);
@@ -74,7 +77,7 @@ typedef struct brcmf_timer_info {
     void* data;
     brcmf_timer_callback_t* callback_function;
     bool scheduled;
-    completion_t finished;
+    sync_completion_t finished;
     mtx_t lock;
 } brcmf_timer_info_t;
 
@@ -110,13 +113,19 @@ static inline void fill_with_zero_addr(uint8_t* address) {
 
 enum {ADDRESSED_TO_MULTICAST = 1, ADDRESSED_TO_BROADCAST, ADDRESSED_TO_OTHER_HOST};
 
+struct brcmf_bus;
+
 struct brcmf_device {
     void* of_node;
     void* parent;
-    void* drvdata;
+    struct brcmf_bus* bus;
     zx_device_t* zxdev;
     zx_device_t* child_zxdev;
 };
+
+static inline struct brcmf_bus* dev_to_bus(struct brcmf_device* dev) {
+    return dev->bus;
+}
 
 struct brcmf_usb_interface_descriptor {
     int bInterfaceClass;
@@ -185,10 +194,7 @@ struct net_device {
     int needs_free_net_device;
 };
 
-struct brcmf_bus* dev_get_drvdata(struct brcmf_device* dev);
-
-void dev_set_drvdata(struct brcmf_device* dev, struct brcmf_bus* bus);
-
+struct brcmf_bus* dev_to_bus(struct brcmf_device* dev);
 
 // TODO(cphoenix): Wrap around whatever completion functions exist in PCIE and SDIO.
 // TODO(cphoenix): To improve efficiency, analyze which spinlocks only need to protect small
@@ -218,5 +224,18 @@ bool brcmf_test_bit_in_array(size_t bit_number, atomic_ulong* addr);
 void brcmf_clear_bit_in_array(size_t bit_number, atomic_ulong* addr);
 
 void brcmf_set_bit_in_array(size_t bit_number, atomic_ulong* addr);
+
+zx_status_t brcmf_debugfs_create_directory(const char *name, zx_handle_t parent,
+                                           zx_handle_t* new_directory_out);
+
+zx_status_t brcmf_debugfs_create_sequential_file(void* dev, const char* fn, zx_handle_t parent,
+                                                 zx_status_t (*read_fn)(struct seq_file* seq,
+                                                                        void* data),
+                                                 zx_handle_t* new_file_out);
+
+zx_status_t brcmf_debugfs_rm_recursive(zx_handle_t dir);
+
+zx_status_t brcmf_debugfs_create_u32_file(const char* name, uint32_t permissions,
+                                          zx_handle_t parent, uint32_t* data_to_access);
 
 #endif /* BRCMF_DEVICE_H */

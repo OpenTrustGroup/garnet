@@ -5,13 +5,13 @@
 import("//build/package.gni")
 
 source_set("lib") {
-  visibility = [ ":*" ]
-
   sources = [
-    "cmx_metadata.cc",
-    "cmx_metadata.h",
     "component_controller_impl.cc",
     "component_controller_impl.h",
+    "debug_directory.cc",
+    "debug_directory.h",
+    "debug_info_retriever.cc",
+    "debug_info_retriever.h",
     "dynamic_library_loader.cc",
     "dynamic_library_loader.h",
     "environment_controller_impl.cc",
@@ -24,6 +24,8 @@ source_set("lib") {
     "hub/hub_info.h",
     "hub/realm_hub.cc",
     "hub/realm_hub.h",
+    "job_provider_impl.cc",
+    "job_provider_impl.h",
     "namespace.cc",
     "namespace.h",
     "namespace_builder.cc",
@@ -34,10 +36,8 @@ source_set("lib") {
     "root_loader.h",
     "runner_holder.cc",
     "runner_holder.h",
-    "runtime_metadata.cc",
-    "runtime_metadata.h",
-    "sandbox_metadata.cc",
-    "sandbox_metadata.h",
+    "scheme_map.cc",
+    "scheme_map.h",
     "service_provider_dir_impl.cc",
     "service_provider_dir_impl.h",
     "url_resolver.cc",
@@ -47,17 +47,21 @@ source_set("lib") {
   ]
 
   public_deps = [
-    "//garnet/lib/far",
-    "//garnet/public/lib/app/cpp",
-    "//garnet/public/lib/app/fidl",
+    "//garnet/lib/cmx",
+    "//garnet/lib/json",
+    "//garnet/lib/pkg_url",
+    "//garnet/public/fidl/fuchsia.sys",
+    "//garnet/public/lib/backoff",
+    "//garnet/public/lib/component/cpp",
     "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/svc/cpp",
     "//third_party/rapidjson",
+    "//zircon/public/fidl/fuchsia-process",
     "//zircon/public/lib/async-loop-cpp",
-    "//zircon/public/fidl/process",
     "//zircon/public/lib/fit",
     "//zircon/public/lib/fs",
+    "//zircon/public/lib/inspector",
     "//zircon/public/lib/loader-service",
     "//zircon/public/lib/zx",
   ]
@@ -75,8 +79,8 @@ source_set("appmgr_for_test") {
 
   public_deps = [
     ":lib",
-    "//garnet/public/lib/app/cpp",
-    "//garnet/public/lib/app/fidl",
+    "//garnet/public/fidl/fuchsia.sys",
+    "//garnet/public/lib/component/cpp",
     "//garnet/public/lib/fxl",
     "//zircon/public/lib/fs",
     "//zircon/public/lib/zx",
@@ -94,6 +98,7 @@ executable("bin") {
 
   deps = [
     ":lib",
+    "//garnet/public/lib/component/cpp:environment_services",
   ]
 }
 
@@ -104,12 +109,10 @@ executable("tests") {
 
   sources = [
     "appmgr_unittest.cc",
-    "cmx_metadata_unittest.cc",
     "component_controller_unittest.cc",
     "hub/hub_holder_unittest.cc",
     "namespace_builder_unittest.cc",
-    "runtime_metadata_unittest.cc",
-    "sandbox_metadata_unittest.cc",
+    "scheme_map_unittest.cc",
     "service_provider_dir_unittest.cc",
     "url_resolver_unittest.cc",
     "util_unittest.cc",
@@ -121,6 +124,7 @@ executable("tests") {
     "//garnet/examples/fidl/services:echo2",
     "//garnet/public/lib/fxl/test:gtest_main",
     "//garnet/public/lib/gtest",
+    "//third_party/googletest:gmock",
   ]
 }
 
@@ -135,11 +139,16 @@ package("appmgr") {
       name = "appmgr"
     },
   ]
+  resources = [
+    {
+      dest = "appmgr/scheme_map/default.config"
+      path = rebase_path("scheme_map.config")
+    },
+  ]
 }
 
 package("appmgr_unittests") {
   testonly = true
-  deprecated_system_image = true
 
   deps = [
     ":tests",
@@ -147,20 +156,6 @@ package("appmgr_unittests") {
   tests = [
     {
       name = "appmgr_unittests"
-    },
-  ]
-}
-
-package("appmgr_integrationtests") {
-  testonly = true
-  deprecated_system_image = true
-
-  deps = [
-    "integration_tests:tests",
-  ]
-  tests = [
-    {
-      name = "appmgr_integration_tests"
     },
   ]
 }

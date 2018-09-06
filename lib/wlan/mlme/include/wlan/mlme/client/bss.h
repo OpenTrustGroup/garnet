@@ -20,6 +20,7 @@
 #include <zircon/types.h>
 
 namespace wlan {
+
 // BeaconHash is a signature to compare consecutive beacons without memcmp().
 // TODO(porce): Revamp to exclude varying IEs.
 typedef uint32_t BeaconHash;
@@ -27,7 +28,6 @@ typedef uint32_t BeaconHash;
 class Bss : public fbl::RefCounted<Bss> {
    public:
     Bss(const common::MacAddr& bssid) : bssid_(bssid) {
-        memset(&cap_, 0, sizeof(cap_));
         supported_rates_.reserve(SupportedRatesElement::kMaxLen);
     }
 
@@ -36,28 +36,12 @@ class Bss : public fbl::RefCounted<Bss> {
     std::string ToString() const;
 
     // TODO(porce): Move these out of Bss class.
-    std::string SsidToString() const;
-    std::string SupportedRatesToString() const;
+    std::string RatesToString(const std::vector<uint8_t>& rates) const;
 
-    ::fuchsia::wlan::mlme::BSSTypes GetBssType() const {
-        // Note. This is in Beacon / Probe Response frames context.
-        // IEEE Std 802.11-2016, 9.4.1.4
-        if (cap_.ess() == 0x1 && cap_.ibss() == 0x0) {
-            return ::fuchsia::wlan::mlme::BSSTypes::INFRASTRUCTURE;
-        } else if (cap_.ess() == 0x0 && cap_.ibss() == 0x1) {
-            return ::fuchsia::wlan::mlme::BSSTypes::INDEPENDENT;
-        } else if (cap_.ess() == 0x0 && cap_.ibss() == 0x0) {
-            return ::fuchsia::wlan::mlme::BSSTypes::MESH;
-        } else {
-            // Undefined
-            return ::fuchsia::wlan::mlme::BSSTypes::ANY_BSS;
-        }
-    }
+    ::fuchsia::wlan::mlme::BSSDescription ToFidl() const;
 
-    ::fuchsia::wlan::mlme::BSSDescription ToFidl();
-    fidl::StringPtr SsidToFidlString();
     const common::MacAddr& bssid() { return bssid_; }
-    zx::time ts_refreshed() { return ts_refreshed_; }
+    zx::time_utc ts_refreshed() { return ts_refreshed_; }
 
    private:
     bool IsBeaconValid(const Beacon& beacon) const;
@@ -68,18 +52,15 @@ class Bss : public fbl::RefCounted<Bss> {
 
     // Update content such as IEs.
     zx_status_t Update(const Beacon& beacon, size_t len);
+    void ParseCapabilityInfo(const CapabilityInfo& cap);
+
     zx_status_t ParseIE(const uint8_t* ie_chains, size_t ie_chains_len);
 
     // TODO(porce): Move Beacon method into Beacon class.
     uint32_t GetBeaconSignature(const Beacon& beacon, size_t len) const;
 
-    common::MacAddr bssid_;  // From Addr3 of Mgmt Header.
-    zx::time ts_refreshed_;  // Last time of Bss object update.
-
-    // TODO(porce): Don't trust instantaneous values. Keep history.
-    common::dBm rssi_dbm_{WLAN_RSSI_DBM_INVALID};
-    common::dBmh rcpi_dbmh_{WLAN_RCPI_DBMH_INVALID};
-    common::dBh rsni_dbh_{WLAN_RSNI_DBH_INVALID};
+    common::MacAddr bssid_;      // From Addr3 of Mgmt Header.
+    zx::time_utc ts_refreshed_;  // Last time of Bss object update.
 
     // TODO(porce): Separate into class BeaconTracker.
     BeaconHash bcn_hash_{0};
@@ -88,29 +69,40 @@ class Bss : public fbl::RefCounted<Bss> {
 
     // TODO(porce): Add ProbeResponse.
 
-    // Fixed fields.
-    uint64_t timestamp_{0};     // IEEE Std 802.11-2016, 9.4.1.10, 11.1.3.1. usec.
-    uint16_t bcn_interval_{0};  // IEEE Std 802.11-2016, 9.4.1.3.
-                                // TUs between TBTTs. 1 TU is 1024 usec.
-    CapabilityInfo cap_;        // IEEE Std 802.11-2016, 9.4.1.4
+    ::fuchsia::wlan::mlme::BSSDescription bss_desc_;
 
-    // Info Elments.
-    // TODO(porce): Store IEs AS-IS without translation.
-    uint8_t ssid_[SsidElement::kMaxLen]{0};
-    size_t ssid_len_{0};
-    std::vector<uint8_t> supported_rates_{0};
+    // TODO(porce): Unify into FIDL data structure
+    std::vector<uint8_t> supported_rates_{};
+    std::vector<uint8_t> ext_supp_rates_{};
 
     // Conditionally present. See IEEE Std 802.11-2016, 9.3.3.3 Table 9-27
     bool has_dsss_param_set_chan_ = false;
     uint8_t dsss_param_set_chan_;
 
-    std::string country_{""};
     std::unique_ptr<uint8_t[]> rsne_;
     size_t rsne_len_{0};
 
     DISALLOW_COPY_AND_ASSIGN_ALLOW_MOVE(Bss);
-};  // namespace wlan
+};
 
 using BssMap = MacAddrMap<fbl::RefPtr<Bss>, macaddr_map_type::kBss>;
+
+::fuchsia::wlan::mlme::HtCapabilityInfo HtCapabilityInfoToFidl(const HtCapabilityInfo& hci);
+::fuchsia::wlan::mlme::AmpduParams AmpduParamsToFidl(const AmpduParams& ap);
+::fuchsia::wlan::mlme::SupportedMcsSet SupportedMcsSetToFidl(const SupportedMcsSet& sms);
+::fuchsia::wlan::mlme::HtExtCapabilities HtExtCapabilitiesToFidl(const HtExtCapabilities& hec);
+::fuchsia::wlan::mlme::TxBfCapability TxBfCapabilityToFidl(const TxBfCapability& tbc);
+::fuchsia::wlan::mlme::AselCapability AselCapabilityToFidl(const AselCapability& ac);
+std::unique_ptr<::fuchsia::wlan::mlme::HtCapabilities> HtCapabilitiesToFidl(
+    const HtCapabilities& ie);
+std::unique_ptr<::fuchsia::wlan::mlme::HtOperation> HtOperationToFidl(const HtOperation& ie);
+::fuchsia::wlan::mlme::BSSTypes GetBssType(const CapabilityInfo& cap);
+::fuchsia::wlan::mlme::VhtMcsNss VhtMcsNssToFidl(const VhtMcsNss& vmn);
+::fuchsia::wlan::mlme::BasicVhtMcsNss BasicVhtMcsNssToFidl(const BasicVhtMcsNss& vmn);
+::fuchsia::wlan::mlme::VhtCapabilitiesInfo VhtCapabilitiesInfoToFidl(
+    const VhtCapabilitiesInfo& vci);
+std::unique_ptr<::fuchsia::wlan::mlme::VhtCapabilities> VhtCapabilitiesToFidl(
+    const VhtCapabilities& ie);
+std::unique_ptr<::fuchsia::wlan::mlme::VhtOperation> VhtOperationToFidl(const VhtOperation& ie);
 
 }  // namespace wlan

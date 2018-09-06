@@ -23,34 +23,32 @@ CommandTransaction::CommandTransaction(
   }
 }
 
-bool CommandTransaction::HasMoreResponses() const {
-  return !replies_.empty();
-}
-
-common::DynamicByteBuffer CommandTransaction::PopNextReply() {
-  FXL_DCHECK(HasMoreResponses());
-  auto reply = std::move(replies_.front());
-  replies_.pop();
-  return reply;
-}
-
 TestController::TestController()
     : FakeControllerBase(),
       data_dispatcher_(nullptr),
       transaction_dispatcher_(nullptr) {}
 
-TestController::~TestController() { Stop(); }
+TestController::~TestController() {
+  EXPECT_EQ(0u, cmd_transactions_.size()) << "Not all transactions resolved!";
+  Stop();
+}
 
 void TestController::QueueCommandTransaction(CommandTransaction transaction) {
   cmd_transactions_.push(std::move(transaction));
 }
 
+void TestController::QueueCommandTransaction(
+    const common::ByteBuffer& expected,
+    const std::vector<const common::ByteBuffer*>& replies) {
+  QueueCommandTransaction(CommandTransaction(expected, replies));
+}
+
 void TestController::SetDataCallback(DataCallback callback,
-                                     async_t* dispatcher) {
-  FXL_DCHECK(callback);
-  FXL_DCHECK(dispatcher);
-  FXL_DCHECK(!data_callback_);
-  FXL_DCHECK(!data_dispatcher_);
+                                     async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(callback);
+  ZX_DEBUG_ASSERT(dispatcher);
+  ZX_DEBUG_ASSERT(!data_callback_);
+  ZX_DEBUG_ASSERT(!data_dispatcher_);
 
   data_callback_ = std::move(callback);
   data_dispatcher_ = dispatcher;
@@ -58,11 +56,11 @@ void TestController::SetDataCallback(DataCallback callback,
 
 void TestController::SetTransactionCallback(
     fit::closure callback,
-    async_t* dispatcher) {
-  FXL_DCHECK(callback);
-  FXL_DCHECK(dispatcher);
-  FXL_DCHECK(!transaction_callback_);
-  FXL_DCHECK(!transaction_dispatcher_);
+    async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(callback);
+  ZX_DEBUG_ASSERT(dispatcher);
+  ZX_DEBUG_ASSERT(!transaction_callback_);
+  ZX_DEBUG_ASSERT(!transaction_dispatcher_);
 
   transaction_callback_ = std::move(callback);
   transaction_dispatcher_ = dispatcher;

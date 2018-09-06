@@ -100,8 +100,8 @@ constexpr char g_kernel_src[] = R"GLSL(
 
 static constexpr size_t k4x4MatrixSize = 16 * sizeof(float);
 
-PoseBufferLatchingShader::PoseBufferLatchingShader(Escher* escher)
-    : escher_(escher) {}
+PoseBufferLatchingShader::PoseBufferLatchingShader(EscherWeakPtr escher)
+    : escher_(std::move(escher)) {}
 
 BufferPtr PoseBufferLatchingShader::LatchPose(const FramePtr& frame,
                                               const Camera& camera,
@@ -113,11 +113,8 @@ BufferPtr PoseBufferLatchingShader::LatchPose(const FramePtr& frame,
 }
 
 BufferPtr PoseBufferLatchingShader::LatchStereoPose(
-    const FramePtr& frame,
-    const Camera& left_camera,
-    const Camera& right_camera,
-    PoseBuffer pose_buffer,
-    uint64_t latch_time,
+    const FramePtr& frame, const Camera& left_camera,
+    const Camera& right_camera, PoseBuffer pose_buffer, uint64_t latch_time,
     bool host_accessible_output) {
   vk::DeviceSize buffer_size = 2 * k4x4MatrixSize + sizeof(Pose);
 
@@ -149,9 +146,9 @@ BufferPtr PoseBufferLatchingShader::LatchStereoPose(
       ((latch_time - pose_buffer.base_time) / pose_buffer.time_interval) %
       pose_buffer.num_entries;
 
-  FXL_DCHECK(vp_matrices_buffer->ptr() != nullptr);
+  FXL_DCHECK(vp_matrices_buffer->host_ptr() != nullptr);
   glm::mat4* vp_matrices =
-      reinterpret_cast<glm::mat4*>(vp_matrices_buffer->ptr());
+      reinterpret_cast<glm::mat4*>(vp_matrices_buffer->host_ptr());
   vp_matrices[0] = left_camera.transform();
   vp_matrices[1] = left_camera.projection();
   vp_matrices[2] = right_camera.transform();

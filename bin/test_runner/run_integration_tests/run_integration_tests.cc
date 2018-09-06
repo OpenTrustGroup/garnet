@@ -24,9 +24,9 @@ namespace {
 class TestRunObserverImpl : public test_runner::TestRunObserver {
  public:
   TestRunObserverImpl(async::Loop* loop, const std::string& test_id)
-    : loop_(loop), test_id_(test_id) {
-      FXL_CHECK(loop);
-    }
+      : loop_(loop), test_id_(test_id) {
+    FXL_CHECK(loop);
+  }
 
   void SendMessage(const std::string& test_id, const std::string& operation,
                    const std::string& msg) override {
@@ -48,7 +48,7 @@ class TestRunObserverImpl : public test_runner::TestRunObserver {
 };
 
 bool RunTest(async::Loop* loop,
-             std::shared_ptr<fuchsia::sys::StartupContext> app_context,
+             std::shared_ptr<component::StartupContext> app_context,
              const std::string& url, const std::vector<std::string>& args) {
   FXL_CHECK(loop);
   uint64_t random_number;
@@ -72,7 +72,7 @@ void PrintKnownTests(const TestRunnerConfig& config) {
 }
 
 int RunIntegrationTestsMain(int argc, char** argv) {
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
   fxl::CommandLine settings = fxl::CommandLineFromArgcArgv(argc, argv);
   std::string test_file;
   bool has_test_file = settings.GetOptionValue("test_file", &test_file);
@@ -100,8 +100,8 @@ int RunIntegrationTestsMain(int argc, char** argv) {
 
   TestRunnerConfig config(test_file);
 
-  std::shared_ptr<fuchsia::sys::StartupContext> app_context =
-      fuchsia::sys::StartupContext::CreateFromStartupInfo();
+  std::shared_ptr<component::StartupContext> app_context =
+      component::StartupContext::CreateFromStartupInfo();
 
   std::vector<std::string> test_names = settings.positional_args();
   if (test_names.empty()) {

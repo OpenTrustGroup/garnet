@@ -9,6 +9,7 @@
 
 #include <vulkan/vulkan.hpp>
 
+#include "lib/escher/fs/hack_filesystem.h"
 #include "lib/escher/resources/resource_manager.h"
 #include "lib/escher/vk/vulkan_context.h"
 #include "lib/escher/vk/vulkan_device_queues.h"
@@ -33,8 +34,7 @@ class DemoHarness {
   using InstanceParams = escher::VulkanInstance::Params;
 
   static std::unique_ptr<DemoHarness> New(
-      DemoHarness::WindowParams window_params,
-      InstanceParams instance_params);
+      DemoHarness::WindowParams window_params, InstanceParams instance_params);
   virtual ~DemoHarness();
 
   const WindowParams& GetWindowParams() const { return window_params_; }
@@ -43,6 +43,7 @@ class DemoHarness {
   const escher::VulkanDeviceQueuesPtr& device_queues() const {
     return device_queues_;
   }
+  const escher::HackFilesystemPtr& filesystem() const { return filesystem_; }
 
   // Notify the demo that it should stop looping and quit.
   void SetShouldQuit() { should_quit_ = true; }
@@ -58,9 +59,17 @@ class DemoHarness {
   // Create via DemoHarness::New().
   DemoHarness(WindowParams window_params);
 
+  // Draw a frame, unless too many unfinished frames are in flight.  Return
+  // true if a frame was drawn and false otherwise.
+  bool DrawFrame();
+
   // Subclasses are responsible for setting this when they start running a Demo,
   // and setting it back to nullptr when they finish running the Demo.
   Demo* demo_ = nullptr;
+
+  // Subclasses are responsible for setting this, as the filesystem on Fuchsia
+  // can take a debug_dir to support hot reload.
+  escher::HackFilesystemPtr filesystem_;
 
   vk::Device device() const { return device_queues_->vk_device(); }
   vk::PhysicalDevice physical_device() const {
@@ -119,12 +128,10 @@ class DemoHarness {
   // Redirect to instance method.
   static VkBool32 RedirectDebugReport(VkDebugReportFlagsEXT flags,
                                       VkDebugReportObjectTypeEXT objectType,
-                                      uint64_t object,
-                                      size_t location,
+                                      uint64_t object, size_t location,
                                       int32_t messageCode,
                                       const char* pLayerPrefix,
-                                      const char* pMessage,
-                                      void* pUserData) {
+                                      const char* pMessage, void* pUserData) {
     return reinterpret_cast<DemoHarness*>(pUserData)->HandleDebugReport(
         flags, objectType, object, location, messageCode, pLayerPrefix,
         pMessage);
@@ -132,10 +139,8 @@ class DemoHarness {
 
   VkBool32 HandleDebugReport(VkDebugReportFlagsEXT flags,
                              VkDebugReportObjectTypeEXT objectType,
-                             uint64_t object,
-                             size_t location,
-                             int32_t messageCode,
-                             const char* pLayerPrefix,
+                             uint64_t object, size_t location,
+                             int32_t messageCode, const char* pLayerPrefix,
                              const char* pMessage);
 
   WindowParams window_params_;

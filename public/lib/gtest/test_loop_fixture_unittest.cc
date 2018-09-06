@@ -13,7 +13,7 @@ namespace {
 using TestLoopFixtureTest = TestLoopFixture;
 
 TEST_F(TestLoopFixtureTest, DefaultDispatcherIsSet) {
-  EXPECT_EQ(async_get_default(), dispatcher());
+  EXPECT_EQ(async_get_default_dispatcher(), dispatcher());
 }
 
 TEST_F(TestLoopFixtureTest, TimeIsAdvanced) {
@@ -21,9 +21,6 @@ TEST_F(TestLoopFixtureTest, TimeIsAdvanced) {
 
   AdvanceTimeTo(zx::time(0) + zx::sec(5));
   EXPECT_EQ(Now(), zx::time(0) + zx::sec(5));
-
-  AdvanceTimeBy(zx::sec(5));
-  EXPECT_EQ(Now(), zx::time(0) + zx::sec(10));
 
   RunLoopUntil(zx::time(0) + zx::sec(15));
   EXPECT_EQ(Now(), zx::time(0) + zx::sec(15));
@@ -65,7 +62,7 @@ TEST_F(TestLoopFixtureTest, LoopCanQuitAndReset) {
 
   // Quit task is posted, followed by another task. The quit task is
   // dispatched and work is reported.
-  async::PostTask(dispatcher(), QuitLoopClosure() );
+  async::PostTask(dispatcher(), QuitLoopClosure());
   async::PostTask(dispatcher(), [] {});
   EXPECT_TRUE(RunLoopUntilIdle());
 

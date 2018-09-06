@@ -11,7 +11,7 @@
 namespace zxdb {
 
 DwarfDieDecoder::DwarfDieDecoder(llvm::DWARFContext* context,
-                                 llvm::DWARFCompileUnit* unit)
+                                 llvm::DWARFUnit* unit)
     : context_(context),
       unit_(unit),
       extractor_(unit_->getDebugInfoExtractor()) {}
@@ -24,11 +24,40 @@ void DwarfDieDecoder::AddPresenceCheck(llvm::dwarf::Attribute attribute,
       attribute, [present](const llvm::DWARFFormValue&) { *present = true; });
 }
 
+void DwarfDieDecoder::AddUnsignedConstant(llvm::dwarf::Attribute attribute,
+                                          llvm::Optional<uint64_t>* output) {
+  attrs_.emplace_back(attribute, [output](const llvm::DWARFFormValue& form) {
+    *output = form.getAsUnsignedConstant();
+  });
+}
+
+void DwarfDieDecoder::AddSignedConstant(llvm::dwarf::Attribute attribute,
+                                        llvm::Optional<int64_t>* output) {
+  attrs_.emplace_back(attribute, [output](const llvm::DWARFFormValue& form) {
+    *output = form.getAsSignedConstant();
+  });
+}
+
 void DwarfDieDecoder::AddAddress(llvm::dwarf::Attribute attribute,
                                  llvm::Optional<uint64_t>* output) {
   attrs_.emplace_back(attribute, [output](const llvm::DWARFFormValue& form) {
     *output = form.getAsAddress();
   });
+}
+
+void DwarfDieDecoder::AddHighPC(llvm::Optional<HighPC>* output) {
+  attrs_.emplace_back(
+      llvm::dwarf::DW_AT_high_pc, [output](const llvm::DWARFFormValue& form) {
+        if (form.isFormClass(llvm::DWARFFormValue::FC_Constant)) {
+          auto as_constant = form.getAsUnsignedConstant();
+          if (as_constant)
+            *output = HighPC(true, *as_constant);
+        } else if (form.isFormClass(llvm::DWARFFormValue::FC_Address)) {
+          auto as_addr = form.getAsAddress();
+          if (as_addr)
+            *output = HighPC(false, *as_addr);
+        }
+      });
 }
 
 void DwarfDieDecoder::AddCString(llvm::dwarf::Attribute attribute,
@@ -66,9 +95,12 @@ void DwarfDieDecoder::AddReference(llvm::dwarf::Attribute attribute,
       case llvm::dwarf::DW_FORM_ref4:
       case llvm::dwarf::DW_FORM_ref8:
       case llvm::dwarf::DW_FORM_ref_udata:
+        // A DWARF "form" is the way a value is encoded in the file. These
+        // are all relative location of DIEs within the same unit.
         *unit_offset = form.getAsReferenceUVal();
         break;
       case llvm::dwarf::DW_FORM_ref_addr:
+        // This is an absolute DIE address which can be used across units.
         *global_offset = form.getAsReferenceUVal();
         break;
       default:
@@ -79,6 +111,66 @@ void DwarfDieDecoder::AddReference(llvm::dwarf::Attribute attribute,
         break;
     }
   });
+}
+
+void DwarfDieDecoder::AddReference(llvm::dwarf::Attribute attribute,
+                                   llvm::DWARFDie* output) {
+  attrs_.emplace_back(
+      attribute, [this, output](const llvm::DWARFFormValue& form) {
+        // See above version for comments.
+        switch (form.getForm()) {
+          case llvm::dwarf::DW_FORM_ref1:
+          case llvm::dwarf::DW_FORM_ref2:
+          case llvm::dwarf::DW_FORM_ref4:
+          case llvm::dwarf::DW_FORM_ref8:
+          case llvm::dwarf::DW_FORM_ref_udata: {
+            auto ref_value = form.getAsReferenceUVal();
+            if (ref_value)
+              *output = unit_->getDIEForOffset(unit_->getOffset() + *ref_value);
+            break;
+          }
+          case llvm::dwarf::DW_FORM_ref_addr: {
+            auto ref_value = form.getAsReferenceUVal();
+            if (ref_value)
+              *output = unit_->getDIEForOffset(*ref_value);
+            break;
+          }
+          default:
+            // See above version for some comments.
+            break;
+        }
+      });
+}
+
+void DwarfDieDecoder::AddFile(llvm::dwarf::Attribute attribute,
+                              llvm::Optional<std::string>* output) {
+  attrs_.emplace_back(
+      attribute, [this, output](const llvm::DWARFFormValue& form) {
+        llvm::Optional<uint64_t> file_index = form.getAsUnsignedConstant();
+        if (!file_index)
+          return;
+
+        const llvm::DWARFDebugLine::LineTable* line_table =
+            context_->getLineTableForUnit(unit_);
+        const char* compilation_dir = unit_->getCompilationDir();
+
+        std::string file_name;
+        if (line_table->getFileNameByIndex(
+                *file_index, compilation_dir,
+                llvm::DILineInfoSpecifier::FileLineInfoKind::AbsoluteFilePath,
+                file_name))
+          *output = std::move(file_name);
+      });
+}
+
+void DwarfDieDecoder::AddCustom(
+    llvm::dwarf::Attribute attribute,
+    std::function<void(const llvm::DWARFFormValue&)> callback) {
+  attrs_.emplace_back(attribute, std::move(callback));
+}
+
+bool DwarfDieDecoder::Decode(const llvm::DWARFDie& die) {
+  return Decode(*die.getDebugInfoEntry());
 }
 
 bool DwarfDieDecoder::Decode(const llvm::DWARFDebugInfoEntry& die) {
@@ -132,7 +224,7 @@ bool DwarfDieDecoder::Decode(const llvm::DWARFDebugInfoEntry& die) {
       form_value.skipValue(extractor_, &offset, unit_->getFormParams());
     }
   }
-  return decoded_any;
+  return true;
 }
 
 }  // namespace zxdb

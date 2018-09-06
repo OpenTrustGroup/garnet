@@ -2,65 +2,56 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#![feature(async_await, await_macro, futures_api, pin, arbitrary_self_types, transpose_result)]
 #![deny(warnings)]
 
-#[macro_use]
-extern crate failure;
-extern crate fidl;
-extern crate fidl_fuchsia_wlan_mlme as fidl_mlme;
-extern crate fidl_fuchsia_wlan_service as legacy;
-extern crate fidl_fuchsia_wlan_sme as fidl_sme;
-extern crate fidl_fuchsia_wlan_stats as fidl_wlan_stats;
-extern crate fidl_fuchsia_wlan_device as wlan;
-extern crate fidl_fuchsia_wlan_device_service as wlan_service;
-extern crate fuchsia_app as app;
-#[macro_use]
-extern crate fuchsia_async as async;
-extern crate fuchsia_zircon as zx;
-extern crate futures;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-
 mod config;
+mod client;
 mod device;
+mod known_ess_store;
+mod future_util;
 mod shim;
+mod state_machine;
 
-use config::Config;
-use app::server::ServicesServer;
-use failure::{Error, ResultExt};
-use futures::prelude::*;
-use wlan_service::DeviceServiceMarker;
+use crate::{config::Config, known_ess_store::KnownEssStore};
+
+use {
+    failure::{format_err, Error, ResultExt},
+    fidl::endpoints2::{RequestStream, ServiceMarker},
+    fidl_fuchsia_wlan_device_service::DeviceServiceMarker,
+    fidl_fuchsia_wlan_service as legacy,
+    fuchsia_app::server::ServicesServer,
+    fuchsia_async as fasync,
+    futures::prelude::*,
+    std::sync::Arc,
+};
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum Never {}
+impl Never {
+    pub fn into_any<T>(self) -> T { match self {} }
+}
 
 fn serve_fidl(_client_ref: shim::ClientRef)
-    -> impl Future<Item = Never, Error = Error>
+    -> impl Future<Output = Result<Never, Error>>
 {
-    ServicesServer::new()
-        // To test the legacy API server, change
-        //     "fuchsia.wlan.service.Wlan": "wlanstack"
-        // to
-        //     "fuchsia.wlan.service.Wlan": "wlancfg"
-        // in 'bin/sysmgr/config/services.config' and uncomment the following code:
-        /*
-        .add_service((<legacy::WlanMarker as ::fidl::endpoints2::ServiceMarker>::NAME, move |channel| {
-            let stream = <legacy::WlanRequestStream as ::fidl::endpoints2::RequestStream>::from_channel(channel);
+    future::ready(ServicesServer::new()
+        .add_service((legacy::WlanMarker::NAME, move |channel| {
+            let stream = legacy::WlanRequestStream::from_channel(channel);
             let fut = shim::serve_legacy(stream, _client_ref.clone())
-                .recover(|e| eprintln!("error serving legacy wlan API: {}", e));
-            async::spawn(fut)
+                .unwrap_or_else(|e| eprintln!("error serving legacy wlan API: {}", e));
+            fasync::spawn(fut)
         }))
-        */
-        .start()
-        .into_future()
+        .start())
         .and_then(|fut| fut)
-        .and_then(|()| Err(format_err!("FIDL server future exited unexpectedly")))
+        .and_then(|()| future::ready(Err(format_err!("FIDL server future exited unexpectedly"))))
 }
 
 fn main() -> Result<(), Error> {
     let cfg = Config::load_from_file()?;
 
-    let mut executor = async::Executor::new().context("error creating event loop")?;
-    let wlan_svc = app::client::connect_to_service::<DeviceServiceMarker>()
+    let mut executor = fasync::Executor::new().context("error creating event loop")?;
+    let wlan_svc = fuchsia_app::client::connect_to_service::<DeviceServiceMarker>()
         .context("failed to connect to device service")?;
 
     let legacy_client = shim::ClientRef::new();
@@ -69,12 +60,13 @@ fn main() -> Result<(), Error> {
     let (watcher_proxy, watcher_server_end) = fidl::endpoints2::create_endpoints()?;
     wlan_svc.watch_devices(watcher_server_end)?;
     let listener = device::Listener::new(wlan_svc, cfg, legacy_client);
+    let ess_store = Arc::new(KnownEssStore::new()?);
     let fut = watcher_proxy.take_event_stream()
-        .for_each(move |evt| device::handle_event(&listener, evt))
+        .try_for_each(move |evt| device::handle_event(&listener, evt, &ess_store).map(Ok))
         .err_into()
-        .and_then(|_| Err(format_err!("Device watcher future exited unexpectedly")));
+        .and_then(|_| future::ready(Err(format_err!("Device watcher future exited unexpectedly"))));
 
     executor
-        .run_singlethreaded(fidl_fut.join(fut))
+        .run_singlethreaded(fidl_fut.try_join(fut))
         .map(|_: (Never, Never)| ())
 }

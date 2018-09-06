@@ -4,11 +4,13 @@
 
 #include "low_energy_advertising_manager.h"
 
+#include <zircon/assert.h>
+
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/common/slab_allocator.h"
 #include "garnet/drivers/bluetooth/lib/gap/random_address_generator.h"
 #include "garnet/drivers/bluetooth/lib/gap/remote_device.h"
 #include "garnet/drivers/bluetooth/lib/hci/util.h"
-#include "lib/fxl/logging.h"
 #include "lib/fxl/random/uuid.h"
 #include "lib/fxl/strings/string_printf.h"
 
@@ -22,7 +24,7 @@ constexpr uint8_t kDefaultFlags = 0;
 
 // Write the block for the flags to the |buffer|.
 void WriteFlags(common::MutableByteBuffer* buffer, bool limited = false) {
-  FXL_CHECK(buffer->size() >= kFlagsSize);
+  ZX_DEBUG_ASSERT(buffer->size() >= kFlagsSize);
   (*buffer)[0] = 2;
   (*buffer)[1] = static_cast<uint8_t>(DataType::kFlags);
   if (limited) {
@@ -54,7 +56,7 @@ class LowEnergyAdvertisingManager::ActiveAdvertisement final {
 LowEnergyAdvertisingManager::LowEnergyAdvertisingManager(
     hci::LowEnergyAdvertiser* advertiser)
     : advertiser_(advertiser), weak_ptr_factory_(this) {
-  FXL_CHECK(advertiser_);
+  ZX_DEBUG_ASSERT(advertiser_);
 }
 
 LowEnergyAdvertisingManager::~LowEnergyAdvertisingManager() {
@@ -73,22 +75,24 @@ void LowEnergyAdvertisingManager::StartAdvertising(
     AdvertisingStatusCallback status_callback) {
   // Can't be anonymous and connectable
   if (anonymous && connect_callback) {
-    FXL_LOG(WARNING) << "Can't advertise anonymously and connectable!";
+    bt_log(TRACE, "gap-le", "can't advertise anonymously and connectable!");
     status_callback("", hci::Status(common::HostError::kInvalidParameters));
     return;
   }
   // Generate the DeviceAddress and id
-  // TODO(jamuraa): Generate resolvable private addresses instead if they're
-  // connectable.
+  // TODO(armansito): Extract private address generation to a centrally
+  // accessible location and persist the address so that it can be used for
+  // pairing.
   auto address = RandomAddressGenerator::PrivateAddress();
   auto ad_ptr = std::make_unique<ActiveAdvertisement>(address);
   auto self = weak_ptr_factory_.GetWeakPtr();
 
   hci::LowEnergyAdvertiser::ConnectionCallback adv_conn_cb;
   if (connect_callback) {
-    adv_conn_cb = [self, id = ad_ptr->id(), connect_callback = std::move(connect_callback)](auto link) {
-      FXL_VLOG(1)
-          << "gap: LowEnergyAdvertisingManager: received new connection.";
+    adv_conn_cb = [self, id = ad_ptr->id(),
+                   connect_callback = std::move(connect_callback)](auto link) {
+      bt_log(TRACE, "gap-le", "received new connection");
+
       if (!self)
         return;
 

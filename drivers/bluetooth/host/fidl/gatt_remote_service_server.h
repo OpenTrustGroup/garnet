@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_GATT_REMOTE_SERVICE_SERVER_H_
+#define GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_GATT_REMOTE_SERVICE_SERVER_H_
 
 #include <unordered_map>
 
@@ -32,14 +33,15 @@ class GattRemoteServiceServer
   void DiscoverCharacteristics(
       DiscoverCharacteristicsCallback callback) override;
   void ReadCharacteristic(uint64_t id,
-                          uint16_t offset,
                           ReadCharacteristicCallback callback) override;
-  void WriteCharacteristic(uint64_t characteristic_id,
-                           uint16_t offset,
+  void ReadLongCharacteristic(uint64_t id, uint16_t offset, uint16_t max_bytes,
+                              ReadLongCharacteristicCallback callback) override;
+  void WriteCharacteristic(uint64_t characteristic_id, uint16_t offset,
                            ::fidl::VectorPtr<uint8_t> value,
                            WriteCharacteristicCallback callback) override;
-  void NotifyCharacteristic(uint64_t id,
-                            bool enable,
+  void WriteCharacteristicWithoutResponse(
+      uint64_t id, ::fidl::VectorPtr<uint8_t> value) override;
+  void NotifyCharacteristic(uint64_t id, bool enable,
                             NotifyCharacteristicCallback callback) override;
 
   // The remote GATT service that backs this service.
@@ -54,3 +56,5 @@ class GattRemoteServiceServer
 };
 
 }  // namespace bthost
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_HOST_FIDL_GATT_REMOTE_SERVICE_SERVER_H_

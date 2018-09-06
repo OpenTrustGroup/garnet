@@ -10,14 +10,11 @@ source_set("audio") {
     "types.h",
   ]
 
-  public_deps = [
-    "//garnet/public/lib/media/transport",
+  deps = [
+    "//garnet/public/lib/fxl",
   ]
 
-  deps = [
-    "//garnet/public/lib/fsl",
-    "//garnet/public/lib/fxl",
-    "//garnet/public/lib/media/fidl",
-    "//garnet/public/lib/media/timeline",
+  public_deps = [
+    "//garnet/public/fidl/fuchsia.media",
   ]
 }

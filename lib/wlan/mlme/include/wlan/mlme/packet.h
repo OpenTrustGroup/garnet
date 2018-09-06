@@ -9,13 +9,14 @@
 #include <fbl/intrusive_double_list.h>
 #include <fbl/slab_allocator.h>
 #include <fbl/unique_ptr.h>
+#include <wlan/common/logging.h>
 #include <wlan/protocol/mac.h>
 #include <zircon/types.h>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
+#include <string>
 
 typedef struct ethmac_netbuf ethmac_netbuf_t;
 
@@ -30,6 +31,62 @@ class Buffer {
     virtual uint8_t* ctrl() = 0;
     virtual size_t capacity() const = 0;
     virtual void clear(size_t len) = 0;
+};
+
+// Huge buffers are used for sending lots of data between drivers and the wlanstack.
+constexpr size_t kHugeSlabs = 2;
+constexpr size_t kHugeBuffers = 8;
+constexpr size_t kHugeBufferSize = 16384;
+// Large buffers can hold the largest 802.11 MSDU, standard Ethernet MTU,
+// or HT A-MSDU of size 3,839 bytes.
+constexpr size_t kLargeSlabs = 20;
+constexpr size_t kLargeBuffers = 32;
+constexpr size_t kLargeBufferSize = 4096;
+// Small buffers are for smaller control packets within the driver stack itself and
+// for transfering small 802.11 frames as well.
+constexpr size_t kSmallSlabs = 40;
+constexpr size_t kSmallBuffers = 512;
+constexpr size_t kSmallBufferSize = 256;
+
+// TODO(eyw): Revisit SlabAllocator counter behavior in Zircon to remove the dependency on template
+template <typename, typename, typename, bool> class BufferDebugger;
+
+template <typename SmallSlabAllocator, typename LargeSlabAllocator, typename HugeSlabAllocator>
+class BufferDebugger<SmallSlabAllocator, LargeSlabAllocator, HugeSlabAllocator, true> {
+   public:
+    static void Fail(const std::string& buffer_name) {
+        // TODO(eyw): Use a timer to throttle logging
+        if (!is_logging_) { return; }
+        debugbuf("%s buffer exhausted.\n", buffer_name.c_str());
+        PrintCounters();
+        is_logging_ = false;
+    }
+    static void PrintCounters() {
+        // 4 numbers for each allocator:
+        // current buffers in use / historical maximum buffers in use /
+        // current allocator capacity / maximum allocator capacity
+        debugbuf("usage: Small: %zu/%zu/%zu/%zu, Large: %zu/%zu/%zu/%zu, Huge: %zu/%zu/%zu/%zu\n",
+                 SmallSlabAllocator::obj_count(), SmallSlabAllocator::max_obj_count(),
+                 SmallSlabAllocator::slab_count() * kSmallBuffers, kSmallSlabs * kSmallBuffers,
+                 LargeSlabAllocator::obj_count(), LargeSlabAllocator::max_obj_count(),
+                 LargeSlabAllocator::slab_count() * kLargeBuffers, kLargeSlabs * kLargeBuffers,
+                 HugeSlabAllocator::obj_count(), HugeSlabAllocator::max_obj_count(),
+                 HugeSlabAllocator::slab_count() * kHugeBuffers, kHugeSlabs * kHugeBuffers);
+    }
+
+   private:
+    static bool is_logging_;
+};
+
+template <typename SmallSlabAllocator, typename LargeSlabAllocator, typename HugeSlabAllocator>
+bool BufferDebugger<SmallSlabAllocator, LargeSlabAllocator, HugeSlabAllocator, true>::is_logging_ =
+    true;
+
+template <typename SmallSlabAllocator, typename LargeSlabAllocator, typename HugeSlabAllocator>
+class BufferDebugger<SmallSlabAllocator, LargeSlabAllocator, HugeSlabAllocator, false> {
+   public:
+    static void Fail(...) {}
+    static void PrintCounters() {}
 };
 
 constexpr size_t kCtrlSize = 32;
@@ -60,7 +117,8 @@ template <size_t NumBuffers, size_t BufferSize>
 using SlabBufferTraits =
     fbl::StaticSlabAllocatorTraits<fbl::unique_ptr<SlabBuffer<NumBuffers, BufferSize>>,
                                    sizeof(internal::FixedBuffer<BufferSize>) * NumBuffers +
-                                       kSlabOverhead>;
+                                       kSlabOverhead,
+                                   ::fbl::Mutex, kBufferDebugEnabled>;
 
 // A SlabBuffer is an implementation of a Buffer that comes from a fbl::SlabAllocator. The size of
 // the internal::FixedBuffer and the number of buffers is part of the typename of the SlabAllocator,
@@ -68,18 +126,6 @@ using SlabBufferTraits =
 template <size_t NumBuffers, size_t BufferSize>
 class SlabBuffer final : public internal::FixedBuffer<BufferSize>,
                          public fbl::SlabAllocated<SlabBufferTraits<NumBuffers, BufferSize>> {};
-
-// Huge buffers are used for sending lots of data between drivers and the wlanstack.
-constexpr size_t kHugeBuffers = 8;
-constexpr size_t kHugeBufferSize = 16384;
-// Large buffers can hold the largest 802.11 MSDU, standard Ethernet MTU,
-// or HT A-MSDU of size 3,839 bytes.
-constexpr size_t kLargeBuffers = 32;
-constexpr size_t kLargeBufferSize = 4096;
-// Small buffers are for smaller control packets within the driver stack itself (though they could
-// be used for transfering small 802.11 frames as well).
-constexpr size_t kSmallBuffers = 1024;
-constexpr size_t kSmallBufferSize = 64;
 
 using HugeBufferTraits = SlabBufferTraits<kHugeBuffers, kHugeBufferSize>;
 using LargeBufferTraits = SlabBufferTraits<kLargeBuffers, kLargeBufferSize>;
@@ -102,8 +148,6 @@ class Packet : public fbl::DoublyLinkedListable<fbl::unique_ptr<Packet>> {
         kEthernet,
         kService,
     };
-
-    static fbl::unique_ptr<Packet> CreateWlanPacket(size_t frame_len);
 
     Packet(fbl::unique_ptr<Buffer> buffer, size_t len);
     size_t Capacity() const { return buffer_->capacity(); }
@@ -154,7 +198,7 @@ class Packet : public fbl::DoublyLinkedListable<fbl::unique_ptr<Packet>> {
 
     zx_status_t CopyFrom(const void* src, size_t len, size_t offset);
 
-    zx_status_t AsWlanTxPacket(wlan_tx_packet_t* tx_pkt);
+    wlan_tx_packet_t AsWlanTxPacket();
 
     bool has_ext_data() const { return ext_data_ != nullptr; }
     void set_ext_data(ethmac_netbuf_t* netbuf, uint16_t offset) {
@@ -210,5 +254,6 @@ class PacketQueue {
 }  // namespace wlan
 
 // Declaration of static slab allocators.
+FWD_DECL_STATIC_SLAB_ALLOCATOR(::wlan::HugeBufferTraits);
 FWD_DECL_STATIC_SLAB_ALLOCATOR(::wlan::LargeBufferTraits);
 FWD_DECL_STATIC_SLAB_ALLOCATOR(::wlan::SmallBufferTraits);

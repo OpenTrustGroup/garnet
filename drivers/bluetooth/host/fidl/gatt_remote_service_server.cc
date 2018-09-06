@@ -54,12 +54,15 @@ GattRemoteServiceServer::GattRemoteServiceServer(
     : GattServerBase(gatt, this, std::move(request)),
       service_(std::move(service)),
       weak_ptr_factory_(this) {
-  FXL_DCHECK(service_);
+  ZX_DEBUG_ASSERT(service_);
 }
 
 GattRemoteServiceServer::~GattRemoteServiceServer() {
   for (const auto& iter : notify_handlers_) {
-    service_->DisableNotifications(iter.first, iter.second, NopStatusCallback);
+    if (iter.second != btlib::gatt::kInvalidId) {
+      service_->DisableNotifications(iter.first, iter.second,
+                                     NopStatusCallback);
+    }
   }
 }
 
@@ -82,9 +85,7 @@ void GattRemoteServiceServer::DiscoverCharacteristics(
 }
 
 void GattRemoteServiceServer::ReadCharacteristic(
-    uint64_t id,
-    uint16_t offset,
-    ReadCharacteristicCallback callback) {
+    uint64_t id, ReadCharacteristicCallback callback) {
   auto cb = [callback = std::move(callback)](
                 btlib::att::Status status,
                 const btlib::common::ByteBuffer& value) {
@@ -102,15 +103,34 @@ void GattRemoteServiceServer::ReadCharacteristic(
              fidl::VectorPtr<uint8_t>(std::move(vec)));
   };
 
-  // TODO(armansito): Use |offset| when gatt::RemoteService supports the long
-  // read procedure.
   service_->ReadCharacteristic(id, std::move(cb));
 }
 
+void GattRemoteServiceServer::ReadLongCharacteristic(
+    uint64_t id, uint16_t offset, uint16_t max_bytes,
+    ReadLongCharacteristicCallback callback) {
+  auto cb = [callback = std::move(callback)](
+                btlib::att::Status status,
+                const btlib::common::ByteBuffer& value) {
+    // We always reply with a non-null value.
+    std::vector<uint8_t> vec;
+
+    if (status && value.size()) {
+      vec.resize(value.size());
+
+      MutableBufferView vec_view(vec.data(), vec.size());
+      value.Copy(&vec_view);
+    }
+
+    callback(fidl_helpers::StatusToFidl(status),
+             fidl::VectorPtr<uint8_t>(std::move(vec)));
+  };
+
+  service_->ReadLongCharacteristic(id, offset, max_bytes, std::move(cb));
+}
+
 void GattRemoteServiceServer::WriteCharacteristic(
-    uint64_t id,
-    uint16_t offset,
-    ::fidl::VectorPtr<uint8_t> value,
+    uint64_t id, uint16_t offset, ::fidl::VectorPtr<uint8_t> value,
     WriteCharacteristicCallback callback) {
   auto cb = [callback = std::move(callback)](btlib::att::Status status) {
     callback(fidl_helpers::StatusToFidl(status, ""));
@@ -121,15 +141,25 @@ void GattRemoteServiceServer::WriteCharacteristic(
   service_->WriteCharacteristic(id, value.take(), std::move(cb));
 }
 
+void GattRemoteServiceServer::WriteCharacteristicWithoutResponse(
+    uint64_t id, ::fidl::VectorPtr<uint8_t> value) {
+  service_->WriteCharacteristicWithoutResponse(id, value.take());
+}
+
 void GattRemoteServiceServer::NotifyCharacteristic(
-    uint64_t id,
-    bool enable,
-    NotifyCharacteristicCallback callback) {
+    uint64_t id, bool enable, NotifyCharacteristicCallback callback) {
   if (!enable) {
     auto iter = notify_handlers_.find(id);
     if (iter == notify_handlers_.end()) {
       callback(fidl_helpers::NewFidlError(ErrorCode::NOT_FOUND,
                                           "characteristic not notifying"));
+      return;
+    }
+
+    if (iter->second == btlib::gatt::kInvalidId) {
+      callback(fidl_helpers::NewFidlError(
+          ErrorCode::IN_PROGRESS,
+          "characteristic notification registration pending"));
       return;
     }
 
@@ -149,9 +179,13 @@ void GattRemoteServiceServer::NotifyCharacteristic(
     return;
   }
 
+  // Prevent any races and leaks by marking a notification is in progress
+  notify_handlers_[id] = btlib::gatt::kInvalidId;
+
   auto self = weak_ptr_factory_.GetWeakPtr();
   auto value_cb = [self, id](const ByteBuffer& value) {
-    if (!self) return;
+    if (!self)
+      return;
 
     std::vector<uint8_t> vec(value.size());
     MutableBufferView vec_view(vec.data(), vec.size());
@@ -173,8 +207,13 @@ void GattRemoteServiceServer::NotifyCharacteristic(
     }
 
     if (status) {
-      FXL_DCHECK(self->notify_handlers_.count(id) == 0u);
+      ZX_DEBUG_ASSERT(handler_id != btlib::gatt::kInvalidId);
+      ZX_DEBUG_ASSERT(self->notify_handlers_.count(id) == 1u);
+      ZX_DEBUG_ASSERT(self->notify_handlers_[id] == btlib::gatt::kInvalidId);
       self->notify_handlers_[id] = handler_id;
+    } else {
+      // Remove our handle holder.
+      self->notify_handlers_.erase(id);
     }
 
     callback(fidl_helpers::StatusToFidl(status, ""));

@@ -6,15 +6,17 @@
 
 #include <fs/pseudo-file.h>
 
+#include "garnet/lib/ui/gfx/engine/session_handler.h"
 #include "garnet/lib/ui/gfx/screenshotter.h"
 #include "garnet/lib/ui/gfx/util/vulkan_utils.h"
 #include "garnet/lib/ui/scenic/scenic.h"
-#include "garnet/public/lib/escher/util/check_vulkan_support.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/escher/escher_process_init.h"
+#include "lib/escher/fs/hack_filesystem.h"
+#include "lib/escher/util/check_vulkan_support.h"
 #include "public/lib/syslog/cpp/logger.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 GfxSystem::GfxSystem(SystemContext context)
@@ -50,7 +52,7 @@ std::unique_ptr<CommandDispatcher> GfxSystem::CreateCommandDispatcher(
 }
 
 std::unique_ptr<Engine> GfxSystem::InitializeEngine() {
-  return std::make_unique<Engine>(&display_manager_, escher_.get());
+  return std::make_unique<Engine>(&display_manager_, escher_->GetWeakPtr());
 }
 
 std::unique_ptr<escher::Escher> GfxSystem::InitializeEscher() {
@@ -61,12 +63,13 @@ std::unique_ptr<escher::Escher> GfxSystem::InitializeEscher() {
            VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
            VK_KHR_SURFACE_EXTENSION_NAME,
            VK_KHR_MAGMA_SURFACE_EXTENSION_NAME,
+           VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
            VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
            VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
        },
        true});
 
-  // Only enable Vulkan validation layers when in debug mode.
+// Only enable Vulkan validation layers when in debug mode.
 #if !defined(NDEBUG)
   instance_params.layer_names.insert("VK_LAYER_LUNARG_standard_validation");
 #endif
@@ -106,9 +109,20 @@ std::unique_ptr<escher::Escher> GfxSystem::InitializeEscher() {
     FXL_CHECK(result == VK_SUCCESS);
   }
 
+  // Provide a PseudoDir where the gfx system can register debugging services.
+  fbl::RefPtr<fs::PseudoDir> debug_dir(fbl::AdoptRef(new fs::PseudoDir()));
+  context()->app_context()->outgoing().debug_dir()->AddEntry("gfx", debug_dir);
+  auto shader_fs = escher::HackFilesystem::New(debug_dir);
+  {
+    bool success = shader_fs->InitializeWithRealFiles(
+        std::vector<escher::HackFilePath>{"shaders/model_renderer/main.vert"});
+    FXL_DCHECK(success);
+  }
+
   // Initialize Escher.
   escher::GlslangInitializeProcess();
-  return std::make_unique<escher::Escher>(vulkan_device_queues_);
+  return std::make_unique<escher::Escher>(vulkan_device_queues_,
+                                          std::move(shader_fs));
 }
 
 void GfxSystem::Initialize() {
@@ -160,7 +174,9 @@ void GfxSystem::GetDisplayInfo(
     GetDisplayInfoImmediately(std::move(callback));
   } else {
     run_after_initialized_.push_back(
-        [this, callback = std::move(callback)]() mutable { GetDisplayInfoImmediately(std::move(callback)); });
+        [this, callback = std::move(callback)]() mutable {
+          GetDisplayInfoImmediately(std::move(callback));
+        });
   }
 };
 
@@ -193,7 +209,9 @@ void GfxSystem::GetDisplayOwnershipEvent(
     GetDisplayOwnershipEventImmediately(std::move(callback));
   } else {
     run_after_initialized_.push_back(
-        [this, callback = std::move(callback)]() mutable { GetDisplayOwnershipEventImmediately(std::move(callback)); });
+        [this, callback = std::move(callback)]() mutable {
+          GetDisplayOwnershipEventImmediately(std::move(callback));
+        });
   }
 }
 
@@ -254,5 +272,18 @@ VkBool32 GfxSystem::HandleDebugReport(VkDebugReportFlagsEXT flags_in,
   return false;
 }
 
+Compositor* GfxSystem::GetCompositor(scenic::ResourceId compositor_id) const {
+  return engine_->GetCompositor(compositor_id);
+}
+
+gfx::Session* GfxSystem::GetSession(SessionId session_id) const {
+  SessionHandler* handler = engine_->session_manager()->FindSession(session_id);
+  return handler ? handler->session() : nullptr;
+}
+
+void GfxSystem::AddInitClosure(fit::closure closure) {
+  run_after_initialized_.push_back(std::move(closure));
+}
+
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

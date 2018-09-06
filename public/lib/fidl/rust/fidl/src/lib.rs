@@ -4,45 +4,41 @@
 
 //! Library and runtime for fidl bindings.
 
+#![feature(futures_api, pin, arbitrary_self_types)]
 #![deny(missing_docs)]
 #![deny(warnings)]
 
-extern crate fuchsia_zircon as zircon;
-extern crate byteorder;
-#[macro_use] extern crate failure;
-extern crate fuchsia_async as async;
-extern crate futures;
-extern crate parking_lot;
-extern crate slab;
-
 #[macro_use]
 pub mod encoding2;
-mod error;
 pub mod client2;
 pub mod endpoints2;
 
-pub use error::{Error, Result};
+mod error;
+pub use self::error::{Error, Result};
 
-use futures::task::{self, AtomicWaker};
-use std::sync::atomic::{self, AtomicBool};
+use {
+    fuchsia_async as fasync,
+    futures::task::{self, AtomicWaker},
+    std::sync::atomic::{self, AtomicBool},
+};
 
 /// A type used from the innards of server implementations
 pub struct ServeInner {
     waker: AtomicWaker,
     shutdown: AtomicBool,
-    channel: async::Channel,
+    channel: fasync::Channel,
 }
 
 impl ServeInner {
     /// Create a new set of server innards.
-    pub fn new(channel: async::Channel) -> Self {
+    pub fn new(channel: fasync::Channel) -> Self {
         let waker = AtomicWaker::new();
         let shutdown = AtomicBool::new(false);
         ServeInner { waker, shutdown, channel }
     }
 
     /// Get a reference to the inner channel.
-    pub fn channel(&self) -> &async::Channel {
+    pub fn channel(&self) -> &fasync::Channel {
         &self.channel
     }
 
@@ -61,22 +57,6 @@ impl ServeInner {
         self.shutdown.load(atomic::Ordering::Relaxed)
     }
 }
-
-/// A specialized `Box<Future<...>>` type for FIDL.
-/// This is a convenience to avoid writing
-/// `Future<Item = I, Error = Error> + Send`.
-/// The error type indicates various FIDL protocol errors, as well as general-purpose IO
-/// errors such as a closed channel.
-pub type BoxFuture<Item> = Box<futures::Future<Item = Item, Error = Error> + Send>;
-
-/// A specialized `Future<...>` type for FIDL.
-/// This is a convenience to avoid writing
-/// `Future<Item = I, Error = fidl::Error> + Send`.
-/// The error type indicates various FIDL protocol errors, as well as general-purpose IO
-/// errors such as a closed channel.
-pub trait Future<Item>: futures::Future<Item = Item, Error = Error> + Send {}
-impl<T, Item> Future<Item> for T
-    where T: futures::Future<Item = Item, Error = Error> + Send {}
 
 #[macro_export]
 macro_rules! fidl_enum {

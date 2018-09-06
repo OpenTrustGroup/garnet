@@ -6,14 +6,10 @@ package main
 
 import (
 	"bufio"
-	"crypto/sha512"
-	"encoding/hex"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"hash"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -29,6 +25,7 @@ import (
 
 	"app/context"
 	"syscall/zx"
+	"syslog/logger"
 )
 
 const (
@@ -51,8 +48,8 @@ func main() {
 		flag.CommandLine.PrintDefaults()
 	}
 
-	log.SetPrefix("amber: ")
-	log.SetFlags(log.Ltime)
+	ctx := context.CreateFromStartupInfo()
+	registerLogger(ctx)
 
 	readExtraFlags()
 
@@ -94,33 +91,48 @@ func main() {
 		log.Println("system update monitor exited")
 	}(supMon)
 
-	startFIDLSvr(d, supMon)
+	startFIDLSvr(ctx, d, supMon)
 
 	//block forever
 	select {}
 }
 
-// LoadSourceConfigs install source configs from a directory.  The directory
-// structure looks like:
+type logWriter struct{}
+
+func (l *logWriter) Write(data []byte) (n int, err error) {
+	// Strip out the trailing newline the `log` library adds because the
+	// logging service also adds a trailing newline.
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		data = data[:len(data)-1]
+	}
+
+	if err := logger.Infof("%s", data); err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
+}
+
+func registerLogger(ctx *context.Context) {
+	if err := logger.InitDefaultLoggerWithTags(ctx.Connector(), "amber"); err != nil {
+		log.Printf("error initializing syslog interface: %s", err)
+	}
+	log.SetOutput(&logWriter{})
+}
+
+// addDefaultSourceConfigs installs source configs from a directory.
+// The directory structure looks like:
 //
 //     $dir/source1/config.json
 //     $dir/source2/config.json
 //     ...
 func addDefaultSourceConfigs(d *daemon.Daemon, dir string) error {
-	files, err := ioutil.ReadDir(dir)
+	configs, err := source.LoadSourceConfigs(dir)
 	if err != nil {
 		return err
 	}
 
-	for _, file := range files {
-		p := filepath.Join(dir, file.Name(), "config.json")
-		log.Printf("loading source config %s", p)
-
-		cfg, err := loadSourceConfig(p)
-		if err != nil {
-			return err
-		}
-
+	for _, cfg := range configs {
 		if err := d.AddTUFSource(cfg); err != nil {
 			return err
 		}
@@ -129,34 +141,16 @@ func addDefaultSourceConfigs(d *daemon.Daemon, dir string) error {
 	return nil
 }
 
-func loadSourceConfig(path string) (*amber_fidl.SourceConfig, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	var cfg amber_fidl.SourceConfig
-	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
-		return nil, err
-	}
-
-	return &cfg, nil
-}
-
-func startFIDLSvr(d *daemon.Daemon, s *daemon.SystemUpdateMonitor) {
-	cxt := context.CreateFromStartupInfo()
+func startFIDLSvr(ctx *context.Context, d *daemon.Daemon, s *daemon.SystemUpdateMonitor) {
 	apiSrvr := ipcserver.NewControlSrvr(d, s)
-	cxt.OutgoingService.AddService(amber_fidl.ControlName, func(c zx.Channel) error {
+	ctx.OutgoingService.AddService(amber_fidl.ControlName, func(c zx.Channel) error {
 		return apiSrvr.Bind(c)
 	})
-	cxt.Serve()
+	ctx.Serve()
 }
 
 func startupDaemon(store string) (*daemon.Daemon, error) {
-	reqSet := newPackageSet([]string{"/pkg/bin/app"})
-
-	d, err := daemon.NewDaemon(store, reqSet, daemon.ProcessPackage, []source.Source{})
+	d, err := daemon.NewDaemon(store, pkg.NewPackageSet(), daemon.ProcessPackage, []source.Source{})
 	if err != nil {
 		return nil, err
 	}
@@ -164,26 +158,6 @@ func startupDaemon(store string) (*daemon.Daemon, error) {
 	log.Println("monitoring for updates")
 
 	return d, err
-}
-
-func newPackageSet(files []string) *pkg.PackageSet {
-	reqSet := pkg.NewPackageSet()
-
-	d := sha512.New()
-	// get the current SHA512 hash of the file
-	for _, name := range files {
-		sha, err := digest(name, d)
-		d.Reset()
-		if err != nil {
-			continue
-		}
-
-		hexStr := hex.EncodeToString(sha)
-		pkg := pkg.Package{Name: name, Version: hexStr}
-		reqSet.Add(&pkg)
-	}
-
-	return reqSet
 }
 
 func digest(name string, hash hash.Hash) ([]byte, error) {
@@ -207,7 +181,7 @@ func readExtraFlags() {
 	d, err := os.Open(flagsDir)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Println("unexpected error reading %q: %s", flagsDir, err)
+			log.Printf("unexpected error reading %q: %s", flagsDir, err)
 		}
 		return
 	}

@@ -106,7 +106,7 @@ class ACLDataChannel final {
   // TODO(armansito): |dispatcher| will become mandatory. The Transport I/O
   // thread will be gone when bt-hci becomes a non-IPC protocol.
   void SetDataRxHandler(DataReceivedCallback rx_callback,
-                        async_t* rx_dispatcher);
+                        async_dispatcher_t* rx_dispatcher);
 
   // Queues the given ACL data packet to be sent to the controller. Returns
   // false if the packet cannot be queued up, e.g. if the size of |data_packet|
@@ -124,6 +124,18 @@ class ACLDataChannel final {
   // contains an element that exceeds the MTU for |ll_type| or it is empty.
   bool SendPackets(common::LinkedList<ACLDataPacket> packets,
                    Connection::LinkType ll_type);
+
+  // Cleans up all outgoing data buffering state related to the logical link
+  // with the given |handle|. This must be called upon disconnection of a link
+  // to ensure that ACL flow-control works correctly.
+  //
+  // TODO(armansito): This doesn't fix things for subsequent data packets on
+  // this |handle| (either already queued by ACLDataChannel or waiting to be
+  // sent in an async task). Support enabling/disabling data flow with separate
+  // packet queues for each link so that we can drop packets for closed links.
+  // This is also needed to correctly pause TX data flow during encryption pause
+  // (NET-1169).
+  bool ClearLinkState(hci::ConnectionHandle handle);
 
   // Returns the underlying channel handle.
   const zx::channel& channel() const { return channel_; }
@@ -189,7 +201,7 @@ class ACLDataChannel final {
       __TA_REQUIRES(send_mutex_);
 
   // Read Ready Handler for |channel_|
-  void OnChannelReady(async_t* async,
+  void OnChannelReady(async_dispatcher_t* dispatcher,
                       async::WaitBase* wait,
                       zx_status_t status,
                       const zx_packet_signal_t* signal);
@@ -215,13 +227,13 @@ class ACLDataChannel final {
   CommandChannel::EventHandlerId event_handler_id_;
 
   // The dispatcher used for posting tasks on the HCI transport I/O thread.
-  async_t* io_dispatcher_;
+  async_dispatcher_t* io_dispatcher_;
 
   // The current handler for incoming data and the dispatcher on which to run
   // it.
   std::mutex rx_mutex_;
   DataReceivedCallback rx_callback_ __TA_GUARDED(rx_mutex_);
-  async_t* rx_dispatcher_ __TA_GUARDED(rx_mutex_);
+  async_dispatcher_t* rx_dispatcher_ __TA_GUARDED(rx_mutex_);
 
   // BR/EDR data buffer information. This buffer will not be available on
   // LE-only controllers.
@@ -245,7 +257,12 @@ class ACLDataChannel final {
   // The ACL data packet queue contains the data packets that are waiting to be
   // sent to the controller.
   // TODO(armansito): Use priority_queue based on L2CAP channel priority.
-  // TODO(armansito): Store std::unique_ptr<QueuedDataPacket>?
+  // TODO(NET-1211): Keep a separate queue for each open connection. Benefits:
+  //   * Helps address the packet-prioritization TODO above.
+  //   * Also: having separate queues, which know their own
+  //     Connection::LinkType, would let us replace std::list<QueuedDataPacket>
+  //     with common::LinkedList<ACLDataPacket> which has a more efficient
+  //     memory layout.
   using DataPacketQueue = std::list<QueuedDataPacket>;
   DataPacketQueue send_queue_ __TA_GUARDED(send_mutex_);
 

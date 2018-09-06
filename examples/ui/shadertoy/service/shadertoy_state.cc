@@ -21,7 +21,7 @@ fxl::RefPtr<ShadertoyState> ShadertoyState::NewForImagePipe(
 
 fxl::RefPtr<ShadertoyState> ShadertoyState::NewForView(
     App* app,
-    ::fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+    ::fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
         view_owner_request,
     bool handle_input_events) {
   FXL_CHECK(false) << "unimplemented.";
@@ -35,7 +35,7 @@ fxl::RefPtr<ShadertoyState> ShadertoyState::NewForView(
 ShadertoyState::ShadertoyState(App* app)
     : escher::Resource(app->escher()->resource_recycler()),
       app_(app),
-      escher_(app_->escher()),
+      escher_(app_->escher()->GetWeakPtr()),
       compiler_(app_->compiler()),
       renderer_(app_->renderer()),
       weak_ptr_factory_(this),

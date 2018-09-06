@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_HCI_HCI_CONSTANTS_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_HCI_HCI_CONSTANTS_H_
 
 // clang-format off
 
@@ -1287,6 +1288,36 @@ enum class LinkType : uint8_t {
   kExtendedSCO = 0x02, // eSCO
 };
 
+enum class InquiryMode : uint8_t {
+  kStandard = 0x00, // Standard Inquiry Result format (default)
+  kRSSI = 0x01, // Inquiry Result format with RSSI
+  kExtended = 0x02, // Inquiry Result format with RSSI or EIR format
+};
+
+// Length of the Extended Inquiry Response data. (Vol 3, Part C, Section 8)
+constexpr size_t kExtendedInquiryResponseBytes = 240;
+
+// Values for the IO Capabilities
+enum class IOCapability : uint8_t {
+  kDisplayOnly = 0x00,
+  kDisplayYesNo = 0x01,
+  kKeyboardOnly = 0x02,
+  kNoInputNoOutput = 0x03,
+};
+
+// Authentication requirements
+// All options without MITM do not require MITM protection, and a numeric
+// comparison with automatic accept is allowed.
+// All options with MITM do require MITM protection, and IO capabilities should
+// be used to determine the authentication procedure.
+enum class AuthRequirements : uint8_t {
+  kNoBonding = 0x00,
+  kMITMNoBonding = 0x01,
+  kDedicatedBonding = 0x02,
+  kMITMDedicatedBonding = 0x03,
+  kGeneralBonding = 0x04,
+  kMITMGeneralBonding = 0x05,
+};
 
 // Bitmask values for supported Packet Types
 // Used for HCI_Create_Connection and HCI_Change_Connection_Packet_Type
@@ -1313,3 +1344,5 @@ using PacketTypeType = uint16_t;
 
 }  // namespace hci
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_HCI_HCI_CONSTANTS_H_

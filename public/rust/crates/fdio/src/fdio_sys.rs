@@ -5,8 +5,10 @@
 // This file was generated with bindgen, then modified to consume already bound
 // types and remove various bindgen-isms that we don't want.
 
-use zircon::sys::*;
-use std::os::raw;
+use {
+    fuchsia_zircon::sys::*,
+    std::os::raw,
+};
 
 #[repr(C)]
 #[derive(Default)]
@@ -1488,8 +1490,6 @@ pub type watchdir_func_t = ::std::option::Option<
 
 #[link(name = "fdio")]
 extern "C" {
-    pub fn fdio_opname(op: u32) -> *const raw::c_char;
-
     pub fn zxrio_handler(
         h: zx_handle_t,
         cb: *mut raw::c_void,
@@ -1550,7 +1550,8 @@ extern "C" {
         out_len: usize,
     ) -> isize;
     pub fn fdio_pipe_half(handle: *mut zx_handle_t, type_: *mut u32) -> zx_status_t;
-    pub fn fdio_get_vmo(fd: raw::c_int, out_vmo: *mut zx_handle_t) -> zx_status_t;
+    pub fn fdio_get_vmo_copy(fd: raw::c_int, out_vmo: *mut zx_handle_t) -> zx_status_t;
+    pub fn fdio_get_vmo_clone(fd: raw::c_int, out_vmo: *mut zx_handle_t) -> zx_status_t;
     pub fn fdio_get_exact_vmo(fd: raw::c_int, out_vmo: *mut zx_handle_t) -> zx_status_t;
     pub fn fdio_vmo_fd(vmo: zx_handle_t, offset: u64, length: u64) -> raw::c_int;
     pub fn fdio_ns_create(out: *mut *mut fdio_ns_t) -> zx_status_t;

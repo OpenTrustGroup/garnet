@@ -27,20 +27,25 @@ public:
 
     virtual ~MsdArmAtom() {}
     MsdArmAtom(std::weak_ptr<MsdArmConnection> connection, uint64_t gpu_address, uint32_t slot,
-               uint8_t atom_number, magma_arm_mali_user_data user_data);
+               uint8_t atom_number, magma_arm_mali_user_data user_data, int8_t priority);
 
     uint64_t trace_nonce() const { return trace_nonce_; }
     std::weak_ptr<MsdArmConnection> connection() const { return connection_; }
     uint64_t gpu_address() const { return gpu_address_; }
+    void set_gpu_address(uint64_t gpu_address) { gpu_address_ = gpu_address; }
     uint32_t slot() const { return slot_; }
     uint8_t atom_number() const { return atom_number_; }
     const magma_arm_mali_user_data& user_data() const { return user_data_; }
 
     void set_require_cycle_counter() { require_cycle_counter_ = true; }
-    void set_using_cycle_counter() { using_cycle_counter_ = true; }
+    void set_using_cycle_counter(bool using_cycle_counter)
+    {
+        using_cycle_counter_ = using_cycle_counter;
+    }
     bool require_cycle_counter() const { return require_cycle_counter_; }
     bool using_cycle_counter() const { return using_cycle_counter_; }
 
+    int8_t priority() const { return priority_; }
     bool IsDependencyOnly() const { return !gpu_address_; }
 
     void set_dependencies(const DependencyList& dependencies);
@@ -60,6 +65,8 @@ public:
     }
     bool hard_stopped() const { return hard_stopped_; }
     void set_hard_stopped() { hard_stopped_ = true; }
+    bool soft_stopped() const { return soft_stopped_; }
+    void set_soft_stopped(bool stopped) { soft_stopped_ = stopped; }
     void SetExecutionStarted();
 
     std::chrono::time_point<std::chrono::steady_clock> execution_start_time() const
@@ -80,8 +87,9 @@ private:
     // The following data is immmutable after construction.
     const uint64_t trace_nonce_;
     const std::weak_ptr<MsdArmConnection> connection_;
-    const uint64_t gpu_address_;
+    uint64_t gpu_address_;
     const uint32_t slot_;
+    const int8_t priority_;
     bool require_cycle_counter_ = false;
     DependencyList dependencies_;
     // Assigned by client.
@@ -93,6 +101,7 @@ private:
     std::shared_ptr<AddressSlotMapping> address_slot_mapping_;
     std::chrono::time_point<std::chrono::steady_clock> execution_start_time_;
     bool hard_stopped_ = false;
+    bool soft_stopped_ = false;
     bool using_cycle_counter_ = false;
 };
 
@@ -109,7 +118,7 @@ public:
     MsdArmSoftAtom(std::weak_ptr<MsdArmConnection> connection, AtomFlags soft_flags,
                    std::shared_ptr<magma::PlatformSemaphore> platform_semaphore,
                    uint8_t atom_number, magma_arm_mali_user_data user_data)
-        : MsdArmAtom(connection, kInvalidGpuAddress, 0, atom_number, user_data),
+        : MsdArmAtom(connection, kInvalidGpuAddress, 0, atom_number, user_data, 0),
           soft_flags_(soft_flags), platform_semaphore_(platform_semaphore)
     {
     }

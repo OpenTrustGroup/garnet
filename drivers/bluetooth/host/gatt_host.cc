@@ -4,6 +4,8 @@
 
 #include "gatt_host.h"
 
+#include "garnet/drivers/bluetooth/lib/common/log.h"
+
 #include "fidl/gatt_client_server.h"
 #include "fidl/gatt_server_server.h"
 
@@ -21,7 +23,7 @@ GattHost::GattHost(std::string thrd_name)
       weak_ptr_factory_(this) {
   // Initialize the profile to operate on our task runner.
   gatt_ = gatt::GATT::Create(dispatcher());
-  FXL_DCHECK(gatt_);
+  ZX_DEBUG_ASSERT(gatt_);
 }
 
 GattHost::~GattHost() {}
@@ -69,7 +71,7 @@ void GattHost::BindGattServer(
     auto server = std::make_unique<GattServerServer>(gatt_, std::move(request));
     server->set_error_handler([self, server = server.get()] {
       if (self) {
-        FXL_VLOG(1) << "bt-host: GATT server disconnected";
+        bt_log(TRACE, "bt-host", "GATT server disconnected");
         self->server_servers_.erase(server);
       }
     });
@@ -83,7 +85,7 @@ void GattHost::BindGattClient(
   PostMessage([this, token, peer_id = std::move(peer_id),
                request = std::move(request)]() mutable {
     if (client_servers_.find(token) != client_servers_.end()) {
-      FXL_LOG(WARNING) << "gatt: duplicate Client FIDL server tokens!";
+      bt_log(WARN, "bt-host", "duplicate Client FIDL server tokens!");
 
       // The handle owned by |request| will be closed.
       return;
@@ -94,7 +96,7 @@ void GattHost::BindGattClient(
                                                      std::move(request));
     server->set_error_handler([self, token] {
       if (self) {
-        FXL_VLOG(1) << "bt-host: GATT client disconnected";
+        bt_log(TRACE, "bt-host", "GATT client disconnected");
         self->client_servers_.erase(token);
       }
     });

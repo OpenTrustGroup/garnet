@@ -46,6 +46,62 @@ type tufSourceConfig struct {
 	Config *amber.SourceConfig
 
 	Oauth2Token *oauth2.Token
+
+	Status *SourceStatus
+}
+
+type SourceStatus struct {
+	Enabled *bool
+}
+
+// LoadSourceConfigs loads source configs from a directory.  The directory
+// structure looks like:
+//
+//     $dir/source1/config.json
+//     $dir/source2/config.json
+//     ...
+//
+// If an error is encountered loading any config, none are returned.
+func LoadSourceConfigs(dir string) ([]*amber.SourceConfig, error) {
+	files, err := ioutil.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	configs := make([]*amber.SourceConfig, 0, len(files))
+	for _, file := range files {
+		p := filepath.Join(dir, file.Name(), configFileName)
+		log.Printf("loading source config %s", p)
+
+		cfg, err := LoadConfigFromDir(p)
+		if err != nil {
+			return nil, err
+		}
+		configs = append(configs, cfg)
+	}
+
+	return configs, nil
+}
+
+func LoadConfigFromDir(path string) (*amber.SourceConfig, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var cfg amber.SourceConfig
+	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
+		return nil, err
+	}
+
+	// it is possible we encounter a config on disk that does not have
+	// this value set, set the defaults
+	if cfg.StatusConfig == nil {
+		cfg.StatusConfig = &amber.StatusConfig{Enabled: true}
+	}
+
+	return &cfg, nil
 }
 
 func newTUFSourceConfig(cfg *amber.SourceConfig) (tufSourceConfig, error) {
@@ -61,8 +117,15 @@ func newTUFSourceConfig(cfg *amber.SourceConfig) (tufSourceConfig, error) {
 		return tufSourceConfig{}, fmt.Errorf("no root keys provided")
 	}
 
+	status := false
+	srcStatus := &SourceStatus{&status}
+	if cfg.StatusConfig != nil && cfg.StatusConfig.Enabled {
+		*srcStatus.Enabled = true
+	}
+
 	return tufSourceConfig{
 		Config: cfg,
+		Status: srcStatus,
 	}, nil
 }
 
@@ -75,17 +138,14 @@ type TUFSource struct {
 
 	dir string
 
-	// `initialized` is set after we initialize in order to save us from
-	// doing unnecessary network accesses.
-	initialized bool
-
 	// We save a reference to the tuf local store so that when we update
 	// the tuf client, we can reuse the store. This avoids us from having
 	// multiple database connections to the same file, which could corrupt
 	// the TUF database.
 	localStore tuf.LocalStore
 
-	httpClient *http.Client
+	tokenSource oauth2.TokenSource
+	httpClient  *http.Client
 
 	keys      []*tuf_data.Key
 	tufClient *tuf.Client
@@ -125,6 +185,31 @@ func NewTUFSource(dir string, c *amber.SourceConfig) (*TUFSource, error) {
 	return &src, nil
 }
 
+// setEnabledStatus examines the config to see if the Status field exists and
+// if enabled is set. If either is not present the field is added and set to
+// enabled. If the sourceConfig is changed true is returned, otherwise false.
+func setEnabledStatus(cfg *tufSourceConfig) bool {
+	dirty := false
+	if cfg.Status == nil {
+		enabled := true
+		cfg.Status = &SourceStatus{&enabled}
+		dirty = true
+	} else if cfg.Status.Enabled == nil {
+		enabled := true
+		cfg.Status.Enabled = &enabled
+		dirty = true
+	}
+
+	// it is possible we encounter a config on disk that does not have
+	// this value set, set the defaults
+	if cfg.Config.StatusConfig == nil {
+		cfg.Config.StatusConfig = &amber.StatusConfig{Enabled: true}
+		dirty = true
+	}
+
+	return dirty
+}
+
 func LoadTUFSourceFromPath(dir string) (*TUFSource, error) {
 	log.Printf("loading source from %s", dir)
 
@@ -139,9 +224,15 @@ func LoadTUFSourceFromPath(dir string) (*TUFSource, error) {
 		return nil, err
 	}
 
+	dirty := setEnabledStatus(&cfg)
+
 	src := TUFSource{
 		cfg: cfg,
 		dir: dir,
+	}
+
+	if dirty {
+		src.Save()
 	}
 
 	if err := src.initSource(); err != nil {
@@ -149,6 +240,10 @@ func LoadTUFSourceFromPath(dir string) (*TUFSource, error) {
 	}
 
 	return &src, nil
+}
+
+func (f *TUFSource) Enabled() bool {
+	return *f.cfg.Status.Enabled
 }
 
 // This function finishes initializing the TUFSource by parsing out the config
@@ -165,7 +260,7 @@ func (f *TUFSource) initSource() error {
 
 	// We might have multiple things in the store directory, so put tuf in
 	// it's own directory.
-	localStore, err := tuf.FileLocalStore(filepath.Join(f.dir, "tuf"))
+	localStore, err := NewFileStore(filepath.Join(f.dir, "tuf.json"))
 	if err != nil {
 		return IOError{fmt.Errorf("couldn't open datastore: %s", err)}
 	}
@@ -213,11 +308,21 @@ func (f *TUFSource) updateTUFClientLocked() error {
 
 	// If we have oauth2 configured, we need to wrap the client in order to
 	// inject the authentication header.
+	var tokenSource oauth2.TokenSource
+
 	if c := oauth2deviceConfig(f.cfg.Config.Oauth2Config); c != nil {
-		// Store the client in the context so oauth2 can use it.
+		// Store the client in the context so oauth2 can use it to
+		// fetch the token. This client's transport will also be used
+		// as the base of the client oauth2 returns to us, except for
+		// the request timeout, which we manually have to copy over.
 		ctx := context.WithValue(context.Background(), oauth2.HTTPClient, httpClient)
 
-		httpClient = c.Client(ctx, f.cfg.Oauth2Token)
+		timeout := httpClient.Timeout
+
+		tokenSource = c.TokenSource(ctx, f.cfg.Oauth2Token)
+		httpClient = oauth2.NewClient(ctx, tokenSource)
+
+		httpClient.Timeout = timeout
 	}
 
 	// Create a new tuf client that uses the new http client.
@@ -233,6 +338,7 @@ func (f *TUFSource) updateTUFClientLocked() error {
 	f.closeIdleConnections()
 
 	// We're done! Save the clients for the next time we update our source.
+	f.tokenSource = tokenSource
 	f.httpClient = httpClient
 	f.tufClient = tufClient
 
@@ -295,23 +401,13 @@ func newTLSClientConfig(cfg *amber.TlsClientConfig) (*tls.Config, error) {
 
 // Note, the mutex should be held when this is called.
 func (f *TUFSource) initLocalStoreLocked() error {
-	if f.initialized {
-		return nil
-	}
-
-	needs, err := needsInit(f.localStore)
-	if err != nil {
-		return fmt.Errorf("source status check failed: %s", err)
-	}
-
-	if needs {
+	if needsInit(f.localStore) {
+		log.Print("initializing local TUF store")
 		err := f.tufClient.Init(f.keys, len(f.keys))
 		if err != nil {
 			return fmt.Errorf("TUF init failed: %s", err)
 		}
 	}
-
-	f.initialized = true
 
 	return nil
 }
@@ -331,7 +427,7 @@ func newTUFKeys(cfg []amber.KeyConfig) ([]*tuf_data.Key, error) {
 
 		keys[i] = &tuf_data.Key{
 			Type:  key.Type,
-			Value: tuf_data.KeyValue{tuf_data.HexBytes(keyHex)},
+			Value: tuf_data.KeyValue{Public: tuf_data.HexBytes(keyHex)},
 		}
 	}
 
@@ -346,12 +442,44 @@ func (f *TUFSource) GetConfig() *amber.SourceConfig {
 	return f.cfg.Config
 }
 
-func (f *TUFSource) GetHttpClient() *http.Client {
+func (f *TUFSource) SetEnabled(enabled bool) {
+	f.cfg.Status.Enabled = &enabled
+}
+
+func (f *TUFSource) GetHttpClient() (*http.Client, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+
+	if err := f.refreshOauth2TokenLocked(); err != nil {
+		return nil, fmt.Errorf("failed to refresh oauth2 token: %s", err)
+	}
+
 	// http.Client itself is thread safe, but the member alias is not, so is
 	// guarded here.
-	return f.httpClient
+	return f.httpClient, nil
+}
+
+// Check if the token has refreshed. If so, save a new token
+func (f *TUFSource) refreshOauth2TokenLocked() error {
+	if f.cfg.Oauth2Token == nil {
+		return nil
+	}
+
+	// Grab the latest token from the token source. If the token has
+	// expired, it will automatically refresh it in the background and give
+	// us a new access token.
+	newToken, err := f.tokenSource.Token()
+	if err != nil {
+		return err
+	}
+
+	if newToken.AccessToken != f.cfg.Oauth2Token.AccessToken {
+		log.Printf("refreshed oauth2 token for: %s", f.cfg.Config.Id)
+		f.cfg.Oauth2Token = newToken
+		f.saveLocked()
+	}
+
+	return nil
 }
 
 func (f *TUFSource) Login() (*amber.DeviceCode, error) {
@@ -421,6 +549,10 @@ func (f *TUFSource) AvailableUpdates(pkgs []*pkg.Package) (map[pkg.Package]pkg.P
 
 	if err := f.initLocalStoreLocked(); err != nil {
 		return nil, fmt.Errorf("tuf_source: source could not be initialized: %s", err)
+	}
+
+	if err := f.refreshOauth2TokenLocked(); err != nil {
+		return nil, fmt.Errorf("tuf_source: failed to refresh oauth2 token: %s", err)
 	}
 
 	_, err := f.tufClient.Update()
@@ -496,6 +628,11 @@ func (f *TUFSource) FetchPkg(pkg *pkg.Package) (*os.File, error) {
 		return nil, fmt.Errorf("tuf_source: source could not be initialized: %s", err)
 	}
 	lg.Log.Printf("tuf_source: requesting download for: %s\n", pkg.Name)
+
+	if err := f.refreshOauth2TokenLocked(); err != nil {
+		return nil, fmt.Errorf("failed to refresh oauth2 token: %s", err)
+	}
+
 	tmp, err := ioutil.TempFile("", pkg.Version)
 	if err != nil {
 		return nil, err
@@ -503,6 +640,8 @@ func (f *TUFSource) FetchPkg(pkg *pkg.Package) (*os.File, error) {
 
 	err = f.tufClient.Download(pkg.Name, &delFile{tmp})
 	if err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
 		return nil, ErrNoUpdateContent
 	}
 
@@ -541,6 +680,20 @@ func (f *TUFSource) Save() error {
 	defer f.mu.Unlock()
 
 	return f.saveLocked()
+}
+
+func (f *TUFSource) DeleteConfig() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return os.Remove(filepath.Join(f.dir, configFileName))
+}
+
+func (f *TUFSource) Delete() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return os.RemoveAll(f.dir)
 }
 
 func (f *TUFSource) Close() {
@@ -602,12 +755,12 @@ func (f *TUFSource) saveLocked() error {
 	return nil
 }
 
-func needsInit(s tuf.LocalStore) (bool, error) {
+func needsInit(s tuf.LocalStore) bool {
 	meta, err := s.GetMeta()
 	if err != nil {
-		return false, err
+		return true
 	}
 
-	_, ok := meta["root.json"]
-	return !ok, nil
+	_, found := meta["root.json"]
+	return !found
 }

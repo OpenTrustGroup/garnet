@@ -40,10 +40,14 @@ class TraceSession : public fxl::RefCountedThreadSafe<TraceSession> {
   // unrecoverable errors that render the session dead.
   explicit TraceSession(zx::socket destination,
                         fidl::VectorPtr<fidl::StringPtr> categories,
-                        size_t trace_buffer_size, fit::closure abort_handler);
+                        size_t trace_buffer_size,
+                        fuchsia::tracelink::BufferingMode buffering_mode,
+                        fit::closure abort_handler);
   // Frees all allocated resources and closes the outgoing
   // connection.
   ~TraceSession();
+
+  const zx::socket& destination() const { return destination_; }
 
   // Invokes |callback| when all providers in this session have acknowledged
   // the start request, or after |timeout| has elapsed.
@@ -74,15 +78,16 @@ class TraceSession : public fxl::RefCountedThreadSafe<TraceSession> {
 
   void TransitionToState(State state);
 
-  void SessionStartTimeout(async_t* async, async::TaskBase* task,
-                           zx_status_t status);
-  void SessionFinalizeTimeout(async_t* async, async::TaskBase* task,
-                              zx_status_t status);
+  void SessionStartTimeout(async_dispatcher_t* dispatcher,
+                           async::TaskBase* task, zx_status_t status);
+  void SessionFinalizeTimeout(async_dispatcher_t* dispatcher,
+                              async::TaskBase* task, zx_status_t status);
 
   State state_ = State::kReady;
   zx::socket destination_;
   fidl::VectorPtr<fidl::StringPtr> categories_;
   size_t trace_buffer_size_;
+  fuchsia::tracelink::BufferingMode buffering_mode_;
   std::list<std::unique_ptr<Tracee>> tracees_;
   async::TaskMethod<TraceSession, &TraceSession::SessionStartTimeout>
       session_start_timeout_{this};

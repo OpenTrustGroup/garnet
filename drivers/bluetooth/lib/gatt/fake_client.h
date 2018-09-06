@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GATT_FAKE_CLIENT_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GATT_FAKE_CLIENT_H_
 
 #include "garnet/drivers/bluetooth/lib/gatt/client.h"
 
@@ -12,7 +13,7 @@ namespace testing {
 
 class FakeClient final : public Client {
  public:
-  explicit FakeClient(async_t* dispatcher);
+  explicit FakeClient(async_dispatcher_t* dispatcher);
   ~FakeClient() override = default;
 
   void set_server_mtu(uint16_t mtu) { server_mtu_ = mtu; }
@@ -73,11 +74,25 @@ class FakeClient final : public Client {
     read_request_callback_ = std::move(callback);
   }
 
+  // Sets a callback which will run when ReadBlobRequest gets called.
+  using ReadBlobRequestCallback =
+      fit::function<void(att::Handle, uint16_t offset, ReadCallback)>;
+  void set_read_blob_request_callback(ReadBlobRequestCallback callback) {
+    read_blob_request_callback_ = std::move(callback);
+  }
+
   // Sets a callback which will run when WriteRequest gets called.
   using WriteRequestCallback = fit::function<
       void(att::Handle, const common::ByteBuffer&, att::StatusCallback)>;
   void set_write_request_callback(WriteRequestCallback callback) {
     write_request_callback_ = std::move(callback);
+  }
+
+  // Sets a callback which will run when WriteWithoutResponse gets called.
+  using WriteWithoutResponseCallback =
+      fit::function<void(att::Handle, const common::ByteBuffer&)>;
+  void set_write_without_rsp_callback(WriteWithoutResponseCallback callback) {
+    write_without_rsp_callback_ = std::move(callback);
   }
 
   // Emulates the receipt of a notification or indication PDU.
@@ -87,6 +102,7 @@ class FakeClient final : public Client {
  private:
   // Client overrides:
   fxl::WeakPtr<Client> AsWeakPtr() override;
+  uint16_t mtu() const override;
   void ExchangeMTU(MTUCallback callback) override;
   void DiscoverPrimaryServices(ServiceCallback svc_callback,
                                att::StatusCallback status_callback) override;
@@ -99,14 +115,18 @@ class FakeClient final : public Client {
                            DescriptorCallback desc_callback,
                            att::StatusCallback status_callback) override;
   void ReadRequest(att::Handle handle, ReadCallback callback) override;
+  void ReadBlobRequest(att::Handle handle, uint16_t offset,
+                       ReadCallback callback) override;
   void WriteRequest(att::Handle handle,
                     const common::ByteBuffer& value,
                     att::StatusCallback callback) override;
+  void WriteWithoutResponse(att::Handle handle,
+                            const common::ByteBuffer& value) override;
   void SetNotificationHandler(NotificationCallback callback) override;
 
   // All callbacks will be posted on this dispatcher to emulate asynchronous
   // behavior.
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
 
   // Value to return for MTU exchange.
   uint16_t server_mtu_ = att::kLEMinMTU;
@@ -135,7 +155,9 @@ class FakeClient final : public Client {
   size_t desc_discovery_count_ = 0;
 
   ReadRequestCallback read_request_callback_;
+  ReadBlobRequestCallback read_blob_request_callback_;
   WriteRequestCallback write_request_callback_;
+  WriteWithoutResponseCallback write_without_rsp_callback_;
   NotificationCallback notification_callback_;
 
   fxl::WeakPtrFactory<FakeClient> weak_ptr_factory_;
@@ -146,3 +168,5 @@ class FakeClient final : public Client {
 }  // namespace testing
 }  // namespace gatt
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GATT_FAKE_CLIENT_H_

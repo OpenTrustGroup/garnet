@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_TEST_CONTROLLER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_TEST_CONTROLLER_H_
 
 #include <queue>
 #include <vector>
@@ -33,9 +34,6 @@ class CommandTransaction final {
  private:
   friend class TestController;
 
-  bool HasMoreResponses() const;
-  common::DynamicByteBuffer PopNextReply();
-
   common::DynamicByteBuffer expected_;
   std::queue<common::DynamicByteBuffer> replies_;
 
@@ -56,14 +54,17 @@ class TestController : public FakeControllerBase {
   // fatal assertion. On a match, TestController will send back the replies
   // provided in the transaction.
   void QueueCommandTransaction(CommandTransaction transaction);
+  void QueueCommandTransaction(
+      const common::ByteBuffer& expected,
+      const std::vector<const common::ByteBuffer*>& replies);
 
   // Callback to invoke when a packet is received over the data channel.
   using DataCallback = fit::function<void(const common::ByteBuffer& packet)>;
-  void SetDataCallback(DataCallback callback, async_t* dispatcher);
+  void SetDataCallback(DataCallback callback, async_dispatcher_t* dispatcher);
 
   // Callback invoked when a transaction completes.
   void SetTransactionCallback(fit::closure callback,
-                              async_t* dispatcher);
+                              async_dispatcher_t* dispatcher);
 
  private:
   // FakeControllerBase overrides:
@@ -74,12 +75,14 @@ class TestController : public FakeControllerBase {
 
   std::queue<CommandTransaction> cmd_transactions_;
   DataCallback data_callback_;
-  async_t* data_dispatcher_;
+  async_dispatcher_t* data_dispatcher_;
   fit::closure transaction_callback_;
-  async_t* transaction_dispatcher_;
+  async_dispatcher_t* transaction_dispatcher_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TestController);
 };
 
 }  // namespace testing
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_TEST_CONTROLLER_H_

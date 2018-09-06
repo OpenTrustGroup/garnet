@@ -7,12 +7,17 @@ package main
 import (
 	"amber/ipcserver"
 	"app/context"
+	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fidl/fuchsia/amber"
 	"flag"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -38,7 +43,9 @@ Commands
         -i: content ID of the blob
 
     add_src   - add a source to the list we can use
+        -n: name of the update source
         -f: path to a source config file
+        -h: SHA256 hash of source config file (required if path is a URL, ignored otherwise)
         -s: location of the package source
         -b: location of the blob source
         -k: the hex string of the public ED25519 key for the source
@@ -46,10 +53,16 @@ Commands
         -p: length of time (in milliseconds) over which the limit passed to
             '-l' applies, 0 for no limit
 
-    rm_src    - remove a source
-        -s: location of the source
+    rm_src    - remove a source, if it exists
+        -n: name of the update source
 
     list_srcs - list the set of sources we can use
+
+    enable_src
+		-n: name of the update source
+
+    disable_src
+		-n: name of the update source
 
     check     - query the list of sources for updates to any of the regularly
                 monitored packages
@@ -58,6 +71,7 @@ Commands
 var (
 	fs         = flag.NewFlagSet("default", flag.ExitOnError)
 	pkgFile    = fs.String("f", "", "Path to a source config file")
+	hash       = fs.String("h", "", "SHA256 hash of source config file (required if -f is a URL, ignored otherwise)")
 	name       = fs.String("n", "", "Name of a source or package")
 	pkgVersion = fs.String("v", "", "Version of a package")
 	srcUrl     = fs.String("s", "", "The location of a package source")
@@ -77,6 +91,16 @@ func NewErrDaemon(str string) ErrDaemon {
 }
 
 func (e ErrDaemon) Error() string {
+	return string(e)
+}
+
+type ErrGetFile string
+
+func NewErrGetFile(str string, inner error) ErrGetFile {
+	return ErrGetFile(fmt.Sprintf("%s: %v", str, inner))
+}
+
+func (e ErrGetFile) Error() string {
 	return string(e)
 }
 
@@ -119,10 +143,8 @@ func addSource(a *amber.ControlInterface) error {
 		}
 
 		blobUrl := strings.TrimSpace(*blobUrl)
-		if blobUrl != "" {
-			if _, err := url.ParseRequestURI(blobUrl); err != nil {
-				return fmt.Errorf("provided URL %q is not valid: %s", blobUrl, err)
-			}
+		if _, err := url.ParseRequestURI(blobUrl); err != nil {
+			return fmt.Errorf("provided URL %q is not valid: %s", blobUrl, err)
 		}
 
 		srcKey := strings.TrimSpace(*srcKey)
@@ -147,13 +169,55 @@ func addSource(a *amber.ControlInterface) error {
 			},
 		}
 	} else {
-		f, err := os.Open(*pkgFile)
-		if err != nil {
-			return fmt.Errorf("failed to open file: %v", err)
-		}
-		defer f.Close()
+		var source io.Reader
+		url, err := url.Parse(*pkgFile)
+		if err == nil && url.IsAbs() {
+			hash := strings.TrimSpace(*hash)
+			if len(hash) == 0 {
+				return fmt.Errorf("no source config hash provided")
+			}
 
-		if err := json.NewDecoder(f).Decode(&cfg); err != nil {
+			expectedHash, err := hex.DecodeString(hash)
+			if err != nil {
+				return fmt.Errorf("hash is not a hex encoded string: %v", err)
+			}
+
+			resp, err := http.Get(*pkgFile)
+			if err != nil {
+				return NewErrGetFile("failed to GET file", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != 200 {
+				io.Copy(ioutil.Discard, resp.Body)
+				return fmt.Errorf("GET response: %v", resp.Status)
+			}
+
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("failed to read file body: %v", err)
+			}
+
+			hasher := sha256.New()
+			hasher.Write(body)
+			actualHash := hasher.Sum(nil)
+
+			if !bytes.Equal(expectedHash, actualHash) {
+				return fmt.Errorf("hash of config file does not match!")
+			}
+
+			source = bytes.NewReader(body)
+
+		} else {
+			f, err := os.Open(*pkgFile)
+			if err != nil {
+				return fmt.Errorf("failed to open file: %v", err)
+			}
+			defer f.Close()
+
+			source = f
+		}
+
+		if err := json.NewDecoder(source).Decode(&cfg); err != nil {
 			return fmt.Errorf("failed to parse source config: %v", err)
 		}
 	}
@@ -167,6 +231,28 @@ func addSource(a *amber.ControlInterface) error {
 	}
 
 	return nil
+}
+
+func rmSource(a *amber.ControlInterface) error {
+	name := strings.TrimSpace(*name)
+	if len(name) == 0 {
+		return fmt.Errorf("no source id provided")
+	}
+
+	status, err := a.RemoveSrc(name)
+	if err != nil {
+		return fmt.Errorf("IPC encountered an error: %s", err)
+	}
+	switch status {
+	case amber.StatusOk:
+		return nil
+	case amber.StatusErrNotFound:
+		return fmt.Errorf("Source not found")
+	case amber.StatusErr:
+		return fmt.Errorf("Unspecified error")
+	default:
+		return fmt.Errorf("Unexpected status: %v", status)
+	}
 }
 
 func getUp(a *amber.ControlInterface) error {
@@ -211,7 +297,7 @@ func getUp(a *amber.ControlInterface) error {
 func listSources(a *amber.ControlInterface) error {
 	srcs, err := a.ListSrcs()
 	if err != nil {
-		fmt.Printf("failed to list sources: %s\n", err)
+		fmt.Printf("failed to list sources: %s", err)
 		return err
 	}
 
@@ -219,11 +305,22 @@ func listSources(a *amber.ControlInterface) error {
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "    ")
 		if err := encoder.Encode(src); err != nil {
-			fmt.Printf("failed to encode source into json: %s\n", err)
+			fmt.Printf("failed to encode source into json: %s", err)
 			return err
 		}
 	}
 
+	return nil
+}
+
+func setSourceEnablement(a *amber.ControlInterface, id string, enabled bool) error {
+	status, err := a.SetSrcEnabled(id, enabled)
+	if err != nil {
+		return fmt.Errorf("call failure attempting to change source status: %s", err)
+	}
+	if status != amber.StatusOk {
+		return fmt.Errorf("failure changing source status")
+	}
 	return nil
 }
 
@@ -251,11 +348,17 @@ func main() {
 	case "add_src":
 		if err := addSource(proxy); err != nil {
 			log.Printf("error adding source: %s", err)
-			os.Exit(1)
+			if _, ok := err.(ErrGetFile); ok {
+				os.Exit(2)
+			} else {
+				os.Exit(1)
+			}
 		}
 	case "rm_src":
-		log.Printf("%q not yet supported", os.Args[1])
-		os.Exit(1)
+		if err := rmSource(proxy); err != nil {
+			log.Printf("error removing source: %s", err)
+			os.Exit(1)
+		}
 	case "list_srcs":
 		if err := listSources(proxy); err != nil {
 			log.Printf("error listing sources: %s", err)
@@ -288,6 +391,20 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("On your computer go to:\n\n\t%v\n\nand enter\n\n\t%v\n\n", device.VerificationUrl, device.UserCode)
+	case "enable_src":
+		err := setSourceEnablement(proxy, *name, true)
+		if err != nil {
+			fmt.Printf("Error enabling source: %s", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Source %q enabled", *name)
+	case "disable_src":
+		err := setSourceEnablement(proxy, *name, false)
+		if err != nil {
+			fmt.Printf("Error disabling source: %s", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Source %q disabled", *name)
 	default:
 		log.Printf("Error, %q is not a recognized command\n%s",
 			os.Args[1], usage)
@@ -301,7 +418,7 @@ func getUpdateComplete(proxy *amber.ControlInterface, pkgName, merkle *string) e
 	c, err := proxy.GetUpdateComplete(*pkgName, nil, merkle)
 	if err == nil {
 		defer c.Close()
-		b := make([]byte, 1024)
+		b := make([]byte, 64*1024)
 		daemonErr := false
 		for {
 			var err error

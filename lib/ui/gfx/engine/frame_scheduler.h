@@ -14,7 +14,7 @@
 #include "lib/fxl/memory/ref_ptr.h"
 #include "lib/fxl/memory/weak_ptr.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 class Display;
@@ -104,7 +104,7 @@ class FrameScheduler {
   friend class FrameTimings;
   void OnFramePresented(FrameTimings* timings);
 
-  async_t* const dispatcher_;
+  async_dispatcher_t* const dispatcher_;
   FrameSchedulerDelegate* delegate_;
   Display* const display_;
 
@@ -124,6 +124,6 @@ class FrameScheduler {
 };
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_ENGINE_FRAME_SCHEDULER_H_

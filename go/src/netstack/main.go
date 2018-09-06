@@ -5,14 +5,18 @@
 package main
 
 import (
+	"flag"
 	"log"
+	"net/http"
+	_ "net/http/pprof"
+	"syscall/zx/fidl"
 
 	"app/context"
-
+	"netstack/connectivity"
+	"netstack/dns"
 	"netstack/link/eth"
 	"netstack/watcher"
 
-	"fidl/bindings"
 	"fidl/fuchsia/devicesettings"
 
 	"github.com/google/netstack/tcpip"
@@ -24,7 +28,10 @@ import (
 	"github.com/google/netstack/tcpip/transport/udp"
 )
 
-var ns *netstack
+// TODO(tkilbourn): change the default to false after tracking down NET-1077
+var pprofServer = flag.Bool("pprof", true, "run the pprof http server")
+
+var ns *Netstack
 
 func main() {
 	log.SetFlags(0)
@@ -42,17 +49,24 @@ func main() {
 		tcp.ProtocolName,
 		udp.ProtocolName,
 	})
-	s, err := socketDispatcher(stk, ctx)
+	s, err := newSocketServer(stk, ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Print("socket dispatcher started")
+	log.Print("socket server started")
 
 	if err := AddNetstackService(ctx); err != nil {
 		log.Fatal(err)
 	}
-	ctx.Serve()
-	go bindings.Serve()
+	if err := AddStackService(ctx); err != nil {
+		log.Fatal(err)
+	}
+	if err := AddLegacySocketProvider(ctx); err != nil {
+		log.Fatal(err)
+	}
+	if err := connectivity.AddOutgoingService(ctx); err != nil {
+		log.Fatal(err)
+	}
 
 	arena, err := eth.NewArena()
 	if err != nil {
@@ -66,10 +80,11 @@ func main() {
 
 	ctx.ConnectToEnvService(req)
 
-	ns = &netstack{
+	ns = &Netstack{
 		arena:          arena,
 		stack:          stk,
-		dispatcher:     s,
+		socketServer:   s,
+		dnsClient:      dns.NewClient(stk),
 		deviceSettings: ds,
 		ifStates:       make(map[tcpip.NICID]*ifState),
 	}
@@ -78,6 +93,20 @@ func main() {
 	}
 
 	s.setNetstack(ns)
+
+	// Serve FIDL bindings on two threads. Since the Go FIDL bindings are blocking,
+	// this allows two outstanding requests at a time.
+	// TODO(tkilbourn): revisit this and tune the number of serving threads.
+	ctx.Serve()
+	go fidl.Serve()
+	go fidl.Serve()
+
+	if *pprofServer {
+		go func() {
+			log.Println("starting http pprof server on 0.0.0.0:6060")
+			log.Println(http.ListenAndServe("0.0.0.0:6060", nil))
+		}()
+	}
 
 	const ethdir = "/dev/class/ethernet"
 	w, err := watcher.NewWatcher(ethdir)

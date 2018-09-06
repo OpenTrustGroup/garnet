@@ -149,7 +149,7 @@ class CompletionAccumulator {
 template <typename A, typename R, typename... Args>
 class BaseWaiter : public fxl::RefCountedThreadSafe<BaseWaiter<A, R, Args...>> {
  public:
-  std::function<void(Args...)> NewCallback() {
+  fit::function<void(Args...)> NewCallback() {
     FXL_DCHECK(!finalized_) << "Waiter was already finalized.";
     FXL_DCHECK(!cancelled_) << "Waiter has been cancelled.";
     if (done_) {
@@ -232,9 +232,7 @@ class BaseWaiter : public fxl::RefCountedThreadSafe<BaseWaiter<A, R, Args...>> {
 // });
 template <class S, class T>
 class Waiter : public BaseWaiter<internal::ResultAccumulator<S, T>,
-                                 std::pair<S, std::vector<T>>,
-                                 S,
-                                 T> {
+                                 std::pair<S, std::vector<T>>, S, T> {
  public:
   void Finalize(fit::function<void(S, std::vector<T>)> callback) {
     BaseWaiter<internal::ResultAccumulator<S, T>, std::pair<S, std::vector<T>>,
@@ -252,9 +250,8 @@ class Waiter : public BaseWaiter<internal::ResultAccumulator<S, T>,
 
   explicit Waiter(S success_status)
       : BaseWaiter<internal::ResultAccumulator<S, T>,
-                   std::pair<S, std::vector<T>>,
-                   S,
-                   T>(internal::ResultAccumulator<S, T>(success_status)) {}
+                   std::pair<S, std::vector<T>>, S, T>(
+            internal::ResultAccumulator<S, T>(success_status)) {}
 };
 
 // StatusWaiter can be used to collate the results of many asynchronous calls
@@ -312,9 +309,7 @@ class AnyWaiter
 // });
 template <class S, class V>
 class Promise : public BaseWaiter<internal::PromiseAccumulator<S, V>,
-                                  std::pair<S, V>,
-                                  S,
-                                  V> {
+                                  std::pair<S, V>, S, V> {
  public:
   void Finalize(fit::function<void(S, V)> callback) {
     BaseWaiter<internal::PromiseAccumulator<S, V>, std::pair<S, V>, S,

@@ -4,7 +4,10 @@
 
 #include "channel.h"
 
-#include "lib/fxl/logging.h"
+#include <zircon/assert.h>
+
+#include "garnet/drivers/bluetooth/lib/common/log.h"
+#include "garnet/drivers/bluetooth/lib/common/run_or_post.h"
 #include "lib/fxl/strings/string_printf.h"
 
 #include "logical_link.h"
@@ -12,45 +15,43 @@
 namespace btlib {
 namespace l2cap {
 
-Channel::Channel(ChannelId id, hci::Connection::LinkType link_type)
+using common::RunOrPost;
+
+Channel::Channel(ChannelId id, ChannelId remote_id,
+                 hci::Connection::LinkType link_type,
+                 hci::ConnectionHandle link_handle)
     : id_(id),
+      remote_id_(remote_id),
       link_type_(link_type),
+      link_handle_(link_handle),
 
       // TODO(armansito): IWBN if the MTUs could be specified dynamically
       // instead (see NET-308).
       tx_mtu_(kDefaultMTU),
       rx_mtu_(kDefaultMTU) {
-  FXL_DCHECK(id_);
-  FXL_DCHECK(link_type_ == hci::Connection::LinkType::kLE ||
-             link_type_ == hci::Connection::LinkType::kACL);
+  ZX_DEBUG_ASSERT(id_);
+  ZX_DEBUG_ASSERT(link_type_ == hci::Connection::LinkType::kLE ||
+                  link_type_ == hci::Connection::LinkType::kACL);
 }
 
 namespace internal {
 
-void RunTask(async_t* dispatcher, fit::closure task) {
-  if (dispatcher) {
-    async::PostTask(dispatcher, std::move(task));
-    return;
-  }
-  task();
-}
-
-ChannelImpl::ChannelImpl(ChannelId id,
+ChannelImpl::ChannelImpl(ChannelId id, ChannelId remote_id,
                          fxl::WeakPtr<internal::LogicalLink> link,
                          std::list<PDU> buffered_pdus)
-    : Channel(id, link->type()),
+    : Channel(id, remote_id, link->type(), link->handle()),
       active_(false),
       dispatcher_(nullptr),
       link_(link),
       pending_rx_sdus_(std::move(buffered_pdus)) {
-  FXL_DCHECK(link_);
+  ZX_DEBUG_ASSERT(link_);
 }
 
 bool ChannelImpl::Activate(RxCallback rx_callback,
                            ClosedCallback closed_callback,
-                           async_t* dispatcher) {
-  FXL_DCHECK(rx_callback);
-  FXL_DCHECK(closed_callback);
+                           async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(rx_callback);
+  ZX_DEBUG_ASSERT(closed_callback);
 
   fit::closure task;
   bool run_task = false;
@@ -63,9 +64,9 @@ bool ChannelImpl::Activate(RxCallback rx_callback,
     if (!link_)
       return false;
 
-    FXL_DCHECK(!active_);
+    ZX_DEBUG_ASSERT(!active_);
     active_ = true;
-    FXL_DCHECK(!dispatcher_);
+    ZX_DEBUG_ASSERT(!dispatcher_);
     dispatcher_ = dispatcher;
     rx_cb_ = std::move(rx_callback);
     closed_cb_ = std::move(closed_callback);
@@ -74,18 +75,19 @@ bool ChannelImpl::Activate(RxCallback rx_callback,
     if (!pending_rx_sdus_.empty()) {
       run_task = true;
       dispatcher = dispatcher_;
-      task = [func = rx_cb_.share(), pending = std::move(pending_rx_sdus_)]() mutable {
+      task = [func = rx_cb_.share(),
+              pending = std::move(pending_rx_sdus_)]() mutable {
         while (!pending.empty()) {
           func(std::move(pending.front()));
           pending.pop();
         }
       };
-      FXL_DCHECK(pending_rx_sdus_.empty());
+      ZX_DEBUG_ASSERT(pending_rx_sdus_.empty());
     }
   }
 
   if (run_task) {
-    RunTask(dispatcher, std::move(task));
+    RunOrPost(std::move(task), dispatcher);
   }
 
   return true;
@@ -106,7 +108,7 @@ void ChannelImpl::Deactivate() {
   closed_cb_ = {};
 
   // Tell the link to release this channel on its thread.
-  async::PostTask(link_->dispatcher(), [this, link = link_, id = id()] {
+  async::PostTask(link_->dispatcher(), [this, link = link_] {
     // If |link| is still alive than |this| must be valid since |link| holds a
     // reference to us.
     if (link) {
@@ -128,18 +130,18 @@ void ChannelImpl::SignalLinkError() {
 }
 
 bool ChannelImpl::Send(std::unique_ptr<const common::ByteBuffer> sdu) {
-  FXL_DCHECK(sdu);
+  ZX_DEBUG_ASSERT(sdu);
 
   if (sdu->size() > tx_mtu()) {
-    FXL_VLOG(1) << fxl::StringPrintf(
-        "l2cap: SDU size exceeds channel TxMTU (channel-id: 0x%04x)", id());
+    bt_log(TRACE, "l2cap", "SDU size exceeds channel TxMTU (channel-id: %#.4x)",
+           id());
     return false;
   }
 
   std::lock_guard<std::mutex> lock(mtx_);
 
   if (!link_) {
-    FXL_LOG(ERROR) << "l2cap: Cannot send SDU on a closed link";
+    bt_log(ERROR, "l2cap", "cannot send SDU on a closed link");
     return false;
   }
 
@@ -148,7 +150,7 @@ bool ChannelImpl::Send(std::unique_ptr<const common::ByteBuffer> sdu) {
     return false;
 
   async::PostTask(link_->dispatcher(),
-                  [id = id(), link = link_, sdu = std::move(sdu)] {
+                  [id = remote_id(), link = link_, sdu = std::move(sdu)] {
                     if (link) {
                       link->SendBasicFrame(id, *sdu);
                     }
@@ -158,7 +160,7 @@ bool ChannelImpl::Send(std::unique_ptr<const common::ByteBuffer> sdu) {
 }
 
 void ChannelImpl::OnLinkClosed() {
-  async_t* dispatcher;
+  async_dispatcher_t* dispatcher;
   fit::closure task;
 
   {
@@ -169,18 +171,18 @@ void ChannelImpl::OnLinkClosed() {
       return;
     }
 
-    FXL_DCHECK(closed_cb_);
+    ZX_DEBUG_ASSERT(closed_cb_);
     dispatcher = dispatcher_;
     task = std::move(closed_cb_);
     active_ = false;
     dispatcher_ = nullptr;
   }
 
-  RunTask(dispatcher, std::move(task));
+  RunOrPost(std::move(task), dispatcher);
 }
 
 void ChannelImpl::HandleRxPdu(PDU&& pdu) {
-  async_t* dispatcher;
+  async_dispatcher_t* dispatcher;
   fit::closure task;
 
   {
@@ -190,7 +192,7 @@ void ChannelImpl::HandleRxPdu(PDU&& pdu) {
     std::lock_guard<std::mutex> lock(mtx_);
 
     // This will only be called on a live link.
-    FXL_DCHECK(link_);
+    ZX_DEBUG_ASSERT(link_);
 
     // Buffer the packets if the channel hasn't been activated.
     if (!active_) {
@@ -199,11 +201,13 @@ void ChannelImpl::HandleRxPdu(PDU&& pdu) {
     }
 
     dispatcher = dispatcher_;
-    task = [func = rx_cb_.share(), pdu = std::move(pdu)] { func(pdu); };
+    task = [func = rx_cb_.share(), pdu = std::move(pdu)]() mutable {
+      func(std::move(pdu));
+    };
 
-    FXL_DCHECK(rx_cb_);
+    ZX_DEBUG_ASSERT(rx_cb_);
   }
-  RunTask(dispatcher, std::move(task));
+  RunOrPost(std::move(task), dispatcher);
 }
 
 }  // namespace internal

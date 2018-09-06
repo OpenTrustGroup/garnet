@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_DEVICE_ADDRESS_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_DEVICE_ADDRESS_H_
 
 #include <array>
 #include <initializer_list>
 #include <string>
+
+#include "garnet/drivers/bluetooth/lib/common/byte_buffer.h"
 
 namespace btlib {
 namespace common {
@@ -40,6 +43,11 @@ class DeviceAddressBytes {
 
   // Sets all bits of the BD_ADDR to 0.
   void SetToZero();
+
+  // Returns a view over the raw bytes of this address.
+  inline BufferView bytes() const {
+    return BufferView(bytes_.data(), bytes_.size());
+  }
 
   // Comparison operators.
   inline bool operator==(const DeviceAddressBytes& other) const {
@@ -133,8 +141,6 @@ struct hash<::btlib::common::DeviceAddress> {
   result_type operator()(argument_type const& value) const;
 };
 
-// Stream operators for easy logging
-ostream& operator<<(ostream& os, const ::btlib::common::DeviceAddressBytes& db);
-ostream& operator<<(ostream& os, const ::btlib::common::DeviceAddress& d);
-
 }  // namespace std
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_DEVICE_ADDRESS_H_

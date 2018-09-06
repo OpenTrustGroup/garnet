@@ -20,11 +20,12 @@ struct MemoryBlock;
 struct Module;
 struct ThreadRecord;
 struct AddressRegion;
-}
+}  // namespace debug_ipc
 
 namespace zxdb {
 
 class Err;
+struct InputLocation;
 class MemoryDump;
 class ProcessSymbols;
 class Target;
@@ -95,6 +96,12 @@ class Process : public ClientObject {
   // Applies to all threads in the process.
   virtual void Pause() = 0;
   virtual void Continue() = 0;
+
+  // The callback does NOT mean the step has completed, but rather the setup
+  // for the function was successful. Symbols and breakpoint setup can cause
+  // asynchronous failures.
+  virtual void ContinueUntil(const InputLocation& location,
+                             std::function<void(const Err&)> cb) = 0;
 
   // Reads memory from the debugged process.
   virtual void ReadMemory(

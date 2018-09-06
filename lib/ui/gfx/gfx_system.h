@@ -7,11 +7,14 @@
 
 #include "garnet/lib/ui/gfx/displays/display_manager.h"
 #include "garnet/lib/ui/gfx/engine/engine.h"
+#include "garnet/lib/ui/gfx/resources/compositor/compositor.h"
 #include "garnet/lib/ui/scenic/system.h"
 #include "lib/escher/escher.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
+
+class Compositor;
 
 class GfxSystem : public TempSystemDelegate {
  public:
@@ -29,7 +32,15 @@ class GfxSystem : public TempSystemDelegate {
   void TakeScreenshot(
       fuchsia::ui::scenic::Scenic::TakeScreenshotCallback callback) override;
   void GetDisplayOwnershipEvent(
-      fuchsia::ui::scenic::Scenic::GetDisplayOwnershipEventCallback callback) override;
+      fuchsia::ui::scenic::Scenic::GetDisplayOwnershipEventCallback callback)
+      override;
+
+  // TODO(SCN-906): Break out Engine, instead of coupling it to GfxSystem.
+  Compositor* GetCompositor(scenic::ResourceId compositor_id) const;
+  gfx::Session* GetSession(SessionId session_id) const;
+
+  // TODO(SCN-906): Remove this in favor of unified initialization.
+  void AddInitClosure(fit::closure closure);
 
  protected:
   // Protected so test classes can expose.
@@ -79,6 +90,6 @@ class GfxSystem : public TempSystemDelegate {
 };
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_GFX_SYSTEM_H_

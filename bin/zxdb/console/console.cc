@@ -7,10 +7,10 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#include "garnet/bin/zxdb/client/err.h"
 #include "garnet/bin/zxdb/client/process.h"
 #include "garnet/bin/zxdb/client/target.h"
 #include "garnet/bin/zxdb/client/thread.h"
+#include "garnet/bin/zxdb/common/err.h"
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/command_parser.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
@@ -68,7 +68,17 @@ void Console::Output(const Err& err) {
   Output(std::move(buffer));
 }
 
-Console::Result Console::DispatchInputLine(const std::string& line) {
+void Console::Clear() {
+  // We write directly instead of using Output because WriteToStdout expects
+  // to append '\n' to outputs and won't flush it explicitly otherwise.
+  line_input_.Hide();
+  const char ff[] = "\033c";  // Form feed.
+  write(STDOUT_FILENO, ff, sizeof(ff));
+  line_input_.Show();
+}
+
+Console::Result Console::DispatchInputLine(const std::string& line,
+                                           CommandCallback callback) {
   Command cmd;
   Err err;
   if (line.empty()) {
@@ -85,8 +95,14 @@ Console::Result Console::DispatchInputLine(const std::string& line) {
     } else {
       err = context_.FillOutCommand(&cmd);
       if (!err.has_error()) {
-        err = DispatchCommand(&context_, cmd);
+        err = DispatchCommand(&context_, cmd, callback);
         previous_command_ = cmd;
+
+        if (cmd.thread() && cmd.verb() != Verb::kNone) {
+          // Show the right source/disassembly for the next listing.
+          context_.SetSourceAffinityForThread(
+              cmd.thread(), GetVerbRecord(cmd.verb())->source_affinity);
+        }
       }
     }
   }
@@ -99,15 +115,22 @@ Console::Result Console::DispatchInputLine(const std::string& line) {
   return Result::kContinue;
 }
 
+Console::Result Console::ProcessInputLine(const std::string& line,
+                                          CommandCallback callback) {
+  Result result = DispatchInputLine(line, callback);
+  if (result == Result::kQuit) {
+    debug_ipc::MessageLoop::Current()->QuitNow();
+  }
+  return result;
+}
+
 void Console::OnFDReadable(int fd) {
   char ch;
   while (read(STDIN_FILENO, &ch, 1) > 0) {
     if (line_input_.OnInput(ch)) {
-      Result result = DispatchInputLine(line_input_.line());
-      if (result == Result::kQuit) {
-        debug_ipc::MessageLoop::Current()->QuitNow();
+      Result result = ProcessInputLine(line_input_.line());
+      if (result == Result::kQuit)
         return;
-      }
       line_input_.BeginReadLine();
     }
   }

@@ -4,6 +4,8 @@
 
 #include "fake_client.h"
 
+#include <zircon/assert.h>
+
 #include "garnet/drivers/bluetooth/lib/gatt/client.h"
 
 namespace btlib {
@@ -12,13 +14,18 @@ namespace testing {
 
 using att::StatusCallback;
 
-FakeClient::FakeClient(async_t* dispatcher)
+FakeClient::FakeClient(async_dispatcher_t* dispatcher)
     : dispatcher_(dispatcher), weak_ptr_factory_(this) {
-  FXL_DCHECK(dispatcher_);
+  ZX_DEBUG_ASSERT(dispatcher_);
 }
 
 fxl::WeakPtr<Client> FakeClient::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
+}
+
+uint16_t FakeClient::mtu() const {
+  // TODO(armansito): Return a configurable value.
+  return att::kLEMinMTU;
 }
 
 void FakeClient::ExchangeMTU(MTUCallback callback) {
@@ -90,11 +97,25 @@ void FakeClient::ReadRequest(att::Handle handle, ReadCallback callback) {
   }
 }
 
+void FakeClient::ReadBlobRequest(att::Handle handle, uint16_t offset,
+                                 ReadCallback callback) {
+  if (read_blob_request_callback_) {
+    read_blob_request_callback_(handle, offset, std::move(callback));
+  }
+}
+
 void FakeClient::WriteRequest(att::Handle handle,
                               const common::ByteBuffer& value,
                               StatusCallback callback) {
   if (write_request_callback_) {
     write_request_callback_(handle, value, std::move(callback));
+  }
+}
+
+void FakeClient::WriteWithoutResponse(att::Handle handle,
+                                      const common::ByteBuffer& value) {
+  if (write_without_rsp_callback_) {
+    write_without_rsp_callback_(handle, value);
   }
 }
 

@@ -4,27 +4,24 @@
 
 //! Stream-based Fuchsia VFS directory watcher
 
-#![deny(warnings)]
 #![deny(missing_docs)]
+#![feature(futures_api, pin, arbitrary_self_types)]
 
-#[macro_use]
-extern crate fdio;
-extern crate fuchsia_async as async;
-#[macro_use]
-extern crate fuchsia_zircon as zx;
-#[macro_use]
-extern crate futures;
+use fuchsia_async as fasync;
+use fuchsia_zircon::{self as zx, HandleBased, assoc_values};
+use pin_utils::pin_mut;
 
-use fdio::fdio_sys;
-use futures::{Async, Stream, task};
+use fdio::{fdio_sys, make_ioctl};
+use futures::{Poll, Stream, task};
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io;
+use std::mem::PinMut;
+use std::marker::Unpin;
 use std::os::raw;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
-use zx::HandleBased;
 
 /// Describes the type of event that occurred in the direcotry being watched.
 #[repr(C)]
@@ -56,11 +53,13 @@ pub struct WatchMessage {
 #[derive(Debug)]
 #[must_use = "futures/streams must be polled"]
 pub struct Watcher {
-    ch: async::Channel,
+    ch: fasync::Channel,
     // If idx >= buf.bytes().len(), you must call reset_buf() before get_next_msg().
     buf: zx::MessageBuf,
     idx: usize,
 }
+
+impl Unpin for Watcher {}
 
 impl Watcher {
     /// Creates a new `Watcher` for the directory given by `dir`.
@@ -83,7 +82,7 @@ impl Watcher {
 
         let mut buf = zx::MessageBuf::new();
         buf.ensure_capacity_bytes(VFS_WATCH_MSG_MAX);
-        Ok(Watcher{ ch: async::Channel::from_channel(h0)?, buf: buf, idx: 0})
+        Ok(Watcher{ ch: fasync::Channel::from_channel(h0)?, buf: buf, idx: 0})
     }
 
     fn reset_buf(&mut self) {
@@ -105,17 +104,21 @@ impl Watcher {
 }
 
 impl Stream for Watcher {
-    type Item = WatchMessage;
-    type Error = io::Error;
+    type Item = Result<WatchMessage, io::Error>;
 
-    fn poll_next(&mut self, cx: &mut task::Context) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        if self.idx >= self.buf.bytes().len() {
-            self.reset_buf();
+    fn poll_next(mut self: PinMut<Self>, cx: &mut task::Context) -> Poll<Option<Self::Item>> {
+        let this = &mut *self;
+        if this.idx >= this.buf.bytes().len() {
+            this.reset_buf();
         }
-        if self.idx == 0 {
-            try_ready!(self.ch.recv_from(&mut self.buf, cx));
+        if this.idx == 0 {
+            match this.ch.recv_from(&mut this.buf, cx) {
+                Poll::Ready(Ok(())) => {},
+                Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e.into()))),
+                Poll::Pending => return Poll::Pending,
+            }
         }
-        Ok(Async::Ready(Some(self.get_next_msg())))
+        Poll::Ready(Some(Ok(this.get_next_msg())))
     }
 }
 
@@ -194,27 +197,27 @@ mod tests {
 
     use super::*;
 
-    use async::TimeoutExt;
+    use fuchsia_async::{self as fasync, TimeoutExt};
     use futures::prelude::*;
     use self::tempdir::TempDir;
     use std::fmt::Debug;
     use std::path::Path;
-    use zx::prelude::*;
+    use fuchsia_zircon::prelude::*;
 
-    fn one_step<S: Stream>(exec: &mut async::Executor, s: S) -> (S::Item, S)
-        where S::Error: Debug
+    fn one_step<S, OK, ERR>(exec: &mut fasync::Executor, s: &mut S) -> OK
+        where S: Stream<Item = Result<OK, ERR>> + Unpin,
+              ERR: Debug
     {
         let f = s.next();
         let f = f.on_timeout(
             500.millis().after_now(),
             || panic!("timeout waiting for watcher")
-        ).unwrap();
+        );
 
-        let (next, stream) =
-            exec.run_singlethreaded(f)
-                .unwrap_or_else(|(e, _s)| panic!("Error waiting for watcher: {:?}", e));
+        let next = exec.run_singlethreaded(f);
 
-        (next.expect("the stream yielded no next item"), stream)
+        next.expect("the stream yielded no next item")
+            .unwrap_or_else(|e| panic!("Error waiting for watcher: {:?}", e))
     }
 
     #[test]
@@ -222,21 +225,22 @@ mod tests {
         let tmp_dir = TempDir::new("vfs-watcher-test-existing").unwrap();
         let _ = File::create(tmp_dir.path().join("file1")).unwrap();
 
-        let exec = &mut async::Executor::new().unwrap();
+        let exec = &mut fasync::Executor::new().unwrap();
         let dir = File::open(tmp_dir.path()).unwrap();
         let w = Watcher::new(&dir).unwrap();
 
         // TODO(tkilbourn): this assumes "." always comes before "file1". If this test ever starts
         // flaking, handle the case of unordered EXISTING files.
-        let (msg, rest) = one_step(exec, w);
+        pin_mut!(w);
+        let msg = one_step(exec, &mut w);
         assert_eq!(WatchEvent::EXISTING, msg.event);
         assert_eq!(Path::new("."), msg.filename);
 
-        let (msg, rest) = one_step(exec, rest);
+        let msg = one_step(exec, &mut w);
         assert_eq!(WatchEvent::EXISTING, msg.event);
         assert_eq!(Path::new("file1"), msg.filename);
 
-        let (msg, _) = one_step(exec, rest);
+        let msg = one_step(exec, &mut w);
         assert_eq!(WatchEvent::IDLE, msg.event);
     }
 
@@ -244,13 +248,13 @@ mod tests {
     fn test_add() {
         let tmp_dir = TempDir::new("vfs-watcher-test-add").unwrap();
 
-        let exec = &mut async::Executor::new().unwrap();
+        let exec = &mut fasync::Executor::new().unwrap();
         let dir = File::open(tmp_dir.path()).unwrap();
-        let mut w = Watcher::new(&dir).unwrap();
+        let w = Watcher::new(&dir).unwrap();
+        pin_mut!(w);
 
         loop {
-            let (msg, rest) = one_step(exec, w);
-            w = rest;
+            let msg = one_step(exec, &mut w);
             match msg.event {
                 WatchEvent::EXISTING => continue,
                 WatchEvent::IDLE => break,
@@ -259,7 +263,7 @@ mod tests {
         }
 
         let _ = File::create(tmp_dir.path().join("file1")).unwrap();
-        let (msg, _) = one_step(exec, w);
+        let msg = one_step(exec, &mut w);
         assert_eq!(WatchEvent::ADD_FILE, msg.event);
         assert_eq!(Path::new("file1"), msg.filename);
     }
@@ -271,13 +275,13 @@ mod tests {
         let filepath = tmp_dir.path().join(filename);
         let _ = File::create(&filepath).unwrap();
 
-        let exec = &mut async::Executor::new().unwrap();
+        let exec = &mut fasync::Executor::new().unwrap();
         let dir = File::open(tmp_dir.path()).unwrap();
-        let mut w = Watcher::new(&dir).unwrap();
+        let w = Watcher::new(&dir).unwrap();
+        pin_mut!(w);
 
         loop {
-            let (msg, rest) = one_step(exec, w);
-            w = rest;
+            let msg = one_step(exec, &mut w);
             match msg.event {
                 WatchEvent::EXISTING => continue,
                 WatchEvent::IDLE => break,
@@ -286,7 +290,7 @@ mod tests {
         }
 
         ::std::fs::remove_file(&filepath).unwrap();
-        let (msg, _) = one_step(exec, w);
+        let msg = one_step(exec, &mut w);
         assert_eq!(WatchEvent::REMOVE_FILE, msg.event);
         assert_eq!(Path::new(filename), msg.filename);
     }
@@ -296,13 +300,13 @@ mod tests {
     fn test_timeout() {
         let tmp_dir = TempDir::new("vfs-watcher-test-timeout").unwrap();
 
-        let exec = &mut async::Executor::new().unwrap();
+        let exec = &mut fasync::Executor::new().unwrap();
         let dir = File::open(tmp_dir.path()).unwrap();
-        let mut w = Watcher::new(&dir).unwrap();
+        let w = Watcher::new(&dir).unwrap();
+        pin_mut!(w);
 
         loop {
-            let (msg, rest) = one_step(exec, w);
-            w = rest;
+            let msg = one_step(exec, &mut w);
             match msg.event {
                 WatchEvent::EXISTING => continue,
                 WatchEvent::IDLE => break,
@@ -312,6 +316,6 @@ mod tests {
 
         // Ensure that our test timeouts actually work by waiting for another event that will never
         // arrive.
-        let _ = one_step(exec, w);
+        let _ = one_step(exec, &mut w);
     }
 }

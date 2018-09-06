@@ -15,7 +15,7 @@
 #include "lib/fxl/strings/string_view.h"
 #include "lib/fxl/tasks/task_runner.h"
 
-namespace debugserver {
+namespace inferior_control {
 
 // Maintains dedicated threads for reads and writes on a given socket file
 // descriptor and allows read and write tasks to be scheduled from a single
@@ -69,9 +69,15 @@ class IOLoop {
   bool quit_called() const { return quit_called_; }
   int fd() const { return fd_; }
   Delegate* delegate() const { return delegate_; }
-  async_t* origin_dispatcher() const { return origin_loop_->async(); }
-  async_t* read_dispatcher() const { return read_loop_.async(); }
-  async_t* write_dispatcher() const { return write_loop_.async(); }
+  async_dispatcher_t* origin_dispatcher() const {
+    return origin_loop_->dispatcher();
+  }
+  async_dispatcher_t* read_dispatcher() const {
+    return read_loop_.dispatcher();
+  }
+  async_dispatcher_t* write_dispatcher() const {
+    return write_loop_.dispatcher();
+  }
 
   // Helper method for StartReadTask, only called from the read thread.
   // Process one read request.
@@ -108,4 +114,4 @@ class IOLoop {
   FXL_DISALLOW_COPY_AND_ASSIGN(IOLoop);
 };
 
-}  // namespace debugserver
+}  // namespace inferior_control

@@ -18,8 +18,7 @@
 
 #include "util.h"
 
-namespace debugserver {
-namespace util {
+namespace debugger_utils {
 
 bool LoadMapTable::ReadLogListenerOutput(const std::string& file) {
   FXL_LOG(INFO) << "Loading load maps from " << file;
@@ -68,18 +67,21 @@ bool LoadMapTable::ReadLogListenerOutput(const std::string& file) {
                        << std::string(line, line_len);
       continue;
     }
-    if (n > 0 && line[n - 1] == '\n') line[n - 1] = '\0';
+    if (n > 0 && line[n - 1] == '\n')
+      line[n - 1] = '\0';
     FXL_VLOG(2) << fxl::StringPrintf("%d: %s", lineno, line);
 
     if (n > kMaxLineLen) {
       FXL_VLOG(2) << fxl::StringPrintf("%d: too long, ignoring", lineno);
     }
 
-    if (!strcmp(line, "\n")) continue;
-    if (line[0] == '#') continue;
+    if (!strcmp(line, "\n"))
+      continue;
+    if (line[0] == '#')
+      continue;
 
     // If this is a new boot, start over.
-    if (strstr(line, "welcome to lk/MP")) {
+    if (strstr(line, "welcome to Zircon")) {
       FXL_VLOG(1) << "Restarting reading of load maps, machine rebooted";
       map_data.clear();
       Clear();
@@ -165,11 +167,11 @@ void LoadMapTable::Clear() { maps_.clear(); }
 
 const LoadMap* LoadMapTable::LookupLoadMap(zx_koid_t pid, uint64_t addr) {
   for (auto& m : maps_) {
-    if (pid == m.pid && addr >= m.load_addr && addr < m.end_addr) return &m;
+    if (pid == m.pid && addr >= m.load_addr && addr < m.end_addr)
+      return &m;
   }
 
   return nullptr;
 }
 
-}  // namespace util
-}  // namespace debugserver
+}  // namespace debugger_utils

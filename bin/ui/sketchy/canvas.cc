@@ -12,11 +12,11 @@
 namespace sketchy_service {
 
 CanvasImpl::CanvasImpl(async::Loop* loop, scenic::Session* session,
-                       escher::Escher* escher)
+                       escher::EscherWeakPtr weak_escher)
     : loop_(loop),
       session_(session),
-      shared_buffer_pool_(session, escher),
-      stroke_manager_(escher) {}
+      shared_buffer_pool_(session, weak_escher),
+      stroke_manager_(std::move(weak_escher)) {}
 
 void CanvasImpl::Init(
     fidl::InterfaceHandle<::fuchsia::ui::sketchy::CanvasListener> listener) {

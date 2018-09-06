@@ -4,9 +4,9 @@
 
 #include "garnet/examples/netconnector/netconnector_example/netconnector_example_impl.h"
 
+#include <fuchsia/netconnector/cpp/fidl.h>
 #include <lib/async/default.h>
 #include <lib/zx/channel.h>
-#include <fuchsia/netconnector/cpp/fidl.h>
 
 #include "garnet/examples/netconnector/netconnector_example/netconnector_example_params.h"
 #include "lib/fxl/logging.h"
@@ -23,7 +23,7 @@ static const std::vector<std::string> kConversation = {
 NetConnectorExampleImpl::NetConnectorExampleImpl(
     NetConnectorExampleParams* params, fit::closure quit_callback)
     : quit_callback_(std::move(quit_callback)),
-      startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()) {
+      startup_context_(component::StartupContext::CreateFromStartupInfo()) {
   // The MessageRelay makes using the channel easier. Hook up its callbacks.
   message_relay_.SetMessageReceivedCallback(
       [this](std::vector<uint8_t> message) { HandleReceivedMessage(message); });
@@ -59,8 +59,8 @@ NetConnectorExampleImpl::NetConnectorExampleImpl(
       // Register our provider with netconnector.
       FXL_LOG(INFO) << "Registering provider";
       fuchsia::netconnector::NetConnectorPtr connector =
-          startup_context_
-              ->ConnectToEnvironmentService<fuchsia::netconnector::NetConnector>();
+          startup_context_->ConnectToEnvironmentService<
+              fuchsia::netconnector::NetConnector>();
 
       fidl::InterfaceHandle<fuchsia::sys::ServiceProvider> handle;
       startup_context_->outgoing_services()->AddBinding(handle.NewRequest());
@@ -74,8 +74,8 @@ NetConnectorExampleImpl::NetConnectorExampleImpl(
     // Params say we should be a requestor.
     FXL_LOG(INFO) << "Running as requestor";
     fuchsia::netconnector::NetConnectorPtr connector =
-        startup_context_
-            ->ConnectToEnvironmentService<fuchsia::netconnector::NetConnector>();
+        startup_context_->ConnectToEnvironmentService<
+            fuchsia::netconnector::NetConnector>();
 
     // Create a pair of channels.
     zx::channel local;

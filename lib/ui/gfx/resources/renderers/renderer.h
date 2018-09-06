@@ -10,7 +10,7 @@
 #include "garnet/lib/ui/gfx/resources/resource_visitor.h"
 #include "lib/escher/scene/object.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 class Camera;
@@ -28,7 +28,7 @@ class Renderer : public Resource {
   // pixels.
   static const uint32_t kRequiredSwapchainPixelMultiple;
 
-  Renderer(Session* session, scenic::ResourceId id);
+  Renderer(Session* session, ResourceId id);
   ~Renderer();
 
   std::vector<escher::Object> CreateDisplayList(const ScenePtr& scene,
@@ -76,6 +76,7 @@ class Renderer : public Resource {
     void Visit(RoundedRectangleShape* r) override;
     void Visit(MeshShape* r) override;
     void Visit(Material* r) override;
+    void Visit(Compositor* r) override;
     void Visit(DisplayCompositor* r) override;
     void Visit(LayerStack* r) override;
     void Visit(Layer* r) override;
@@ -115,6 +116,6 @@ class Renderer : public Resource {
 using RendererPtr = fxl::RefPtr<Renderer>;
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_RESOURCES_RENDERERS_RENDERER_H_

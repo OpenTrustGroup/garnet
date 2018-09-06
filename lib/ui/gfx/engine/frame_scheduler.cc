@@ -13,11 +13,13 @@
 #include "garnet/lib/ui/gfx/engine/frame_timings.h"
 #include "lib/fxl/logging.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 FrameScheduler::FrameScheduler(Display* display)
-    : dispatcher_(async_get_default()), display_(display), weak_factory_(this) {
+    : dispatcher_(async_get_default_dispatcher()),
+      display_(display),
+      weak_factory_(this) {
   outstanding_frames_.reserve(kMaxOutstandingFrames);
 }
 
@@ -130,7 +132,11 @@ FrameScheduler::ComputeTargetPresentationAndWakeupTimes(
     wakeup_time += vsync_interval;
   }
 
+#if SCENIC_IGNORE_VSYNC
+  return std::make_pair(now, now);
+#else
   return std::make_pair(target_presentation_time, wakeup_time);
+#endif
 }
 
 void FrameScheduler::ScheduleFrame() {
@@ -211,27 +217,32 @@ void FrameScheduler::OnFramePresented(FrameTimings* timings) {
   // receiving signals out-of-order and is therefore generating bogus data.
   FXL_DCHECK(outstanding_frames_[0].get() == timings) << "out-of-order.";
 
-  // TODO(MZ-400): This needs to be generalized for multi-display support.
-  display_->set_last_vsync_time(timings->actual_presentation_time());
+  if (timings->frame_was_dropped()) {
+    TRACE_INSTANT("gfx", "FrameDropped", TRACE_SCOPE_PROCESS, "frame_number",
+                  timings->frame_number());
+  } else {
+    // TODO(MZ-400): This needs to be generalized for multi-display support.
+    display_->set_last_vsync_time(timings->actual_presentation_time());
 
-  // Log trace data.
-  // TODO(MZ-400): just pass the whole Frame to a listener.
-  int64_t target_vs_actual_usecs =
-      static_cast<int64_t>(timings->actual_presentation_time() -
-                           timings->target_presentation_time()) /
-      1000;
+    // Log trace data.
+    // TODO(MZ-400): just pass the whole Frame to a listener.
+    int64_t target_vs_actual_usecs =
+        static_cast<int64_t>(timings->actual_presentation_time() -
+                             timings->target_presentation_time()) /
+        1000;
 
-  zx_time_t now = zx_clock_get(ZX_CLOCK_MONOTONIC);
-  FXL_DCHECK(now >= timings->actual_presentation_time());
-  uint64_t elapsed_since_presentation_usecs =
-      static_cast<int64_t>(now - timings->actual_presentation_time()) / 1000;
+    zx_time_t now = zx_clock_get(ZX_CLOCK_MONOTONIC);
+    FXL_DCHECK(now >= timings->actual_presentation_time());
+    uint64_t elapsed_since_presentation_usecs =
+        static_cast<int64_t>(now - timings->actual_presentation_time()) / 1000;
 
-  TRACE_INSTANT("gfx", "FramePresented", TRACE_SCOPE_PROCESS, "frame_number",
-                timings->frame_number(), "presentation time (usecs)",
-                timings->actual_presentation_time() / 1000,
-                "target time missed by (usecs)", target_vs_actual_usecs,
-                "elapsed time since presentation (usecs)",
-                elapsed_since_presentation_usecs);
+    TRACE_INSTANT("gfx", "FramePresented", TRACE_SCOPE_PROCESS, "frame_number",
+                  timings->frame_number(), "presentation time (usecs)",
+                  timings->actual_presentation_time() / 1000,
+                  "target time missed by (usecs)", target_vs_actual_usecs,
+                  "elapsed time since presentation (usecs)",
+                  elapsed_since_presentation_usecs);
+  }
 
   // Pop the front Frame off the queue.
   for (size_t i = 1; i < outstanding_frames_.size(); ++i) {
@@ -264,4 +275,4 @@ bool FrameScheduler::TooMuchBackPressure() {
 }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

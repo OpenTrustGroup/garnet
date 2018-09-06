@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <fuchsia/ui/policy/cpp/fidl.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <trace-provider/provider.h>
 
@@ -18,8 +17,8 @@ int main(int argc, const char** argv) {
 
   bool use_fake_camera = command_line.HasOption("fake_camera");
 
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
-  trace::TraceProvider trace_provider(loop.async());
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
+  trace::TraceProvider trace_provider(loop.dispatcher());
 
   mozart::ViewProviderApp app(
       [&loop, use_fake_camera](mozart::ViewContext view_context) {

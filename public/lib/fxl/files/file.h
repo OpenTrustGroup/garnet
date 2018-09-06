@@ -5,11 +5,11 @@
 #ifndef LIB_FXL_FILES_FILE_H_
 #define LIB_FXL_FILES_FILE_H_
 
+#include <stdint.h>
 #include <string>
 #include <vector>
 
 #include "lib/fxl/fxl_export.h"
-#include "lib/fxl/inttypes.h"
 #include "lib/fxl/strings/string_view.h"
 
 namespace files {
@@ -18,10 +18,8 @@ namespace files {
 // was successfully written, otherwise returns false.
 FXL_EXPORT bool WriteFile(const std::string& path, const char* data,
                           ssize_t size);
-#if defined(OS_LINUX) || defined(OS_FUCHSIA)
 FXL_EXPORT bool WriteFileAt(int dirfd, const std::string& path,
                             const char* data, ssize_t size);
-#endif
 
 // Writes the given data a temporary file under |temp_root| and then moves the
 // temporary file to |path|, ensuring write atomicity. Returns true if the data
@@ -40,10 +38,8 @@ FXL_EXPORT bool WriteFileInTwoPhases(const std::string& path,
 // the empty string.
 FXL_EXPORT bool ReadFileToString(const std::string& path, std::string* result);
 FXL_EXPORT bool ReadFileDescriptorToString(int fd, std::string* result);
-#if defined(OS_LINUX) || defined(OS_FUCHSIA)
 FXL_EXPORT bool ReadFileToStringAt(int dirfd, const std::string& path,
                                    std::string* result);
-#endif
 
 // Reads the contents of the file at the given path and stores the data in
 // result. Returns true if the file was read successfully, otherwise returns
@@ -60,12 +56,12 @@ FXL_EXPORT std::pair<uint8_t*, intptr_t> ReadFileDescriptorToBytes(int fd);
 
 // Returns whether the given path is a file.
 FXL_EXPORT bool IsFile(const std::string& path);
-#if defined(OS_LINUX) || defined(OS_FUCHSIA)
 FXL_EXPORT bool IsFileAt(int dirfd, const std::string& path);
-#endif
 
 // If the given path is a file, set size to the size of the file.
 FXL_EXPORT bool GetFileSize(const std::string& path, uint64_t* size);
+FXL_EXPORT bool GetFileSizeAt(int dirfd, const std::string& path,
+                              uint64_t* size);
 
 }  // namespace files
 

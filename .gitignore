@@ -18,6 +18,7 @@
 .vscode
 Session.vim
 Thumbs.db
+compile_commands.json
 cscope.*
 tags
 target
@@ -29,4 +30,3 @@ tools/cipd.gni
 *.iml
 **/Cargo.lock
 **/Cargo.toml
-drivers/video/amlogic-decoder/firmware/

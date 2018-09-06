@@ -6,7 +6,7 @@
 #include <trace-provider/provider.h>
 
 #include "garnet/bin/ui/sketchy/app.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/escher/escher.h"
 #include "lib/escher/escher_process_init.h"
 
@@ -17,6 +17,7 @@ int main(int argc, const char** argv) {
     escher::VulkanInstance::Params instance_params(
         {{},
          {VK_EXT_DEBUG_REPORT_EXTENSION_NAME,
+          VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
           VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
           VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME},
          false});
@@ -35,10 +36,10 @@ int main(int argc, const char** argv) {
 
     escher::Escher escher(vulkan_device);
 
-    async::Loop loop(&kAsyncLoopConfigMakeDefault);
-    trace::TraceProvider trace_provider(loop.async());
+    async::Loop loop(&kAsyncLoopConfigAttachToThread);
+    trace::TraceProvider trace_provider(loop.dispatcher());
 
-    sketchy_service::App app(&loop, &escher);
+    sketchy_service::App app(&loop, escher.GetWeakPtr());
     loop.Run();
   }
   escher::GlslangFinalizeProcess();

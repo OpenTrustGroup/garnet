@@ -4,7 +4,9 @@
 
 #![allow(deprecated)] // Necessary for AsciiExt usage from clap args_enum macro
 
-use wlan;
+use clap::{_clap_count_exprs, arg_enum};
+use fidl_fuchsia_wlan_device as wlan;
+use structopt::StructOpt;
 
 arg_enum!{
     #[derive(PartialEq, Copy, Clone, Debug)]
@@ -36,6 +38,10 @@ pub enum Opt {
     #[structopt(name = "client")]
     /// commands for client stations
     Client(ClientCmd),
+
+    #[structopt(name = "ap")]
+    /// commands for AP stations
+    Ap(ApCmd),
 }
 
 #[derive(StructOpt, Copy, Clone, Debug)]
@@ -95,12 +101,37 @@ pub enum ClientCmd {
         #[structopt(raw(required = "true"))]
         iface_id: u16,
         #[structopt(raw(required = "true"))]
-        ssid: String
+        ssid: String,
+        #[structopt(short = "p", long = "password")]
+        password: String
+    },
+    #[structopt(name = "disconnect")]
+    Disconnect {
+        #[structopt(raw(required = "true"))]
+        iface_id: u16,
     },
     #[structopt(name = "status")]
     Status {
         #[structopt(raw(required = "true"))]
         iface_id: u16,
     }
+}
+
+#[derive(StructOpt, Clone, Debug)]
+pub enum ApCmd {
+    #[structopt(name = "start")]
+    Start {
+        #[structopt(raw(required = "true"))]
+        iface_id: u16,
+        #[structopt(short = "s", long = "ssid")]
+        ssid: String,
+        #[structopt(short = "c", long = "channel")]
+        channel: u8,
+    },
+    #[structopt(name = "stop")]
+    Stop {
+        #[structopt(raw(required = "true"))]
+        iface_id: u16,
+    },
 }
 

@@ -6,19 +6,20 @@
 
 #include <lib/fdio/util.h>
 
-#include <fuchsia/ui/views_v1/cpp/fidl.h>
+#include <fuchsia/ui/viewsv1/cpp/fidl.h>
 #include "lib/fidl/cpp/optional.h"
 #include "lib/fxl/logging.h"
+#include "lib/fxl/strings/split_string.h"
 #include "lib/svc/cpp/services.h"
 #include "lib/ui/geometry/cpp/geometry_util.h"
 
 namespace examples {
 
 TileView::TileView(
-    ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-    fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+    ::fuchsia::ui::viewsv1::ViewManagerPtr view_manager,
+    fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
         view_owner_request,
-    fuchsia::sys::StartupContext* startup_context, const TileParams& params)
+    component::StartupContext* startup_context, const TileParams& params)
     : BaseView(std::move(view_manager), std::move(view_owner_request), "Tile"),
       startup_context_(startup_context),
       params_(params),
@@ -32,7 +33,7 @@ TileView::TileView(
 TileView::~TileView() {}
 
 void TileView::Present(
-    fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner>
+    fidl::InterfaceHandle<::fuchsia::ui::viewsv1token::ViewOwner>
         child_view_owner,
     fidl::InterfaceRequest<fuchsia::ui::policy::Presentation> presentation) {
   const std::string empty_url;
@@ -41,12 +42,24 @@ void TileView::Present(
 
 void TileView::ConnectViews() {
   for (const auto& url : params_.view_urls) {
-    fuchsia::sys::Services services;
+    component::Services services;
     fuchsia::sys::ComponentControllerPtr controller;
 
     fuchsia::sys::LaunchInfo launch_info;
-    launch_info.url = url;
+
+    // Pass arguments to children, if there are any.
+    std::vector<std::string> split_url = fxl::SplitStringCopy(
+        url, " ", fxl::kTrimWhitespace, fxl::kSplitWantNonEmpty);
+    FXL_CHECK(split_url.size() >= 1);
+    launch_info.url = split_url[0];
     launch_info.directory_request = services.NewRequest();
+
+    if (split_url.size() > 1) {
+      launch_info.arguments = fidl::VectorPtr<fidl::StringPtr>::New(0);
+      for (auto it = split_url.begin() + 1; it != split_url.end(); it++) {
+        launch_info.arguments.push_back(*it);
+      }
+    }
 
     // |env_launcher_| launches the app with our nested environment.
     env_launcher_->CreateComponent(std::move(launch_info),
@@ -54,9 +67,9 @@ void TileView::ConnectViews() {
 
     // Get the view provider back from the launched app.
     auto view_provider =
-        services.ConnectToService<::fuchsia::ui::views_v1::ViewProvider>();
+        services.ConnectToService<::fuchsia::ui::viewsv1::ViewProvider>();
 
-    fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner>
+    fidl::InterfaceHandle<::fuchsia::ui::viewsv1token::ViewOwner>
         child_view_owner;
     view_provider->CreateView(child_view_owner.NewRequest(), nullptr);
 
@@ -85,7 +98,7 @@ void TileView::CreateNestedEnvironment() {
 }
 
 void TileView::OnChildAttached(
-    uint32_t child_key, ::fuchsia::ui::views_v1::ViewInfo child_view_info) {
+    uint32_t child_key, ::fuchsia::ui::viewsv1::ViewInfo child_view_info) {
   auto it = views_.find(child_key);
   FXL_DCHECK(it != views_.end());
 
@@ -99,7 +112,7 @@ void TileView::OnChildUnavailable(uint32_t child_key) {
 }
 
 void TileView::AddChildView(
-    fidl::InterfaceHandle<::fuchsia::ui::views_v1_token::ViewOwner>
+    fidl::InterfaceHandle<::fuchsia::ui::viewsv1token::ViewOwner>
         child_view_owner,
     const std::string& url, fuchsia::sys::ComponentControllerPtr controller) {
   const uint32_t view_key = next_child_view_key_++;
@@ -110,6 +123,10 @@ void TileView::AddChildView(
   zx::eventpair host_import_token;
   view_data->host_node.ExportAsRequest(&host_import_token);
   container_node_.AddChild(view_data->host_node);
+
+  view_data->host_node.AddPart(view_data->clip_shape_node);
+  view_data->host_node.SetClip(0, true);
+
   views_.emplace(view_key, std::move(view_data));
 
   GetViewContainer()->AddChild(view_key, std::move(child_view_owner),
@@ -166,13 +183,13 @@ void TileView::OnSceneInvalidated(
     }
     offset += extent;
 
-    ::fuchsia::ui::views_v1::ViewProperties view_properties;
-    view_properties.view_layout = ::fuchsia::ui::views_v1::ViewLayout::New();
+    ::fuchsia::ui::viewsv1::ViewProperties view_properties;
+    view_properties.view_layout = ::fuchsia::ui::viewsv1::ViewLayout::New();
     view_properties.view_layout->size.width = layout_bounds.width;
     view_properties.view_layout->size.height = layout_bounds.height;
 
     if (view_data->view_properties != view_properties) {
-      ::fuchsia::ui::views_v1::ViewProperties view_properties_clone;
+      ::fuchsia::ui::viewsv1::ViewProperties view_properties_clone;
       view_properties.Clone(&view_properties_clone);
       view_data->view_properties = std::move(view_properties_clone);
       GetViewContainer()->SetChildProperties(
@@ -180,6 +197,16 @@ void TileView::OnSceneInvalidated(
     }
 
     view_data->host_node.SetTranslation(layout_bounds.x, layout_bounds.y, 0u);
+
+    // Clip
+    scenic::Rectangle shape(session(),            // session
+                            layout_bounds.width,  // width
+                            layout_bounds.height  // height
+    );
+    view_data->clip_shape_node.SetShape(shape);
+    view_data->clip_shape_node.SetTranslation(layout_bounds.width * 0.5f,
+                                              layout_bounds.height * 0.5f, 0.f);
+    ;
   }
 }
 
@@ -189,7 +216,8 @@ TileView::ViewData::ViewData(const std::string& url, uint32_t key,
     : url(url),
       key(key),
       controller(std::move(controller)),
-      host_node(session) {}
+      host_node(session),
+      clip_shape_node(session) {}
 
 TileView::ViewData::~ViewData() {}
 

@@ -21,20 +21,20 @@
 
 #include <zircon/status.h>
 
-#include "hif.h"
 #include "core.h"
 #include "debug.h"
-#include "wmi.h"
+#include "hif.h"
 #include "htt.h"
 #include "ieee80211.h"
 #include "macros.h"
-#include "txrx.h"
 #include "testmode.h"
-#include "wmi.h"
-#include "wmi-tlv.h"
+#include "txrx.h"
 #include "wmi-ops.h"
+#include "wmi-tlv.h"
+#include "wmi.h"
 #include "wow.h"
 
+// clang-format off
 #define CHAN2G(_channel, _freq, _flags) { \
     .hw_value           = (_channel), \
     .center_freq        = (_freq), \
@@ -98,41 +98,34 @@ static const struct ath10k_channel ath10k_5ghz_channels[] = {
     CHAN5G(165, 5825, 0),
     CHAN5G(169, 5845, 0),
 };
+// clang-format on
 
+// Band information that is consistent across all supported ath10k chipsets
 static const struct ath10k_band ath10k_supported_bands[] = {
     {
-        .name = "2.4 Ghz",
-        // FIXME: NET-817
-        .ht_caps = { .ht_capability_info = 0x01fe,
-                     .ampdu_params = 0x00,
-                     .supported_mcs_set = { 0xff, 0x00, 0x00, 0x80,
-                                            0x00, 0x00, 0x00, 0x00,
-                                            0x00, 0x00, 0x00, 0x00,
-                                            0x01, 0x00, 0x00, 0x00 },
-                     .ht_ext_capabilities = 0x0000,
-                     .tx_beamforming_capabilities = 0x00000000,
-                     .asel_capabilities = 0x00 },
+        .name = "2.4 GHz",
+        .ht_supported = true,
         .vht_supported = false,
-        .basic_rates = { 2, 4, 11, 22, 12, 18, 24, 36, 48, 72, 96, 108 },
+        // TODO(NET-1321, NET-1375):
+        // Unmark the "BasicRate" bit for the first 4 rates.
+        // Rename ".basic_rates" to ".supported_rates"
+        // See IEEE Std 802.11-2016, 9.4.2.3 for encoding
+        .basic_rates = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24, 0x30, 0x48, 0x60, 0x6c},
         .base_freq = 2407,
         .n_channels = countof(ath10k_2ghz_channels),
         .channels = ath10k_2ghz_channels,
     },
 
     {
-        .name = "5 Ghz",
-        // FIXME: NET-817
-        .ht_caps = { .ht_capability_info = 0x01fe,
-                     .ampdu_params = 0x00,
-                     .supported_mcs_set = { 0xff, 0xff, 0x00, 0x80,
-                                            0x00, 0x00, 0x00, 0x00,
-                                            0x00, 0x00, 0x00, 0x00,
-                                            0x01, 0x00, 0x00, 0x00 },
-                     .ht_ext_capabilities = 0x0000,
-                     .tx_beamforming_capabilities = 0x00000000,
-                     .asel_capabilities = 0x00 },
-        .vht_supported = false,
-        .basic_rates = { 12, 18, 24, 36, 48, 72, 96, 108 },
+        .name = "5 GHz",
+        .ht_supported = true,
+        .vht_supported = true,
+        // TODO(NET-1321, NET-1375):
+        // Unmark the "BasicRate" bit for the first 4 rates.
+        // Rename ".basic_rates" to ".supported_rates"
+        // See IEEE Std 802.11-2016, 9.4.2.3 for encoding
+        .basic_rates = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24, 0x30, 0x48, 0x60, 0x6c},
+        .base_freq = 5000,
         .n_channels = countof(ath10k_5ghz_channels),
         .channels = ath10k_5ghz_channels,
     },
@@ -144,7 +137,7 @@ static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role);
 /* Rates */
 /*********/
 
-#if 0 // NEEDS PORTING
+#if 0  // NEEDS PORTING
 static struct ieee80211_rate ath10k_rates[] = {
     {
         .bitrate = 10,
@@ -216,8 +209,7 @@ static struct ieee80211_rate ath10k_rates_rev2[] = {
 #define ATH10K_MAC_FIRST_OFDM_RATE_IDX 4
 
 #define ath10k_a_rates (ath10k_rates + ATH10K_MAC_FIRST_OFDM_RATE_IDX)
-#define ath10k_a_rates_size (countof(ath10k_rates) - \
-                 ATH10K_MAC_FIRST_OFDM_RATE_IDX)
+#define ath10k_a_rates_size (countof(ath10k_rates) - ATH10K_MAC_FIRST_OFDM_RATE_IDX)
 #define ath10k_g_rates (ath10k_rates + 0)
 #define ath10k_g_rates_size (countof(ath10k_rates))
 
@@ -311,7 +303,7 @@ ath10k_mac_max_vht_nss(const uint16_t vht_mcs_mask[NL80211_VHT_NSS_MAX]) {
 
     return 1;
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 zx_status_t ath10k_mac_ext_resource_config(struct ath10k* ar, uint32_t val) {
     enum wmi_host_platform_type platform_type;
@@ -337,8 +329,7 @@ zx_status_t ath10k_mac_ext_resource_config(struct ath10k* ar, uint32_t val) {
 /* Crypto */
 /**********/
 
-static zx_status_t ath10k_send_key(struct ath10k_vif* arvif,
-                                   wlan_key_config_t* key_config,
+static zx_status_t ath10k_send_key(struct ath10k_vif* arvif, wlan_key_config_t* key_config,
                                    const uint8_t* macaddr, uint32_t flags) {
     struct wmi_vdev_install_key_arg arg = {
         .vdev_id = arvif->vdev_id,
@@ -376,26 +367,21 @@ static zx_status_t ath10k_send_key(struct ath10k_vif* arvif,
     return ath10k_wmi_vdev_install_key(arvif->ar, &arg);
 }
 
-static zx_status_t ath10k_install_key(struct ath10k_vif* arvif,
-                                      wlan_key_config_t* key_config,
+static zx_status_t ath10k_install_key(struct ath10k_vif* arvif, wlan_key_config_t* key_config,
                                       const uint8_t* macaddr, uint32_t flags) {
     struct ath10k* ar = arvif->ar;
     zx_status_t ret;
 
     ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    completion_reset(&ar->install_key_done);
+    sync_completion_reset(&ar->install_key_done);
 
-    if (arvif->nohwcrypt) {
-        return ZX_ERR_NOT_SUPPORTED;
-    }
+    if (arvif->nohwcrypt) { return ZX_ERR_NOT_SUPPORTED; }
 
     ret = ath10k_send_key(arvif, key_config, macaddr, flags);
-    if (ret != ZX_OK) {
-        return ret;
-    }
+    if (ret != ZX_OK) { return ret; }
 
-    if (completion_wait(&ar->install_key_done, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
+    if (sync_completion_wait(&ar->install_key_done, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
         ath10k_err("Timed out waiting for key install complete message\n");
         return ZX_ERR_TIMED_OUT;
     }
@@ -403,7 +389,7 @@ static zx_status_t ath10k_install_key(struct ath10k_vif* arvif,
     return ZX_OK;
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 static int ath10k_clear_peer_keys(struct ath10k_vif* arvif,
                                   const uint8_t* addr) {
     struct ath10k* ar = arvif->ar;
@@ -496,18 +482,17 @@ static int ath10k_clear_vdev_key(struct ath10k_vif* arvif,
 
     return first_errno;
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 /*********************/
 /* General utilities */
 /*********************/
 
-static inline enum wmi_phy_mode
-chan_to_phymode(wlan_channel_t* wlan_chan) {
+static inline enum wmi_phy_mode chan_to_phymode(wlan_channel_t* wlan_chan) {
     enum wmi_phy_mode phymode = MODE_UNKNOWN;
 
     if (wlan_chan->primary <= 14) {
-        switch(wlan_chan->cbw) {
+        switch (wlan_chan->cbw) {
         case CBW20:
             phymode = MODE_11NG_HT20;
             break;
@@ -547,7 +532,7 @@ chan_to_phymode(wlan_channel_t* wlan_chan) {
     return phymode;
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 static uint8_t ath10k_parse_mpdudensity(uint8_t mpdudensity) {
     /*
      * 802.11n D2.0 defined values for "Minimum MPDU Start Spacing":
@@ -891,24 +876,21 @@ static void ath10k_mac_vif_beacon_cleanup(struct ath10k_vif* arvif) {
         arvif->beacon_buf = NULL;
     }
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 static inline zx_status_t ath10k_vdev_setup_sync(struct ath10k* ar) {
-
     ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    if (BITARR_TEST(ar->dev_flags, ATH10K_FLAG_CRASH_FLUSH)) {
-        return ZX_ERR_BAD_STATE;
-    }
+    if (BITARR_TEST(ar->dev_flags, ATH10K_FLAG_CRASH_FLUSH)) { return ZX_ERR_BAD_STATE; }
 
-    if (completion_wait(&ar->vdev_setup_done, ATH10K_VDEV_SETUP_TIMEOUT) == ZX_ERR_TIMED_OUT) {
+    if (sync_completion_wait(&ar->vdev_setup_done, ATH10K_VDEV_SETUP_TIMEOUT) == ZX_ERR_TIMED_OUT) {
         return ZX_ERR_TIMED_OUT;
     }
 
     return ZX_OK;
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 static int ath10k_monitor_vdev_start(struct ath10k* ar, int vdev_id) {
     struct cfg80211_chan_def* chandef = NULL;
     struct ieee80211_channel* channel = NULL;
@@ -943,7 +925,7 @@ static int ath10k_monitor_vdev_start(struct ath10k* ar, int vdev_id) {
     arg.channel.max_reg_power = channel->max_reg_power * 2;
     arg.channel.max_antenna_gain = channel->max_antenna_gain * 2;
 
-    completion_reset(&ar->vdev_setup_done);
+    sync_completion_reset(&ar->vdev_setup_done);
 
     ret = ath10k_wmi_vdev_start(ar, &arg);
     if (ret) {
@@ -991,7 +973,7 @@ static int ath10k_monitor_vdev_stop(struct ath10k* ar) {
         ath10k_warn("failed to put down monitor vdev %i: %d\n",
                     ar->monitor_vdev_id, ret);
 
-    completion_reset(&ar->vdev_setup_done);
+    sync_completion_reset(&ar->vdev_setup_done);
 
     ret = ath10k_wmi_vdev_stop(ar, ar->monitor_vdev_id);
     if (ret)
@@ -1325,7 +1307,7 @@ static int ath10k_vdev_stop(struct ath10k_vif* arvif) {
 
     ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    completion_reset(&ar->vdev_setup_done);
+    sync_completion_reset(&ar->vdev_setup_done);
 
     ret = ath10k_wmi_vdev_stop(ar, arvif->vdev_id);
     if (ret) {
@@ -1350,7 +1332,7 @@ static int ath10k_vdev_stop(struct ath10k_vif* arvif) {
 
     return ret;
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 static zx_status_t ath10k_lookup_chan(uint8_t wlan_chan, const struct ath10k_channel** ath_chan) {
     // TODO: create channel -> channel info map
@@ -1367,8 +1349,7 @@ static zx_status_t ath10k_lookup_chan(uint8_t wlan_chan, const struct ath10k_cha
     return ZX_ERR_NOT_FOUND;
 }
 
-static zx_status_t ath10k_vdev_start_restart(struct ath10k_vif* arvif,
-                                             wlan_channel_t* chandef,
+static zx_status_t ath10k_vdev_start_restart(struct ath10k_vif* arvif, wlan_channel_t* chandef,
                                              bool restart) {
     struct ath10k* ar = arvif->ar;
 
@@ -1394,7 +1375,7 @@ static zx_status_t ath10k_vdev_start_restart(struct ath10k_vif* arvif,
 
     struct wmi_vdev_start_request_arg arg = {};
 
-    completion_reset(&ar->vdev_setup_done);
+    sync_completion_reset(&ar->vdev_setup_done);
 
     arg.vdev_id = arvif->vdev_id;
     arg.dtim_period = arvif->dtim_period;
@@ -1402,7 +1383,7 @@ static zx_status_t ath10k_vdev_start_restart(struct ath10k_vif* arvif,
 
     arg.channel.freq = primary_chan->center_freq;
 
-    switch(chandef->cbw) {
+    switch (chandef->cbw) {
     case CBW20:
         arg.channel.band_center_freq1 = primary_chan->center_freq;
         break;
@@ -1421,8 +1402,7 @@ static zx_status_t ath10k_vdev_start_restart(struct ath10k_vif* arvif,
         break;
     default:
         ZX_DEBUG_ASSERT(0);
-        ath10k_err("attempt to start vdev %d with invalid CBW %d\n",
-                   arvif->vdev_id, chandef->cbw);
+        ath10k_err("attempt to start vdev %d with invalid CBW %d\n", arvif->vdev_id, chandef->cbw);
         return ZX_ERR_INVALID_ARGS;
     }
 
@@ -1433,7 +1413,7 @@ static zx_status_t ath10k_vdev_start_restart(struct ath10k_vif* arvif,
     arg.channel.max_reg_power = primary_chan->max_reg_power * 2;
     arg.channel.max_antenna_gain = primary_chan->max_antenna_gain * 2;
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     if (arvif->vdev_type == WMI_VDEV_TYPE_AP) {
         arg.ssid = arvif->u.ap.ssid;
         arg.ssid_len = arvif->u.ap.ssid_len;
@@ -1446,12 +1426,10 @@ static zx_status_t ath10k_vdev_start_restart(struct ath10k_vif* arvif,
         arg.ssid = arvif->vif->bss_conf.ssid;
         arg.ssid_len = arvif->vif->bss_conf.ssid_len;
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
-    ath10k_dbg(ar, ATH10K_DBG_MAC,
-               "mac vdev %d start center_freq %d phymode %s\n",
-               arg.vdev_id, arg.channel.freq,
-               ath10k_wmi_phymode_str(arg.channel.mode));
+    ath10k_dbg(ar, ATH10K_DBG_MAC, "mac vdev %d start center_freq %d phymode %s\n", arg.vdev_id,
+               arg.channel.freq, ath10k_wmi_phymode_str(arg.channel.mode));
 
     if (restart) {
         status = ath10k_wmi_vdev_restart(ar, &arg);
@@ -1460,8 +1438,7 @@ static zx_status_t ath10k_vdev_start_restart(struct ath10k_vif* arvif,
     }
 
     if (status != ZX_OK) {
-        ath10k_warn("failed to start WMI vdev %i: %s\n",
-                    arg.vdev_id, zx_status_get_string(status));
+        ath10k_warn("failed to start WMI vdev %i: %s\n", arg.vdev_id, zx_status_get_string(status));
         return status;
     }
 
@@ -1469,15 +1446,15 @@ static zx_status_t ath10k_vdev_start_restart(struct ath10k_vif* arvif,
     // confirmation that the channel change actually went through.
     status = ath10k_vdev_setup_sync(ar);
     if (status != ZX_OK) {
-        ath10k_warn("failed to synchronize setup for vdev %i restart %d: %s\n",
-                    arg.vdev_id, restart, zx_status_get_string(status));
+        ath10k_warn("failed to synchronize setup for vdev %i restart %d: %s\n", arg.vdev_id,
+                    restart, zx_status_get_string(status));
         return status;
     }
 
     ar->num_started_vdevs++;
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     ath10k_recalc_radar_detection(ar);
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     return status;
 }
@@ -1490,7 +1467,7 @@ static zx_status_t ath10k_vdev_restart(struct ath10k_vif* arvif, wlan_channel_t*
     return ath10k_vdev_start_restart(arvif, def, true);
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 static int ath10k_mac_setup_bcn_p2p_ie(struct ath10k_vif* arvif,
                                        struct sk_buff* bcn) {
     struct ath10k* ar = arvif->ar;
@@ -2500,8 +2477,8 @@ static void ath10k_peer_assoc_h_vht(struct ath10k* ar,
     arg->peer_vht_caps = vht_cap->cap;
 
     ampdu_factor = (vht_cap->cap &
-                    IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_MASK) >>
-                   IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_SHIFT;
+                    IEEE80211_VHT_CAP_MAX_AMPDU_LENGTH_EXPONENT_MASK) >>
+                   IEEE80211_VHT_CAP_MAX_AMPDU_LENGTH_EXPONENT_SHIFT;
 
     /* Workaround: Some Netgear/Linksys 11ac APs set Rx A-MPDU factor to
      * zero in VHT IE. Using it would result in degraded throughput.
@@ -2821,7 +2798,7 @@ static int ath10k_mac_vif_recalc_txbf(struct ath10k* ar,
 
     return 0;
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 static void ethaddr_sprintf(char* str, uint8_t* addr) {
     bool first = true;
@@ -2832,44 +2809,35 @@ static void ethaddr_sprintf(char* str, uint8_t* addr) {
     }
 }
 
-static void ath10k_mac_parse_a_mpdu(uint8_t response_a_mpdu,
-                                    struct wmi_peer_assoc_complete_arg* assoc_arg) {
-    assoc_arg->peer_max_mpdu = response_a_mpdu & IEEE80211_A_MPDU_MAX_RX_LEN;
-    assoc_arg->peer_mpdu_density = (response_a_mpdu & IEEE80211_A_MPDU_DENSITY) >>
-                                   IEEE80211_A_MPDU_DENSITY_SHIFT;
+static void ath10k_mac_parse_ampdu(uint8_t response_ampdu,
+                                   struct wmi_peer_assoc_complete_arg* assoc_arg) {
+    assoc_arg->peer_max_mpdu = response_ampdu & IEEE80211_AMPDU_MAX_RX_LEN;
+    assoc_arg->peer_mpdu_density =
+        (response_ampdu & IEEE80211_AMPDU_DENSITY) >> IEEE80211_AMPDU_DENSITY_SHIFT;
 }
 
-static void ath10k_mac_parse_assoc_resp(struct ath10k* ar,
-                                        const uint8_t* tagged_data,
+static void ath10k_mac_parse_assoc_resp(struct ath10k* ar, const uint8_t* tagged_data,
                                         size_t data_len,
                                         struct wmi_peer_assoc_complete_arg* assoc_arg) {
     size_t legacy_rates_seen = 0;
 
     while (data_len > 0) {
-
-        if (data_len < 2) {
-            goto invalid_data;
-        }
+        if (data_len < 2) { goto invalid_data; }
 
         uint8_t tag = *tagged_data++;
         uint8_t tag_len = *tagged_data++;
         data_len -= 2;
-        if (tag_len > data_len) {
-            goto invalid_data;
-        }
+        if (tag_len > data_len) { goto invalid_data; }
 
         switch (tag) {
-        case IEEE80211_ASSOC_TAG_RATES:
-            {
-                size_t num_rates = MIN(tag_len, MAX_SUPPORTED_RATES);
-                legacy_rates_seen = assoc_arg->peer_legacy_rates.num_rates = num_rates;
-                memcpy(assoc_arg->peer_legacy_rates.rates, tagged_data, num_rates);
-                break;
-            }
+        case IEEE80211_ASSOC_TAG_RATES: {
+            size_t num_rates = MIN(tag_len, MAX_SUPPORTED_RATES);
+            legacy_rates_seen = assoc_arg->peer_legacy_rates.num_rates = num_rates;
+            memcpy(assoc_arg->peer_legacy_rates.rates, tagged_data, num_rates);
+            break;
+        }
         case IEEE80211_ASSOC_TAG_HT_CAPS:
-            if (tag_len != 26) {
-                goto invalid_data;
-            }
+            if (tag_len != 26) { goto invalid_data; }
             assoc_arg->peer_flags |= ar->wmi.peer_flags->ht;
             uint16_t ht_caps = tagged_data[0] | ((uint16_t)tagged_data[1] << 8);
             assoc_arg->peer_ht_caps = ht_caps;
@@ -2878,8 +2846,7 @@ static void ath10k_mac_parse_assoc_resp(struct ath10k* ar,
                 assoc_arg->peer_flags |= ar->wmi.peer_flags->bw40;
                 assoc_arg->peer_rate_caps |= WMI_RC_CW40_FLAG;
             }
-            if ((ht_caps & IEEE80211_HT_CAPS_SGI_20) ||
-                (ht_caps & IEEE80211_HT_CAPS_SGI_40)) {
+            if ((ht_caps & IEEE80211_HT_CAPS_SGI_20) || (ht_caps & IEEE80211_HT_CAPS_SGI_40)) {
                 assoc_arg->peer_rate_caps |= WMI_RC_SGI_FLAG;
             }
             if (ht_caps & IEEE80211_HT_CAPS_LDPC) {
@@ -2896,13 +2863,11 @@ static void ath10k_mac_parse_assoc_resp(struct ath10k* ar,
                 assoc_arg->peer_rate_caps |= stbc;
                 assoc_arg->peer_flags |= ar->wmi.peer_flags->stbc;
             }
-            ath10k_mac_parse_a_mpdu(tagged_data[2], assoc_arg);
+            ath10k_mac_parse_ampdu(tagged_data[2], assoc_arg);
             break;
         case IEEE80211_ASSOC_TAG_HT_INFO:
-            if (tag_len != 22) {
-                goto invalid_data;
-            }
-#if 0 // NEEDS PORTING
+            if (tag_len != 22) { goto invalid_data; }
+#if 0   // NEEDS PORTING
             struct ieee80211_ht_info* ht_info = (void*)tagged_data;
             unsigned i, n, max_nss;
             for (i = 0, n = 0, max_nss = 0; i < (10 * 8); i++) {
@@ -2922,28 +2887,25 @@ static void ath10k_mac_parse_assoc_resp(struct ath10k* ar,
              * Firmware asserts if such situation occurs.
              */
             if (n == 0) {
-#endif // NEEDS PORTING
-                unsigned i;
-                assoc_arg->peer_ht_rates.num_rates = 8;
-                for (i = 0; i < assoc_arg->peer_ht_rates.num_rates; i++) {
-                    assoc_arg->peer_ht_rates.rates[i] = i;
-                }
-#if 0 // NEEDS PORTING
+#endif  // NEEDS PORTING
+            unsigned i;
+            assoc_arg->peer_ht_rates.num_rates = 8;
+            for (i = 0; i < assoc_arg->peer_ht_rates.num_rates; i++) {
+                assoc_arg->peer_ht_rates.rates[i] = i;
+            }
+#if 0   // NEEDS PORTING
             } else {
                 arg->peer_ht_rates.num_rates = n;
                 arg->peer_num_spatial_streams = MIN(sta->rx_nss, max_nss);
             }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
             break;
-        case IEEE80211_ASSOC_TAG_EXTENDED_RATES:
-            {
-                size_t num_rates = MIN(tag_len, MAX_SUPPORTED_RATES - legacy_rates_seen);
-                assoc_arg->peer_legacy_rates.num_rates += num_rates;
-                memcpy(&assoc_arg->peer_legacy_rates.rates[legacy_rates_seen], tagged_data,
-                       num_rates);
-                legacy_rates_seen += num_rates;
-            }
-            break;
+        case IEEE80211_ASSOC_TAG_EXTENDED_RATES: {
+            size_t num_rates = MIN(tag_len, MAX_SUPPORTED_RATES - legacy_rates_seen);
+            assoc_arg->peer_legacy_rates.num_rates += num_rates;
+            memcpy(&assoc_arg->peer_legacy_rates.rates[legacy_rates_seen], tagged_data, num_rates);
+            legacy_rates_seen += num_rates;
+        } break;
         default:
             // Ignore
             break;
@@ -2964,25 +2926,24 @@ static zx_status_t ath10k_mac_bss_disassoc(struct ath10k* ar) {
 
     ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    if (!arvif->is_up) {
-        return ZX_ERR_BAD_STATE;
-    }
+    if (!arvif->is_up) { return ZX_ERR_BAD_STATE; }
 
     zx_status_t ret = ath10k_wmi_peer_delete(ar, arvif->vdev_id, arvif->bssid);
     if (ret != ZX_OK) {
         char ethaddr_str[ETH_ALEN * 3];
         ethaddr_sprintf(ethaddr_str, arvif->bssid);
-        ath10k_err("Failed to delete peer %s in vdev %i: %s\n",
-                   ethaddr_str, arvif->vdev_id, zx_status_get_string(ret));
+        ath10k_err("Failed to delete peer %s in vdev %i: %s\n", ethaddr_str, arvif->vdev_id,
+                   zx_status_get_string(ret));
         return ret;
     }
+    arvif->is_up = false;
 
     ret = ath10k_wmi_vdev_down(ar, arvif->vdev_id);
     if (ret != ZX_OK) {
         ath10k_err("Failed to take vdev %i down: %s\n", arvif->vdev_id, zx_status_get_string(ret));
         return ret;
     }
-    arvif->is_up = false;
+    arvif->is_started = false;
 
     return ZX_OK;
 }
@@ -2992,6 +2953,20 @@ zx_status_t ath10k_mac_set_bss(struct ath10k* ar, wlan_bss_config_t* config) {
     zx_status_t ret = ZX_OK;
 
     mtx_lock(&ar->conf_mutex);
+    if (arvif->is_started && arvif->is_up) {
+        ret = ath10k_mac_bss_disassoc(ar);
+        if (ret != ZX_OK) {
+            ath10k_warn("failed to disassociate vdev %i: %s\n", arvif->vdev_id,
+                        zx_status_get_string(ret));
+        }
+        ret = ath10k_vdev_restart(arvif, &ar->rx_channel);
+        if (ret != ZX_OK) {
+            ath10k_warn("failed to restart vdev %i: %s\n", arvif->vdev_id,
+                        zx_status_get_string(ret));
+        } else {
+            arvif->is_started = true;
+        }
+    }
     memcpy(&arvif->bssid, config->bssid, ETH_ALEN);
     mtx_unlock(&ar->conf_mutex);
     return ret;
@@ -3005,9 +2980,9 @@ int ath10k_mac_bss_assoc(void* thrd_data) {
     zx_status_t status;
 
     while (1) {
-        completion_wait(&ar->assoc_complete, ZX_TIME_INFINITE);
+        sync_completion_wait(&ar->assoc_complete, ZX_TIME_INFINITE);
         mtx_lock(&ar->assoc_lock);
-        completion_reset(&ar->assoc_complete);
+        sync_completion_reset(&ar->assoc_complete);
 
         // assoc_frame is set by ath10k_wmi_event_mgmt_rx before signaling the
         // assoc_complete completion.
@@ -3021,8 +2996,10 @@ int ath10k_mac_bss_assoc(void* thrd_data) {
         struct ieee80211_frame_header* frame_hdr;
         struct ieee80211_assoc_resp* assoc_resp;
 
-        ZX_DEBUG_ASSERT(arvif->is_started);
-        ZX_DEBUG_ASSERT(!arvif->is_up);
+        if (!arvif->is_started || arvif->is_up) {
+            // Ignore frame
+            goto done;
+        }
 
         void* frame_ptr = ath10k_msg_buf_get_payload(buf) + buf->rx.frame_offset;
         frame_hdr = frame_ptr;
@@ -3032,9 +3009,7 @@ int ath10k_mac_bss_assoc(void* thrd_data) {
         size_t total_size = buf->rx.frame_size;
         size_t rate_info_size = total_size - (sizeof(*frame_hdr) + sizeof(*assoc_resp));
 
-        if (assoc_resp->status != 0) {
-            goto done;
-        }
+        if (assoc_resp->status != 0) { goto done; }
 
         uint8_t* frame_bssid = ieee80211_get_bssid(frame_hdr);
         memset(&assoc_arg, 0, sizeof(assoc_arg));
@@ -3063,7 +3038,7 @@ int ath10k_mac_bss_assoc(void* thrd_data) {
 
         // TODO: set crypto flags (as per ath10k_peer_assoc_h_crypto)
 
-#if 0 // TODO: VHT
+#if 0  // TODO: VHT
         assoc_arg.peer_vht_caps
         assoc_arg.peer_vht_rates
         assoc_arg.peer_bw_rxnss_override
@@ -3080,8 +3055,8 @@ int ath10k_mac_bss_assoc(void* thrd_data) {
 
         status = ath10k_wmi_peer_assoc(ar, &assoc_arg);
         if (status != ZX_OK) {
-            ath10k_warn("failed to run peer assoc for %pM vdev %i: %s\n",
-                        arvif->bssid, arvif->vdev_id, zx_status_get_string(status));
+            ath10k_warn("failed to run peer assoc for %pM vdev %i: %s\n", arvif->bssid,
+                        arvif->vdev_id, zx_status_get_string(status));
             ath10k_wmi_peer_delete(ar, arvif->vdev_id, frame_bssid);
             goto done;
         }
@@ -3091,8 +3066,8 @@ int ath10k_mac_bss_assoc(void* thrd_data) {
 
         status = ath10k_wmi_vdev_up(ar, arvif->vdev_id, arvif->aid, arvif->bssid);
         if (status != ZX_OK) {
-            ath10k_warn("failed to bring vdev %d up with aid: %d bssid: %s (%s)\n",
-                        arvif->vdev_id, arvif->aid, bssid_str, zx_status_get_string(status));
+            ath10k_warn("failed to bring vdev %d up with aid: %d bssid: %s (%s)\n", arvif->vdev_id,
+                        arvif->aid, bssid_str, zx_status_get_string(status));
         }
 
         arvif->is_up = true;
@@ -3103,15 +3078,14 @@ int ath10k_mac_bss_assoc(void* thrd_data) {
          * WLAN.RM.2.0-00073) have buggy powersave state machine and must be
          * poked with peer param command.
          */
-        status = ath10k_wmi_peer_set_param(ar, arvif->vdev_id, arvif->bssid,
-                                           WMI_PEER_DUMMY_VAR, 1);
+        status = ath10k_wmi_peer_set_param(ar, arvif->vdev_id, arvif->bssid, WMI_PEER_DUMMY_VAR, 1);
         if (status != ZX_OK) {
             ath10k_warn("failed to poke peer %pM param for ps workaround on vdev %i: %s\n",
                         arvif->bssid, arvif->vdev_id, zx_status_get_string(status));
             goto done;
         }
 
-done:
+    done:
         mtx_unlock(&ar->conf_mutex);
 
         mtx_lock(&ar->assoc_lock);
@@ -3119,7 +3093,7 @@ done:
         ar->assoc_frame = NULL;
         mtx_unlock(&ar->assoc_lock);
     }
-    return 1; // We should never exit...
+    return 1;  // We should never exit...
 }
 
 #if 0
@@ -3344,12 +3318,13 @@ static int ath10k_station_disassoc(struct ath10k* ar,
     return ret;
 }
 
+#endif
+
 /**************/
 /* Regulatory */
 /**************/
 
 static zx_status_t ath10k_update_channel_list(struct ath10k* ar) {
-
     ASSERT_MTX_HELD(&ar->conf_mutex);
 
     size_t num_bands = countof(ath10k_supported_bands);
@@ -3366,33 +3341,25 @@ static zx_status_t ath10k_update_channel_list(struct ath10k* ar) {
 
     size_t len = sizeof(struct wmi_channel_arg) * arg.n_channels;
     arg.channels = malloc(len);
-    if (!arg.channels) {
-        return ZX_ERR_NO_MEMORY;
-    }
+    if (!arg.channels) { return ZX_ERR_NO_MEMORY; }
 
     struct wmi_channel_arg* ch = arg.channels;
     for (unsigned band = 0; band < num_bands; band++) {
-
         for (unsigned i = 0; i < ath10k_supported_bands[band].n_channels; i++) {
             const struct ath10k_channel* channel = &ath10k_supported_bands[band].channels[i];
 
-            if (channel->flags & IEEE80211_CHAN_DISABLED) {
-                continue;
-            }
+            if (channel->flags & IEEE80211_CHAN_DISABLED) { continue; }
 
             ch->allow_ht = true;
 
             /* FIXME: when should we really allow VHT? */
             ch->allow_vht = true;
 
-            ch->allow_ibss =
-                !(channel->flags & IEEE80211_CHAN_NO_IR);
+            ch->allow_ibss = !(channel->flags & IEEE80211_CHAN_NO_IR);
 
-            ch->ht40plus =
-                !(channel->flags & IEEE80211_CHAN_NO_HT40PLUS);
+            ch->ht40plus = !(channel->flags & IEEE80211_CHAN_NO_HT40PLUS);
 
-            ch->chan_radar =
-                !!(channel->flags & IEEE80211_CHAN_RADAR);
+            ch->chan_radar = !!(channel->flags & IEEE80211_CHAN_RADAR);
 
             bool passive = channel->flags & IEEE80211_CHAN_NO_IR;
             ch->passive = passive;
@@ -3409,17 +3376,14 @@ static zx_status_t ath10k_update_channel_list(struct ath10k* ar) {
              * HT/VHT modes? Would that even make any
              * difference?
              */
-            ch->mode = ath10k_supported_bands[band].mode;
+            ch->mode = (ath10k_supported_bands[band].base_freq == 5000) ? MODE_11A : MODE_11G;
 
-            if (COND_WARN_ONCE(ch->mode == MODE_UNKNOWN)) {
-                continue;
-            }
+            if (COND_WARN_ONCE(ch->mode == MODE_UNKNOWN)) { continue; }
 
             ath10k_dbg(ar, ATH10K_DBG_WMI,
                        "mac channel [%zd/%d] freq %d maxpower %d regpower %d antenna %d mode %d\n",
-                       ch - arg.channels, arg.n_channels,
-                       ch->freq, ch->max_power, ch->max_reg_power,
-                       ch->max_antenna_gain, ch->mode);
+                       ch - arg.channels, arg.n_channels, ch->freq, ch->max_power,
+                       ch->max_reg_power, ch->max_antenna_gain, ch->mode);
 
             ch++;
         }
@@ -3430,6 +3394,8 @@ static zx_status_t ath10k_update_channel_list(struct ath10k* ar) {
 
     return ret;
 }
+
+#if 0
 
 static enum wmi_dfs_region
 ath10k_mac_get_dfs_region(enum nl80211_dfs_regions dfs_region) {
@@ -3445,26 +3411,24 @@ ath10k_mac_get_dfs_region(enum nl80211_dfs_regions dfs_region) {
     }
     return WMI_UNINIT_DFS_DOMAIN;
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 static void ath10k_regd_update(struct ath10k* ar) {
 //    zx_status_t ret;
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     struct reg_dmn_pair_mapping* regpair;
     enum wmi_dfs_region wmi_dfs_reg;
     enum nl80211_dfs_regions nl_dfs_reg;
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     ASSERT_MTX_HELD(&ar->conf_mutex);
 
-#if 0
-    ret = ath10k_update_channel_list(ar);
-    if (ret != ZX_OK) {
-        ath10k_warn("failed to update channel list: %s\n", zx_status_get_string(ret));
+    zx_status_t st = ath10k_update_channel_list(ar);
+    if (st != ZX_OK) {
+        ath10k_err("failed to update channel list: %s\n", zx_status_get_string(st));
     }
-#endif
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     regpair = ar->ath_common.regulatory.regpair;
 
     if (IS_ENABLED(CONFIG_ATH10K_DFS_CERTIFIED) && ar->dfs_detector) {
@@ -3487,20 +3451,21 @@ static void ath10k_regd_update(struct ath10k* ar) {
     if (ret) {
         ath10k_warn("failed to set pdev regdomain: %d\n", ret);
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 }
 
-void ath10k_foreach_band(void (*cb)(const struct ath10k_band* band, void* cookie),
+void ath10k_foreach_band(struct ath10k* ar,
+                         void (*cb)(struct ath10k* ar, const struct ath10k_band* band,
+                                    void* cookie),
                          void* cookie) {
     for (size_t band_ndx = 0; band_ndx < countof(ath10k_supported_bands); band_ndx++) {
         const struct ath10k_band* band = &ath10k_supported_bands[band_ndx];
-        cb(band, cookie);
+        cb(ar, band, cookie);
     }
 }
 
 void ath10k_foreach_channel(const struct ath10k_band* band,
-                            void (*cb)(const struct ath10k_channel* ch,
-                                       void* cookie),
+                            void (*cb)(const struct ath10k_channel* ch, void* cookie),
                             void* cookie) {
     for (size_t ch_ndx = 0; ch_ndx < band->n_channels; ch_ndx++) {
         const struct ath10k_channel* ch = &band->channels[ch_ndx];
@@ -3508,7 +3473,7 @@ void ath10k_foreach_channel(const struct ath10k_band* band,
     }
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 static void ath10k_mac_update_channel_list(struct ath10k* ar,
         struct ieee80211_supported_band* band) {
     int i;
@@ -3551,7 +3516,7 @@ static void ath10k_reg_notifier(struct wiphy* wiphy,
         ath10k_mac_update_channel_list(ar,
                                        ar->hw->wiphy->bands[NL80211_BAND_5GHZ]);
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 /***************/
 /* TX handlers */
@@ -3564,7 +3529,7 @@ enum ath10k_mac_tx_path {
     ATH10K_MAC_TX_UNKNOWN,
 };
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 void ath10k_mac_tx_lock(struct ath10k* ar, int reason) {
     ASSERT_MTX_HELD(&ar->htt.tx_lock);
 
@@ -3688,28 +3653,25 @@ void ath10k_mac_handle_tx_pause_vdev(struct ath10k* ar, uint32_t vdev_id,
             &arg);
     mtx_unlock(&ar->htt.tx_lock);
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
-static enum ath10k_hw_txrx_mode
-ath10k_mac_tx_h_get_txmode(struct ath10k* ar, void* packet_head) {
-#if 0 // NEEDS PORTING
+static enum ath10k_hw_txrx_mode ath10k_mac_tx_h_get_txmode(struct ath10k* ar, void* packet_head) {
+#if 0   // NEEDS PORTING
                            struct ieee80211_vif* vif,
                            struct ieee80211_sta* sta,
                            struct sk_buff* skb) {
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
     const struct ieee80211_frame_header* hdr = packet_head;
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     if (!vif || vif->type == NL80211_IFTYPE_MONITOR) {
         return ATH10K_HW_TXRX_RAW;
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
-    if (ieee80211_get_frame_type(hdr) == IEEE80211_FRAME_TYPE_MGMT) {
-        return ATH10K_HW_TXRX_MGMT;
-    }
+    if (ieee80211_get_frame_type(hdr) == IEEE80211_FRAME_TYPE_MGMT) { return ATH10K_HW_TXRX_MGMT; }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     /* Workaround:
      *
      * NullFunc frames are mostly used to ping if a client or AP are still
@@ -3743,25 +3705,18 @@ ath10k_mac_tx_h_get_txmode(struct ath10k* ar, void* packet_head) {
     if (ieee80211_is_data_present(fc) && sta && sta->tdls) {
         return ATH10K_HW_TXRX_ETHERNET;
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
-    if (BITARR_TEST(ar->dev_flags, ATH10K_FLAG_RAW_MODE)) {
-        return ATH10K_HW_TXRX_RAW;
-    }
+    if (BITARR_TEST(ar->dev_flags, ATH10K_FLAG_RAW_MODE)) { return ATH10K_HW_TXRX_RAW; }
 
     return ATH10K_HW_TXRX_NATIVE_WIFI;
 }
 
-static bool ath10k_tx_h_use_hwcrypto(struct ath10k* ar,
-                                     struct ath10k_msg_buf* tx_buf,
+static bool ath10k_tx_h_use_hwcrypto(struct ath10k* ar, struct ath10k_msg_buf* tx_buf,
                                      wlan_tx_info_t* tx_info) {
-    if (!(tx_info->tx_flags & WLAN_TX_INFO_FLAGS_PROTECTED)) {
-        return false;
-    }
+    if (!(tx_info->tx_flags & WLAN_TX_INFO_FLAGS_PROTECTED)) { return false; }
 
-    if (ar->arvif.nohwcrypt) {
-        return false;
-    }
+    if (ar->arvif.nohwcrypt) { return false; }
 
     return true;
 }
@@ -3775,13 +3730,9 @@ static void ath10k_tx_h_nwifi(struct ath10k_msg_buf* tx_buf) {
     void* pkt = ath10k_msg_buf_get_payload(tx_buf);
     struct ieee80211_frame_header* hdr = pkt;
 
-    if (ieee80211_get_frame_type(hdr) != IEEE80211_FRAME_TYPE_DATA) {
-        return;
-    }
+    if (ieee80211_get_frame_type(hdr) != IEEE80211_FRAME_TYPE_DATA) { return; }
 
-    if (!(ieee80211_get_frame_subtype(hdr) & IEEE80211_FRAME_SUBTYPE_QOS)) {
-        return;
-    }
+    if (!(ieee80211_get_frame_subtype(hdr) & IEEE80211_FRAME_SUBTYPE_QOS)) { return; }
 
     size_t hdr_size = sizeof(struct ieee80211_frame_header);
     void* qos_info = pkt + hdr_size;
@@ -3800,7 +3751,7 @@ static void ath10k_tx_h_nwifi(struct ath10k_msg_buf* tx_buf) {
     hdr->frame_ctrl &= ~IEEE80211_FRAME_SUBTYPE_QOS;
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 static void ath10k_tx_h_8023(struct sk_buff* skb) {
     struct ieee80211_hdr* hdr;
     struct rfc1042_hdr* rfc1042;
@@ -3848,12 +3799,10 @@ static void ath10k_tx_h_add_p2p_noa_ie(struct ath10k* ar,
         mtx_unlock(&ar->data_lock);
     }
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
-static void ath10k_mac_tx_h_tx_flags(struct ath10k* ar,
-                                     struct ath10k_msg_buf* tx_buf,
+static void ath10k_mac_tx_h_tx_flags(struct ath10k* ar, struct ath10k_msg_buf* tx_buf,
                                      wlan_tx_info_t* tx_info) {
-
     struct ieee80211_frame_header* hdr = ath10k_msg_buf_get_payload(tx_buf);
 
     tx_buf->tx.flags = 0;
@@ -3861,8 +3810,8 @@ static void ath10k_mac_tx_h_tx_flags(struct ath10k* ar,
         tx_buf->tx.flags |= ATH10K_TX_BUF_PROTECTED;
     }
 
-    if ((ieee80211_get_frame_type(hdr) == IEEE80211_FRAME_TYPE_DATA)
-        && (ieee80211_get_frame_subtype(hdr) & IEEE80211_FRAME_SUBTYPE_QOS)) {
+    if ((ieee80211_get_frame_type(hdr) == IEEE80211_FRAME_TYPE_DATA) &&
+        (ieee80211_get_frame_subtype(hdr) & IEEE80211_FRAME_SUBTYPE_QOS)) {
         tx_buf->tx.flags |= ATH10K_TX_BUF_QOS;
     }
 }
@@ -3874,14 +3823,13 @@ bool ath10k_mac_tx_frm_has_freq(struct ath10k* ar) {
      * tx credit replenishment and reliability). Assuming it's at least 3.4
      * because that's when the `freq` was introduced to TX_FRM HTT command.
      */
-    return (ar->htt.target_version_major >= 3 &&
-            ar->htt.target_version_minor >= 4 &&
+    return (ar->htt.target_version_major >= 3 && ar->htt.target_version_minor >= 4 &&
             ar->running_fw->fw_file.htt_op_version == ATH10K_FW_HTT_OP_VERSION_TLV);
 }
 
 static zx_status_t ath10k_mac_tx_wmi_mgmt(struct ath10k* ar, struct ath10k_msg_buf* tx_buf) {
-ath10k_err("ath10k_mac_tx_wmi_mgmt unimplemented - dropping tx packet!\n");
-#if 0 // NEEDS PORTING
+    ath10k_err("ath10k_mac_tx_wmi_mgmt unimplemented - dropping tx packet!\n");
+#if 0   // NEEDS PORTING
     struct sk_buff_head* q = &ar->wmi_mgmt_tx_queue;
     int ret = 0;
 
@@ -3900,18 +3848,17 @@ unlock:
     mtx_unlock(&ar->data_lock);
 
     return ret;
-#endif // NEEDS PORTING
-return ZX_ERR_NOT_SUPPORTED;
+#endif  // NEEDS PORTING
+    return ZX_ERR_NOT_SUPPORTED;
 }
 
-static enum ath10k_mac_tx_path
-ath10k_mac_tx_h_get_txpath(struct ath10k* ar,
-                           enum ath10k_hw_txrx_mode txmode) {
+static enum ath10k_mac_tx_path ath10k_mac_tx_h_get_txpath(struct ath10k* ar,
+                                                          enum ath10k_hw_txrx_mode txmode) {
     switch (txmode) {
     case ATH10K_HW_TXRX_RAW:
     case ATH10K_HW_TXRX_NATIVE_WIFI:
     case ATH10K_HW_TXRX_ETHERNET:
-                        return ATH10K_MAC_TX_HTT;
+        return ATH10K_MAC_TX_HTT;
     case ATH10K_HW_TXRX_MGMT:
         if (BITARR_TEST(ar->running_fw->fw_file.fw_features, ATH10K_FW_FEATURE_HAS_WMI_MGMT_TX)) {
             return ATH10K_MAC_TX_WMI_MGMT;
@@ -3925,8 +3872,7 @@ ath10k_mac_tx_h_get_txpath(struct ath10k* ar,
     return ATH10K_MAC_TX_UNKNOWN;
 }
 
-static zx_status_t ath10k_mac_tx_submit(struct ath10k* ar,
-                                        enum ath10k_hw_txrx_mode txmode,
+static zx_status_t ath10k_mac_tx_submit(struct ath10k* ar, enum ath10k_hw_txrx_mode txmode,
                                         enum ath10k_mac_tx_path txpath,
                                         struct ath10k_msg_buf* tx_buf) {
     struct ath10k_htt* htt = &ar->htt;
@@ -3950,8 +3896,7 @@ static zx_status_t ath10k_mac_tx_submit(struct ath10k* ar,
     }
 
     if (ret != ZX_OK) {
-        ath10k_warn("failed to transmit packet, dropping: %s\n",
-                    zx_status_get_string(ret));
+        ath10k_warn("failed to transmit packet, dropping: %s\n", zx_status_get_string(ret));
         ath10k_msg_buf_free(tx_buf);
     }
 
@@ -3961,31 +3906,29 @@ static zx_status_t ath10k_mac_tx_submit(struct ath10k* ar,
 /* This function consumes the tx_buf regardless of return value as far as
  * caller is concerned so no freeing is necessary afterwards.
  */
-static zx_status_t ath10k_mac_tx(struct ath10k* ar,
-                                 enum ath10k_hw_txrx_mode txmode,
-                                 enum ath10k_mac_tx_path txpath,
-                                 struct ath10k_msg_buf* tx_buf) {
-#if 0 // NEEDS PORTING
+static zx_status_t ath10k_mac_tx(struct ath10k* ar, enum ath10k_hw_txrx_mode txmode,
+                                 enum ath10k_mac_tx_path txpath, struct ath10k_msg_buf* tx_buf) {
+#if 0   // NEEDS PORTING
     /* We should disable CCK RATE due to P2P */
     if (info->flags & IEEE80211_TX_CTL_NO_CCK_RATE) {
         ath10k_dbg(ar, ATH10K_DBG_MAC, "IEEE80211_TX_CTL_NO_CCK_RATE\n");
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     switch (txmode) {
     case ATH10K_HW_TXRX_MGMT:
     case ATH10K_HW_TXRX_NATIVE_WIFI:
         ath10k_tx_h_nwifi(tx_buf);
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
         ath10k_tx_h_add_p2p_noa_ie(ar, vif, skb);
         ath10k_tx_h_seq_no(vif, skb);
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
         break;
     case ATH10K_HW_TXRX_ETHERNET:
-        ZX_DEBUG_ASSERT(0); // Not supported yet
-#if 0 // NEEDS PORTING
+        ZX_DEBUG_ASSERT(0);  // Not supported yet
+#if 0                        // NEEDS PORTING
         ath10k_tx_h_8023(skb);
-#endif // NEEDS PORTING
+#endif                       // NEEDS PORTING
         break;
     case ATH10K_HW_TXRX_RAW:
         if (!BITARR_TEST(ar->dev_flags, ATH10K_FLAG_RAW_MODE)) {
@@ -3995,7 +3938,7 @@ static zx_status_t ath10k_mac_tx(struct ath10k* ar,
         }
     }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     if (info->flags & IEEE80211_TX_CTL_TX_OFFCHAN) {
         if (!ath10k_mac_tx_frm_has_freq(ar)) {
             ath10k_dbg(ar, ATH10K_DBG_MAC, "queued offchannel skb %pK\n",
@@ -4006,7 +3949,7 @@ static zx_status_t ath10k_mac_tx(struct ath10k* ar,
             return 0;
         }
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     zx_status_t ret = ath10k_mac_tx_submit(ar, txmode, txpath, tx_buf);
     if (ret != ZX_OK) {
@@ -4017,7 +3960,7 @@ static zx_status_t ath10k_mac_tx(struct ath10k* ar,
     return ZX_OK;
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 void ath10k_offchan_tx_purge(struct ath10k* ar) {
     struct sk_buff* skb;
 
@@ -4089,7 +4032,7 @@ void ath10k_offchan_tx_work(struct work_struct* work) {
         }
 
         mtx_lock(&ar->data_lock);
-        completion_reset(&ar->offchan_tx_completed);
+        sync_completion_reset(&ar->offchan_tx_completed);
         ar->offchan_tx_skb = skb;
         mtx_unlock(&ar->data_lock);
 
@@ -4116,7 +4059,7 @@ void ath10k_offchan_tx_work(struct work_struct* work) {
             /* not serious */
         }
 
-        if (completion_wait(&ar->offchan_tx_completed, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
+        if (sync_completion_wait(&ar->offchan_tx_completed, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
             ath10k_warn("timed out waiting for offchannel skb %pK\n", skb);
         }
 
@@ -4143,7 +4086,7 @@ void ath10k_mgmt_over_wmi_tx_purge(struct ath10k* ar) {
         ieee80211_free_txskb(ar->hw, skb);
     }
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 /************/
 /* Scanning */
@@ -4157,28 +4100,25 @@ void __ath10k_scan_finish(struct ath10k* ar) {
         break;
     case ATH10K_SCAN_RUNNING:
     case ATH10K_SCAN_ABORTING:
-#if 0 // NEEDS PORTING
         if (!ar->scan.is_roc) {
-            struct cfg80211_scan_info info = {
-                .aborted = (ar->scan.state ==
-                            ATH10K_SCAN_ABORTING),
-            };
-
-            ieee80211_scan_completed(ar->hw, &info);
+            wlan_hw_scan_result_t result = {.code = (ar->scan.state == ATH10K_SCAN_ABORTING)
+                                                        ? WLAN_HW_SCAN_ABORTED
+                                                        : WLAN_HW_SCAN_SUCCESS};
+            ar->wlanmac.ifc->hw_scan_complete(ar->wlanmac.cookie, &result);
         } else if (ar->scan.roc_notify) {
+#if 0   // NEEDS PORTING
             ieee80211_remain_on_channel_expired(ar->hw);
+#endif  // NEEDS PORTING
         }
-#endif // NEEDS PORTING
     /* fall through */
     case ATH10K_SCAN_STARTING:
         ar->scan.state = ATH10K_SCAN_IDLE;
-        memset(&ar->scan_channel, 0, sizeof(wlan_channel_t));
         ar->scan.roc_freq = 0;
-#if 0  // NEEDS PORTING
+#if 0   // NEEDS PORTING
         ath10k_offchan_tx_purge(ar);
         cancel_delayed_work(&ar->scan.timeout);
-#endif // NEEDS PORTING
-        completion_signal(&ar->scan.completed);
+#endif  // NEEDS PORTING
+        sync_completion_signal(&ar->scan.completed);
         break;
     }
 }
@@ -4189,31 +4129,29 @@ void ath10k_scan_finish(struct ath10k* ar) {
     mtx_unlock(&ar->data_lock);
 }
 
-#if 0 // NEEDS PORTING
-static int ath10k_scan_stop(struct ath10k* ar) {
+static zx_status_t ath10k_scan_stop(struct ath10k* ar) {
     struct wmi_stop_scan_arg arg = {
         .req_id = 1, /* FIXME */
         .req_type = WMI_SCAN_STOP_ONE,
         .u.scan_id = ATH10K_SCAN_ID,
     };
-    int ret;
+    zx_status_t ret = ZX_OK;
 
     ASSERT_MTX_HELD(&ar->conf_mutex);
 
-    ret = ath10k_wmi_stop_scan(ar, &arg);
-    if (ret) {
-        ath10k_warn("failed to stop wmi scan: %d\n", ret);
+    int wmi_res = ath10k_wmi_stop_scan(ar, &arg);
+    if (wmi_res) {
+        ath10k_warn("failed to stop wmi scan: %d\n", wmi_res);
+        ret = ZX_ERR_INTERNAL;
         goto out;
     }
 
-    zx_status_t status = completion_wait(&ar->scan.completed, ZX_SEC(3));
-    if (status == ZX_ERR_TIMED_OUT) {
-        ath10k_warn("failed to receive scan abortion completion: timed out\n");
-        ret = -ETIMEDOUT;
-    } else if (status == ZX_OK) {
-        ret = 0;
-    } else {
-        ZX_DEBUG_ASSERT(0);
+    zx_status_t status = sync_completion_wait(&ar->scan.completed, ZX_SEC(3));
+    if (status != ZX_OK) {
+        ath10k_warn("failed to receive scan abortion completion: %s\n",
+                    zx_status_get_string(status));
+        ret = ZX_ERR_TIMED_OUT;
+        goto out;
     }
 
 out:
@@ -4225,14 +4163,13 @@ out:
      * next scan request is submitted.
      */
     mtx_lock(&ar->data_lock);
-    if (ar->scan.state != ATH10K_SCAN_IDLE) {
-        __ath10k_scan_finish(ar);
-    }
+    if (ar->scan.state != ATH10K_SCAN_IDLE) { __ath10k_scan_finish(ar); }
     mtx_unlock(&ar->data_lock);
 
     return ret;
 }
 
+#if 0   // NEEDS PORTING
 static void ath10k_scan_abort(struct ath10k* ar) {
     int ret;
 
@@ -4276,25 +4213,27 @@ void ath10k_scan_timeout_work(struct work_struct* work) {
     ath10k_scan_abort(ar);
     mtx_unlock(&ar->conf_mutex);
 }
+#endif  // NEEDS PORTING
 
-static int ath10k_start_scan(struct ath10k* ar,
-                             const struct wmi_start_scan_arg* arg) {
-    int ret;
+static zx_status_t ath10k_start_scan(struct ath10k* ar, const struct wmi_start_scan_arg* arg) {
+    zx_status_t ret;
 
     ASSERT_MTX_HELD(&ar->conf_mutex);
 
     ret = ath10k_wmi_start_scan(ar, arg);
     if (ret) {
-        return ret;
+        ath10k_err("ath10k_wmi_start_scan returned error code %d\n", ret);
+        return ZX_ERR_INTERNAL;
     }
 
-    if (completion_wait(&ar->scan.started, ZX_SEC(1)) == ZX_ERR_TIMED_OUT) {
+    if (sync_completion_wait(&ar->scan.started, ZX_SEC(1)) == ZX_ERR_TIMED_OUT) {
+        ath10k_warn("scan start timed out waiting for confirmation\n");
         ret = ath10k_scan_stop(ar);
-        if (ret) {
-            ath10k_warn("failed to stop scan: %d\n", ret);
+        if (ret != ZX_OK) {
+            ath10k_warn("attempt to reset (scan_stop) from failed scan start also failed: %s\n",
+                        zx_status_get_string(ret));
         }
-
-        return -ETIMEDOUT;
+        return ZX_ERR_TIMED_OUT;
     }
 
     /* If we failed to start the scan, return error code at
@@ -4304,25 +4243,22 @@ static int ath10k_start_scan(struct ath10k* ar,
     mtx_lock(&ar->data_lock);
     if (ar->scan.state == ATH10K_SCAN_IDLE) {
         mtx_unlock(&ar->data_lock);
-        return -EINVAL;
+        return ZX_ERR_INTERNAL;
     }
     mtx_unlock(&ar->data_lock);
 
-    return 0;
+    return ZX_OK;
 }
-#endif // NEEDS PORTING
 
 /**********************/
 /* mac80211 callbacks */
 /**********************/
 
-static zx_status_t ath10k_mac_build_tx_pkt(struct ath10k* ar,
-                                           struct ath10k_msg_buf** tx_buf_ptr,
-                                           wlan_tx_packet_t* pkt,
-                                           enum ath10k_mac_tx_path txpath) {
+static zx_status_t ath10k_mac_build_tx_pkt(struct ath10k* ar, struct ath10k_msg_buf** tx_buf_ptr,
+                                           wlan_tx_packet_t* pkt, enum ath10k_mac_tx_path txpath) {
     enum ath10k_msg_type buf_type;
 
-    switch(txpath) {
+    switch (txpath) {
     case ATH10K_MAC_TX_HTT:
     case ATH10K_MAC_TX_HTT_MGMT:
     case ATH10K_MAC_TX_WMI_MGMT:
@@ -4333,8 +4269,7 @@ static zx_status_t ath10k_mac_build_tx_pkt(struct ath10k* ar,
     }
 
     struct ath10k_msg_buf* tx_buf;
-    ZX_DEBUG_ASSERT(pkt->packet_head);
-    size_t head_size = pkt->packet_head->len;
+    size_t head_size = pkt->packet_head.len;
     size_t tail_size = pkt->packet_tail ? (pkt->packet_tail->len - pkt->tail_offset) : 0;
     // This 64 gives us headroom to add fields. It would be nice if we could be more specific...
     size_t extra_bytes = head_size + tail_size + 64;
@@ -4347,7 +4282,7 @@ static zx_status_t ath10k_mac_build_tx_pkt(struct ath10k* ar,
     tx_buf->used -= 64;
 
     uint8_t* next_data = ath10k_msg_buf_get_payload(tx_buf);
-    memcpy(next_data, pkt->packet_head->data, head_size);
+    memcpy(next_data, pkt->packet_head.data, head_size);
     next_data += head_size;
     if (tail_size > 0) {
         memcpy(next_data, (pkt->packet_tail->data + pkt->tail_offset), tail_size);
@@ -4357,11 +4292,10 @@ static zx_status_t ath10k_mac_build_tx_pkt(struct ath10k* ar,
     return ZX_OK;
 }
 
-zx_status_t ath10k_mac_op_tx(struct ath10k* ar,
-                             wlan_tx_packet_t* pkt) {
+zx_status_t ath10k_mac_op_tx(struct ath10k* ar, wlan_tx_packet_t* pkt) {
     struct ath10k_htt* htt = &ar->htt;
 
-    enum ath10k_hw_txrx_mode txmode = ath10k_mac_tx_h_get_txmode(ar, pkt->packet_head->data);
+    enum ath10k_hw_txrx_mode txmode = ath10k_mac_tx_h_get_txmode(ar, pkt->packet_head.data);
     enum ath10k_mac_tx_path txpath = ath10k_mac_tx_h_get_txpath(ar, txmode);
 
     if (txpath == ATH10K_MAC_TX_UNKNOWN) {
@@ -4371,21 +4305,19 @@ zx_status_t ath10k_mac_op_tx(struct ath10k* ar,
 
     struct ath10k_msg_buf* tx_buf;
     zx_status_t ret = ath10k_mac_build_tx_pkt(ar, &tx_buf, pkt, txpath);
-    if (ret != ZX_OK) {
-        return ret;
-    }
+    if (ret != ZX_OK) { return ret; }
 
     bool is_htt = (txpath == ATH10K_MAC_TX_HTT || txpath == ATH10K_MAC_TX_HTT_MGMT);
     bool is_mgmt = (txpath == ATH10K_MAC_TX_HTT_MGMT);
 
     ath10k_mac_tx_h_tx_flags(ar, tx_buf, &pkt->info);
 
-    struct ieee80211_frame_header* hdr = pkt->packet_head->data;
+    struct ieee80211_frame_header* hdr = pkt->packet_head.data;
 
     if (is_htt) {
         mtx_lock(&ar->htt.tx_lock);
-        bool is_presp = (ieee80211_get_frame_type(hdr) == IEEE80211_FRAME_TYPE_MGMT)
-                        && (ieee80211_get_frame_subtype(hdr) == IEEE80211_FRAME_SUBTYPE_PROBE_RESP);
+        bool is_presp = (ieee80211_get_frame_type(hdr) == IEEE80211_FRAME_TYPE_MGMT) &&
+                        (ieee80211_get_frame_subtype(hdr) == IEEE80211_FRAME_SUBTYPE_PROBE_RESP);
 
         ret = ath10k_htt_tx_inc_pending(htt);
         if (ret != ZX_OK) {
@@ -4414,9 +4346,7 @@ zx_status_t ath10k_mac_op_tx(struct ath10k* ar,
         if (is_htt) {
             mtx_lock(&ar->htt.tx_lock);
             ath10k_htt_tx_dec_pending(htt);
-            if (is_mgmt) {
-                ath10k_htt_tx_mgmt_dec_pending(htt);
-            }
+            if (is_mgmt) { ath10k_htt_tx_mgmt_dec_pending(htt); }
             mtx_unlock(&ar->htt.tx_lock);
         }
         ath10k_msg_buf_free(tx_buf);
@@ -4425,7 +4355,7 @@ zx_status_t ath10k_mac_op_tx(struct ath10k* ar,
     return ZX_OK;
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 static void ath10k_mac_op_wake_tx_queue(struct ieee80211_hw* hw,
                                         struct ieee80211_txq* txq) {
     struct ath10k* ar = hw->priv;
@@ -4458,11 +4388,11 @@ static void ath10k_mac_op_wake_tx_queue(struct ieee80211_hw* hw,
     ath10k_htt_tx_txq_update(hw, f_txq);
     ath10k_htt_tx_txq_update(hw, txq);
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 /* Must not be called with conf_mutex held as workers can use that also. */
 void ath10k_drain_tx(struct ath10k* ar) {
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     /* make sure rcu-protected mac80211 tx path itself is drained */
     synchronize_net();
 
@@ -4471,10 +4401,10 @@ void ath10k_drain_tx(struct ath10k* ar) {
 
     cancel_work_sync(&ar->offchan_tx_work);
     cancel_work_sync(&ar->wmi_mgmt_tx_work);
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 void ath10k_halt(struct ath10k* ar) {
     struct ath10k_vif* arvif;
 
@@ -4515,214 +4445,20 @@ static int ath10k_get_antenna(struct ieee80211_hw* hw, uint32_t* tx_ant, uint32_
 
     return 0;
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 static void ath10k_check_chain_mask(struct ath10k* ar, uint32_t cm, const char* dbg) {
     /* It is not clear that allowing gaps in chainmask
      * is helpful.  Probably it will not do what user
      * is hoping for, so warn in that case.
      */
-    if (cm == 15 || cm == 7 || cm == 3 || cm == 1 || cm == 0) {
-        return;
-    }
+    if (cm == 15 || cm == 7 || cm == 3 || cm == 1 || cm == 0) { return; }
 
-    ath10k_warn("mac %s antenna chainmask may be invalid: 0x%x.  "
-                "Suggested values: 15, 7, 3, 1 or 0.\n",
-                dbg, cm);
+    ath10k_warn(
+        "mac %s antenna chainmask may be invalid: 0x%x.  "
+        "Suggested values: 15, 7, 3, 1 or 0.\n",
+        dbg, cm);
 }
-
-#if 0 // NEEDS PORTING
-static int ath10k_mac_get_vht_cap_bf_sts(struct ath10k* ar) {
-    int nsts = ar->vht_cap_info;
-
-    nsts &= IEEE80211_VHT_CAP_BEAMFORMEE_STS_MASK;
-    nsts >>= IEEE80211_VHT_CAP_BEAMFORMEE_STS_SHIFT;
-
-    /* If firmware does not deliver to host number of space-time
-     * streams supported, assume it support up to 4 BF STS and return
-     * the value for VHT CAP: nsts-1)
-     */
-    if (nsts == 0) {
-        return 3;
-    }
-
-    return nsts;
-}
-
-static int ath10k_mac_get_vht_cap_bf_sound_dim(struct ath10k* ar) {
-    int sound_dim = ar->vht_cap_info;
-
-    sound_dim &= IEEE80211_VHT_CAP_SOUNDING_DIMENSIONS_MASK;
-    sound_dim >>= IEEE80211_VHT_CAP_SOUNDING_DIMENSIONS_SHIFT;
-
-    /* If the sounding dimension is not advertised by the firmware,
-     * let's use a default value of 1
-     */
-    if (sound_dim == 0) {
-        return 1;
-    }
-
-    return sound_dim;
-}
-
-static struct ieee80211_sta_vht_cap ath10k_create_vht_cap(struct ath10k* ar) {
-    struct ieee80211_sta_vht_cap vht_cap = {0};
-    struct ath10k_hw_params* hw = &ar->hw_params;
-    uint16_t mcs_map;
-    uint32_t val;
-    int i;
-
-    vht_cap.vht_supported = 1;
-    vht_cap.cap = ar->vht_cap_info;
-
-    if (ar->vht_cap_info & (IEEE80211_VHT_CAP_SU_BEAMFORMEE_CAPABLE |
-                            IEEE80211_VHT_CAP_MU_BEAMFORMEE_CAPABLE)) {
-        val = ath10k_mac_get_vht_cap_bf_sts(ar);
-        val <<= IEEE80211_VHT_CAP_BEAMFORMEE_STS_SHIFT;
-        val &= IEEE80211_VHT_CAP_BEAMFORMEE_STS_MASK;
-
-        vht_cap.cap |= val;
-    }
-
-    if (ar->vht_cap_info & (IEEE80211_VHT_CAP_SU_BEAMFORMER_CAPABLE |
-                            IEEE80211_VHT_CAP_MU_BEAMFORMER_CAPABLE)) {
-        val = ath10k_mac_get_vht_cap_bf_sound_dim(ar);
-        val <<= IEEE80211_VHT_CAP_SOUNDING_DIMENSIONS_SHIFT;
-        val &= IEEE80211_VHT_CAP_SOUNDING_DIMENSIONS_MASK;
-
-        vht_cap.cap |= val;
-    }
-
-    /* Currently the firmware seems to be buggy, don't enable 80+80
-     * mode until that's resolved.
-     */
-    if ((ar->vht_cap_info & IEEE80211_VHT_CAP_SHORT_GI_160) &&
-            (ar->vht_cap_info & IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_MASK) == 0) {
-        vht_cap.cap |= IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_160MHZ;
-    }
-
-    mcs_map = 0;
-    for (i = 0; i < 8; i++) {
-        if ((i < ar->num_rf_chains) && (ar->cfg_tx_chainmask & BIT(i))) {
-            mcs_map |= IEEE80211_VHT_MCS_SUPPORT_0_9 << (i * 2);
-        } else {
-            mcs_map |= IEEE80211_VHT_MCS_NOT_SUPPORTED << (i * 2);
-        }
-    }
-
-    if (ar->cfg_tx_chainmask <= 1) {
-        vht_cap.cap &= ~IEEE80211_VHT_CAP_TXSTBC;
-    }
-
-    vht_cap.vht_mcs.rx_mcs_map = mcs_map;
-    vht_cap.vht_mcs.tx_mcs_map = mcs_map;
-
-    /* If we are supporting 160Mhz or 80+80, then the NIC may be able to do
-     * a restricted NSS for 160 or 80+80 vs what it can do for 80Mhz.  Give
-     * user-space a clue if that is the case.
-     */
-    if ((vht_cap.cap & IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_MASK) &&
-            (hw->vht160_mcs_rx_highest != 0 ||
-             hw->vht160_mcs_tx_highest != 0)) {
-        vht_cap.vht_mcs.rx_highest = hw->vht160_mcs_rx_highest;
-        vht_cap.vht_mcs.tx_highest = hw->vht160_mcs_tx_highest;
-    }
-
-    return vht_cap;
-}
-
-static struct ieee80211_sta_ht_cap ath10k_get_ht_cap(struct ath10k* ar) {
-    int i;
-    struct ieee80211_sta_ht_cap ht_cap = {0};
-
-    if (!(ar->ht_cap_info & WMI_HT_CAP_ENABLED)) {
-        return ht_cap;
-    }
-
-    ht_cap.ht_supported = 1;
-    ht_cap.ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K;
-    ht_cap.ampdu_density = IEEE80211_HT_MPDU_DENSITY_8;
-    ht_cap.cap |= IEEE80211_HT_CAP_SUP_WIDTH_20_40;
-    ht_cap.cap |= IEEE80211_HT_CAP_DSSSCCK40;
-    ht_cap.cap |=
-        WLAN_HT_CAP_SM_PS_DISABLED << IEEE80211_HT_CAP_SM_PS_SHIFT;
-
-    if (ar->ht_cap_info & WMI_HT_CAP_HT20_SGI) {
-        ht_cap.cap |= IEEE80211_HT_CAP_SGI_20;
-    }
-
-    if (ar->ht_cap_info & WMI_HT_CAP_HT40_SGI) {
-        ht_cap.cap |= IEEE80211_HT_CAP_SGI_40;
-    }
-
-    if (ar->ht_cap_info & WMI_HT_CAP_DYNAMIC_SMPS) {
-        uint32_t smps;
-
-        smps   = WLAN_HT_CAP_SM_PS_DYNAMIC;
-        smps <<= IEEE80211_HT_CAP_SM_PS_SHIFT;
-
-        ht_cap.cap |= smps;
-    }
-
-    if (ar->ht_cap_info & WMI_HT_CAP_TX_STBC && (ar->cfg_tx_chainmask > 1)) {
-        ht_cap.cap |= IEEE80211_HT_CAP_TX_STBC;
-    }
-
-    if (ar->ht_cap_info & WMI_HT_CAP_RX_STBC) {
-        uint32_t stbc;
-
-        stbc   = ar->ht_cap_info;
-        stbc  &= WMI_HT_CAP_RX_STBC;
-        stbc >>= WMI_HT_CAP_RX_STBC_MASK_SHIFT;
-        stbc <<= IEEE80211_HT_CAP_RX_STBC_SHIFT;
-        stbc  &= IEEE80211_HT_CAP_RX_STBC;
-
-        ht_cap.cap |= stbc;
-    }
-
-    if (ar->ht_cap_info & WMI_HT_CAP_LDPC) {
-        ht_cap.cap |= IEEE80211_HT_CAP_LDPC_CODING;
-    }
-
-    if (ar->ht_cap_info & WMI_HT_CAP_L_SIG_TXOP_PROT) {
-        ht_cap.cap |= IEEE80211_HT_CAP_LSIG_TXOP_PROT;
-    }
-
-    /* max AMSDU is implicitly taken from vht_cap_info */
-    if (ar->vht_cap_info & WMI_VHT_CAP_MAX_MPDU_LEN_MASK) {
-        ht_cap.cap |= IEEE80211_HT_CAP_MAX_AMSDU;
-    }
-
-    for (i = 0; i < ar->num_rf_chains; i++) {
-        if (ar->cfg_rx_chainmask & BIT(i)) {
-            ht_cap.mcs.rx_mask[i] = 0xFF;
-        }
-    }
-
-    ht_cap.mcs.tx_params |= IEEE80211_HT_MCS_TX_DEFINED;
-
-    return ht_cap;
-}
-
-static void ath10k_mac_setup_ht_vht_cap(struct ath10k* ar) {
-    struct ieee80211_supported_band* band;
-    struct ieee80211_sta_vht_cap vht_cap;
-    struct ieee80211_sta_ht_cap ht_cap;
-
-    ht_cap = ath10k_get_ht_cap(ar);
-    vht_cap = ath10k_create_vht_cap(ar);
-
-    if (ar->phy_capability & WHAL_WLAN_11G_CAPABILITY) {
-        band = &ar->mac.sbands[NL80211_BAND_2GHZ];
-        band->ht_cap = ht_cap;
-    }
-    if (ar->phy_capability & WHAL_WLAN_11A_CAPABILITY) {
-        band = &ar->mac.sbands[NL80211_BAND_5GHZ];
-        band->ht_cap = ht_cap;
-        band->vht_cap = vht_cap;
-    }
-}
-#endif // NEEDS PORTING
 
 static zx_status_t __ath10k_set_antenna(struct ath10k* ar, uint32_t tx_ant, uint32_t rx_ant) {
     zx_status_t ret;
@@ -4735,12 +4471,9 @@ static zx_status_t __ath10k_set_antenna(struct ath10k* ar, uint32_t tx_ant, uint
     ar->cfg_tx_chainmask = tx_ant;
     ar->cfg_rx_chainmask = rx_ant;
 
-    if ((ar->state != ATH10K_STATE_ON) && (ar->state != ATH10K_STATE_RESTARTED)) {
-        return ZX_OK;
-    }
+    if ((ar->state != ATH10K_STATE_ON) && (ar->state != ATH10K_STATE_RESTARTED)) { return ZX_OK; }
 
-    ret = ath10k_wmi_pdev_set_param(ar, ar->wmi.pdev_param->tx_chain_mask,
-                                    tx_ant);
+    ret = ath10k_wmi_pdev_set_param(ar, ar->wmi.pdev_param->tx_chain_mask, tx_ant);
     if (ret != ZX_OK) {
         ath10k_warn("failed to set tx-chainmask: %d, req 0x%x\n", ret, tx_ant);
         return ret;
@@ -4752,15 +4485,15 @@ static zx_status_t __ath10k_set_antenna(struct ath10k* ar, uint32_t tx_ant, uint
         return ret;
     }
 
-#if 0  // NEEDS PORTING
+#if 0   // NEEDS PORTING
     /* Reload HT/VHT capability */
     ath10k_mac_setup_ht_vht_cap(ar);
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     return ZX_OK;
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 static zx_status_t ath10k_set_antenna(struct ieee80211_hw* hw, uint32_t tx_ant, uint32_t rx_ant) {
     struct ath10k* ar = hw->priv;
     zx_status_t ret;
@@ -4770,7 +4503,7 @@ static zx_status_t ath10k_set_antenna(struct ieee80211_hw* hw, uint32_t tx_ant, 
     mtx_unlock(&ar->conf_mutex);
     return ret;
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 enum { IEEE80211_AC_VO, IEEE80211_AC_VI, IEEE80211_AC_BE, IEEE80211_AC_BK };
 static int ath10k_conf_tx(struct ath10k* ar, uint16_t ac, struct wmi_wmm_params_arg* params);
@@ -4812,7 +4545,7 @@ zx_status_t ath10k_start(struct ath10k* ar, wlanmac_ifc_t* ifc, void* cookie) {
         goto err;
     }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     param = ar->wmi.pdev_param->pmf_qos;
     ret = ath10k_wmi_pdev_set_param(ar, param, 1);
     if (ret) {
@@ -4844,11 +4577,11 @@ zx_status_t ath10k_start(struct ath10k* ar, wlanmac_ifc_t* ifc, void* cookie) {
             goto err_core_stop;
         }
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     __ath10k_set_antenna(ar, ar->cfg_tx_chainmask, ar->cfg_rx_chainmask);
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     /*
      * By default FW set ARP frames ac to voice (6). In that case ARP
      * exchange is not working properly for UAPSD enabled AP. ARP requests
@@ -4909,7 +4642,7 @@ zx_status_t ath10k_start(struct ath10k* ar, wlanmac_ifc_t* ifc, void* cookie) {
         }
         BITARR_CLEAR(&ar->dev_flags, ATH10K_FLAG_BTCOEX);
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     ar->num_started_vdevs = 0;
     ath10k_regd_update(ar);
@@ -4949,15 +4682,15 @@ zx_status_t ath10k_start(struct ath10k* ar, wlanmac_ifc_t* ifc, void* cookie) {
     wmm_params.no_ack = 0;
     ath10k_conf_tx(ar, IEEE80211_AC_BK, &wmm_params);
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     ath10k_spectral_start(ar);
     ath10k_thermal_set_throttling(ar);
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     mtx_unlock(&ar->conf_mutex);
     return ZX_OK;
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 err_core_stop:
     ath10k_core_stop(ar);
 
@@ -4966,14 +4699,14 @@ err_power_down:
 
 err_off:
     ar->state = ATH10K_STATE_OFF;
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 err:
     mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 static void ath10k_stop(struct ieee80211_hw* hw) {
     struct ath10k* ar = hw->priv;
 
@@ -5007,7 +4740,7 @@ static int ath10k_config_ps(struct ath10k* ar) {
 
     return ret;
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 static zx_status_t ath10k_mac_txpower_setup(struct ath10k* ar, int txpower) {
     zx_status_t ret;
@@ -5020,16 +4753,14 @@ static zx_status_t ath10k_mac_txpower_setup(struct ath10k* ar, int txpower) {
     param = ar->wmi.pdev_param->txpower_limit2g;
     ret = ath10k_wmi_pdev_set_param(ar, param, txpower * 2);
     if (ret != ZX_OK) {
-        ath10k_warn("failed to set 2g txpower %d: %s\n",
-                    txpower, zx_status_get_string(ret));
+        ath10k_warn("failed to set 2g txpower %d: %s\n", txpower, zx_status_get_string(ret));
         return ret;
     }
 
     param = ar->wmi.pdev_param->txpower_limit5g;
     ret = ath10k_wmi_pdev_set_param(ar, param, txpower * 2);
     if (ret != ZX_OK) {
-        ath10k_warn("failed to set 5g txpower %d: %s\n",
-                    txpower, zx_status_get_string(ret));
+        ath10k_warn("failed to set 5g txpower %d: %s\n", txpower, zx_status_get_string(ret));
         return ret;
     }
 
@@ -5044,21 +4775,18 @@ static zx_status_t ath10k_mac_txpower_recalc(struct ath10k* ar) {
 
     int txpower = arvif->txpower;
 
-    if (txpower == -1) {
-        return ZX_OK;
-    }
+    if (txpower == -1) { return ZX_OK; }
 
     ret = ath10k_mac_txpower_setup(ar, txpower);
     if (ret != ZX_OK) {
-        ath10k_warn("failed to setup tx power %d: %s\n",
-                    txpower, zx_status_get_string(ret));
+        ath10k_warn("failed to setup tx power %d: %s\n", txpower, zx_status_get_string(ret));
         return ret;
     }
 
     return ZX_OK;
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 static int ath10k_config(struct ieee80211_hw* hw, uint32_t changed) {
     struct ath10k* ar = hw->priv;
     struct ieee80211_conf* conf = &hw->conf;
@@ -5138,7 +4866,7 @@ static int ath10k_mac_set_txbf_conf(struct ath10k_vif* arvif) {
     return ath10k_wmi_vdev_set_param(ar, arvif->vdev_id,
                                      ar->wmi.vdev_param->txbf, value);
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 // Role is one of the supported roles in WLAN_MAC_ROLE_* values
 static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role) {
@@ -5150,7 +4878,7 @@ static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role) {
     memset(arvif, 0, sizeof(*arvif));
 
     arvif->ar = ar;
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     arvif->vif = vif;
 
     INIT_LIST_HEAD(&arvif->list);
@@ -5165,7 +4893,7 @@ static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role) {
         memset(arvif->bitrate_mask.control[i].vht_mcs, 0xff,
                sizeof(arvif->bitrate_mask.control[i].vht_mcs));
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     if (ar->num_peers >= ar->max_num_peers) {
         ath10k_warn(
@@ -5181,27 +4909,26 @@ static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role) {
     }
     unsigned bit = __builtin_ffsll(ar->free_vdev_map);
 
-    ath10k_dbg(ar, ATH10K_DBG_MAC, "mac create vdev %i map %llx\n",
-               bit, ar->free_vdev_map);
+    ath10k_dbg(ar, ATH10K_DBG_MAC, "mac create vdev %i map %llx\n", bit, ar->free_vdev_map);
 
     arvif->vdev_id = bit;
 
     switch (vif_role) {
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     case ATH10K_VIF_TYPE_P2P:
         arvif->vdev_type = WMI_VDEV_TYPE_STA;
         arvif->vdev_subtype = ath10k_wmi_get_vdev_subtype(ar, WMI_VDEV_SUBTYPE_P2P_DEVICE);
         break;
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
     case WLAN_MAC_ROLE_CLIENT:
         arvif->vdev_type = WMI_VDEV_TYPE_STA;
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
         if (vif->p2p)
             arvif->vdev_subtype = ath10k_wmi_get_vdev_subtype
                                   (ar, WMI_VDEV_SUBTYPE_P2P_CLIENT);
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
         break;
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     case NL80211_IFTYPE_ADHOC:
         arvif->vdev_type = WMI_VDEV_TYPE_IBSS;
         break;
@@ -5216,11 +4943,11 @@ static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role) {
         }
         arvif->vdev_type = WMI_VDEV_TYPE_AP;
         break;
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
     case WLAN_MAC_ROLE_AP:
         arvif->vdev_type = WMI_VDEV_TYPE_AP;
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
         if (vif->p2p)
             arvif->vdev_subtype = ath10k_wmi_get_vdev_subtype
                                   (ar, WMI_VDEV_SUBTYPE_P2P_GO);
@@ -5228,13 +4955,13 @@ static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role) {
     case ATH10K_VIF_TYPE_MONITOR:
         arvif->vdev_type = WMI_VDEV_TYPE_MONITOR;
         break;
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
     default:
         ath10k_warn("invalid network type specified when adding interface\n");
         return ZX_ERR_INVALID_ARGS;
     }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     /* Using vdev_id as queue number will make it very easy to do per-vif
      * tx queue locking. This shouldn't wrap due to interface combinations
      * but do a modulo for correctness sake and prevent using offchannel tx
@@ -5275,10 +5002,8 @@ static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role) {
             goto err;
         }
     }
-#endif // NEEDS PORTING
-    if (BITARR_TEST(ar->dev_flags, ATH10K_FLAG_HW_CRYPTO_DISABLED)) {
-        arvif->nohwcrypt = true;
-    }
+#endif  // NEEDS PORTING
+    if (BITARR_TEST(ar->dev_flags, ATH10K_FLAG_HW_CRYPTO_DISABLED)) { arvif->nohwcrypt = true; }
 
     if (arvif->nohwcrypt && !BITARR_TEST(ar->dev_flags, ATH10K_FLAG_RAW_MODE)) {
         ath10k_warn("cryptmode module param needed for sw crypto\n");
@@ -5286,20 +5011,19 @@ static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role) {
     }
 
     ath10k_dbg(ar, ATH10K_DBG_MAC,
-               "mac vdev create %d (add interface) type %d subtype %d bcnmode %s\n",
-               arvif->vdev_id, arvif->vdev_type, arvif->vdev_subtype,
-               arvif->beacon_buf ? "single-buf" : "per-skb");
+               "mac vdev create %d (add interface) type %d subtype %d bcnmode %s\n", arvif->vdev_id,
+               arvif->vdev_type, arvif->vdev_subtype, arvif->beacon_buf ? "single-buf" : "per-skb");
 
-    ret = ath10k_wmi_vdev_create(ar, arvif->vdev_id, arvif->vdev_type,
-                                 arvif->vdev_subtype, ar->mac_addr);
+    ret = ath10k_wmi_vdev_create(ar, arvif->vdev_id, arvif->vdev_type, arvif->vdev_subtype,
+                                 ar->mac_addr);
     if (ret != ZX_OK) {
-        ath10k_warn("failed to create WMI vdev %i: %s\n",
-                    arvif->vdev_id, zx_status_get_string(ret));
+        ath10k_warn("failed to create WMI vdev %i: %s\n", arvif->vdev_id,
+                    zx_status_get_string(ret));
         goto err;
     }
 
     ar->free_vdev_map &= ~(1LL << arvif->vdev_id);
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     mtx_lock(&ar->data_lock);
     list_add(&arvif->list, &ar->arvifs);
     mtx_unlock(&ar->data_lock);
@@ -5315,19 +5039,17 @@ static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role) {
     }
 
     arvif->def_wep_key_idx = -1;
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     uint32_t vdev_param = ar->wmi.vdev_param->tx_encap_type;
-    ret = ath10k_wmi_vdev_set_param(ar, arvif->vdev_id, vdev_param,
-                                    ATH10K_HW_TXRX_NATIVE_WIFI);
+    ret = ath10k_wmi_vdev_set_param(ar, arvif->vdev_id, vdev_param, ATH10K_HW_TXRX_NATIVE_WIFI);
     /* 10.X firmware does not support this VDEV parameter. Do not warn */
     if (ret != ZX_OK && ret != ZX_ERR_NOT_SUPPORTED) {
-        ath10k_warn("failed to set vdev %i TX encapsulation: %d\n",
-                    arvif->vdev_id, ret);
+        ath10k_warn("failed to set vdev %i TX encapsulation: %d\n", arvif->vdev_id, ret);
         goto err_vdev_delete;
     }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     /* Configuring number of spatial stream for monitor interface is causing
      * target assert in qca9888 and qca6174.
      */
@@ -5422,16 +5144,16 @@ static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role) {
                     arvif->vdev_id, ret);
         goto err_peer_delete;
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
-    arvif->txpower = 30; // TODO -- look up from channel information
+    arvif->txpower = 30;  // TODO -- look up from channel information
     ret = ath10k_mac_txpower_recalc(ar);
     if (ret) {
         ath10k_warn("failed to recalc tx power: %d\n", ret);
         goto err_peer_delete;
     }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     if (vif->type == NL80211_IFTYPE_MONITOR) {
         ar->monitor_arvif = arvif;
         ret = ath10k_monitor_recalc(ar);
@@ -5446,40 +5168,40 @@ static zx_status_t ath10k_add_interface(struct ath10k* ar, uint32_t vif_role) {
         ieee80211_wake_queue(ar->hw, arvif->vdev_id);
     }
     mtx_unlock(&ar->htt.tx_lock);
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     return ZX_OK;
 
 err_peer_delete:
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     if (arvif->vdev_type == WMI_VDEV_TYPE_AP ||
             arvif->vdev_type == WMI_VDEV_TYPE_IBSS) {
         ath10k_wmi_peer_delete(ar, arvif->vdev_id, vif->addr);
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 err_vdev_delete:
     ath10k_wmi_vdev_delete(ar, arvif->vdev_id);
     ar->free_vdev_map |= 1LL << arvif->vdev_id;
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     mtx_lock(&ar->data_lock);
     list_del(&arvif->list);
     mtx_unlock(&ar->data_lock);
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 err:
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     if (arvif->beacon_buf) {
         dma_free_coherent(ar->dev, IEEE80211_MAX_FRAME_LEN,
                           arvif->beacon_buf, arvif->beacon_paddr);
         arvif->beacon_buf = NULL;
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     return ret;
 }
 
-#if 0 // NEEDS PORTING
+#if 0  // NEEDS PORTING
 static void ath10k_mac_vif_tx_unlock_all(struct ath10k_vif* arvif) {
     int i;
 
@@ -5593,14 +5315,9 @@ static void ath10k_remove_interface(struct ieee80211_hw* hw,
 /*
  * FIXME: Has to be verified.
  */
-#define SUPPORTED_FILTERS           \
-    (FIF_ALLMULTI |             \
-    FIF_CONTROL |               \
-    FIF_PSPOLL |                \
-    FIF_OTHER_BSS |             \
-    FIF_BCN_PRBRESP_PROMISC |       \
-    FIF_PROBE_REQ |             \
-    FIF_FCSFAIL)
+#define SUPPORTED_FILTERS                                                                \
+    (FIF_ALLMULTI | FIF_CONTROL | FIF_PSPOLL | FIF_OTHER_BSS | FIF_BCN_PRBRESP_PROMISC | \
+     FIF_PROBE_REQ | FIF_FCSFAIL)
 
 static void ath10k_configure_filter(struct ieee80211_hw* hw,
                                     unsigned int changed_flags,
@@ -5823,84 +5540,87 @@ static void ath10k_mac_op_set_coverage_class(struct ieee80211_hw* hw, int16_t va
     ar->hw_params.hw_ops->set_coverage_class(ar, value);
 }
 
-static int ath10k_hw_scan(struct ieee80211_hw* hw,
-                          struct ieee80211_vif* vif,
-                          struct ieee80211_scan_request* hw_req) {
-    struct ath10k* ar = hw->priv;
-    struct ath10k_vif* arvif = (void*)vif->drv_priv;
-    struct cfg80211_scan_request* req = &hw_req->req;
+#endif  // NEEDS PORTING
+
+static zx_status_t ath10k_mac_convert_scan_config(const wlan_hw_scan_config_t* scan_config,
+                                                  struct wmi_start_scan_arg* arg) {
+    if (scan_config->num_channels == 0) {
+        ath10k_err("number of channels to scan must be non-zero\n");
+        return ZX_ERR_INVALID_ARGS;
+    }
+    if (scan_config->num_channels > countof(arg->channels)) {
+        ath10k_err("too many channels to scan: %u\n", scan_config->num_channels);
+        return ZX_ERR_INVALID_ARGS;
+    }
+
+    memset(arg, 0, sizeof(*arg));
+    ath10k_wmi_start_scan_init(arg);
+    arg->scan_ctrl_flags |= WMI_SCAN_FLAG_PASSIVE;
+    arg->n_channels = scan_config->num_channels;
+
+    for (size_t i = 0; i < scan_config->num_channels; ++i) {
+        const struct ath10k_channel* ath_chan;
+        if (ath10k_lookup_chan(scan_config->channels[i], &ath_chan) != ZX_OK) {
+            ath10k_err("invalid channel number %u\n", scan_config->channels[i]);
+            return ZX_ERR_INVALID_ARGS;
+        }
+        arg->channels[i] = ath_chan->center_freq;
+    }
+    return ZX_OK;
+}
+
+zx_status_t ath10k_mac_hw_scan(struct ath10k* ar, const wlan_hw_scan_config_t* scan_config) {
     struct wmi_start_scan_arg arg;
-    int ret = 0;
-    int i;
+    zx_status_t ret = ath10k_mac_convert_scan_config(scan_config, &arg);
+    if (ret != ZX_OK) { return ret; }
 
+    struct ath10k_vif* arvif = &ar->arvif;
     mtx_lock(&ar->conf_mutex);
-
     mtx_lock(&ar->data_lock);
+
+    arg.scan_id = ATH10K_SCAN_ID;
+    arg.vdev_id = arvif->vdev_id;
+
     switch (ar->scan.state) {
     case ATH10K_SCAN_IDLE:
-        completion_reset(&ar->scan.started);
-        completion_reset(&ar->scan.completed);
+        sync_completion_reset(&ar->scan.started);
+        sync_completion_reset(&ar->scan.completed);
         ar->scan.state = ATH10K_SCAN_STARTING;
         ar->scan.is_roc = false;
         ar->scan.vdev_id = arvif->vdev_id;
-        ret = 0;
+        ret = ZX_OK;
         break;
     case ATH10K_SCAN_STARTING:
     case ATH10K_SCAN_RUNNING:
     case ATH10K_SCAN_ABORTING:
-        ret = -EBUSY;
+        ret = ZX_ERR_BAD_STATE;
         break;
     }
     mtx_unlock(&ar->data_lock);
 
-    if (ret) {
-        goto exit;
-    }
-
-    memset(&arg, 0, sizeof(arg));
-    ath10k_wmi_start_scan_init(ar, &arg);
-    arg.vdev_id = arvif->vdev_id;
-    arg.scan_id = ATH10K_SCAN_ID;
-
-    if (req->ie_len) {
-        arg.ie_len = req->ie_len;
-        memcpy(arg.ie, req->ie, arg.ie_len);
-    }
-
-    if (req->n_ssids) {
-        arg.n_ssids = req->n_ssids;
-        for (i = 0; i < arg.n_ssids; i++) {
-            arg.ssids[i].len  = req->ssids[i].ssid_len;
-            arg.ssids[i].ssid = req->ssids[i].ssid;
-        }
-    } else {
-        arg.scan_ctrl_flags |= WMI_SCAN_FLAG_PASSIVE;
-    }
-
-    if (req->n_channels) {
-        arg.n_channels = req->n_channels;
-        for (i = 0; i < arg.n_channels; i++) {
-            arg.channels[i] = req->channels[i]->center_freq;
-        }
-    }
+    if (ret != ZX_OK) { goto exit; }
 
     ret = ath10k_start_scan(ar, &arg);
-    if (ret) {
+    if (ret != ZX_OK) {
         ath10k_warn("failed to start hw scan: %d\n", ret);
         mtx_lock(&ar->data_lock);
         ar->scan.state = ATH10K_SCAN_IDLE;
         mtx_unlock(&ar->data_lock);
     }
 
+#if 0   // NEEDS PORTING
     /* Add a 200ms margin to account for event/command processing */
     ieee80211_queue_delayed_work(ar->hw, &ar->scan.timeout,
                                  msecs_to_jiffies(arg.max_scan_time +
                                          200));
+#endif  // NEEDS PORTING
 
 exit:
     mtx_unlock(&ar->conf_mutex);
     return ret;
 }
+
+#if 0   // NEEDS PORTING
 
 static void ath10k_cancel_hw_scan(struct ieee80211_hw* hw,
                                   struct ieee80211_vif* vif) {
@@ -5912,10 +5632,9 @@ static void ath10k_cancel_hw_scan(struct ieee80211_hw* hw,
 
     cancel_delayed_work_sync(&ar->scan.timeout);
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
-static void ath10k_set_key_h_def_keyidx(struct ath10k* ar,
-                                        wlan_key_config_t* key_config) {
+static void ath10k_set_key_h_def_keyidx(struct ath10k* ar, wlan_key_config_t* key_config) {
     struct ath10k_vif* arvif = &ar->arvif;
     uint32_t vdev_param = arvif->ar->wmi.vdev_param->def_keyid;
     zx_status_t status;
@@ -5931,27 +5650,18 @@ static void ath10k_set_key_h_def_keyidx(struct ath10k* ar,
      * interfaces on 10.1.
      */
 
-    if (arvif->vdev_type != WMI_VDEV_TYPE_AP &&
-            arvif->vdev_type != WMI_VDEV_TYPE_IBSS) {
-        return;
-    }
+    if (arvif->vdev_type != WMI_VDEV_TYPE_AP && arvif->vdev_type != WMI_VDEV_TYPE_IBSS) { return; }
 
-    if (key_config->cipher_type == IEEE80211_CIPHER_SUITE_WEP_40) {
-        return;
-    }
+    if (key_config->cipher_type == IEEE80211_CIPHER_SUITE_WEP_40) { return; }
 
-    if (key_config->cipher_type == IEEE80211_CIPHER_SUITE_WEP_104) {
-        return;
-    }
+    if (key_config->cipher_type == IEEE80211_CIPHER_SUITE_WEP_104) { return; }
 
-    if (key_config->key_type == WLAN_KEY_TYPE_PAIRWISE) {
-        return;
-    }
+    if (key_config->key_type == WLAN_KEY_TYPE_PAIRWISE) { return; }
 
     status = ath10k_wmi_vdev_set_param(ar, arvif->vdev_id, vdev_param, key_config->key_idx);
     if (status != ZX_OK) {
-        ath10k_warn("failed to set vdev %i group key as default key: %s\n",
-                    arvif->vdev_id, zx_status_get_string(status));
+        ath10k_warn("failed to set vdev %i group key as default key: %s\n", arvif->vdev_id,
+                    zx_status_get_string(status));
     } else {
         ath10k_info("set vdev %i group key as default key\n", arvif->vdev_id);
     }
@@ -5963,20 +5673,16 @@ zx_status_t ath10k_mac_set_key(struct ath10k* ar, wlan_key_config_t* key_config)
     zx_status_t ret = ZX_OK;
     uint32_t flags = 0;
 
-    if (arvif->nohwcrypt) {
-        return ZX_ERR_NOT_SUPPORTED;
-    }
+    if (arvif->nohwcrypt) { return ZX_ERR_NOT_SUPPORTED; }
 
-    if (key_config->key_idx > WMI_MAX_KEY_INDEX) {
-        return ZX_ERR_INVALID_ARGS;
-    }
+    if (key_config->key_idx > WMI_MAX_KEY_INDEX) { return ZX_ERR_INVALID_ARGS; }
 
     // TODO: We should retrieve this value from key_config, but it is currently unavailable.
     peer_addr = arvif->bssid;
 
     mtx_lock(&ar->conf_mutex);
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     struct ath10k_peer* peer;
 
     /* the peer should not disappear in mid-way (unless FW goes awry) since
@@ -5991,9 +5697,9 @@ zx_status_t ath10k_mac_set_key(struct ath10k* ar, wlan_key_config_t* key_config)
         ret = ZX_ERR_NOT_FOUND;
         goto exit;
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
-    switch(key_config->key_type) {
+    switch (key_config->key_type) {
     case WLAN_KEY_TYPE_PAIRWISE:
         flags |= WMI_KEY_PAIRWISE;
         break;
@@ -6008,14 +5714,14 @@ zx_status_t ath10k_mac_set_key(struct ath10k* ar, wlan_key_config_t* key_config)
 
     ret = ath10k_install_key(arvif, key_config, peer_addr, flags);
     if (ret != ZX_OK) {
-        ath10k_warn("failed to install key for vdev %i peer %pM: %d\n",
-                    arvif->vdev_id, peer_addr, ret);
+        ath10k_warn("failed to install key for vdev %i peer %pM: %d\n", arvif->vdev_id, peer_addr,
+                    ret);
         goto exit;
     }
 
     ath10k_set_key_h_def_keyidx(ar, key_config);
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     mtx_lock(&ar->data_lock);
     peer = ath10k_peer_find(ar, arvif->vdev_id, peer_addr);
     if (peer) {
@@ -6025,14 +5731,14 @@ zx_status_t ath10k_mac_set_key(struct ath10k* ar, wlan_key_config_t* key_config)
         ath10k_warn("Peer %pM disappeared!\n", peer_addr);
     }
     mtx_unlock(&ar->data_lock);
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 exit:
     mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 static void ath10k_set_default_unicast_key(struct ieee80211_hw* hw,
         struct ieee80211_vif* vif,
         int keyidx) {
@@ -6586,7 +6292,7 @@ static int ath10k_conf_tx_uapsd(struct ath10k* ar, struct ieee80211_vif* vif,
 exit:
     return ret;
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 static zx_status_t ath10k_conf_tx(struct ath10k* ar, uint16_t ac,
                                   struct wmi_wmm_params_arg* params) {
@@ -6617,11 +6323,9 @@ static zx_status_t ath10k_conf_tx(struct ath10k* ar, uint16_t ac,
     memcpy(p, params, sizeof(*p));
 
     if (ar->wmi.ops->gen_vdev_wmm_conf) {
-        ret = ath10k_wmi_vdev_wmm_conf(ar, arvif->vdev_id,
-                                       &arvif->wmm_params);
+        ret = ath10k_wmi_vdev_wmm_conf(ar, arvif->vdev_id, &arvif->wmm_params);
         if (ret != ZX_OK) {
-            ath10k_warn("failed to set vdev wmm params on vdev %i: %d\n",
-                        arvif->vdev_id, ret);
+            ath10k_warn("failed to set vdev wmm params on vdev %i: %d\n", arvif->vdev_id, ret);
             goto exit;
         }
     } else {
@@ -6635,18 +6339,18 @@ static zx_status_t ath10k_conf_tx(struct ath10k* ar, uint16_t ac,
         }
     }
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     ret = ath10k_conf_tx_uapsd(ar, vif, ac, params->uapsd);
     if (ret) {
         ath10k_warn("failed to set sta uapsd: %d\n", ret);
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 exit:
     return ret;
 }
 
-#if 0 // NEEDS PORTING
+#if 0  // NEEDS PORTING
 #define ATH10K_ROC_TIMEOUT_HZ (2 * HZ)
 
 static int ath10k_remain_on_channel(struct ieee80211_hw* hw,
@@ -6665,9 +6369,9 @@ static int ath10k_remain_on_channel(struct ieee80211_hw* hw,
     mtx_lock(&ar->data_lock);
     switch (ar->scan.state) {
     case ATH10K_SCAN_IDLE:
-        completion_reset(&ar->scan.started);
-        completion_reset(&ar->scan.completed);
-        completion_reset(&ar->scan.on_channel);
+        sync_completion_reset(&ar->scan.started);
+        sync_completion_reset(&ar->scan.completed);
+        sync_completion_reset(&ar->scan.on_channel);
         ar->scan.state = ATH10K_SCAN_STARTING;
         ar->scan.is_roc = true;
         ar->scan.vdev_id = arvif->vdev_id;
@@ -6711,7 +6415,7 @@ static int ath10k_remain_on_channel(struct ieee80211_hw* hw,
         goto exit;
     }
 
-    if (completion_wait(&ar->scan.on_channel, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
+    if (sync_completion_wait(&ar->scan.on_channel, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
         ath10k_warn("failed to switch to channel for roc scan\n");
 
         ret = ath10k_scan_stop(ar);
@@ -6879,7 +6583,7 @@ ath10k_mac_update_bss_chan_survey(struct ath10k* ar,
         return;
     }
 
-    completion_reset(&ar->bss_survey_done);
+    sync_completion_reset(&ar->bss_survey_done);
 
     ret = ath10k_wmi_pdev_bss_chan_info_request(ar, type);
     if (ret) {
@@ -6887,7 +6591,7 @@ ath10k_mac_update_bss_chan_survey(struct ath10k* ar,
         return;
     }
 
-    if (completion_wait(&ar->bss_survey_done, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
+    if (sync_completion_wait(&ar->bss_survey_done, ZX_SEC(3)) == ZX_ERR_TIMED_OUT) {
         ath10k_warn("bss channel survey timed out\n");
         return;
     }
@@ -7648,29 +7352,26 @@ radar:
 unlock:
     mtx_unlock(&ar->conf_mutex);
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 // (Re-)start vif on the specified channel. A different flow will be needed if we
 // want to support continued association transferring to a new channel (likely
 // ath10k_mac_update_vif_channel). Upon successful completion, we will be in a started,
 // but not up, state.
-zx_status_t
-ath10k_mac_assign_vif_chanctx(struct ath10k* ar, wlan_channel_t* chan) {
+zx_status_t ath10k_mac_assign_vif_chanctx(struct ath10k* ar, wlan_channel_t* chan) {
     struct ath10k_vif* arvif = &ar->arvif;
     zx_status_t ret;
 
     mtx_lock(&ar->conf_mutex);
 
-    ath10k_dbg(ar, ATH10K_DBG_MAC,
-               "mac chanctx assign ptr %pK vdev_id %i\n",
-               chan, arvif->vdev_id);
+    ath10k_dbg(ar, ATH10K_DBG_MAC, "mac chanctx assign ptr %pK vdev_id %i\n", chan, arvif->vdev_id);
 
     if (arvif->is_started) {
         if (arvif->is_up) {
             ret = ath10k_mac_bss_disassoc(ar);
             if (ret != ZX_OK) {
-                ath10k_warn("failed to disassociate vdev %i: %s\n",
-                            arvif->vdev_id, zx_status_get_string(ret));
+                ath10k_warn("failed to disassociate vdev %i: %s\n", arvif->vdev_id,
+                            zx_status_get_string(ret));
             }
         }
         ret = ath10k_vdev_restart(arvif, chan);
@@ -7680,20 +7381,18 @@ ath10k_mac_assign_vif_chanctx(struct ath10k* ar, wlan_channel_t* chan) {
 
     if (ret != ZX_OK) {
         if (chan->cbw == CBW80P80) {
-            ath10k_warn("failed to start vdev %i on channels %d + %d: %s\n",
-                        arvif->vdev_id, chan->primary, chan->secondary80,
-                        zx_status_get_string(ret));
+            ath10k_warn("failed to start vdev %i on channels %d + %d: %s\n", arvif->vdev_id,
+                        chan->primary, chan->secondary80, zx_status_get_string(ret));
         } else {
-            ath10k_warn("failed to start vdev %i on channel %d: %s\n",
-                        arvif->vdev_id, chan->primary,
-                        zx_status_get_string(ret));
+            ath10k_warn("failed to start vdev %i on channel %d: %s\n", arvif->vdev_id,
+                        chan->primary, zx_status_get_string(ret));
         }
         goto err;
     }
 
     arvif->is_started = true;
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
     ret = ath10k_mac_vif_setup_ps(arvif);
     if (ret) {
         ath10k_warn("failed to update vdev %i ps: %d\n",
@@ -7718,24 +7417,24 @@ ath10k_mac_assign_vif_chanctx(struct ath10k* ar, wlan_channel_t* chan) {
             ath10k_warn("failed to set cts protection for vdev %d: %d\n",
                         arvif->vdev_id, ret);
     }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
     mtx_unlock(&ar->conf_mutex);
     return ZX_OK;
 
-#if 0 // NEEDS PORTING
+#if 0   // NEEDS PORTING
 err_stop:
     ath10k_vdev_stop(arvif);
     arvif->is_started = false;
     ath10k_mac_vif_setup_ps(arvif);
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 err:
     mtx_unlock(&ar->conf_mutex);
     return ret;
 }
 
-#if 0 // NEEDS PORTING
+#if 0  // NEEDS PORTING
 static void
 ath10k_mac_op_unassign_vif_chanctx(struct ieee80211_hw* hw,
                                    struct ieee80211_vif* vif,
@@ -7858,16 +7557,14 @@ static const struct ieee80211_ops ath10k_ops = {
     .sta_statistics         = ath10k_sta_statistics,
 #endif
 };
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING
 
 struct ath10k* ath10k_mac_create(size_t priv_size) {
     struct ath10k* ar;
     void* hif_ctx;
 
     ar = calloc(1, sizeof(struct ath10k));
-    if (!ar) {
-        return NULL;
-    }
+    if (!ar) { return NULL; }
 
     hif_ctx = calloc(1, priv_size);
     if (!hif_ctx) {
@@ -7884,7 +7581,7 @@ void ath10k_mac_destroy(struct ath10k* ar) {
     free(ar);
 }
 
-#if 0 // NEEDS PORTING
+#if 0  // NEEDS PORTING
 static const struct ieee80211_iface_limit ath10k_if_limits[] = {
     {
         .max    = 8,
@@ -8102,7 +7799,7 @@ struct ath10k_vif* ath10k_get_arvif(struct ath10k* ar, uint32_t vdev_id) {
 }
 
 #define WRD_METHOD "WRDD"
-#define WRDD_WIFI  (0x07)
+#define WRDD_WIFI (0x07)
 
 static uint32_t ath10k_mac_wrdd_get_mcc(struct ath10k* ar, union acpi_object* wrdd) {
     union acpi_object* mcc_pkg;
@@ -8504,4 +8201,4 @@ void ath10k_mac_unregister(struct ath10k* ar) {
 
     SET_IEEE80211_DEV(ar->hw, NULL);
 }
-#endif // NEEDS PORTING
+#endif  // NEEDS PORTING

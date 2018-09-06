@@ -10,8 +10,7 @@
 #include "registers.h"
 #include "thread.h"
 
-namespace debugserver {
-namespace arch {
+namespace inferior_control {
 
 namespace {
 
@@ -77,7 +76,7 @@ namespace {
 // Set the TF bit in the RFLAGS register of |thread|.
 
 bool SetRflagsTF(Thread* thread, bool enable) {
-  arch::Registers* registers = thread->registers();
+  Registers* registers = thread->registers();
 
   if (!registers->RefreshGeneralRegisters()) {
     FXL_LOG(ERROR) << "Failed to refresh general regs";
@@ -105,7 +104,8 @@ bool SingleStepBreakpoint::Insert() {
 
   // TODO: Manage things like the user having already set TF.
 
-  if (!SetRflagsTF(owner()->thread(), true)) return false;
+  if (!SetRflagsTF(owner()->thread(), true))
+    return false;
 
   inserted_ = true;
   return true;
@@ -117,7 +117,8 @@ bool SingleStepBreakpoint::Remove() {
     return false;
   }
 
-  if (!SetRflagsTF(owner()->thread(), false)) return false;
+  if (!SetRflagsTF(owner()->thread(), false))
+    return false;
 
   inserted_ = false;
   return true;
@@ -125,5 +126,4 @@ bool SingleStepBreakpoint::Remove() {
 
 bool SingleStepBreakpoint::IsInserted() const { return inserted_; }
 
-}  // namespace arch
-}  // namespace debugserver
+}  // namespace inferior_control

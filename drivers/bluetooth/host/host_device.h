@@ -2,13 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_HOST_HOST_DEVICE_H_
+#define GARNET_DRIVERS_BLUETOOTH_HOST_HOST_DEVICE_H_
 
 #include <mutex>
+
+#include <lib/async-loop/cpp/loop.h>
+#include <lib/async/cpp/task.h>
+#include <lib/async/dispatcher.h>
 
 #include <ddk/device.h>
 #include <ddk/driver.h>
 
+#include "garnet/drivers/bluetooth/host/gatt_remote_service_device.h"
 #include "garnet/drivers/bluetooth/host/host.h"
 
 #include "lib/fxl/macros.h"
@@ -33,12 +39,8 @@ class HostDevice final {
     static_cast<HostDevice*>(ctx)->Release();
   }
 
-  static zx_status_t DdkIoctl(void* ctx,
-                              uint32_t op,
-                              const void* in_buf,
-                              size_t in_len,
-                              void* out_buf,
-                              size_t out_len,
+  static zx_status_t DdkIoctl(void* ctx, uint32_t op, const void* in_buf,
+                              size_t in_len, void* out_buf, size_t out_len,
                               size_t* out_actual) {
     return static_cast<HostDevice*>(ctx)->Ioctl(op, in_buf, in_len, out_buf,
                                                 out_len, out_actual);
@@ -46,12 +48,8 @@ class HostDevice final {
 
   void Unbind();
   void Release();
-  zx_status_t Ioctl(uint32_t op,
-                    const void* in_buf,
-                    size_t in_len,
-                    void* out_buf,
-                    size_t out_len,
-                    size_t* out_actual);
+  zx_status_t Ioctl(uint32_t op, const void* in_buf, size_t in_len,
+                    void* out_buf, size_t out_len, size_t* out_actual);
 
   // Called when a new remote GATT service has been found.
   void OnRemoteGattServiceAdded(
@@ -69,6 +67,10 @@ class HostDevice final {
   // Guards access to members below.
   std::mutex mtx_;
 
+  // Map of child DDK gatt devices
+  std::unordered_map<GattRemoteServiceDevice*, std::unique_ptr<GattRemoteServiceDevice>>
+      gatt_devices_;
+
   // Host processes all its messages on |loop_|. |loop_| is initialized to run
   // in its own thread.
   //
@@ -81,3 +83,5 @@ class HostDevice final {
 };
 
 }  // namespace bthost
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_HOST_HOST_DEVICE_H_

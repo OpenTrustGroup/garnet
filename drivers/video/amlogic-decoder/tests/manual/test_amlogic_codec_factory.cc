@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 #include <fuchsia/mediacodec/cpp/fidl.h>
-#include <lib/app/cpp/startup_context.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/task.h>
+#include <lib/component/cpp/startup_context.h>
 
 #include <stdio.h>
 
@@ -17,8 +17,8 @@ void FailFatal() {
   exit(-1);
 }
 
-void PostSerial(async_t* async, fit::closure to_run) {
-  zx_status_t result = async::PostTask(async, std::move(to_run));
+void PostSerial(async_dispatcher_t* dispatcher, fit::closure to_run) {
+  zx_status_t result = async::PostTask(dispatcher, std::move(to_run));
   if (result != ZX_OK) {
     printf("async::PostTask() failed\n");
     FailFatal();
@@ -29,21 +29,20 @@ void test_factory() {
   // We don't just use Sync FIDL proxies because we might need to recieve events
   // before long.
 
-  // Intentionally not using kAsyncLoopConfigMakeDefault here.
-  async::Loop fidl_loop;
+  async::Loop fidl_loop(&kAsyncLoopConfigNoAttachToThread);
   // Start a separate FIDL thread for two reasons:
   //   * It's handy for the main thread to stay separate to control the test.
   //   * By having a separate FIDL thread, this test shows how to do so without
   //     creating problems.
   fidl_loop.StartThread("FIDL_thread");
 
-  std::unique_ptr<fuchsia::sys::StartupContext> startup_context;
+  std::unique_ptr<component::StartupContext> startup_context;
   // Use FIDL thread to run CreateFromStartupInfo(), since it uses the calling
   // thread's default async_t, and we don't want to be accidentally doing
-  // FIDL requests from the main thread, so we don't use
-  // kAsyncLoopConfigMakeDefault above.
-  PostSerial(fidl_loop.async(), [&startup_context] {
-    startup_context = fuchsia::sys::StartupContext::CreateFromStartupInfo();
+  // FIDL requests from the main thread, so we use
+  // kAsyncLoopConfigNoAttachToThread above.
+  PostSerial(fidl_loop.dispatcher(), [&startup_context] {
+    startup_context = component::StartupContext::CreateFromStartupInfo();
   });
 
   fuchsia::mediacodec::CodecFactoryPtr codec_factory;
@@ -56,8 +55,9 @@ void test_factory() {
   // from the main thread, but if it moves to use FIDL libs instead, then it
   // won't be any longer, so call from FIDL thread instead.
   PostSerial(
-      fidl_loop.async(), [&startup_context, request = codec_factory.NewRequest(
-                                                fidl_loop.async())]() mutable {
+      fidl_loop.dispatcher(),
+      [&startup_context,
+       request = codec_factory.NewRequest(fidl_loop.dispatcher())]() mutable {
         startup_context
             ->ConnectToEnvironmentService<fuchsia::mediacodec::CodecFactory>(
                 std::move(request));
@@ -70,17 +70,17 @@ void test_factory() {
     FailFatal();
   });
   // Use FIDL thread to send request for Codec.
-  PostSerial(fidl_loop.async(),
-             [&codec_factory, request = codec.NewRequest(fidl_loop.async()),
-              params = fuchsia::mediacodec::CreateDecoder_Params{
-                  .input_details.format_details_version_ordinal = 0,
-                  .input_details.mime_type = "video/h264",
-                  .promise_separate_access_units_on_input = true,
-                  .require_hw = true,
-              }]() mutable {
-               codec_factory->CreateDecoder(std::move(params),
-                                            std::move(request));
-             });
+  PostSerial(
+      fidl_loop.dispatcher(),
+      [&codec_factory, request = codec.NewRequest(fidl_loop.dispatcher()),
+       params = fuchsia::mediacodec::CreateDecoder_Params{
+           .input_details.format_details_version_ordinal = 0,
+           .input_details.mime_type = "video/h264",
+           .promise_separate_access_units_on_input = true,
+           .require_hw = true,
+       }]() mutable {
+        codec_factory->CreateDecoder(std::move(params), std::move(request));
+      });
 
   // Use FIDL thread to check that codec can communicate to the driver
   // round-trip.  The other-thread usage is a bit unnatural here, but we want to
@@ -89,8 +89,8 @@ void test_factory() {
   std::mutex is_sync_done_lock;
   bool is_sync_done = false;
   std::condition_variable is_sync_done_condition;
-  PostSerial(fidl_loop.async(), [&codec, &is_sync_done_lock, &is_sync_done,
-                                 &is_sync_done_condition] {
+  PostSerial(fidl_loop.dispatcher(), [&codec, &is_sync_done_lock, &is_sync_done,
+                                      &is_sync_done_condition] {
     codec->Sync([&is_sync_done_lock, &is_sync_done, &is_sync_done_condition] {
       printf("codec->Sync() completing (FIDL thread)\n");
       {  // scope lock

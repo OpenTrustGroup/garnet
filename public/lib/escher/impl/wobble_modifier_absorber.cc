@@ -107,17 +107,17 @@ constexpr char g_compute_wobble_src[] = R"GLSL(
 
 }  // namespace
 
-WobbleModifierAbsorber::WobbleModifierAbsorber(Escher* escher)
-    : escher_(escher),
-      vulkan_context_(escher->vulkan_context()),
-      command_buffer_pool_(escher->command_buffer_pool()),
-      compiler_(escher->glsl_compiler()),
-      allocator_(escher->gpu_allocator()),
-      recycler_(escher->resource_recycler()),
+WobbleModifierAbsorber::WobbleModifierAbsorber(EscherWeakPtr weak_escher)
+    : escher_(std::move(weak_escher)),
+      vulkan_context_(escher_->vulkan_context()),
+      command_buffer_pool_(escher_->command_buffer_pool()),
+      compiler_(escher_->glsl_compiler()),
+      allocator_(escher_->gpu_allocator()),
+      recycler_(escher_->resource_recycler()),
       kernel_(NewKernel()),
       per_model_uniform_buffer_(NewUniformBuffer(sizeof(ModelData::PerModel))),
       per_model_uniform_data_(reinterpret_cast<ModelData::PerModel*>(
-          per_model_uniform_buffer_->ptr())) {}
+          per_model_uniform_buffer_->host_ptr())) {}
 
 void WobbleModifierAbsorber::AbsorbWobbleIfAny(Model* model) {
   // frag_coord_to_uv_multiplier is not used; won't populate.
@@ -129,7 +129,7 @@ void WobbleModifierAbsorber::AbsorbWobbleIfAny(Model* model) {
       continue;
     }
 
-    auto& vertex_buffer = object.shape().mesh()->vertex_buffer();
+    auto& vertex_buffer = object.shape().mesh()->attribute_buffer(0).buffer;
     auto compute_buffer =
         Buffer::New(recycler_, allocator_, vertex_buffer->size(),
                     vk::BufferUsageFlagBits::eVertexBuffer |
@@ -141,7 +141,7 @@ void WobbleModifierAbsorber::AbsorbWobbleIfAny(Model* model) {
     auto per_object_uniform_buffer =
         NewUniformBuffer(sizeof(ModelData::PerObject));
     auto per_object_uniform_data = reinterpret_cast<ModelData::PerObject*>(
-        per_object_uniform_buffer->ptr());
+        per_object_uniform_buffer->host_ptr());
 
     // For memory transfer.
     CommandBuffer* command_buffer = command_buffer_pool_->GetCommandBuffer();

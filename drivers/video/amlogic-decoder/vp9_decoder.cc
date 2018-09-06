@@ -6,6 +6,8 @@
 
 #include "firmware_blob.h"
 #include "macros.h"
+#include "memory_barriers.h"
+#include "pts_manager.h"
 #include "third_party/libvpx/vp9/common/vp9_loopfilter.h"
 
 using HevcDecStatusReg = HevcAssistScratch0;
@@ -75,9 +77,8 @@ void Vp9Decoder::BufferAllocator::Register(WorkingBuffer* buffer) {
 zx_status_t Vp9Decoder::BufferAllocator::AllocateBuffers(
     VideoDecoder::Owner* owner) {
   for (auto* buffer : buffers_) {
-    zx_status_t status =
-        io_buffer_init(&buffer->buffer(), owner->bti(), buffer->size(),
-                       IO_BUFFER_CONTIG | IO_BUFFER_RW);
+    zx_status_t status = owner->AllocateIoBuffer(
+        &buffer->buffer(), buffer->size(), 0, IO_BUFFER_CONTIG | IO_BUFFER_RW);
     if (status != ZX_OK) {
       DECODE_ERROR("VP9 working buffer allocation failed: %d\n", status);
       return status;
@@ -99,15 +100,22 @@ uint32_t Vp9Decoder::WorkingBuffer::addr32() {
   return truncate_to_32(io_buffer_phys(&buffer_));
 }
 
-Vp9Decoder::Vp9Decoder(Owner* owner) : owner_(owner) {}
+Vp9Decoder::Vp9Decoder(Owner* owner, InputType input_type)
+    : owner_(owner), input_type_(input_type) {
+  InitializeLoopFilterData();
+}
 
 Vp9Decoder::~Vp9Decoder() {
-  owner_->core()->StopDecoding();
-  owner_->core()->WaitForIdle();
+  if (owner_->IsDecoderCurrent(this)) {
+    owner_->core()->StopDecoding();
+    owner_->core()->WaitForIdle();
+  }
+
+  BarrierBeforeRelease();  // For all working buffers
 }
 
 void Vp9Decoder::UpdateLoopFilterThresholds() {
-  for (uint32_t i = 0; i < MAX_LOOP_FILTER / 2; i++) {
+  for (uint32_t i = 0; i <= MAX_LOOP_FILTER / 2; i++) {
     uint32_t threshold = 0;
     for (uint32_t j = 0; j < 2; j++) {
       uint32_t new_threshold =
@@ -121,9 +129,15 @@ void Vp9Decoder::UpdateLoopFilterThresholds() {
   }
 }
 
-void Vp9Decoder::InitLoopFilter() {
-  vp9_loop_filter_init(loop_filter_info_.get(), loop_filter_.get());
+void Vp9Decoder::InitializeLoopFilterData() {
+  loop_filter_info_ = std::make_unique<loop_filter_info_n>();
+  loop_filter_ = std::make_unique<loopfilter>();
+  segmentation_ = std::make_unique<segmentation>();
 
+  vp9_loop_filter_init(loop_filter_info_.get(), loop_filter_.get());
+}
+
+void Vp9Decoder::InitLoopFilter() {
   UpdateLoopFilterThresholds();
   if (owner_->device_type() == DeviceType::kG12A) {
     HevcDblkCfgB::Get()
@@ -178,24 +192,38 @@ void Vp9Decoder::UpdateLoopFilter(HardwareRenderParams* param) {
 }
 
 zx_status_t Vp9Decoder::Initialize() {
+  zx_status_t status = InitializeBuffers();
+  if (status != ZX_OK)
+    return status;
+  return InitializeHardware();
+}
+
+zx_status_t Vp9Decoder::InitializeBuffers() {
+  zx_status_t status = working_buffers_.AllocateBuffers(owner_);
+  if (status != ZX_OK)
+    return status;
+  status = AllocateFrames();
+  BarrierAfterFlush();  // For all frames and working buffers.
+  return status;
+}
+
+zx_status_t Vp9Decoder::InitializeHardware() {
+  assert(owner_->IsDecoderCurrent(this));
   uint8_t* firmware;
   uint32_t firmware_size;
+  FirmwareBlob::FirmwareType firmware_type =
+      (owner_->device_type() == DeviceType::kG12A)
+          ? FirmwareBlob::FirmwareType::kVp9MmuG12a
+          : FirmwareBlob::FirmwareType::kVp9Mmu;
+
   zx_status_t status = owner_->firmware_blob()->GetFirmwareData(
-      FirmwareBlob::FirmwareType::kVp9Mmu, &firmware, &firmware_size);
+      firmware_type, &firmware, &firmware_size);
   if (status != ZX_OK)
     return status;
 
   status = owner_->core()->LoadFirmware(firmware, firmware_size);
   if (status != ZX_OK)
     return status;
-
-  status = working_buffers_.AllocateBuffers(owner_);
-  if (status != ZX_OK)
-    return status;
-
-  loop_filter_info_ = std::make_unique<loop_filter_info_n>();
-  loop_filter_ = std::make_unique<loopfilter>();
-  segmentation_ = std::make_unique<segmentation>();
 
   HevcRpmBuffer::Get()
       .FromValue(working_buffers_.rpm.addr32())
@@ -274,10 +302,6 @@ zx_status_t Vp9Decoder::Initialize() {
         .WriteTo(owner_->dosbus());
   }
 
-  status = AllocateFrames();
-  if (status != ZX_OK)
-    return status;
-
   InitializeHardwarePictureList();
   InitializeParser();
   InitLoopFilter();
@@ -293,7 +317,10 @@ zx_status_t Vp9Decoder::Initialize() {
 
   DecodeStopPos::Get().FromValue(0).WriteTo(owner_->dosbus());
 
-  owner_->core()->StartDecoding();
+  // In the multi-stream case, don't start yet to give the caller the chance
+  // to restore the input state.
+  if (input_type_ == InputType::kSingleStream)
+    owner_->core()->StartDecoding();
   return ZX_OK;
 }
 
@@ -316,12 +343,71 @@ static uint32_t ComputeCompressedHeaderSize(uint32_t width, uint32_t height,
 
 void Vp9Decoder::ProcessCompletedFrames() {
   // On the first interrupt no frame will be completed.
-  if (decoded_frame_count_ == 0)
+  if (!current_frame_)
     return;
 
-  if (notifier_)
-    notifier_(current_frame_->frame.get());
+  if (current_frame_data_.show_frame && notifier_) {
+    current_frame_->frame->has_pts = current_frame_data_.has_pts;
+    current_frame_->frame->pts = current_frame_data_.pts;
+    current_frame_->refcount++;
+    notifier_(current_frame_->frame);
+  }
+
+  for (uint32_t i = 0; i < fbl::count_of(reference_frame_map_); i++) {
+    if (current_frame_data_.refresh_frame_flags & (1 << i)) {
+      if (reference_frame_map_[i]) {
+        reference_frame_map_[i]->refcount--;
+        assert(reference_frame_map_[i]->refcount >= 0);
+      }
+      reference_frame_map_[i] = current_frame_;
+      current_frame_->refcount++;
+    }
+  }
+  for (Frame*& frame : current_reference_frames_) {
+    frame = nullptr;
+  }
+  if (last_frame_) {
+    last_frame_->refcount--;
+  }
+  last_frame_ = current_frame_;
+  current_frame_ = nullptr;
 }
+
+void Vp9Decoder::ReturnFrame(std::shared_ptr<VideoFrame> frame) {
+  assert(frame->index < frames_.size());
+  auto& ref_frame = frames_[frame->index];
+  // Frame must still be valid if the refcount is > 0.
+  assert(ref_frame->frame == frame);
+  ref_frame->refcount--;
+  assert(ref_frame->refcount >= 0);
+
+  if (waiting_for_empty_frames_) {
+    waiting_for_empty_frames_ = false;
+    PrepareNewFrame();
+  }
+}
+enum Vp9Command {
+  // Sent from the host to the device after a header has been decoded to say
+  // that the compressed frame body should be decoded.
+  kVp9CommandDecodeSlice = 5,
+
+  // Sent from the device to the host to say that all of the input data (from
+  // HevcDecodeSize) has been processed. Only sent in multi-stream mode.
+  kVp9CommandDecodingDataDone = 0xa,
+
+  // Sent from the device to the host to say that a frame has finished decoding.
+  // This is only sent in multi-stream mode.
+  kVp9CommandNalDecodeDone = 0xe,
+
+  // Sent from the device to the host to say that a VP9 header has been
+  // decoded and the parameter buffer has data. In single-stream mode this also
+  // signals that the previous frame finished decoding.
+  kProcessedHeader = 0xf0,
+
+  // Sent from the host to the device to say that the last interupt has been
+  // processed.
+  kVp9ActionDone = 0xff,
+};
 
 void Vp9Decoder::HandleInterrupt() {
   DLOG("Got VP9 interrupt\n");
@@ -335,11 +421,23 @@ void Vp9Decoder::HandleInterrupt() {
 
   DLOG("Decoder state: %x %x\n", dec_status, adapt_prob_status);
 
+  if (dec_status == kVp9CommandDecodingDataDone) {
+    // Signal that there's more data that can be decoded.
+    uint32_t new_input_data_size = frame_data_provider_->GetInputDataSize();
+    HevcDecodeSize::Get()
+        .FromValue(
+            HevcDecodeSize::Get().ReadFrom(owner_->dosbus()).reg_value() +
+            new_input_data_size)
+        .WriteTo(owner_->dosbus());
+    HevcDecStatusReg::Get().FromValue(kVp9ActionDone).WriteTo(owner_->dosbus());
+    return;
+  }
   ProcessCompletedFrames();
 
-  enum {
-    kProcessedHeader = 0xf0,
-  };
+  if (dec_status == kVp9CommandNalDecodeDone) {
+    frame_data_provider_->FrameWasOutput();
+    return;
+  }
   if (dec_status != kProcessedHeader) {
     DECODE_ERROR("Unexpected decode status %x\n", dec_status);
     return;
@@ -352,37 +450,103 @@ void Vp9Decoder::HandleInterrupt() {
 
 void Vp9Decoder::ConfigureMcrcc() {
   // The MCRCC seems to be used with processing reference frames.
-  // TODO(MTWN-147): support inter frames.
   HevcdMcrccCtl1::Get().FromValue(0).set_reset(true).WriteTo(owner_->dosbus());
-  HevcdMcrccCtl1::Get().FromValue(0).set_reset(false).WriteTo(owner_->dosbus());
+  if (current_frame_data_.keyframe || current_frame_data_.intra_only) {
+    HevcdMcrccCtl1::Get().FromValue(0).set_reset(false).WriteTo(
+        owner_->dosbus());
+    return;
+  }
+  // Signal an autoincrementing read of some canvas table.
+  HevcdMppAncCanvasAccconfigAddr::Get().FromValue(0).set_bit1(1).WriteTo(
+      owner_->dosbus());
+  // First element is probably for last frame.
+  uint32_t data_addr =
+      HevcdMppAncCanvasDataAddr::Get().ReadFrom(owner_->dosbus()).reg_value();
+  data_addr &= 0xffff;
+  HevcdMcrccCtl2::Get()
+      .FromValue(data_addr | (data_addr << 16))
+      .WriteTo(owner_->dosbus());
+
+  // Second element is probably for golden frame.
+  data_addr =
+      HevcdMppAncCanvasDataAddr::Get().ReadFrom(owner_->dosbus()).reg_value();
+  data_addr &= 0xffff;
+  HevcdMcrccCtl3::Get()
+      .FromValue(data_addr | (data_addr << 16))
+      .WriteTo(owner_->dosbus());
+  // Set to progressive mode.
+  HevcdMcrccCtl1::Get().FromValue(0xff0).WriteTo(owner_->dosbus());
 }
 
 void Vp9Decoder::ConfigureMotionPrediction() {
-  // Intra frames and frames after intra frames don't need to use the previous
+  // Intra frames and frames after intra frames can't use the previous
   // frame's mvs.
-  // TODO(MTWN-147): support later inter frames.
+  if (current_frame_data_.keyframe || current_frame_data_.intra_only) {
+    HevcMpredCtrl4::Get()
+        .ReadFrom(owner_->dosbus())
+        .set_use_prev_frame_mvs(false)
+        .WriteTo(owner_->dosbus());
+    return;
+  }
+
+  // Not sure what this value means.
+  HevcMpredCtrl3::Get().FromValue(0x24122412).WriteTo(owner_->dosbus());
+  HevcMpredAbvStartAddr::Get()
+      .FromValue(working_buffers_.motion_prediction_above.addr32())
+      .WriteTo(owner_->dosbus());
+
+  bool last_frame_has_mv =
+      last_frame_ && !last_frame_data_.keyframe &&
+      !last_frame_data_.intra_only &&
+      current_frame_->frame->width == last_frame_->frame->width &&
+      current_frame_->frame->height == last_frame_->frame->height &&
+      !current_frame_data_.error_resilient_mode && last_frame_data_.show_frame;
   HevcMpredCtrl4::Get()
       .ReadFrom(owner_->dosbus())
-      .set_use_prev_frame_mvs(false)
+      .set_use_prev_frame_mvs(last_frame_has_mv)
       .WriteTo(owner_->dosbus());
+
+  uint32_t mv_mpred_addr =
+      truncate_to_32(io_buffer_phys(&current_frame_->mv_mpred_buffer));
+  HevcMpredMvWrStartAddr::Get()
+      .FromValue(mv_mpred_addr)
+      .WriteTo(owner_->dosbus());
+  HevcMpredMvWptr::Get().FromValue(mv_mpred_addr).WriteTo(owner_->dosbus());
+  if (last_frame_) {
+    uint32_t last_mv_mpred_addr =
+        truncate_to_32(io_buffer_phys(&last_frame_->mv_mpred_buffer));
+    HevcMpredMvRdStartAddr::Get()
+        .FromValue(last_mv_mpred_addr)
+        .WriteTo(owner_->dosbus());
+    HevcMpredMvRptr::Get()
+        .FromValue(last_mv_mpred_addr)
+        .WriteTo(owner_->dosbus());
+
+    uint32_t last_end_addr =
+        last_mv_mpred_addr + io_buffer_size(&last_frame_->mv_mpred_buffer, 0);
+    HevcMpredMvRdEndAddr::Get()
+        .FromValue(last_end_addr)
+        .WriteTo(owner_->dosbus());
+  }
 }
 
-void Vp9Decoder::ConfigureFrameOutput(uint32_t width, uint32_t height) {
+void Vp9Decoder::ConfigureFrameOutput(uint32_t width, uint32_t height,
+                                      bool bit_depth_8) {
   // SAO stands for Sample Adaptive Offset, which is a type of filtering in
   // HEVC. Sao isn't used in VP9, but the hardware that handles it also handles
   // writing frames to memory.
 
   HevcSaoCtrl5::Get()
       .ReadFrom(owner_->dosbus())
-      .set_mode_8_bits(true)
+      .set_mode_8_bits(bit_depth_8)
       .WriteTo(owner_->dosbus());
 
   HevcdMppDecompCtl1::Get().FromValue(0).set_paged_mode(1).WriteTo(
       owner_->dosbus());
   uint32_t compressed_body_size =
-      ComputeCompressedBodySize(width, height, false);
+      ComputeCompressedBodySize(width, height, !bit_depth_8);
   uint32_t compressed_header_size =
-      ComputeCompressedHeaderSize(width, height, false);
+      ComputeCompressedHeaderSize(width, height, !bit_depth_8);
 
   HevcdMppDecompCtl2::Get()
       .FromValue(compressed_body_size >> 5)
@@ -405,13 +569,16 @@ void Vp9Decoder::ConfigureFrameOutput(uint32_t width, uint32_t height) {
   assert(compressed_header_size <=
          io_buffer_size(&current_frame_->compressed_header, 0));
 
-  uint32_t frame_count =
-      fbl::round_up(compressed_body_size, static_cast<uint32_t>(PAGE_SIZE)) /
-      PAGE_SIZE;
-  if (!io_buffer_is_valid(&current_frame_->compressed_data)) {
+  uint32_t frame_buffer_size =
+      fbl::round_up(compressed_body_size, static_cast<uint32_t>(PAGE_SIZE));
+  if (!io_buffer_is_valid(&current_frame_->compressed_data) ||
+      (io_buffer_size(&current_frame_->compressed_data, 0) !=
+       frame_buffer_size)) {
+    if (io_buffer_is_valid(&current_frame_->compressed_data))
+      io_buffer_release(&current_frame_->compressed_data);
     zx_status_t status =
         io_buffer_init(&current_frame_->compressed_data, owner_->bti(),
-                       PAGE_SIZE * frame_count, IO_BUFFER_RW);
+                       frame_buffer_size, IO_BUFFER_RW);
     if (status != ZX_OK) {
       DECODE_ERROR("Couldn't allocate compressed frame data: %d\n", status);
       return;
@@ -423,7 +590,8 @@ void Vp9Decoder::ConfigureFrameOutput(uint32_t width, uint32_t height) {
       return;
     }
     io_buffer_cache_flush(&current_frame_->compressed_data, 0,
-                          PAGE_SIZE * frame_count);
+                          frame_buffer_size);
+    BarrierAfterFlush();
   }
 
   // Enough frames for the maximum possible size of compressed video have to be
@@ -433,6 +601,7 @@ void Vp9Decoder::ConfigureFrameOutput(uint32_t width, uint32_t height) {
   // TODO(MTWN-148): Return unused frames could be returned to a pool and use
   // them for decoding a different frame.
   {
+    uint32_t frame_count = frame_buffer_size / PAGE_SIZE;
     uint32_t* mmu_data = static_cast<uint32_t*>(
         io_buffer_virt(&working_buffers_.frame_map_mmu.buffer()));
     for (uint32_t i = 0; i < frame_count; i++) {
@@ -440,6 +609,7 @@ void Vp9Decoder::ConfigureFrameOutput(uint32_t width, uint32_t height) {
     }
     io_buffer_cache_flush(&working_buffers_.frame_map_mmu.buffer(), 0,
                           frame_count * 4);
+    BarrierAfterFlush();
   }
 
   uint32_t buffer_address =
@@ -454,9 +624,13 @@ void Vp9Decoder::ConfigureFrameOutput(uint32_t width, uint32_t height) {
       .FromValue(buffer_address + current_frame_->frame->uv_plane_offset)
       .WriteTo(owner_->dosbus());
 
-  // There's no way to specify a non-tightly-packed stride.
-  HevcSaoYLength::Get().FromValue(width * height).WriteTo(owner_->dosbus());
-  HevcSaoCLength::Get().FromValue(width * height / 2).WriteTo(owner_->dosbus());
+  // There's no way to specify a different stride than the default.
+  HevcSaoYLength::Get()
+      .FromValue(current_frame_->frame->stride * height)
+      .WriteTo(owner_->dosbus());
+  HevcSaoCLength::Get()
+      .FromValue(current_frame_->frame->stride * height / 2)
+      .WriteTo(owner_->dosbus());
   // Compressed data is used as a reference for future frames, and uncompressed
   // data is output to consumers. Uncompressed data writes could be disabled in
   // the future if the consumer (e.g. the display) supported reading the
@@ -490,8 +664,45 @@ void Vp9Decoder::ConfigureFrameOutput(uint32_t width, uint32_t height) {
       .WriteTo(owner_->dosbus());
 }
 
+void Vp9Decoder::ShowExistingFrame(HardwareRenderParams* params) {
+  Frame* frame = reference_frame_map_[params->frame_to_show];
+  if (!frame) {
+    DECODE_ERROR("Showing existing frame that doesn't exist");
+    return;
+  }
+  // stream_offset points to an offset within the header of the frame. With
+  // superframes, the offset stored in the PTS manager will be the start of the
+  // superframe, but since the offset here is less than the start of the next
+  // superframe the correct PTS will be found.
+  //
+  // When show_existing_frame is set, the original PTS from when the reference
+  // frame was decoded is ignored.
+  uint32_t stream_offset =
+      HevcShiftByteCount::Get().ReadFrom(owner_->dosbus()).reg_value();
+
+  PtsManager::LookupResult result =
+      owner_->pts_manager()->Lookup(stream_offset);
+  frame->frame->has_pts = result.has_pts();
+  frame->frame->pts = result.pts();
+  if (result.is_end_of_stream()) {
+    // TODO(dustingreen): Handle this once we're able to detect this way.  For
+    // now, ignore but print an obvious message.
+    printf("##### UNHANDLED END OF STREAM DETECTED #####\n");
+    return;
+  }
+
+  if (notifier_) {
+    frame->refcount++;
+    notifier_(frame->frame);
+  }
+  HevcDecStatusReg::Get()
+      .FromValue(kVp9CommandDecodeSlice)
+      .WriteTo(owner_->dosbus());
+}
+
 void Vp9Decoder::PrepareNewFrame() {
   HardwareRenderParams params;
+  BarrierBeforeInvalidate();
   io_buffer_cache_flush_invalidate(&working_buffers_.rpm.buffer(), 0,
                                    sizeof(HardwareRenderParams));
   uint16_t* input_params =
@@ -504,10 +715,45 @@ void Vp9Decoder::PrepareNewFrame() {
     }
   }
 
-  last_frame_data_ = current_frame_data_;
-  current_frame_data_.keyframe = params.frame_type == 0;
+  if (params.show_existing_frame) {
+    ShowExistingFrame(&params);
+    return;
+  }
 
-  FindNewFrameBuffer(&params);
+  // If this is failing due to running out of buffers then the function will be
+  // retried once more are received.
+  if (!FindNewFrameBuffer(&params))
+    return;
+
+  last_frame_data_ = current_frame_data_;
+  // See comments about stream_offset above. Multiple frames will return the
+  // same PTS if they're part of a superframe, but only one of the frames should
+  // have show_frame set, so only that frame will be output with that PTS.
+  uint32_t stream_offset =
+      HevcShiftByteCount::Get().ReadFrom(owner_->dosbus()).reg_value();
+
+  PtsManager::LookupResult result =
+      owner_->pts_manager()->Lookup(stream_offset);
+  current_frame_data_.has_pts = result.has_pts();
+  current_frame_data_.pts = result.pts();
+  if (result.is_end_of_stream()) {
+    // TODO(dustingreen): Handle this once we're able to detect this way.  For
+    // now, ignore but print an obvious message.
+    printf("##### UNHANDLED END OF STREAM DETECTED #####\n");
+    return;
+  }
+
+  current_frame_data_.keyframe = params.frame_type == 0;
+  current_frame_data_.intra_only = params.intra_only;
+  current_frame_data_.refresh_frame_flags = params.refresh_frame_flags;
+  if (current_frame_data_.keyframe) {
+    current_frame_data_.refresh_frame_flags =
+        (1 << fbl::count_of(reference_frame_map_)) - 1;
+  }
+  current_frame_data_.error_resilient_mode = params.error_resilient_mode;
+  current_frame_data_.show_frame = params.show_frame;
+
+  SetRefFrames(&params);
 
   uint32_t width = params.width;
   uint32_t height = params.height;
@@ -515,18 +761,17 @@ void Vp9Decoder::PrepareNewFrame() {
       .FromValue((height << 16) | width)
       .WriteTo(owner_->dosbus());
 
+  ConfigureReferenceFrameHardware();
   ConfigureMotionPrediction();
   ConfigureMcrcc();
 
-  ConfigureFrameOutput(width, height);
+  ConfigureFrameOutput(width, height, params.bit_depth == 0);
 
   UpdateLoopFilter(&params);
 
-  enum {
-    kDecodeSlice = 5,
-  };
-
-  HevcDecStatusReg::Get().FromValue(kDecodeSlice).WriteTo(owner_->dosbus());
+  HevcDecStatusReg::Get()
+      .FromValue(kVp9CommandDecodeSlice)
+      .WriteTo(owner_->dosbus());
 }
 
 void Vp9Decoder::SetFrameReadyNotifier(FrameReadyNotifier notifier) {
@@ -536,33 +781,146 @@ void Vp9Decoder::SetFrameReadyNotifier(FrameReadyNotifier notifier) {
 Vp9Decoder::Frame::~Frame() {
   io_buffer_release(&compressed_header);
   io_buffer_release(&compressed_data);
+  io_buffer_release(&mv_mpred_buffer);
 }
 
-void Vp9Decoder::FindNewFrameBuffer(HardwareRenderParams* params) {
-  current_frame_idx_ = (current_frame_idx_ + 1) % frames_.size();
-  current_frame_ = frames_[current_frame_idx_].get();
-  if (!current_frame_->frame ||
-      (current_frame_->frame->width != params->width) ||
-      (current_frame_->frame->width != params->width)) {
-    auto frame = std::make_unique<VideoFrame>();
-    uint32_t width = params->width;
-    uint32_t height = params->height;
-    zx_status_t status =
-        io_buffer_init(&frame->buffer, owner_->bti(), width * height * 3 / 2,
-                       IO_BUFFER_RW | IO_BUFFER_CONTIG);
-    if (status != ZX_OK) {
-      DECODE_ERROR("Failed to make frame: %d\n", status);
-      return;
+bool Vp9Decoder::FindNewFrameBuffer(HardwareRenderParams* params) {
+  assert(!current_frame_);
+  Frame* new_frame = nullptr;
+  for (uint32_t i = 0; i < frames_.size(); i++) {
+    if (frames_[i]->refcount == 0) {
+      new_frame = frames_[i].get();
+      break;
     }
-
-    frame->uv_plane_offset = width * height;
-    frame->stride = width;
-    frame->width = width;
-    frame->height = height;
-    current_frame_->frame = std::move(frame);
+  }
+  if (!new_frame) {
+    waiting_for_empty_frames_ = true;
+    DLOG("Couldn't allocate framebuffer - all in use\n");
+    return false;
   }
 
+  if (!new_frame->frame || (new_frame->frame->width != params->width) ||
+      (new_frame->frame->height != params->height)) {
+    auto video_frame = std::make_unique<VideoFrame>();
+    video_frame->width = params->width;
+    video_frame->height = params->height;
+    video_frame->stride = fbl::round_up(video_frame->width, 32u);
+    video_frame->uv_plane_offset =
+        fbl::round_up(video_frame->stride * video_frame->height, 1u << 16);
+    video_frame->index = new_frame->index;
+
+    assert(video_frame->height % 2 == 0);
+    zx_status_t status = io_buffer_init_aligned(
+        &video_frame->buffer, owner_->bti(),
+        video_frame->uv_plane_offset +
+            video_frame->stride * video_frame->height / 2,
+        16, IO_BUFFER_RW | IO_BUFFER_CONTIG);
+    if (status != ZX_OK) {
+      DECODE_ERROR("Failed to make video_frame: %d\n", status);
+      return false;
+    }
+    io_buffer_cache_flush(&video_frame->buffer, 0,
+                          io_buffer_size(&video_frame->buffer, 0));
+
+    new_frame->frame = std::move(video_frame);
+
+    // The largest coding unit is assumed to be 64x32.
+    constexpr uint32_t kLcuMvBytes = 0x240;
+    constexpr uint32_t kLcuCount = 4096 * 2048 / (64 * 32);
+    status = io_buffer_init_aligned(&new_frame->mv_mpred_buffer, owner_->bti(),
+                                    kLcuCount * kLcuMvBytes, 16,
+                                    IO_BUFFER_CONTIG | IO_BUFFER_RW);
+    if (status != ZX_OK) {
+      DECODE_ERROR("Alloc buffer error: %d\n", status);
+      return false;
+    }
+    io_buffer_cache_flush_invalidate(&new_frame->mv_mpred_buffer, 0,
+                                     kLcuCount * kLcuMvBytes);
+
+    BarrierAfterFlush();
+  }
+
+  if (params->render_size_present) {
+    new_frame->frame->display_width = params->render_width;
+    new_frame->frame->display_height = params->render_height;
+  } else {
+    new_frame->frame->display_width = params->width;
+    new_frame->frame->display_height = params->height;
+  }
+
+  current_frame_ = new_frame;
+  current_frame_->refcount++;
   current_frame_->decoded_index = decoded_frame_count_++;
+  return true;
+}
+
+void Vp9Decoder::SetRefFrames(HardwareRenderParams* params) {
+  uint32_t reference_frame_count = fbl::count_of(current_reference_frames_);
+  for (uint32_t i = 0; i < reference_frame_count; i++) {
+    uint32_t ref =
+        (params->ref_info >> (((reference_frame_count - 1 - i) * 4) + 1)) & 0x7;
+    assert(ref < fbl::count_of(reference_frame_map_));
+    current_reference_frames_[i] = reference_frame_map_[ref];
+  }
+}
+
+void Vp9Decoder::ConfigureReferenceFrameHardware() {
+  // Do an autoincrementing write to one canvas table.
+  HevcdMppAncCanvasAccconfigAddr::Get().FromValue(0).set_bit0(1).WriteTo(
+      owner_->dosbus());
+  for (Frame* frame : current_reference_frames_) {
+    if (!frame)
+      continue;
+    HevcdMppAncCanvasDataAddr::Get()
+        .FromValue((frame->index << 16) | (frame->index << 8) | (frame->index))
+        .WriteTo(owner_->dosbus());
+  }
+
+  // Do an autoincrementing write to a different canvas table.
+  HevcdMppAncCanvasAccconfigAddr::Get()
+      .FromValue(0)
+      .set_field15_8(16)
+      .set_bit0(1)
+      .WriteTo(owner_->dosbus());
+
+  for (Frame* frame : current_reference_frames_) {
+    if (!frame)
+      continue;
+    HevcdMppAncCanvasDataAddr::Get()
+        .FromValue((frame->index << 16) | (frame->index << 8) | (frame->index))
+        .WriteTo(owner_->dosbus());
+  }
+
+  // Do an autoincrementing write to the reference info table.
+  Vp9dMppRefinfoTblAccconfig::Get().FromValue(0).set_bit2(1).WriteTo(
+      owner_->dosbus());
+  uint32_t scale_mask = 0;
+  for (uint32_t i = 0; i < fbl::count_of(current_reference_frames_); i++) {
+    Frame* frame = current_reference_frames_[i];
+    if (!frame)
+      continue;
+    Vp9dMppRefinfoData::Get()
+        .FromValue(frame->frame->width)
+        .WriteTo(owner_->dosbus());
+    Vp9dMppRefinfoData::Get()
+        .FromValue(frame->frame->height)
+        .WriteTo(owner_->dosbus());
+
+    if (current_frame_->frame->width != frame->frame->width ||
+        current_frame_->frame->height != frame->frame->height) {
+      scale_mask |= 1 << i;
+    }
+    Vp9dMppRefinfoData::Get()
+        .FromValue((frame->frame->width << 14) / current_frame_->frame->width)
+        .WriteTo(owner_->dosbus());
+    Vp9dMppRefinfoData::Get()
+        .FromValue((frame->frame->height << 14) / current_frame_->frame->height)
+        .WriteTo(owner_->dosbus());
+    // Copmpressed body size. 0 If dynamically allocated
+    Vp9dMppRefinfoData::Get().FromValue(0).WriteTo(owner_->dosbus());
+  }
+
+  Vp9dMppRefScaleEnable::Get().FromValue(scale_mask).WriteTo(owner_->dosbus());
 }
 
 zx_status_t Vp9Decoder::AllocateFrames() {
@@ -571,8 +929,8 @@ zx_status_t Vp9Decoder::AllocateFrames() {
   for (uint32_t i = 0; i < 16; i++) {
     auto frame = std::make_unique<Frame>();
     constexpr uint32_t kCompressedHeaderSize = 0x48000;
-    zx_status_t status = io_buffer_init_aligned(
-        &frame->compressed_header, owner_->bti(), kCompressedHeaderSize, 16,
+    zx_status_t status = owner_->AllocateIoBuffer(
+        &frame->compressed_header, kCompressedHeaderSize, 16,
         IO_BUFFER_CONTIG | IO_BUFFER_RW);
     if (status != ZX_OK) {
       DECODE_ERROR("Alloc buffer error: %d\n", status);
@@ -580,6 +938,7 @@ zx_status_t Vp9Decoder::AllocateFrames() {
     }
     io_buffer_cache_flush_invalidate(&frame->compressed_header, 0,
                                      kCompressedHeaderSize);
+    frame->index = i;
     frames_.push_back(std::move(frame));
   }
 
@@ -587,8 +946,11 @@ zx_status_t Vp9Decoder::AllocateFrames() {
 }
 
 void Vp9Decoder::InitializeHardwarePictureList() {
+  // Signal autoincrementing writes to table.
   HevcdMppAnc2AxiTblConfAddr::Get()
-      .FromValue((1 << 1) | (1 << 2))
+      .FromValue(0)
+      .set_bit1(1)
+      .set_bit2(1)
       .WriteTo(owner_->dosbus());
 
   // This table maps "canvas" indices to the compressed headers of reference
@@ -602,8 +964,10 @@ void Vp9Decoder::InitializeHardwarePictureList() {
 
   HevcdMppAnc2AxiTblConfAddr::Get().FromValue(1).WriteTo(owner_->dosbus());
 
-  // Set all reference picture canvas indices to 0.
-  HevcdMppAncCanvasAccconfigAddr::Get().FromValue(1).WriteTo(owner_->dosbus());
+  // Set all reference picture canvas indices to 0 - do an autoincrementing
+  // write.
+  HevcdMppAncCanvasAccconfigAddr::Get().FromValue(0).set_bit0(1).WriteTo(
+      owner_->dosbus());
   for (uint32_t i = 0; i < 32; ++i) {
     HevcdMppAncCanvasDataAddr::Get().FromValue(0).WriteTo(owner_->dosbus());
   }
@@ -647,12 +1011,34 @@ void Vp9Decoder::InitializeParser() {
 
   HevcStreamSwapTest::Get().FromValue(0).WriteTo(owner_->dosbus());
   enum DecodeModes {
-    kDecodeModeSingle =
-        (0x80 << 24),  // One decoder, instead of multiple at a time.
+    kDecodeModeSingle = (0x80 << 24) | 0,
+    kDecodeModeMultiStreamBased = (0x80 << 24) | 1,
+    kDecodeModeMultiFrameBased = (0x80 << 24) | 2,
   };
-  DecodeMode::Get().FromValue(kDecodeModeSingle).WriteTo(owner_->dosbus());
-  HevcDecodeSize::Get().FromValue(0).WriteTo(owner_->dosbus());
-  HevcDecodeCount::Get().FromValue(0).WriteTo(owner_->dosbus());
+  uint32_t decode_mode;
+  switch (input_type_) {
+    case InputType::kSingleStream:
+      decode_mode = kDecodeModeSingle;
+      break;
+    case InputType::kMultiStream:
+      decode_mode = kDecodeModeMultiStreamBased;
+      break;
+    case InputType::kMultiFrameBased:
+      decode_mode = kDecodeModeMultiFrameBased;
+      break;
+  }
+  DecodeMode::Get().FromValue(decode_mode).WriteTo(owner_->dosbus());
+  if (input_type_ == InputType::kSingleStream) {
+    HevcDecodeSize::Get().FromValue(0).WriteTo(owner_->dosbus());
+    HevcDecodeCount::Get().FromValue(0).WriteTo(owner_->dosbus());
+  } else {
+    HevcDecodeSize::Get()
+        .FromValue(frame_data_provider_->GetInputDataSize())
+        .WriteTo(owner_->dosbus());
+    HevcDecodeCount::Get()
+        .FromValue(decoded_frame_count_)
+        .WriteTo(owner_->dosbus());
+  }
 
   HevcParserCmdWrite::Get().FromValue(1 << 16).WriteTo(owner_->dosbus());
 

@@ -10,6 +10,7 @@
 
 #include "garnet/lib/ui/gfx/resources/resource.h"
 #include "garnet/lib/ui/gfx/swapchain/swapchain.h"
+#include "lib/fxl/memory/weak_ptr.h"
 
 namespace escher {
 class Escher;
@@ -20,6 +21,7 @@ class PaperRenderer;
 class Semaphore;
 class ShadowMapRenderer;
 class Stage;
+using EscherWeakPtr = fxl::WeakPtr<Escher>;
 using FramePtr = fxl::RefPtr<Frame>;
 using ImagePtr = fxl::RefPtr<Image>;
 using SemaphorePtr = fxl::RefPtr<Semaphore>;
@@ -28,14 +30,16 @@ class PoseBufferLatchingShader;
 }
 }  // namespace escher
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
+class Compositor;
 class FrameTimings;
 class Layer;
 class LayerStack;
 class Scene;
 class Swapchain;
+using CompositorPtr = fxl::RefPtr<Compositor>;
 using FrameTimingsPtr = fxl::RefPtr<FrameTimings>;
 using LayerStackPtr = fxl::RefPtr<LayerStack>;
 
@@ -44,6 +48,10 @@ using LayerStackPtr = fxl::RefPtr<LayerStack>;
 class Compositor : public Resource {
  public:
   static const ResourceTypeInfo kTypeInfo;
+
+  // TODO(SCN-452): there is currently no way to create/attach a display, so
+  // this compositor will never render anything.
+  static CompositorPtr New(Session* session, ResourceId id);
 
   ~Compositor() override;
 
@@ -74,13 +82,16 @@ class Compositor : public Resource {
   std::pair<uint32_t, uint32_t> GetBottomLayerSize() const;
   int GetNumDrawableLayers() const;
 
+  // | Resource |
+  void Accept(class ResourceVisitor* visitor) override;
+
  protected:
   // Returns the list of drawable layers from the layer stack.
   std::vector<Layer*> GetDrawableLayers() const;
 
-  escher::Escher* escher() const { return escher_; }
+  escher::Escher* escher() const { return escher_.get(); }
 
-  Compositor(Session* session, scenic::ResourceId id,
+  Compositor(Session* session, ResourceId id,
              const ResourceTypeInfo& type_info,
              std::unique_ptr<Swapchain> swapchain);
 
@@ -101,7 +112,7 @@ class Compositor : public Resource {
                  const escher::ImagePtr& output_image,
                  const escher::Model* overlay_model);
 
-  escher::Escher* const escher_;
+  const escher::EscherWeakPtr escher_;
   std::unique_ptr<Swapchain> swapchain_;
   LayerStackPtr layer_stack_;
   std::unique_ptr<escher::hmd::PoseBufferLatchingShader>
@@ -111,6 +122,6 @@ class Compositor : public Resource {
 };
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_RESOURCES_COMPOSITOR_COMPOSITOR_H_

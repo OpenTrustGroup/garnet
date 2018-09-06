@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_WLAN_WLAN_DEVICE_H_
+#define GARNET_DRIVERS_WLAN_WLAN_DEVICE_H_
 
+#include "minstrel.h"
 #include "proxy_helpers.h"
 
 #include <ddk/driver.h>
@@ -22,6 +24,8 @@
 #include <mutex>
 #include <thread>
 
+#include "lib/svc/cpp/services.h"
+
 typedef struct zx_port_packet zx_port_packet_t;
 
 namespace wlan {
@@ -30,7 +34,8 @@ class Timer;
 
 class Device : public DeviceInterface {
    public:
-    Device(zx_device_t* device, wlanmac_protocol_t wlanmac_proto);
+    Device(zx_device_t* device, wlanmac_protocol_t wlanmac_proto,
+           std::shared_ptr<component::Services> services);
     ~Device();
 
     zx_status_t Bind();
@@ -48,6 +53,8 @@ class Device : public DeviceInterface {
     void WlanmacRecv(uint32_t flags, const void* data, size_t length, wlan_rx_info_t* info);
     void WlanmacCompleteTx(wlan_tx_packet_t* pkt, zx_status_t status);
     void WlanmacIndication(uint32_t ind);
+    void WlanmacReportTxStatus(const wlan_tx_status_t* tx_status);
+    void WlanmacHwScanComplete(const wlan_hw_scan_result_t* result);
 
     // ddk ethmac_protocol_ops methods
     zx_status_t EthmacQuery(uint32_t options, ethmac_info_t* info);
@@ -67,6 +74,8 @@ class Device : public DeviceInterface {
     zx_status_t EnableBeaconing(bool enabled) override final;
     zx_status_t ConfigureBeacon(fbl::unique_ptr<Packet> beacon) override final;
     zx_status_t SetKey(wlan_key_config_t* key_config) override final;
+    zx_status_t StartHwScan(const wlan_hw_scan_config_t* scan_config) override final;
+    zx_status_t ConfigureAssoc(wlan_assoc_ctx_t* assoc_ctx) override final;
     fbl::RefPtr<DeviceState> GetState() override final;
     const wlanmac_info_t& GetWlanInfo() const override final;
 
@@ -75,6 +84,8 @@ class Device : public DeviceInterface {
         kShutdown,
         kPacketQueued,
         kIndication,
+        kReportTxStatus,
+        kHwScanComplete,
     };
 
     zx_status_t AddWlanDevice();
@@ -94,10 +105,17 @@ class Device : public DeviceInterface {
     void MainLoop();
     void ProcessChannelPacketLocked(const zx_port_packet_t& pkt) __TA_REQUIRES(lock_);
     zx_status_t RegisterChannelWaitLocked() __TA_REQUIRES(lock_);
+    // Queue a packet that does not contain user data, either there is no user data or user data is
+    // too large and needs to be enqueued into packet_queue_ separately.
     zx_status_t QueueDevicePortPacket(DevicePacket id, uint32_t status = 0);
+    // Queue a packet that contains a small amount of data (<= 32 bytes) as a user packet.
+    zx_status_t QueueDevicePortPacketUser(DevicePacket id, zx_packet_user_t user_pkt = {});
 
     zx_status_t GetChannel(zx::channel* out) __TA_EXCLUDES(lock_);
+
     void SetStatusLocked(uint32_t status);
+    zx_status_t CreateMinstrel();
+    void AddMinstrelPeer(const wlan_assoc_ctx_t& assoc_ctx);
 
     zx_device_t* parent_;
     zx_device_t* zxdev_;
@@ -113,6 +131,10 @@ class Device : public DeviceInterface {
     std::thread work_thread_;
     zx::port port_;
 
+    fbl::unique_ptr<MinstrelRateSelector> minstrel_;
+
+    std::shared_ptr<component::Services> services_;
+
     fbl::unique_ptr<Dispatcher> dispatcher_ __TA_GUARDED(lock_);
 
     bool dead_ __TA_GUARDED(lock_) = false;
@@ -122,4 +144,8 @@ class Device : public DeviceInterface {
     PacketQueue packet_queue_ __TA_GUARDED(packet_queue_lock_);
 };
 
+zx_status_t ValidateWlanMacInfo(const wlanmac_info& wlanmac_info);
+
 }  // namespace wlan
+
+#endif  // GARNET_DRIVERS_WLAN_WLAN_DEVICE_H_

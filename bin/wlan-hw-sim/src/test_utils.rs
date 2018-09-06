@@ -2,14 +2,30 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use async::{self, TimeoutExt};
-use wlantap;
-use futures::prelude::*;
-use futures::channel::mpsc;
-use std::sync::Arc;
-use wlantap_client::Wlantap;
-use zx::{self, prelude::*};
-use futures::task::Context;
+use {
+    fidl_fuchsia_wlan_tap as wlantap,
+    fuchsia_async::{
+        self as fasync,
+        TimeoutExt,
+        temp::TempStreamExt
+    },
+    fuchsia_zircon::{
+        self as zx,
+        prelude::*
+    },
+    futures::{
+        channel::mpsc,
+        prelude::*,
+        ready,
+        task::Context,
+    },
+    std::{
+        marker::Unpin,
+        mem::PinMut,
+        sync::Arc,
+    },
+    wlantap_client::Wlantap,
+};
 
 type EventStream = wlantap::WlantapPhyEventStream;
 
@@ -19,33 +35,41 @@ pub struct TestHelper {
     event_stream: Option<EventStream>,
 }
 
-struct TestHelperFuture<F: Future, H>
-    where H: FnMut(wlantap::WlantapPhyEvent) -> ()
+struct TestHelperFuture<F, H>
+where
+    F: Future + Unpin,
+    H: FnMut(wlantap::WlantapPhyEvent),
 {
     event_stream: Option<EventStream>,
     event_handler: H,
     main_future: F,
 }
 
-impl<F: Future, H> Future for TestHelperFuture<F, H>
-    where H: FnMut(wlantap::WlantapPhyEvent) -> ()
-{
-    type Item = (F::Item, EventStream);
-    type Error = (F::Error, EventStream);
+impl<F, H> Unpin for TestHelperFuture<F, H>
+where
+    F: Future + Unpin,
+    H: FnMut(wlantap::WlantapPhyEvent),
+{}
 
-    fn poll(&mut self, cx: &mut Context) -> Poll<(F::Item, EventStream), (F::Error, EventStream)> {
-        match self.main_future.poll(cx) {
-            Err(e) => Err((e, self.event_stream.take().unwrap())),
-            Ok(Async::Ready(item)) => Ok(Async::Ready((item, self.event_stream.take().unwrap()))),
-            Ok(Async::Pending) => {
-                let stream = self.event_stream.as_mut().unwrap();
+impl<T, E, F, H> Future for TestHelperFuture<F, H>
+where
+    F: Future<Output = Result<T, E>> + Unpin,
+    H: FnMut(wlantap::WlantapPhyEvent),
+{
+    type Output = Result<(T, EventStream), (E, EventStream)>;
+
+    fn poll(mut self: PinMut<Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let this = &mut *self;
+        match this.main_future.poll_unpin(cx) {
+            Poll::Ready(Err(e)) => Poll::Ready(Err((e, this.event_stream.take().unwrap()))),
+            Poll::Ready(Ok(item)) => Poll::Ready(Ok((item, this.event_stream.take().unwrap()))),
+            Poll::Pending => {
+                let stream = this.event_stream.as_mut().unwrap();
                 loop {
-                    match stream.poll_next(cx) {
-                        Err(e) => panic!("WlantapPhy event stream returned an error: {:?}", e),
-                        Ok(Async::Ready(None)) => panic!("Unexpected end of the WlantapPhy event stream"),
-                        Ok(Async::Ready(Some(event))) => (self.event_handler)(event),
-                        Ok(Async::Pending) => return Ok(Async::Pending),
-                    }
+                    let event = ready!(stream.poll_next_unpin(cx))
+                        .expect("Unexpected end of the WlantapPhy event stream")
+                        .expect("WlantapPhy event stream returned an error");
+                    (this.event_handler)(event);
                 }
             }
         }
@@ -53,7 +77,7 @@ impl<F: Future, H> Future for TestHelperFuture<F, H>
 }
 
 impl TestHelper {
-    pub fn begin_test(exec: &mut async::Executor,
+    pub fn begin_test(exec: &mut fasync::Executor,
                       config: wlantap::WlantapPhyConfig) -> Self {
         let wlantap = Wlantap::open().expect("Failed to open wlantapctl");
         let proxy = wlantap.create_phy(config).expect("Failed to create wlantap PHY");
@@ -67,9 +91,9 @@ impl TestHelper {
         helper
     }
 
-    fn wait_for_wlanmac_start(&mut self, exec: &mut async::Executor) {
+    fn wait_for_wlanmac_start(&mut self, exec: &mut fasync::Executor) {
         let (mut sender, receiver) = mpsc::channel::<()>(1);
-        self.run(exec, 2.seconds(), "receive a WlanmacStart event",
+        self.run(exec, 5.seconds(), "receive a WlanmacStart event",
             move |event| {
                 match event {
                     wlantap::WlantapPhyEvent::WlanmacStart{ .. } => {
@@ -78,27 +102,29 @@ impl TestHelper {
                     _ => {}
                 }
             },
-            receiver.next()
-        ).unwrap();
+            receiver.map(Ok).try_into_future()
+        ).unwrap_or_else(|()| unreachable!());
     }
 
     pub fn proxy(&self) -> Arc<wlantap::WlantapPhyProxy> {
         self.proxy.clone()
     }
 
-    pub fn run<F: Future, H>(&mut self, exec: &mut async::Executor, timeout: zx::Duration,
+    pub fn run<T, E, F, H>(&mut self, exec: &mut fasync::Executor, timeout: zx::Duration,
                              context: &str, event_handler: H, future: F)
-        -> Result<F::Item, F::Error>
-        where H: FnMut(wlantap::WlantapPhyEvent) -> ()
+        -> Result<T, E>
+    where
+        H: FnMut(wlantap::WlantapPhyEvent),
+        F: Future<Output = Result<T, E>> + Unpin,
     {
         let res = exec.run_singlethreaded(
-            TestHelperFuture{
+            TestHelperFuture {
                 event_stream: Some(self.event_stream.take().unwrap()),
                 event_handler,
-                main_future: future
+                main_future: future,
             }
             .on_timeout(timeout.after_now(),
-                        || panic!("Did not complete in time: {}", context)).unwrap());
+                        || panic!("Did not complete in time: {}", context)));
         match res {
             Ok((item, stream)) => {
                 self.event_stream = Some(stream);

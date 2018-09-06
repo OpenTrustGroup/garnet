@@ -4,8 +4,10 @@
 
 //! Type-safe bindings for Zircon vmar objects.
 
-use {ok, sys};
-use {AsHandleRef, Handle, HandleBased, HandleRef, Status, Unowned, Vmo};
+use bitflags::{__bitflags, __impl_bitflags, bitflags};
+use crate::ok;
+use crate::{AsHandleRef, Handle, HandleBased, HandleRef, Status, Unowned, Vmo};
+use fuchsia_zircon_sys as sys;
 
 /// An object representing a Zircon
 /// [virtual memory address region](https://fuchsia.googlesource.com/zircon/+/master/docs/objects/vm_address_region.md).
@@ -30,7 +32,7 @@ impl Vmar {
         let mut mapped = 0;
         let mut handle = 0;
         let status = unsafe {
-            sys::zx_vmar_allocate(
+            sys::zx_vmar_allocate_old(
                 self.raw_handle(),
                 offset,
                 size,
@@ -63,7 +65,7 @@ impl Vmar {
         flags: VmarFlagsExtended,
     ) -> Result<usize, Status> {
         let mut mapped = 0;
-        let status = sys::zx_vmar_map(
+        let status = sys::zx_vmar_map_old(
             self.0.raw_handle(),
             vmar_offset,
             vmo.raw_handle(),
@@ -80,7 +82,7 @@ impl Vmar {
     }
 
     pub unsafe fn protect(&self, addr: usize, len: usize, flags: VmarFlags) -> Result<(), Status> {
-        ok(sys::zx_vmar_protect(self.raw_handle(), addr, len, flags.bits()))
+        ok(sys::zx_vmar_protect_old(self.raw_handle(), addr, len, flags.bits()))
     }
 
     pub unsafe fn destroy(&self) -> Result<(), Status> {
@@ -94,15 +96,17 @@ bitflags! {
     /// Flags to VMAR routines which are considered safe.
     #[repr(transparent)]
     pub struct VmarFlags: u32 {
-        const PERM_READ          = sys::ZX_VM_FLAG_PERM_READ;
-        const PERM_WRITE         = sys::ZX_VM_FLAG_PERM_WRITE;
-        const PERM_EXECUTE       = sys::ZX_VM_FLAG_PERM_EXECUTE;
-        const COMPACT            = sys::ZX_VM_FLAG_COMPACT;
-        const SPECIFIC           = sys::ZX_VM_FLAG_SPECIFIC;
-        const CAN_MAP_SPECIFIC   = sys::ZX_VM_FLAG_CAN_MAP_SPECIFIC;
-        const CAN_MAP_READ       = sys::ZX_VM_FLAG_CAN_MAP_READ;
-        const CAN_MAP_WRITE      = sys::ZX_VM_FLAG_CAN_MAP_WRITE;
-        const CAN_MAP_EXECUTE    = sys::ZX_VM_FLAG_CAN_MAP_EXECUTE;
+        const PERM_READ             = sys::ZX_VM_FLAG_PERM_READ;
+        const PERM_WRITE            = sys::ZX_VM_FLAG_PERM_WRITE;
+        const PERM_EXECUTE          = sys::ZX_VM_FLAG_PERM_EXECUTE;
+        const COMPACT               = sys::ZX_VM_FLAG_COMPACT;
+        const SPECIFIC              = sys::ZX_VM_FLAG_SPECIFIC;
+        const CAN_MAP_SPECIFIC      = sys::ZX_VM_FLAG_CAN_MAP_SPECIFIC;
+        const CAN_MAP_READ          = sys::ZX_VM_FLAG_CAN_MAP_READ;
+        const CAN_MAP_WRITE         = sys::ZX_VM_FLAG_CAN_MAP_WRITE;
+        const CAN_MAP_EXECUTE       = sys::ZX_VM_FLAG_CAN_MAP_EXECUTE;
+        const MAP_RANGE             = sys::ZX_VM_FLAG_MAP_RANGE;
+        const REQUIRE_NON_RESIZABLE = sys::ZX_VM_FLAG_REQUIRE_NON_RESIZABLE;
     }
 }
 

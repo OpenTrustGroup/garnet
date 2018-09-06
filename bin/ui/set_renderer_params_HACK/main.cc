@@ -5,10 +5,10 @@
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/zx/channel.h>
 
-#include <fuchsia/ui/views_v1/cpp/fidl.h>
 #include <fuchsia/ui/policy/cpp/fidl.h>
+#include <fuchsia/ui/viewsv1/cpp/fidl.h>
 #include "garnet/bin/ui/root_presenter/renderer_params.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/log_settings_command_line.h"
 #include "lib/fxl/logging.h"
@@ -45,17 +45,22 @@ int main(int argc, const char** argv) {
     renderer_params.push_back(std::move(param));
   }
 
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
-  auto startup_context_ = fuchsia::sys::StartupContext::CreateFromStartupInfo();
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
+  auto startup_context_ = component::StartupContext::CreateFromStartupInfo();
 
   // Ask the presenter to change renderer params.
   auto presenter =
-      startup_context_->ConnectToEnvironmentService<fuchsia::ui::policy::Presenter>();
+      startup_context_
+          ->ConnectToEnvironmentService<fuchsia::ui::policy::Presenter>();
+  presenter.set_error_handler([&loop] {
+    FXL_LOG(INFO) << "Lost connection to Presenter service.";
+    loop.Quit();
+  });
   presenter->HACK_SetRendererParams(clipping_enabled,
                                     std::move(renderer_params));
 
   // Done!
-  async::PostTask(loop.async(), [&loop] { loop.Quit(); });
+  async::PostTask(loop.dispatcher(), [&loop] { loop.Quit(); });
   loop.Run();
   return 0;
 }

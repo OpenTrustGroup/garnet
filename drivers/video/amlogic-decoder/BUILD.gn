@@ -19,10 +19,16 @@ driver_module("amlogic_decoder") {
     testonly = true
     deps += [ ":tests" ]
   }
+
+  configs -= [ "//build/config/fuchsia:no_cpp_standard_library" ]
+  configs += [ "//build/config/fuchsia:static_cpp_standard_library" ]
 }
 
 config("sources_include_config") {
   include_dirs = [ "." ]
+  if (amlogic_decoder_tests) {
+    include_dirs += [ "./tests/integration/test_data_headers" ]
+  }
 }
 
 source_set("test_support") {
@@ -57,6 +63,8 @@ source_set("sources") {
     "macros.h",
     "mpeg12_decoder.cc",
     "mpeg12_decoder.h",
+    "pts_manager.cc",
+    "pts_manager.h",
     "registers.h",
     "vdec1.cc",
     "vdec1.h",
@@ -67,14 +75,31 @@ source_set("sources") {
     "vp9_decoder.h",
 
     # CodecFactory+Codec interface handling:
+    "codec_adapter.cc",
+    "codec_adapter.h",
+    "codec_adapter_events.cc",
+    "codec_adapter_events.h",
+    "codec_adapter_h264.cc",
+    "codec_adapter_h264.h",
+    "codec_adapter_mpeg2.cc",
+    "codec_adapter_mpeg2.h",
+    "codec_admission_control.cc",
+    "codec_admission_control.h",
+    "codec_buffer.cc",
+    "codec_buffer.h",
     "codec_impl.cc",
     "codec_impl.h",
+    "codec_input_item.cc",
+    "codec_input_item.h",
+    "codec_packet.cc",
+    "codec_packet.h",
     "device_fidl.cc",
     "device_fidl.h",
     "local_codec_factory.cc",
     "local_codec_factory.h",
   ]
   public_deps = [
+    "//zircon/public/lib/async-cpp",
     "//zircon/public/lib/async-loop-cpp",
     "//zircon/public/lib/ddk",
     "//zircon/public/lib/driver",
@@ -85,9 +110,9 @@ source_set("sources") {
   deps = [
     ":test_support",
     "third_party/libvpx",
+    "//garnet/public/fidl/fuchsia.mediacodec",
     "//garnet/public/lib/fidl/cpp",
     "//garnet/public/lib/fxl",
-    "//garnet/public/lib/media/fidl:media_codec",
   ]
   if (amlogic_decoder_tests) {
     testonly = true
@@ -102,8 +127,8 @@ source_set("tests") {
   deps = [
     ":sources",
     ":test_support",
+    "//garnet/public/fidl/fuchsia.mediacodec",
     "//garnet/public/lib/fxl",
-    "//garnet/public/lib/media/fidl:media_codec",
     "//third_party/googletest:gtest",
   ]
   sources = [
@@ -112,6 +137,7 @@ source_set("tests") {
     "tests/integration/test_vp9.cc",
     "tests/test_support.cc",
     "tests/unit_tests/test_binding.cc",
+    "tests/unit_tests/test_vp9.cc",
   ]
 }
 
@@ -124,28 +150,63 @@ copy("video-ucode") {
   ]
 }
 
+copy("test_files") {
+  sources = [
+    "//garnet/test_data/media/third_party/chromium_media_test_data/bear.h264",
+    "//garnet/test_data/media/third_party/chromium_media_test_data/test-25fps.h264",
+    "//garnet/test_data/media/third_party/chromium_media_test_data/test-25fps.vp9",
+    "//garnet/test_data/media/third_party/chromium_media_test_data/test-25fps.vp9_2",
+  ]
+  outputs = [
+    "$root_out_dir/firmware/video_test_data/{{source_file_part}}",
+  ]
+}
+
 package("amlogic_video_decoder") {
   deprecated_system_image = true
 
-  if (amlogic_decoder_tests) {
-    testonly = true
+  if (target_cpu == "arm64") {
+    if (amlogic_decoder_tests) {
+      testonly = true
+    }
+
+    deps = [
+      ":amlogic_decoder",
+      ":video-ucode($shlib_toolchain)",
+    ]
+
+    drivers = [
+      {
+        name = "amlogic_video_decoder.so"
+      },
+    ]
+    libraries = [
+      {
+        name = "firmware/amlogic_video_ucode.bin"
+      },
+    ]
+
+    if (amlogic_decoder_tests) {
+      deps += [ ":test_files($shlib_toolchain)" ]
+
+      # The test data is stored as a firmware file, because that's the only way
+      # that a file can be read from a driver.
+      libraries += [
+        {
+          name = "firmware/video_test_data/bear.h264"
+        },
+        {
+          name = "firmware/video_test_data/test-25fps.h264"
+        },
+        {
+          name = "firmware/video_test_data/test-25fps.vp9"
+        },
+        {
+          name = "firmware/video_test_data/test-25fps.vp9_2"
+        },
+      ]
+    }
   }
-
-  deps = [
-    ":amlogic_decoder",
-    ":video-ucode($shlib_toolchain)",
-  ]
-
-  drivers = [
-    {
-      name = "amlogic_video_decoder.so"
-    },
-  ]
-  libraries = [
-    {
-      name = "firmware/amlogic_video_ucode.bin"
-    },
-  ]
 }
 
 #
@@ -158,8 +219,8 @@ executable("test_amlogic_codec_factory") {
     "tests/manual/test_amlogic_codec_factory.cc",
   ]
   deps = [
-    "//garnet/public/lib/app/cpp",
-    "//garnet/public/lib/media/fidl:media_codec",
+    "//garnet/public/fidl/fuchsia.mediacodec",
+    "//garnet/public/lib/component/cpp",
     "//zircon/public/lib/async-loop-cpp",
   ]
 }
@@ -167,7 +228,6 @@ executable("test_amlogic_codec_factory") {
 package("test_amlogic_codec_factory_package") {
   # TODO(dustingreen): Do we need deprecated_system_image to be able to run a
   # test manually from fx shell?
-  deprecated_system_image = true
   testonly = true
   deps = [
     ":test_amlogic_codec_factory",

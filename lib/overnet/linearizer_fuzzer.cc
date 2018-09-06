@@ -14,7 +14,8 @@ class InputStream {
       : cur_(data), end_(data + size) {}
 
   uint8_t NextByte() {
-    if (cur_ == end_) return 0;
+    if (cur_ == end_)
+      return 0;
     return *cur_++;
   }
 
@@ -60,8 +61,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     } else {
       uint8_t len = op - 2;
       assert(len >= 1);
+      bool eom = (len & 1) != 0;
+      len >>= 1;
       uint16_t offset = input.NextShort();
-      fuzzer.Push(offset, len, input.Block(len));
+      fuzzer.Push(offset, len, eom, input.Block(len));
     }
   }
 }

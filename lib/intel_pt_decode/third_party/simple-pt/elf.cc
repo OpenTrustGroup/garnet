@@ -46,15 +46,13 @@
 
 namespace simple_pt {
 
-using namespace debugserver;
-
 // Read in the symbol table(s) of |elf|.
 // |base| is the address at which the file was loaded, and |len|
 // is the length of the text segment.
 // |offset| is the different between where the file was actually
 // loaded (|base|) and address recorded in the file.
 
-static bool ReadSymtabs(elf::Reader* elf,
+static bool ReadSymtabs(debugger_utils::ElfReader* elf,
                         uint64_t cr3,
                         uint64_t base,
                         uint64_t len,
@@ -64,10 +62,10 @@ static bool ReadSymtabs(elf::Reader* elf,
                         std::unique_ptr<SymbolTable>* out_dynsym) {
   size_t num_sections = elf->GetNumSections();
 
-  elf::Error rc = elf->ReadSectionHeaders();
-  if (rc != elf::Error::OK) {
+  debugger_utils::ElfError rc = elf->ReadSectionHeaders();
+  if (rc != debugger_utils::ElfError::OK) {
     FXL_LOG(ERROR) << "Error reading ELF section headers: "
-                   << elf::ErrorName(rc);
+                   << ElfErrorName(rc);
     return false;
   }
 
@@ -75,7 +73,7 @@ static bool ReadSymtabs(elf::Reader* elf,
   std::unique_ptr<SymbolTable> dynsym;
 
   for (size_t i = 0; i < num_sections; ++i) {
-    const elf::SectionHeader& shdr = elf->GetSectionHeader(i);
+    const debugger_utils::ElfSectionHeader& shdr = elf->GetSectionHeader(i);
     SymbolTable* st;
     switch (shdr.sh_type) {
       case SHT_SYMTAB:
@@ -99,7 +97,7 @@ static bool ReadSymtabs(elf::Reader* elf,
     size_t num_symbols = st->num_symbols();
     uint64_t end = 0;
     for (size_t j = 0; j < num_symbols; j++) {
-      const debugserver::elf::Symbol& sym = st->GetSymbol(j);
+      const debugger_utils::ElfSymbol& sym = st->GetSymbol(j);
       if (end < sym.addr + sym.size)
         end = sym.addr + sym.size;
     }
@@ -125,13 +123,13 @@ static bool ReadSymtabs(elf::Reader* elf,
 // Find the base address, length, and file offset of the text segment
 // of a non-PIC ELF.
 
-static void FindBaseLenFileoff(elf::Reader* elf,
+static void FindBaseLenFileoff(debugger_utils::ElfReader* elf,
                                uint64_t* base,
                                uint64_t* len,
                                uint64_t* fileoff) {
   size_t num_segments = elf->GetNumSegments();
   for (size_t i = 0; i < num_segments; ++i) {
-    const elf::SegmentHeader& phdr = elf->GetSegmentHeader(i);
+    const debugger_utils::ElfSegmentHeader& phdr = elf->GetSegmentHeader(i);
     if (phdr.p_type == PT_LOAD && (phdr.p_flags & PF_X) != 0) {
       *base = phdr.p_vaddr;
       *len = phdr.p_memsz;
@@ -144,7 +142,7 @@ static void FindBaseLenFileoff(elf::Reader* elf,
 // Given a potential PIC ELF loaded at |base|, compute the offset from where
 // the file says segments are loaded to where they were actually loaded.
 
-static void FindOffset(elf::Reader* elf, uint64_t base, uint64_t* offset) {
+static void FindOffset(debugger_utils::ElfReader* elf, uint64_t base, uint64_t* offset) {
   uint64_t minaddr = UINT64_MAX;
 
   if (!base) {
@@ -154,7 +152,7 @@ static void FindOffset(elf::Reader* elf, uint64_t base, uint64_t* offset) {
 
   size_t num_segments = elf->GetNumSegments();
   for (size_t i = 0; i < num_segments; ++i) {
-    const elf::SegmentHeader& phdr = elf->GetSegmentHeader(i);
+    const debugger_utils::ElfSegmentHeader& phdr = elf->GetSegmentHeader(i);
     if (phdr.p_type == PT_LOAD && phdr.p_vaddr < minaddr) {
       minaddr = phdr.p_vaddr;
     }
@@ -169,7 +167,7 @@ static void FindOffset(elf::Reader* elf, uint64_t base, uint64_t* offset) {
   *offset = base - minaddr;
 }
 
-static void AddProgbits(elf::Reader* elf,
+static void AddProgbits(debugger_utils::ElfReader* elf,
                         struct pt_image* image,
                         const char* file_name,
                         uint64_t base,
@@ -179,7 +177,7 @@ static void AddProgbits(elf::Reader* elf,
                         uint64_t map_len) {
   size_t num_segments = elf->GetNumSegments();
   for (size_t i = 0; i < num_segments; ++i) {
-    const elf::SegmentHeader& phdr = elf->GetSegmentHeader(i);
+    const debugger_utils::ElfSegmentHeader& phdr = elf->GetSegmentHeader(i);
 
     if ((phdr.p_type == PT_LOAD) && (phdr.p_flags & PF_X) &&
         phdr.p_offset >= file_off &&
@@ -213,26 +211,26 @@ static void AddProgbits(elf::Reader* elf,
 }
 
 static bool ElfOpen(const char* file_name,
-                    std::unique_ptr<elf::Reader>* out_elf) {
+                    std::unique_ptr<debugger_utils::ElfReader>* out_elf) {
   int fd = open(file_name, O_RDONLY);
   if (fd < 0) {
-    FXL_LOG(ERROR) << file_name << ", " << util::ErrnoString(errno);
+    FXL_LOG(ERROR) << file_name << ", " << debugger_utils::ErrnoString(errno);
     return false;
   }
 
-  auto bb = std::shared_ptr<util::FileByteBlock>(new util::FileByteBlock(fd));
+  auto bb = std::shared_ptr<debugger_utils::FileByteBlock>(new debugger_utils::FileByteBlock(fd));
 
-  std::unique_ptr<elf::Reader> elf;
-  elf::Error rc = elf::Reader::Create(file_name, bb, 0, 0, &elf);
-  if (rc != elf::Error::OK) {
-    FXL_LOG(ERROR) << "Error creating ELF reader: " << elf::ErrorName(rc);
+  std::unique_ptr<debugger_utils::ElfReader> elf;
+  debugger_utils::ElfError rc = debugger_utils::ElfReader::Create(file_name, bb, 0, 0, &elf);
+  if (rc != debugger_utils::ElfError::OK) {
+    FXL_LOG(ERROR) << "Error creating ELF reader: " << debugger_utils::ElfErrorName(rc);
     return false;
   }
 
   rc = elf->ReadSegmentHeaders();
-  if (rc != elf::Error::OK) {
+  if (rc != debugger_utils::ElfError::OK) {
     FXL_LOG(ERROR) << "Error reading ELF segment headers: "
-                   << elf::ErrorName(rc);
+                   << ElfErrorName(rc);
     return false;
   }
 
@@ -245,12 +243,12 @@ bool ReadElf(const char* file_name, struct pt_image* image,
              uint64_t file_off, uint64_t map_len,
              std::unique_ptr<SymbolTable>* out_symtab,
              std::unique_ptr<SymbolTable>* out_dynsym) {
-  std::unique_ptr<elf::Reader> elf;
+  std::unique_ptr<debugger_utils::ElfReader> elf;
   if (!ElfOpen(file_name, &elf))
     return false;
 
   bool pic = false;
-  const elf::Header& hdr = elf->header();
+  const debugger_utils::ElfHeader& hdr = elf->header();
   pic = hdr.e_type == ET_DYN;
   if (pic && base == 0) {
     FXL_LOG(ERROR) << "PIC/PIE ELF with base 0 is not supported";
@@ -275,7 +273,7 @@ bool ReadNonPicElf(const char* file_name, pt_image* image,
                    uint64_t cr3, bool is_kernel,
                    std::unique_ptr<SymbolTable>* out_symtab,
                    std::unique_ptr<SymbolTable>* out_dynsym) {
-  std::unique_ptr<elf::Reader> elf;
+  std::unique_ptr<debugger_utils::ElfReader> elf;
   if (!ElfOpen(file_name, &elf))
     return false;
 

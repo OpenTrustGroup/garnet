@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <memory>
 
+#include "lib/component/cpp/environment_services_helper.h"
+
 extern "C" zx_status_t wlan_bind(void* ctx, zx_device_t* device) {
     std::printf("%s\n", __func__);
 
@@ -19,7 +21,9 @@ extern "C" zx_status_t wlan_bind(void* ctx, zx_device_t* device) {
         return ZX_ERR_INTERNAL;
     }
 
-    auto wlandev = std::make_unique<wlan::Device>(device, wlanmac_proto);
+    auto environment_services = component::GetEnvironmentServices();
+
+    auto wlandev = std::make_unique<wlan::Device>(device, wlanmac_proto, environment_services);
     auto status = wlandev->Bind();
     if (status != ZX_OK) {
         std::printf("wlan: could not bind: %d\n", status);

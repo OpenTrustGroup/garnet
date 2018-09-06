@@ -38,20 +38,19 @@ constexpr char kStopAck[] = "vStopped";
 }  // namespace
 
 RspServer::PendingNotification::PendingNotification(
-    const fxl::StringView& name,
-    const fxl::StringView& event,
+    const fxl::StringView& name, const fxl::StringView& event,
     const fxl::TimeDelta& timeout)
     : name(name.data(), name.size()),
       event(event.data(), event.size()),
       timeout(timeout) {}
 
 RspServer::RspServer(uint16_t port, zx_koid_t initial_attach_pid)
-  : ServerWithIO(util::GetRootJob(), util::GetDefaultJob()),
-    port_(port),
-    initial_attach_pid_(initial_attach_pid),
-    server_sock_(-1),
-    command_handler_(this) {
-}
+    : ServerWithIO(debugger_utils::GetRootJob(),
+                   debugger_utils::GetDefaultJob()),
+      port_(port),
+      initial_attach_pid_(initial_attach_pid),
+      server_sock_(-1),
+      command_handler_(this) {}
 
 bool RspServer::Run() {
   FXL_DCHECK(!io_loop_);
@@ -92,8 +91,8 @@ bool RspServer::Run() {
   // |client_sock_| should be ready to be consumed now.
   FXL_DCHECK(client_sock_.is_valid());
 
-  io_loop_ = std::make_unique<RspIOLoop>(client_sock_.get(), this,
-                                         &message_loop_);
+  io_loop_ =
+      std::make_unique<RspIOLoop>(client_sock_.get(), this, &message_loop_);
   io_loop_->Run();
 
   // Start the main loop.
@@ -168,7 +167,7 @@ bool RspServer::Listen() {
   fxl::UniqueFD server_sock(socket(AF_INET, SOCK_STREAM, 0));
   if (!server_sock.is_valid()) {
     FXL_LOG(ERROR) << "Failed to open socket"
-                   << ", " << util::ErrnoString(errno);
+                   << ", " << debugger_utils::ErrnoString(errno);
     return false;
   }
 
@@ -181,13 +180,13 @@ bool RspServer::Listen() {
 
   if (bind(server_sock.get(), (struct sockaddr*)&addr, sizeof(addr)) < 0) {
     FXL_LOG(ERROR) << "Failed to bind socket"
-                   << ", " << util::ErrnoString(errno);
+                   << ", " << debugger_utils::ErrnoString(errno);
     return false;
   }
 
   if (listen(server_sock.get(), 1) < 0) {
     FXL_LOG(ERROR) << "Listen failed"
-                   << ", " << util::ErrnoString(errno);
+                   << ", " << debugger_utils::ErrnoString(errno);
     return false;
   }
 
@@ -199,7 +198,7 @@ bool RspServer::Listen() {
       accept(server_sock.get(), (struct sockaddr*)&addr, &addrlen));
   if (!client_sock.is_valid()) {
     FXL_LOG(ERROR) << "Accept failed"
-                   << ", " << util::ErrnoString(errno);
+                   << ", " << debugger_utils::ErrnoString(errno);
     return false;
   }
 
@@ -225,7 +224,7 @@ void RspServer::PostWriteTask(bool notify, const fxl::StringView& data) {
 
   // Copy the data into a std::string to capture it in the closure.
   async::PostTask(
-      message_loop_.async(), [this, data = data.ToString(), notify] {
+      message_loop_.dispatcher(), [this, data = data.ToString(), notify] {
         int index = 0;
         out_buffer_[index++] = notify ? '%' : '$';
         memcpy(out_buffer_.data() + index, data.data(), data.size());
@@ -236,7 +235,7 @@ void RspServer::PostWriteTask(bool notify, const fxl::StringView& data) {
         for (uint8_t byte : data)
           checksum += byte;
 
-        util::EncodeByteString(checksum, out_buffer_.data() + index);
+        debugger_utils::EncodeByteString(checksum, out_buffer_.data() + index);
         index += 2;
 
         io_loop_->PostWriteTask(fxl::StringView(out_buffer_.data(), index));
@@ -274,7 +273,7 @@ void RspServer::PostNotificationTimeoutHandler() {
   // or until the notification is removed (say because the process exits).
   zx::duration delay =
       zx::nsec((pending_notification_->timeout).ToNanoseconds());
-  async::PostDelayedTask(message_loop_.async(),
+  async::PostDelayedTask(message_loop_.dispatcher(),
                          [this, pending = pending_notification_.get()] {
                            // If the notification that we set this timeout for
                            // has already been acknowledged by the remote, then
@@ -298,7 +297,7 @@ void RspServer::OnBytesRead(const fxl::StringView& bytes_read) {
     return;
 
   fxl::StringView packet_data;
-  bool verified = util::VerifyPacket(bytes_read, &packet_data);
+  bool verified = VerifyPacket(bytes_read, &packet_data);
 
   // Send acknowledgment back
   SendAck(verified);
@@ -365,8 +364,8 @@ void RspServer::OnIOError() {
   QuitMessageLoop(false);
 }
 
-void RspServer::OnThreadStarting(Process* process,
-                                 Thread* thread,
+void RspServer::OnThreadStarting(inferior_control::Process* process,
+                                 inferior_control::Thread* thread,
                                  const zx_exception_context_t& context) {
   FXL_DCHECK(process);
 
@@ -382,12 +381,12 @@ void RspServer::OnThreadStarting(Process* process,
   auto packet = stop_reply.Build();
 
   switch (process->state()) {
-    case Process::State::kStarting:
+    case inferior_control::Process::State::kStarting:
       // vRun receives a synchronous response. After that it's all asynchronous.
       PostPacketWriteTask(fxl::StringView(packet.data(), packet.size()));
-      process->set_state(Process::State::kRunning);
+      process->set_state(inferior_control::Process::State::kRunning);
       break;
-    case Process::State::kRunning:
+    case inferior_control::Process::State::kRunning:
       QueueStopNotification(fxl::StringView(packet.data(), packet.size()));
       break;
     default:
@@ -395,8 +394,8 @@ void RspServer::OnThreadStarting(Process* process,
   }
 }
 
-void RspServer::OnThreadExiting(Process* process,
-                                Thread* thread,
+void RspServer::OnThreadExiting(inferior_control::Process* process,
+                                inferior_control::Thread* thread,
                                 const zx_exception_context_t& context) {
   std::vector<char> packet;
   FXL_LOG(INFO) << "Thread " << thread->GetName() << " exited";
@@ -414,7 +413,7 @@ void RspServer::OnThreadExiting(Process* process,
   thread->ResumeForExit();
 }
 
-void RspServer::OnProcessExit(Process* process) {
+void RspServer::OnProcessExit(inferior_control::Process* process) {
   std::vector<char> packet;
   FXL_LOG(INFO) << "Process " << process->GetName() << " exited";
   SetCurrentThread(nullptr);
@@ -426,15 +425,13 @@ void RspServer::OnProcessExit(Process* process) {
 }
 
 void RspServer::OnArchitecturalException(
-    Process* process,
-    Thread* thread,
-    const zx_excp_type_t type,
-    const zx_exception_context_t& context) {
+    inferior_control::Process* process, inferior_control::Thread* thread,
+    const zx_excp_type_t type, const zx_exception_context_t& context) {
   ExceptionHelper(process, thread, type, context);
 }
 
-void RspServer::OnSyntheticException(Process* process,
-                                     Thread* thread,
+void RspServer::OnSyntheticException(inferior_control::Process* process,
+                                     inferior_control::Thread* thread,
                                      zx_excp_type_t type,
                                      const zx_exception_context_t& context) {
   // These are basically equivalent to architectural exceptions
@@ -442,8 +439,8 @@ void RspServer::OnSyntheticException(Process* process,
   ExceptionHelper(process, thread, type, context);
 }
 
-void RspServer::ExceptionHelper(Process* process,
-                                Thread* thread,
+void RspServer::ExceptionHelper(inferior_control::Process* process,
+                                inferior_control::Thread* thread,
                                 zx_excp_type_t type,
                                 const zx_exception_context_t& context) {
   FXL_DCHECK(process);
@@ -451,17 +448,17 @@ void RspServer::ExceptionHelper(Process* process,
 
   if (ZX_EXCP_IS_ARCH(type)) {
     FXL_VLOG(1) << "Architectural Exception: "
-                << util::ExceptionToString(type, context);
+                << debugger_utils::ExceptionToString(type, context);
   } else {
     FXL_VLOG(1) << "Synthetic Exception: "
-                << util::ExceptionToString(type, context);
+                << debugger_utils::ExceptionToString(type, context);
   }
 
   // TODO(armansito): Fine-tune this check if we ever support multi-processing.
   FXL_DCHECK(process == current_process());
 
-  arch::GdbSignal sigval = thread->GetGdbSignal();
-  if (sigval == arch::GdbSignal::kUnsupported) {
+  inferior_control::GdbSignal sigval = thread->GetGdbSignal();
+  if (sigval == inferior_control::GdbSignal::kUnsupported) {
     FXL_LOG(ERROR) << "Exception reporting not supported on current "
                    << "architecture!";
     return;
@@ -476,9 +473,9 @@ void RspServer::ExceptionHelper(Process* process,
 
   // Registers.
   if (thread->registers()->RefreshGeneralRegisters()) {
-    std::array<int, 3> regnos{{arch::GetFPRegisterNumber(),
-                               arch::GetSPRegisterNumber(),
-                               arch::GetPCRegisterNumber()}};
+    std::array<int, 3> regnos{{inferior_control::GetFPRegisterNumber(),
+                               inferior_control::GetSPRegisterNumber(),
+                               inferior_control::GetPCRegisterNumber()}};
     for (int regno : regnos) {
       FXL_DCHECK(regno < std::numeric_limits<uint8_t>::max() && regno >= 0);
       std::string regval = thread->registers()->GetRegisterAsString(regno);

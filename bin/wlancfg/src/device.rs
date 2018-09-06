@@ -2,15 +2,30 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use config::{self, Config};
-use fidl::{self, endpoints2::create_endpoints};
-use futures::prelude::*;
-use futures::{future, stream};
-use shim;
-use std::sync::Arc;
-use wlan;
-use wlan_service::{self, DeviceWatcherEvent, DeviceServiceProxy};
-use zx;
+use crate::{
+    config::{self, Config},
+    client,
+    known_ess_store::KnownEssStore,
+    shim,
+};
+
+use {
+    fidl::endpoints2::create_endpoints,
+    fidl_fuchsia_wlan_device as wlan,
+    fidl_fuchsia_wlan_device_service::{
+        self as wlan_service,
+        DeviceWatcherEvent,
+        DeviceServiceProxy
+    },
+    fuchsia_async::{self as fasync, temp::TempFutureExt},
+    fuchsia_zircon as zx,
+    futures::{
+        future,
+        prelude::*,
+        stream,
+    },
+    std::sync::Arc,
+};
 
 pub struct Listener {
     proxy: DeviceServiceProxy,
@@ -18,36 +33,36 @@ pub struct Listener {
     legacy_client: shim::ClientRef,
 }
 
-pub fn handle_event(listener: &Arc<Listener>, evt: DeviceWatcherEvent)
-    -> impl Future<Item = (), Error = fidl::Error>
+pub fn handle_event(listener: &Arc<Listener>, evt: DeviceWatcherEvent, ess_store: &Arc<KnownEssStore>)
+    -> impl Future<Output = ()>
 {
     println!("wlancfg got event: {:?}", evt);
     match evt {
         DeviceWatcherEvent::OnPhyAdded { phy_id } => on_phy_added(
-            listener, phy_id,
-            ).map_err(|e| e.never_into())
+                listener, phy_id,
+            )
             .left_future()
             .left_future(),
         DeviceWatcherEvent::OnPhyRemoved { phy_id } => on_phy_removed(
-            listener, phy_id,
-            ).map_err(|e| e.never_into())
+                listener, phy_id,
+            )
             .right_future()
             .left_future(),
         DeviceWatcherEvent::OnIfaceAdded { iface_id } => on_iface_added(
-            listener, iface_id,
-            ).map_err(|e| e.never_into())
+                listener, iface_id, Arc::clone(ess_store),
+            )
             .left_future()
             .right_future(),
         DeviceWatcherEvent::OnIfaceRemoved { iface_id } => on_iface_removed(
-            listener, iface_id,
-            ).map_err(|e| e.never_into())
+                listener, iface_id,
+            )
             .right_future()
             .right_future(),
     }
 }
 
 fn on_phy_added(listener: &Arc<Listener>, id: u16)
-    -> impl Future<Item = (), Error = Never>
+    -> impl Future<Output = ()>
 {
     println!("wlancfg: phy {} added", id);
 
@@ -58,30 +73,31 @@ fn on_phy_added(listener: &Arc<Listener>, id: u16)
         .and_then(move |resp| {
             let (status, query_resp) = resp;
             if let Err(e) = zx::Status::ok(status) {
-                println!("failed to query phy {}: {:?}", id, e);
-                return future::ok(()).left_future();
+                println!("wlancfg: failed to query phy {}: {:?}", id, e);
+                return future::ready(Ok(())).left_future();
             }
 
             let info = match query_resp {
                 Some(r) => r.info,
                 None => {
-                    println!("query_phy failed to return a a PhyInfo in the QueryPhyResponse");
-                    return future::ok(()).left_future();
+                    println!("wlancfg: query_phy failed to return a PhyInfo in the QueryPhyResponse");
+                    return future::ready(Ok(())).left_future();
                 }
             };
             let path = info.dev_path.unwrap_or("*".into());
+            println!("wlancfg: received a PhyInfo from phy #{}: path is {}", id, path);
             let roles_to_create = match listener_ref.config.roles_for_path(&path) {
                 Some(roles) => roles,
                 None => {
-                    println!("no matches for wlan phy {}", id);
-                    return future::ok(()).left_future();
+                    println!("wlancfg: no matches for wlan phy {}", id);
+                    return future::ready(Ok(())).left_future();
                 }
             };
 
             roles_to_create
                 .iter()
                 .map(|role: &config::Role| {
-                    println!("Creating {:?} iface for phy {}", role, id);
+                    println!("wlancfg: Creating {:?} iface for phy {}", role, id);
                     let mut req = wlan_service::CreateIfaceRequest {
                         phy_id: id,
                         role: wlan::MacRole::from(*role),
@@ -89,52 +105,53 @@ fn on_phy_added(listener: &Arc<Listener>, id: u16)
                     listener_ref
                         .proxy
                         .create_iface(&mut req)
-                        .map(|_| ())
-                        .recover(|e| eprintln!("error creating iface: {:?}", e))
+                        .map_ok(|_| ())
+                        .unwrap_or_else(|e| eprintln!("error creating iface: {:?}", e))
                 })
                 .collect::<stream::FuturesUnordered<_>>()
-                .for_each(|()| Ok(()))
-                .map(|_| ())
+                .collect::<()>()
+                .map(Ok)
                 .right_future()
         })
-        .recover(|e| println!("failure in on_phy_added: {:?}", e))
+        .unwrap_or_else(|e| println!("failure in on_phy_added: {:?}", e))
 }
 
 fn on_phy_removed(_listener: &Arc<Listener>, id: u16)
-    -> impl Future<Item = (), Error = Never>
+    -> impl Future<Output = ()>
 {
     println!("wlancfg: phy removed: {}", id);
-    future::ok(())
+    future::ready(())
 }
 
-fn on_iface_added(listener: &Arc<Listener>, iface_id: u16)
-    -> impl Future<Item = (), Error = Never>
+fn on_iface_added(listener: &Arc<Listener>, iface_id: u16, ess_store: Arc<KnownEssStore>)
+    -> impl Future<Output = ()>
 {
     let service = listener.proxy.clone();
     let legacy_client = listener.legacy_client.clone();
-    create_endpoints()
-        .into_future()
+    future::ready(create_endpoints())
         .and_then(move |(sme, remote)| {
             service.get_client_sme(iface_id, remote)
-                .map(move |status| {
+                .map_ok(move |status| {
                     if status == zx::sys::ZX_OK {
-                        let c = shim::Client { service, sme, iface_id };
-                        legacy_client.set_if_empty(c);
+                        let (c, fut) = client::new_client(iface_id, sme.clone(), ess_store);
+                        fasync::spawn(fut);
+                        let lc = shim::Client { service, client: c, sme, iface_id };
+                        legacy_client.set_if_empty(lc);
                     } else {
                         eprintln!("GetClientSme returned {}", zx::Status::from_raw(status));
                     }
                 })
         })
-        .recover(|e| eprintln!("Failed to get client SME: {}", e))
-        .inspect(move |()| println!("wlancfg: iface added: {}", iface_id))
+        .unwrap_or_else(|e| eprintln!("Failed to get client SME: {}", e))
+        .map(move |()| println!("wlancfg: iface added: {}", iface_id))
 }
 
 fn on_iface_removed(listener: &Arc<Listener>, id: u16)
-    -> impl Future<Item = (), Error = Never>
+    -> impl Future<Output = ()>
 {
     listener.legacy_client.remove_if_matching(id);
     println!("wlancfg: iface removed: {}", id);
-    future::ok(())
+    future::ready(())
 }
 
 impl Listener {

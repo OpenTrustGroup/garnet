@@ -19,15 +19,18 @@
 #include <zircon/processargs.h>
 #include <zircon/syscalls.h>
 
-#include "lib/app/cpp/environment_services.h"
+#include "lib/svc/cpp/services.h"
 
 namespace process {
 
-ProcessBuilder::ProcessBuilder() {
-  fuchsia::sys::ConnectToEnvironmentService(launcher_.NewRequest());
+ProcessBuilder::ProcessBuilder(std::shared_ptr<component::Services> services)
+    : services_(services) {
+  services_->ConnectToService(launcher_.NewRequest());
 }
 
-ProcessBuilder::ProcessBuilder(zx::job job) : ProcessBuilder() {
+ProcessBuilder::ProcessBuilder(zx::job job,
+                               std::shared_ptr<component::Services> services)
+    : ProcessBuilder(services) {
   launch_info_.job = std::move(job);
 }
 
@@ -101,7 +104,7 @@ void ProcessBuilder::CloneJob() {
   if (launch_info_.job)
     launch_info_.job.duplicate(ZX_RIGHT_SAME_RIGHTS, &duplicate_job);
   else
-    zx::job::default_job().duplicate(ZX_RIGHT_SAME_RIGHTS, &duplicate_job);
+    zx::job::default_job()->duplicate(ZX_RIGHT_SAME_RIGHTS, &duplicate_job);
   SetDefaultJob(std::move(duplicate_job));
 }
 
@@ -172,14 +175,13 @@ zx_status_t ProcessBuilder::Prepare(std::string* error_message) {
   zx_status_t status = ZX_OK;
   launcher_->AddHandles(std::move(handles_));
   if (!launch_info_.job) {
-    status = zx::job::default_job().duplicate(ZX_RIGHT_SAME_RIGHTS,
-                                              &launch_info_.job);
+    status = zx::job::default_job()->duplicate(ZX_RIGHT_SAME_RIGHTS,
+                                               &launch_info_.job);
     if (status != ZX_OK)
       return status;
   }
   fuchsia::process::CreateWithoutStartingResult result;
-  status =
-      launcher_->CreateWithoutStarting(std::move(launch_info_), &result).statvs;
+  status = launcher_->CreateWithoutStarting(std::move(launch_info_), &result);
   if (status != ZX_OK)
     return status;
   if (result.status != ZX_OK) {

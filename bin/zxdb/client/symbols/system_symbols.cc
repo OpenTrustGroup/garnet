@@ -4,9 +4,9 @@
 
 #include "garnet/bin/zxdb/client/symbols/system_symbols.h"
 
-#include "garnet/bin/zxdb/client/file_util.h"
-#include "garnet/bin/zxdb/client/host_util.h"
 #include "garnet/bin/zxdb/client/symbols/module_symbols_impl.h"
+#include "garnet/bin/zxdb/common/file_util.h"
+#include "garnet/bin/zxdb/common/host_util.h"
 #include "garnet/public/lib/fxl/strings/string_printf.h"
 #include "garnet/public/lib/fxl/strings/string_view.h"
 #include "garnet/public/lib/fxl/strings/trim.h"
@@ -94,7 +94,7 @@ bool SystemSymbols::LoadBuildIDFile(std::string* msg) {
   fclose(id_file);
   build_id_to_file_ = ParseIds(contents);
 
-  *msg = fxl::StringPrintf("Loaded %zu system symbol mappings from \"%s\".",
+  *msg = fxl::StringPrintf("Loaded %zu system symbol mappings from:\n  %s",
                            build_id_to_file_.size(), file_name.c_str());
   return true;
 }
@@ -132,7 +132,8 @@ Err SystemSymbols::GetModule(const std::string& name_for_msg,
         name_for_msg.c_str(), build_id.c_str()));
   }
 
-  auto module_symbols = std::make_unique<ModuleSymbolsImpl>(found_id->second);
+  auto module_symbols =
+      std::make_unique<ModuleSymbolsImpl>(found_id->second, build_id);
   Err err = module_symbols->Load();
   if (err.has_error())
     return err;

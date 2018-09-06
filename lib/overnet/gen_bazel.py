@@ -191,7 +191,10 @@ def mapdep(n):
     return m[n]
 
 
-FUZZERS = ['linearizer', 'receive_mode', 'routing_header']
+FUZZERS = ['bbr', 'internal_list', 'linearizer',
+           'packet_protocol', 'receive_mode', 'routing_header']
+
+assert FUZZERS == sorted(FUZZERS)
 
 
 with open('BUILD.bazel', 'w') as o:
@@ -202,6 +205,9 @@ with open('BUILD.bazel', 'w') as o:
                 print >>o, '  name="%s",' % bundle.name
                 print >>o, '  srcs=[%s],' % ','.join(
                     '"%s"' % s for s in bundle.values['sources'])
+                if 'deps' in bundle.values:
+                    print >>o, '  deps=[%s],' % ','.join(
+                        '"%s"' % mapdep(s) for s in bundle.values['deps'] if mapdep(s) is not None)
                 print >>o, ')'
             if bundle.rule == 'executable':
                 if bundle.values.get('testonly', False):
@@ -222,7 +228,7 @@ with open('BUILD.bazel', 'w') as o:
         if os.path.exists(helpers_h):
             srcs.append(helpers_h)
         print >>o, '  srcs=[%s],' % ', '.join('"%s"' % s for s in srcs)
-        print >>o, '  deps=[":overnet"],'
+        print >>o, '  deps=[":overnet", ":test_util"],'
         print >>o, ')'
 
 WORKSPACE = """
@@ -232,7 +238,7 @@ WORKSPACE = """
 git_repository(
     name = 'com_google_googletest',
     remote = 'https://github.com/google/googletest.git',
-    commit = '045e7f9ee4f969ac1a3fe428f79c4b880f0aff43',
+    commit = 'd5266326752f0a1dadbd310932d8f4fd8c3c5e7d',
 )
 """
 
@@ -270,6 +276,13 @@ build:msan --copt -fPIC
 build:msan --linkopt -fsanitize=memory
 build:msan --linkopt -fPIC
 build:msan --action_env=MSAN_OPTIONS=poison_in_dtor=1
+
+build:tsan --strip=never
+build:tsan --copt -fsanitize=thread
+build:tsan --copt -fno-omit-frame-pointer
+build:tsan --copt -DNDEBUG
+build:tsan --linkopt -fsanitize=thread
+build:tsan --action_env=TSAN_OPTIONS=halt_on_error=1
 
 build:ubsan --strip=never
 build:ubsan --copt -fsanitize=undefined

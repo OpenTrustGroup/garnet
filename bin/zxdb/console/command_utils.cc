@@ -9,12 +9,13 @@
 #include <limits>
 
 #include "garnet/bin/zxdb/client/breakpoint.h"
-#include "garnet/bin/zxdb/client/err.h"
 #include "garnet/bin/zxdb/client/frame.h"
 #include "garnet/bin/zxdb/client/process.h"
 #include "garnet/bin/zxdb/client/symbols/location.h"
+#include "garnet/bin/zxdb/client/symbols/symbol_utils.h"
 #include "garnet/bin/zxdb/client/target.h"
 #include "garnet/bin/zxdb/client/thread.h"
+#include "garnet/bin/zxdb/common/err.h"
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/console_context.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
@@ -37,10 +38,13 @@ Err AssertRunningTarget(ConsoleContext* context, const char* command_name,
 }
 
 Err AssertStoppedThreadCommand(ConsoleContext* context, const Command& cmd,
-                               const char* command_name) {
-  Err err = cmd.ValidateNouns({Noun::kProcess, Noun::kThread});
-  if (err.has_error())
-    return err;
+                               bool validate_nouns, const char* command_name) {
+  Err err;
+  if (validate_nouns) {
+    err = cmd.ValidateNouns({Noun::kProcess, Noun::kThread});
+    if (err.has_error())
+      return err;
+  }
 
   if (!cmd.thread()) {
     return Err(fxl::StringPrintf(
@@ -56,6 +60,48 @@ Err AssertStoppedThreadCommand(ConsoleContext* context, const Command& cmd,
         command_name, context->IdForThread(cmd.thread()),
         ThreadStateToString(cmd.thread()->GetState()).c_str()));
   }
+  return Err();
+}
+
+Err StringToInt(const std::string& s, int* out) {
+  if (s.empty())
+    return Err(ErrType::kInput, "The empty string is not a number.");
+
+  // Re-uses StringToUint64's error handling and just adds support for '-' at
+  // the beginning and size-checks the output.
+  uint64_t absolute_val;
+  if (s[0] == '-') {
+    Err err = StringToUint64(s.substr(1), &absolute_val);
+    if (err.has_error())
+      return err;
+    if (absolute_val >
+        -static_cast<int64_t>(std::numeric_limits<int>::lowest()))
+      return Err("This value is too small for an integer.");
+    *out = -static_cast<int>(absolute_val);
+  } else {
+    Err err = StringToUint64(s, &absolute_val);
+    if (err.has_error())
+      return err;
+    if (absolute_val > std::numeric_limits<int>::max())
+      return Err("This value is too large for an integer.");
+    *out = static_cast<int>(absolute_val);
+  }
+
+  return Err();
+}
+
+Err StringToUint32(const std::string& s, uint32_t* out) {
+  // Re-uses StringToUint64's error handling and just size-checks the output.
+  uint64_t value64;
+  Err err = StringToUint64(s, &value64);
+  if (err.has_error())
+    return err;
+
+  if (value64 > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max())) {
+    return Err(fxl::StringPrintf(
+        "Expected 32-bit unsigned value, but %s is too large.", s.c_str()));
+  }
+  *out = static_cast<uint32_t>(value64);
   return Err();
 }
 
@@ -194,8 +240,9 @@ std::string BreakpointScopeToString(const ConsoleContext* context,
                                context->IdForTarget(settings.scope_target));
     case BreakpointSettings::Scope::kThread:
       return fxl::StringPrintf(
-          "pr %d t %d", context->IdForTarget(
-                            settings.scope_thread->GetProcess()->GetTarget()),
+          "pr %d t %d",
+          context->IdForTarget(
+              settings.scope_thread->GetProcess()->GetTarget()),
           context->IdForThread(settings.scope_thread));
   }
   FXL_NOTREACHED();
@@ -278,14 +325,6 @@ std::string DescribeThread(const ConsoleContext* context,
                            thread->GetKoid(), thread->GetName().c_str());
 }
 
-// Unlike the other describe command, this takes an ID because normally
-// you know the index when calling into here, and it's inefficient to look up.
-std::string DescribeFrame(const Frame* frame, int id) {
-  // This will need symbols hooked up.
-  return fxl::StringPrintf("Frame %d ", id) +
-         DescribeLocation(frame->GetLocation(), false);
-}
-
 std::string DescribeBreakpoint(const ConsoleContext* context,
                                const Breakpoint* breakpoint) {
   BreakpointSettings settings = breakpoint->GetSettings();
@@ -325,8 +364,11 @@ std::string DescribeLocation(const Location& loc, bool always_show_address) {
   if (always_show_address)
     result = fxl::StringPrintf("0x%" PRIx64 ", ", loc.address());
 
-  if (!loc.function().empty())
-    result += loc.function() + "() " + GetBullet() + " ";
+  if (loc.function()) {
+    const std::string& func_name = loc.function().Get()->GetFullName();
+    if (!func_name.empty())
+      result += func_name + " " + GetBullet() + " ";
+  }
   result += DescribeFileLine(loc.file_line());
   return result;
 }

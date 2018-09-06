@@ -1,12 +1,16 @@
 // Copyright 2018 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-//trace_macros!(true);
 
-#![allow(dead_code)]
-
-use byteorder::{LittleEndian, WriteBytesExt};
-use std::io;
+use {
+    bitfield::{
+        bitfield,
+        bitfield_fields,
+        bitfield_struct,
+    },
+    byteorder::{LittleEndian, WriteBytesExt},
+    std::io,
+};
 
 // IEEE Std 802.11-2016, 9.2.4.1.3 Table 9-1
 #[derive(Clone, Copy, Debug)]
@@ -138,6 +142,7 @@ impl<W: io::Write> ElementWriter<W> {
         Ok(self)
     }
 
+    #[cfg(test)]
     pub fn into_writer(self) -> W {
         self.w
     }

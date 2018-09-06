@@ -2,25 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use akm;
-use bytes::{BufMut, Bytes, BytesMut};
-use cipher;
-use failure::Error;
-use pmkid;
-use suite_selector;
+use crate::akm;
+use bytes::{BufMut, Bytes};
+use crate::cipher;
+use crate::pmkid;
+use crate::suite_selector;
 
 use nom::{le_u16, le_u8, IResult};
+use nom::{try_parse, named, take, expr_res, call, do_parse, cond, count, error_position, eof};
 
 macro_rules! if_remaining (
   ($i:expr, $f:expr) => ( cond!($i, $i.len() !=0, call!($f)); );
-);
-
-macro_rules! check_remaining (
-  ($required:expr, $remaining:expr) => {
-    if $remaining < $required {
-        return Err(ErrorBufferTooSmall($required, $remaining).into());
-    }
-  };
 );
 
 // IEEE 802.11-2016, 9.4.2.25.1
@@ -28,7 +20,7 @@ pub const ID: u8 = 48;
 pub const VERSION: u16 = 1;
 
 // IEEE 802.11-2016, 9.4.2.25.1
-#[derive(Default, Debug, PartialOrd, PartialEq)]
+#[derive(Default, Debug, PartialOrd, PartialEq, Clone)]
 pub struct Rsne {
     pub version: u16,
     pub group_data_cipher_suite: Option<cipher::Cipher>,
@@ -80,28 +72,24 @@ impl Rsne {
         length
     }
 
-    pub fn as_bytes(&self, buf: &mut BufMut) -> Result<(), Error> {
-        check_remaining!(4, buf.remaining_mut());
+    pub fn as_bytes(&self, buf: &mut Vec<u8>) {
+        buf.reserve(self.len());
+
         buf.put_u8(ID);
         buf.put_u8((self.len() - 2) as u8);
         buf.put_u16_le(self.version);
 
         match self.group_data_cipher_suite.as_ref() {
-            None => return Ok(()),
+            None => return,
             Some(cipher) => {
-                check_remaining!(4, buf.remaining_mut());
                 buf.put_slice(&cipher.oui[..]);
                 buf.put_u8(cipher.suite_type);
             }
         };
 
         if self.pairwise_cipher_suites.is_empty() {
-            return Ok(());
+            return;
         }
-        check_remaining!(
-            2 + 4 * self.pairwise_cipher_suites.len(),
-            buf.remaining_mut()
-        );
         buf.put_u16_le(self.pairwise_cipher_suites.len() as u16);
         for cipher in &self.pairwise_cipher_suites {
             buf.put_slice(&cipher.oui[..]);
@@ -109,9 +97,8 @@ impl Rsne {
         }
 
         if self.akm_suites.is_empty() {
-            return Ok(());
+            return;
         }
-        check_remaining!(2 + 4 * self.akm_suites.len(), buf.remaining_mut());
         buf.put_u16_le(self.akm_suites.len() as u16);
         for akm in &self.akm_suites {
             buf.put_slice(&akm.oui[..]);
@@ -119,29 +106,24 @@ impl Rsne {
         }
 
         match self.rsn_capabilities.as_ref() {
-            None => return Ok(()),
+            None => return,
             Some(caps) => {
-                check_remaining!(2, buf.remaining_mut());
                 buf.put_u16_le(*caps)
             }
         };
 
         if self.pmkids.is_empty() {
-            return Ok(());
+            return;
         }
-        check_remaining!(2 + 16 * self.pmkids.len(), buf.remaining_mut());
         buf.put_u16_le(self.pmkids.len() as u16);
         for pmkid in &self.pmkids {
             buf.put_slice(&pmkid[..]);
         }
 
         if let Some(cipher) = self.group_mgmt_cipher_suite.as_ref() {
-            check_remaining!(4, buf.remaining_mut());
             buf.put_slice(&cipher.oui[..]);
             buf.put_u8(cipher.suite_type);
         }
-
-        Ok(())
     }
 }
 
@@ -192,10 +174,6 @@ named!(pub from_bytes<&[u8], Rsne>,
     )
 );
 
-#[derive(Debug, Fail)]
-#[fail(display = "buffer too small; required: {}, available: {}", _0, _1)]
-struct ErrorBufferTooSmall(usize, usize);
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,12 +198,11 @@ mod tests {
             0x05, 0x06, 0x07, 0x08, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x00, 0x0f,
             0xac, 0x04,
         ];
-        let mut buf = BytesMut::with_capacity(128);
+        let mut buf = Vec::with_capacity(128);
         let result = from_bytes(&frame);
         assert!(result.is_done());
         let rsne = result.unwrap().1;
-        let result = rsne.as_bytes(&mut buf);
-        assert!(result.is_ok());
+        rsne.as_bytes(&mut buf);
         let rsne_len = buf.len();
         let left_over = buf.split_off(rsne_len);
         assert_eq!(&buf[..], &frame[..]);
@@ -235,15 +212,19 @@ mod tests {
     #[test]
     fn test_short_buffer() {
         let frame: Vec<u8> = vec![
-            0x30, 0x2A, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x07, 0x00, 0x00, 0x0f, 0xac, 0x04,
-            0x00, 0x0f, 0xac, 0x04, 0x00, 0x0f, 0xac, 0x04, 0x00, 0x0f, 0xac, 0x04, 0x00, 0x0f,
-            0xac, 0x04, 0x00, 0x0f, 0xac, 0x04, 0x00, 0x0f, 0xac, 0x04,
+            0x30, 0x2A, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04,
+            0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00, 0x01, 0x00, 0x01, 0x02, 0x03, 0x04,
+            0x05, 0x06, 0x07, 0x08, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x00, 0x0f,
+            0xac, 0x04,
         ];
-        let mut buf = BytesMut::with_capacity(32);
+        let mut buf = Vec::with_capacity(32);
         let result = from_bytes(&frame);
         assert!(result.is_done());
         let rsne = result.unwrap().1;
-        let result = rsne.as_bytes(&mut buf);
-        assert!(result.is_err());
+        rsne.as_bytes(&mut buf);
+        let rsne_len = buf.len();
+        let left_over = buf.split_off(rsne_len);
+        assert_eq!(&buf[..], &frame[..]);
+        assert!(left_over.iter().all(|b| *b == 0));
     }
 }

@@ -10,14 +10,15 @@ package("bthci_fake") {
   testonly = true
 
   deps = [
-    ":fake_driver"
+    ":fake_driver",
   ]
 
-  drivers = [ {
-        name = "bthci-fake.so"
-  } ]
+  drivers = [
+    {
+      name = "bthci-fake.so"
+    },
+  ]
 }
-
 
 driver_module("fake_driver") {
   output_name = "bthci-fake"
@@ -32,7 +33,7 @@ driver_module("fake_driver") {
 
   deps = [
     "//garnet/drivers/bluetooth/lib/hci",
-    "//garnet/drivers/bluetooth/lib/testing",
+    "//garnet/drivers/bluetooth/lib/testing:fake_controller",
     "//zircon/public/lib/async-cpp",
     "//zircon/public/lib/async-default",
     "//zircon/public/lib/ddk",
@@ -42,4 +43,6 @@ driver_module("fake_driver") {
     "//zircon/public/lib/zx",
   ]
 
+  configs -= [ "//build/config/fuchsia:no_cpp_standard_library" ]
+  configs += [ "//build/config/fuchsia:static_cpp_standard_library" ]
 }

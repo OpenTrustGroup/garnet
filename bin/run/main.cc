@@ -2,14 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <lib/async-loop/cpp/loop.h>
+#include <lib/component/cpp/termination_reason.h>
 #include <lib/fdio/limits.h>
 #include <lib/fdio/util.h>
+#include <lib/fxl/strings/string_printf.h>
 #include <stdio.h>
 
 #include <fuchsia/sys/cpp/fidl.h>
 #include <zircon/syscalls.h>
 
-#include "lib/app/cpp/environment_services.h"
+#include "lib/component/cpp/environment_services_helper.h"
+
+using fuchsia::sys::TerminationReason;
+using fxl::StringPrintf;
 
 static fuchsia::sys::FileDescriptorPtr CloneFileDescriptor(int fd) {
   zx_handle_t handles[FDIO_MAX_HANDLES] = {0, 0, 0};
@@ -51,15 +57,18 @@ int main(int argc, const char** argv) {
   }
   fuchsia::sys::LaunchInfo launch_info;
   launch_info.url = argv[0];
+  std::string program_name = argv[0];
   consume_arg(&argc, &argv);
   while (argc) {
     launch_info.arguments.push_back(*argv);
     consume_arg(&argc, &argv);
   }
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
+  auto env_services = component::GetEnvironmentServices();
 
   // Connect to the Launcher service through our static environment.
-  fuchsia::sys::LauncherSync2Ptr launcher;
-  fuchsia::sys::ConnectToEnvironmentService(launcher.NewRequest());
+  fuchsia::sys::LauncherSyncPtr launcher;
+  env_services->ConnectToService(launcher.NewRequest());
 
   if (daemonize) {
     launcher->CreateComponent(std::move(launch_info), {});
@@ -68,14 +77,21 @@ int main(int argc, const char** argv) {
 
   launch_info.out = CloneFileDescriptor(STDOUT_FILENO);
   launch_info.err = CloneFileDescriptor(STDERR_FILENO);
-  fuchsia::sys::ComponentControllerSync2Ptr controller;
+
+  fuchsia::sys::ComponentControllerPtr controller;
   launcher->CreateComponent(std::move(launch_info), controller.NewRequest());
 
-  int64_t return_code;
-  if (controller->Wait(&return_code).statvs != ZX_OK) {
-    fprintf(stderr, "%s exited without a return code\n", argv[1]);
-    return 1;
-  }
-  zx_process_exit(return_code);
+  controller.events().OnTerminated = [&program_name](
+                                         int64_t return_code,
+                                         TerminationReason termination_reason) {
+    if (termination_reason != TerminationReason::EXITED) {
+      fprintf(stderr, "%s: %s\n", program_name.c_str(),
+              component::HumanReadableTerminationReason(termination_reason)
+                  .c_str());
+    }
+    zx_process_exit(return_code);
+  };
+
+  loop.Run();
   return 0;
 }

@@ -11,7 +11,7 @@
 
 #include "garnet/bin/auth/cache/token_cache.h"
 #include "garnet/bin/auth/store/auth_db.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fidl/cpp/interface_request.h"
 #include "lib/fidl/cpp/string.h"
@@ -27,7 +27,7 @@ constexpr int kMaxCacheSize = 10;
 class TokenManagerImpl : public fuchsia::auth::TokenManager {
  public:
   TokenManagerImpl(
-      fuchsia::sys::StartupContext* context,
+      component::StartupContext* context,
       std::unique_ptr<store::AuthDb> auth_db,
       fidl::VectorPtr<fuchsia::auth::AuthProviderConfig> auth_provider_configs,
       fidl::InterfaceHandle<fuchsia::auth::AuthenticationContextProvider>
@@ -38,13 +38,13 @@ class TokenManagerImpl : public fuchsia::auth::TokenManager {
  private:
   // |TokenManager|
   void Authorize(fuchsia::auth::AppConfig app_config,
-                 const fidl::VectorPtr<fidl::StringPtr> app_scopes,
-                 fidl::StringPtr user_profile_id,
+                 fidl::VectorPtr<fidl::StringPtr> app_scopes,
+                 fidl::StringPtr user_profile_id, fidl::StringPtr auth_code,
                  AuthorizeCallback callback) override;
 
   void GetAccessToken(fuchsia::auth::AppConfig app_config,
                       fidl::StringPtr user_profile_id,
-                      const fidl::VectorPtr<fidl::StringPtr> app_scopes,
+                      fidl::VectorPtr<fidl::StringPtr> app_scopes,
                       GetAccessTokenCallback callback) override;
 
   void GetIdToken(fuchsia::auth::AppConfig app_config,

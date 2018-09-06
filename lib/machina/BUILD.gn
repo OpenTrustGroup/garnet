@@ -9,6 +9,7 @@ source_set("machina") {
     "bits.h",
     "block_dispatcher.cc",
     "block_dispatcher.h",
+    "dev_mem.h",
     "framebuffer_scanout.cc",
     "framebuffer_scanout.h",
     "gpu_bitmap.cc",
@@ -19,8 +20,6 @@ source_set("machina") {
     "gpu_scanout.h",
     "guest.cc",
     "guest.h",
-    "guest_controller_impl.cc",
-    "guest_controller_impl.h",
     "hid_event_source.cc",
     "hid_event_source.h",
     "input_dispatcher.cc",
@@ -43,7 +42,6 @@ source_set("machina") {
     "virtio_block.h",
     "virtio_console.cc",
     "virtio_console.h",
-    "virtio_device.cc",
     "virtio_device.h",
     "virtio_gpu.cc",
     "virtio_gpu.h",
@@ -89,15 +87,14 @@ source_set("machina") {
       "arch/x86/io_port.h",
       "arch/x86/page_table.cc",
       "arch/x86/page_table.h",
-      "arch/x86/tpm.h",
     ]
 
     include_dirs = [ "//zircon/third_party/lib/acpica/source/include" ]
   }
 
   public_deps = [
-    "//garnet/public/lib/app/cpp",
-    "//garnet/public/lib/guest/fidl",
+    "//garnet/public/lib/component/cpp",
+    "//garnet/public/fidl/fuchsia.guest",
     "//zircon/public/lib/bitmap",
     "//zircon/public/lib/ddk",
     "//zircon/public/lib/fit",
@@ -165,7 +162,6 @@ executable("machina_unittests") {
 
 package("machina_tests") {
   testonly = true
-  deprecated_system_image = true
 
   deps = [
     ":machina_unittests",

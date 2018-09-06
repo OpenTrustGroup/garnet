@@ -4,24 +4,19 @@
 
 #include "bredr_interrogator.h"
 
+#include <zircon/assert.h>
+
 #include "garnet/drivers/bluetooth/lib/gap/remote_device.h"
 #include "garnet/drivers/bluetooth/lib/hci/transport.h"
 
 namespace btlib {
 namespace gap {
 
-namespace {
-
-// The maximum features page that we'll attempt to retrieve.
-constexpr uint8_t kMaxPage = 2;
-
-}  // namespace
-
 BrEdrInterrogator::Interrogation::Interrogation(hci::ConnectionPtr conn,
                                                 ResultCallback cb)
     : conn_ptr(std::move(conn)), result_cb(std::move(cb)) {
-  FXL_DCHECK(conn_ptr);
-  FXL_DCHECK(result_cb);
+  ZX_DEBUG_ASSERT(conn_ptr);
+  ZX_DEBUG_ASSERT(result_cb);
 }
 
 BrEdrInterrogator::Interrogation::~Interrogation() {
@@ -41,14 +36,14 @@ void BrEdrInterrogator::Interrogation::Finish(hci::Status status) {
 
 BrEdrInterrogator::BrEdrInterrogator(RemoteDeviceCache* cache,
                                      fxl::RefPtr<hci::Transport> hci,
-                                     async_t* dispatcher)
+                                     async_dispatcher_t* dispatcher)
     : hci_(hci),
       dispatcher_(dispatcher),
       cache_(cache),
       weak_ptr_factory_(this) {
-  FXL_DCHECK(hci_);
-  FXL_DCHECK(dispatcher_);
-  FXL_DCHECK(cache_);
+  ZX_DEBUG_ASSERT(hci_);
+  ZX_DEBUG_ASSERT(dispatcher_);
+  ZX_DEBUG_ASSERT(cache_);
 }
 
 BrEdrInterrogator::~BrEdrInterrogator() {
@@ -60,8 +55,8 @@ BrEdrInterrogator::~BrEdrInterrogator() {
 void BrEdrInterrogator::Start(const std::string& device_id,
                               hci::ConnectionPtr conn_ptr,
                               ResultCallback callback) {
-  FXL_DCHECK(conn_ptr);
-  FXL_DCHECK(callback);
+  ZX_DEBUG_ASSERT(conn_ptr);
+  ZX_DEBUG_ASSERT(callback);
 
   hci::ConnectionHandle handle = conn_ptr->handle();
 
@@ -85,9 +80,8 @@ void BrEdrInterrogator::Start(const std::string& device_id,
   if (!device->features().HasPage(0)) {
     ReadRemoteFeatures(device_id, handle);
   } else if (device->features().HasBit(0, hci::LMPFeature::kExtendedFeatures)) {
-    for (size_t page = 1; page <= hci::LMPFeatureSet::kMaxPages; page++) {
-      ReadRemoteExtendedFeatures(device_id, handle, page);
-    }
+    device->set_last_page_number(1);
+    ReadRemoteExtendedFeatures(device_id, handle, 1);
   }
 }
 
@@ -125,7 +119,7 @@ void BrEdrInterrogator::MaybeComplete(const std::string& device_id) {
   if (!device->features().HasPage(0)) {
     return;
   } else if (device->features().HasBit(0, hci::LMPFeature::kExtendedFeatures)) {
-    for (uint8_t page = 1; page <= kMaxPage; page++) {
+    for (uint8_t page = 1; page <= device->last_page_number(); page++) {
       if (!device->features().HasPage(page)) {
         return;
       }
@@ -137,7 +131,7 @@ void BrEdrInterrogator::MaybeComplete(const std::string& device_id) {
 
 void BrEdrInterrogator::Complete(std::string device_id, hci::Status status) {
   auto it = pending_.find(std::move(device_id));
-  FXL_DCHECK(it != pending_.end());
+  ZX_DEBUG_ASSERT(it != pending_.end());
 
   it->second->Finish(std::move(status));
   pending_.erase(it);
@@ -165,16 +159,13 @@ void BrEdrInterrogator::MakeRemoteNameRequest(const std::string& device_id) {
   }
 
   auto it = pending_.find(device_id);
-  FXL_DCHECK(it != pending_.end());
+  ZX_DEBUG_ASSERT(it != pending_.end());
 
   it->second->callbacks.emplace_back(
       [device_id, self = weak_ptr_factory_.GetWeakPtr()](auto,
                                                          const auto& event) {
-        auto status = event.ToStatus();
-        if (!status) {
-          FXL_LOG(INFO)
-              << "hci: BrEdrInterrogator: falied retrieving remote name: "
-              << status.ToString();
+        if (hci_is_error(event, WARN, "gap-bredr",
+                         "remote name request failed")) {
           self->Complete(device_id, event.ToStatus());
           return;
         }
@@ -183,8 +174,8 @@ void BrEdrInterrogator::MakeRemoteNameRequest(const std::string& device_id) {
           return;
         }
 
-        FXL_DCHECK(event.event_code() ==
-                   hci::kRemoteNameRequestCompleteEventCode);
+        ZX_DEBUG_ASSERT(event.event_code() ==
+                        hci::kRemoteNameRequestCompleteEventCode);
 
         const auto& params =
             event.view()
@@ -207,6 +198,8 @@ void BrEdrInterrogator::MakeRemoteNameRequest(const std::string& device_id) {
         self->MaybeComplete(device_id);
       });
 
+  bt_log(SPEW, "gap-bredr", "name request %s",
+         device->address().ToString().c_str());
   hci_->command_channel()->SendCommand(
       std::move(packet), dispatcher_, it->second->callbacks.back().callback(),
       hci::kRemoteNameRequestCompleteEventCode);
@@ -222,15 +215,13 @@ void BrEdrInterrogator::ReadRemoteVersionInformation(
       ->connection_handle = htole16(handle);
 
   auto it = pending_.find(device_id);
-  FXL_DCHECK(it != pending_.end());
+  ZX_DEBUG_ASSERT(it != pending_.end());
 
   it->second->callbacks.emplace_back([device_id,
                                       self = weak_ptr_factory_.GetWeakPtr()](
                                          auto, const auto& event) {
-    auto status = event.ToStatus();
-    if (!status) {
-      FXL_LOG(INFO) << "hci: BrEdrInterrogator: ReadRemoteVersionInfo failed: "
-                    << status.ToString();
+    if (hci_is_error(event, WARN, "gap-bredr",
+                     "read remote version info failed")) {
       self->Complete(device_id, event.ToStatus());
       return;
     }
@@ -239,8 +230,8 @@ void BrEdrInterrogator::ReadRemoteVersionInformation(
       return;
     }
 
-    FXL_DCHECK(event.event_code() ==
-               hci::kReadRemoteVersionInfoCompleteEventCode);
+    ZX_DEBUG_ASSERT(event.event_code() ==
+                    hci::kReadRemoteVersionInfoCompleteEventCode);
 
     const auto params =
         event.view()
@@ -257,6 +248,7 @@ void BrEdrInterrogator::ReadRemoteVersionInformation(
     self->MaybeComplete(device_id);
   });
 
+  bt_log(SPEW, "gap-bredr", "asking for version info");
   hci_->command_channel()->SendCommand(
       std::move(packet), dispatcher_, it->second->callbacks.back().callback(),
       hci::kReadRemoteVersionInfoCompleteEventCode);
@@ -272,16 +264,13 @@ void BrEdrInterrogator::ReadRemoteFeatures(const std::string& device_id,
       ->connection_handle = htole16(handle);
 
   auto it = pending_.find(device_id);
-  FXL_DCHECK(it != pending_.end());
+  ZX_DEBUG_ASSERT(it != pending_.end());
 
   it->second->callbacks.emplace_back(
       [device_id, handle, self = weak_ptr_factory_.GetWeakPtr()](
           auto, const auto& event) {
-        auto status = event.ToStatus();
-        if (!status) {
-          FXL_LOG(INFO)
-              << "hci: BrEdrInterrogator: ReadRemoteSupportedFeatures failed: "
-              << status.ToString();
+        if (hci_is_error(event, WARN, "gap-bredr",
+                         "read remote supported features failed")) {
           self->Complete(device_id, event.ToStatus());
           return;
         }
@@ -290,8 +279,8 @@ void BrEdrInterrogator::ReadRemoteFeatures(const std::string& device_id,
           return;
         }
 
-        FXL_DCHECK(event.event_code() ==
-                   hci::kReadRemoteSupportedFeaturesCompleteEventCode);
+        ZX_DEBUG_ASSERT(event.event_code() ==
+                        hci::kReadRemoteSupportedFeaturesCompleteEventCode);
 
         const auto& params =
             event.view()
@@ -306,14 +295,14 @@ void BrEdrInterrogator::ReadRemoteFeatures(const std::string& device_id,
         device->SetFeaturePage(0, le64toh(params.lmp_features));
 
         if (device->features().HasBit(0, hci::LMPFeature::kExtendedFeatures)) {
-          for (uint8_t page = 1; page <= kMaxPage; page++) {
-            self->ReadRemoteExtendedFeatures(device_id, handle, page);
-          }
+          device->set_last_page_number(1);
+          self->ReadRemoteExtendedFeatures(device_id, handle, 1);
         }
 
         self->MaybeComplete(device_id);
       });
 
+  bt_log(SPEW, "gap-bredr", "asking for supported features");
   hci_->command_channel()->SendCommand(
       std::move(packet), dispatcher_, it->second->callbacks.back().callback(),
       hci::kReadRemoteSupportedFeaturesCompleteEventCode);
@@ -332,16 +321,13 @@ void BrEdrInterrogator::ReadRemoteExtendedFeatures(const std::string& device_id,
   params->page_number = page;
 
   auto it = pending_.find(device_id);
-  FXL_DCHECK(it != pending_.end());
+  ZX_DEBUG_ASSERT(it != pending_.end());
 
   it->second->callbacks.emplace_back(
-      [device_id, self = weak_ptr_factory_.GetWeakPtr()](auto,
-                                                         const auto& event) {
-        auto status = event.ToStatus();
-        if (!status) {
-          FXL_LOG(INFO)
-              << "hci: BrEdrInterrogator: ReadRemoteExtendedFeatures failed: "
-              << status.ToString();
+      [device_id, handle, page, self = weak_ptr_factory_.GetWeakPtr()](
+          auto, const auto& event) {
+        if (hci_is_error(event, WARN, "gap-bredr",
+                         "read remote extended features failed")) {
           self->Complete(device_id, event.ToStatus());
           return;
         }
@@ -350,8 +336,8 @@ void BrEdrInterrogator::ReadRemoteExtendedFeatures(const std::string& device_id,
           return;
         }
 
-        FXL_DCHECK(event.event_code() ==
-                   hci::kReadRemoteExtendedFeaturesCompleteEventCode);
+        ZX_DEBUG_ASSERT(event.event_code() ==
+                        hci::kReadRemoteExtendedFeaturesCompleteEventCode);
 
         const auto& params =
             event.view()
@@ -365,10 +351,23 @@ void BrEdrInterrogator::ReadRemoteExtendedFeatures(const std::string& device_id,
         }
         device->SetFeaturePage(params.page_number,
                                le64toh(params.lmp_features));
+        if (params.page_number != page) {
+          bt_log(INFO, "gap-bredr",
+                 "requested page %u and received page %u, giving up", page,
+                 params.page_number);
+          device->set_last_page_number(0);
+        } else {
+          device->set_last_page_number(params.max_page_number);
+        }
 
+        if (params.page_number < device->last_page_number()) {
+          self->ReadRemoteExtendedFeatures(device_id, handle,
+                                           params.page_number + 1);
+        }
         self->MaybeComplete(device_id);
       });
 
+  bt_log(SPEW, "gap-bredr", "get ext page %u", page);
   hci_->command_channel()->SendCommand(
       std::move(packet), dispatcher_, it->second->callbacks.back().callback(),
       hci::kReadRemoteExtendedFeaturesCompleteEventCode);

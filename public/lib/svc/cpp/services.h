@@ -13,15 +13,13 @@
 #include "lib/fidl/cpp/interface_request.h"
 #include "lib/fxl/macros.h"
 
-namespace fuchsia {
-namespace sys {
+namespace component {
 
 // Connects to a service located at a path within the directory and binds it to
 // an untyped interface request.
 // TODO(ZX-1358): Replace use of bare directory channel with suitable interface
 // once RIO is ported to FIDL.
-void ConnectToService(const zx::channel& directory,
-                      zx::channel request,
+void ConnectToService(const zx::channel& directory, zx::channel request,
                       const std::string& service_path);
 
 // Connects to a service located at a path within the directory and binds it to
@@ -31,8 +29,7 @@ void ConnectToService(const zx::channel& directory,
 // once RIO is ported to FIDL.
 template <typename Interface>
 inline void ConnectToService(
-    const zx::channel& directory,
-    fidl::InterfaceRequest<Interface> request,
+    const zx::channel& directory, fidl::InterfaceRequest<Interface> request,
     const std::string& service_path = Interface::Name_) {
   ConnectToService(directory, request.TakeChannel(), service_path);
 }
@@ -81,7 +78,7 @@ class Services {
   // By default, uses the interface name as the service's path.
   void ConnectToService(zx::channel request,
                         const std::string& service_path) const {
-    fuchsia::sys::ConnectToService(directory_, std::move(request), service_path);
+    component::ConnectToService(directory_, std::move(request), service_path);
   }
 
   // Connects to a service located at a path within the directory and binds it
@@ -91,7 +88,7 @@ class Services {
   void ConnectToService(
       fidl::InterfaceRequest<Interface> request,
       const std::string& service_path = Interface::Name_) const {
-    fuchsia::sys::ConnectToService<Interface>(directory_, std::move(request),
+    component::ConnectToService<Interface>(directory_, std::move(request),
                                            service_path);
   }
 
@@ -101,7 +98,7 @@ class Services {
   template <typename Interface>
   fidl::InterfacePtr<Interface> ConnectToService(
       const std::string& service_path = Interface::Name_) const {
-    return fuchsia::sys::ConnectToService<Interface>(directory_, service_path);
+    return component::ConnectToService<Interface>(directory_, service_path);
   }
 
   const zx::channel& directory() const { return directory_; }
@@ -112,7 +109,6 @@ class Services {
   FXL_DISALLOW_COPY_AND_ASSIGN(Services);
 };
 
-}  // namespace sys
-}  // namespace fuchsia
+}  // namespace component
 
 #endif  // LIB_SVC_CPP_SERVICES_H_

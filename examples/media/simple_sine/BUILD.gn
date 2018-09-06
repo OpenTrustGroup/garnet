@@ -9,11 +9,11 @@ executable("simple_sine") {
   ]
 
   deps = [
-    "//garnet/public/lib/app/cpp",
+    "//garnet/public/fidl/fuchsia.media",
+    "//garnet/public/lib/component/cpp",
     "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
-    "//garnet/public/lib/media/fidl",
+    "//zircon/public/lib/fzl",
     "//zircon/public/lib/async-loop-cpp",
-    "//zircon/public/lib/vmo-utils",
   ]
 }

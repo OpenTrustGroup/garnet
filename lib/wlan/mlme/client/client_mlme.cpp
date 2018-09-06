@@ -13,6 +13,7 @@
 #include <wlan/mlme/packet.h>
 #include <wlan/mlme/service.h>
 #include <wlan/mlme/timer.h>
+#include <wlan/mlme/timer_manager.h>
 #include <wlan/mlme/wlan.h>
 
 #include <fuchsia/wlan/mlme/cpp/fidl.h>
@@ -30,7 +31,7 @@ namespace wlan {
 namespace wlan_mlme = ::fuchsia::wlan::mlme;
 namespace wlan_stats = ::fuchsia::wlan::stats;
 
-ClientMlme::ClientMlme(DeviceInterface* device) : device_(device) {
+ClientMlme::ClientMlme(DeviceInterface* device) : device_(device), on_channel_handler_(this) {
     debugfn();
 }
 
@@ -42,21 +43,22 @@ zx_status_t ClientMlme::Init() {
     fbl::unique_ptr<Timer> timer;
     ObjectId timer_id;
     timer_id.set_subtype(to_enum_type(ObjectSubtype::kTimer));
-    timer_id.set_target(to_enum_type(ObjectTarget::kScanner));
+    timer_id.set_target(to_enum_type(ObjectTarget::kChannelScheduler));
     zx_status_t status = device_->GetTimer(ToPortKey(PortKeyType::kMlme, timer_id.val()), &timer);
     if (status != ZX_OK) {
-        errorf("could not create scan timer: %d\n", status);
+        errorf("could not create channel scheduler timer: %d\n", status);
         return status;
     }
+    chan_sched_.reset(new ChannelScheduler(&on_channel_handler_, device_, fbl::move(timer)));
 
-    scanner_.reset(new Scanner(device_, std::move(timer)));
+    scanner_.reset(new Scanner(device_, chan_sched_.get()));
     return status;
 }
 
 zx_status_t ClientMlme::HandleTimeout(const ObjectId id) {
     switch (id.target()) {
-    case to_enum_type(ObjectTarget::kScanner):
-        scanner_->HandleTimeout();
+    case to_enum_type(ObjectTarget::kChannelScheduler):
+        chan_sched_->HandleTimeout();
         break;
     case to_enum_type(ObjectTarget::kStation):
         // TODO(porce): Fix this crash point. bssid() can be nullptr.
@@ -74,6 +76,14 @@ zx_status_t ClientMlme::HandleTimeout(const ObjectId id) {
     return ZX_OK;
 }
 
+void ClientMlme::HwScanComplete(uint8_t result_code) {
+    if (result_code == WLAN_HW_SCAN_SUCCESS) {
+        scanner_->HandleHwScanComplete();
+    } else {
+        scanner_->HandleHwScanAborted();
+    }
+}
+
 zx_status_t ClientMlme::HandleMlmeMsg(const BaseMlmeMsg& msg) {
     // Let the Scanner handle all MLME-SCAN.requests.
     if (auto scan_req = msg.As<wlan_mlme::ScanRequest>()) {
@@ -81,29 +91,32 @@ zx_status_t ClientMlme::HandleMlmeMsg(const BaseMlmeMsg& msg) {
     }
 
     // MLME-JOIN.request will reset the STA.
-    if (auto join_req = msg.As<wlan_mlme::JoinRequest>()) {
-        HandleMlmeJoinReq(*join_req);
-    }
+    if (auto join_req = msg.As<wlan_mlme::JoinRequest>()) { HandleMlmeJoinReq(*join_req); }
 
     // Once the STA was spawned, let it handle all incoming MLME messages.
-    if (sta_ != nullptr) { DispatchMlmeMsg(msg, sta_.get()); }
+    if (sta_ != nullptr) { sta_->HandleAnyMlmeMsg(msg); }
     return ZX_OK;
 }
 
 zx_status_t ClientMlme::HandleFramePacket(fbl::unique_ptr<Packet> pkt) {
-    // TODO(hahnr): Extract into some form of helper method.
-    MgmtFrameView<> mgmt_frame(pkt.get());
-    if (mgmt_frame.hdr()->fc.IsMgmt()) {
-        if (mgmt_frame.hdr()->IsBeacon()) {
-            auto bcn = mgmt_frame.Specialize<Beacon>();
-            if (bcn.HasValidLen()) { scanner_->HandleBeacon(bcn); }
-        } else if (mgmt_frame.hdr()->IsProbeResponse()) {
-            auto proberesp = mgmt_frame.Specialize<ProbeResponse>();
-            if (proberesp.HasValidLen()) { scanner_->HandleProbeResponse(proberesp); }
+    switch (pkt->peer()) {
+    case Packet::Peer::kEthernet: {
+        // For outbound frame (Ethernet frame), hand to station directly so
+        // station sends frame to device when on channel, or buffers it when
+        // off channel.
+        if (auto eth_frame = EthFrameView::CheckType(pkt.get()).CheckLength()) {
+            sta_->HandleEthFrame(eth_frame.IntoOwned(fbl::move(pkt)));
         }
+        break;
     }
-
-    if (sta_ != nullptr) { DispatchFramePacket(fbl::move(pkt), sta_.get()); }
+    case Packet::Peer::kWlan: {
+        chan_sched_->HandleIncomingFrame(fbl::move(pkt));
+        break;
+    }
+    default:
+        errorf("unknown Packet peer: %u\n", pkt->peer());
+        break;
+    }
     return ZX_OK;
 }
 
@@ -120,7 +133,7 @@ zx_status_t ClientMlme::HandleMlmeJoinReq(const MlmeMsg<wlan_mlme::JoinRequest>&
         return status;
     }
 
-    sta_.reset(new Station(device_, std::move(timer)));
+    sta_.reset(new Station(device_, TimerManager(std::move(timer)), chan_sched_.get()));
     return ZX_OK;
 }
 
@@ -129,24 +142,41 @@ bool ClientMlme::IsStaValid() const {
     return sta_ != nullptr && sta_->bssid() != nullptr;
 }
 
-zx_status_t ClientMlme::PreChannelChange(wlan_channel_t chan) {
+void ClientMlme::OnChannelHandlerImpl::PreSwitchOffChannel() {
     debugfn();
-    if (IsStaValid()) { sta_->PreChannelChange(chan); }
-    return ZX_OK;
+    if (mlme_->IsStaValid()) { mlme_->sta_->PreSwitchOffChannel(); }
 }
 
-zx_status_t ClientMlme::PostChannelChange() {
+void ClientMlme::OnChannelHandlerImpl::HandleOnChannelFrame(fbl::unique_ptr<Packet> packet) {
     debugfn();
-    if (IsStaValid()) { sta_->PostChannelChange(); }
-    return ZX_OK;
+    // Only WLAN frame is handed to channel handler since all Ethernet frames are handed
+    // over to station directly.
+    ZX_DEBUG_ASSERT(packet->peer() == Packet::Peer::kWlan);
+
+    if (auto mgmt_frame = MgmtFrameView<>::CheckType(packet.get()).CheckLength()) {
+        if (auto bcn_frame = mgmt_frame.CheckBodyType<Beacon>().CheckLength()) {
+            mlme_->scanner_->HandleBeacon(bcn_frame);
+        }
+    }
+
+    if (mlme_->IsStaValid()) {
+        mlme_->sta_->HandleAnyWlanFrame(fbl::move(packet));
+    }
+}
+
+void ClientMlme::OnChannelHandlerImpl::ReturnedOnChannel() {
+    debugfn();
+    if (mlme_->IsStaValid()) { mlme_->sta_->BackToMainChannel(); }
 }
 
 wlan_stats::MlmeStats ClientMlme::GetMlmeStats() const {
     wlan_stats::MlmeStats mlme_stats{};
-    if (sta_) {
-      mlme_stats.set_client_mlme_stats(sta_->stats());
-    }
+    if (sta_) { mlme_stats.set_client_mlme_stats(sta_->stats()); }
     return mlme_stats;
+}
+
+void ClientMlme::ResetMlmeStats() {
+    if (sta_) { sta_->ResetStats(); }
 }
 
 }  // namespace wlan

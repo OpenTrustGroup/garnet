@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use fidl_stats::IfaceStats;
-use future_util::GroupAvailableExt;
+use fidl_fuchsia_wlan_stats::IfaceStats;
+use fuchsia_zircon as zx;
 use futures::channel::{oneshot, mpsc};
 use futures::prelude::*;
 use parking_lot::Mutex;
 use std::sync::Arc;
-use zx;
+
+use crate::future_util::GroupAvailableExt;
+use crate::Never;
 
 // TODO(gbonik): get rid of the Mutex when FIDL APIs make it possible
 // Mutex is a workaround for the fact that Responder.send() takes a &mut.
@@ -21,17 +23,20 @@ pub struct StatsScheduler {
 }
 
 pub fn create_scheduler()
-    -> (StatsScheduler, impl Stream<Item = StatsRequest, Error = Never>)
+    -> (StatsScheduler, impl Stream<Item = StatsRequest>)
 {
     let (sender, receiver) = mpsc::unbounded();
     let scheduler = StatsScheduler{ queue: sender };
-    let req_stream = receiver.group_available().map(StatsRequest);
+    let req_stream = receiver
+        .map(Ok).group_available()
+        .map_ok(StatsRequest)
+        .map(|x| x.unwrap_or_else(Never::into_any));
     (scheduler, req_stream)
 }
 
 impl StatsScheduler {
     pub fn get_stats(&self)
-        -> impl Future<Item = StatsRef, Error = zx::Status>
+        -> impl Future<Output = Result<StatsRef, zx::Status>>
     {
         let (sender, receiver) = oneshot::channel();
         // Ignore the error: if the other side is closed, `sender` will be immediately
@@ -55,12 +60,12 @@ impl StatsRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async;
-    use fidl_stats::{Counter, DispatcherStats, IfaceStats, PacketCounter};
+    use fidl_fuchsia_wlan_stats::{Counter, DispatcherStats, IfaceStats, PacketCounter};
+    use fuchsia_async as fasync;
 
     #[test]
     fn schedule() {
-        let mut exec = async::Executor::new().expect("Failed to create an executor");
+        let mut exec = fasync::Executor::new().expect("Failed to create an executor");
 
         let (sched, req_stream) = create_scheduler();
         let mut fut1 = sched.get_stats();
@@ -69,55 +74,66 @@ mod tests {
         let mut counter = 0;
         let mut server = req_stream.for_each(move |req| {
             counter += 100;
-            Ok(req.reply(fake_iface_stats(counter)))
+            future::ready(req.reply(fake_iface_stats(counter)))
         });
-        exec.run_until_stalled(&mut server).expect("server future returned an error (a)");
+        exec.run_until_stalled(&mut server);
 
-        let res1 = exec.run_until_stalled(&mut fut1).expect("request future 1 returned an error");
+        let res1 = exec.run_until_stalled(&mut fut1);
         match res1 {
-            Async::Ready(r) => assert_eq!(fake_iface_stats(100), *r.lock()),
-            Async::Pending => panic!("request future 1 returned 'Pending'")
+            Poll::Ready(Ok(r)) => assert_eq!(fake_iface_stats(100), *r.lock()),
+            Poll::Ready(Err(e)) => panic!("request future 1 returned an error: {:?}", e),
+            Poll::Pending => panic!("request future 1 returned 'Pending'")
         }
 
-        let res2 = exec.run_until_stalled(&mut fut2).expect("request future 2 returned an error");
+        let res2 = exec.run_until_stalled(&mut fut2);
         match res2 {
-            Async::Ready(r) => assert_eq!(fake_iface_stats(100), *r.lock()),
-            Async::Pending => panic!("request future 2 returned 'Pending'")
+            Poll::Ready(Ok(r)) => assert_eq!(fake_iface_stats(100), *r.lock()),
+            Poll::Ready(Err(e)) => panic!("request future 2 returned an error: {:?}", e),
+            Poll::Pending => panic!("request future 2 returned 'Pending'")
         }
 
         let mut fut3 = sched.get_stats();
-        exec.run_until_stalled(&mut server).expect("server future returned an error (b)");
-        let res3 = exec.run_until_stalled(&mut fut3).expect("request future 3 returned an error");
+        exec.run_until_stalled(&mut server);
+        let res3 = exec.run_until_stalled(&mut fut3);
         match res3 {
-            Async::Ready(r) => assert_eq!(fake_iface_stats(200), *r.lock()),
-            Async::Pending => panic!("request future 3 returned 'Pending'")
+            Poll::Ready(Ok(r)) => assert_eq!(fake_iface_stats(200), *r.lock()),
+            Poll::Ready(Err(e)) => panic!("request future 3 returned an error: {:?}", e),
+            Poll::Pending => panic!("request future 3 returned 'Pending'")
         }
     }
 
     #[test]
     fn canceled_if_server_dropped_after_request() {
-        let mut exec = async::Executor::new().expect("Failed to create an executor");
+        let mut exec = fasync::Executor::new().expect("Failed to create an executor");
 
         let (sched, req_stream) = create_scheduler();
         let mut fut = sched.get_stats();
 
         ::std::mem::drop(req_stream);
 
-        let res = exec.run_until_stalled(&mut fut).map(|_| ());
-        assert_eq!(Err(zx::Status::CANCELED), res);
+        let res = exec.run_until_stalled(&mut fut);
+        if let Poll::Ready(Err(zx::Status::CANCELED)) = res {
+            // OK
+        } else {
+            panic!("canceled error not found");
+        }
     }
 
     #[test]
     fn canceled_if_server_dropped_before_request() {
-        let mut exec = async::Executor::new().expect("Failed to create an executor");
+        let mut exec = fasync::Executor::new().expect("Failed to create an executor");
 
         let (sched, req_stream) = create_scheduler();
         ::std::mem::drop(req_stream);
 
         let mut fut = sched.get_stats();
 
-        let res = exec.run_until_stalled(&mut fut).map(|_| ());
-        assert_eq!(Err(zx::Status::CANCELED), res);
+        let res = exec.run_until_stalled(&mut fut);
+        if let Poll::Ready(Err(zx::Status::CANCELED)) = res {
+            // OK
+        } else {
+            panic!("no cancelled error");
+        }
     }
 
     fn fake_iface_stats(count: u64) -> IfaceStats {

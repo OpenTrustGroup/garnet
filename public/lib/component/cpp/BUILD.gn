@@ -1,0 +1,61 @@
+# Copyright 2016 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+source_set("cpp") {
+  sources = [
+    "connect.h",
+    "environment_services.cc",
+    "environment_services.h",
+    "expose.cc",
+    "expose.h",
+    "exposed_object.cc",
+    "exposed_object.h",
+    "object_dir.cc",
+    "object_dir.h",
+    "outgoing.cc",
+    "outgoing.h",
+    "service_provider_impl.cc",
+    "service_provider_impl.h",
+    "startup_context.cc",
+    "startup_context.h",
+    "termination_reason.cc",
+    "termination_reason.h",
+  ]
+
+  deps = [
+    "//zircon/public/lib/async-default",
+    "//zircon/public/lib/fdio",
+  ]
+
+  public_deps = [
+    "//garnet/public/fidl/fuchsia.inspect",
+    "//garnet/public/fidl/fuchsia.sys",
+    "//garnet/public/lib/fidl/cpp",
+    "//garnet/public/lib/fxl",
+    "//garnet/public/lib/svc/cpp",
+    "//zircon/public/lib/fit",
+    "//zircon/public/lib/fs",
+    "//zircon/public/lib/zx",
+  ]
+}
+
+source_set("environment_services") {
+  visibility = [
+    "//garnet/bin/appmgr:bin",
+    "//garnet/bin/run:bin",
+    "//garnet/bin/debugserver:bin",
+    "//garnet/bin/insntrace:bin",
+    "//garnet/bin/debug_agent:bin",
+    "//garnet/drivers/wlan/wlan:*",
+    "testing",
+  ]
+  sources = [
+    "environment_services_helper.cc",
+    "environment_services_helper.h",
+  ]
+
+  public_deps = [
+    ":cpp",
+  ]
+}

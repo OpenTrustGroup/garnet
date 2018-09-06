@@ -7,6 +7,7 @@ import("//build/rust/rustc_library.gni")
 rustc_library("wlantap-client") {
   name = "wlantap_client"
   version = "0.1.0"
+  edition = "2018"
 
   deps = [
     "//garnet/lib/wlan/fidl:wlantap-rustc",
@@ -16,7 +17,6 @@ rustc_library("wlantap-client") {
     "//garnet/public/rust/crates/fuchsia-zircon",
     "//third_party/rust-crates/rustc_deps:byteorder",
     "//third_party/rust-crates/rustc_deps:failure",
-    "//third_party/rust-crates/rustc_deps:futures",
   ]
 }
 

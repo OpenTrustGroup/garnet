@@ -10,16 +10,17 @@
 #include "gtest/gtest.h"
 #include "lib/escher/flib/fence.h"
 #include "lib/escher/util/image_utils.h"
-#include "lib/ui/scenic/fidl_helpers.h"
+#include "lib/ui/scenic/cpp/commands.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 namespace test {
 
 class ImagePipeTest : public SessionTest, public escher::ResourceManager {
  public:
   ImagePipeTest()
-      : escher::ResourceManager(nullptr), command_buffer_sequencer_() {}
+      : escher::ResourceManager(escher::EscherWeakPtr()),
+        command_buffer_sequencer_() {}
 
   std::unique_ptr<Engine> CreateEngine() override {
     auto r = std::make_unique<ReleaseFenceSignallerForTest>(
@@ -104,8 +105,8 @@ TEST_F(ImagePipeTest, ImagePipeImageIdMustNotBeZero) {
                          CopyVmo(checkerboard->vmo()),
                          fuchsia::images::MemoryType::HOST_MEMORY, 0);
 
-    EXPECT_EQ("ImagePipe::AddImage: Image can not be assigned an ID of 0.",
-              reported_errors_.back());
+    ExpectLastReportedError(
+        "ImagePipe::AddImage: Image can not be assigned an ID of 0.");
   }
 }
 
@@ -130,14 +131,15 @@ TEST_F(ImagePipeTest, PresentImagesOutOfOrder) {
   fuchsia::images::ImagePipe::PresentImageCallback callback = [](auto) {};
 
   image_pipe->PresentImage(imageId1, 1, CopyEventIntoFidlArray(CreateEvent()),
-                           CopyEventIntoFidlArray(CreateEvent()), std::move(callback));
+                           CopyEventIntoFidlArray(CreateEvent()),
+                           std::move(callback));
   image_pipe->PresentImage(imageId1, 0, CopyEventIntoFidlArray(CreateEvent()),
-                           CopyEventIntoFidlArray(CreateEvent()), std::move(callback));
+                           CopyEventIntoFidlArray(CreateEvent()),
+                           std::move(callback));
 
-  EXPECT_EQ(
-      "scenic::gfx::ImagePipe: Present called with out-of-order presentation "
-      "time.presentation_time=0, last scheduled presentation time=1",
-      reported_errors_.back());
+  ExpectLastReportedError(
+      "ImagePipe: Present called with out-of-order presentation "
+      "time.presentation_time=0, last scheduled presentation time=1");
 }
 
 // Call Present with in-order presentation times, and expect no error.
@@ -161,11 +163,13 @@ TEST_F(ImagePipeTest, PresentImagesInOrder) {
   fuchsia::images::ImagePipe::PresentImageCallback callback = [](auto) {};
 
   image_pipe->PresentImage(imageId1, 1, CopyEventIntoFidlArray(CreateEvent()),
-                           CopyEventIntoFidlArray(CreateEvent()), std::move(callback));
+                           CopyEventIntoFidlArray(CreateEvent()),
+                           std::move(callback));
   image_pipe->PresentImage(imageId1, 1, CopyEventIntoFidlArray(CreateEvent()),
-                           CopyEventIntoFidlArray(CreateEvent()), std::move(callback));
+                           CopyEventIntoFidlArray(CreateEvent()),
+                           std::move(callback));
 
-  EXPECT_TRUE(reported_errors_.empty());
+  EXPECT_ERROR_COUNT(0);
 }
 
 // Present two frames on the ImagePipe, making sure that acquire fence is
@@ -265,4 +269,4 @@ TEST_F(ImagePipeTest, ImagePipePresentTwoFrames) {
 
 }  // namespace test
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

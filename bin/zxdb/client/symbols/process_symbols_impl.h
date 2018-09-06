@@ -19,7 +19,6 @@ struct Module;
 namespace zxdb {
 
 class LoadedModuleSymbols;
-class LoadedModuleSymbolsImpl;
 class TargetSymbolsImpl;
 
 // Main client interface for querying process symbol information. See also
@@ -46,18 +45,12 @@ class ProcessSymbolsImpl : public ProcessSymbols {
 
   TargetSymbolsImpl* target_symbols() { return target_symbols_; }
 
-  // Adds the given module to the process. The callback will be executed with
-  // the local path of the module if it is found, or the empty string if it is
-  // not found.
-  void AddModule(const debug_ipc::Module& module,
-                 std::function<void(const std::string&)> callback);
-
   // Replaces all modules with the given list.
   void SetModules(const std::vector<debug_ipc::Module>& modules);
 
   // ProcessSymbols implementation.
   TargetSymbols* GetTargetSymbols() override;
-  std::vector<ModuleStatus> GetStatus() const override;
+  std::vector<ModuleSymbolStatus> GetStatus() const override;
   Location LocationForAddress(uint64_t address) const override;
   LineDetails LineDetailsForAddress(uint64_t address) const override;
   std::vector<uint64_t> AddressesForFunction(
@@ -71,7 +64,7 @@ class ProcessSymbolsImpl : public ProcessSymbols {
     uint64_t base = 0;
 
     // MAY BE NULL if the symbols could not be loaded.
-    std::unique_ptr<LoadedModuleSymbolsImpl> symbols;
+    std::unique_ptr<LoadedModuleSymbols> symbols;
   };
 
   // Creates the ModuleInfo structure, attempts to load the symbols, and

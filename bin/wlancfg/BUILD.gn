@@ -8,24 +8,27 @@ import("//build/package.gni")
 rustc_binary("bin") {
   name = "wlancfg"
   with_unit_tests = true
-  with_lto = "fat"
+  edition = "2018"
 
   deps = [
     "//garnet/lib/wlan/fidl:fidl-rustc",
     "//garnet/lib/wlan/fidl:service-rustc",
     "//garnet/lib/wlan/fidl:sme-rustc",
+    "//garnet/public/fidl/fuchsia.wlan.mlme:fuchsia.wlan.mlme-rustc",
+    "//garnet/public/fidl/fuchsia.wlan.service:fuchsia.wlan.service-rustc",
+    "//garnet/public/fidl/fuchsia.wlan.stats:fuchsia.wlan.stats-rustc",
     "//garnet/public/lib/fidl/rust/fidl",
-    "//garnet/public/lib/wlan/fidl:mlme-rustc",
-    "//garnet/public/lib/wlan/fidl:service-rustc",
-    "//garnet/public/lib/wlan/fidl:stats-rustc",
     "//garnet/public/rust/crates/fuchsia-app",
     "//garnet/public/rust/crates/fuchsia-async",
     "//garnet/public/rust/crates/fuchsia-zircon",
     "//third_party/rust-crates/rustc_deps:failure",
-    "//third_party/rust-crates/rustc_deps:futures",
+    "//third_party/rust-crates/rustc_deps:futures-preview",
+    "//third_party/rust-crates/rustc_deps:log",
+    "//third_party/rust-crates/rustc_deps:parking_lot",
     "//third_party/rust-crates/rustc_deps:serde",
     "//third_party/rust-crates/rustc_deps:serde_derive",
     "//third_party/rust-crates/rustc_deps:serde_json",
+    "//third_party/rust-crates/rustc_deps:tempdir",
   ]
 }
 
@@ -51,13 +54,15 @@ package("wlancfg") {
   ]
 }
 
-package("config") {
-  deprecated_system_image = true
-  package_name = "wlancfg_config"
-  resources = [
+package("wlancfg-tests") {
+  testonly = true
+  deps = [
+    ":bin",
+  ]
+  tests = [
     {
-      dest = "sysmgr/wlancfg.config"
-      path = rebase_path("wlancfg.config")
+      name = "wlancfg_bin_test_rustc"
+      dest = "wlancfg_bin_test_rustc"
     },
   ]
 }

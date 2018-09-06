@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_L2CAP_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_L2CAP_H_
 
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
@@ -23,8 +24,8 @@ class Channel;
 //
 //   * Waiting on L2CAP sockets;
 //
-// A production L2CAP (obtained via L2CAP::Create()) spawns a thread with an
-// async dispatcher which is used to serially dispatch all internal L2CAP tasks.
+// A production L2CAP (obtained via L2CAP::Create()) spawns a thread with a
+// dispatcher which is used to serially dispatch all internal L2CAP tasks.
 //
 // L2CAP is defined as a pure-virtual interface, so that a fake can be injected
 // while testing layers that depend on it.
@@ -33,7 +34,6 @@ class Channel;
 // from any thread.
 class L2CAP : public fbl::RefCounted<L2CAP> {
  public:
-  using ChannelCallback = fit::function<void(fbl::RefPtr<Channel>)>;
   using LEConnectionParameterUpdateCallback =
       internal::LESignalingChannel::ConnectionParameterUpdateCallback;
   using LinkErrorCallback = fit::closure;
@@ -59,11 +59,10 @@ class L2CAP : public fbl::RefCounted<L2CAP> {
   // error. It will be posted onto |dispatcher|.
   //
   // Has no effect if L2CAP is uninitialized or shut down.
-  virtual void RegisterACL(
-      hci::ConnectionHandle handle,
-      hci::Connection::Role role,
-      LinkErrorCallback link_error_callback,
-      async_t* dispatcher) = 0;
+  virtual void AddACLConnection(hci::ConnectionHandle handle,
+                                hci::Connection::Role role,
+                                LinkErrorCallback link_error_callback,
+                                async_dispatcher_t* dispatcher) = 0;
 
   // Registers an LE connection with the L2CAP layer. L2CAP channels can be
   // opened on the logical link represented by |handle| after a call to this
@@ -75,13 +74,18 @@ class L2CAP : public fbl::RefCounted<L2CAP> {
   // |link_error_callback| will be used to notify when a channel signals a link
   // error.
   //
+  // Upon successful registration of the link, |channel_callback| will be called
+  // with the ATT and SMP fixed channels.
+  //
   // Has no effect if L2CAP is uninitialized or shut down.
-  virtual void RegisterLE(
-      hci::ConnectionHandle handle,
-      hci::Connection::Role role,
+  using AddLEConnectionCallback =
+      fit::function<void(fbl::RefPtr<Channel> att, fbl::RefPtr<Channel> smp)>;
+  virtual void AddLEConnection(
+      hci::ConnectionHandle handle, hci::Connection::Role role,
       LEConnectionParameterUpdateCallback conn_param_callback,
       LinkErrorCallback link_error_callback,
-      async_t* dispatcher) = 0;
+      AddLEConnectionCallback channel_callback,
+      async_dispatcher_t* dispatcher) = 0;
 
   // Removes a previously registered connection. All corresponding Channels will
   // be closed and all incoming data packets on this link will be dropped.
@@ -92,25 +96,45 @@ class L2CAP : public fbl::RefCounted<L2CAP> {
   // more packets to send after removing the link entry.
   //
   // Has no effect if L2CAP is uninitialized or shut down.
-  virtual void Unregister(hci::ConnectionHandle handle) = 0;
+  virtual void RemoveConnection(hci::ConnectionHandle handle) = 0;
 
-  // Opens the L2CAP fixed channel with |channel_id| over the logical link
-  // identified by |connection_handle| and starts routing packets.
+  // Open an outbound dynamic channel against a peer's Protocol/Service
+  // Multiplexing (PSM) code |psm| on a link identified by |handle|.
   //
-  // The resulting channel will be returned asynchronously via |callback| on the
-  // requested |dispatcher|. Runs |callback| with nullptr if the channel is
-  // already open.
+  // |cb| will be called on |dispatcher| with the channel created to the remote,
+  // or nullptr if the channel creation resulted in an error.
   //
-  // Has no effect if L2CAP is uninitialized or shut down. |callback| will not
-  // run in this case.
+  // Has no effect if L2CAP is uninitialized or shut down.
+  virtual void OpenChannel(hci::ConnectionHandle handle, PSM psm,
+                           ChannelCallback cb,
+                           async_dispatcher_t* dispatcher) = 0;
+
+  // Registers a handler for peer-initiated dynamic channel requests that have
+  // the Protocol/Service Multiplexing (PSM) code |psm|.
   //
-  // TODO(armansito): Replace this with a version that returns all fixed
-  // channels to avoid jumping through an asynchronous callback for each
-  // channel. Probably one for LE and one for Classic.
-  virtual void OpenFixedChannel(hci::ConnectionHandle handle,
-                                ChannelId id,
-                                ChannelCallback callback,
-                                async_t* dispatcher) = 0;
+  // |cb| will be called on |dispatcher| with the channel created by each
+  // inbound connection request received. Handlers must be unregistered before
+  // they are replaced.
+  //
+  // Returns false if |psm| is invalid or already has a handler registered.
+  //
+  // Inbound connection requests with a PSM that has no registered handler will
+  // be rejected.
+  //
+  // Has no effect if L2CAP is uninitialized or shut down.
+  //
+  // TODO(xow): NET-1084 Pass in required channel configurations. Call signature
+  //            will likely change.
+  // TODO(xow): Dynamic PSMs may need their routing space (ACL or LE) identified
+  virtual bool RegisterService(PSM psm, ChannelCallback cb,
+                               async_dispatcher_t* dispatcher) = 0;
+
+  // Removes the handler for inbound channel requests for the previously-
+  // registered service identified by |psm|. This only prevents new inbound
+  // channels from being opened but does not close already-open channels.
+  //
+  // Has no effect if L2CAP is uninitialized or shut down.
+  virtual void UnregisterService(PSM psm) = 0;
 
  protected:
   friend class fbl::RefPtr<L2CAP>;
@@ -123,3 +147,5 @@ class L2CAP : public fbl::RefCounted<L2CAP> {
 
 }  // namespace l2cap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_L2CAP_H_

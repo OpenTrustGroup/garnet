@@ -2,9 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <fuchsia/netconnector/cpp/fidl.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/task.h>
-#include <fuchsia/netconnector/cpp/fidl.h>
 
 #include "garnet/examples/netconnector/netconnector_example/netconnector_example_impl.h"
 #include "garnet/examples/netconnector/netconnector_example/netconnector_example_params.h"
@@ -17,10 +17,10 @@ int main(int argc, const char** argv) {
     return 1;
   }
 
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
   examples::NetConnectorExampleImpl impl(&params, [&loop]() {
-    async::PostTask(loop.async(), [&loop]() { loop.Quit(); });
+    async::PostTask(loop.dispatcher(), [&loop]() { loop.Quit(); });
   });
 
   loop.Run();

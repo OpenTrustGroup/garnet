@@ -93,19 +93,6 @@ class Includer : public shaderc::CompileOptions::IncluderInterface {
 
 }  // anonymous namespace
 
-ShaderModuleVariantArgs::ShaderModuleVariantArgs(
-    std::vector<std::pair<std::string, std::string>> definitions)
-    : definitions_(std::move(definitions)) {}
-
-Hash ShaderModuleVariantArgs::GenerateHash() const {
-  Hasher h;
-  for (auto& def : definitions_) {
-    h.string(def.first);
-    h.string(def.second);
-  }
-  return h.value();
-}
-
 ShaderModuleTemplate::ShaderModuleTemplate(vk::Device device,
                                            shaderc::Compiler* compiler,
                                            ShaderStage shader_stage,
@@ -114,13 +101,13 @@ ShaderModuleTemplate::ShaderModuleTemplate(vk::Device device,
     : device_(device),
       compiler_(compiler),
       shader_stage_(shader_stage),
-      path_(path),
+      path_(std::move(path)),
       filesystem_(std::move(filesystem)) {}
 
 ShaderModuleTemplate::~ShaderModuleTemplate() { FXL_DCHECK(variants_.empty()); }
 
 ShaderModulePtr ShaderModuleTemplate::GetShaderModuleVariant(
-    const ShaderModuleVariantArgs& args) {
+    const ShaderVariantArgs& args) {
   if (Variant* variant = variants_[args]) {
     return ShaderModulePtr(variant);
   }
@@ -156,7 +143,7 @@ void ShaderModuleTemplate::ScheduleVariantCompilation(
 }
 
 ShaderModuleTemplate::Variant::Variant(ShaderModuleTemplate* tmplate,
-                                       ShaderModuleVariantArgs args)
+                                       ShaderVariantArgs args)
     : ShaderModule(tmplate->device_, tmplate->shader_stage_),
       template_(tmplate),
       args_(std::move(args)),

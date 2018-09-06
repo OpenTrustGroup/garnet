@@ -11,12 +11,15 @@
 
 #include "garnet/bin/appmgr/realm.h"
 #include "garnet/bin/appmgr/root_loader.h"
+#include "garnet/bin/appmgr/util.h"
 #include "lib/fxl/macros.h"
+#include "lib/svc/cpp/services.h"
 
 namespace component {
 
 struct AppmgrArgs {
   zx_handle_t pa_directory_request;
+  const std::shared_ptr<component::Services> environment_services;
   std::string sysmgr_url;
   fidl::VectorPtr<fidl::StringPtr> sysmgr_args;
   bool run_virtual_console;
@@ -25,14 +28,10 @@ struct AppmgrArgs {
 
 class Appmgr {
  public:
-  Appmgr(async_t* async, AppmgrArgs args);
+  Appmgr(async_dispatcher_t* dispatcher, AppmgrArgs args);
   ~Appmgr();
 
  private:
-  fs::SynchronousVfs loader_vfs_;
-  RootLoader root_loader_;
-  fbl::RefPtr<fs::PseudoDir> loader_dir_;
-
   std::unique_ptr<Realm> root_realm_;
   fs::SynchronousVfs publish_vfs_;
   fbl::RefPtr<fs::PseudoDir> publish_dir_;
@@ -40,6 +39,8 @@ class Appmgr {
   fuchsia::sys::ComponentControllerPtr sysmgr_;
   std::string sysmgr_url_;
   fidl::VectorPtr<fidl::StringPtr> sysmgr_args_;
+  RestartBackOff sysmgr_backoff_;
+  bool sysmgr_permanently_failed_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Appmgr);
 };

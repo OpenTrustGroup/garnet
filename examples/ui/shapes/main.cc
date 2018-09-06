@@ -9,8 +9,8 @@
 #include "lib/ui/view_framework/view_provider_app.h"
 
 int main(int argc, const char** argv) {
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
-  trace::TraceProvider trace_provider(loop.async());
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
+  trace::TraceProvider trace_provider(loop.dispatcher());
 
   mozart::ViewProviderApp app([](mozart::ViewContext view_context) {
     return std::make_unique<examples::ShapesView>(

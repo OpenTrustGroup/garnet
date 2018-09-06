@@ -4,6 +4,7 @@
 
 #include <wlan/mlme/ap/ap_mlme.h>
 #include <wlan/mlme/frame_dispatcher.h>
+#include <wlan/mlme/service.h>
 
 #include <fbl/ref_ptr.h>
 #include <wlan/common/logging.h>
@@ -49,12 +50,12 @@ zx_status_t ApMlme::HandleMlmeMsg(const BaseMlmeMsg& msg) {
         return HandleMlmeStopReq(*stop_req);
     }
 
-    if (bss_ != nullptr) { return DispatchMlmeMsg(msg, bss_.get()); }
+    // TODO(hahnr): Forward MLME primitives to BSS.
     return ZX_OK;
 }
 
 zx_status_t ApMlme::HandleFramePacket(fbl::unique_ptr<Packet> pkt) {
-    if (bss_ != nullptr) { return DispatchFramePacket(fbl::move(pkt), bss_.get()); }
+    if (bss_ != nullptr) { bss_->HandleAnyFrame(fbl::move(pkt)); }
     return ZX_OK;
 }
 
@@ -98,18 +99,6 @@ zx_status_t ApMlme::HandleMlmeStopReq(const MlmeMsg<wlan_mlme::StopRequest>& req
     bss_->Stop();
     bss_.reset();
 
-    return ZX_OK;
-}
-
-zx_status_t ApMlme::PreChannelChange(wlan_channel_t chan) {
-    debugfn();
-    // TODO(hahnr): Implement.
-    return ZX_OK;
-}
-
-zx_status_t ApMlme::PostChannelChange() {
-    debugfn();
-    // TODO(hahnr): Implement.
     return ZX_OK;
 }
 

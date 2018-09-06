@@ -7,7 +7,6 @@ package daemon
 import (
 	"errors"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"net/url"
@@ -52,7 +51,7 @@ type Daemon struct {
 	processor func(*GetResult, *pkg.PackageSet) error
 
 	muRepos sync.Mutex
-	repos   []BlobRepo
+	repos   map[string]BlobRepo
 
 	muInProg sync.Mutex
 	inProg   map[pkg.Package]*upRec
@@ -68,23 +67,33 @@ func NewDaemon(store string, r *pkg.PackageSet, f func(*GetResult, *pkg.PackageS
 		srcMons:   []*SourceMonitor{},
 		srcs:      make(map[string]source.Source),
 		processor: f,
-		repos:     []BlobRepo{},
+		repos:     make(map[string]BlobRepo),
 		muInProg:  sync.Mutex{},
 		inProg:    make(map[pkg.Package]*upRec)}
 	mon := NewSourceMonitor(d, r, f, CheckInterval)
 	d.runCount.Add(1)
-	d.srcMons = append(d.srcMons, mon)
 	for k := range s {
-		d.addSrc(s[k])
+		d.addSource(s[k])
 	}
 	go func() {
 		mon.Run()
 		d.runCount.Done()
 	}()
+	d.srcMons = append(d.srcMons, mon)
 
+	var srcs []source.Source
+	var err error
 	// Ignore if the directory doesn't exist
-	if err := d.loadSourcesFromPath(store); err != nil && !os.IsNotExist(err) {
+	if srcs, err = loadSourcesFromPath(store); err != nil && !os.IsNotExist(err) {
 		return nil, err
+	}
+
+	for _, src := range srcs {
+		if src.Enabled() {
+			if err = d.addSource(src); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	return d, nil
@@ -92,33 +101,33 @@ func NewDaemon(store string, r *pkg.PackageSet, f func(*GetResult, *pkg.PackageS
 
 // loadSourcesFromPath loads sources from a directory, where each source gets
 // it's own directory.  The actual directory structure is source dependent.
-func (d *Daemon) loadSourcesFromPath(dir string) error {
+func loadSourcesFromPath(dir string) ([]source.Source, error) {
 	files, err := ioutil.ReadDir(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
+	srcs := make([]source.Source, 0, len(files))
 	for _, f := range files {
 		p := filepath.Join(dir, f.Name())
 		src, err := source.LoadTUFSourceFromPath(p)
 		if err != nil {
-			return err
+			return nil, err
 		}
-
-		d.addTUFSource(src)
+		srcs = append(srcs, src)
 	}
 
-	return nil
+	return srcs, nil
 }
 
-func (d *Daemon) addSrc(s source.Source) {
+func (d *Daemon) addToActiveSrcs(s source.Source) {
 	d.muSrcs.Lock()
 	defer d.muSrcs.Unlock()
 
 	id := s.GetId()
 
 	if oldSource, ok := d.srcs[id]; ok {
-		log.Printf("overwriting source: %s", id)
+		log.Printf("overwriting active source: %s", id)
 		oldSource.Close()
 	}
 
@@ -134,6 +143,10 @@ func (d *Daemon) AddTUFSource(cfg *amber.SourceConfig) error {
 	// Make sure the id is safe to be written to disk.
 	store := filepath.Join(d.store, url.PathEscape(cfg.Id))
 
+	// if enabled/disabled is not set, default to disabled
+	if cfg.StatusConfig == nil {
+		cfg.StatusConfig = &amber.StatusConfig{Enabled: false}
+	}
 	src, err := source.NewTUFSource(store, cfg)
 	if err != nil {
 		log.Printf("failed to create TUF source: %v: %s", cfg.Id, err)
@@ -142,38 +155,111 @@ func (d *Daemon) AddTUFSource(cfg *amber.SourceConfig) error {
 
 	// Save the config.
 	if err := src.Save(); err != nil {
-		log.Printf("failed to save TUF config: %v: %s", cfg.Id, err)
+		log.Printf("failed to save TUF config %v: %s", cfg.Id, err)
 		return err
 	}
 
-	return d.addTUFSource(src)
+	if !src.Enabled() {
+		d.muSrcs.Lock()
+		if _, ok := d.srcs[cfg.Id]; ok && cfg.BlobRepoUrl != "" {
+			d.RemoveBlobRepo(cfg.BlobRepoUrl)
+		}
+		delete(d.srcs, cfg.Id)
+		d.muSrcs.Unlock()
+		return nil
+	}
+
+	return d.addSource(src)
 }
 
-func (d *Daemon) addTUFSource(src *source.TUFSource) error {
+func (d *Daemon) DisableSource(srcID string) error {
+	d.muSrcs.Lock()
+	defer d.muSrcs.Unlock()
+
+	if _, err := d.setSrcEnablementLock(srcID, false); err != nil {
+		return err
+	}
+
+	// get the source directly since we only are interested in removing the
+	// repo if the corresponding source is currently used.
+	src, ok := d.srcs[srcID]
+	if ok {
+		if cfg := src.GetConfig(); cfg != nil {
+			d.RemoveBlobRepo(cfg.BlobRepoUrl)
+		}
+	}
+	delete(d.srcs, srcID)
+
+	return nil
+}
+
+func (d *Daemon) EnableSource(srcID string) error {
+	d.muSrcs.Lock()
+	defer d.muSrcs.Unlock()
+
+	var err error
+	var src source.Source
+	if src, err = d.setSrcEnablementLock(srcID, true); err != nil {
+		return err
+	}
+
+	br := blobRepoFromSource(src)
+	if br == nil {
+		return fmt.Errorf("source %q's blob repo could not be used, source not added", srcID)
+	}
+
+	if err = d.AddBlobRepo(*br); err != nil {
+		return fmt.Errorf("source not added, error adding blob repo: %s", err)
+	}
+
+	d.srcs[srcID] = src
+	return nil
+}
+
+// blobRepoFromSource constructs a BlobRepo struct if the Source has a config.
+// It does not check if the BlobRepoUrl is set or even valid
+func blobRepoFromSource(s source.Source) *BlobRepo {
+	if cfg := s.GetConfig(); cfg != nil {
+		return &BlobRepo{
+			Source:   s,
+			Address:  cfg.BlobRepoUrl,
+			Interval: time.Second * 5,
+		}
+	}
+	return nil
+}
+
+func (d *Daemon) setSrcEnablementLock(srcID string, enabled bool) (source.Source, error) {
+	src, err := d.srcLock(srcID)
+	if err != nil {
+		return nil, err
+	}
+
+	src.SetEnabled(enabled)
+	if err := src.Save(); err != nil {
+		return nil, err
+	}
+	return src, nil
+}
+
+func (d *Daemon) addSource(src source.Source) error {
 	cfg := src.GetConfig()
 	if cfg == nil {
-		return fmt.Errorf("TUFSource does not have a config")
+		return fmt.Errorf("source does not have a config")
 	}
 
-	// Add the source's blob repo. If not specified, assume the blobs are
-	// found under $RepoURL/blobs.
-	blobRepoUrl := cfg.BlobRepoUrl
-	if blobRepoUrl == "" {
-		blobRepoUrl = filepath.Join(cfg.RepoUrl, "blobs")
-	}
-
-	blobRepo := BlobRepo{
-		Source:   src,
-		Address:  cfg.BlobRepoUrl,
-		Interval: time.Second * 5,
-	}
-
-	if err := d.AddBlobRepo(blobRepo); err != nil {
-		return err
+	// Add the source's blob repo.
+	blobRepo := blobRepoFromSource(src)
+	if blobRepo != nil {
+		if err := d.AddBlobRepo(*blobRepo); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("source's blob repo could not be added")
 	}
 
 	// If we made it to this point, we're ready to actually add the source.
-	d.addSrc(src)
+	d.addToActiveSrcs(src)
 
 	// after the source is added, let the monitor(s) know so they can decide if they
 	// want to look again for updates
@@ -186,15 +272,88 @@ func (d *Daemon) addTUFSource(src *source.TUFSource) error {
 	return nil
 }
 
+func (d *Daemon) RemoveTUFSource(id string) (amber.Status, error) {
+	// If this method succeeds, the source should be removed from the
+	// running service and not be loaded after a service restart. Delete
+	// the config file before removing the source from the service to
+	// ensure this behavior.
+	s, err := d.removeTUFSource(id)
+	if err != nil {
+		return amber.StatusErr, nil
+	} else if s == nil {
+		return amber.StatusErrNotFound, nil
+	}
+
+	cfg := s.GetConfig()
+	if cfg != nil {
+		if found := d.RemoveBlobRepo(cfg.BlobRepoUrl); !found {
+			log.Printf("blob repo not found: %s", cfg.BlobRepoUrl)
+		}
+	}
+
+	s.Close()
+
+	err = s.Delete()
+	if err != nil {
+		log.Printf("unable to remove TUFSource from disk: %v\n", err)
+	}
+	log.Printf("removed source: %s", id)
+
+	return amber.StatusOk, nil
+}
+
+func (d *Daemon) removeTUFSource(id string) (source.Source, error) {
+	d.muSrcs.Lock()
+	defer d.muSrcs.Unlock()
+
+	s, err := d.srcLock(id)
+	if err != nil {
+		log.Printf("source %q not found: %s", id, err)
+		return nil, nil
+	}
+
+	err = s.DeleteConfig()
+	if err != nil {
+		log.Printf("unable to remove source config from disk: %v", err)
+		return nil, err
+	}
+
+	delete(d.srcs, id)
+
+	return s, nil
+}
+
+// srcLock gets a source, either an enabled or disabled one. It is the
+// responsibility of the caller to hold muSrcs when calling.
+func (d *Daemon) srcLock(srcID string) (source.Source, error) {
+	src, ok := d.srcs[srcID]
+	if ok {
+		return src, nil
+	}
+
+	allSrcs, err := loadSourcesFromPath(d.store)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, src := range allSrcs {
+		if src.GetId() == srcID {
+			return src, nil
+		}
+	}
+
+	return nil, os.ErrNotExist
+}
+
 func (d *Daemon) Login(srcId string) (*amber.DeviceCode, error) {
 	log.Printf("logging into %s", srcId)
 	d.muSrcs.Lock()
-	src, ok := d.srcs[srcId]
+	src, err := d.srcLock(srcId)
 	d.muSrcs.Unlock()
 
-	if !ok {
-		log.Printf("unknown source id: %v", srcId)
-		return nil, fmt.Errorf("unknown source: %v", srcId)
+	if err != nil {
+		log.Printf("error getting source by ID: %s", err)
+		return nil, fmt.Errorf("unknown source: %s", err)
 	}
 
 	return src.Login()
@@ -203,8 +362,10 @@ func (d *Daemon) Login(srcId string) (*amber.DeviceCode, error) {
 func (d *Daemon) blobRepos() []BlobRepo {
 	d.muRepos.Lock()
 	defer d.muRepos.Unlock()
-	c := make([]BlobRepo, len(d.repos))
-	copy(c, d.repos)
+	c := make([]BlobRepo, 0, len(d.repos))
+	for _, r := range d.repos {
+		c = append(c, r)
+	}
 	return c
 }
 
@@ -215,7 +376,7 @@ func (d *Daemon) AddBlobRepo(br BlobRepo) error {
 	}
 
 	d.muRepos.Lock()
-	d.repos = append(d.repos, br)
+	d.repos[br.Address] = br
 	d.muRepos.Unlock()
 
 	log.Printf("added blob repo: %v\n", br.Address)
@@ -229,15 +390,17 @@ func (d *Daemon) GetBlob(blob string) error {
 	return FetchBlob(repos, blob, DstBlob)
 }
 
-func (d *Daemon) RemoveBlobRepo(r BlobRepo) {
+func (d *Daemon) RemoveBlobRepo(blobUrl string) bool {
 	d.muRepos.Lock()
-	for i := range d.repos {
-		if d.repos[i] == r {
-			d.repos = append(d.repos[:i], d.repos[i+1:]...)
-			break
-		}
+	defer d.muRepos.Unlock()
+
+	_, ok := d.repos[blobUrl]
+	delete(d.repos, blobUrl)
+
+	if ok {
+		log.Printf("removed blob repo: %v\n", blobUrl)
 	}
-	d.muRepos.Unlock()
+	return ok
 }
 
 type upRec struct {
@@ -447,7 +610,7 @@ func detectExisting(pkgs []*pkg.Package, resultSet map[pkg.Package]*GetResult) [
 func (d *Daemon) getUpdates(rec *upRec) map[pkg.Package]*GetResult {
 	fetchRecs := []*pkgSrcPair{}
 
-	srcs := d.GetSources()
+	srcs := d.GetActiveSources()
 
 	unfoundPkgs := rec.pkgs
 	// TODO thread-safe access for sources?
@@ -459,11 +622,11 @@ func (d *Daemon) getUpdates(rec *upRec) map[pkg.Package]*GetResult {
 		updates, err := src.AvailableUpdates(unfoundPkgs)
 		if len(updates) == 0 || err != nil {
 			if err == ErrRateExceeded {
-				log.Printf("daemon: source rate limit exceeded\n")
+				log.Printf("daemon: source rate limit exceeded")
 			} else if err != nil {
-				log.Printf("daemon: error checking source for updates %s\n", err)
+				log.Printf("daemon: error checking source for updates %s", err)
 			} else {
-				log.Printf("daemon: no update found at source\n")
+				log.Printf("daemon: no update found at source")
 			}
 			continue
 		}
@@ -535,6 +698,7 @@ func cleanupFiles(files []*os.File) {
 // on the Source to complete. This method returns ErrSrcNotFound if the supplied
 // Source is not know to this Daemon.
 func (d *Daemon) RemoveSource(src source.Source) error {
+	// TODO(PKG-154) unify this method with RemoveTUFSource
 	d.muSrcs.Lock()
 	defer d.muSrcs.Unlock()
 
@@ -550,13 +714,34 @@ func (d *Daemon) RemoveSource(src source.Source) error {
 	return ErrSrcNotFound
 }
 
-func (d *Daemon) GetSources() map[string]source.Source {
+func (d *Daemon) GetActiveSources() map[string]source.Source {
 	d.muSrcs.Lock()
 	defer d.muSrcs.Unlock()
 
 	srcs := make(map[string]source.Source)
 	for key, value := range d.srcs {
 		srcs[key] = value
+	}
+	return srcs
+}
+
+func (d *Daemon) GetSources() map[string]source.Source {
+	srcs := d.GetActiveSources()
+	d.muSrcs.Lock()
+	defer d.muSrcs.Unlock()
+
+	// load any sources from disk that we may know about, but are not currently
+	// using
+	allSrcs, err := loadSourcesFromPath(d.store)
+	if err != nil {
+		log.Printf("couldn't load sources from disk: %s", err)
+	} else {
+		// don't override any in-memory entries
+		for _, src := range allSrcs {
+			if _, ok := srcs[src.GetId()]; !ok {
+				srcs[src.GetId()] = src
+			}
+		}
 	}
 
 	return srcs
@@ -650,12 +835,20 @@ func WriteUpdateToPkgFS(data *GetResult, dst *os.File) (string, error) {
 	if err != nil {
 		return "", NewErrProcessPackage("couldn't truncate file destination %s", e)
 	}
-	written, err := io.Copy(dst, data)
+
+	// TODO(XXX) Consider a more efficient implementation that reads chunks, for now this
+	// is pretty safe because meta FARs are small
+	fileBytes, err := ioutil.ReadAll(data)
+	if err != nil {
+		return "", NewErrProcessPackage("reading from temp file failed: %s", err)
+	}
+
+	written, err := dst.Write(fileBytes)
 	if err != nil {
 		return "", NewErrProcessPackage("couldn't write update to file %s", err)
 	}
 
-	if written != i.Size() {
+	if int64(written) != i.Size() {
 		return "", NewErrProcessPackage("pkg blob incomplete, only wrote %d out of %d bytes", written, i.Size())
 	}
 

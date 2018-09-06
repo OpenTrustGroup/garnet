@@ -27,7 +27,7 @@
 #include "garnet/lib/ui/gfx/resources/view.h"
 #include "garnet/lib/ui/gfx/resources/view_holder.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 const ResourceTypeInfo Renderer::kTypeInfo = {ResourceType::kRenderer,
@@ -36,7 +36,7 @@ const ResourceTypeInfo Renderer::kTypeInfo = {ResourceType::kRenderer,
 const uint32_t Renderer::kRequiredSwapchainPixelMultiple =
     escher::impl::SsdoSampler::kSsdoAccelDownsampleFactor;
 
-Renderer::Renderer(Session* session, scenic::ResourceId id)
+Renderer::Renderer(Session* session, ResourceId id)
     : Resource(session, id, Renderer::kTypeInfo) {
   escher::MaterialPtr default_material_ =
       fxl::MakeRefCounted<escher::Material>();
@@ -181,6 +181,8 @@ void Renderer::Visitor::VisitNode(Node* r) {
 
 void Renderer::Visitor::Visit(Scene* r) { VisitNode(r); }
 
+void Renderer::Visitor::Visit(Compositor* r) { FXL_DCHECK(false); }
+
 void Renderer::Visitor::Visit(DisplayCompositor* r) { FXL_DCHECK(false); }
 
 void Renderer::Visitor::Visit(LayerStack* r) { FXL_DCHECK(false); }
@@ -240,4 +242,4 @@ void Renderer::Visitor::Visit(AmbientLight* r) { FXL_CHECK(false); }
 void Renderer::Visitor::Visit(DirectionalLight* r) { FXL_CHECK(false); }
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

@@ -2,17 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_FAKE_CONTROLLER_TEST_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_FAKE_CONTROLLER_TEST_H_
 
 #include <memory>
 
 #include <lib/async/cpp/task.h>
+#include <zircon/assert.h>
 
 #include "garnet/drivers/bluetooth/lib/hci/acl_data_channel.h"
 #include "garnet/drivers/bluetooth/lib/hci/acl_data_packet.h"
 #include "garnet/drivers/bluetooth/lib/hci/device_wrapper.h"
 #include "garnet/drivers/bluetooth/lib/hci/transport.h"
-#include "lib/fxl/logging.h"
 #include "lib/fxl/macros.h"
 #include "lib/gtest/test_loop_fixture.h"
 
@@ -38,6 +39,10 @@ class FakeControllerBase;
 template <class FakeControllerType>
 class FakeControllerTest : public ::gtest::TestLoopFixture {
  public:
+  // Default data buffer information used by ACLDataChannel.
+  static constexpr size_t kDefaultMaxDataPacketLength = 1024;
+  static constexpr size_t kDefaultMaxPacketCount = 5;
+
   FakeControllerTest() = default;
   virtual ~FakeControllerTest() = default;
 
@@ -63,22 +68,28 @@ class FakeControllerTest : public ::gtest::TestLoopFixture {
     test_device_ = nullptr;
  }
 
-  // Directly initializes the ACL data channel and wires up its data rx
-  // callback. It is OK to override the data rx callback after this is called.
-  bool InitializeACLDataChannel(const hci::DataBufferInfo& bredr_buffer_info,
-                                const hci::DataBufferInfo& le_buffer_info) {
-    if (!transport_->InitializeACLDataChannel(bredr_buffer_info,
-                                              le_buffer_info)) {
-      return false;
-    }
+ // Directly initializes the ACL data channel and wires up its data rx
+ // callback. It is OK to override the data rx callback after this is called.
+ //
+ // If data buffer information isn't provided, the ACLDataChannel will be
+ // initialized with shared BR/EDR/LE buffers using the constants declared
+ // above.
+ bool InitializeACLDataChannel(
+     const hci::DataBufferInfo& bredr_buffer_info = hci::DataBufferInfo(
+         kDefaultMaxDataPacketLength, kDefaultMaxPacketCount),
+     const hci::DataBufferInfo& le_buffer_info = hci::DataBufferInfo()) {
+   if (!transport_->InitializeACLDataChannel(bredr_buffer_info,
+                                             le_buffer_info)) {
+     return false;
+   }
 
-    transport_->acl_data_channel()->SetDataRxHandler(
-        std::bind(&FakeControllerTest<FakeControllerType>::OnDataReceived, this,
-                  std::placeholders::_1),
-        dispatcher());
+   transport_->acl_data_channel()->SetDataRxHandler(
+       std::bind(&FakeControllerTest<FakeControllerType>::OnDataReceived, this,
+                 std::placeholders::_1),
+       dispatcher());
 
-    return true;
-  }
+   return true;
+ }
 
   // Sets a callback which will be invoked when we receive packets from the test
   // controller. |callback| will be posted on the test loop, thus no locking is
@@ -107,6 +118,12 @@ class FakeControllerTest : public ::gtest::TestLoopFixture {
   zx::channel test_cmd_chan() { return std::move(cmd1_); }
   zx::channel test_acl_chan() { return std::move(acl1_); }
 
+  // Starts processing data on the control and ACL data channels.
+  void StartTestDevice() {
+    test_device()->StartCmdChannel(test_cmd_chan());
+    test_device()->StartAclChannel(test_acl_chan());
+  }
+
  private:
   // Channels to be moved to the tests
   zx::channel cmd1_;
@@ -119,10 +136,10 @@ class FakeControllerTest : public ::gtest::TestLoopFixture {
     zx::channel acl0;
 
     zx_status_t status = zx::channel::create(0, &cmd0, &cmd1_);
-    FXL_DCHECK(ZX_OK == status);
+    ZX_DEBUG_ASSERT(ZX_OK == status);
 
     status = zx::channel::create(0, &acl0, &acl1_);
-    FXL_DCHECK(ZX_OK == status);
+    ZX_DEBUG_ASSERT(ZX_OK == status);
 
     auto hci_dev = std::make_unique<hci::DummyDeviceWrapper>(std::move(cmd0),
                                                              std::move(acl0));
@@ -155,3 +172,5 @@ class FakeControllerTest : public ::gtest::TestLoopFixture {
 
 }  // namespace testing
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_TESTING_FAKE_CONTROLLER_TEST_H_

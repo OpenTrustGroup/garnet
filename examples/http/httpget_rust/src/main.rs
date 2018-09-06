@@ -3,18 +3,16 @@
 // found in the LICENSE file.
 
 #![deny(warnings)]
+#![feature(async_await, await_macro, futures_api)]
 
-extern crate failure;
-extern crate fidl;
-extern crate fuchsia_app as component;
-extern crate fuchsia_async as async;
-extern crate fuchsia_zircon as zx;
-extern crate futures;
-extern crate fidl_fuchsia_net_oldhttp as http;
-
-use failure::{Error, ResultExt};
-use futures::prelude::*;
-use futures::io::AllowStdIo;
+use {
+    failure::{Error, ResultExt},
+    fidl_fuchsia_net_oldhttp as http,
+    fuchsia_app as component,
+    fuchsia_async as fasync,
+    fuchsia_zircon as zx,
+    futures::io::{AllowStdIo, AsyncReadExt},
+};
 
 fn print_headers(resp: &http::UrlResponse) {
     println!(">>> Headers <<<");
@@ -28,14 +26,7 @@ fn print_headers(resp: &http::UrlResponse) {
     }
 }
 
-fn main() {
-    if let Err(e) = main_res() {
-        println!("Error: {:?}", e);
-    }
-}
-
-/// Connects to the http service, sends a url request, and prints the response.
-fn main_res() -> Result<(), Error> {
+fn main() -> Result<(), Error> {
     let url = match std::env::args().nth(1) {
         Some(url) => {
             if url.find("://").is_none() {
@@ -51,14 +42,20 @@ fn main_res() -> Result<(), Error> {
     };
 
     // Set up async executor
-    let mut exec = async::Executor::new()?;
+    let mut exec = fasync::Executor::new()?;
 
+    //// Run the future to completion
+    exec.run_singlethreaded(http_get(url))
+}
+
+/// Connects to the http service, sends a url request, and prints the response.
+async fn http_get(url: String) -> Result<(), Error> {
     // Connect to the http service
     let net = component::client::connect_to_service::<http::HttpServiceMarker>()?;
 
     // Create a UrlLoader instance
     let (s, p) = zx::Channel::create().context("failed to create zx channel")?;
-    let proxy = async::Channel::from_channel(p).context("failed to make async channel")?;
+    let proxy = fasync::Channel::from_channel(p).context("failed to make async channel")?;
 
     let loader_server = fidl::endpoints2::ServerEnd::<http::UrlLoaderMarker>::new(s);
     net.create_url_loader(loader_server)?;
@@ -76,38 +73,30 @@ fn main_res() -> Result<(), Error> {
     };
 
 	let loader_proxy = http::UrlLoaderProxy::new(proxy);
-    let fut = loader_proxy.start(&mut req).err_into().and_then(|resp| {
-        if let Some(e) = resp.error {
-            let code = e.code;
-            println!("Got error: {} ({})",
-                    code,
-                    e.description.unwrap_or("".into()));
-            return None;
-        }
-        print_headers(&resp);
+    let resp = await!(loader_proxy.start(&mut req))?;
+    if let Some(e) = resp.error {
+        let code = e.code;
+        println!("Got error: {} ({})",
+                code,
+                e.description.unwrap_or("".into()));
+        return Ok(());
+    }
+    print_headers(&resp);
 
-        match resp.body.map(|x| *x) {
-            Some(http::UrlBody::Stream(s)) => {
-                Some(async::Socket::from_socket(s)
-                        .into_future()
-                        .err_into())
-            }
-            Some(http::UrlBody::Buffer(_)) |
-            Some(http::UrlBody::SizedBuffer(_)) |
-            None =>  None,
-        }
-    }).and_then(|socket_opt| {
-        socket_opt.map(|socket| {
-            // stdout is blocking, but we'll pretend it's okay
-            println!(">>> Body <<<");
+    let mut socket = match resp.body.map(|x| *x) {
+        Some(http::UrlBody::Stream(s)) => fasync::Socket::from_socket(s)?,
+        Some(http::UrlBody::Buffer(_))
+        | Some(http::UrlBody::SizedBuffer(_))
+        | None => return Ok(()),
+    };
 
-            // Copy the bytes from the socket to stdout
-            socket.copy_into(AllowStdIo::new(::std::io::stdout()))
-                .map(|_| println!("\n>>> EOF <<<"))
-                .err_into()
-        })
-    }).map(|_| ());
+    // stdout is blocking, but we'll pretend it's okay
+    println!(">>> Body <<<");
 
-    //// Run the future to completion
-    exec.run_singlethreaded(fut)
+    // Copy the bytes from the socket to stdout
+    let mut stdio = AllowStdIo::new(std::io::stdout());
+    await!(socket.copy_into(&mut stdio))?;
+    println!("\n>>> EOF <<<");
+
+    Ok(())
 }

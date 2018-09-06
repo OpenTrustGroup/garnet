@@ -36,17 +36,16 @@
 #if defined(CUBE_USE_IMAGE_PIPE)
 #include <lib/async-loop/cpp/loop.h>
 
-#include "lib/app/cpp/connect.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/connect.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/log_settings.h"
 #include "lib/fxl/logging.h"
 
 #include <fuchsia/ui/gfx/cpp/fidl.h>
-#include "garnet/public/lib/ui/scenic/fidl_helpers.h"
-#include "garnet/public/lib/ui/scenic/types.h"
 #include "lib/ui/scenic/cpp/resources.h"
 #include "lib/ui/scenic/cpp/session.h"
+#include "lib/ui/scenic/cpp/commands.h"
 #include "lib/ui/view_framework/view_provider_service.h"
 #include "vkcube_view.h"
 #endif  // defined(CUBE_USE_IMAGE_PIPE)
@@ -92,7 +91,7 @@ struct FuchsiaState {
   uint32_t elapsed_frames = 0;
   std::chrono::time_point<std::chrono::high_resolution_clock> t0{};
 
-  FuchsiaState() : loop(&kAsyncLoopConfigMakeDefault) {}
+  FuchsiaState() : loop(&kAsyncLoopConfigAttachToThread) {}
 };
 #endif
 

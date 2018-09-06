@@ -18,13 +18,19 @@ if (is_mac) {
     sources = [
       "fs/hack_filesystem_unittest.cc",
       "geometry/bounding_box_unittest.cc",
+      "geometry/clip_planes_unittest.cc",
       "gpu_mem_unittest.cc",
       "impl/glsl_compiler_unittest.cc",
       "impl/pipeline_cache_unittest.cc",
       "math/rotations_unittest.cc",
       "mesh_spec_unittest.cc",
       "object_unittest.cc",
+      "paper/paper_render_queue_unittest.cc",
       "pose_buffer_latching_test.cc",
+      "renderer/batch_gpu_uploader_unittest.cc",
+      "renderer/buffer_cache_unittest.cc",
+      "renderer/frame_unittest.cc",
+      "renderer/render_queue_unittest.cc",
       "run_all_unittests.cc",
       "scene/directional_light_unittest.cc",
       "shape/rounded_rect_factory_unittest.cc",
@@ -32,6 +38,7 @@ if (is_mac) {
       "transform_unittest.cc",
       "util/align_unittest.cc",
       "util/bit_ops_unittest.cc",
+      "util/bitmap_unittest.cc",
       "util/block_allocator_unittest.cc",
       "util/hash_cache_unittest.cc",
       "util/hash_unittest.cc",
@@ -56,6 +63,7 @@ if (is_mac) {
       ":gtest_escher",
       "base:base_unittests",
       "//garnet/public/lib/fxl",
+      "//third_party/googletest:gmock",
       "//third_party/shaderc/libshaderc",
       "//third_party/shaderc/third_party/glslang",
       "//third_party/shaderc/third_party/glslang:SPIRV",
@@ -72,6 +80,7 @@ if (is_mac) {
       ]
       deps += [
         "//garnet/public/lib/gtest",
+
         "//zircon/public/lib/async-loop-cpp",
       ]
     }

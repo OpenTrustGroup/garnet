@@ -17,24 +17,17 @@ namespace zxdb {
 SystemImpl::SystemImpl(Session* session)
     : System(session), weak_factory_(this) {
   AddNewTarget(std::make_unique<TargetImpl>(this));
-
-  // Load the build ID file but asynchronously notify. This allows the system
-  // to be loaded enough so that the observers are initialized.
-  std::string symbol_msg;
-  bool ids_loaded = symbols_.LoadBuildIDFile(&symbol_msg);
-  debug_ipc::MessageLoop::Current()->PostTask(
-      [ weak_system = weak_factory_.GetWeakPtr(), ids_loaded, symbol_msg ]() {
-        if (weak_system) {
-          for (auto& observer : weak_system->observers())
-            observer.DidTryToLoadSymbolMapping(ids_loaded, symbol_msg);
-        }
-      });
 }
 
 SystemImpl::~SystemImpl() {
   // Target destruction may depend on the symbol system. Ensure the targets
   // get cleaned up first.
   for (auto& target : targets_) {
+    // It's better if process destruction notifications are sent before target
+    // ones because the target owns the process. Because this class sends the
+    // target notifications, force the process destruction before doing
+    // anything.
+    target->ImplicitlyDetach();
     for (auto& observer : observers())
       observer.WillDestroyTarget(target.get());
   }
@@ -80,8 +73,10 @@ std::vector<Target*> SystemImpl::GetTargets() const {
 std::vector<Breakpoint*> SystemImpl::GetBreakpoints() const {
   std::vector<Breakpoint*> result;
   result.reserve(breakpoints_.size());
-  for (const auto& t : breakpoints_)
-    result.push_back(t.get());
+  for (const auto& pair : breakpoints_) {
+    if (!pair.second->is_internal())
+      result.push_back(pair.second.get());
+  }
   return result;
 }
 
@@ -103,8 +98,11 @@ Target* SystemImpl::CreateNewTarget(Target* clone) {
 }
 
 Breakpoint* SystemImpl::CreateNewBreakpoint() {
-  breakpoints_.push_back(std::make_unique<BreakpointImpl>(session()));
-  Breakpoint* to_return = breakpoints_.back().get();
+  auto owning = std::make_unique<BreakpointImpl>(session(), false);
+  uint32_t id = owning->backend_id();
+  Breakpoint* to_return = owning.get();
+
+  breakpoints_[id] = std::move(owning);
 
   // Notify observers (may mutate breakpoint list).
   for (auto& observer : observers())
@@ -113,18 +111,30 @@ Breakpoint* SystemImpl::CreateNewBreakpoint() {
   return to_return;
 }
 
-void SystemImpl::DeleteBreakpoint(Breakpoint* breakpoint) {
-  for (size_t i = 0; i < breakpoints_.size(); i++) {
-    if (breakpoints_[i].get() == breakpoint) {
-      // Notify observers.
-      for (auto& observer : observers())
-        observer.WillDestroyBreakpoint(breakpoint);
+Breakpoint* SystemImpl::CreateNewInternalBreakpoint() {
+  auto owning = std::make_unique<BreakpointImpl>(session(), true);
+  uint32_t id = owning->backend_id();
+  Breakpoint* to_return = owning.get();
 
-      breakpoints_.erase(breakpoints_.begin() + i);
-      return;
-    }
+  breakpoints_[id] = std::move(owning);
+  return to_return;
+}
+
+void SystemImpl::DeleteBreakpoint(Breakpoint* breakpoint) {
+  BreakpointImpl* impl = static_cast<BreakpointImpl*>(breakpoint);
+  auto found = breakpoints_.find(impl->backend_id());
+  if (found == breakpoints_.end()) {
+    // Should always have found the breakpoint.
+    FXL_NOTREACHED();
+    return;
   }
-  FXL_NOTREACHED();
+
+  // Only notify observers for non-internal breakpoints.
+  if (!found->second->is_internal()) {
+    for (auto& observer : observers())
+      observer.WillDestroyBreakpoint(breakpoint);
+  }
+  breakpoints_.erase(found);
 }
 
 void SystemImpl::Pause() {
@@ -138,10 +148,31 @@ void SystemImpl::Pause() {
 void SystemImpl::Continue() {
   debug_ipc::ResumeRequest request;
   request.process_koid = 0;  // 0 means all processes.
-  request.thread_koid = 0;   // 0 means all threads.
   request.how = debug_ipc::ResumeRequest::How::kContinue;
   session()->remote_api()->Resume(
       request, std::function<void(const Err&, debug_ipc::ResumeReply)>());
+}
+
+void SystemImpl::DidConnect() {
+  // (Re)load the build ID file after connection. This needs to be done for
+  // every connection since a new image could have been compiled and launched
+  // which will have a different build ID file.
+  std::string symbol_msg;
+  bool ids_loaded = symbols_.LoadBuildIDFile(&symbol_msg);
+  for (auto& observer : observers())
+    observer.DidTryToLoadSymbolMapping(ids_loaded, symbol_msg);
+}
+
+void SystemImpl::DidDisconnect() {
+  for (auto& target : targets_)
+    target->ImplicitlyDetach();
+}
+
+BreakpointImpl* SystemImpl::BreakpointImplForId(uint32_t id) {
+  auto found = breakpoints_.find(id);
+  if (found == breakpoints_.end())
+    return nullptr;
+  return found->second.get();
 }
 
 void SystemImpl::AddNewTarget(std::unique_ptr<TargetImpl> target) {

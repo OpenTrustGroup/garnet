@@ -2,27 +2,43 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use bytes::Bytes;
-use client::bss::convert_bss_description;
-use fidl_mlme::{self, BssDescription, MlmeEvent};
-use client::{ConnectResult, Status, Tokens};
-use client::internal::{MlmeSink, UserSink};
-use MlmeRequest;
-use wlan_rsn::{akm, cipher, rsne, suite_selector::OUI};
+use fidl_fuchsia_wlan_mlme::{self as fidl_mlme, BssDescription, MlmeEvent};
+use log::{error, log, warn};
+use wlan_rsn::key::exchange::Key;
+use wlan_rsn::rsna::{NegotiatedRsne, SecAssocUpdate, SecAssocStatus};
+
+use super::bss::convert_bss_description;
+use super::{ConnectResult, Status, Tokens};
+use super::internal::UserSink;
+use super::rsn::Rsna;
+
+use crate::{DeviceInfo, MlmeRequest};
+use crate::sink::MlmeSink;
 
 const DEFAULT_JOIN_FAILURE_TIMEOUT: u32 = 20; // beacon intervals
 const DEFAULT_AUTH_FAILURE_TIMEOUT: u32 = 20; // beacon intervals
 
-pub enum LinkState {
-    _ShakingHands,
-    LinkUp
+#[derive(Debug, PartialEq)]
+pub enum LinkState<T: Tokens> {
+    EstablishingRsna(Option<T::ConnectToken>, Box<Rsna>),
+    LinkUp(Option<Box<Rsna>>)
 }
 
+#[derive(Debug, PartialEq)]
 pub struct ConnectCommand<T> {
     pub bss: Box<BssDescription>,
-    pub token: Option<T>
+    pub token: Option<T>,
+    pub rsna: Option<Box<Rsna>>,
 }
 
+#[derive(Debug)]
+pub enum RsnaStatus {
+    Established,
+    Failed(ConnectResult),
+    Unchanged,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum State<T: Tokens> {
     Idle,
     Joining {
@@ -37,20 +53,16 @@ pub enum State<T: Tokens> {
     Associated {
         bss: Box<BssDescription>,
         last_rssi: Option<i8>,
-        link_state: LinkState,
+        link_state: LinkState<T>,
     },
-    Deauthenticating {
-        // Network to join after the deauthentication process is finished
-        next_cmd: Option<ConnectCommand<T::ConnectToken>>,
-    }
 }
 
 impl<T: Tokens> State<T> {
-    pub fn on_mlme_event(self, event: MlmeEvent, mlme_sink: &MlmeSink,
+    pub fn on_mlme_event(self, _device_info: &DeviceInfo, event: MlmeEvent, mlme_sink: &MlmeSink,
                          user_sink: &UserSink<T>) -> Self {
         match self {
             State::Idle => {
-                eprintln!("Unexpected MLME message while Idle: {:?}", event);
+                warn!("Unexpected MLME message while Idle: {:?}", event);
                 State::Idle
             },
             State::Joining{ cmd } => match event {
@@ -65,7 +77,7 @@ impl<T: Tokens> State<T> {
                         State::Authenticating { cmd }
                     },
                     other => {
-                        eprintln!("Join request failed with result code {:?}", other);
+                        error!("Join request failed with result code {:?}", other);
                         report_connect_finished(cmd.token, user_sink, ConnectResult::Failed);
                         State::Idle
                     }
@@ -80,7 +92,7 @@ impl<T: Tokens> State<T> {
                         to_associating_state(cmd, mlme_sink)
                     },
                     other => {
-                        eprintln!("Authenticate request failed with result code {:?}", other);
+                        error!("Authenticate request failed with result code {:?}", other);
                         report_connect_finished(cmd.token, user_sink, ConnectResult::Failed);
                         State::Idle
                     }
@@ -89,16 +101,25 @@ impl<T: Tokens> State<T> {
             },
             State::Associating{ cmd } => match event {
                 MlmeEvent::AssociateConf { resp } => match resp.result_code {
-                    fidl_mlme::AssociateResultCodes::Success => {
-                        report_connect_finished(cmd.token, user_sink, ConnectResult::Success);
-                        State::Associated {
-                            bss: cmd.bss,
-                            last_rssi: None,
-                            link_state: LinkState::LinkUp
+                    fidl_mlme::AssociateResultCodes::Success => match cmd.rsna {
+                        Some(rsna) => {
+                            State::Associated {
+                                bss: cmd.bss,
+                                last_rssi: None,
+                                link_state: LinkState::EstablishingRsna(cmd.token, rsna),
+                            }
+                        },
+                        None => {
+                            report_connect_finished(cmd.token, user_sink, ConnectResult::Success);
+                            State::Associated {
+                                bss: cmd.bss,
+                                last_rssi: None,
+                                link_state: LinkState::LinkUp(None),
+                            }
                         }
                     },
                     other => {
-                        eprintln!("Associate request failed with result code {:?}", other);
+                        error!("Associate request failed with result code {:?}", other);
                         report_connect_finished(cmd.token, user_sink, ConnectResult::Failed);
                         State::Idle
                     }
@@ -107,80 +128,122 @@ impl<T: Tokens> State<T> {
             },
             State::Associated { bss, last_rssi, link_state } => match event {
                 MlmeEvent::DisassociateInd{ .. } => {
-                    let cmd = ConnectCommand{ bss, token: None };
+                    let (token, mut rsna) = match link_state {
+                        LinkState::LinkUp(rsna) => (None, rsna),
+                        LinkState::EstablishingRsna(token, rsna) => (token, Some(rsna)),
+                    };
+                    // Client is disassociating. The ESS-SA must be kept alive but reset.
+                    if let Some(rsna) = &mut rsna {
+                        rsna.esssa.reset();
+                    }
+                    let cmd = ConnectCommand{ bss, token, rsna };
                     to_associating_state(cmd, mlme_sink)
                 },
-                MlmeEvent::DeauthenticateInd{ .. } => {
+                MlmeEvent::DeauthenticateInd{ ind } => {
+                    if let LinkState::EstablishingRsna(token, _) = link_state {
+                        let connect_result = deauth_code_to_connect_result(ind.reason_code);
+                        report_connect_finished(token, user_sink, connect_result);
+                    }
                     State::Idle
                 },
                 MlmeEvent::SignalReport{ ind } => {
                     State::Associated {
                         bss,
                         last_rssi: Some(ind.rssi_dbm),
-                        link_state
+                        link_state,
                     }
                 },
-                // TODO(gbonik): Also handle EapolInd and EapolConf
+                MlmeEvent::EapolInd{ ref ind } if bss.rsn.is_some() => match link_state {
+                    LinkState::EstablishingRsna(token, mut rsna) => {
+                        match process_eapol_ind(mlme_sink, &mut rsna, &ind) {
+                            RsnaStatus::Established => {
+                                report_connect_finished(token, user_sink, ConnectResult::Success);
+                                let link_state = LinkState::LinkUp(Some(rsna));
+                                State::Associated { bss, last_rssi, link_state }
+                            },
+                            RsnaStatus::Failed(result) => {
+                                report_connect_finished(token, user_sink, result);
+                                send_deauthenticate_request(bss, mlme_sink);
+                                State::Idle
+                            },
+                            RsnaStatus::Unchanged => {
+                                let link_state = LinkState::EstablishingRsna(token, rsna);
+                                State::Associated { bss, last_rssi, link_state }
+                            },
+                        }
+                    },
+                    LinkState::LinkUp(Some(mut rsna)) => {
+                        match process_eapol_ind(mlme_sink, &mut rsna, &ind) {
+                            RsnaStatus::Unchanged => {},
+                            // Once re-keying is supported, the RSNA can fail in LinkUp as well
+                            // and cause deauthentication.
+                            s => error!("unexpected RsnaStatus in LinkUp state: {:?}", s),
+                        };
+                        let link_state = LinkState::LinkUp(Some(rsna));
+                        State::Associated { bss, last_rssi, link_state }
+                    },
+                    _ => panic!("expected Link to carry RSNA because bss.rsn is present"),
+                }
                 _ => State::Associated{ bss, last_rssi, link_state }
-            },
-            State::Deauthenticating{ next_cmd } => match event {
-                MlmeEvent::DeauthenticateConf{ .. } => {
-                    disconnect_or_join(next_cmd, mlme_sink)
-                },
-                _ => State::Deauthenticating { next_cmd }
             },
         }
     }
 
-    pub fn disconnect(self, next_bss_to_join: Option<ConnectCommand<T::ConnectToken>>,
-                      mlme_sink: &MlmeSink, user_sink: &UserSink<T>) -> Self {
+    pub fn connect(self, cmd: ConnectCommand<T::ConnectToken>,
+                   mlme_sink: &MlmeSink, user_sink: &UserSink<T>) -> Self {
+        self.disconnect_internal(mlme_sink, user_sink);
+        mlme_sink.send(MlmeRequest::Join(
+            fidl_mlme::JoinRequest {
+                selected_bss: clone_bss_desc(&cmd.bss),
+                join_failure_timeout: DEFAULT_JOIN_FAILURE_TIMEOUT,
+                nav_sync_delay: 0,
+                op_rate_set: vec![]
+            }
+        ));
+        State::Joining { cmd }
+    }
+
+    pub fn disconnect(self, mlme_sink: &MlmeSink, user_sink: &UserSink<T>) -> Self {
+        self.disconnect_internal(mlme_sink, user_sink);
+        State::Idle
+    }
+
+    fn disconnect_internal(self, mlme_sink: &MlmeSink, user_sink: &UserSink<T>) {
         match self {
-            State::Idle => {
-                disconnect_or_join(next_bss_to_join, mlme_sink)
-            },
+            State::Idle => { },
             State::Joining { cmd } | State::Authenticating { cmd }  => {
                 report_connect_finished(cmd.token, user_sink, ConnectResult::Canceled);
-                disconnect_or_join(next_bss_to_join, mlme_sink)
             },
-            State::Associating{ cmd } => {
+            State::Associating{ cmd, .. } => {
                 report_connect_finished(cmd.token, user_sink, ConnectResult::Canceled);
-                to_deauthenticating_state(cmd.bss, next_bss_to_join, mlme_sink)
+                send_deauthenticate_request(cmd.bss, mlme_sink);
             },
-            State::Associated { bss, ..} => {
-                to_deauthenticating_state(bss, next_bss_to_join, mlme_sink)
+            State::Associated { bss, .. } => {
+                send_deauthenticate_request(bss, mlme_sink);
             },
-            State::Deauthenticating { next_cmd } => {
-                if let Some(next_cmd) = next_cmd {
-                    report_connect_finished(next_cmd.token, user_sink, ConnectResult::Canceled);
-                }
-                State::Deauthenticating {
-                    next_cmd: next_bss_to_join
-                }
-            }
         }
     }
 
     pub fn status(&self) -> Status {
         match self {
-            &State::Idle | &State::Deauthenticating { next_cmd: None } => Status {
+            State::Idle => Status {
                 connected_to: None,
                 connecting_to: None,
             },
-            &State::Joining { ref cmd }
-                | &State::Authenticating { ref cmd }
-                | &State::Associating { ref cmd }
-                | &State::Deauthenticating { next_cmd: Some(ref cmd) }  =>
+            State::Joining { cmd }
+                | State::Authenticating { cmd }
+                | State::Associating { cmd, .. } =>
             {
                 Status {
                     connected_to: None,
                     connecting_to: Some(cmd.bss.ssid.as_bytes().to_vec()),
                 }
             },
-            &State::Associated { ref bss, link_state: LinkState::_ShakingHands, .. } => Status {
+            State::Associated { bss, link_state: LinkState::EstablishingRsna(..), .. } => Status {
                 connected_to: None,
                 connecting_to: Some(bss.ssid.as_bytes().to_vec()),
             },
-            &State::Associated { ref bss, link_state: LinkState::LinkUp, .. } => Status {
+            State::Associated { bss, link_state: LinkState::LinkUp(..), .. } => Status {
                 connected_to: Some(convert_bss_description(bss)),
                 connecting_to: None,
             },
@@ -188,51 +251,140 @@ impl<T: Tokens> State<T> {
     }
 }
 
-fn to_deauthenticating_state<T>(current_bss: Box<BssDescription>,
-                                next_bss_to_join: Option<ConnectCommand<T::ConnectToken>>,
-                                mlme_sink: &MlmeSink) -> State<T>
-    where T: Tokens
+fn deauth_code_to_connect_result(reason_code: fidl_mlme::ReasonCode) -> ConnectResult {
+    match reason_code {
+        fidl_mlme::ReasonCode::InvalidAuthentication
+        | fidl_mlme::ReasonCode::Ieee8021XAuthFailed => ConnectResult::BadCredentials,
+        _ => ConnectResult::Failed
+    }
+}
+
+fn process_eapol_ind(mlme_sink: &MlmeSink, rsna: &mut Rsna, ind: &fidl_mlme::EapolIndication)
+    -> RsnaStatus
 {
+    let mic_size = rsna.negotiated_rsne.mic_size;
+    let eapol_pdu = &ind.data[..];
+    let eapol_frame = match eapol::key_frame_from_bytes(eapol_pdu, mic_size).to_full_result() {
+        Ok(key_frame) => Some(eapol::Frame::Key(key_frame)),
+        Err(e) => {
+            error!("received invalid EAPOL Key frame: {:?}", e);
+            None
+        }
+    };
+
+    if let Some(eapol_frame) = eapol_frame {
+        let bssid = ind.src_addr;
+        let sta_addr = ind.dst_addr;
+        match rsna.esssa.on_eapol_frame(&eapol_frame) {
+            Ok(updates) => for update in updates {
+                match update {
+                    // ESS Security Association requests to send an EAPOL frame.
+                    // Forward EAPOL frame to MLME.
+                    SecAssocUpdate::TxEapolKeyFrame(frame) => {
+                        send_eapol_frame(mlme_sink, bssid, sta_addr, frame)
+                    },
+                    // ESS Security Association derived a new key.
+                    // Configure key in MLME.
+                    SecAssocUpdate::Key(key) => {
+                        send_keys(mlme_sink, bssid, &rsna.negotiated_rsne, key)
+                    },
+                    // Received a status update.
+                    // TODO(hahnr): Rework this part.
+                    // As of now, we depend on the fact that the status is always the last update.
+                    // However, this fact is not clear from the API.
+                    // We should fix the API and make this more explicit.
+                    // Then we should rework this part.
+                    SecAssocUpdate::Status(status) => match status {
+                        // ESS Security Association was successfully established. Link is now up.
+                        SecAssocStatus::EssSaEstablished => return RsnaStatus::Established,
+                        SecAssocStatus::WrongPassword => {
+                            return RsnaStatus::Failed(ConnectResult::BadCredentials);
+                        }
+                    },
+                }
+            }
+            Err(e) => error!("error processing EAPOL key frame: {}", e),
+        };
+    }
+
+    RsnaStatus::Unchanged
+}
+
+fn send_eapol_frame(mlme_sink: &MlmeSink, bssid: [u8; 6], sta_addr: [u8; 6], frame: eapol::KeyFrame)
+{
+    let mut buf = Vec::with_capacity(frame.len());
+    frame.as_bytes(false, &mut buf);
+    mlme_sink.send(MlmeRequest::Eapol(
+        fidl_mlme::EapolRequest {
+            src_addr: sta_addr,
+            dst_addr: bssid,
+            data: buf,
+        }
+    ));
+}
+
+fn send_keys(mlme_sink: &MlmeSink, bssid: [u8; 6], s_rsne: &NegotiatedRsne, key: Key)
+{
+    match key {
+        Key::Ptk(ptk) => {
+            mlme_sink.send(MlmeRequest::SetKeys(
+                fidl_mlme::SetKeysRequest {
+                    keylist: vec![fidl_mlme::SetKeyDescriptor{
+                        key_type: fidl_mlme::KeyType::Pairwise,
+                        key: ptk.tk().to_vec(),
+                        key_id: 0,
+                        address: bssid,
+                        cipher_suite_oui: eapol::to_array(&s_rsne.pairwise.oui[..]),
+                        cipher_suite_type: s_rsne.pairwise.suite_type,
+                        rsc: [0u8; 8],
+                    }]
+                }
+            ));
+        },
+        Key::Gtk(gtk) => {
+            mlme_sink.send(MlmeRequest::SetKeys(
+                fidl_mlme::SetKeysRequest {
+                    keylist: vec![fidl_mlme::SetKeyDescriptor{
+                        key_type: fidl_mlme::KeyType::Group,
+                        key: gtk.tk().to_vec(),
+                        key_id: gtk.key_id() as u16,
+                        address: [0xFFu8; 6],
+                        cipher_suite_oui: eapol::to_array(&s_rsne.group_data.oui[..]),
+                        cipher_suite_type: s_rsne.group_data.suite_type,
+                        rsc: [0u8; 8],
+                    }]
+                }
+            ));
+        },
+        _ => error!("derived unexpected key")
+    };
+}
+
+fn send_deauthenticate_request(current_bss: Box<BssDescription>,
+                               mlme_sink: &MlmeSink) {
     mlme_sink.send(MlmeRequest::Deauthenticate(
         fidl_mlme::DeauthenticateRequest {
             peer_sta_address: current_bss.bssid.clone(),
             reason_code: fidl_mlme::ReasonCode::StaLeaving,
         }
     ));
-    State::Deauthenticating {
-        next_cmd: next_bss_to_join
-    }
-}
-
-fn disconnect_or_join<T>(next_bss_to_join: Option<ConnectCommand<T::ConnectToken>>,
-                         mlme_sink: &MlmeSink)
-    -> State<T>
-    where T: Tokens
-{
-    match next_bss_to_join {
-        Some(next_cmd) => {
-            mlme_sink.send(MlmeRequest::Join(
-                fidl_mlme::JoinRequest {
-                    selected_bss: clone_bss_desc(&next_cmd.bss),
-                    join_failure_timeout: DEFAULT_JOIN_FAILURE_TIMEOUT,
-                    nav_sync_delay: 0,
-                    op_rate_set: vec![]
-                }
-            ));
-            State::Joining { cmd: next_cmd }
-        },
-        None => State::Idle
-    }
 }
 
 fn to_associating_state<T>(cmd: ConnectCommand<T::ConnectToken>, mlme_sink: &MlmeSink)
     -> State<T>
     where T: Tokens
 {
+    let s_rsne_data = cmd.rsna.as_ref().map(|rsna| {
+        let s_rsne = rsna.negotiated_rsne.to_full_rsne();
+        let mut buf = Vec::with_capacity(s_rsne.len());
+        s_rsne.as_bytes(&mut buf);
+        buf
+    });
+
     mlme_sink.send(MlmeRequest::Associate(
         fidl_mlme::AssociateRequest {
             peer_sta_address: cmd.bss.bssid.clone(),
-            rsn: derive_s_rsne(&cmd.bss.bssid[..], cmd.bss.rsn.as_ref()),
+            rsn: s_rsne_data,
         }
     ));
     State::Associating { cmd }
@@ -250,6 +402,60 @@ fn report_connect_finished<T>(token: Option<T::ConnectToken>,
     }
 }
 
+fn clone_ht_capabilities(c: &fidl_mlme::HtCapabilities) -> fidl_mlme::HtCapabilities {
+    fidl_mlme::HtCapabilities {
+        ht_cap_info: fidl_mlme::HtCapabilityInfo { ..c.ht_cap_info },
+        ampdu_params: fidl_mlme::AmpduParams { ..c.ampdu_params },
+        mcs_set: fidl_mlme::SupportedMcsSet { ..c.mcs_set },
+        ht_ext_cap: fidl_mlme::HtExtCapabilities { ..c.ht_ext_cap },
+        txbf_cap: fidl_mlme::TxBfCapability { ..c.txbf_cap },
+        asel_cap: fidl_mlme::AselCapability { ..c.asel_cap },
+    }
+}
+
+fn clone_ht_operation(o: &fidl_mlme::HtOperation) -> fidl_mlme::HtOperation {
+    fidl_mlme::HtOperation {
+        ht_op_info: fidl_mlme::HtOperationInfo { ..o.ht_op_info },
+        basic_mcs_set: fidl_mlme::SupportedMcsSet { ..o.basic_mcs_set },
+        ..*o
+    }
+}
+
+fn clone_vht_mcs_nss(m: &fidl_mlme::VhtMcsNss) -> fidl_mlme::VhtMcsNss {
+    fidl_mlme::VhtMcsNss {
+        rx_max_mcs: m.rx_max_mcs.clone(),
+        tx_max_mcs: m.tx_max_mcs.clone(),
+        ..*m
+    }
+}
+
+fn clone_basic_vht_mcs_nss(m: &fidl_mlme::BasicVhtMcsNss) -> fidl_mlme::BasicVhtMcsNss {
+    fidl_mlme::BasicVhtMcsNss {
+        max_mcs: m.max_mcs.clone(),
+        ..*m
+    }
+}
+
+fn clone_vht_capabilities_info(i: &fidl_mlme::VhtCapabilitiesInfo) -> fidl_mlme::VhtCapabilitiesInfo {
+    fidl_mlme::VhtCapabilitiesInfo {
+        ..*i
+    }
+}
+
+fn clone_vht_capabilities(c: &fidl_mlme::VhtCapabilities) -> fidl_mlme::VhtCapabilities {
+    fidl_mlme::VhtCapabilities {
+        vht_cap_info: clone_vht_capabilities_info(&c.vht_cap_info),
+        vht_mcs_nss: clone_vht_mcs_nss(&c.vht_mcs_nss)
+    }
+}
+
+fn clone_vht_operation(o: &fidl_mlme::VhtOperation) -> fidl_mlme::VhtOperation {
+    fidl_mlme::VhtOperation {
+        basic_mcs: clone_basic_vht_mcs_nss(&o.basic_mcs),
+        ..*o
+    }
+}
+
 fn clone_bss_desc(d: &fidl_mlme::BssDescription) -> fidl_mlme::BssDescription {
     fidl_mlme::BssDescription {
         bssid: d.bssid.clone(),
@@ -259,177 +465,384 @@ fn clone_bss_desc(d: &fidl_mlme::BssDescription) -> fidl_mlme::BssDescription {
         dtim_period: d.dtim_period,
         timestamp: d.timestamp,
         local_time: d.local_time,
+
+        country: d.country.clone(),
+        cap: fidl_mlme::CapabilityInfo { ..d.cap },
+
         rsn: d.rsn.clone(),
+
+        rcpi_dbmh: d.rcpi_dbmh,
+        rsni_dbh: d.rsni_dbh,
+
+        ht_cap: d.ht_cap.as_ref().map(|v| Box::new(clone_ht_capabilities(v))),
+        ht_op:  d.ht_op.as_ref().map(|v| Box::new(clone_ht_operation(v))),
+
+        vht_cap: d.vht_cap.as_ref().map(|v| Box::new(clone_vht_capabilities(v))),
+        vht_op:  d.vht_op.as_ref().map(|v| Box::new(clone_vht_operation(v))),
+
         chan: fidl_mlme::WlanChan {
             primary: d.chan.primary,
             cbw: d.chan.cbw,
             secondary80: d.chan.secondary80,
         },
         rssi_dbm: d.rssi_dbm,
-        rcpi_dbmh: d.rcpi_dbmh,
-        rsni_dbh: d.rsni_dbh
-    }
-}
-
-fn derive_s_rsne(bssid: &[u8], rsne: Option<&Vec<u8>>) -> Option<Vec<u8>> {
-    // Supported Ciphers and AKMs:
-    // Group: CCMP-128, TKIP
-    // Pairwise: CCMP-128
-    // AKMS: PSK
-    let a_rsne = match rsne {
-        Some(rsn_data) => match rsne::from_bytes(&rsn_data[..]).to_full_result() {
-            Ok(a_rsne) => a_rsne,
-            _ => {
-                eprintln!("BSS {:?} uses invalid RSNE: {:?}", bssid, &rsn_data[..]);
-                return None
-            },
-        },
-        None => return None,
-    };
-
-    let has_supported_group_data_cipher = match a_rsne.group_data_cipher_suite.as_ref() {
-        Some(c) if c.has_known_usage() => match c.suite_type {
-            // IEEE allows TKIP usage only in GTKSAs for compatibility reasons.
-            // TKIP is considered broken and should never be used in a PTKSA or IGTKSA.
-            cipher::CCMP_128 | cipher::TKIP => true,
-            _ => false,
-        },
-        _ => false,
-    };
-    let has_supported_pairwise_cipher = a_rsne.pairwise_cipher_suites.iter()
-        .any(|c| c.has_known_usage() && c.suite_type == cipher::CCMP_128);
-    let has_supported_akm_suite = a_rsne.akm_suites.iter()
-        .any(|a| a.has_known_algorithm() && a.suite_type == akm::PSK);
-    if !has_supported_group_data_cipher || !has_supported_pairwise_cipher || !has_supported_akm_suite {
-        eprintln!("BSS {:?} uses incompatible RSNE: {:?}", bssid, a_rsne);
-        return None;
-    }
-
-    // If Authenticator's RSNE is supported, construct Supplicant's RSNE.
-    let mut s_rsne = rsne::Rsne::new();
-    s_rsne.group_data_cipher_suite = a_rsne.group_data_cipher_suite;
-    let pairwise_cipher =
-        cipher::Cipher{oui: Bytes::from(&OUI[..]), suite_type: cipher::CCMP_128 };
-    s_rsne.pairwise_cipher_suites.push(pairwise_cipher);
-    let akm = akm::Akm{oui: Bytes::from(&OUI[..]), suite_type: akm::PSK };
-    s_rsne.akm_suites.push(akm);
-
-    let mut buf = Vec::with_capacity(s_rsne.len());
-    match s_rsne.as_bytes(&mut buf) {
-        Ok(_) => Some(buf),
-        _ => None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::channel::mpsc;
+    use std::collections::HashSet;
+    use std::iter::FromIterator;
 
-    const BSSID: [u8; 6] = [0u8; 6];
+    use crate::client::test_utils::fake_unprotected_bss_description;
+    use crate::client::{UserEvent, UserStream};
+    use crate::{MlmeStream, Ssid};
 
-    fn make_cipher(suite_type: u8) -> cipher::Cipher {
-        cipher::Cipher { oui: Bytes::from(&OUI[..]), suite_type: suite_type }
+    #[derive(Debug, PartialEq)]
+    struct FakeTokens;
+
+    impl Tokens for FakeTokens {
+        type ScanToken = u32;
+        type ConnectToken = u32;
     }
 
-    fn make_akm(suite_type: u8) -> akm::Akm {
-        akm::Akm { oui: Bytes::from(&OUI[..]), suite_type: suite_type }
-    }
+    #[test]
+    fn associate_happy_path_unprotected() {
+        let mut h = TestHelper::new();
 
-    fn make_rsne(data: Option<u8>, pairwise: Vec<u8>, akms: Vec<u8>) -> Option<Vec<u8>> {
-        let a_rsne = rsne::Rsne {
-            version: 1,
-            group_data_cipher_suite: data.map(|t| make_cipher(t)),
-            pairwise_cipher_suites: pairwise.into_iter().map(|t| make_cipher(t)).collect(),
-            akm_suites: akms.into_iter().map(|t| make_akm(t)).collect(),
-            ..Default::default()
+        let state = State::Idle::<FakeTokens>;
+
+        // Issue a "connect" command
+        let state = state.connect(connect_command_one(), &h.mlme_sink, &h.user_sink);
+
+        // (sme->mlme) Expect a JoinRequest
+        match h.mlme_stream.try_next().unwrap() {
+            Some(MlmeRequest::Join(req)) => {
+                assert_eq!(connect_command_one().bss.ssid, req.selected_bss.ssid);
+            },
+            other => panic!("expected a Join request, got {:?}", other),
+        }
+
+        // (mlme->sme) Send a JoinConf as a response
+        let join_conf = MlmeEvent::JoinConf {
+            resp: fidl_mlme::JoinConfirm {
+                result_code: fidl_mlme::JoinResultCodes::Success
+            }
         };
-        let mut buf = Vec::with_capacity(a_rsne.len());
-        a_rsne.as_bytes(&mut buf).expect("could not write Authenticator's RSNE to buffer");
-        Some(buf)
+        let state = state.on_mlme_event(&h.device_info, join_conf, &h.mlme_sink, &h.user_sink);
+
+        // (sme->mlme) Expect an AuthenticateRequest
+        match h.mlme_stream.try_next().unwrap() {
+            Some(MlmeRequest::Authenticate(req)) => {
+                assert_eq!(connect_command_one().bss.bssid, req.peer_sta_address);
+            },
+            other => panic!("expected an Authenticate request, got {:?}", other)
+        }
+
+        // (mlme->sme) Send an AuthenticateConf as a response
+        let auth_conf = MlmeEvent::AuthenticateConf {
+            resp: fidl_mlme::AuthenticateConfirm {
+                peer_sta_address: connect_command_one().bss.bssid,
+                auth_type: fidl_mlme::AuthenticationTypes::OpenSystem,
+                result_code: fidl_mlme::AuthenticateResultCodes::Success,
+            }
+        };
+        let state = state.on_mlme_event(&h.device_info, auth_conf, &h.mlme_sink, &h.user_sink);
+
+        // (sme->mlme) Expect an AssociateRequest
+        match h.mlme_stream.try_next().unwrap() {
+            Some(MlmeRequest::Associate(req)) => {
+                assert_eq!(connect_command_one().bss.bssid, req.peer_sta_address);
+            },
+            other => panic!("expected an Associate request, got {:?}", other)
+        }
+
+        // (mlme->sme) Send an AssociateConf
+        let assoc_conf = MlmeEvent::AssociateConf {
+            resp: fidl_mlme::AssociateConfirm {
+                result_code: fidl_mlme::AssociateResultCodes::Success,
+                association_id: 55,
+            }
+        };
+        let _state = state.on_mlme_event(&h.device_info, assoc_conf, &h.mlme_sink, &h.user_sink);
+
+        // User should be notified that we are connected
+        expect_connect_result(&mut h.user_stream, connect_command_one().token.unwrap(),
+                              ConnectResult::Success);
     }
 
     #[test]
-    fn test_incompatible_group_data_cipher() {
-        let a_rsne = make_rsne(Some(cipher::GCMP_256), vec![cipher::CCMP_128], vec![akm::PSK]);
-        let s_rsne = derive_s_rsne(&BSSID[..], a_rsne.as_ref());
-        assert_eq!(s_rsne, None);
+    fn join_failure() {
+        let mut h = TestHelper::new();
+
+        // Start in a "Joining" state
+        let state = State::Joining::<FakeTokens> { cmd: connect_command_one() };
+
+        // (mlme->sme) Send an unsuccessful JoinConf
+        let join_conf = MlmeEvent::JoinConf {
+            resp: fidl_mlme::JoinConfirm {
+                result_code: fidl_mlme::JoinResultCodes::JoinFailureTimeout
+            }
+        };
+        let state = state.on_mlme_event(&h.device_info, join_conf, &h.mlme_sink, &h.user_sink);
+        assert_eq!(idle_state(), state);
+
+        // User should be notified that connection attempt failed
+        expect_connect_result(&mut h.user_stream, connect_command_one().token.unwrap(),
+                              ConnectResult::Failed);
     }
 
     #[test]
-    fn test_incompatible_pairwise_cipher() {
-        let a_rsne = make_rsne(Some(cipher::CCMP_128), vec![cipher::BIP_CMAC_256], vec![akm::PSK]);
-        let s_rsne = derive_s_rsne(&BSSID[..], a_rsne.as_ref());
-        assert_eq!(s_rsne, None);
+    fn authenticate_failure() {
+        let mut h = TestHelper::new();
+
+        // Start in an "Authenticating" state
+        let state = State::Authenticating::<FakeTokens> { cmd: connect_command_one() };
+
+        // (mlme->sme) Send an unsuccessful AuthenticateConf
+        let auth_conf = MlmeEvent::AuthenticateConf {
+            resp: fidl_mlme::AuthenticateConfirm {
+                peer_sta_address: connect_command_one().bss.bssid,
+                auth_type: fidl_mlme::AuthenticationTypes::OpenSystem,
+                result_code: fidl_mlme::AuthenticateResultCodes::Refused,
+            }
+        };
+        let state = state.on_mlme_event(&h.device_info, auth_conf, &h.mlme_sink, &h.user_sink);
+        assert_eq!(idle_state(), state);
+
+        // User should be notified that connection attempt failed
+        expect_connect_result(&mut h.user_stream, connect_command_one().token.unwrap(),
+                              ConnectResult::Failed);
     }
 
     #[test]
-    fn test_tkip_pairwise_cipher() {
-        let a_rsne = make_rsne(Some(cipher::CCMP_128), vec![cipher::TKIP], vec![akm::PSK]);
-        let s_rsne = derive_s_rsne(&BSSID[..], a_rsne.as_ref());
-        assert_eq!(s_rsne, None);
+    fn associate_failure() {
+        let mut h = TestHelper::new();
+
+        // Start in an "Associating" state
+        let state = State::Associating::<FakeTokens> { cmd: connect_command_one() };
+
+        // (mlme->sme) Send an unsuccessful AssociateConf
+        let assoc_conf = MlmeEvent::AssociateConf {
+            resp: fidl_mlme::AssociateConfirm {
+                result_code: fidl_mlme::AssociateResultCodes::RefusedReasonUnspecified,
+                association_id: 0,
+            }
+        };
+        let state = state.on_mlme_event(&h.device_info, assoc_conf, &h.mlme_sink, &h.user_sink);
+        assert_eq!(idle_state(), state);
+
+        // User should be notified that connection attempt failed
+        expect_connect_result(&mut h.user_stream, connect_command_one().token.unwrap(),
+                              ConnectResult::Failed);
     }
 
     #[test]
-    fn test_tkip_group_data_cipher() {
-        let a_rsne = make_rsne(Some(cipher::TKIP), vec![cipher::CCMP_128], vec![akm::PSK]);
-        let s_rsne = derive_s_rsne(&BSSID[..], a_rsne.as_ref());
-        let expected_rsne_bytes = vec![48, 18, 1, 0, 0, 15, 172, 2, 1, 0, 0, 15, 172, 4, 1, 0, 0, 15, 172, 2];
-        assert_eq!(s_rsne, Some(expected_rsne_bytes));
+    fn connect_while_joining() {
+        let mut h = TestHelper::new();
+        let state = joining_state(connect_command_one());
+        let state = state.connect(connect_command_two(), &h.mlme_sink, &h.user_sink);
+        expect_connect_result(&mut h.user_stream, connect_command_one().token.unwrap(),
+                              ConnectResult::Canceled);
+        expect_join_request(&mut h.mlme_stream);
+        assert_eq!(joining_state(connect_command_two()), state);
     }
 
     #[test]
-    fn test_ccmp128_group_data_pairwise_cipher_psk() {
-        let a_rsne = make_rsne(Some(cipher::CCMP_128), vec![cipher::CCMP_128], vec![akm::PSK]);
-        let s_rsne = derive_s_rsne(&BSSID[..], a_rsne.as_ref());
-        let expected_rsne_bytes = vec![48, 18, 1, 0, 0, 15, 172, 4, 1, 0, 0, 15, 172, 4, 1, 0, 0, 15, 172, 2];
-        assert_eq!(s_rsne, Some(expected_rsne_bytes));
+    fn connect_while_authenticating() {
+        let mut h = TestHelper::new();
+        let state = authenticating_state(connect_command_one());
+        let state = state.connect(connect_command_two(), &h.mlme_sink, &h.user_sink);
+        expect_connect_result(&mut h.user_stream, connect_command_one().token.unwrap(),
+                              ConnectResult::Canceled);
+        expect_join_request(&mut h.mlme_stream);
+        assert_eq!(joining_state(connect_command_two()), state);
     }
 
     #[test]
-    fn test_mixed_mode() {
-        let a_rsne = make_rsne(Some(cipher::CCMP_128), vec![cipher::CCMP_128, cipher::TKIP], vec![akm::PSK, akm::FT_PSK]);
-        let s_rsne = derive_s_rsne(&BSSID[..], a_rsne.as_ref());
-        let expected_rsne_bytes = vec![48, 18, 1, 0, 0, 15, 172, 4, 1, 0, 0, 15, 172, 4, 1, 0, 0, 15, 172, 2];
-        assert_eq!(s_rsne, Some(expected_rsne_bytes));
+    fn connect_while_associating() {
+        let mut h = TestHelper::new();
+        let state = associating_state(connect_command_one());
+        let state = state.connect(connect_command_two(), &h.mlme_sink, &h.user_sink);
+        let state = exchange_deauth(state, &mut h);
+        expect_connect_result(&mut h.user_stream, connect_command_one().token.unwrap(),
+                              ConnectResult::Canceled);
+        expect_join_request(&mut h.mlme_stream);
+        assert_eq!(joining_state(connect_command_two()), state);
     }
 
     #[test]
-    fn test_no_group_data_cipher() {
-        let a_rsne = make_rsne(None, vec![cipher::CCMP_128], vec![akm::PSK]);
-        let s_rsne = derive_s_rsne(&BSSID[..], a_rsne.as_ref());
-        assert_eq!(s_rsne, None);
+    fn connect_while_link_up() {
+        let mut h = TestHelper::new();
+        let state = link_up_state(connect_command_one().bss);
+        let state = state.connect(connect_command_two(), &h.mlme_sink, &h.user_sink);
+        let state = exchange_deauth(state, &mut h);
+        expect_join_request(&mut h.mlme_stream);
+        assert_eq!(joining_state(connect_command_two()), state);
     }
 
     #[test]
-    fn test_no_pairwise_cipher() {
-        let a_rsne = make_rsne(Some(cipher::CCMP_128), vec![], vec![akm::PSK]);
-        let s_rsne = derive_s_rsne(&BSSID[..], a_rsne.as_ref());
-        assert_eq!(s_rsne, None);
+    fn disconnect_while_idle() {
+        let mut h = TestHelper::new();
+        let new_state = State::Idle.disconnect(&h.mlme_sink, &h.user_sink);
+        assert_eq!(State::Idle, new_state);
+        // Expect no messages to the MLME or the user
+        assert!(h.mlme_stream.try_next().is_err());
+        assert!(h.user_stream.try_next().is_err());
     }
 
     #[test]
-    fn test_no_akm() {
-        let a_rsne = make_rsne(Some(cipher::CCMP_128), vec![cipher::CCMP_128], vec![]);
-        let s_rsne = derive_s_rsne(&BSSID[..], a_rsne.as_ref());
-        assert_eq!(s_rsne, None);
+    fn disconnect_while_joining() {
+        let mut h = TestHelper::new();
+        let state = joining_state(connect_command_one());
+        let state = state.disconnect(&h.mlme_sink, &h.user_sink);
+        expect_connect_result(&mut h.user_stream, connect_command_one().token.unwrap(),
+                              ConnectResult::Canceled);
+        assert_eq!(State::Idle, state);
     }
 
     #[test]
-    fn test_incompatible_akm() {
-        let a_rsne = make_rsne(Some(cipher::CCMP_128), vec![cipher::CCMP_128], vec![akm::EAP]);
-        let s_rsne = derive_s_rsne(&BSSID[..], a_rsne.as_ref());
-        assert_eq!(s_rsne, None);
+    fn disconnect_while_authenticating() {
+        let mut h = TestHelper::new();
+        let state = authenticating_state(connect_command_one());
+        let state = state.disconnect(&h.mlme_sink, &h.user_sink);
+        expect_connect_result(&mut h.user_stream, connect_command_one().token.unwrap(),
+                              ConnectResult::Canceled);
+        assert_eq!(State::Idle, state);
     }
 
     #[test]
-    fn test_no_rsne() {
-        let s_rsne = derive_s_rsne(&BSSID[..], None);
-        assert_eq!(s_rsne, None);
+    fn disconnect_while_associating() {
+        let mut h = TestHelper::new();
+        let state = associating_state(connect_command_one());
+        let state = state.disconnect(&h.mlme_sink, &h.user_sink);
+        let state = exchange_deauth(state, &mut h);
+        expect_connect_result(&mut h.user_stream, connect_command_one().token.unwrap(),
+                              ConnectResult::Canceled);
+        assert_eq!(State::Idle, state);
     }
 
     #[test]
-    fn test_iempty_rsne() {
-        let s_rsne = derive_s_rsne(&BSSID[..], Some(vec![]).as_ref());
-        assert_eq!(s_rsne, None);
+    fn disconnect_while_link_up() {
+        let mut h = TestHelper::new();
+        let state = link_up_state(connect_command_one().bss);
+        let state = state.disconnect(&h.mlme_sink, &h.user_sink);
+        let state = exchange_deauth(state, &mut h);
+        assert_eq!(State::Idle, state);
     }
+
+    struct TestHelper {
+        mlme_sink: MlmeSink,
+        mlme_stream: MlmeStream,
+        user_sink: UserSink<FakeTokens>,
+        user_stream: UserStream<FakeTokens>,
+        device_info: DeviceInfo,
+    }
+
+    impl TestHelper {
+        fn new() -> Self {
+            let (mlme_sink, mlme_stream) = mpsc::unbounded();
+            let (user_sink, user_stream) = mpsc::unbounded();
+            let mlme_sink = MlmeSink::new(mlme_sink);
+            let user_sink = UserSink::new(user_sink);
+            let device_info = fake_device_info();
+            TestHelper { mlme_sink, mlme_stream, user_sink, user_stream, device_info }
+        }
+    }
+
+    fn exchange_deauth(state: State<FakeTokens>, h: &mut TestHelper) -> State<FakeTokens> {
+        // (sme->mlme) Expect a DeauthenticateRequest
+        match h.mlme_stream.try_next().unwrap() {
+            Some(MlmeRequest::Deauthenticate(req)) => {
+                assert_eq!(connect_command_one().bss.bssid, req.peer_sta_address);
+            },
+            other => panic!("expected a Deauthenticate request, got {:?}", other),
+        }
+
+        // (mlme->sme) Send a DeauthenticateConf as a response
+        let deauth_conf = MlmeEvent::DeauthenticateConf {
+            resp: fidl_mlme::DeauthenticateConfirm {
+                peer_sta_address: connect_command_one().bss.bssid,
+            }
+        };
+        state.on_mlme_event(&h.device_info, deauth_conf, &h.mlme_sink, &h.user_sink)
+    }
+
+    fn expect_join_request(mlme_stream: &mut MlmeStream) {
+        // (sme->mlme) Expect a JoinRequest
+        match mlme_stream.try_next().unwrap() {
+            Some(MlmeRequest::Join(req)) => {
+                assert_eq!(connect_command_two().bss.ssid, req.selected_bss.ssid);
+            },
+            other => panic!("expected a Join request, got {:?}", other),
+        }
+    }
+
+    fn expect_connect_result(user_stream: &mut UserStream<FakeTokens>,
+                             expected_token: u32, expected_result: ConnectResult) {
+        match user_stream.try_next().unwrap() {
+            Some(UserEvent::ConnectFinished { token, result }) => {
+                assert_eq!(expected_token, token);
+                assert_eq!(expected_result, result);
+            },
+            other => panic!("expected a ConnectFinished event, got {:?}", other)
+        }
+    }
+
+    fn connect_command_one() -> ConnectCommand<u32> {
+        ConnectCommand {
+            bss: Box::new(bss(b"foo".to_vec(), [7, 7, 7, 7, 7, 7])),
+            token: Some(123_u32),
+            rsna: None,
+        }
+    }
+
+    fn connect_command_two() -> ConnectCommand<u32> {
+        ConnectCommand {
+            bss: Box::new(bss(b"bar".to_vec(), [8, 8, 8, 8, 8, 8])),
+            token: Some(456_u32),
+            rsna: None,
+        }
+    }
+
+    fn idle_state() -> State<FakeTokens> {
+        State::Idle
+    }
+
+    fn joining_state(cmd: ConnectCommand<u32>) -> State<FakeTokens> {
+        State::Joining { cmd }
+    }
+
+    fn authenticating_state(cmd: ConnectCommand<u32>) -> State<FakeTokens> {
+        State::Authenticating { cmd }
+    }
+
+    fn associating_state(cmd: ConnectCommand<u32>) -> State<FakeTokens> {
+        State::Associating { cmd }
+    }
+
+    fn link_up_state(bss: Box<fidl_mlme::BssDescription>) -> State<FakeTokens> {
+        State::Associated {
+            bss,
+            last_rssi: None,
+            link_state: LinkState::LinkUp(None),
+        }
+    }
+
+    fn bss(ssid: Ssid, bssid: [u8; 6]) -> fidl_mlme::BssDescription {
+        fidl_mlme::BssDescription {
+            bssid,
+            .. fake_unprotected_bss_description(ssid)
+        }
+    }
+
+    fn fake_device_info() -> DeviceInfo {
+        DeviceInfo {
+            supported_channels: HashSet::from_iter([1, 2, 3].into_iter().cloned()),
+            addr: [ 0, 1, 2, 3, 4, 5 ],
+        }
+    }
+
 }

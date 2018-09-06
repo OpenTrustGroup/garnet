@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_HCI_HCI_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_HCI_HCI_H_
 
 #include <array>
 #include <cstdint>
@@ -330,12 +331,62 @@ struct ReadRemoteVersionInfoCommandParams {
 // Read Remote Version Information Complete event will indicate that this
 // command has been completed.
 
+// =========================================================
+// IO Capability Request Reply Command (v2.1 + EDR) (BR/EDR)
+constexpr OpCode kIOCapabilityRequestReply = LinkControlOpCode(0x002B);
+
+struct IOCapabilityRequestReplyCommandParams {
+  // The BD_ADDR of the remote device involved in simple pairing process
+  common::DeviceAddressBytes bd_addr;
+
+  // The IOCapablities of this device
+  IOCapability io_capability;
+
+  // Whether there is OOB Data Present, and what type. Valid values:
+  // 0x00 - OOB authentication data not present
+  // 0x01 - P-192 OOB authentication data from remote device present
+  // 0x02 - P-256 OOB authentication data from remote device present
+  // 0x03 - P-192 and P-256 OOB authentication data from remote device present
+  uint8_t oob_data_present;
+
+  // Authenication Requirements.
+  // See enum class AuthRequirements in hci_constants.h
+  AuthRequirements auth_requirements;
+} __PACKED;
+
+struct IOCapabilityRequestReplyReturnParams {
+  // See enum StatusCode in hci_constants.h.
+  StatusCode status;
+
+  // BD_ADDR of the remote device involved in simple pairing process
+  common::DeviceAddressBytes bd_addr;
+} __PACKED;
+
 // ======= Controller & Baseband Commands =======
 // Core Spec v5.0 Vol 2, Part E, Section 7.3
 constexpr uint8_t kControllerAndBasebandOGF = 0x03;
 constexpr OpCode ControllerAndBasebandOpCode(const uint16_t ocf) {
   return DefineOpCode(kControllerAndBasebandOGF, ocf);
 }
+
+// =============================================================
+// User Confirmation Request Reply Command (v2.1 + EDR) (BR/EDR)
+constexpr OpCode kUserConfirmationRequestReply = LinkControlOpCode(0x002C);
+
+struct UserConfirmationRequestReplyCommandParams {
+  // The BD_ADDR of the remote device involved in the simple pairing process.
+  common::DeviceAddressBytes bd_addr;
+} __PACKED;
+
+// ======================================================================
+// User Confirmation Request Negative Reply Command (v2.1 + EDR) (BR/EDR)
+constexpr OpCode kUserConfirmationRequestNegativeReply =
+    LinkControlOpCode(0x002D);
+
+struct UserConfirmationRequestNegativeReplyCommandParams {
+  // The BD_ADDR of the remote device involved in the simple pairing process.
+  common::DeviceAddressBytes bd_addr;
+} __PACKED;
 
 // =============================
 // Set Event Mask Command (v1.1)
@@ -481,6 +532,27 @@ struct ReadTransmitPowerLevelReturnParams {
   //   Range: -30 ≤ N ≤ 20
   //   Units: dBm
   int8_t tx_power_level;
+} __PACKED;
+
+// =================================
+// Read Inquiry Mode (v1.2) (BR/EDR)
+constexpr OpCode kReadInquiryMode = ControllerAndBasebandOpCode(0x0044);
+
+struct ReadInquiryModeReturnParams {
+  // See enum StatusCode in hci_constants.h.
+  StatusCode status;
+
+  // See enum InquiryMode in hci_constants.h
+  InquiryMode inquiry_mode;
+} __PACKED;
+
+// ==================================
+// Write Inquiry Mode (v1.2) (BR/EDR)
+constexpr OpCode kWriteInquiryMode = ControllerAndBasebandOpCode(0x0045);
+
+struct WriteInquiryModeCommandParams {
+  // See enum InquiryMode in hci_constants.h
+  InquiryMode inquiry_mode;
 } __PACKED;
 
 // ===================================
@@ -782,7 +854,9 @@ struct InquiryResult {
   // Class of device
   common::DeviceClass class_of_device;
 
-  // 15 MSB of the Clock Offset
+  // Clock Offset
+  // the 15 lower bits represent bits 16-2 of CLKNslave-CLK
+  // the most significant bit is reserved
   uint16_t clock_offset;
 } __PACKED;
 
@@ -992,6 +1066,45 @@ struct NumberOfCompletedPacketsEventParams {
   NumberOfCompletedPacketsEventData data[];
 } __PACKED;
 
+// ==============================================
+// Inquiry Result with RSSI Event (v1.2) (BR/EDR)
+constexpr EventCode kInquiryResultWithRSSIEventCode = 0x22;
+
+struct InquiryResultRSSI {
+  // The address for the device which responded.
+  common::DeviceAddressBytes bd_addr;
+
+  // The Page Scan Repetition Mode being used by the remote device.
+  PageScanRepetitionMode page_scan_repetition_mode;
+
+  // Reserved (no meaning as of v1.2)
+  uint8_t page_scan_period_mode;
+
+  // Reserved (no meaning as of v1.2)
+  uint8_t page_scan_mode;
+
+  // Class of device
+  common::DeviceClass class_of_device;
+
+  // Clock Offset
+  // the 15 lower bits represent bits 16-2 of CLKNslave-CLK
+  // the most significant bit is reserved
+  uint16_t clock_offset;
+
+  // RSSI
+  // Valid range: -127 to +20
+  uint8_t rssi;
+} __PACKED;
+
+struct InquiryResultWithRSSIEventParams {
+  FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(InquiryResultWithRSSIEventParams);
+
+  // The number of responses included.
+  uint8_t num_responses;
+
+  InquiryResultRSSI responses[];
+} __PACKED;
+
 // =============================================================
 // Read Remote Extended Features Complete Event (v1.1) (BR/EDR)
 constexpr EventCode kReadRemoteExtendedFeaturesCompleteEventCode = 0x23;
@@ -1017,6 +1130,41 @@ struct ReadRemoteExtendedFeaturesCompleteEventParams {
   uint64_t lmp_features;
 } __PACKED;
 
+// =============================================
+// Extended Inquiry Result Event (v1.2) (BR/EDR)
+constexpr EventCode kExtendedInquiryResultEventCode = 0x2F;
+
+struct ExtendedInquiryResultEventParams {
+  // Num_Responses
+  // The number of responses from the inquiry.
+  // Must be 1.
+  uint8_t num_responses;
+
+  // BD_ADDR of the device that responded.
+  common::DeviceAddressBytes bd_addr;
+
+  // The Page Scan Repetition Mode being used by the remote device.
+  PageScanRepetitionMode page_scan_repetition_mode;
+
+  // Reserved for future use
+  uint8_t reserved;
+
+  // Class of device
+  common::DeviceClass class_of_device;
+
+  // Clock offset
+  // the 15 lower bits represent bits 16-2 of CLKNslave-CLK
+  // the most significant bit is reserved
+  uint16_t clock_offset;
+
+  // RSSI in dBm.
+  // Valid range: -127 to +20
+  int8_t rssi;
+
+  // Extended inquiey response data as defined in Vol 3, Part C, Sec 8
+  uint8_t extended_inquiry_response[kExtendedInquiryResponseBytes];
+} __PACKED;
+
 // ================================================================
 // Encryption Key Refresh Complete Event (v2.1 + EDR) (BR/EDR & LE)
 constexpr EventCode kEncryptionKeyRefreshCompleteEventCode = 0x30;
@@ -1029,6 +1177,49 @@ struct EncryptionKeyRefreshCompleteEventParams {
   //
   //   Range: 0x0000 to kConnectioHandleMax in hci_constants.h
   ConnectionHandle connection_handle;
+} __PACKED;
+
+// =============================================
+// IO Capability Request Event (xxx) (BR/EDR)
+constexpr EventCode kIOCapabilityRequestEventCode = 0x31;
+
+struct IOCapabilityRequestEventParams {
+  // The address of the remote device involved in the simple pairing process
+  common::DeviceAddressBytes bd_addr;
+} __PACKED;
+
+// =============================================
+// IO Capability Response Event (xxx) (BR/EDR)
+constexpr EventCode kIOCapabilityResponseEventCode = 0x32;
+
+struct IOCapabilityResponseEventParams {
+  // The address of the remote device which the IO capabilities apply
+  common::DeviceAddressBytes bd_addr;
+
+  // IO Capabilities of the device
+  IOCapability io_capability;
+
+  // Whether OOB Data is present.
+  // Allowed values:
+  //  0x00 - OOB authentication data not present
+  //  0x01 - OOB authentication data from remote device present
+  uint8_t oob_data_present;
+
+  // Authentication Requirements.
+  // See AuthenticationRequirements in hci_constants.h
+  AuthRequirements auth_requirements;
+} __PACKED;
+
+// =====================================================
+// User Confirmation Request Event (v2.1 + EDR) (BR/EDR)
+constexpr EventCode kUserConfirmationRequestEventCode = 0x33;
+
+struct UserConfirmationRequestEventParams {
+  // Address of the device involved in simple pairing process
+  common::DeviceAddressBytes bd_addr;
+
+  // Numeric valud to be displayed.  Valid values are 0 - 999999
+  uint32_t numeric_value;
 } __PACKED;
 
 // =========================
@@ -1172,7 +1363,7 @@ struct LEReadRemoteFeaturesCompleteSubeventParams {
 } __PACKED;
 
 // LE Long Term Key Request Event (v4.0) (LE)
-constexpr EventCode LELongTermKeyRequestSubeventCode = 0x05;
+constexpr EventCode kLELongTermKeyRequestSubeventCode = 0x05;
 
 struct LELongTermKeyRequestSubeventParams {
   // Connection Handle (only the lower 12-bits are meaningful).
@@ -3109,3 +3300,5 @@ constexpr OpCode VendorOpCode(const uint8_t ocf) {
 
 }  // namespace hci
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_HCI_HCI_H_

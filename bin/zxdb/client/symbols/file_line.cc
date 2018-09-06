@@ -4,7 +4,7 @@
 
 #include "garnet/bin/zxdb/client/symbols/file_line.h"
 
-#include "garnet/bin/zxdb/client/file_util.h"
+#include "garnet/bin/zxdb/common/file_util.h"
 
 namespace zxdb {
 
@@ -15,6 +15,12 @@ FileLine::~FileLine() = default;
 
 std::string FileLine::GetFileNamePart() const {
   return ExtractLastFileComponent(file_).ToString();
+}
+
+bool operator<(const FileLine& a, const FileLine& b) {
+  if (a.line() != b.line())
+    return a.line() < b.line();
+  return a.file() < b.file();
 }
 
 }  // namespace zxdb

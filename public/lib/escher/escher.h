@@ -12,9 +12,12 @@
 #include "lib/escher/status.h"
 #include "lib/escher/util/hash.h"
 #include "lib/escher/util/hash_map.h"
+#include "lib/escher/vk/command_buffer.h"
+#include "lib/escher/vk/shader_program_factory.h"
 #include "lib/escher/vk/vulkan_context.h"
 #include "lib/escher/vk/vulkan_device_queues.h"
 #include "lib/fxl/macros.h"
+#include "lib/fxl/memory/weak_ptr.h"
 
 namespace escher {
 
@@ -22,13 +25,16 @@ namespace escher {
 //
 // Escher is currently not thread-safe; it (and all objects obtained from it)
 // must be used from a single thread.
-class Escher : public MeshBuilderFactory {
+class Escher : public MeshBuilderFactory, public ShaderProgramFactory {
  public:
   // Escher does not take ownership of the objects in the Vulkan context.  It is
   // up to the application to eventually destroy them, and also to ensure that
   // they outlive the Escher instance.
   explicit Escher(VulkanDeviceQueuesPtr device);
+  Escher(VulkanDeviceQueuesPtr device, HackFilesystemPtr filesystem);
   ~Escher();
+
+  EscherWeakPtr GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
   // Implement MeshBuilderFactory interface.
   MeshBuilderPtr NewMeshBuilder(const MeshSpec& spec, size_t max_vertex_count,
@@ -47,7 +53,12 @@ class Escher : public MeshBuilderFactory {
   // |enable_gpu_logging| is true, GPU profiling timestamps will be logged via
   // FXL_LOG().
   FramePtr NewFrame(const char* trace_literal, uint64_t frame_number,
-                    bool enable_gpu_logging = false);
+                    bool enable_gpu_logging = false,
+                    escher::CommandBuffer::Type requested_type =
+                        escher::CommandBuffer::Type::kGraphics);
+  // Return the number of frames that have been returned by NewFrame() and which
+  // have not finished rendering (after having EndFrame() invoked upon them).
+  uint32_t GetNumOutstandingFrames() const;
 
   // Construct a new Texture, which encapsulates a newly-created VkImageView and
   // VkSampler.  |aspect_mask| is used to create the VkImageView, and |filter|
@@ -109,6 +120,7 @@ class Escher : public MeshBuilderFactory {
   impl::GlslToSpirvCompiler* glsl_compiler() { return glsl_compiler_.get(); }
   shaderc::Compiler* shaderc_compiler() { return shaderc_compiler_.get(); }
   impl::ImageCache* image_cache() { return image_cache_.get(); }
+  BufferCache* buffer_cache() { return buffer_cache_.get(); }
   impl::MeshManager* mesh_manager() { return mesh_manager_.get(); }
   impl::PipelineLayoutCache* pipeline_layout_cache() {
     return pipeline_layout_cache_.get();
@@ -129,6 +141,10 @@ class Escher : public MeshBuilderFactory {
     return transfer_command_buffer_pool_.get();
   }
 
+  DefaultShaderProgramFactory* shader_program_factory() {
+    return shader_program_factory_.get();
+  }
+
   // Check if GPU performance profiling is supported.
   bool supports_timer_queries() const { return supports_timer_queries_; }
   float timestamp_period() const { return timestamp_period_; }
@@ -138,35 +154,47 @@ class Escher : public MeshBuilderFactory {
   friend class Renderer;
   void IncrementRendererCount() { ++renderer_count_; }
   void DecrementRendererCount() { --renderer_count_; }
+  std::atomic<uint32_t> renderer_count_;
+
+  // |ShaderProgramFactory|
+  ShaderProgramPtr GetProgram(
+      const std::string shader_paths[EnumCount<ShaderStage>()],
+      ShaderVariantArgs args) override;
 
   VulkanDeviceQueuesPtr device_;
   VulkanContext vulkan_context_;
 
+  // These can be constructed without an EscherWeakPtr.
   std::unique_ptr<GpuAllocator> gpu_allocator_;
   std::unique_ptr<impl::CommandBufferSequencer> command_buffer_sequencer_;
   std::unique_ptr<impl::CommandBufferPool> command_buffer_pool_;
   std::unique_ptr<impl::CommandBufferPool> transfer_command_buffer_pool_;
   std::unique_ptr<impl::GlslToSpirvCompiler> glsl_compiler_;
   std::unique_ptr<shaderc::Compiler> shaderc_compiler_;
-  std::unique_ptr<impl::ImageCache> image_cache_;
+  std::unique_ptr<impl::PipelineCache> pipeline_cache_;
+  // Everything below this point requires |weak_factory_| to be initialized
+  // before they can be constructed.
 
+  std::unique_ptr<impl::ImageCache> image_cache_;
+  std::unique_ptr<BufferCache> buffer_cache_;
   std::unique_ptr<impl::GpuUploader> gpu_uploader_;
   std::unique_ptr<ResourceRecycler> resource_recycler_;
   std::unique_ptr<impl::MeshManager> mesh_manager_;
+  std::unique_ptr<DefaultShaderProgramFactory> shader_program_factory_;
 
-  std::unique_ptr<impl::PipelineCache> pipeline_cache_;
   std::unique_ptr<impl::PipelineLayoutCache> pipeline_layout_cache_;
 
   std::unique_ptr<impl::RenderPassCache> render_pass_cache_;
   std::unique_ptr<impl::FramebufferAllocator> framebuffer_allocator_;
+  std::unique_ptr<impl::FrameManager> frame_manager_;
 
   HashMap<Hash, std::unique_ptr<impl::DescriptorSetAllocator>>
       descriptor_set_allocators_;
 
-  std::atomic<uint32_t> renderer_count_;
-
   bool supports_timer_queries_ = false;
   float timestamp_period_ = 0.f;
+
+  fxl::WeakPtrFactory<Escher> weak_factory_;  // must be last
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Escher);
 };

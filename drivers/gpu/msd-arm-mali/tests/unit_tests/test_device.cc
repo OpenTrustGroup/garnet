@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "helper/platform_device_helper.h"
-#include "lib/fxl/arraysize.h"
 #include "mock/mock_mmio.h"
 #include "msd_arm_device.h"
 #include "registers.h"
@@ -141,14 +140,14 @@ public:
         device->power_manager_->shader_ready_status_ = 0xfu;
 
         auto null_atom =
-            std::make_unique<MsdArmAtom>(connection, 0, 0, 0, magma_arm_mali_user_data());
+            std::make_unique<MsdArmAtom>(connection, 0, 0, 0, magma_arm_mali_user_data(), 0);
         device->scheduler_->EnqueueAtom(std::move(null_atom));
         device->scheduler_->TryToSchedule();
 
         // Atom has 0 job chain address and should be thrown out.
         EXPECT_EQ(0u, device->scheduler_->GetAtomListSize());
 
-        MsdArmAtom atom(connection, 5, 0, 0, magma_arm_mali_user_data());
+        MsdArmAtom atom(connection, 5, 0, 0, magma_arm_mali_user_data(), 0);
         atom.set_require_cycle_counter();
         device->ExecuteAtomOnDevice(&atom, reg_io);
         EXPECT_EQ(registers::GpuCommand::kCmdCycleCountStart,
@@ -156,7 +155,7 @@ public:
 
         constexpr uint32_t kJobSlot = 1;
         auto connection1 = MsdArmConnection::Create(0, device.get());
-        MsdArmAtom atom1(connection1, 100, kJobSlot, 0, magma_arm_mali_user_data());
+        MsdArmAtom atom1(connection1, 100, kJobSlot, 0, magma_arm_mali_user_data(), 0);
 
         device->ExecuteAtomOnDevice(&atom1, reg_io);
 

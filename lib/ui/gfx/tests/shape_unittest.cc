@@ -8,11 +8,11 @@
 #include "garnet/lib/ui/gfx/resources/shapes/rectangle_shape.h"
 #include "garnet/lib/ui/gfx/resources/shapes/rounded_rectangle_shape.h"
 #include "garnet/lib/ui/gfx/tests/session_test.h"
-#include "lib/ui/scenic/fidl_helpers.h"
+#include "lib/ui/scenic/cpp/commands.h"
 
 #include "gtest/gtest.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 namespace test {
 namespace {
@@ -32,7 +32,7 @@ constexpr vec4 kAngledVector{2.f, -1.f, -.5f, 0.f};
 using ShapeTest = SessionTest;
 
 TEST_F(ShapeTest, Circle) {
-  const scenic::ResourceId id = 1;
+  const ResourceId id = 1;
   EXPECT_TRUE(Apply(scenic::NewCreateCircleCmd(id, 50.f)));
 
   auto circle = FindResource<CircleShape>(id);
@@ -91,7 +91,7 @@ TEST_F(ShapeTest, Circle) {
 }
 
 TEST_F(ShapeTest, Rectangle) {
-  const scenic::ResourceId id = 1;
+  const ResourceId id = 1;
   EXPECT_TRUE(Apply(scenic::NewCreateRectangleCmd(id, 30.f, 40.f)));
 
   auto rectangle = FindResource<RectangleShape>(id);
@@ -154,9 +154,9 @@ TEST_F(ShapeTest, Rectangle) {
 // TODO(MZ-159): This test needs a rounded rect factory to run but it is
 // not currently available in the engine for tests.
 TEST_F(ShapeTest, DISABLED_RoundedRectangle) {
-  const scenic::ResourceId id = 1;
-  EXPECT_TRUE(Apply(scenic::NewCreateRoundedRectangleCmd(
-      id, 30.f, 40.f, 2.f, 4.f, 6.f, 8.f)));
+  const ResourceId id = 1;
+  EXPECT_TRUE(Apply(scenic::NewCreateRoundedRectangleCmd(id, 30.f, 40.f, 2.f,
+                                                         4.f, 6.f, 8.f)));
 
   auto rounded_rectangle = FindResource<RoundedRectangleShape>(id);
   ASSERT_NE(nullptr, rounded_rectangle.get());
@@ -229,4 +229,4 @@ TEST_F(ShapeTest, DISABLED_RoundedRectangle) {
 
 }  // namespace test
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

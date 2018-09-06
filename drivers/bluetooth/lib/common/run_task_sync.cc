@@ -9,19 +9,18 @@
 
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
-
-#include "lib/fxl/logging.h"
+#include <zircon/assert.h>
 
 namespace btlib {
 namespace common {
 
-void RunTaskSync(fit::closure callback, async_t* dispatcher) {
-  FXL_DCHECK(callback);
+void RunTaskSync(fit::closure callback, async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(callback);
 
-  // TODO(armansito) This check is risky. async_get_default() could return
+  // TODO(armansito) This check is risky. async_get_default_dispatcher() could return
   // a dispatcher that goes to another thread. We don't have any current
   // instances of a multi threaded dispatcher but we could.
-  if (dispatcher == async_get_default()) {
+  if (dispatcher == async_get_default_dispatcher()) {
     callback();
     return;
   }

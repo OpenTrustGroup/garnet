@@ -10,12 +10,17 @@ source_set("src") {
     "address_space.cc",
     "address_space.h",
     "msd_vsl_buffer.cc",
+    "msd_vsl_buffer.h",
     "msd_vsl_connection.cc",
+    "msd_vsl_connection.h",
+    "msd_vsl_context.cc",
+    "msd_vsl_context.h",
     "msd_vsl_device.cc",
     "msd_vsl_device.h",
     "msd_vsl_driver.cc",
     "msd_vsl_driver.h",
     "msd_vsl_semaphore.cc",
+    "msd_vsl_semaphore.h",
     "page_table_arrays.cc",
     "page_table_arrays.h",
   ]
@@ -26,8 +31,10 @@ source_set("src") {
     "//garnet/lib/magma/src/magma_util",
     "//garnet/lib/magma/src/magma_util:registers",
     "//garnet/lib/magma/src/magma_util/platform:buffer",
+    "//garnet/lib/magma/src/magma_util/platform:bus_mapper",
     "//garnet/lib/magma/src/magma_util/platform:device",
     "//garnet/lib/magma/src/magma_util/platform:mmio",
+    "//garnet/lib/magma/src/magma_util/platform:semaphore",
   ]
   friend = [
     "../tests/unit_tests:*",

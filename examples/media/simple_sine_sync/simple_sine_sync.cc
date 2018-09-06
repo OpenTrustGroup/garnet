@@ -8,12 +8,13 @@
 #include <math.h>
 #include <zircon/syscalls.h>
 
-#include "lib/app/cpp/environment_services.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fidl/cpp/synchronous_interface_ptr.h"
 #include "lib/fxl/logging.h"
 
 namespace {
-// Set the renderer format to: 44.1 kHz, stereo, 16-bit LPCM (signed integer).
+// Set the renderer stream_type to: 44.1 kHz, stereo, 16-bit LPCM (signed
+// integer).
 constexpr float kRendererFrameRate = 44100.0f;
 constexpr size_t kNumChannels = 2;
 
@@ -36,7 +37,8 @@ constexpr size_t kNumPacketsToSend =
 
 namespace examples {
 
-MediaApp::MediaApp() {}
+MediaApp::MediaApp(std::unique_ptr<component::StartupContext> context)
+    : context_(std::move(context)) {}
 MediaApp::~MediaApp() {}
 
 // Prepare for playback, compute playback data, supply media packets, start.
@@ -58,7 +60,7 @@ int MediaApp::Run() {
     return 1;
   }
 
-  SetMediaType();
+  SetStreamType();
 
   if (CreateMemoryMapping() != ZX_OK) {
     return 2;
@@ -98,8 +100,8 @@ int MediaApp::Run() {
 
   int64_t ref_start_time;
   int64_t media_start_time;
-  audio_renderer_->Play(fuchsia::media::kNoTimestamp,
-                        fuchsia::media::kNoTimestamp, &ref_start_time,
+  audio_renderer_->Play(fuchsia::media::NO_TIMESTAMP,
+                        fuchsia::media::NO_TIMESTAMP, &ref_start_time,
                         &media_start_time);
   start_time_known_ = true;
 
@@ -130,24 +132,24 @@ int MediaApp::Run() {
 
 // Connect to the Audio service and get an AudioRenderer.
 bool MediaApp::AcquireRenderer() {
-  fuchsia::media::AudioSync2Ptr audio;
-  fuchsia::sys::ConnectToEnvironmentService(audio.NewRequest());
-  return audio->CreateRendererV2(audio_renderer_.NewRequest()).statvs == ZX_OK;
+  fuchsia::media::AudioSyncPtr audio;
+  context_->ConnectToEnvironmentService(audio.NewRequest());
+  return audio->CreateAudioOut(audio_renderer_.NewRequest()) == ZX_OK;
 }
 
-// Set the AudioRenderer's audio format to stereo 48kHz.
-void MediaApp::SetMediaType() {
+// Set the AudioRenderer's audio stream_type to stereo 48kHz.
+void MediaApp::SetStreamType() {
   FXL_DCHECK(audio_renderer_);
 
-  fuchsia::media::AudioPcmFormat format;
-  format.sample_format = use_float_
-                             ? fuchsia::media::AudioSampleFormat::FLOAT
-                             : fuchsia::media::AudioSampleFormat::SIGNED_16;
-  format.channels = kNumChannels;
-  format.frames_per_second = kRendererFrameRate;
+  fuchsia::media::AudioStreamType stream_type;
+  stream_type.sample_format =
+      use_float_ ? fuchsia::media::AudioSampleFormat::FLOAT
+                 : fuchsia::media::AudioSampleFormat::SIGNED_16;
+  stream_type.channels = kNumChannels;
+  stream_type.frames_per_second = kRendererFrameRate;
 
-  if (audio_renderer_->SetPcmFormat(std::move(format)).statvs != ZX_OK)
-    FXL_LOG(ERROR) << "Could not set format";
+  if (audio_renderer_->SetPcmStreamType(std::move(stream_type)) != ZX_OK)
+    FXL_LOG(ERROR) << "Could not set stream type";
 }
 
 // Create a single Virtual Memory Object, and map enough memory for our audio
@@ -163,7 +165,7 @@ zx_status_t MediaApp::CreateMemoryMapping() {
     return status;
   }
 
-  audio_renderer_->SetPayloadBuffer(std::move(payload_vmo));
+  audio_renderer_->AddPayloadBuffer(0, std::move(payload_vmo));
 
   return ZX_OK;
 }
@@ -188,15 +190,15 @@ void MediaApp::WriteAudioIntoBuffer(void* buffer, size_t num_frames) {
 }
 
 // Create a packet for this payload.
-fuchsia::media::AudioPacket MediaApp::CreateAudioPacket(size_t payload_num) {
-  fuchsia::media::AudioPacket packet;
+fuchsia::media::StreamPacket MediaApp::CreateAudioPacket(size_t payload_num) {
+  fuchsia::media::StreamPacket packet;
   packet.payload_offset = (payload_num % kNumPayloads) * payload_size_;
   packet.payload_size = payload_size_;
   return packet;
 }
 
 // Submit a packet, incrementing our count of packets sent.
-bool MediaApp::SendAudioPacket(fuchsia::media::AudioPacket packet) {
+bool MediaApp::SendAudioPacket(fuchsia::media::StreamPacket packet) {
   if (verbose_) {
     const float delay =
         (start_time_known_
@@ -209,7 +211,7 @@ bool MediaApp::SendAudioPacket(fuchsia::media::AudioPacket packet) {
   ++num_packets_sent_;
 
   // Note: SupplyPacketNoReply returns immediately, before packet is consumed.
-  return audio_renderer_->SendPacketNoReply(std::move(packet)).statvs == ZX_OK;
+  return audio_renderer_->SendPacketNoReply(std::move(packet)) == ZX_OK;
 }
 
 // Stay ahead of the presentation timeline, by the amount high_water_mark_.

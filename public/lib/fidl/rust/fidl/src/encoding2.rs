@@ -4,12 +4,15 @@
 
 //! Encoding2 contains functions and traits for FIDL2 encoding and decoding.
 
-use {Error, Result};
-use std::{mem, ptr, str, u32, u64};
-use zircon as zx;
-use self::zx::HandleBased;
-
-use byteorder::{ByteOrder, LittleEndian};
+use {
+    crate::{Error, Result},
+    byteorder::{ByteOrder, LittleEndian},
+    fuchsia_zircon::{
+        self as zx,
+        HandleBased,
+    },
+    std::{mem, ptr, str, u32, u64},
+};
 
 /// Rounds `x` up if necessary so that it is a multiple of `align`.
 pub fn round_up_to_align(x: usize, align: usize) -> usize {
@@ -471,6 +474,8 @@ impl_codable_for_fixed_array!( 0,  1,  2,  3,  4,  5,  6,  7,
                               16, 17, 18, 19, 20, 21, 22, 23,
                               24, 25, 26, 27, 28, 29, 30, 31,
                               32,);
+// Hack for FIDL library fuchsia.net
+impl_codable_for_fixed_array!(256,);
 
 fn encode_byte_slice(encoder: &mut Encoder, slice_opt: Option<&[u8]>) -> Result<()> {
     match slice_opt {
@@ -1573,7 +1578,7 @@ impl<'a, T> Encodable for &'a mut T where T: Encodable {
 mod test {
     use super::*;
     use std::{fmt, u64, i64, f32, f64};
-    use self::zx::AsHandleRef;
+    use fuchsia_zircon::AsHandleRef;
 
     fn encode_decode<T: Encodable + Decodable>(start: &mut T) -> T {
         let buf = &mut Vec::new();

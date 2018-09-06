@@ -16,19 +16,27 @@ driver_module("wlan_driver") {
     "device.cpp",
     "device.h",
     "driver.cpp",
+    "minstrel.cpp",
+    "minstrel.h",
     "proxy_helpers.h",
   ]
 
   deps = [
     "//garnet/lib/wlan/mlme",
     "//garnet/lib/wlan/protocol",
+    "//garnet/public/lib/component/cpp:environment_services",
+    "//garnet/public/lib/svc/cpp",
     "//zircon/public/lib/ddk",
     "//zircon/public/lib/driver",
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/zx",
   ]
 
-  configs += [ "//build/config/fuchsia:enable_zircon_asserts" ]
+  configs -= [ "//build/config/fuchsia:no_cpp_standard_library" ]
+  configs += [
+    "//build/config/fuchsia:enable_zircon_asserts",
+    "//build/config/fuchsia:static_cpp_standard_library",
+  ]
 }
 
 package("wlan") {
@@ -38,7 +46,9 @@ package("wlan") {
     ":wlan_driver",
   ]
 
-  drivers = [ {
-        name = "wlan.so"
-      } ]
+  drivers = [
+    {
+      name = "wlan.so"
+    },
+  ]
 }

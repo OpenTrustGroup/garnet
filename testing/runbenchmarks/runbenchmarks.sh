@@ -5,7 +5,7 @@
 # found in the LICENSE file.
 #
 # This script defines a set of utility functions for running benchmarks on
-# Fuchisa.  For example usage, see the package //garnet/bin/benchmarks. For
+# Fuchsia.  For example usage, see the package //garnet/tests/benchmarks. For
 # detailed instructions see README.md.
 
 # Enable stricter error handling:
@@ -29,6 +29,44 @@ _got_errors=0
 # https://fuchsia.googlesource.com/zircon/+/master/system/uapp/runtests/summary-schema.json
 _benchmark_summaries=""
 
+# This parses command line arguments:
+#  * It sets ${OUT_DIR} to the output directory specified on the command line.
+#  * It sets ${benchmarks_bot_name} to the name of the bot specified on the
+#    command line.
+#  * It reads other arguments that are used by the Catapult converter.
+#
+# This will normally be invoked as:
+#   runbench_read_arguments "$@"
+#
+# A script that uses runbench_read_arguments should be invoked as follows:
+#   benchmarks.sh <output-dir> --catapult-converter-args <args>
+runbench_read_arguments() {
+    if [ $# -lt 2 ] || [ "$2" != "--catapult-converter-args" ]; then
+        echo "Error: Missing '--catapult-converter-args' argument"
+        echo "Usage: $0 <output-dir> --catapult-converter-args <args>"
+        exit 1
+    fi
+    OUT_DIR="$1"
+    shift 2
+    _catapult_converter_args="$@"
+
+    # Parse the catapult_converter argument to find the bot name.
+    while [ $# -gt 0 ]; do
+        local arg="$1"
+        shift
+        case "${arg}" in
+            --execution-timestamp-ms|--masters|--log-url)
+                shift;;
+            --bots)
+                benchmarks_bot_name="$1"
+                shift;;
+            *)
+                _runbench_log "Error: Unrecognized argument: ${arg}"
+                exit 1;;
+        esac
+    done
+}
+
 # Runs a command and expects a results file to be produced.
 #
 # If the results file was not generated, an error message is logged and a
@@ -50,6 +88,11 @@ runbench_exec() {
     # Ensure the results file doesn't already exist.
     rm -f "${results_file}"
 
+    # Create the results file so that it's always present, even if the test
+    # crashes. Infra expects this file to always be present because it is
+    # listed in summary.json.
+    touch "${results_file}"
+
     # Run the benchmark.
     _runbench_log "running $@"
     if ! "$@"; then
@@ -70,6 +113,15 @@ runbench_exec() {
 
     # Record a successful run.
     _write_summary_entry "${results_file}" "PASS"
+
+    # Convert the results file to a Catapult Histogram JSON file.
+    local base_name="$(basename ${results_file} .json).catapult_json"
+    local catapult_file="$(dirname ${results_file})/$base_name"
+    /pkgfs/packages/catapult_converter/0/bin/app \
+        --input ${results_file} \
+        --output ${catapult_file} \
+        ${_catapult_converter_args}
+    _write_summary_entry "${catapult_file}" "PASS"
 }
 
 # Exits the current process with a code indicating whether any errors occurred.

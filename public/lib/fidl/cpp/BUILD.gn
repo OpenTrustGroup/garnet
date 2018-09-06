@@ -9,27 +9,18 @@ import("//build/fidl/fidl.gni")
 sdk_source_set("cpp") {
   category = "partner"
 
+  sdk_name = "fidl_cpp"
+
   sources = [
-    "array.h",
     "binding.h",
     "binding_set.h",
     "clone.cc",
     "clone.h",
-    "coding_traits.cc",
-    "coding_traits.h",
-    "comparison.h",
-    "decoder.cc",
-    "decoder.h",
-    "encoder.cc",
-    "encoder.h",
-    "interface_handle.h",
+    "enum.h",
     "interface_ptr.h",
     "interface_ptr_set.h",
-    "interface_request.h",
     "internal/header.h",
     "internal/implementation.h",
-    "internal/logging.cc",
-    "internal/logging.h",
     "internal/message_handler.cc",
     "internal/message_handler.h",
     "internal/message_reader.cc",
@@ -44,22 +35,18 @@ sdk_source_set("cpp") {
     "internal/stub.h",
     "internal/stub_controller.cc",
     "internal/stub_controller.h",
-    "internal/synchronous_proxy.cc",
-    "internal/synchronous_proxy.h",
     "internal/weak_stub_controller.cc",
     "internal/weak_stub_controller.h",
     "optional.h",
     "string.cc",
     "string.h",
-    "synchronous_interface_ptr.h",
     "thread_safe_binding_set.h",
-    "traits.h",
-    "vector.h",
   ]
 
   include_base = "//garnet/public"
 
   public_deps = [
+    ":cpp_sync",
     "//zircon/public/lib/async",
     "//zircon/public/lib/async-default",
     "//zircon/public/lib/fidl",
@@ -70,15 +57,51 @@ sdk_source_set("cpp") {
   public_configs = [ "//garnet/public:config" ]
 }
 
+sdk_source_set("cpp_sync") {
+  category = "partner"
+
+  sdk_name = "fidl_cpp_sync"
+
+  sources = [
+    "array.h",
+    "coding_traits.cc",
+    "coding_traits.h",
+    "comparison.h",
+    "decoder.cc",
+    "decoder.h",
+    "encoder.cc",
+    "encoder.h",
+    "interface_handle.h",
+    "interface_request.h",
+    "internal/logging.cc",
+    "internal/logging.h",
+    "internal/synchronous_proxy.cc",
+    "internal/synchronous_proxy.h",
+    "synchronous_interface_ptr.h",
+    "traits.h",
+    "vector.h",
+  ]
+
+  include_base = "//garnet/public"
+
+  public_configs = [ "//garnet/public:config" ]
+
+  public_deps = [
+    "//zircon/public/lib/fidl",
+    "//zircon/public/lib/fit",
+    "//zircon/public/lib/zx",
+  ]
+}
+
 source_set("test_support") {
   testonly = true
 
-  sources = [
+  public = [
     "test/async_loop_for_test.h",
   ]
 
   public_deps = [
-    "//zircon/public/lib/async-default",
+    "//zircon/public/lib/async",
   ]
 }
 
@@ -95,9 +118,9 @@ fidl("fidl_test") {
 source_set("test_sources") {
   testonly = true
 
-# TODO(jamesr): Make this an sdk source set
-# sdk_name = "fidl_cpp_tests"
-# include_base = "//garnet/public"
+  # TODO(jamesr): Make this an sdk source set
+  # sdk_name = "fidl_cpp_tests"
+  # include_base = "//garnet/public"
 
   sources = [
     "array_unittest.cc",
@@ -125,6 +148,7 @@ source_set("test_sources") {
     "//garnet/public/lib/fidl/cpp/test",
     "//garnet/public/lib/fxl",
     "//third_party/googletest:gtest",
+    "//zircon/public/lib/async-loop",
   ]
 
   public_configs = [ "//garnet/public:config" ]

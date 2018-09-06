@@ -449,11 +449,30 @@ extern {
         child_addr: *mut usize
         ) -> zx_status_t;
 
+    pub fn zx_vmar_allocate_old(
+        parent_vmar_handle: zx_handle_t,
+        offset: usize,
+        size: usize,
+        map_flags: u32,
+        child_vmar: *mut zx_handle_t,
+        child_addr: *mut usize
+        ) -> zx_status_t;
+
     pub fn zx_vmar_destroy(
         vmar_handle: zx_handle_t
         ) -> zx_status_t;
 
     pub fn zx_vmar_map(
+        vmar_handle: zx_handle_t,
+        vmar_offset: usize,
+        vmo_handle: zx_handle_t,
+        vmo_offset: u64,
+        len: usize,
+        map_flags: u32,
+        mapped_addr: *mut usize
+        ) -> zx_status_t;
+
+    pub fn zx_vmar_map_old(
         vmar_handle: zx_handle_t,
         vmar_offset: usize,
         vmo_handle: zx_handle_t,
@@ -470,6 +489,13 @@ extern {
         ) -> zx_status_t;
 
     pub fn zx_vmar_protect(
+        vmar_handle: zx_handle_t,
+        addr: usize,
+        len: usize,
+        prot_flags: u32
+        ) -> zx_status_t;
+
+    pub fn zx_vmar_protect_old(
         vmar_handle: zx_handle_t,
         addr: usize,
         len: usize,
@@ -526,11 +552,6 @@ extern {
         handle: zx_handle_t
         );
 
-    pub fn zx_log_create(
-        options: u32,
-        out: *mut zx_handle_t
-        ) -> zx_status_t;
-
     pub fn zx_log_write(
         handle: zx_handle_t,
         len: u32,
@@ -543,7 +564,27 @@ extern {
         len: u32,
         buffer: *mut u8,
         options: u32
-        ) -> zx_status_t;
+    ) -> zx_status_t;
+
+    pub fn zx_debuglog_create(
+        resource: zx_handle_t,
+        options: u32,
+        out: *mut zx_handle_t
+    ) -> zx_status_t;
+
+    pub fn zx_debuglog_write(
+        handle: zx_handle_t,
+        options: u32,
+        buffer: *const u8,
+        buffer_size: usize
+    ) -> zx_status_t;
+
+    pub fn zx_debuglog_read(
+        handle: zx_handle_t,
+        options: u32,
+        buffer: *mut u8,
+        buffer_size: usize
+    ) -> zx_status_t;
 
     pub fn zx_ktrace_read(
         handle: zx_handle_t,
@@ -759,10 +800,12 @@ extern {
         ) -> zx_status_t;
 
     pub fn zx_resource_create(
-        parent_handle: zx_handle_t,
-        kind: u32,
-        low: u64,
-        high: u64,
+        parent_rsrc: zx_handle_t,
+        options: u32,
+        base: u64,
+        len: usize,
+        name: *const u8,
+        name_len: u32,
         resource_out: *mut zx_handle_t
         ) -> zx_status_t;
 

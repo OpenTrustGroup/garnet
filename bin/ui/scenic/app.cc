@@ -16,32 +16,36 @@
 #include "garnet/lib/ui/views/view_system.h"
 #endif
 
-namespace scenic {
+#ifdef SCENIC_ENABLE_INPUT_SUBSYSTEM
+#include "garnet/lib/ui/input/input_system.h"
+#endif
 
-App::App(fuchsia::sys::StartupContext* app_context, fit::closure quit_callback)
+namespace scenic_impl {
+
+App::App(component::StartupContext* app_context, fit::closure quit_callback)
     : scenic_(std::make_unique<Scenic>(app_context, std::move(quit_callback))) {
 #ifdef SCENIC_ENABLE_GFX_SUBSYSTEM
-  auto scenic = scenic_->RegisterSystem<scenic::gfx::GfxSystem>();
-  FXL_DCHECK(scenic);
+  auto gfx = scenic_->RegisterSystem<gfx::GfxSystem>();
+  FXL_DCHECK(gfx);
 #endif
 
 #ifdef SCENIC_ENABLE_SKETCHY_SUBSYSTEM
 #ifdef SCENIC_ENABLE_GFX_SUBSYSTEM
-  auto sketchy = scenic_->RegisterSystem<SketchySystem>(scenic);
+  auto sketchy = scenic_->RegisterSystem<SketchySystem>(gfx);
   FXL_DCHECK(sketchy);
 #else
 #error SketchySystem requires gfx::GfxSystem.
 #endif
 #endif
 
-#ifdef SCENIC_ENABLE_VIEWS_SUBSYSTEM
+#ifdef SCENIC_ENABLE_INPUT_SUBSYSTEM
 #ifdef SCENIC_ENABLE_GFX_SUBSYSTEM
-  auto views = scenic_->RegisterSystem<ViewSystem>(scenic);
-  FXL_DCHECK(views);
+  auto input = scenic_->RegisterSystem<input::InputSystem>(gfx);
+  FXL_DCHECK(input);
 #else
-#error ViewSystem requires gfx::GfxSystem.
+#error InputSystem requires gfx::GfxSystem.
 #endif
 #endif
 }
 
-}  // namespace scenic
+}  // namespace scenic_impl

@@ -5,23 +5,12 @@
 #pragma once
 
 #include <wlan/mlme/mac_frame.h>
-#include <wlan/mlme/service.h>
-
-#include <fuchsia/wlan/mlme/cpp/fidl.h>
 
 #include <wlan/protocol/mac.h>
 #include <zircon/types.h>
 
 #define WLAN_DECL_VIRT_FUNC_HANDLE(methodName, args...) \
     virtual zx_status_t methodName(args) { return ZX_OK; }
-
-#define WLAN_DECL_FUNC_HANDLE_MLME(methodName, mlmeMsgType) \
-    WLAN_DECL_VIRT_FUNC_HANDLE(methodName, const MlmeMsg<::fuchsia::wlan::mlme::mlmeMsgType>&)
-
-#define WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(methodName, mlmeMsgType)                              \
-    zx_status_t HandleMlmeFrameInternal(const MlmeMsg<::fuchsia::wlan::mlme::mlmeMsgType>& msg) { \
-        return methodName(msg);                                                                   \
-    }
 
 #define WLAN_DECL_FUNC_HANDLE_MGMT(mgmtFrameType) \
     WLAN_DECL_VIRT_FUNC_HANDLE(Handle##mgmtFrameType, const MgmtFrame<mgmtFrameType>&)
@@ -78,57 +67,16 @@ class FrameHandler {
     virtual ~FrameHandler() = default;
 
     template <typename... Args> zx_status_t HandleFrame(Args&&... args) {
-        auto status = HandleAnyFrame();
-        // Do not forward frame if it was dropped.
-        if (status == ZX_ERR_STOP) { return ZX_OK; }
-        // Do not forward frame if processing failed.
-        if (status != ZX_OK) { return status; }
-
-        status = HandleFrameInternal(std::forward<Args>(args)...);
-        if (status == ZX_ERR_STOP) { return ZX_OK; }
-        if (status != ZX_OK) { return status; }
-
-        // If there is a dynamic target registered, forward frame.
-        if (dynamic_target_ != nullptr) {
-            status = dynamic_target_->HandleFrame(std::forward<Args>(args)...);
-            if (status != ZX_OK) {
-                debugfhandler("dynamic target failed handling frame: %d\n", status);
-            }
-            dynamic_target_ = nullptr;
-        }
-        return ZX_OK;
-    }
-
-    void ForwardCurrentFrameTo(FrameHandler* handler) {
-        ZX_DEBUG_ASSERT(handler != nullptr);
-        ZX_DEBUG_ASSERT(dynamic_target_ == nullptr);
-        dynamic_target_ = handler;
+        return HandleFrameInternal(std::forward<Args>(args)...);
     }
 
    protected:
-    virtual zx_status_t HandleAnyFrame() { return ZX_OK; }
-
     // Ethernet frame handlers.
     virtual zx_status_t HandleEthFrame(const EthFrame& frame) { return ZX_OK; }
 
-    // Service Message handlers.
-    virtual zx_status_t HandleMlmeMessage(uint32_t ordinal) { return ZX_OK; }
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeResetReq, ResetRequest)
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeScanReq, ScanRequest)
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeJoinReq, JoinRequest)
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeAuthReq, AuthenticateRequest)
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeAuthResp, AuthenticateResponse)
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeDeauthReq, DeauthenticateRequest)
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeAssocReq, AssociateRequest)
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeAssocResp, AssociateResponse)
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeEapolReq, EapolRequest)
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeSetKeysReq, SetKeysRequest)
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeStartReq, StartRequest)
-    WLAN_DECL_FUNC_HANDLE_MLME(HandleMlmeStopReq, StopRequest)
-
     // Data frame handlers.
     virtual zx_status_t HandleDataFrame(const DataFrameHeader& hdr) { return ZX_OK; }
-    WLAN_DECL_VIRT_FUNC_HANDLE_DATA(NullDataFrame, NilHeader)
+    WLAN_DECL_VIRT_FUNC_HANDLE_DATA(NullDataFrame, NullDataHdr)
     // TODO(hahnr): Rename to something more specific since there are two HandleDataFrame methods
     // now.
     WLAN_DECL_VIRT_FUNC_HANDLE_DATA(DataFrame, LlcHeader)
@@ -143,34 +91,13 @@ class FrameHandler {
     WLAN_DECL_FUNC_HANDLE_MGMT(AssociationRequest)
     WLAN_DECL_FUNC_HANDLE_MGMT(AssociationResponse)
     WLAN_DECL_FUNC_HANDLE_MGMT(Disassociation)
-    WLAN_DECL_FUNC_HANDLE_MGMT(AddBaRequestFrame)
-    WLAN_DECL_FUNC_HANDLE_MGMT(AddBaResponseFrame)
+    WLAN_DECL_FUNC_HANDLE_MGMT(ActionFrame)
 
     // Control frame handlers.
     virtual zx_status_t HandleCtrlFrame(const FrameControl& fc) { return ZX_OK; }
     WLAN_DECL_FUNC_HANDLE_CTRL(PsPollFrame)
 
    private:
-    // Internal Service Message handlers.
-    template <typename Message> zx_status_t HandleFrameInternal(const MlmeMsg<Message>& msg) {
-        auto status = HandleMlmeMessage(msg.ordinal());
-        if (status != ZX_OK) { return status; }
-
-        return HandleMlmeFrameInternal(msg);
-    }
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeResetReq, ResetRequest)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeScanReq, ScanRequest)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeJoinReq, JoinRequest)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeAuthReq, AuthenticateRequest)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeAuthResp, AuthenticateResponse)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeDeauthReq, DeauthenticateRequest)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeAssocReq, AssociateRequest)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeAssocResp, AssociateResponse)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeEapolReq, EapolRequest)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeSetKeysReq, SetKeysRequest)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeStartReq, StartRequest)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MLME(HandleMlmeStopReq, StopRequest)
-
     // Internal Management frame handlers.
     template <typename Body> zx_status_t HandleFrameInternal(const MgmtFrame<Body>& frame) {
         auto status = HandleMgmtFrame(*frame.hdr());
@@ -186,8 +113,7 @@ class FrameHandler {
     WLAN_DECL_FUNC_INTERNAL_HANDLE_MGMT(AssociationRequest)
     WLAN_DECL_FUNC_INTERNAL_HANDLE_MGMT(AssociationResponse)
     WLAN_DECL_FUNC_INTERNAL_HANDLE_MGMT(Disassociation)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MGMT(AddBaRequestFrame)
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_MGMT(AddBaResponseFrame)
+    WLAN_DECL_FUNC_INTERNAL_HANDLE_MGMT(ActionFrame)
 
     // Internal Ethernet frame handlers.
     zx_status_t HandleFrameInternal(const EthFrame& frame) { return HandleEthFrame(frame); }
@@ -199,27 +125,19 @@ class FrameHandler {
 
         return HandleDataFrameInternal(frame);
     }
-    WLAN_DECL_FUNC_INTERNAL_HANDLE_DATA(NullDataFrame, NilHeader)
+    WLAN_DECL_FUNC_INTERNAL_HANDLE_DATA(NullDataFrame, NullDataHdr)
     WLAN_DECL_FUNC_INTERNAL_HANDLE_DATA(DataFrame, LlcHeader)
 
     // Internal Control frame handlers.
     // Note: Null Data frames hold no body and thus also match this method. As a result, this case
     // is caught.
-    template <typename Header>
-    typename std::enable_if<!std::is_same<Header, DataFrameHeader>::value, zx_status_t>::type
-    HandleFrameInternal(const CtrlFrame<Header>& frame) {
+    template <typename Body> zx_status_t HandleFrameInternal(const CtrlFrame<Body>& frame) {
         auto status = HandleCtrlFrame(frame.hdr()->fc);
         if (status != ZX_OK) { return status; }
 
         return HandleCtrlFrameInternal(frame);
     }
     WLAN_DECL_FUNC_INTERNAL_HANDLE_CTRL(PsPollFrame)
-
-    // Frame target which will only receive the current frame. Will be reset after each frame.
-    // TODO(hahnr): This is still not exactly what I fancy but good enough for now.
-    // Ideally, this will turn into its own component which is also better testable and replaceable.
-    // However, most of my prototyping hit compiler limitations.
-    FrameHandler* dynamic_target_ = nullptr;
 };
 
 }  // namespace wlan

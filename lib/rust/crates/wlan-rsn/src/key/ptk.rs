@@ -2,18 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use Error;
-use akm::Akm;
-use bytes::Bytes;
-use cipher::Cipher;
-use crypto_utils::prf;
-use failure;
+use crate::Error;
+use crate::akm::Akm;
+use crate::cipher::Cipher;
+use crate::crypto_utils::prf;
+use failure::{self, bail, ensure};
 use std::cmp::{max, min};
 
 /// A PTK is derived from a PMK and provides access to the PTK's key-hierarchy which yields a KEK,
 /// KCK, and TK, used for EAPOL frame protection, integrity check and unicast frame protection
 /// respectively.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Ptk {
     ptk: Vec<u8>,
     kck_len: usize,
@@ -33,26 +32,15 @@ impl Ptk {
         akm: &Akm,
         cipher: &Cipher,
     ) -> Result<Ptk, failure::Error> {
-        if anonce.len() != 32 {
-            return Err(Error::InvalidNonceSize(anonce.len()).into());
-        }
-        if snonce.len() != 32 {
-            return Err(Error::InvalidNonceSize(snonce.len()).into());
-        }
+        ensure!(anonce.len() == 32 && snonce.len() == 32, Error::InvalidNonceSize(anonce.len()));
 
-        let pmk_bits = akm.pmk_bits()
-            .ok_or_else(|| failure::Error::from(Error::PtkHierarchyUnsupportedAkmError))?;
-        if pmk.len() != (pmk_bits / 8) as usize {
-            return Err(Error::PtkHierarchyInvalidPmkError.into());
-        }
+        let pmk_len = akm.pmk_bits().map(|bits| (bits / 8) as usize)
+            .ok_or(Error::PtkHierarchyUnsupportedAkmError)?;
+        ensure!(pmk.len() == pmk_len, Error::PtkHierarchyInvalidPmkError);
 
-        let kck_bits = akm.kck_bits()
-            .ok_or_else(|| failure::Error::from(Error::PtkHierarchyUnsupportedAkmError))?;
-        let kek_bits = akm.kek_bits()
-            .ok_or_else(|| failure::Error::from(Error::PtkHierarchyUnsupportedAkmError))?;
-        let tk_bits = cipher
-            .tk_bits()
-            .ok_or_else(|| failure::Error::from(Error::PtkHierarchyUnsupportedCipherError))?;
+        let kck_bits = akm.kck_bits().ok_or(Error::PtkHierarchyUnsupportedAkmError)?;
+        let kek_bits = akm.kek_bits().ok_or(Error::PtkHierarchyUnsupportedAkmError)?;
+        let tk_bits = cipher.tk_bits().ok_or(Error::PtkHierarchyUnsupportedCipherError)?;
         let prf_bits = kck_bits + kek_bits + tk_bits;
 
         // data length = 6 (aa) + 6 (spa) + 32 (anonce) + 32 (snonce)
@@ -95,10 +83,11 @@ impl Ptk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akm::{Akm, PSK};
-    use cipher::{CCMP_128, Cipher, TKIP};
+    use crate::akm::{Akm, PSK};
+    use bytes::Bytes;
+    use crate::cipher::{CCMP_128, Cipher, TKIP};
     use hex::FromHex;
-    use suite_selector::{Factory, OUI};
+    use crate::suite_selector::{Factory, OUI};
 
     struct TestData {
         pmk: Vec<u8>,

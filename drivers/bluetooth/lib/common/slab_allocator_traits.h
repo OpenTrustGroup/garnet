@@ -2,17 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_SLAB_ALLOCATOR_TRAITS_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_SLAB_ALLOCATOR_TRAITS_H_
 
 #include <memory>
 
 #include <fbl/slab_allocator.h>
 
-#include "lib/fxl/logging.h"
-#include "lib/fxl/macros.h"
-
 namespace btlib {
 namespace common {
+
 namespace internal {
 constexpr size_t kSlabOverhead = 16;
 }  // namespace internal
@@ -43,3 +42,5 @@ struct SlabAllocatorPtrTraits<std::unique_ptr<T>> {
 
 }  // namespace internal
 }  // namespace fbl
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_COMMON_SLAB_ALLOCATOR_TRAITS_H_

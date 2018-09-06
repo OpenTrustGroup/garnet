@@ -23,6 +23,8 @@ using testing::FakeController;
 using testing::FakeDevice;
 using TestingBase = testing::FakeControllerTest<FakeController>;
 
+const common::DeviceAddress kLocalAddress(
+    common::DeviceAddress::Type::kLEPublic, "00:00:00:00:00:FF");
 const common::DeviceAddress kTestAddress(common::DeviceAddress::Type::kLEPublic,
                                          "00:00:00:00:00:01");
 const LEPreferredConnectionParameters kTestParams(1, 1, 1, 1);
@@ -37,13 +39,14 @@ class LowEnergyConnectorTest : public TestingBase {
   // TestingBase overrides:
   void SetUp() override {
     TestingBase::SetUp();
+    InitializeACLDataChannel();
 
     FakeController::Settings settings;
     settings.ApplyLegacyLEConfig();
     test_device()->set_settings(settings);
 
     connector_ = std::make_unique<LowEnergyConnector>(
-        transport(), dispatcher(),
+        transport(), kLocalAddress, dispatcher(),
         std::bind(&LowEnergyConnectorTest::OnIncomingConnectionCreated, this,
                   std::placeholders::_1));
 
@@ -52,9 +55,7 @@ class LowEnergyConnectorTest : public TestingBase {
                   std::placeholders::_1, std::placeholders::_2,
                   std::placeholders::_3),
         dispatcher());
-
-    test_device()->StartCmdChannel(test_cmd_chan());
-    test_device()->StartAclChannel(test_acl_chan());
+    StartTestDevice();
   }
 
   void TearDown() override {
@@ -129,6 +130,7 @@ TEST_F(HCI_LowEnergyConnectorTest, CreateConnection) {
 
   ASSERT_TRUE(conn);
   EXPECT_EQ(1u, conn->handle());
+  EXPECT_EQ(kLocalAddress, conn->local_address());
   EXPECT_EQ(kTestAddress, conn->peer_address());
   EXPECT_TRUE(conn->is_open());
   conn->set_closed();
@@ -270,6 +272,7 @@ TEST_F(HCI_LowEnergyConnectorTest, IncomingConnect) {
 
   auto conn = in_connections()[0].get();
   EXPECT_EQ(1u, conn->handle());
+  EXPECT_EQ(kLocalAddress, conn->local_address());
   EXPECT_EQ(kTestAddress, conn->peer_address());
   EXPECT_TRUE(conn->is_open());
   conn->set_closed();
@@ -353,13 +356,8 @@ TEST_F(HCI_LowEnergyConnectorTest, CreateConnectionTimeout) {
 
   EXPECT_FALSE(request_canceled);
 
-  // Advance the loop until the HCI command is processed (advancing the fake
-  // clock here would cause the HCI command to time out).
-  RunLoopUntilIdle();
-
   // Make the connection attempt time out.
-  AdvanceTimeBy(zx::msec(kConnectTimeoutMs));
-  RunLoopUntilIdle();
+  RunLoopFor(zx::msec(kConnectTimeoutMs));
 
   EXPECT_FALSE(connector()->request_pending());
   EXPECT_TRUE(callback_called);

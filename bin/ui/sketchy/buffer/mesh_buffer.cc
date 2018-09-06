@@ -5,7 +5,7 @@
 #include "garnet/bin/ui/sketchy/buffer/mesh_buffer.h"
 
 #include "garnet/bin/ui/sketchy/buffer/shared_buffer_pool.h"
-#include "lib/ui/scenic/fidl_helpers.h"
+#include "lib/ui/scenic/cpp/commands.h"
 
 namespace {
 
@@ -79,8 +79,8 @@ void MeshBuffer::ProvideBuffersToScenicMesh(scenic::Mesh* scenic_mesh) {
       index_buffer_->scenic_buffer(), kMeshIndexFormat, /* index_offset= */ 0,
       index_count_, vertex_buffer_->scenic_buffer(),
       scenic::NewMeshVertexFormat(kMeshVertexPositionType,
-                                      kMeshVertexNormalType,
-                                      kMeshVertexTexCoodType),
+                                  kMeshVertexNormalType,
+                                  kMeshVertexTexCoodType),
       /* vertex_offset= */ 0, vertex_count_, bb_min_arr, bb_max_arr);
 }
 

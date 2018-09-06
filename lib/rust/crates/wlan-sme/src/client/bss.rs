@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use fidl_mlme::BssDescription;
-use Ssid;
+use fidl_fuchsia_wlan_mlme::BssDescription;
 use std::cmp::Ordering;
+use wlan_rsn::rsne;
+
+use crate::Ssid;
+use super::rsn::is_rsn_compatible;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BssInfo {
@@ -50,15 +53,17 @@ fn get_rx_dbm(bss: &BssDescription) -> i8 {
 fn is_bss_compatible(bss: &BssDescription) -> bool {
     match bss.rsn.as_ref() {
         None => true,
-        // TODO(hahnr): check if RSN is supported
-        Some(_rsn) => false
+        Some(rsn) => match rsne::from_bytes(&rsn[..]).to_full_result() {
+            Ok(a_rsne) => is_rsn_compatible(&a_rsne),
+            _ => false
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fidl_mlme;
+    use fidl_fuchsia_wlan_mlme as fidl_mlme;
     use std::cmp::Ordering;
 
     #[test]
@@ -83,20 +88,45 @@ mod tests {
         assert_eq!(Ordering::Greater, compare_bss(better, worse));
     }
 
-    fn bss(rssi_dbm: i8, rcpi_dbmh: i16, compatible: bool) -> fidl_mlme::BssDescription {
+    fn bss(_rssi_dbm: i8, _rcpi_dbmh: i16, compatible: bool) -> fidl_mlme::BssDescription {
         let ret = fidl_mlme::BssDescription {
             bssid: [0, 0, 0, 0, 0, 0],
             ssid: String::new(),
+
             bss_type: fidl_mlme::BssTypes::Infrastructure,
             beacon_period: 100,
             dtim_period: 100,
             timestamp: 0,
             local_time: 0,
+
+            cap: fidl_mlme::CapabilityInfo {
+                ess: false,
+                ibss: false,
+                cf_pollable: false,
+                cf_poll_req: false,
+                privacy: false,
+                short_preamble: false,
+                spectrum_mgmt: false,
+                qos: false,
+                short_slot_time: false,
+                apsd: false,
+                radio_msmt: false,
+                delayed_block_ack: false,
+                immediate_block_ack: false,
+            },
+            country: None,
             rsn: if compatible { None } else { Some(Vec::new()) },
+
+            rcpi_dbmh: _rcpi_dbmh,
+            rsni_dbh: 0,
+
+            ht_cap: None,
+            ht_op: None,
+            vht_cap: None,
+            vht_op: None,
+
             chan: fidl_mlme::WlanChan { primary: 1, secondary80: 0, cbw: fidl_mlme::Cbw::Cbw20 },
-            rssi_dbm,
-            rcpi_dbmh,
-            rsni_dbh: 0
+            rssi_dbm: _rssi_dbm,
         };
         assert_eq!(compatible, is_bss_compatible(&ret));
         ret

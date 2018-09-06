@@ -43,15 +43,15 @@ int main(int argc, char* argv[]) {
     exit(-1);
   }
 
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
-  async::Now(loop.async());
+  async::Now(loop.dispatcher());
 
-  std::unique_ptr<fuchsia::sys::StartupContext> startup_context =
-      fuchsia::sys::StartupContext::CreateFromStartupInfo();
+  std::unique_ptr<component::StartupContext> startup_context =
+      component::StartupContext::CreateFromStartupInfo();
 
-  codec_runner::CodecRunnerComponent codec_runner(loop.async(), thrd_current(),
-                                                  std::move(startup_context));
+  codec_runner::CodecRunnerComponent codec_runner(
+      loop.dispatcher(), thrd_current(), std::move(startup_context));
 
   loop.Run();
 

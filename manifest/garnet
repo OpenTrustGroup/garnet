@@ -10,7 +10,7 @@
     <import remote="https://fuchsia.googlesource.com/buildtools"
             manifest="manifest/buildtools"
             name="buildtools"
-            revision="957289c1db8ecc4a4f03d867f28f166c55f02e16"/>
+            revision="c1408453246f0475547b6fe634c2f3dad71c6457"/>
     <import remote="https://review.gerrithub.io/OpenTrustGroup/scripts"
             manifest="manifest/scripts"
             name="scripts"

@@ -15,8 +15,9 @@ enum class Align { kLeft, kRight };
 
 struct ColSpec {
   explicit ColSpec(Align align = Align::kLeft, int max_width = 0,
-                   const std::string& head = std::string(), int pad_left = 0)
-      : align(align), max_width(max_width), head(head), pad_left(pad_left) {}
+                   const std::string& head = std::string(), int pad_left = 0,
+                   Syntax syntax = Syntax::kNormal)
+      : align(align), max_width(max_width), head(head), pad_left(pad_left), syntax(syntax) {}
 
   Align align = Align::kLeft;
 
@@ -39,8 +40,12 @@ struct ColSpec {
 };
 
 // Formats the given rows in the output as a series of horizontally aligned (if
-// possible) columns. The number of columns in the spec vector and in each row
-// must match.
+// possible) columns.
+//
+// If the number of items in a row is less than the number of items in the
+// spec, the last element in the rows will occupy the remaining space and it
+// won't affect other columns (like you used colspan in HTML). Such items will
+// always be left-aligned.
 void FormatTable(const std::vector<ColSpec>& spec,
                  const std::vector<std::vector<std::string>>& rows,
                  OutputBuffer* out);

@@ -8,10 +8,12 @@
 
 #include <endian.h>
 
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/common/uuid.h"
 #include "garnet/drivers/bluetooth/lib/gap/advertising_data.h"
 #include "garnet/drivers/bluetooth/lib/gap/discovery_filter.h"
 
+using btlib::sm::SecurityLevel;
 using fuchsia::bluetooth::Bool;
 using fuchsia::bluetooth::Error;
 using fuchsia::bluetooth::ErrorCode;
@@ -34,7 +36,7 @@ ctrl::TechnologyType TechnologyTypeToFidl(::btlib::gap::TechnologyType type) {
     case ::btlib::gap::TechnologyType::kDualMode:
       return ctrl::TechnologyType::DUAL_MODE;
     default:
-      FXL_NOTREACHED();
+      ZX_PANIC("invalid technology type: %u", static_cast<unsigned int>(type));
       break;
   }
 
@@ -77,9 +79,59 @@ Status NewFidlError(ErrorCode error_code, std::string description) {
   return status;
 }
 
+btlib::common::DeviceAddress::Type NewAddrType(
+    const fuchsia::bluetooth::control::AddressType& type) {
+  switch (type) {
+    case ctrl::AddressType::LE_RANDOM:
+      return btlib::common::DeviceAddress::Type::kLERandom;
+    case ctrl::AddressType::LE_PUBLIC:
+      return btlib::common::DeviceAddress::Type::kLEPublic;
+    case ctrl::AddressType::BREDR:
+      return btlib::common::DeviceAddress::Type::kBREDR;
+    default:
+      ZX_PANIC("invalid address type: %u", static_cast<unsigned int>(type));
+      break;
+  }
+  return btlib::common::DeviceAddress::Type::kBREDR;
+}
+
+btlib::sm::SecurityProperties NewSecurityLevel(
+    const fuchsia::bluetooth::control::SecurityProperties& sec_prop) {
+  auto level = btlib::sm::SecurityLevel::kEncrypted;
+  if (sec_prop.authenticated) {
+    level = btlib::sm::SecurityLevel::kAuthenticated;
+  }
+
+  return btlib::sm::SecurityProperties(level, sec_prop.encryption_key_size,
+                                       sec_prop.secure_connections);
+}
+
+btlib::sm::IOCapability NewIoCapability(ctrl::InputCapabilityType input,
+                                        ctrl::OutputCapabilityType output) {
+  if (input == ctrl::InputCapabilityType::NONE &&
+      output == ctrl::OutputCapabilityType::NONE) {
+    return btlib::sm::IOCapability::kNoInputNoOutput;
+  } else if (input == ctrl::InputCapabilityType::KEYBOARD &&
+             output == ctrl::OutputCapabilityType::DISPLAY) {
+    return btlib::sm::IOCapability::kKeyboardDisplay;
+  } else if (input == ctrl::InputCapabilityType::KEYBOARD &&
+             output == ctrl::OutputCapabilityType::NONE) {
+    return btlib::sm::IOCapability::kKeyboardOnly;
+  } else if (input == ctrl::InputCapabilityType::NONE &&
+             output == ctrl::OutputCapabilityType::DISPLAY) {
+    return btlib::sm::IOCapability::kDisplayOnly;
+  } else if (input == ctrl::InputCapabilityType::CONFIRMATION &&
+             output == ctrl::OutputCapabilityType::DISPLAY) {
+    return btlib::sm::IOCapability::kDisplayYesNo;
+  }
+  return btlib::sm::IOCapability::kNoInputNoOutput;
+}
+
 ctrl::AdapterInfo NewAdapterInfo(const ::btlib::gap::Adapter& adapter) {
   ctrl::AdapterInfo adapter_info;
   adapter_info.state = ctrl::AdapterState::New();
+
+  adapter_info.state->local_name = adapter.state().local_name();
 
   adapter_info.state->discoverable = Bool::New();
   adapter_info.state->discoverable->value = false;
@@ -88,6 +140,8 @@ ctrl::AdapterInfo NewAdapterInfo(const ::btlib::gap::Adapter& adapter) {
 
   adapter_info.identifier = adapter.identifier();
   adapter_info.address = adapter.state().controller_address().ToString();
+
+  adapter_info.technology = TechnologyTypeToFidl(adapter.state().type());
 
   return adapter_info;
 }
@@ -186,14 +240,14 @@ bool IsScanFilterValid(const ble::ScanFilter& fidl_filter) {
 
 bool PopulateDiscoveryFilter(const ble::ScanFilter& fidl_filter,
                              ::btlib::gap::DiscoveryFilter* out_filter) {
-  FXL_DCHECK(out_filter);
+  ZX_DEBUG_ASSERT(out_filter);
 
   if (fidl_filter.service_uuids) {
     std::vector<::btlib::common::UUID> uuids;
     for (const auto& uuid_str : *fidl_filter.service_uuids) {
       ::btlib::common::UUID uuid;
       if (!::btlib::common::StringToUuid(uuid_str, &uuid)) {
-        FXL_VLOG(1) << "Invalid parameters given to scan filter";
+        bt_log(TRACE, "bt-host", "invalid parameters given to scan filter");
         return false;
       }
       uuids.push_back(uuid);
@@ -228,8 +282,8 @@ bool PopulateDiscoveryFilter(const ble::ScanFilter& fidl_filter,
 
 // static
 fidl::VectorPtr<uint8_t>
-fxl::TypeConverter<fidl::VectorPtr<uint8_t>, ::btlib::common::ByteBuffer>::Convert(
-    const ::btlib::common::ByteBuffer& from) {
+fxl::TypeConverter<fidl::VectorPtr<uint8_t>, ::btlib::common::ByteBuffer>::
+    Convert(const ::btlib::common::ByteBuffer& from) {
   auto to = fidl::VectorPtr<uint8_t>::New(from.size());
   ::btlib::common::MutableBufferView view(to->data(), to->size());
   view.Write(from);

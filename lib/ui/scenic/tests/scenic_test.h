@@ -10,11 +10,11 @@
 #include "garnet/lib/ui/scenic/scenic.h"
 #include "garnet/lib/ui/scenic/util/error_reporter.h"
 #include "gtest/gtest.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fxl/tasks/task_runner.h"
 #include "lib/gtest/test_loop_fixture.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace test {
 
 // Base class that can be specialized to configure a Scenic with the systems
@@ -40,7 +40,9 @@ class ScenicTest : public ::gtest::TestLoopFixture,
                    std::string error_string) override;
 
   // |EventReporter|
-  void EnqueueEvent(fuchsia::ui::scenic::Event event) override;
+  void EnqueueEvent(fuchsia::ui::gfx::Event event) override;
+  void EnqueueEvent(fuchsia::ui::input::InputEvent event) override;
+  void EnqueueEvent(fuchsia::ui::scenic::Command event) override;
 
   // Verify that the last reported error is as expected.  If no error is
   // expected, use nullptr as |expected_error_string|.
@@ -52,13 +54,13 @@ class ScenicTest : public ::gtest::TestLoopFixture,
     }
   }
 
-  static std::unique_ptr<fuchsia::sys::StartupContext> app_context_;
+  static std::unique_ptr<component::StartupContext> app_context_;
   std::unique_ptr<Scenic> scenic_;
   std::vector<std::string> reported_errors_;
   std::vector<fuchsia::ui::scenic::Event> events_;
 };
 
 }  // namespace test
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_SCENIC_TESTS_SCENIC_TEST_H_

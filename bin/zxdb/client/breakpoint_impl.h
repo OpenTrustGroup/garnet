@@ -7,10 +7,15 @@
 #include <map>
 
 #include "garnet/bin/zxdb/client/breakpoint.h"
+#include "garnet/bin/zxdb/client/breakpoint_action.h"
 #include "garnet/bin/zxdb/client/process_observer.h"
 #include "garnet/bin/zxdb/client/system_observer.h"
 #include "garnet/bin/zxdb/client/target_observer.h"
 #include "garnet/public/lib/fxl/memory/weak_ptr.h"
+
+namespace debug_ipc {
+struct BreakpointStats;
+}
 
 namespace zxdb {
 
@@ -20,14 +25,34 @@ class BreakpointImpl : public Breakpoint,
                        public ProcessObserver,
                        public SystemObserver {
  public:
-  explicit BreakpointImpl(Session* session);
+  // The controller can be null in which case it will perform the default
+  // behavior. The controller must outlive the breakpoint.
+  BreakpointImpl(Session* session, bool is_internal);
   ~BreakpointImpl() override;
+
+  // This flag doesn't control anything in the breakpoint but is stored here
+  // for the use of external consumers. Internal breakpoints are set by the
+  // debugger internally as part of implementing other features such as
+  // stepping. They should not be shown to the user.
+  bool is_internal() const { return is_internal_; }
+
+  // Identifies this breakpoint to the backend in IPC messages. This will not
+  // change.
+  uint32_t backend_id() const { return backend_id_; }
 
   // Breakpoint implementation:
   BreakpointSettings GetSettings() const override;
   void SetSettings(const BreakpointSettings& settings,
                    std::function<void(const Err&)> callback) override;
+  bool IsInternal() const override;
   std::vector<BreakpointLocation*> GetLocations() override;
+
+  // Called whenever new stats are available from the debug agent.
+  void UpdateStats(const debug_ipc::BreakpointStats& stats);
+
+  // Called when the backend reports that the breakpoint has been automatically
+  // removed.
+  void BackendBreakpointRemoved();
 
  private:
   friend BreakpointLocationImpl;
@@ -66,15 +91,21 @@ class BreakpointImpl : public Breakpoint,
   // Returns true if any addresses were resolved.
   bool RegisterProcess(Process* process);
 
+  bool is_internal_;
+
+  // ID used to refer to this in the backend.
+  const uint32_t backend_id_;
+
   BreakpointSettings settings_;
 
-  // Every process which this breakpoint can apply to is in this map, even if
-  // there are no addresses assocaited with it.
-  std::map<Process*, ProcessRecord> procs_;
+  debug_ipc::BreakpointStats stats_;
 
-  // ID used to refer to this in the backend. 0 means no current backend
-  // breakpoint.
-  uint32_t backend_id_ = 0;
+  // Indicates if the backend knows about this breakpoint.
+  bool backend_installed_ = false;
+
+  // Every process which this breakpoint can apply to is in this map, even if
+  // there are no addresses associated with it.
+  std::map<Process*, ProcessRecord> procs_;
 
   fxl::WeakPtrFactory<BreakpointImpl> impl_weak_factory_;
 

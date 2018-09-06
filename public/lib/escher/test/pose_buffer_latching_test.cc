@@ -19,8 +19,7 @@ namespace escher {
 namespace test {
 
 // Returns true iff |a| and |b| are the same within optional |epsilon|.
-bool ComparePose(escher::hmd::Pose* p0,
-                 escher::hmd::Pose* p1,
+bool ComparePose(escher::hmd::Pose* p0, escher::hmd::Pose* p1,
                  float epsilon = 0.0) {
   bool compare = true;
 
@@ -86,11 +85,12 @@ VK_TEST(PoseBuffer, ComputeShaderLatching) {
                           memory_property_flags),
       num_entries, base_time, time_interval);
 
-  hmd::PoseBufferLatchingShader test_shader(escher.get());
+  hmd::PoseBufferLatchingShader test_shader(escher->GetWeakPtr());
 
   // Fill the pose buffer.
-  ASSERT_NE(nullptr, pose_buffer.buffer->ptr());
-  hmd::Pose* poses = reinterpret_cast<hmd::Pose*>(pose_buffer.buffer->ptr());
+  ASSERT_NE(nullptr, pose_buffer.buffer->host_ptr());
+  hmd::Pose* poses =
+      reinterpret_cast<hmd::Pose*>(pose_buffer.buffer->host_ptr());
   float pi = glm::pi<float>();
   for (uint32_t i = 0; i < num_entries; i++) {
     // Change pose each interation. The goal is to have unique poses in each
@@ -138,15 +138,15 @@ VK_TEST(PoseBuffer, ComputeShaderLatching) {
   // Verify results.
   for (uint32_t i = 0; i < num_dispatches; i++) {
     auto output_buffer = output_buffers[i];
-    ASSERT_NE(nullptr, output_buffer->ptr());
+    ASSERT_NE(nullptr, output_buffer->host_ptr());
     uint32_t index = i % num_entries;
     auto pose_in = &poses[index];
-    auto pose_out = reinterpret_cast<hmd::Pose*>(output_buffer->ptr());
+    auto pose_out = reinterpret_cast<hmd::Pose*>(output_buffer->host_ptr());
     EXPECT_TRUE(ComparePose(pose_in, pose_out, 0.0));
     glm::mat4 vp_matrix_in = cameras[i].projection() *
                              MatrixFromPose(*pose_in) * cameras[i].transform();
-    glm::mat4 vp_matrix_out = glm::make_mat4(
-        reinterpret_cast<float*>(output_buffer->ptr() + sizeof(hmd::Pose)));
+    glm::mat4 vp_matrix_out = glm::make_mat4(reinterpret_cast<float*>(
+        output_buffer->host_ptr() + sizeof(hmd::Pose)));
     EXPECT_TRUE(CompareMatrix(vp_matrix_in, vp_matrix_out, 0.00001));
 
     // Pose zero uses all identity params so VP result should be identity.
@@ -160,14 +160,15 @@ VK_TEST(PoseBuffer, ComputeShaderLatching) {
                                 MatrixFromPose(poses[0]) *
                                 left_camera.transform();
   glm::mat4 left_vp_matrix_out = glm::make_mat4(reinterpret_cast<float*>(
-      stereo_output_buffer->ptr() + sizeof(hmd::Pose)));
+      stereo_output_buffer->host_ptr() + sizeof(hmd::Pose)));
   EXPECT_TRUE(CompareMatrix(left_vp_matrix_in, left_vp_matrix_out, 0.00001));
 
   glm::mat4 right_vp_matrix_in = right_camera.projection() *
                                  MatrixFromPose(poses[0]) *
                                  right_camera.transform();
-  glm::mat4 right_vp_matrix_out = glm::make_mat4(reinterpret_cast<float*>(
-      stereo_output_buffer->ptr() + sizeof(hmd::Pose) + 16 * sizeof(float)));
+  glm::mat4 right_vp_matrix_out = glm::make_mat4(
+      reinterpret_cast<float*>(stereo_output_buffer->host_ptr() +
+                               sizeof(hmd::Pose) + 16 * sizeof(float)));
   EXPECT_TRUE(CompareMatrix(right_vp_matrix_in, right_vp_matrix_out, 0.00001));
 
   escher->Cleanup();

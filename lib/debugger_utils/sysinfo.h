@@ -7,12 +7,10 @@
 
 #include <lib/zx/job.h>
 
-namespace debugserver {
-namespace util {
+namespace debugger_utils {
 
 zx::job GetRootJob();
 
-}  // namespace util
-}  // namespace debugserver
+}  // namespace debugger_utils
 
 #endif  // GARNET_LIB_DEBUGGER_UTILS_SYSINFO_H_

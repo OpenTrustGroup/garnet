@@ -14,7 +14,7 @@ namespace view_manager {
 
 InputConnectionImpl::InputConnectionImpl(
     ViewInspector* inspector, InputOwner* owner,
-    ::fuchsia::ui::views_v1_token::ViewToken view_token,
+    ::fuchsia::ui::viewsv1token::ViewToken view_token,
     fidl::InterfaceRequest<fuchsia::ui::input::InputConnection> request)
     : inspector_(inspector),
       owner_(owner),
@@ -43,7 +43,8 @@ void InputConnectionImpl::DeliverEvent(fuchsia::ui::input::InputEvent event,
     InjectInput(std::move(event_clone));
   }
 
-  event_listener_->OnEvent(std::move(event), fxl::MakeCopyable(std::move(callback)));
+  event_listener_->OnEvent(std::move(event),
+                           fxl::MakeCopyable(std::move(callback)));
 }
 
 void InputConnectionImpl::SetEventListener(
@@ -62,7 +63,7 @@ void InputConnectionImpl::GetInputMethodEditor(
   FXL_DCHECK(editor_request.is_valid());
 
   FXL_VLOG(1) << "GetInputMethodEditor: view_token=" << view_token_
-              << ", keyboard_type=" << keyboard_type
+              << ", keyboard_type=" << fidl::ToUnderlying(keyboard_type)
               << ", initial_state=" << initial_state;
 
   Reset();
@@ -84,30 +85,18 @@ void InputConnectionImpl::GetInputMethodEditor(
 
         client_ = client.Bind();
 
-        if (hardware_keyboard_connected()) {
-          ConnectWithImeService(keyboard_type, action,
-                                std::move(initial_state));
-        } else {
-          container_.Unbind();
-          inspector_->GetSoftKeyboardContainer(view_token_,
-                                               container_.NewRequest());
-          container_.set_error_handler([this] {
-            FXL_VLOG(1) << "SoftKeyboardContainer died.";
-            // TODO if HW Keyboard available, we should fallback to HW IME
-            Reset();
-          });
-
-          container_->Show(fxl::MakeCopyable(
-              [this, keyboard_type, action,
-               initial_state = std::move(initial_state)](bool shown) mutable {
-                FXL_VLOG(1) << "SoftKeyboardContainer.Show " << shown;
-                if (shown) {
-                  ConnectWithImeService(keyboard_type, action,
-                                        std::move(initial_state));
-                }
-              }));
-        }
+        ConnectWithImeService(keyboard_type, action, std::move(initial_state));
       }));
+}
+
+void InputConnectionImpl::ShowKeyboard() {
+  FXL_VLOG(1) << "ShowKeyboard: view_token=" << view_token_;
+  ime_service_->ShowKeyboard();
+}
+
+void InputConnectionImpl::HideKeyboard() {
+  FXL_VLOG(1) << "HideKeyboard: view_token=" << view_token_;
+  ime_service_->HideKeyboard();
 }
 
 void InputConnectionImpl::InjectInput(fuchsia::ui::input::InputEvent event) {
@@ -118,20 +107,32 @@ void InputConnectionImpl::InjectInput(fuchsia::ui::input::InputEvent event) {
   }
 }
 
+// TODO(TEXT-19): remove these in a later change after PlatformView has been switched over
+void InputConnectionImpl::Show() {
+  ShowKeyboard();
+}
+
+// TODO(TEXT-19): remove these in a later change after PlatformView has been switched over
+void InputConnectionImpl::Hide() {
+  HideKeyboard();
+}
+
 void InputConnectionImpl::ConnectWithImeService(
     fuchsia::ui::input::KeyboardType keyboard_type,
     fuchsia::ui::input::InputMethodAction action,
     fuchsia::ui::input::TextInputState state) {
   FXL_VLOG(1) << "ConnectWithImeService: view_token=" << view_token_
-              << ", keyboard_type=" << keyboard_type << ", action=" << action
+              << ", keyboard_type=" << fidl::ToUnderlying(keyboard_type)
+              << ", action=" << fidl::ToUnderlying(action)
               << ", initial_state=" << state;
   // Retrieve IME Service from the view tree
-  inspector_->GetImeService(view_token_, ime_service_.NewRequest());
-  ime_service_.set_error_handler([this] {
-    FXL_LOG(ERROR) << "IME Service Died.";
-    Reset();
-  });
-
+  if (!ime_service_.is_bound()) {
+    inspector_->GetImeService(view_token_, ime_service_.NewRequest());
+    ime_service_.set_error_handler([this] {
+      FXL_LOG(ERROR) << "IME Service Died.";
+      Reset();
+    });
+  }
   // GetInputMethodEditor from IME service
   fuchsia::ui::input::InputMethodEditorClientPtr client_ptr;
   client_binding_.Bind(client_ptr.NewRequest());
@@ -152,14 +153,6 @@ void InputConnectionImpl::OnClientDied() {
 }
 
 void InputConnectionImpl::Reset() {
-  if (ime_service_)
-    ime_service_.Unbind();
-
-  if (container_) {
-    container_->Hide();
-    container_.Unbind();
-  }
-
   if (editor_binding_.is_bound())
     editor_binding_.Unbind();
   if (client_)
@@ -186,17 +179,13 @@ void InputConnectionImpl::SetKeyboardType(
     fuchsia::ui::input::KeyboardType keyboard_type) {
   if (editor_) {
     FXL_VLOG(1) << "SetKeyboardType: view_token=" << view_token_
-                << ", keyboard_type=" << keyboard_type;
+                << ", keyboard_type=" << fidl::ToUnderlying(keyboard_type);
     editor_->SetKeyboardType(keyboard_type);
   } else {
     FXL_VLOG(2) << "Ignoring SetKeyboardType: view_token=" << view_token_
-                << ", keyboard_type=" << keyboard_type;
+                << ", keyboard_type=" << fidl::ToUnderlying(keyboard_type);
   }
 }
-
-void InputConnectionImpl::Show() {}
-
-void InputConnectionImpl::Hide() {}
 
 void InputConnectionImpl::DidUpdateState(
     fuchsia::ui::input::TextInputState state,
@@ -215,11 +204,11 @@ void InputConnectionImpl::OnAction(
     fuchsia::ui::input::InputMethodAction action) {
   if (client_) {
     FXL_VLOG(1) << "OnAction: view_token=" << view_token_
-                << ", action=" << action;
+                << ", action=" << fidl::ToUnderlying(action);
     client_->OnAction(action);
   } else {
     FXL_VLOG(2) << "Ignoring OnAction: view_token=" << view_token_
-                << ", action=" << action;
+                << ", action=" << fidl::ToUnderlying(action);
   }
 }
 

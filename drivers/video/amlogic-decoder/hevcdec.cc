@@ -10,6 +10,7 @@
 
 #include "lib/fxl/logging.h"
 #include "macros.h"
+#include "memory_barriers.h"
 
 zx_status_t HevcDec::LoadFirmware(const uint8_t* data, uint32_t size) {
   HevcMpsr::Get().FromValue(0).WriteTo(mmio()->dosbus);
@@ -29,6 +30,7 @@ zx_status_t HevcDec::LoadFirmware(const uint8_t* data, uint32_t size) {
   memcpy(io_buffer_virt(&firmware_buffer), data, std::min(size, kFirmwareSize));
   io_buffer_cache_flush(&firmware_buffer, 0, kFirmwareSize);
 
+  BarrierAfterFlush();
   HevcImemDmaAdr::Get()
       .FromValue(truncate_to_32(io_buffer_phys(&firmware_buffer)))
       .WriteTo(mmio()->dosbus);
@@ -42,10 +44,13 @@ zx_status_t HevcDec::LoadFirmware(const uint8_t* data, uint32_t size) {
                 0x8000) == 0;
       })) {
     DECODE_ERROR("Failed to load microcode.");
+
+    BarrierBeforeRelease();
     io_buffer_release(&firmware_buffer);
     return ZX_ERR_TIMED_OUT;
   }
 
+  BarrierBeforeRelease();
   io_buffer_release(&firmware_buffer);
   return ZX_OK;
 }
@@ -114,6 +119,7 @@ void HevcDec::PowerOff() {
 }
 
 void HevcDec::StartDecoding() {
+  assert(!decoding_started_);
   decoding_started_ = true;
   // Delay to wait for previous command to finish.
   for (uint32_t i = 0; i < 3; i++) {
@@ -218,4 +224,99 @@ void HevcDec::InitializeParserInput() {
       .WriteTo(mmio()->dosbus);
 }
 
-void HevcDec::InitializeDirectInput() { FXL_NOTIMPLEMENTED(); }
+void HevcDec::InitializeDirectInput() {
+  HevcStreamControl::Get()
+      .ReadFrom(mmio()->dosbus)
+      .set_endianness(7)
+      .set_use_parser_vbuf_wp(false)
+      .set_stream_fetch_enable(false)
+      .WriteTo(mmio()->dosbus);
+  HevcStreamFifoCtl::Get()
+      .ReadFrom(mmio()->dosbus)
+      .set_stream_fifo_hole(1)
+      .WriteTo(mmio()->dosbus);
+}
+
+void HevcDec::UpdateWritePointer(uint32_t write_pointer) {
+  HevcStreamWrPtr::Get().FromValue(write_pointer).WriteTo(mmio()->dosbus);
+  HevcStreamControl::Get()
+      .ReadFrom(mmio()->dosbus)
+      .set_endianness(7)
+      .set_use_parser_vbuf_wp(false)
+      .set_stream_fetch_enable(true)
+      .WriteTo(mmio()->dosbus);
+}
+
+uint32_t HevcDec::GetStreamInputOffset() {
+  uint32_t write_ptr =
+      HevcStreamWrPtr::Get().ReadFrom(mmio()->dosbus).reg_value();
+  uint32_t buffer_start =
+      HevcStreamStartAddr::Get().ReadFrom(mmio()->dosbus).reg_value();
+  assert(write_ptr >= buffer_start);
+  return write_ptr - buffer_start;
+}
+
+uint32_t HevcDec::GetReadOffset() {
+  uint32_t read_ptr =
+      HevcStreamRdPtr::Get().ReadFrom(mmio()->dosbus).reg_value();
+  uint32_t buffer_start =
+      HevcStreamStartAddr::Get().ReadFrom(mmio()->dosbus).reg_value();
+  assert(read_ptr >= buffer_start);
+  return read_ptr - buffer_start;
+}
+
+zx_status_t HevcDec::InitializeInputContext(InputContext* context) {
+  constexpr uint32_t kInputContextSize = 4096;
+  zx_status_t status =
+      io_buffer_init_aligned(&context->buffer, owner_->bti(), kInputContextSize,
+                             0, IO_BUFFER_RW | IO_BUFFER_CONTIG);
+  if (status != ZX_OK) {
+    DECODE_ERROR("Failed to allocate input context, status %d\n", status);
+    return status;
+  }
+  io_buffer_cache_flush(&context->buffer, 0, kInputContextSize);
+  BarrierAfterFlush();
+  return status;
+}
+
+void HevcDec::SaveInputContext(InputContext* context) {
+  HevcStreamSwapAddr::Get()
+      .FromValue(truncate_to_32(io_buffer_phys(&context->buffer)))
+      .WriteTo(mmio()->dosbus);
+  HevcStreamSwapCtrl::Get()
+      .FromValue(0)
+      .set_enable(true)
+      .set_save(true)
+      .WriteTo(mmio()->dosbus);
+  bool finished = SpinWaitForRegister(std::chrono::milliseconds(100), [this]() {
+    return !HevcStreamSwapCtrl::Get().ReadFrom(mmio()->dosbus).in_progress();
+  });
+  // TODO: return error on failure.
+  FXL_CHECK(finished);
+  HevcStreamSwapCtrl::Get().FromValue(0).WriteTo(mmio()->dosbus);
+
+  context->processed_video =
+      HevcShiftByteCount::Get().ReadFrom(mmio()->dosbus).reg_value();
+}
+
+void HevcDec::RestoreInputContext(InputContext* context) {
+  // Stream fetching enabled needs to be set before the rest of the state is
+  // restored, or else the parser's state becomes incorrect and decoding fails.
+  HevcStreamControl::Get()
+      .ReadFrom(mmio()->dosbus)
+      .set_endianness(7)
+      .set_use_parser_vbuf_wp(false)
+      .set_stream_fetch_enable(true)
+      .WriteTo(mmio()->dosbus);
+  HevcStreamSwapAddr::Get()
+      .FromValue(truncate_to_32(io_buffer_phys(&context->buffer)))
+      .WriteTo(mmio()->dosbus);
+  HevcStreamSwapCtrl::Get().FromValue(0).set_enable(true).WriteTo(
+      mmio()->dosbus);
+  bool finished = SpinWaitForRegister(std::chrono::milliseconds(100), [this]() {
+    return !HevcStreamSwapCtrl::Get().ReadFrom(mmio()->dosbus).in_progress();
+  });
+  // TODO: return error on failure.
+  FXL_CHECK(finished);
+  HevcStreamSwapCtrl::Get().FromValue(0).WriteTo(mmio()->dosbus);
+}

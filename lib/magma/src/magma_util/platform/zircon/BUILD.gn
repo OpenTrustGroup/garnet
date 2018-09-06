@@ -9,19 +9,39 @@ source_set("buffer") {
 
   sources = [
     "zircon_platform_buffer.cc",
+    "zircon_platform_buffer.h",
+  ]
+
+  public_deps = [
+    ":handle",
+    "..:buffer_header",
+  ]
+
+  deps = [
+    "$magma_build_root/src/magma_util",
+    "$magma_build_root/src/magma_util/platform:trace",
+    "..:object",
+  ]
+}
+
+source_set("bus_mapper") {
+  configs += [ "..:platform_include_config" ]
+
+  sources = [
     "zircon_platform_bus_mapper.cc",
+    "zircon_platform_bus_mapper.h",
+  ]
+
+  public_deps = [
+    ":buffer",
   ]
 
   deps = [
     "$magma_build_root/src/magma_util",
     "$magma_build_root/src/magma_util/platform:trace",
     "$zircon_build_root/public/lib/ddk",
-    "$zircon_build_root/public/lib/driver",
-    "$zircon_build_root/public/lib/zx",
     "..:object",
   ]
-
-  libs = [ "zircon" ]
 }
 
 source_set("interrupt") {
@@ -44,8 +64,6 @@ source_set("mmio") {
 
   public_deps = [
     "$magma_build_root/src/magma_util",
-    "$zircon_build_root/public/lib/ddk",
-    "$zircon_build_root/public/lib/fdio",
     "$zircon_build_root/public/lib/zx",
     "..:mmio",
   ]
@@ -63,14 +81,14 @@ source_set("device") {
   ]
 
   deps = [
+    ":bus_mapper",
     ":interrupt",
     ":mmio",
     "$magma_build_root/src/magma_util",
     "$zircon_build_root/public/lib/ddk",
     "$zircon_build_root/public/lib/driver",
+    "$zircon_build_root/public/lib/zx",
   ]
-
-  libs = [ "zircon" ]
 }
 
 source_set("futex") {
@@ -82,11 +100,24 @@ source_set("futex") {
 
   deps = [
     "$magma_build_root/src/magma_util",
-    "$zircon_build_root/public/lib/ddk",
-    "$zircon_build_root/public/lib/driver",
+    "$zircon_build_root/public/lib/zx",
+  ]
+}
+
+source_set("client_connection") {
+  configs += [ "..:platform_include_config" ]
+
+  sources = [
+    "zircon_platform_connection_client.cc",
   ]
 
-  libs = [ "zircon" ]
+  deps = [
+    "..:connection_header",
+    "$magma_build_root/include:msd_abi",
+    "$magma_build_root/src/magma_util",
+    "$zircon_build_root/public/lib/fdio",
+    "$zircon_build_root/public/lib/zx",
+  ]
 }
 
 source_set("connection") {
@@ -97,18 +128,12 @@ source_set("connection") {
   ]
 
   deps = [
-    ":event",
+    "..:connection_header",
     "$magma_build_root/include:msd_abi",
     "$magma_build_root/src/magma_util",
-    "$zircon_build_root/public/lib/async",
     "$zircon_build_root/public/lib/async-loop-cpp",
-    "$zircon_build_root/public/lib/ddk",
-    "$zircon_build_root/public/lib/driver",
-    "$zircon_build_root/public/lib/fdio",
     "$zircon_build_root/public/lib/zx",
   ]
-
-  libs = [ "zircon" ]
 }
 
 source_set("thread") {
@@ -120,9 +145,8 @@ source_set("thread") {
 
   deps = [
     "..:object",
+    "..:thread_header",
   ]
-
-  libs = [ "zircon" ]
 }
 
 source_set("event") {
@@ -143,11 +167,15 @@ source_set("handle") {
 
   sources = [
     "zircon_platform_handle.cc",
+    "zircon_platform_handle.h",
+  ]
+
+  public_deps = [
+    "$zircon_build_root/public/lib/zx",
   ]
 
   deps = [
     "$magma_build_root/src/magma_util",
-    "$zircon_build_root/public/lib/zx",
   ]
 }
 
@@ -160,7 +188,6 @@ source_set("object") {
 
   deps = [
     "$magma_build_root/src/magma_util",
-    "$zircon_build_root/public/lib/zx",
   ]
 }
 
@@ -200,6 +227,7 @@ source_set("trace") {
 
   sources = [
     "zircon_platform_trace.cc",
+    "zircon_platform_trace.h",
   ]
 
   deps = [
@@ -210,16 +238,10 @@ source_set("trace") {
     public_deps = [
       "$zircon_build_root/public/lib/async-cpp",
       "$zircon_build_root/public/lib/async-loop-cpp",
-      "$zircon_build_root/public/lib/ddk",
-      "$zircon_build_root/public/lib/driver",
-      "$zircon_build_root/public/lib/fdio",
       "$zircon_build_root/public/lib/trace",
       "$zircon_build_root/public/lib/trace-provider",
-      "//garnet/public/lib/fsl",
     ]
   }
-
-  libs = [ "zircon" ]
 }
 
 source_set("random") {
@@ -229,6 +251,4 @@ source_set("random") {
   sources = [
     "zircon_platform_random.cc",
   ]
-
-  libs = [ "zircon" ]
 }

@@ -13,46 +13,54 @@ import (
 )
 
 type Type struct {
-	Decl     string
-	DeclType types.DeclType
+	Decl       string
+	DeclType   types.DeclType
+	LargeArray bool
 }
 
 type Const struct {
-	Name  string
-	Type  string
-	Value string
+	Name       string
+	Type       string
+	Value      string
+	DocStrings []string
 }
 
 type Enum struct {
-	Name    string
-	Type    string
-	Members []EnumMember
+	Name       string
+	Type       string
+	Members    []EnumMember
+	DocStrings []string
 }
 
 type EnumMember struct {
-	Name      string
-	ConstName string
-	Value     string
+	Name       string
+	ConstName  string
+	Value      string
+	DocStrings []string
 }
 
 type Union struct {
-	Name      string
-	Members   []UnionMember
-	Size      int
-	Alignment int
+	Name       string
+	Members    []UnionMember
+	Size       int
+	Alignment  int
+	DocStrings []string
 }
 
 type UnionMember struct {
-	Type   string
-	Name   string
-	Offset int
+	Type       string
+	Name       string
+	Offset     int
+	DocStrings []string
 }
 
 type Struct struct {
-	Name      string
-	Members   []StructMember
-	Size      int
-	Alignment int
+	Name        string
+	Members     []StructMember
+	Size        int
+	Alignment   int
+	LargeArrays bool
+	DocStrings  []string
 }
 
 type StructMember struct {
@@ -61,12 +69,15 @@ type StructMember struct {
 	Offset       int
 	HasDefault   bool
 	DefaultValue string
+	LargeArray   bool
+	DocStrings   []string
 }
 
 type Interface struct {
 	Name        string
 	Methods     []Method
 	ServiceName string
+	DocStrings  []string
 }
 
 type Method struct {
@@ -74,6 +85,7 @@ type Method struct {
 	OrdinalName  string
 	Name         string
 	CamelName    string
+	DocStrings   []string
 	HasRequest   bool
 	Request      []Parameter
 	HasResponse  bool
@@ -82,10 +94,10 @@ type Method struct {
 }
 
 type Parameter struct {
-	Type   string
+	Type         string
 	BorrowedType string
-	Name   string
-	Offset int
+	Name         string
+	Offset       int
 }
 
 type Root struct {
@@ -213,7 +225,6 @@ func changeIfReserved(val types.Identifier) string {
 
 var primitiveTypes = map[types.PrimitiveSubtype]string{
 	types.Bool:    "bool",
-	types.Status:  "::zx::Status",
 	types.Int8:    "i8",
 	types.Int16:   "i16",
 	types.Int32:   "i32",
@@ -247,8 +258,8 @@ var handleSubtypes = map[types.HandleSubtype]string{
 }
 
 type compiler struct {
-	decls   *types.DeclMap
-	library types.LibraryIdentifier
+	decls        *types.DeclMap
+	library      types.LibraryIdentifier
 	externCrates map[string]bool
 }
 
@@ -349,15 +360,17 @@ func (c *compiler) compileConst(val types.Const) Const {
 	var r Const
 	if val.Type.Kind == types.StringType {
 		r = Const{
-			Type:  "&str",
-			Name:  name,
-			Value: c.compileConstant(val.Value),
+			Type:       "&str",
+			Name:       name,
+			Value:      c.compileConstant(val.Value),
+			DocStrings: types.GetDocString(val),
 		}
 	} else {
 		r = Const{
-			Type:  c.compileType(val.Type, false).Decl,
-			Name:  name,
-			Value: c.compileConstant(val.Value),
+			Type:       c.compileType(val.Type, false).Decl,
+			Name:       name,
+			Value:      c.compileConstant(val.Value),
+			DocStrings: types.GetDocString(val),
 		}
 	}
 	return r
@@ -382,6 +395,7 @@ func compileHandleSubtype(val types.HandleSubtype) string {
 func (c *compiler) compileType(val types.Type, borrowed bool) Type {
 	var r string
 	var declType types.DeclType
+	largeArray := false
 	switch val.Kind {
 	case types.ArrayType:
 		t := c.compileType(*val.ElementType, borrowed)
@@ -389,6 +403,7 @@ func (c *compiler) compileType(val types.Type, borrowed bool) Type {
 		if borrowed {
 			r = fmt.Sprintf("&mut %s", r)
 		}
+		largeArray = t.LargeArray || *val.ElementCount > 32
 	case types.VectorType:
 		t := c.compileType(*val.ElementType, borrowed)
 		var inner string
@@ -402,6 +417,7 @@ func (c *compiler) compileType(val types.Type, borrowed bool) Type {
 		} else {
 			r = inner
 		}
+		largeArray = t.LargeArray
 	case types.StringType:
 		if borrowed {
 			if val.Nullable {
@@ -474,8 +490,9 @@ func (c *compiler) compileType(val types.Type, borrowed bool) Type {
 	}
 
 	return Type{
-		Decl:     r,
-		DeclType: declType,
+		Decl:       r,
+		DeclType:   declType,
+		LargeArray: largeArray,
 	}
 }
 
@@ -484,12 +501,14 @@ func (c *compiler) compileEnum(val types.Enum) Enum {
 		c.compileCamelCompoundIdentifier(val.Name),
 		compilePrimitiveSubtype(val.Type),
 		[]EnumMember{},
+		types.GetDocString(val),
 	}
 	for _, v := range val.Members {
 		e.Members = append(e.Members, EnumMember{
-			Name:      compileCamelIdentifier(v.Name),
-			ConstName: compileScreamingSnakeIdentifier(v.Name),
-			Value:     c.compileConstant(v.Value),
+			Name:       compileCamelIdentifier(v.Name),
+			ConstName:  compileScreamingSnakeIdentifier(v.Name),
+			Value:      c.compileConstant(v.Value),
+			DocStrings: types.GetDocString(val),
 		})
 	}
 	return e
@@ -516,6 +535,7 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 		c.compileCamelCompoundIdentifier(val.Name),
 		[]Method{},
 		strings.Trim(val.GetServiceName(), "\""),
+		types.GetDocString(val),
 	}
 
 	for _, v := range val.Methods {
@@ -523,6 +543,7 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 		camelName := compileCamelIdentifier(v.Name)
 		request := c.compileParameterArray(v.Request)
 		response := c.compileParameterArray(v.Response)
+		doc_string := types.GetDocString(v)
 
 		m := Method{
 			Ordinal:     v.Ordinal,
@@ -532,6 +553,7 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 			Request:     request,
 			HasResponse: v.HasResponse,
 			Response:    response,
+			DocStrings:  doc_string,
 		}
 		r.Methods = append(r.Methods, m)
 	}
@@ -540,26 +562,35 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 }
 
 func (c *compiler) compileStructMember(val types.StructMember) StructMember {
+	memberType := c.compileType(val.Type, false)
+	doc_string := types.GetDocString(val)
 	return StructMember{
-		Type:         c.compileType(val.Type, false).Decl,
+		Type:         memberType.Decl,
 		Name:         compileSnakeIdentifier(val.Name),
 		Offset:       val.Offset,
 		HasDefault:   false,
 		DefaultValue: "", // TODO(cramertj) support defaults
+		LargeArray:   memberType.LargeArray,
+		DocStrings:   doc_string,
 	}
 }
 
 func (c *compiler) compileStruct(val types.Struct) Struct {
 	name := c.compileCamelCompoundIdentifier(val.Name)
+	doc_string := types.GetDocString(val)
 	r := Struct{
-		Name:      name,
-		Members:   []StructMember{},
-		Size:      val.Size,
-		Alignment: val.Alignment,
+		Name:        name,
+		Members:     []StructMember{},
+		Size:        val.Size,
+		Alignment:   val.Alignment,
+		LargeArrays: false,
+		DocStrings:  doc_string,
 	}
 
 	for _, v := range val.Members {
-		r.Members = append(r.Members, c.compileStructMember(v))
+		member := c.compileStructMember(v)
+		r.Members = append(r.Members, member)
+		r.LargeArrays = r.LargeArrays || member.LargeArray
 	}
 
 	return r

@@ -14,13 +14,6 @@
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-//#include <linux/bcm47xx_nvram.h>
-//#include <linux/device.h>
-//#include <linux/firmware.h>
-//#include <linux/kernel.h>
-//#include <linux/module.h>
-//#include <linux/slab.h>
-
 #include "firmware.h"
 
 #include <zircon/syscalls.h>
@@ -490,7 +483,7 @@ fail:
 }
 
 zx_status_t request_firmware_nowait(bool b, const char* name, struct brcmf_device* dev,
-                                    uint32_t flags, struct brcmf_fw* ctx,
+                                    struct brcmf_fw* ctx,
                                     zx_status_t (*callback)(const struct brcmf_firmware* fw,
                                                             void* ctx)) {
     zx_status_t result;
@@ -537,8 +530,8 @@ static zx_status_t brcmf_fw_request_code_done(const struct brcmf_firmware* fw, v
     }
 
     fwctx->code = fw;
-    result = request_firmware_nowait(true, fwctx->nvram_name, fwctx->dev, GFP_KERNEL,
-                                  fwctx, brcmf_fw_request_nvram_done);
+    result = request_firmware_nowait(true, fwctx->nvram_name, fwctx->dev, fwctx,
+                                     brcmf_fw_request_nvram_done);
 
     /* pass NULL to nvram callback for bcm47xx fallback */
     if (result != ZX_OK) {
@@ -585,8 +578,7 @@ zx_status_t brcmf_fw_get_firmwares_pcie(struct brcmf_device* dev, uint16_t flags
     fwctx->domain_nr = domain_nr;
     fwctx->bus_nr = bus_nr;
 
-    return request_firmware_nowait(true, code, dev, GFP_KERNEL, fwctx,
-                                   brcmf_fw_request_code_done);
+    return request_firmware_nowait(true, code, dev, fwctx, brcmf_fw_request_code_done);
 }
 
 zx_status_t brcmf_fw_get_firmwares(struct brcmf_device* dev, uint16_t flags, const char* code,

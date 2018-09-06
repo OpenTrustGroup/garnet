@@ -19,6 +19,7 @@ struct EssInfo {
 
 enum ScanErrorCode {
     NOT_SUPPORTED = 1;
+    INTERNAL_ERROR = 2;
 };
 
 struct ScanError {
@@ -44,7 +45,9 @@ enum ConnectResultCode {
     CANCELED = 1;
     // Failed to join for some reason
     FAILED = 2;
-    // TODO(gbonik): possibly add more granular error codes, e.g. "BAD_CREDENTIALS"
+    // Failed to join due to bad credentials
+    BAD_CREDENTIALS = 3;
+    // TODO(hahnr): Add result code for attempting to join an incompatible network
 };
 
 interface ConnectTransaction {
@@ -54,6 +57,7 @@ interface ConnectTransaction {
 
 struct ConnectRequest {
     vector<uint8>:32 ssid;
+    vector<uint8>:64 password;
 };
 
 struct ClientStatusResponse {
@@ -65,5 +69,22 @@ struct ClientStatusResponse {
 interface ClientSme {
     1: Scan(ScanRequest req, request<ScanTransaction> txn);
     2: Connect(ConnectRequest req, request<ConnectTransaction>? txn);
-    3: Status() -> (ClientStatusResponse resp);
+    3: Disconnect() -> ();
+    4: Status() -> (ClientStatusResponse resp);
+};
+
+struct ApConfig {
+    vector<uint8>:32 ssid;
+    uint8 channel;
+};
+
+enum StartApResultCode {
+    SUCCESS = 0;
+    ALREADY_STARTED = 1;
+    INTERNAL_ERROR = 2;
+};
+
+interface ApSme {
+    1: Start(ApConfig config) -> (StartApResultCode code);
+    2: Stop() -> ();
 };

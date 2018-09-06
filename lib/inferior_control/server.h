@@ -20,7 +20,7 @@
 #include "process.h"
 #include "thread.h"
 
-namespace debugserver {
+namespace inferior_control {
 
 // Server implements the main loop and handles commands.
 //
@@ -111,14 +111,14 @@ class Server : public Process::Delegate {
   // for "Run()" when |message_loop_| exits.
   bool run_status_;
 
-private:
+ private:
   FXL_DISALLOW_COPY_AND_ASSIGN(Server);
 };
 
 // Same as Server, but provides I/O support.
 // An example use-case is debugserver for gdb.
 class ServerWithIO : public Server, public IOLoop::Delegate {
-protected:
+ protected:
   ServerWithIO(zx::job job_for_search, zx::job job_for_launch);
   virtual ~ServerWithIO();
 
@@ -132,4 +132,4 @@ protected:
   fxl::UniqueFD client_sock_;
 };
 
-}  // namespace debugserver
+}  // namespace inferior_control

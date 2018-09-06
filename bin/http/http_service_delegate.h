@@ -8,17 +8,17 @@
 #include <memory>
 
 #include "garnet/bin/http/http_service_impl.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 
 namespace http {
 
 class HttpServiceDelegate {
  public:
-  HttpServiceDelegate(async_t* dispatcher);
+  HttpServiceDelegate(async_dispatcher_t* dispatcher);
   ~HttpServiceDelegate();
 
  private:
-  std::unique_ptr<fuchsia::sys::StartupContext> context_;
+  std::unique_ptr<component::StartupContext> context_;
   HttpServiceImpl http_provider_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(HttpServiceDelegate);

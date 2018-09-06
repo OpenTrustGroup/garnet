@@ -58,7 +58,9 @@ class InputInterpreter {
     PARADISEv2,
     PARADISEv3,
     SAMSUNG,
-    EGALAX
+    EGALAX,
+    EYOYO,
+    FT3X27,
   };
 
   enum class MouseDeviceType { NONE, BOOT, PARADISEv1, PARADISEv2, GAMEPAD };
@@ -66,6 +68,7 @@ class InputInterpreter {
   enum class SensorDeviceType {
     NONE,
     PARADISE,
+    AMBIENT_LIGHT,
   };
 
   InputInterpreter(std::string name, int fd,
@@ -85,6 +88,11 @@ class InputInterpreter {
   template <typename ReportT>
   bool ParseParadiseTouchpadReport(uint8_t* report, size_t len);
   bool ParseParadiseSensorReport(uint8_t* report, size_t len);
+  bool ParseParadiseStylusReport(uint8_t* report, size_t len);
+  bool ParseEyoyoTouchscreenReport(uint8_t* report, size_t len);
+  bool ParseFt3x27TouchscreenReport(uint8_t* r, size_t len);
+
+  bool ParseAmbientLightSensorReport();
 
   fuchsia::ui::input::InputDeviceRegistry* registry_;
 

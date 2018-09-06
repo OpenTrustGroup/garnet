@@ -46,7 +46,7 @@ func (k *SourceKeeper) GetConfig() *amber.SourceConfig {
 	return k.src.GetConfig()
 }
 
-func (k *SourceKeeper) GetHttpClient() *http.Client {
+func (k *SourceKeeper) GetHttpClient() (*http.Client, error) {
 	return k.src.GetHttpClient()
 }
 
@@ -106,6 +106,22 @@ func (k *SourceKeeper) Save() error {
 	return k.src.Save()
 }
 
+func (k *SourceKeeper) DeleteConfig() error {
+	return k.src.DeleteConfig()
+}
+
+func (k *SourceKeeper) Delete() error {
+	return k.src.Delete()
+}
+
 func (k *SourceKeeper) Close() {
 	k.src.Close()
+}
+
+func (k *SourceKeeper) Enabled() bool {
+	return k.src.Enabled()
+}
+
+func (k *SourceKeeper) SetEnabled(enabled bool) {
+	k.src.SetEnabled(enabled)
 }

@@ -17,7 +17,7 @@
 #ifndef BRCMFMAC_CFG80211_H
 #define BRCMFMAC_CFG80211_H
 
-#include <sync/completion.h>
+#include <lib/sync/completion.h>
 #include <threads.h>
 
 #include <zircon/listnode.h>
@@ -243,7 +243,7 @@ struct escan_info {
  * @vif: virtual interface object related to the event.
  */
 struct brcmf_cfg80211_vif_event {
-    completion_t vif_event_wait;
+    sync_completion_t vif_event_wait;
     mtx_t vif_event_lock;
     uint8_t action;
     struct brcmf_cfg80211_vif* vif;
@@ -264,7 +264,7 @@ struct brcmf_cfg80211_wowl {
     uint32_t pre_pmmode;
     struct cfg80211_wowlan_nd_match* nd;
     struct cfg80211_wowlan_nd_info* nd_info;
-    completion_t nd_data_wait;
+    sync_completion_t nd_data_wait;
     bool nd_enabled;
 };
 
@@ -325,14 +325,14 @@ struct brcmf_cfg80211_info {
     bool scan_tried;
     uint8_t* dcmd_buf;
     uint8_t* extra_buf;
-    struct dentry* debugfsdir;
+    zx_handle_t debugfsdir;
     struct escan_info escan_info;
     brcmf_timer_info_t escan_timeout;
     struct work_struct escan_timeout_work;
     struct list_node vif_list;
     struct brcmf_cfg80211_vif_event vif_event;
     uint8_t vif_event_pending_action;
-    completion_t vif_disabled;
+    sync_completion_t vif_disabled;
     struct brcmu_d11inf d11inf;
     struct brcmf_assoclist_le assoclist;
     struct brcmf_cfg80211_wowl wowl;
@@ -357,16 +357,16 @@ static inline struct wiphy* cfg_to_wiphy(struct brcmf_cfg80211_info* cfg) {
 }
 
 static inline struct brcmf_cfg80211_info* wiphy_to_cfg(struct wiphy* w) {
-    return w->priv_info;
+    return w->cfg80211_info;
 }
 
 static inline struct brcmf_cfg80211_info* wdev_to_cfg(struct wireless_dev* wd) {
-    return wd->priv_info;
+    return wd->cfg80211_info;
 }
 
 static inline struct net_device* cfg_to_ndev(struct brcmf_cfg80211_info* cfg) {
     struct brcmf_cfg80211_vif* vif;
-    vif = list_first_entry(&cfg->vif_list, struct brcmf_cfg80211_vif, list);
+    vif = list_peek_head_type(&cfg->vif_list, struct brcmf_cfg80211_vif, list);
     return vif->wdev.netdev;
 }
 

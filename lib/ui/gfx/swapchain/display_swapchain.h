@@ -19,7 +19,7 @@
 #include "lib/escher/vk/vulkan_device_queues.h"
 #include "lib/fxl/memory/weak_ptr.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 
 class Display;
@@ -55,8 +55,7 @@ class DisplaySwapchain : public Swapchain {
     uint64_t render_finished_event_id;
     EventTimestamper::Watch render_finished_watch;
 
-    uint64_t frame_presented_event_id;
-    EventTimestamper::Watch frame_presented_watch;
+    bool presented = false;
   };
   std::unique_ptr<FrameRecord> NewFrameRecord(
       const FrameTimingsPtr& frame_timings);
@@ -66,28 +65,33 @@ class DisplaySwapchain : public Swapchain {
   // When a frame is presented, the previously-presented frame becomes available
   // as a render target.
   void OnFrameRendered(size_t frame_index, zx_time_t render_finished_time);
-  void OnFramePresented(size_t frame_index, zx_time_t vsync_time);
+
+  void OnVsync(zx_time_t timestamp, const std::vector<uint64_t>& image_ids);
+
+  // A nullable Escher (good for testing) means some resources must be accessed
+  // through its (valid) pointer.
+  escher::Escher* const escher_ = nullptr;
 
   DisplayManager* display_manager_;
   Display* const display_;
 
-  vk::Format format_;
-  vk::Device device_;
-  vk::Queue queue_;
-
-  const escher::VulkanDeviceQueues::ProcAddrs& vulkan_proc_addresses_;
-
   size_t next_frame_index_ = 0;
+  size_t presented_frame_idx_ = 0;
+  size_t outstanding_frame_count_ = 0;
   EventTimestamper* const timestamper_;
 
   std::vector<Framebuffer> swapchain_buffers_;
 
   std::vector<std::unique_ptr<FrameRecord>> frames_;
 
+  vk::Format format_;
+  vk::Device device_;
+  vk::Queue queue_;
+
   FXL_DISALLOW_COPY_AND_ASSIGN(DisplaySwapchain);
 };
 
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_SWAPCHAIN_DISPLAY_SWAPCHAIN_H_

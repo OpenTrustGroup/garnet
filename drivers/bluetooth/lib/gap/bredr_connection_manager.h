@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GAP_BREDR_CONNECTION_MANAGER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GAP_BREDR_CONNECTION_MANAGER_H_
 
 #include "lib/fxl/memory/weak_ptr.h"
 
@@ -21,6 +22,7 @@ class Transport;
 
 namespace gap {
 
+class PairingDelegate;
 class RemoteDeviceCache;
 
 // Manages all activity related to connections in the BR/EDR section of the
@@ -36,6 +38,12 @@ class BrEdrConnectionManager {
   // Set whether this host is connectable
   void SetConnectable(bool connectable, hci::StatusCallback status_cb);
 
+  // Assigns a new PairingDelegate to handle BR/EDR authentication challenges.
+  // Replacing an existing pairing delegate cancels all ongoing pairing
+  // procedures. If a delegate is not set then all pairing requests will be
+  // rejected.
+  void SetPairingDelegate(fxl::WeakPtr<PairingDelegate> delegate);
+
  private:
   // Reads the controller page scan settings.
   void ReadPageScanSettings();
@@ -48,6 +56,10 @@ class BrEdrConnectionManager {
                              bool interlaced,
                              hci::StatusCallback cb);
 
+  // Helper to register an event handler to run.
+  hci::CommandChannel::EventHandlerId AddEventHandler(
+      const hci::EventCode& code, hci::CommandChannel::EventCallback cb);
+
   // Called when a ConnectionRequest event is received.
   void OnConnectionRequest(const hci::EventPacket& event);
 
@@ -56,6 +68,12 @@ class BrEdrConnectionManager {
 
   // Called when a DisconnectComplete event is received.
   void OnDisconnectionComplete(const hci::EventPacket& event);
+
+  // Called when an IO Capabilies Reqeust event is received.
+  void OnIOCapabilitiesRequest(const hci::EventPacket& event);
+
+  // Called when an User Confirmation Reqeust event is received.
+  void OnUserConfirmationRequest(const hci::EventPacket& event);
 
   fxl::RefPtr<hci::Transport> hci_;
   std::unique_ptr<hci::SequentialCommandRunner> hci_cmd_runner_;
@@ -78,6 +96,10 @@ class BrEdrConnectionManager {
   hci::CommandChannel::EventHandlerId conn_request_handler_id_;
   hci::CommandChannel::EventHandlerId disconn_cmpl_handler_id_;
 
+  // Handler IDs for pairing events
+  hci::CommandChannel::EventHandlerId io_cap_req_handler_id_;
+  hci::CommandChannel::EventHandlerId user_conf_handler_id_;
+
   // The current page scan parameters of the controller.
   // Set to 0 when non-connectable.
   uint16_t page_scan_interval_;
@@ -86,7 +108,7 @@ class BrEdrConnectionManager {
   bool use_interlaced_scan_;
 
   // The dispatcher that all commands are queued on.
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
 
   // Keep this as the last member to make sure that all weak pointers are
   // invalidated before other members get destroyed.
@@ -97,3 +119,5 @@ class BrEdrConnectionManager {
 
 }  // namespace gap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GAP_BREDR_CONNECTION_MANAGER_H_

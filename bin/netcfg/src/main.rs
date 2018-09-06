@@ -4,40 +4,35 @@
 
 #![deny(warnings)]
 
-extern crate failure;
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_json;
-extern crate fidl;
-extern crate fidl_fuchsia_devicesettings;
-extern crate fidl_fuchsia_netstack as netstack;
-extern crate fuchsia_app as app;
-extern crate fuchsia_async as async;
-extern crate fuchsia_zircon as zx;
-extern crate futures;
+use std::fs;
+use std::net::IpAddr;
 
 use failure::{Error, ResultExt};
+use futures::{future, StreamExt, TryFutureExt, TryStreamExt};
+use serde_derive::Deserialize;
+
+use fuchsia_async::temp::TempFutureExt;
 use fidl_fuchsia_devicesettings::{DeviceSettingsManagerMarker};
-use netstack::{NetstackMarker, NetInterface, NetstackEvent, INTERFACE_FEATURE_SYNTH, INTERFACE_FEATURE_LOOPBACK};
-use std::fs;
-use std::io::Read;
-use futures::{future, FutureExt, StreamExt};
+use fidl_fuchsia_netstack::{NetstackMarker, NetAddress, Ipv4Address, Ipv6Address, NetAddressFamily, NetInterface, NetstackEvent};
+use fidl_zircon_ethernet::{INFO_FEATURE_SYNTH, INFO_FEATURE_LOOPBACK};
 
 mod device_id;
 
 const DEFAULT_CONFIG_FILE: &str = "/pkg/data/default.json";
 
 #[derive(Debug, Deserialize)]
-pub struct Config {
-    pub device_name: String,
+struct Config {
+    pub device_name: Option<String>,
+    pub dns_config: DnsConfig,
 }
 
-fn parse_config(config: String) -> Result<Config, Error> {
-    serde_json::from_str(&config).map_err(Into::into)
+#[derive(Debug, Deserialize)]
+struct DnsConfig {
+    pub servers: Vec<IpAddr>,
 }
 
 fn is_physical(n: &NetInterface) -> bool {
-    (n.features & (INTERFACE_FEATURE_SYNTH | INTERFACE_FEATURE_LOOPBACK)) == 0
+    (n.features & (INFO_FEATURE_SYNTH | INFO_FEATURE_LOOPBACK)) == 0
 }
 
 fn derive_device_name(interfaces: Vec<NetInterface>) -> Option<String> {
@@ -47,43 +42,47 @@ fn derive_device_name(interfaces: Vec<NetInterface>) -> Option<String> {
         .map(|iface| device_id::device_id(&iface.hwaddr))
 }
 
-// Workaround for https://fuchsia.atlassian.net/browse/TC-141
-fn read_to_string(s: &str) -> Result<String, Error> {
-    let mut f = fs::File::open(s).context("Failed to read file")?;
-    let mut out = String::new();
-    f.read_to_string(&mut out)?;
-    Ok(out)
-}
-
 static DEVICE_NAME_KEY: &str = "DeviceName";
 
 fn main() -> Result<(), Error> {
     println!("netcfg: started");
-    // Will be used to store DNS configuration.
-    let _default_config = parse_config(read_to_string(DEFAULT_CONFIG_FILE)?)?;
-    let mut executor = async::Executor::new().context("error creating event loop")?;
-    let netstack = app::client::connect_to_service::<NetstackMarker>().context("failed to connect to netstack")?;
-    let device_settings_manager = app::client::connect_to_service::<DeviceSettingsManagerMarker>()
+    let default_config_file = fs::File::open(DEFAULT_CONFIG_FILE)?;
+    let default_config: Config = serde_json::from_reader(default_config_file)?;
+    let mut executor = fuchsia_async::Executor::new().context("error creating event loop")?;
+    let netstack = fuchsia_app::client::connect_to_service::<NetstackMarker>().context("failed to connect to netstack")?;
+    let device_settings_manager = fuchsia_app::client::connect_to_service::<DeviceSettingsManagerMarker>()
         .context("failed to connect to device settings manager")?;
 
-    let f1 = netstack.get_interfaces().into_stream().left_stream();
-    let f2 =
-        netstack
-            .take_event_stream()
-            .filter_map(|NetstackEvent::InterfacesChanged { interfaces: ifs }| future::ok(Some(ifs)))
-            .right_stream();
+    let device_name = match default_config.device_name {
+        Some(name) => {
+            device_settings_manager.set_string(DEVICE_NAME_KEY, &name).map_ok(|_| ()).left_future()
+        },
+        None => {
+            netstack.take_event_stream().try_filter_map(|NetstackEvent::OnInterfacesChanged { interfaces: is }| {
+                future::ready(Ok(derive_device_name(is)))
+            }).take(1).try_for_each(|name| {
+                device_settings_manager.set_string(DEVICE_NAME_KEY, &name).map_ok(|_| ())
+            }).map_ok(|_| ()).right_future()
+        },
+    }.map_err(Into::into);
 
-    let fs = futures::stream::select_all(vec![f1, f2])
-        .filter_map(|ifs| future::ok(derive_device_name(ifs)))
-        .next()
-        .map_err(|(e, _)| e)
-        .and_then(|(opt, _)| {
-            match opt {
-                Some(name) => device_settings_manager.set_string(DEVICE_NAME_KEY, &name).left_future(),
-                None => future::ok(false).right_future()
-            }
-        });
+    let mut servers = default_config.dns_config.servers.iter().map(to_net_address).collect::<Vec<NetAddress>>();
+    let () = netstack.set_name_servers(&mut servers.iter_mut())?;
 
-    let _ = executor.run_singlethreaded(fs);
-    Ok(())
+    executor.run_singlethreaded(device_name)
+}
+
+fn to_net_address(addr: &IpAddr) -> NetAddress {
+    match addr {
+        IpAddr::V4(v4addr) => NetAddress{
+            family: NetAddressFamily::Ipv4,
+            ipv4: Some(Box::new(Ipv4Address { addr: v4addr.octets() })),
+            ipv6: None,
+        },
+        IpAddr::V6(v6addr) => NetAddress{
+            family: NetAddressFamily::Ipv6,
+            ipv4: None,
+            ipv6: Some(Box::new(Ipv6Address { addr: v6addr.octets() })),
+        }
+    }
 }

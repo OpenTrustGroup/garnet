@@ -4,24 +4,26 @@
 
 // TODO(dje): wip wip wip
 
-#include <cinttypes>
 #include <fcntl.h>
 #include <link.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <cinttypes>
 
 #include <iostream>
 
 #include <lib/fdio/util.h>
 
+#include "lib/component/cpp/environment_services_helper.h"
 #include "lib/fxl/command_line.h"
 #include "lib/fxl/log_settings.h"
 #include "lib/fxl/log_settings_command_line.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/split_string.h"
-#include "lib/fxl/strings/string_printf.h"
 #include "lib/fxl/strings/string_number_conversions.h"
+#include "lib/fxl/strings/string_printf.h"
+#include "lib/svc/cpp/services.h"
 
 #ifdef __x86_64__  // for other arches we're just a stub, TO-128
 
@@ -45,105 +47,104 @@ static constexpr uint32_t kCr3MatchReservedMask = 0x1f;
 
 // TODO(dje): Split up into topics, output is long and can scroll off screen.
 constexpr char kUsageString[] =
-  "Usage: insntrace [options] program [args...]\n"
-  "       insntrace [options] --control action1 [action2 ...]\n"
-  "\n"
-  "  program - the path to the executable to run\n"
-  "\n"
-  "Actions (performed when --control is specified):\n"
-  "These cannot be specified with a program to run.\n"
-  "  init               allocate PT resources (buffers)\n"
-  "  start              turn on PT\n"
-  "  stop               turn off PT\n"
-  "  dump               dump PT data\n"
-  "  reset              reset PT (release all resources)\n"
-  "\n"
-  "Options:\n"
-  "  --control          perform the specified actions\n"
-  "  --dump-arch        print random facts about the architecture and exit\n"
-  "  --help             show this help message and exit\n"
-  "  --output-path-prefix PREFIX\n"
-  "                     set the file path prefix of output files\n"
-  "                       The default is \"/tmp/ptout\".\n"
-  "  --quiet[=level]    set quietness level (opposite of verbose)\n"
-  "  --verbose[=level]  set debug verbosity level\n"
-  "\n"
-  "IPT configuration options:\n"
-  "  --chunk-order=N    set chunks size, in pages, as a power of 2\n"
-  "                       The default is 2: 16KB chunks.\n"
-  "  --circular         use a circular trace buffer\n"
-  "                       Otherwise tracing stops when the buffer fills.\n"
-  "                       The default is non-circular.\n"
-  "  --mode=cpu|thread  set the tracing mode\n"
-  "                       Must be specified with a program to run.\n"
-  "                       The default is cpu.\n"
-  "  --num-chunks=N     set number of chunks\n"
-  "                       The default is 16.\n"
-  "\n"
-  "Control configuration options (IA32_RTIT_CTL MSR):\n"
-  "  --config=option1;option2;...\n"
-  "\n"
-  "  --config may be specified any number of times.\n"
-  "  Values are applied in order.\n"
-  "  Boolean values may be set with just the name, \"=on\" is optional.\n"
-  "\n"
-  "  addr0=off|enable|stop\n"
-  "                     Set the addr0 filter register.\n"
-  "                     enable: trace is enabled in the specified range\n"
-  "                     stop: trace is stopped on entering specified range\n"
-  "  addr0-range=BEGIN,END\n"
-  "                     BEGIN,END are numerical addresses\n"
-  "                       If the values are in hex they must begin with 0x.\n"
-#if 0 // TODO(dje): Need to insert breakpoint to load dso list.
-  "  addr0-range=ELF,BEGIN,END\n"
-  "                     BEGIN,END are numerical addresses within ELF\n"
-  "                       The values are before PIE adjustments.\n"
-  "                       If the values are in hex they must begin with 0x.\n"
-  "                       This option can only be used when running the\n"
-  "                       test program directly.\n"
+    "Usage: insntrace [options] program [args...]\n"
+    "       insntrace [options] --control action1 [action2 ...]\n"
+    "\n"
+    "  program - the path to the executable to run\n"
+    "\n"
+    "Actions (performed when --control is specified):\n"
+    "These cannot be specified with a program to run.\n"
+    "  init               allocate PT resources (buffers)\n"
+    "  start              turn on PT\n"
+    "  stop               turn off PT\n"
+    "  dump               dump PT data\n"
+    "  reset              reset PT (release all resources)\n"
+    "\n"
+    "Options:\n"
+    "  --control          perform the specified actions\n"
+    "  --dump-arch        print random facts about the architecture and exit\n"
+    "  --help             show this help message and exit\n"
+    "  --output-path-prefix PREFIX\n"
+    "                     set the file path prefix of output files\n"
+    "                       The default is \"/tmp/ptout\".\n"
+    "  --quiet[=level]    set quietness level (opposite of verbose)\n"
+    "  --verbose[=level]  set debug verbosity level\n"
+    "\n"
+    "IPT configuration options:\n"
+    "  --chunk-order=N    set chunks size, in pages, as a power of 2\n"
+    "                       The default is 2: 16KB chunks.\n"
+    "  --circular         use a circular trace buffer\n"
+    "                       Otherwise tracing stops when the buffer fills.\n"
+    "                       The default is non-circular.\n"
+    "  --mode=cpu|thread  set the tracing mode\n"
+    "                       Must be specified with a program to run.\n"
+    "                       The default is cpu.\n"
+    "  --num-chunks=N     set number of chunks\n"
+    "                       The default is 16.\n"
+    "\n"
+    "Control configuration options (IA32_RTIT_CTL MSR):\n"
+    "  --config=option1;option2;...\n"
+    "\n"
+    "  --config may be specified any number of times.\n"
+    "  Values are applied in order.\n"
+    "  Boolean values may be set with just the name, \"=on\" is optional.\n"
+    "\n"
+    "  addr0=off|enable|stop\n"
+    "                     Set the addr0 filter register.\n"
+    "                     enable: trace is enabled in the specified range\n"
+    "                     stop: trace is stopped on entering specified range\n"
+    "  addr0-range=BEGIN,END\n"
+    "                     BEGIN,END are numerical addresses\n"
+    "                       If the values are in hex they must begin with 0x.\n"
+#if 0  // TODO(dje): Need to insert breakpoint to load dso list.
+    "  addr0-range=ELF,BEGIN,END\n"
+    "                     BEGIN,END are numerical addresses within ELF\n"
+    "                       The values are before PIE adjustments.\n"
+    "                       If the values are in hex they must begin with 0x.\n"
+    "                       This option can only be used when running the\n"
+    "                       test program directly.\n"
 #endif
-  "  addr1=off|enable|stop\n"
-  "  addr1-range=BEGIN,END\n"
-#if 0 // TODO(dje): Need to insert breakpoint to load dso list.
-  "  addr1-range=ELF,BEGIN,END\n"
+    "  addr1=off|enable|stop\n"
+    "  addr1-range=BEGIN,END\n"
+#if 0  // TODO(dje): Need to insert breakpoint to load dso list.
+    "  addr1-range=ELF,BEGIN,END\n"
 #endif
-  "                     Same as addr0.\n"
-  "  branch=on|off      set/reset the BranchEn bit\n"
-  "  cr3-match=off|VALUE\n"
-  "                     set/reset the Cr3Filter bit, and the CR3_MATCH MSR\n"
-  "                       If VALUE is in hex it must begin with 0x.\n"
-  "                       The default is zero(off) if not running a program,\n"
-  "                       or the cr3 of the program being run.\n"
-  "  cyc=on|off         set/reset the CycEn bit\n"
-  "  cyc-thresh=VALUE(0...15)\n"
-  "                     set the value of the CycThresh field\n"
-  "  mtc=on|off         set/reset the MtcEn bit\n"
-  "  mtc-freq=VALUE(0...15)\n"
-  "                     set the value of the MtcFreq field\n"
-  "  os=on|off          set/reset the OS bit\n"
-  "  psb-freq=VALUE(0...15)\n"
-  "                     set the value of the PsbFreq field\n"
-  "  retc=on|off        reset/set the DisRetc bit\n"
-  "                       [the inverted value is what h/w uses]\n"
-  "  tsc=on|off         set/reset the TscEn bit\n"
-  "  user=on|off        set/reset the USER bit\n"
-  "The default is: branch;os;user;retc;tsc.\n"
-  "\n"
-  "Notes:\n"
-  "--verbose=<level> : sets |min_log_level| to -level\n"
-  "--quiet=<level>   : sets |min_log_level| to +level\n"
-  "Quiet supersedes verbose if both are specified.\n"
-  "Defined log levels:\n"
-  "-n - verbosity level n\n"
-  " 0 - INFO - this is the default level\n"
-  " 1 - WARNING\n"
-  " 2 - ERROR\n"
-  " 3 - FATAL\n"
-  "Note that negative log levels mean more verbosity.\n";
+    "                     Same as addr0.\n"
+    "  branch=on|off      set/reset the BranchEn bit\n"
+    "  cr3-match=off|VALUE\n"
+    "                     set/reset the Cr3Filter bit, and the CR3_MATCH MSR\n"
+    "                       If VALUE is in hex it must begin with 0x.\n"
+    "                       The default is zero(off) if not running a "
+    "program,\n"
+    "                       or the cr3 of the program being run.\n"
+    "  cyc=on|off         set/reset the CycEn bit\n"
+    "  cyc-thresh=VALUE(0...15)\n"
+    "                     set the value of the CycThresh field\n"
+    "  mtc=on|off         set/reset the MtcEn bit\n"
+    "  mtc-freq=VALUE(0...15)\n"
+    "                     set the value of the MtcFreq field\n"
+    "  os=on|off          set/reset the OS bit\n"
+    "  psb-freq=VALUE(0...15)\n"
+    "                     set the value of the PsbFreq field\n"
+    "  retc=on|off        reset/set the DisRetc bit\n"
+    "                       [the inverted value is what h/w uses]\n"
+    "  tsc=on|off         set/reset the TscEn bit\n"
+    "  user=on|off        set/reset the USER bit\n"
+    "The default is: branch;os;user;retc;tsc.\n"
+    "\n"
+    "Notes:\n"
+    "--verbose=<level> : sets |min_log_level| to -level\n"
+    "--quiet=<level>   : sets |min_log_level| to +level\n"
+    "Quiet supersedes verbose if both are specified.\n"
+    "Defined log levels:\n"
+    "-n - verbosity level n\n"
+    " 0 - INFO - this is the default level\n"
+    " 1 - WARNING\n"
+    " 2 - ERROR\n"
+    " 3 - FATAL\n"
+    "Note that negative log levels mean more verbosity.\n";
 
-static void PrintUsageString() {
-  std::cout << kUsageString << std::endl;
-}
+static void PrintUsageString() { std::cout << kUsageString << std::endl; }
 
 static bool BeginsWith(fxl::StringView str, fxl::StringView prefix,
                        fxl::StringView* arg) {
@@ -173,9 +174,7 @@ static bool ParseFlag(const char* name, const fxl::StringView& arg,
 
 static bool ParseNumber(const char* name, const fxl::StringView& arg,
                         uint64_t* value) {
-  if (arg.size() > 2 &&
-      arg[0] == '0' &&
-      (arg[1] == 'x' || arg[1] == 'X')) {
+  if (arg.size() > 2 && arg[0] == '0' && (arg[1] == 'x' || arg[1] == 'X')) {
     if (!fxl::StringToNumberWithError<uint64_t>(arg.substr(2), value,
                                                 fxl::Base::k16)) {
       FXL_LOG(ERROR) << "Invalid value for " << name << ": " << arg;
@@ -190,8 +189,7 @@ static bool ParseNumber(const char* name, const fxl::StringView& arg,
   return true;
 }
 
-static bool ParseCr3Match(const char* name,
-                          const fxl::StringView& arg,
+static bool ParseCr3Match(const char* name, const fxl::StringView& arg,
                           uint64_t* value) {
   if (arg == "off") {
     *value = 0;
@@ -199,24 +197,23 @@ static bool ParseCr3Match(const char* name,
   }
 
   if (!ParseNumber(name, arg, value))
-      return false;
+    return false;
   if ((*value & kCr3MatchReservedMask) != 0) {
-    FXL_LOG(ERROR) << "Invalid value (reserved bits set) for "
-                   << name << ": " << arg;
+    FXL_LOG(ERROR) << "Invalid value (reserved bits set) for " << name << ": "
+                   << arg;
     return false;
   }
   return true;
 }
 
-static bool ParseAddrConfig(const char* name,
-                            const fxl::StringView& arg,
-                            debugserver::IptConfig::AddrFilter* value) {
+static bool ParseAddrConfig(const char* name, const fxl::StringView& arg,
+                            insntrace::IptConfig::AddrFilter* value) {
   if (arg == "off")
-    *value = debugserver::IptConfig::AddrFilter::kOff;
+    *value = insntrace::IptConfig::AddrFilter::kOff;
   else if (arg == "enable")
-    *value = debugserver::IptConfig::AddrFilter::kEnable;
+    *value = insntrace::IptConfig::AddrFilter::kEnable;
   else if (arg == "stop")
-    *value = debugserver::IptConfig::AddrFilter::kStop;
+    *value = insntrace::IptConfig::AddrFilter::kStop;
   else {
     FXL_LOG(ERROR) << "Invalid value for " << name << ": " << arg;
     return false;
@@ -224,12 +221,10 @@ static bool ParseAddrConfig(const char* name,
   return true;
 }
 
-static bool ParseAddrRange(const char* name,
-                           const fxl::StringView& arg,
-                           debugserver::IptConfig::AddrRange* value) {
-  std::vector<fxl::StringView> range_strings =
-    fxl::SplitString(fxl::StringView(arg), ",",
-                     fxl::kTrimWhitespace, fxl::kSplitWantNonEmpty);
+static bool ParseAddrRange(const char* name, const fxl::StringView& arg,
+                           insntrace::IptConfig::AddrRange* value) {
+  std::vector<fxl::StringView> range_strings = fxl::SplitString(
+      fxl::StringView(arg), ",", fxl::kTrimWhitespace, fxl::kSplitWantNonEmpty);
   if (range_strings.size() != 2 && range_strings.size() != 3) {
     FXL_LOG(ERROR) << "Invalid value for " << name << ": " << arg;
     return false;
@@ -246,8 +241,7 @@ static bool ParseAddrRange(const char* name,
   return true;
 }
 
-static bool ParseFreqValue(const char* name,
-                           const fxl::StringView& arg,
+static bool ParseFreqValue(const char* name, const fxl::StringView& arg,
                            uint32_t* value) {
   if (!fxl::StringToNumberWithError<uint32_t>(arg, value)) {
     FXL_LOG(ERROR) << "Invalid value for " << name << ": " << arg;
@@ -256,11 +250,11 @@ static bool ParseFreqValue(const char* name,
   return true;
 }
 
-static bool ParseConfigOption(debugserver::IptConfig* config,
+static bool ParseConfigOption(insntrace::IptConfig* config,
                               const std::string& options_string) {
   std::vector<fxl::StringView> options =
-    fxl::SplitString(fxl::StringView(options_string), ";",
-                     fxl::kTrimWhitespace, fxl::kSplitWantNonEmpty);
+      fxl::SplitString(fxl::StringView(options_string), ";",
+                       fxl::kTrimWhitespace, fxl::kSplitWantNonEmpty);
 
   fxl::StringView arg;
 
@@ -334,8 +328,8 @@ static bool ParseConfigOption(debugserver::IptConfig* config,
   return true;
 }
 
-static debugserver::IptConfig GetIptConfig(const fxl::CommandLine& cl) {
-  debugserver::IptConfig config;
+static insntrace::IptConfig GetIptConfig(const fxl::CommandLine& cl) {
+  insntrace::IptConfig config;
   std::string arg;
 
   if (cl.GetOptionValue("chunk-order", &arg)) {
@@ -392,7 +386,7 @@ static debugserver::IptConfig GetIptConfig(const fxl::CommandLine& cl) {
   return config;
 }
 
-static bool ControlIpt(const debugserver::IptConfig& config,
+static bool ControlIpt(const insntrace::IptConfig& config,
                        const fxl::CommandLine& cl) {
   // We only support the cpu mode here.
   // This isn't a full test as we only actually set the mode for "init".
@@ -406,24 +400,24 @@ static bool ControlIpt(const debugserver::IptConfig& config,
     if (action == "init") {
       if (!AllocTrace(config))
         return false;
-      if (!debugserver::InitCpuPerf(config))
+      if (!insntrace::InitCpuPerf(config))
         return false;
-      if (!debugserver::InitPerfPreProcess(config))
+      if (!insntrace::InitPerfPreProcess(config))
         return false;
     } else if (action == "start") {
-      if (!debugserver::StartCpuPerf(config)) {
+      if (!insntrace::StartCpuPerf(config)) {
         FXL_LOG(WARNING) << "Start failed, but buffers not removed";
         return false;
       }
     } else if (action == "stop") {
-      debugserver::StopCpuPerf(config);
-      debugserver::StopPerf(config);
+      insntrace::StopCpuPerf(config);
+      insntrace::StopPerf(config);
     } else if (action == "dump") {
-      debugserver::DumpCpuPerf(config);
-      debugserver::DumpPerf(config);
+      insntrace::DumpCpuPerf(config);
+      insntrace::DumpPerf(config);
     } else if (action == "reset") {
-      debugserver::ResetCpuPerf(config);
-      debugserver::FreeTrace(config);
+      insntrace::ResetCpuPerf(config);
+      insntrace::FreeTrace(config);
     } else {
       FXL_LOG(ERROR) << "Unrecognized action: " << action;
       return false;
@@ -433,10 +427,11 @@ static bool ControlIpt(const debugserver::IptConfig& config,
   return true;
 }
 
-static bool RunProgram(const debugserver::IptConfig& config,
-                       const fxl::CommandLine& cl) {
-  debugserver::util::Argv inferior_argv(cl.positional_args().begin(),
-                                        cl.positional_args().end());
+static bool RunProgram(const insntrace::IptConfig& config,
+                       const fxl::CommandLine& cl,
+                       std::shared_ptr<component::Services>& services) {
+  debugger_utils::Argv inferior_argv(cl.positional_args().begin(),
+                                     cl.positional_args().end());
 
   if (inferior_argv.size() == 0) {
     FXL_LOG(ERROR) << "Missing program";
@@ -449,9 +444,9 @@ static bool RunProgram(const debugserver::IptConfig& config,
   // can write to at the moment is the kernel debug log.
   setenv(ldso_trace_env_var, ldso_trace_value, 1);
 
-  debugserver::IptServer ipt(config);
+  insntrace::IptServer ipt(config);
 
-  auto inferior = new debugserver::Process(&ipt, &ipt);
+  auto inferior = new inferior_control::Process(&ipt, &ipt, services);
   inferior->set_argv(inferior_argv);
 
   ipt.set_current_process(inferior);
@@ -471,24 +466,26 @@ int main(int argc, char* argv[]) {
   }
 
   if (cl.HasOption("dump-arch", nullptr)) {
-    debugserver::arch::DumpArch(stdout);
+    inferior_control::DumpArch(stdout);
     return EXIT_SUCCESS;
   }
 
-  if (!debugserver::arch::x86::HaveProcessorTrace()) {
+  if (!debugger_utils::X86HaveProcessorTrace()) {
     FXL_LOG(ERROR) << "PT not supported";
     return EXIT_FAILURE;
   }
 
-  debugserver::IptConfig config = GetIptConfig(cl);
+  insntrace::IptConfig config = GetIptConfig(cl);
 
   FXL_LOG(INFO) << "insntrace control program starting";
+
+  auto environment_services = component::GetEnvironmentServices();
 
   bool success;
   if (cl.HasOption("control", nullptr)) {
     success = ControlIpt(config, cl);
   } else {
-    success = RunProgram(config, cl);
+    success = RunProgram(config, cl, environment_services);
   }
 
   if (!success) {

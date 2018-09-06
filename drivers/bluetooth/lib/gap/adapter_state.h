@@ -2,16 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GAP_ADAPTER_STATE_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GAP_ADAPTER_STATE_H_
 
 #include <cstdint>
 
+#include <zircon/assert.h>
+
 #include "garnet/drivers/bluetooth/lib/common/device_address.h"
+#include "garnet/drivers/bluetooth/lib/gap/gap.h"
 #include "garnet/drivers/bluetooth/lib/gap/low_energy_state.h"
 #include "garnet/drivers/bluetooth/lib/hci/acl_data_channel.h"
 #include "garnet/drivers/bluetooth/lib/hci/hci_constants.h"
 #include "garnet/drivers/bluetooth/lib/hci/lmp_feature_set.h"
-#include "lib/fxl/logging.h"
 
 namespace btlib {
 namespace gap {
@@ -35,6 +38,14 @@ class AdapterState final {
     return controller_address_;
   }
 
+  TechnologyType type() const {
+    // Note: we don't support BR/EDR only controllers.
+    if (IsBREDRSupported()) {
+      return TechnologyType::kDualMode;
+    }
+    return TechnologyType::kLowEnergy;
+  }
+
   // The features that are supported by this controller.
   const hci::LMPFeatureSet& features() const { return features_; }
 
@@ -51,7 +62,7 @@ class AdapterState final {
   // command list.
   inline bool IsCommandSupported(size_t octet,
                                  hci::SupportedCommand command_bit) const {
-    FXL_DCHECK(octet < sizeof(supported_commands_));
+    ZX_DEBUG_ASSERT(octet < sizeof(supported_commands_));
     return supported_commands_[octet] & static_cast<uint8_t>(command_bit);
   }
 
@@ -62,6 +73,9 @@ class AdapterState final {
   const hci::DataBufferInfo& bredr_data_buffer_info() const {
     return bredr_data_buffer_info_;
   }
+
+  // Returns the BR/EDR local name
+  const std::string local_name() const { return local_name_; }
 
  private:
   // Let Adapter directly write to the private members.
@@ -92,8 +106,13 @@ class AdapterState final {
   // BLE-specific state.
   LowEnergyState le_state_;
 
+  // Local name
+  std::string local_name_;
+
   // TODO(armansito): Add BREDRState class.
 };
 
 }  // namespace gap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GAP_ADAPTER_STATE_H_

@@ -13,11 +13,9 @@
 #include "lib/fxl/macros.h"
 #include "lib/fxl/strings/string_view.h"
 
-namespace debugserver {
+namespace inferior_control {
 
 class Thread;
-
-namespace arch {
 
 // Returns the register number for the "Program Counter Register" on the current
 // platform. Returns -1, if this operation is not supported.
@@ -163,5 +161,4 @@ class Registers {
   FXL_DISALLOW_COPY_AND_ASSIGN(Registers);
 };
 
-}  // namespace arch
-}  // namespace debugserver
+}  // namespace inferior_control

@@ -6,11 +6,11 @@
 #include "garnet/lib/ui/gfx/resources/nodes/shape_node.h"
 #include "garnet/lib/ui/gfx/resources/shapes/circle_shape.h"
 #include "garnet/lib/ui/gfx/tests/session_test.h"
-#include "lib/ui/scenic/fidl_helpers.h"
+#include "lib/ui/scenic/cpp/commands.h"
 
 #include "gtest/gtest.h"
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 namespace test {
 
@@ -24,7 +24,8 @@ TEST_F(SessionTest, ScheduleUpdateOutOfOrder) {
                                ::fidl::VectorPtr<zx::event>(),
                                ::fidl::VectorPtr<zx::event>(), [](auto) {}));
   ExpectLastReportedError(
-      "scenic::gfx::Session: Present called with out-of-order presentation "
+      "scenic_impl::gfx::Session: Present called with out-of-order "
+      "presentation "
       "time. requested presentation time=0, last scheduled presentation "
       "time=1.");
 }
@@ -75,15 +76,8 @@ TEST_F(SessionTest, AddAndRemoveResource) {
   EXPECT_EQ(0U, session_->GetMappedResourceCount());
 }
 
-TEST_F(SessionTest, CreateViewWithBadTokenDies) {
-  EXPECT_DEATH_IF_SUPPORTED(
-      Apply(scenic::NewCreateViewCmd(1, zx::eventpair(), "")), "");
-  EXPECT_DEATH_IF_SUPPORTED(
-      Apply(scenic::NewCreateViewHolderCmd(2, zx::eventpair(), "")), "");
-}
-
 TEST_F(SessionTest, Labeling) {
-  const scenic::ResourceId kNodeId = 1;
+  const ResourceId kNodeId = 1;
   const std::string kShortLabel = "test!";
   const std::string kLongLabel =
       std::string(::fuchsia::ui::gfx::kLabelMaxLength, 'x');
@@ -114,4 +108,4 @@ TEST_F(SessionTest, Labeling) {
 
 }  // namespace test
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl

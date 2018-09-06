@@ -24,12 +24,9 @@ using escher::vec3;
 
 const float kRectYPos = 40.f;
 
-WobblyRingsScene::WobblyRingsScene(Demo* demo,
-                                   vec3 clear_color,
-                                   vec3 ring1_color,
-                                   vec3 ring2_color,
-                                   vec3 ring3_color,
-                                   vec3 circle_color,
+WobblyRingsScene::WobblyRingsScene(Demo* demo, vec3 clear_color,
+                                   vec3 ring1_color, vec3 ring2_color,
+                                   vec3 ring3_color, vec3 circle_color,
                                    vec3 checkerboard_color)
     : Scene(demo), clear_color_(clear_color) {
   ring1_color_ = fxl::MakeRefCounted<escher::Material>();
@@ -77,9 +74,9 @@ void WobblyRingsScene::Init(escher::Stage* stage) {
 
 WobblyRingsScene::~WobblyRingsScene() {}
 
-escher::Model* WobblyRingsScene::Update(const escher::Stopwatch& stopwatch,
-                                        uint64_t frame_count,
-                                        escher::Stage* stage) {
+escher::Model* WobblyRingsScene::Update(
+    const escher::Stopwatch& stopwatch, uint64_t frame_count,
+    escher::Stage* stage, escher::PaperRenderQueue* render_queue) {
   stage->set_clear_color(clear_color_);
   float current_time_sec = stopwatch.GetElapsedSeconds();
 

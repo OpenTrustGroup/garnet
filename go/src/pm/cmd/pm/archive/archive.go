@@ -8,6 +8,7 @@ package archive
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -19,9 +20,25 @@ import (
 	"fuchsia.googlesource.com/pm/pkg"
 )
 
+const usage = `Usage: %s archive
+construct a single .far representation of the package
+`
+
 // Run reads the configured package meta FAR and produces a whole-package
 // archive including the metadata and the blobs.
-func Run(cfg *build.Config) error {
+func Run(cfg *build.Config, args []string) error {
+	fs := flag.NewFlagSet("archive", flag.ExitOnError)
+
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, usage, filepath.Base(os.Args[0]))
+		fmt.Fprintln(os.Stderr)
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
 	mfest, err := cfg.Manifest()
 	if err != nil {
 		return err
@@ -60,12 +77,13 @@ func Run(cfg *build.Config) error {
 		var line string
 		line, err = buf.ReadString('\n')
 		nameMerkle := strings.SplitN(strings.TrimSpace(line), "=", 2)
+
 		if len(nameMerkle) != 2 {
 			if err == nil {
 				continue
 			}
 			if err == io.EOF {
-				return nil
+				break
 			}
 			return err
 		}

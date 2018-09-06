@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GATT_GATT_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GATT_GATT_H_
 
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
@@ -32,14 +33,14 @@ namespace gatt {
 //   * All client and server data bearers
 //   * L2CAP ATT fixed channels
 //
-// GATT requires an async dispatcher on initialization which will be used to
+// GATT requires an dispatcher on initialization which will be used to
 // serialize all internal GATT tasks.
 //
 // All public functions are asynchronous and thread-safe.
 class GATT : public fbl::RefCounted<GATT> {
  public:
   // Constructs a GATT object.
-  static fbl::RefPtr<GATT> Create(async_t* gatt_dispatcher);
+  static fbl::RefPtr<GATT> Create(async_dispatcher_t* gatt_dispatcher);
 
   // Initialize/ShutDown the GATT profile. It is safe for the caller to drop its
   // reference after ShutDown.
@@ -48,8 +49,10 @@ class GATT : public fbl::RefCounted<GATT> {
   virtual void Initialize() = 0;
   virtual void ShutDown() = 0;
 
-  // Initializes a new GATT profile connection with the given peer. The GATT
-  // profile is implemented over the L2CAP ATT fixed channel.
+  // Registers the given connection with the GATT profile without initiating
+  // service discovery. Once a connection is registered with GATT, the peer can
+  // access local services and clients can call the "Remote Service" methods
+  // below using |peer_id|.
   //
   // |peer_id|: The identifier for the peer device that the link belongs to.
   //            This is used to identify the peer while handling certain events.
@@ -127,20 +130,28 @@ class GATT : public fbl::RefCounted<GATT> {
   // The methods below are for interacting with remote GATT services. These
   // methods operate asynchronously.
 
+  // Perform service discovery and initialize remote services for the peer with
+  // the given |peer_id|.
+  virtual void DiscoverServices(std::string peer_id) = 0;
+
   // Register a handler that will be notified when a remote service gets
   // discovered on a connected peer.
   //
-  // |watcher| will be posted on an async dispatcher if one is provided.
+  // |watcher| will be posted on an dispatcher if one is provided.
   // Otherwise, it will run on an internal thread and the client is responsible
   // for synchronization.
   using RemoteServiceWatcher =
       fit::function<void(const std::string& peer_id,
                          fbl::RefPtr<RemoteService> service)>;
   virtual void RegisterRemoteServiceWatcher(RemoteServiceWatcher watcher,
-                                            async_t* dispatcher = nullptr) = 0;
+                                            async_dispatcher_t* dispatcher = nullptr) = 0;
 
   // Returns the list of remote services that were found on the device with
-  // |peer_id|. |callback| will run on the GATT loop.
+  // |peer_id|. If |peer_id| was registered but DiscoverServices() has not been
+  // called yet, this request will be buffered until remote services have been
+  // discovered. If the connection is removed without discovery services,
+  // |callback| will be called with an error status. |callback| will always run
+  // on the GATT loop.
   virtual void ListServices(std::string peer_id,
                             std::vector<common::UUID> uuids,
                             ServiceListCallback callback) = 0;
@@ -165,3 +176,5 @@ class GATT : public fbl::RefCounted<GATT> {
 
 }  // namespace gatt
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GATT_GATT_H_

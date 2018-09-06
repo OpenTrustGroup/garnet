@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef VP9_DECODER_H_
-#define VP9_DECODER_H_
+#ifndef GARNET_DRIVERS_VIDEO_AMLOGIC_DECODER_VP9_DECODER_H_
+#define GARNET_DRIVERS_VIDEO_AMLOGIC_DECODER_VP9_DECODER_H_
 
 #include <vector>
 
@@ -17,7 +17,23 @@ struct segmentation;
 
 class Vp9Decoder : public VideoDecoder {
  public:
-  explicit Vp9Decoder(Owner* owner);
+  enum class InputType {
+    // A single stream is decoded at once
+    kSingleStream,
+    // Multiple streams are decoded at once
+    kMultiStream,
+    // Multiple streams, each with input buffers divided on frame boundaries,
+    // are decoded at once.
+
+    kMultiFrameBased
+  };
+  class FrameDataProvider {
+   public:
+    // Returns how much data is currently available to be decoded.
+    virtual uint32_t GetInputDataSize() = 0;
+    virtual void FrameWasOutput() = 0;
+  };
+  explicit Vp9Decoder(Owner* owner, InputType input_type);
   Vp9Decoder(const Vp9Decoder&) = delete;
 
   ~Vp9Decoder() override;
@@ -25,8 +41,12 @@ class Vp9Decoder : public VideoDecoder {
   zx_status_t Initialize() override;
   void HandleInterrupt() override;
   void SetFrameReadyNotifier(FrameReadyNotifier notifier) override;
+  void ReturnFrame(std::shared_ptr<VideoFrame> frame) override;
 
  private:
+  friend class Vp9UnitTest;
+  friend class TestVP9;
+  friend class TestFrameProvider;
   class WorkingBuffer;
 
   class BufferAllocator {
@@ -82,8 +102,14 @@ class Vp9Decoder : public VideoDecoder {
   struct Frame {
     ~Frame();
 
+    // Index into frames_.
+    uint32_t index;
+
+    // This is the count of references from reference_frame_map_, last_frame_,
+    // current_frame_, and any buffers the ultimate consumers have outstanding.
+    int32_t refcount = 0;
     // Allocated on demand.
-    std::unique_ptr<VideoFrame> frame;
+    std::shared_ptr<VideoFrame> frame;
     // With the MMU enabled the compressed frame header is stored separately
     // from the data itself, allowing the data to be allocated in noncontiguous
     // memory.
@@ -91,12 +117,22 @@ class Vp9Decoder : public VideoDecoder {
 
     io_buffer_t compressed_data = {};
 
+    // This stores the motion vectors used to decode this frame for use in
+    // calculating motion vectors for the next frame.
+    io_buffer_t mv_mpred_buffer = {};
+
     // This is decoded_frame_count_ when this frame was decoded into.
     uint32_t decoded_index = 0xffffffff;
   };
 
   struct PictureData {
-    bool keyframe;
+    bool keyframe = false;
+    bool intra_only = false;
+    uint32_t refresh_frame_flags = 0;
+    bool show_frame;
+    bool error_resilient_mode;
+    bool has_pts = false;
+    uint64_t pts = 0;
   };
 
   union HardwareRenderParams;
@@ -104,33 +140,52 @@ class Vp9Decoder : public VideoDecoder {
   zx_status_t AllocateFrames();
   void InitializeHardwarePictureList();
   void InitializeParser();
-  void FindNewFrameBuffer(HardwareRenderParams* params);
+  bool FindNewFrameBuffer(HardwareRenderParams* params);
   void InitLoopFilter();
   void UpdateLoopFilter(HardwareRenderParams* params);
   void ProcessCompletedFrames();
+  void ShowExistingFrame(HardwareRenderParams* params);
   void PrepareNewFrame();
-  void ConfigureFrameOutput(uint32_t width, uint32_t height);
+  void ConfigureFrameOutput(uint32_t width, uint32_t height, bool bit_depth_8);
   void ConfigureMcrcc();
   void UpdateLoopFilterThresholds();
   void ConfigureMotionPrediction();
+  void ConfigureReferenceFrameHardware();
+  void SetRefFrames(HardwareRenderParams* params);
+  zx_status_t InitializeBuffers();
+  zx_status_t InitializeHardware();
+  void InitializeLoopFilterData();
+  void SetFrameDataProvider(FrameDataProvider* provider) {
+    frame_data_provider_ = provider;
+  }
 
   Owner* owner_;
+  InputType input_type_;
+  FrameDataProvider* frame_data_provider_ = nullptr;
 
   WorkingBuffers working_buffers_;
   FrameReadyNotifier notifier_;
 
   std::vector<std::unique_ptr<Frame>> frames_;
-  int current_frame_idx_ = -1;
+  Frame* last_frame_ = nullptr;
   Frame* current_frame_ = nullptr;
   std::unique_ptr<loop_filter_info_n> loop_filter_info_;
   std::unique_ptr<loopfilter> loop_filter_;
   std::unique_ptr<segmentation> segmentation_ = {};
+  bool waiting_for_empty_frames_ = false;
 
   // This is the count of frames decoded since this object was created.
   uint32_t decoded_frame_count_ = 0;
 
   PictureData last_frame_data_;
   PictureData current_frame_data_;
+  // The VP9 specification requires that 8 reference frames can be stored -
+  // they're saved in this structure.
+  Frame* reference_frame_map_[8] = {};
+
+  // Each frame that's being decoded can reference 3 of the frames that are in
+  // reference_frame_map_.
+  Frame* current_reference_frames_[3] = {};
 };
 
-#endif  // VP9_DECODER_H_
+#endif  // GARNET_DRIVERS_VIDEO_AMLOGIC_DECODER_VP9_DECODER_H_

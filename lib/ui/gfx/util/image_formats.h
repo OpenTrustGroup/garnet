@@ -13,15 +13,9 @@
 // TODO(MZ-547): Merge with existing image conversion libraries in media:
 // bin/media/video/video_converter.h
 
-namespace scenic {
+namespace scenic_impl {
 namespace gfx {
 namespace image_formats {
-
-// Returns the number of bytes per pixel for the given format.
-size_t BytesPerPixel(const fuchsia::images::PixelFormat& pixel_format);
-
-// Returns the pixel alignment for the given format.
-size_t PixelAlignment(const fuchsia::images::PixelFormat& pixel_format);
 
 // Returns a function that can be used to convert any format supported in
 // ImageInfo into a BGRA_8 image.
@@ -30,6 +24,6 @@ escher::image_utils::ImageConversionFunction GetFunctionToConvertToBgra8(
 
 }  // namespace image_formats
 }  // namespace gfx
-}  // namespace scenic
+}  // namespace scenic_impl
 
 #endif  // GARNET_LIB_UI_GFX_UTIL_IMAGE_FORMATS_H_

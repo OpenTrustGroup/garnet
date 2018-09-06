@@ -1,4 +1,11 @@
-use {Status, ok, sys};
+// Copyright 2018 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+//! Type-safe bindings for the Zircon kernel's CPRNG.
+//!
+use crate::{Status, ok};
+use fuchsia_zircon_sys as sys;
 
 /// Draw random bytes from the kernel's CPRNG to fill the given buffer. Returns the actual number of
 /// bytes drawn, which is always the size of the buffer provided.

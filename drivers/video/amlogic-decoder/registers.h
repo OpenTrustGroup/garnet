@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef REGISTERS_H_
-#define REGISTERS_H_
+#ifndef GARNET_DRIVERS_VIDEO_AMLOGIC_DECODER_REGISTERS_H_
+#define GARNET_DRIVERS_VIDEO_AMLOGIC_DECODER_REGISTERS_H_
 
 #include <hwreg/bitfields.h>
 #include <hwreg/mmio.h>
@@ -298,6 +298,12 @@ REGISTER_NAME(HevcCabacControl, DosRegisterIo, 0x3110)
 REGISTER_NAME(HevcParserCoreControl, DosRegisterIo, 0x3113)
   DEF_BIT(0, clock_enable);
 };
+DEFINE_REGISTER(HevcStreamSwapAddr, DosRegisterIo, 0x3134);
+REGISTER_NAME(HevcStreamSwapCtrl, DosRegisterIo, 0x3135)
+  DEF_BIT(0, enable);
+  DEF_BIT(1, save); // 0 means restore
+  DEF_BIT(7, in_progress);
+};
 DEFINE_REGISTER(HevcIqitScalelutWrAddr, DosRegisterIo, 0x3702);
 DEFINE_REGISTER(HevcIqitScalelutData, DosRegisterIo, 0x3704);
 DEFINE_REGISTER(HevcParserCmdWrite, DosRegisterIo, 0x3112);
@@ -312,10 +318,17 @@ DEFINE_REGISTER(HevcParserCmdSkip0, DosRegisterIo, 0x3128);
 DEFINE_REGISTER(HevcParserCmdSkip1, DosRegisterIo, 0x3129);
 DEFINE_REGISTER(HevcParserCmdSkip2, DosRegisterIo, 0x312a);
 
+DEFINE_REGISTER(HevcMpredAbvStartAddr, DosRegisterIo, 0x3212);
+DEFINE_REGISTER(HevcMpredMvWrStartAddr, DosRegisterIo, 0x3213);
+DEFINE_REGISTER(HevcMpredMvRdStartAddr, DosRegisterIo, 0x3214);
+DEFINE_REGISTER(HevcMpredMvWptr, DosRegisterIo, 0x3215);
+DEFINE_REGISTER(HevcMpredMvRptr, DosRegisterIo, 0x3216);
+DEFINE_REGISTER(HevcMpredCurrLcu, DosRegisterIo, 0x3219);
 DEFINE_REGISTER(HevcMpredCtrl3, DosRegisterIo, 0x321d);
 REGISTER_NAME(HevcMpredCtrl4, DosRegisterIo, 0x324c)
   DEF_BIT(6, use_prev_frame_mvs);
 };
+DEFINE_REGISTER(HevcMpredMvRdEndAddr, DosRegisterIo, 0x3262);
 
 DEFINE_REGISTER(HevcMpsr, DosRegisterIo, 0x3301);
 DEFINE_REGISTER(HevcCpsr, DosRegisterIo, 0x3321);
@@ -339,9 +352,21 @@ REGISTER_NAME(HevcdIppAxiifConfig, DosRegisterIo, 0x340b)
   DEF_FIELD(3, 0, double_write_endian);
 };
 
-DEFINE_REGISTER(HevcdMppAnc2AxiTblConfAddr, DosRegisterIo, 0x3460);
+DEFINE_REGISTER(Vp9dMppRefScaleEnable, DosRegisterIo, 0x3441);
+REGISTER_NAME(Vp9dMppRefinfoTblAccconfig, DosRegisterIo, 0x3442)
+  DEF_BIT(2, bit2);
+};
+DEFINE_REGISTER(Vp9dMppRefinfoData, DosRegisterIo, 0x3443);
+REGISTER_NAME(HevcdMppAnc2AxiTblConfAddr, DosRegisterIo, 0x3460)
+  DEF_BIT(1, bit1);
+  DEF_BIT(2, bit2);
+};
 DEFINE_REGISTER(HevcdMppAnc2AxiTblData, DosRegisterIo, 0x3464);
-DEFINE_REGISTER(HevcdMppAncCanvasAccconfigAddr, DosRegisterIo, 0x34c0);
+REGISTER_NAME(HevcdMppAncCanvasAccconfigAddr, DosRegisterIo, 0x34c0);
+  DEF_BIT(0, bit0); // Probably signals a write.
+  DEF_BIT(1, bit1);
+  DEF_FIELD(15, 8, field15_8);
+};
 DEFINE_REGISTER(HevcdMppAncCanvasDataAddr, DosRegisterIo, 0x34c1);
 
 REGISTER_NAME(HevcdMppDecompCtl1, DosRegisterIo, 0x34c2)
@@ -448,34 +473,6 @@ REGISTER_NAME(DmcReqCtrl, DmcRegisterIo, 0x0)
   DEF_BIT(13, vdec);
 };
 
-REGISTER_NAME(DmcCavLutDatal, DmcRegisterIo, 0x12)
-    DEF_FIELD(28, 0, addr) // Shifted down by 3
-    DEF_FIELD(31, 29, width_lower) // Shifted down by 3
-};
-
-REGISTER_NAME(DmcCavLutDatah, DmcRegisterIo, 0x13)
-    DEF_FIELD(8, 0, width_upper) // Shifted down by 6
-    DEF_FIELD(21, 9, height)
-    DEF_BIT(22, wrap_x)
-    DEF_BIT(23, wrap_y)
-    DEF_FIELD(25, 24, block_mode)
-    DEF_FIELD(29, 26, endianness)
-
-    enum {
-        kBlockModeLinear = 0,
-        kBlockMode32x32 = 1
-    };
-};
-
-REGISTER_NAME(DmcCavLutAddr, DmcRegisterIo, 0x14)
-    DEF_BIT(9, wr_en)
-    DEF_BIT(8, rd_en)
-    DEF_FIELD(7, 0, index)
-};
-
-DEFINE_REGISTER(DmcCavLutRdataL, DmcRegisterIo, 0x15)
-DEFINE_REGISTER(DmcCavLutRdataH, DmcRegisterIo, 0x16)
-
 DEFINE_REGISTER(Reset0Register, ResetRegisterIo, 0x1101);
 REGISTER_NAME(Reset1Register, ResetRegisterIo, 0x1102)
   DEF_BIT(8, parser)
@@ -528,6 +525,7 @@ REGISTER_NAME(ParserControl, ParserRegisterIo, 0x2960)
 
 DEFINE_REGISTER(ParserVideoStartPtr, ParserRegisterIo, 0x2980)
 DEFINE_REGISTER(ParserVideoEndPtr, ParserRegisterIo, 0x2981)
+DEFINE_REGISTER(ParserVideoWp, ParserRegisterIo, 0x2982)
 
 REGISTER_NAME(ParserEsControl, ParserRegisterIo, 0x2977)
   DEF_BIT(0, video_manual_read_ptr_update)
@@ -535,6 +533,7 @@ REGISTER_NAME(ParserEsControl, ParserRegisterIo, 0x2977)
 
 REGISTER_NAME(ParserIntStatus, ParserRegisterIo, 0x296c)
   DEF_BIT(7, fetch_complete)
+  DEF_BIT(0, start_code_found)
 };
 REGISTER_NAME(ParserIntEnable, ParserRegisterIo, 0x296b)
   DEF_BIT(8, host_en_start_code_found)
@@ -552,4 +551,4 @@ REGISTER_NAME(ParserFetchCmd, ParserRegisterIo, 0x2962)
 #undef REGISTER_NAME
 #undef DEFINE_REGISTER
 
-#endif  // REGISTERS_H_
+#endif  // GARNET_DRIVERS_VIDEO_AMLOGIC_DECODER_REGISTERS_H_

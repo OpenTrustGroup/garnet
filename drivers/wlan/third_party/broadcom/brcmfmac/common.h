@@ -15,9 +15,6 @@
 #ifndef BRCMFMAC_COMMON_H
 #define BRCMFMAC_COMMON_H
 
-//#include <linux/platform_data/brcmfmac.h>
-//#include <linux/platform_device.h>
-
 #include "core.h"
 #include "device.h"
 #include "fwil_types.h"
@@ -47,6 +44,18 @@ struct brcmf_mp_global_t {
 extern struct brcmf_mp_global_t brcmf_mp_global;
 
 /**
+ * struct brcmfmac_sdio_pd - SDIO-specific device module parameters
+ */
+struct brcmfmac_sdio_pd {
+    int sd_sgentry_align;
+    int sd_head_align;
+    int drive_strength;
+    size_t txglomsz;
+    int oob_irq_flags;
+    int oob_irq_supported;
+};
+
+/**
  * struct brcmf_mp_device - Device module paramaters.
  *
  * @p2p_enable: Legacy P2P0 enable (old wpa_supplicant).
@@ -64,7 +73,7 @@ struct brcmf_mp_device {
     bool roamoff;
     bool ignore_probe_fail;
     struct brcmfmac_pd_cc* country_codes;
-    union {
+    struct {
         struct brcmfmac_sdio_pd sdio;
     } bus;
 };

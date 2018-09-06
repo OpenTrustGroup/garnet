@@ -90,8 +90,6 @@ type Interface struct {
 	EventSenderName string
 	SyncName        string
 	SyncProxyName   string
-	Sync2Name       string
-	Sync2ProxyName  string
 	Methods         []Method
 }
 
@@ -313,7 +311,6 @@ var reservedWords = map[string]bool{
 
 var primitiveTypes = map[types.PrimitiveSubtype]string{
 	types.Bool:    "bool",
-	types.Status:  "zx_status_t",
 	types.Int8:    "int8_t",
 	types.Int16:   "int16_t",
 	types.Int32:   "int32_t",
@@ -455,7 +452,7 @@ func (c *compiler) compileType(val types.Type) Type {
 	case types.RequestType:
 		t := c.compileCompoundIdentifier(val.RequestSubtype, "")
 		r.Decl = fmt.Sprintf("::fidl::InterfaceRequest<%s>", t)
-		r.Dtor = fmt.Sprintf("~InterfaceRequest", r.Decl)
+		r.Dtor = "~InterfaceRequest"
 	case types.PrimitiveType:
 		r.Decl = c.compilePrimitiveSubtype(val.PrimitiveSubtype)
 	case types.IdentifierType:
@@ -556,8 +553,6 @@ func (c *compiler) compileInterface(val types.Interface) Interface {
 		c.compileCompoundIdentifier(val.Name, "_EventSender"),
 		c.compileCompoundIdentifier(val.Name, "_Sync"),
 		c.compileCompoundIdentifier(val.Name, "_SyncProxy"),
-		c.compileCompoundIdentifier(val.Name, "_Sync2"),
-		c.compileCompoundIdentifier(val.Name, "_Sync2Proxy"),
 		[]Method{},
 	}
 

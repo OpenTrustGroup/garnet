@@ -9,8 +9,8 @@
 
 #include <fbl/vector.h>
 #include <fuchsia/simplecamera/cpp/fidl.h>
-#include <lib/app/cpp/startup_context.h>
 #include <lib/async-loop/cpp/loop.h>
+#include <lib/component/cpp/startup_context.h>
 #include <lib/fxl/macros.h>
 #include <lib/ui/scenic/cpp/resources.h>
 #include <lib/ui/view_framework/base_view.h>
@@ -20,9 +20,9 @@ namespace video_display {
 class SimpleCameraView : public mozart::BaseView {
  public:
   SimpleCameraView(
-      async::Loop* loop, fuchsia::sys::StartupContext* startup_context,
-      ::fuchsia::ui::views_v1::ViewManagerPtr view_manager,
-      fidl::InterfaceRequest<::fuchsia::ui::views_v1_token::ViewOwner>
+      async::Loop* loop, component::StartupContext* startup_context,
+      ::fuchsia::ui::viewsv1::ViewManagerPtr view_manager,
+      fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
           view_owner_request,
       bool use_fake_camera);
 
@@ -38,7 +38,7 @@ class SimpleCameraView : public mozart::BaseView {
   scenic::ShapeNode node_;
 
   // Client Application:
-  fuchsia::sys::Services simple_camera_provider_;
+  component::Services simple_camera_provider_;
   fuchsia::sys::ComponentControllerPtr controller_;
   fuchsia::simplecamera::SimpleCameraPtr simple_camera_;
 

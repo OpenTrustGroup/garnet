@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GAP_LOW_ENERGY_CONNECTION_MANAGER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GAP_LOW_ENERGY_CONNECTION_MANAGER_H_
 
 #include <list>
 #include <memory>
@@ -39,6 +40,7 @@ class LowEnergyConnection;
 // TODO(armansito): Document the usage pattern.
 
 class LowEnergyConnectionManager;
+class PairingDelegate;
 class RemoteDevice;
 class RemoteDeviceCache;
 
@@ -119,6 +121,8 @@ class LowEnergyConnectionManager final {
   bool Connect(const std::string& device_identifier,
                ConnectionResultCallback callback);
 
+  RemoteDeviceCache* device_cache() { return device_cache_; }
+
   // Disconnects any existing LE connection to |device_identifier|, invalidating
   // all active LowEnergyConnectionRefs. Returns false if |device_identifier| is
   // not recognized or the corresponding remote device is not connected.
@@ -135,6 +139,15 @@ class LowEnergyConnectionManager final {
   // A link with the given handle should not have been previously registered.
   LowEnergyConnectionRefPtr RegisterRemoteInitiatedLink(
       hci::ConnectionPtr link);
+
+  // Returns the PairingDelegate currently assigned to this connection manager.
+  PairingDelegate* pairing_delegate() const { return pairing_delegate_.get(); }
+
+  // Assigns a new PairingDelegate to handle LE authentication challenges.
+  // Replacing an existing pairing delegate cancels all ongoing pairing
+  // procedures. If a delegate is not set then all pairing requests will be
+  // rejected.
+  void SetPairingDelegate(fxl::WeakPtr<PairingDelegate> delegate);
 
   // TODO(armansito): Add a RemoteDeviceCache::Observer interface and move these
   // callbacks there.
@@ -301,12 +314,16 @@ class LowEnergyConnectionManager final {
 
   fxl::RefPtr<hci::Transport> hci_;
 
+  // The pairing delegate used for authentication challenges. If nullptr, all
+  // pairing requests will be rejected.
+  fxl::WeakPtr<PairingDelegate> pairing_delegate_;
+
   // Time after which a connection attempt is considered to have timed out. This
   // is configurable to allow unit tests to set a shorter value.
   int64_t request_timeout_ms_;
 
   // The dispather for all asynchronous tasks.
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
 
   // The device cache is used to look up and persist remote device data that is
   // relevant during connection establishment (such as the address, preferred
@@ -354,3 +371,5 @@ class LowEnergyConnectionManager final {
 
 }  // namespace gap
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GAP_LOW_ENERGY_CONNECTION_MANAGER_H_

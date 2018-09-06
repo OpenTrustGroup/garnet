@@ -7,6 +7,7 @@
 #include <lib/async/default.h>
 #include <zircon/status.h>
 
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/hci/acl_data_packet.h"
 #include "garnet/drivers/bluetooth/lib/hci/hci_constants.h"
 
@@ -30,11 +31,11 @@ bool FakeControllerBase::StartCmdChannel(zx::channel chan) {
   cmd_channel_ = std::move(chan);
   cmd_channel_wait_.set_object(cmd_channel_.get());
   cmd_channel_wait_.set_trigger(ZX_CHANNEL_READABLE | ZX_CHANNEL_PEER_CLOSED);
-  zx_status_t status = cmd_channel_wait_.Begin(async_get_default());
+  zx_status_t status = cmd_channel_wait_.Begin(async_get_default_dispatcher());
   if (status != ZX_OK) {
     cmd_channel_.reset();
-    FXL_LOG(WARNING) << "FakeController: Failed to Start Command channel: "
-                     << zx_status_get_string(status);
+    bt_log(WARN, "fake-hci", "failed to start command channel: %s",
+           zx_status_get_string(status));
     return false;
   }
   return true;
@@ -48,11 +49,11 @@ bool FakeControllerBase::StartAclChannel(zx::channel chan) {
   acl_channel_ = std::move(chan);
   acl_channel_wait_.set_object(acl_channel_.get());
   acl_channel_wait_.set_trigger(ZX_CHANNEL_READABLE | ZX_CHANNEL_PEER_CLOSED);
-  zx_status_t status = acl_channel_wait_.Begin(async_get_default());
+  zx_status_t status = acl_channel_wait_.Begin(async_get_default_dispatcher());
   if (status != ZX_OK) {
     acl_channel_.reset();
-    FXL_LOG(WARNING) << "FakeController: Failed to Start ACL channel: "
-                     << zx_status_get_string(status);
+    bt_log(WARN, "fake-hci", "failed to start ACL channel: %s",
+           zx_status_get_string(status));
     return false;
   }
   return true;
@@ -68,8 +69,8 @@ zx_status_t FakeControllerBase::SendCommandChannelPacket(
   zx_status_t status =
       cmd_channel_.write(0, packet.data(), packet.size(), nullptr, 0);
   if (status != ZX_OK) {
-    FXL_LOG(WARNING) << "FakeController: Failed to write to control channel: "
-                     << zx_status_get_string(status);
+    bt_log(WARN, "fake-hci", "failed to write to control channel: %s",
+           zx_status_get_string(status));
   }
   return status;
 }
@@ -79,8 +80,8 @@ zx_status_t FakeControllerBase::SendACLDataChannelPacket(
   zx_status_t status =
       acl_channel_.write(0, packet.data(), packet.size(), nullptr, 0);
   if (status != ZX_OK) {
-    FXL_LOG(WARNING) << "FakeController: Failed to write to ACL data channel: "
-                     << zx_status_get_string(status);
+    bt_log(WARN, "fake-hci", "failed to write to ACL data channel: %s",
+           zx_status_get_string(status));
   }
   return status;
 }
@@ -102,7 +103,7 @@ void FakeControllerBase::CloseACLDataChannel() {
 }
 
 void FakeControllerBase::HandleCommandPacket(
-    async_t* async,
+    async_dispatcher_t* dispatcher,
     async::WaitBase* wait,
     zx_status_t wait_status,
     const zx_packet_signal_t* signal) {
@@ -111,20 +112,20 @@ void FakeControllerBase::HandleCommandPacket(
   zx_status_t status = cmd_channel_.read(0u, buffer.mutable_data(),
                                          hci::kMaxCommandPacketPayloadSize,
                                          &read_size, nullptr, 0, nullptr);
-  FXL_DCHECK(status == ZX_OK || status == ZX_ERR_PEER_CLOSED);
+  ZX_DEBUG_ASSERT(status == ZX_OK || status == ZX_ERR_PEER_CLOSED);
   if (status < 0) {
-    if (status == ZX_ERR_PEER_CLOSED)
-      FXL_LOG(INFO) << "Command channel was closed";
-    else
-      FXL_LOG(ERROR) << "Failed to read on cmd channel: "
-                     << zx_status_get_string(status);
-
+    if (status == ZX_ERR_PEER_CLOSED) {
+      bt_log(INFO, "fake-hci", "command channel was closed");
+    } else {
+      bt_log(ERROR, "fake-hci", "failed to read on cmd channel: %s",
+             zx_status_get_string(status));
+    }
     CloseCommandChannel();
     return;
   }
 
   if (read_size < sizeof(hci::CommandHeader)) {
-    FXL_LOG(ERROR) << "Malformed command packet received";
+    bt_log(ERROR, "fake-hci", "malformed command packet received");
   } else {
     common::MutableBufferView view(buffer.mutable_data(), read_size);
     common::PacketView<hci::CommandHeader> packet(
@@ -132,16 +133,16 @@ void FakeControllerBase::HandleCommandPacket(
     OnCommandPacketReceived(packet);
   }
 
-  status = wait->Begin(async);
+  status = wait->Begin(dispatcher);
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to wait on cmd channel: "
-                   << zx_status_get_string(status);
+    bt_log(ERROR, "fake-hci", "failed to wait on cmd channel: %s",
+           zx_status_get_string(status));
     CloseCommandChannel();
   }
 }
 
 void FakeControllerBase::HandleACLPacket(
-    async_t* async,
+    async_dispatcher_t* dispatcher,
     async::WaitBase* wait,
     zx_status_t wait_status,
     const zx_packet_signal_t* signal) {
@@ -151,13 +152,14 @@ void FakeControllerBase::HandleACLPacket(
   zx_status_t status =
       acl_channel_.read(0u, buffer.mutable_data(), buffer.size(), &read_size,
                         nullptr, 0, nullptr);
-  FXL_DCHECK(status == ZX_OK || status == ZX_ERR_PEER_CLOSED);
+  ZX_DEBUG_ASSERT(status == ZX_OK || status == ZX_ERR_PEER_CLOSED);
   if (status < 0) {
-    if (status == ZX_ERR_PEER_CLOSED)
-      FXL_LOG(INFO) << "ACL channel was closed";
-    else
-      FXL_LOG(ERROR) << "Failed to read on ACL channel: "
-                     << zx_status_get_string(status);
+    if (status == ZX_ERR_PEER_CLOSED) {
+      bt_log(INFO, "fake-hci", "ACL channel was closed");
+    } else {
+      bt_log(ERROR, "fake-hci", "failed to read on ACL channel: %s",
+             zx_status_get_string(status));
+    }
 
     CloseACLDataChannel();
     return;
@@ -166,10 +168,10 @@ void FakeControllerBase::HandleACLPacket(
   common::BufferView view(buffer.data(), read_size);
   OnACLDataPacketReceived(view);
 
-  status = wait->Begin(async);
+  status = wait->Begin(dispatcher);
   if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to wait on ACL channel: "
-                   << zx_status_get_string(status);
+    bt_log(ERROR, "fake-hci", "failed to wait on ACL channel: %s",
+           zx_status_get_string(status));
     CloseACLDataChannel();
   }
 }

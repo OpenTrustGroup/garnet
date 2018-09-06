@@ -4,7 +4,9 @@
 
 #include "channel_manager.h"
 
-#include "lib/fxl/logging.h"
+#include <zircon/assert.h>
+
+#include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "lib/fxl/strings/string_printf.h"
 
 #include "logical_link.h"
@@ -13,10 +15,10 @@ namespace btlib {
 namespace l2cap {
 
 ChannelManager::ChannelManager(fxl::RefPtr<hci::Transport> hci,
-                               async_t* l2cap_dispatcher)
+                               async_dispatcher_t* l2cap_dispatcher)
     : hci_(hci), l2cap_dispatcher_(l2cap_dispatcher), weak_ptr_factory_(this) {
-  FXL_DCHECK(hci_);
-  FXL_DCHECK(l2cap_dispatcher_);
+  ZX_DEBUG_ASSERT(hci_);
+  ZX_DEBUG_ASSERT(l2cap_dispatcher_);
 
   // TODO(armansito): NET-353
   auto self = weak_ptr_factory_.GetWeakPtr();
@@ -31,7 +33,7 @@ ChannelManager::ChannelManager(fxl::RefPtr<hci::Transport> hci,
 }
 
 ChannelManager::~ChannelManager() {
-  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+  ZX_DEBUG_ASSERT(thread_checker_.IsCreationThreadCurrent());
   hci_->acl_data_channel()->SetDataRxHandler(nullptr, nullptr);
 }
 
@@ -39,9 +41,9 @@ void ChannelManager::RegisterACL(
     hci::ConnectionHandle handle,
     hci::Connection::Role role,
     LinkErrorCallback link_error_cb,
-    async_t* dispatcher) {
-  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
-  FXL_VLOG(1) << "l2cap: register ACL link (handle: " << handle << ")";
+    async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(thread_checker_.IsCreationThreadCurrent());
+  bt_log(TRACE, "l2cap", "register ACL link (handle: %#.4x)", handle);
 
   auto* ll = RegisterInternal(handle, hci::Connection::LinkType::kACL, role);
   ll->set_error_callback(std::move(link_error_cb), dispatcher);
@@ -52,9 +54,9 @@ void ChannelManager::RegisterLE(
     hci::Connection::Role role,
     LEConnectionParameterUpdateCallback conn_param_cb,
     LinkErrorCallback link_error_cb,
-    async_t* dispatcher) {
-  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
-  FXL_VLOG(1) << "l2cap: register LE link (handle: " << handle << ")";
+    async_dispatcher_t* dispatcher) {
+  ZX_DEBUG_ASSERT(thread_checker_.IsCreationThreadCurrent());
+  bt_log(TRACE, "l2cap", "register LE link (handle: %#.4x)", handle);
 
   auto* ll = RegisterInternal(handle, hci::Connection::LinkType::kLE, role);
   ll->set_error_callback(std::move(link_error_cb), dispatcher);
@@ -63,26 +65,26 @@ void ChannelManager::RegisterLE(
 }
 
 void ChannelManager::Unregister(hci::ConnectionHandle handle) {
-  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+  ZX_DEBUG_ASSERT(thread_checker_.IsCreationThreadCurrent());
 
-  FXL_VLOG(1) << "l2cap: unregister LE link (handle: " << handle << ")";
+  bt_log(TRACE, "l2cap", "unregister link (handle: %#.4x)", handle);
 
   pending_packets_.erase(handle);
   auto count = ll_map_.erase(handle);
-  FXL_DCHECK(count) << fxl::StringPrintf(
-      "l2cap: Attempted to remove unknown connection handle: 0x%04x", handle);
+  ZX_DEBUG_ASSERT_MSG(
+      count, "attempted to remove unknown connection handle: %#.4x", handle);
 }
 
 fbl::RefPtr<Channel> ChannelManager::OpenFixedChannel(
     hci::ConnectionHandle handle,
     ChannelId channel_id) {
-  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+  ZX_DEBUG_ASSERT(thread_checker_.IsCreationThreadCurrent());
 
   auto iter = ll_map_.find(handle);
   if (iter == ll_map_.end()) {
-    FXL_LOG(ERROR) << fxl::StringPrintf(
-        "l2cap: Cannot open fixed channel on unknown connection handle: 0x%04x",
-        handle);
+    bt_log(ERROR, "l2cap",
+           "cannot open fixed channel on unknown connection handle: %#.4x",
+           handle);
     return nullptr;
   }
 
@@ -90,7 +92,7 @@ fbl::RefPtr<Channel> ChannelManager::OpenFixedChannel(
 }
 
 void ChannelManager::OnACLDataReceived(hci::ACLDataPacketPtr packet) {
-  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+  ZX_DEBUG_ASSERT(thread_checker_.IsCreationThreadCurrent());
 
   // TODO(armansito): Route packets based on channel priority, prioritizing
   // Guaranteed channels over Best Effort. Right now all channels are Best
@@ -115,9 +117,7 @@ void ChannelManager::OnACLDataReceived(hci::ACLDataPacketPtr packet) {
 
   if (pp_iter != pending_packets_.end()) {
     pp_iter->second.push_back(std::move(packet));
-
-    FXL_VLOG(2) << fxl::StringPrintf(
-        "l2cap: Queued rx packet on handle: 0x%04x", handle);
+    bt_log(SPEW, "l2cap", "queued rx packet on handle: %#.4x", handle);
     return;
   }
 
@@ -128,11 +128,13 @@ internal::LogicalLink* ChannelManager::RegisterInternal(
     hci::ConnectionHandle handle,
     hci::Connection::LinkType ll_type,
     hci::Connection::Role role) {
-  FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+  ZX_DEBUG_ASSERT(thread_checker_.IsCreationThreadCurrent());
 
+  // TODO(armansito): Return nullptr instead of asserting. Callers shouldn't
+  // assume this will succeed.
   auto iter = ll_map_.find(handle);
-  FXL_DCHECK(iter == ll_map_.end()) << fxl::StringPrintf(
-      "l2cap: Connection handle re-used! (handle=0x%04x)", handle);
+  ZX_DEBUG_ASSERT_MSG(iter == ll_map_.end(),
+                      "connection handle re-used! (handle=%#.4x)", handle);
 
   auto ll = std::make_unique<internal::LogicalLink>(handle, ll_type, role,
                                                     l2cap_dispatcher_, hci_);

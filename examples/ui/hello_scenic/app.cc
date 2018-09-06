@@ -23,15 +23,14 @@
 #include <lib/async/cpp/task.h>
 #include <zx/time.h>
 
-#include "lib/app/cpp/connect.h"
+#include "lib/component/cpp/connect.h"
 #include "lib/escher/util/image_utils.h"
 
 #include "lib/fxl/functional/make_copyable.h"
 #include "lib/fxl/logging.h"
 
-#include "lib/ui/scenic/cpp/fidl_helpers.h"
+#include "lib/ui/scenic/cpp/commands.h"
 #include "lib/ui/scenic/cpp/host_memory.h"
-#include "lib/ui/scenic/types.h"
 
 using namespace scenic;
 
@@ -40,7 +39,7 @@ namespace hello_scenic {
 static constexpr uint64_t kBillion = 1000000000;
 
 App::App(async::Loop* loop)
-    : startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()),
+    : startup_context_(component::StartupContext::CreateFromStartupInfo()),
       loop_(loop) {
   // Connect to the SceneManager service.
   scenic_ = startup_context_
@@ -207,7 +206,8 @@ void App::Init(fuchsia::ui::gfx::DisplayInfo display_info) {
 
   // Wait kSessionDuration seconds, and close the session.
   constexpr int kSessionDuration = 40;
-  async::PostDelayedTask(loop_->async(), [this] { ReleaseSessionResources(); },
+  async::PostDelayedTask(loop_->dispatcher(),
+                         [this] { ReleaseSessionResources(); },
                          zx::sec(kSessionDuration));
 
   // Set up initial scene.

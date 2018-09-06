@@ -51,7 +51,7 @@ sysdrv_device_t* get_device(void* context) { return static_cast<sysdrv_device_t*
 // implement device protocol
 
 static zx_status_t sysdrv_common_ioctl(void* ctx, uint32_t op, const void* in_buf, size_t in_len,
-                                      void* out_buf, size_t out_len, size_t* out_actual)
+                                       void* out_buf, size_t out_len, size_t* out_actual)
 {
     sysdrv_device_t* device = get_device(ctx);
 
@@ -85,10 +85,18 @@ static zx_status_t sysdrv_common_ioctl(void* ctx, uint32_t op, const void* in_bu
 
         case IOCTL_MAGMA_DUMP_STATUS: {
             DLOG("IOCTL_MAGMA_DUMP_STATUS");
+            uint32_t dump_type = 0;
+            if (in_buf && in_len >= sizeof(uint32_t)) {
+                dump_type = *reinterpret_cast<const uint32_t*>(in_buf);
+            }
+            if (dump_type & ~(MAGMA_DUMP_TYPE_NORMAL | MAGMA_DUMP_TYPE_PERF_COUNTERS |
+                              MAGMA_DUMP_TYPE_PERF_COUNTER_ENABLE)) {
+                return DRET_MSG(ZX_ERR_INVALID_ARGS, "Invalid dump type %d", dump_type);
+            }
             std::unique_lock<std::mutex> lock(device->magma_mutex);
             sysdrv_device_t* device = get_device(ctx);
             if (device->magma_system_device)
-                device->magma_system_device->DumpStatus();
+                device->magma_system_device->DumpStatus(dump_type);
             result = ZX_OK;
             break;
         }
@@ -110,7 +118,7 @@ static zx_status_t sysdrv_common_ioctl(void* ctx, uint32_t op, const void* in_bu
 }
 
 static zx_status_t sysdrv_gpu_ioctl(void* ctx, uint32_t op, const void* in_buf, size_t in_len,
-                                   void* out_buf, size_t out_len, size_t* out_actual)
+                                    void* out_buf, size_t out_len, size_t* out_actual)
 {
     DLOG("sysdrv_gpu_ioctl");
     zx_status_t result = sysdrv_common_ioctl(ctx, op, in_buf, in_len, out_buf, out_len, out_actual);
@@ -167,7 +175,9 @@ static void sysdrv_gpu_release(void* ctx)
 }
 
 static zx_protocol_device_t sysdrv_gpu_device_proto = {
-    .version = DEVICE_OPS_VERSION, .ioctl = sysdrv_gpu_ioctl, .release = sysdrv_gpu_release,
+    .version = DEVICE_OPS_VERSION,
+    .ioctl = sysdrv_gpu_ioctl,
+    .release = sysdrv_gpu_release,
 };
 
 // implement driver object:
@@ -225,7 +235,8 @@ static zx_status_t sysdrv_bind(void* ctx, zx_device_t* zx_device)
 }
 
 zx_driver_ops_t msd_driver_ops = {
-    .version = DRIVER_OPS_VERSION, .bind = sysdrv_bind,
+    .version = DRIVER_OPS_VERSION,
+    .bind = sysdrv_bind,
 };
 
 static int magma_start(sysdrv_device_t* device)
@@ -252,7 +263,6 @@ static int magma_stop(sysdrv_device_t* device)
     return ZX_OK;
 }
 #endif
-
 
 // clang-format off
 ZIRCON_DRIVER_BEGIN(gpu, msd_driver_ops, "magma", "0.1", 5)

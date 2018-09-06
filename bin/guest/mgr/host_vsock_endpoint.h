@@ -5,13 +5,12 @@
 #ifndef GARNET_BIN_GUEST_MGR_HOST_VSOCK_ENDPOINT_H_
 #define GARNET_BIN_GUEST_MGR_HOST_VSOCK_ENDPOINT_H_
 
-#include "garnet/bin/guest/mgr/vsock_endpoint.h"
-
 #include <unordered_map>
 
 #include <bitmap/rle-bitmap.h>
 #include <fuchsia/guest/cpp/fidl.h>
 #include <lib/async/cpp/wait.h>
+#include <lib/fidl/cpp/binding_set.h>
 
 namespace guestmgr {
 
@@ -20,52 +19,54 @@ namespace guestmgr {
 static constexpr uint32_t kFirstEphemeralPort = 49152;
 static constexpr uint32_t kLastEphemeralPort = 65535;
 
-// Implements a |VsockEndpoint| to use for host connections. Specifically this
-// endpoint will handle out-bound port allocations to avoid port collisions and
-// exposes an interface for registering listeners on a per-port basis.
-class HostVsockEndpoint : public VsockEndpoint,
-                          public fuchsia::guest::ManagedSocketEndpoint {
+// An callback for querying a |GuestEnvironment| for |GuestVsockAcceptor|s.
+using AcceptorProvider =
+    fit::function<fuchsia::guest::GuestVsockAcceptor*(uint32_t)>;
+
+// An endpoint that represents the host. Specifically this endpoint will handle
+// out-bound port allocations to avoid port collisions and exposes an interface
+// for registering listeners on a per-port basis.
+class HostVsockEndpoint : public fuchsia::guest::HostVsockConnector,
+                          public fuchsia::guest::HostVsockEndpoint {
  public:
-  HostVsockEndpoint(uint32_t cid);
-  ~HostVsockEndpoint() override;
+  HostVsockEndpoint(AcceptorProvider acceptor_provider);
 
   void AddBinding(
-      fidl::InterfaceRequest<fuchsia::guest::ManagedSocketEndpoint> request);
+      fidl::InterfaceRequest<fuchsia::guest::HostVsockEndpoint> request);
 
-  // |fuchsia::guest::SocketAcceptor|
-  void Accept(uint32_t src_cid, uint32_t src_port, uint32_t port,
-              AcceptCallback callback) override;
+  // |fuchsia::guest::HostVsockConnector|
+  void Connect(
+      uint32_t src_cid, uint32_t src_port, uint32_t cid, uint32_t port,
+      fuchsia::guest::HostVsockConnector::ConnectCallback callback) override;
 
-  // |fuchsia::guest::ManagedSocketEndpoint|
-  void Listen(uint32_t port, fidl::InterfaceHandle<SocketAcceptor> acceptor,
+  // |fuchsia::guest::HostVsockEndpoint|
+  void Listen(uint32_t port,
+              fidl::InterfaceHandle<fuchsia::guest::HostVsockAcceptor> acceptor,
               ListenCallback callback) override;
   void Connect(
-      uint32_t cid, uint32_t port,
-      fuchsia::guest::ManagedSocketEndpoint::ConnectCallback callback) override;
-
-  // This gets hidden by the ManagedSocketEndpoint::Connect overload so ensure
-  // it's visible.
-  using VsockEndpoint::Connect;
+      uint32_t cid, uint32_t port, zx::handle handle,
+      fuchsia::guest::HostVsockEndpoint::ConnectCallback callback) override;
 
  private:
   struct Connection {
     uint32_t port;
-    zx::socket socket;
+    zx::handle handle;
     async::Wait wait;
   };
 
   void ConnectCallback(
-      zx_status_t status, zx::socket socket, uint32_t port,
-      fuchsia::guest::ManagedSocketEndpoint::ConnectCallback remote_callback);
+      zx_status_t status, zx::handle dup, uint32_t src_port,
+      fuchsia::guest::HostVsockEndpoint::ConnectCallback remote_callback);
 
   void OnPeerClosed(Connection* conn);
 
-  zx_status_t FindEphemeralPort(uint32_t* port);
-  zx_status_t FreePort(uint32_t port);
+  zx_status_t AllocEphemeralPort(uint32_t* port);
+  void FreeEphemeralPort(uint32_t port);
 
+  AcceptorProvider acceptor_provider_;
   bitmap::RleBitmap port_bitmap_;
-  fidl::BindingSet<fuchsia::guest::ManagedSocketEndpoint> bindings_;
-  std::unordered_map<uint32_t, fuchsia::guest::SocketAcceptorPtr> listeners_;
+  fidl::BindingSet<fuchsia::guest::HostVsockEndpoint> bindings_;
+  std::unordered_map<uint32_t, fuchsia::guest::HostVsockAcceptorPtr> listeners_;
   std::unordered_map<uint32_t, std::unique_ptr<Connection>> connections_;
 };
 

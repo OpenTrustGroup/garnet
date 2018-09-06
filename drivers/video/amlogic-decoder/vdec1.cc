@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "macros.h"
+#include "memory_barriers.h"
 
 zx_status_t Vdec1::LoadFirmware(const uint8_t* data, uint32_t size) {
   Mpsr::Get().FromValue(0).WriteTo(mmio()->dosbus);
@@ -28,6 +29,7 @@ zx_status_t Vdec1::LoadFirmware(const uint8_t* data, uint32_t size) {
   memcpy(io_buffer_virt(&firmware_buffer), data, std::min(size, kFirmwareSize));
   io_buffer_cache_flush(&firmware_buffer, 0, kFirmwareSize);
 
+  BarrierAfterFlush();
   ImemDmaAdr::Get()
       .FromValue(truncate_to_32(io_buffer_phys(&firmware_buffer)))
       .WriteTo(mmio()->dosbus);
@@ -42,10 +44,12 @@ zx_status_t Vdec1::LoadFirmware(const uint8_t* data, uint32_t size) {
       })) {
     DECODE_ERROR("Failed to load microcode.");
 
+    BarrierBeforeRelease();
     io_buffer_release(&firmware_buffer);
     return ZX_ERR_TIMED_OUT;
   }
 
+  BarrierBeforeRelease();
   io_buffer_release(&firmware_buffer);
   return ZX_OK;
 }
@@ -254,4 +258,31 @@ void Vdec1::InitializeDirectInput() {
       .WriteTo(mmio()->dosbus);
   VldMemVififoBufCntl::Get().FromValue(0).set_manual(true).WriteTo(
       mmio()->dosbus);
+}
+
+void Vdec1::UpdateWritePointer(uint32_t write_pointer) {
+  VldMemVififoWP::Get().FromValue(write_pointer).WriteTo(mmio()->dosbus);
+  VldMemVififoControl::Get()
+      .ReadFrom(mmio()->dosbus)
+      .set_fill_en(true)
+      .set_empty_en(true)
+      .WriteTo(mmio()->dosbus);
+}
+
+uint32_t Vdec1::GetStreamInputOffset() {
+  uint32_t write_ptr =
+      VldMemVififoWP::Get().ReadFrom(mmio()->dosbus).reg_value();
+  uint32_t buffer_start =
+      VldMemVififoStartPtr::Get().ReadFrom(mmio()->dosbus).reg_value();
+  assert(write_ptr >= buffer_start);
+  return write_ptr - buffer_start;
+}
+
+uint32_t Vdec1::GetReadOffset() {
+  uint32_t read_ptr =
+      VldMemVififoRP::Get().ReadFrom(mmio()->dosbus).reg_value();
+  uint32_t buffer_start =
+      VldMemVififoStartPtr::Get().ReadFrom(mmio()->dosbus).reg_value();
+  assert(read_ptr >= buffer_start);
+  return read_ptr - buffer_start;
 }

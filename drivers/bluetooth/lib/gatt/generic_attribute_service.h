@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_GATT_GENERIC_ATTRIBUTE_SERVICE_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_GATT_GENERIC_ATTRIBUTE_SERVICE_H_
 
 #include <unordered_set>
 
@@ -37,7 +38,6 @@ class GenericAttributeService final {
                           SendIndicationCallback send_indication_callback);
   ~GenericAttributeService();
 
-
  private:
   void Register();
 
@@ -62,3 +62,5 @@ class GenericAttributeService final {
 
 }  // namespace gatt
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_GATT_GENERIC_ATTRIBUTE_SERVICE_H_

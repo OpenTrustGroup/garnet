@@ -12,8 +12,7 @@
 
 #include "lib/fxl/macros.h"
 
-namespace debugserver {
-namespace util {
+namespace debugger_utils {
 
 struct LoadMap {
   zx_koid_t pid;
@@ -42,5 +41,4 @@ class LoadMapTable {
   FXL_DISALLOW_COPY_AND_ASSIGN(LoadMapTable);
 };
 
-}  // namespace util
-}  // namespace debugserver
+}  // namespace debugger_utils

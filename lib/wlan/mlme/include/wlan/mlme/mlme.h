@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_LIB_WLAN_MLME_INCLUDE_WLAN_MLME_MLME_H_
+#define GARNET_LIB_WLAN_MLME_INCLUDE_WLAN_MLME_MLME_H_
 
 #include <fuchsia/wlan/stats/cpp/fidl.h>
 #include <wlan/common/bitfield.h>
@@ -17,9 +18,10 @@ enum class ObjectSubtype : uint8_t {
 };
 
 enum class ObjectTarget : uint8_t {
-    kScanner = 0,
+    kChannelScheduler = 0,
     kStation = 1,
     kBss = 2,
+    kMinstrel = 3,
 };
 
 // An ObjectId is used as an id in a PortKey. Therefore, only the lower 56 bits may be used.
@@ -49,15 +51,14 @@ class Mlme {
 
     virtual zx_status_t HandleMlmeMsg(const BaseMlmeMsg& msg) = 0;
     virtual zx_status_t HandleFramePacket(fbl::unique_ptr<Packet> pkt) = 0;
-    // Called before a channel change happens.
-    virtual zx_status_t PreChannelChange(wlan_channel_t chan) = 0;
-    // Called after a channel change is complete. The DeviceState channel will reflect the channel,
-    // whether it changed or not.
-    virtual zx_status_t PostChannelChange() = 0;
     virtual zx_status_t HandleTimeout(const ObjectId id) = 0;
     // Called when the hardware reports an indication such as Pre-TBTT.
-    virtual void HwIndication(uint32_t ind) {};
+    virtual void HwIndication(uint32_t ind){};
+    virtual void HwScanComplete(uint8_t result_code){};
     virtual ::fuchsia::wlan::stats::MlmeStats GetMlmeStats() const { return {}; };
+    virtual void ResetMlmeStats(){};
 };
 
 }  // namespace wlan
+
+#endif  // GARNET_LIB_WLAN_MLME_INCLUDE_WLAN_MLME_MLME_H_

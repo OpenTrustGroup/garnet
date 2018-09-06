@@ -4,6 +4,10 @@
 
 static_library("console") {
   sources = [
+    "actions.cc",
+    "actions.h",
+    "analyze_memory.cc",
+    "analyze_memory.h",
     "command.cc",
     "command.h",
     "command_parser.cc",
@@ -14,10 +18,17 @@ static_library("console") {
     "console.h",
     "console_context.cc",
     "console_context.h",
+    "flags.cc",
+    "flags.h",
+    "flags_impl.cc",
     "format_context.cc",
     "format_context.h",
+    "format_frame.cc",
+    "format_frame.h",
     "format_table.cc",
     "format_table.h",
+    "format_value.cc",
+    "format_value.h",
     "input_location_parser.cc",
     "input_location_parser.h",
     "line_input.cc",
@@ -28,6 +39,10 @@ static_library("console") {
     "output_buffer.h",
     "nouns.cc",
     "nouns.h",
+    "format_register.cc",
+    "format_register.h",
+    "string_formatters.cc",
+    "string_formatters.h",
     "string_util.cc",
     "string_util.h",
     "verbs.h",
@@ -43,6 +58,7 @@ static_library("console") {
   deps = []
   public_deps = [
     "//garnet/bin/zxdb/client",
+    "//garnet/bin/zxdb/expr",
     "//garnet/public/lib/fxl",
   ]
 
@@ -58,18 +74,27 @@ static_library("console") {
 source_set("tests") {
   testonly = true
   sources = [
+    "analyze_memory_unittest.cc",
     "command_parser_unittest.cc",
     "command_utils_unittest.cc",
+    "flags_unittest.cc",
+    "flags_impl_unittest.cc",
     "format_context_unittest.cc",
+    "format_frame_unittest.cc",
     "format_table_unittest.cc",
+    "format_value_unittest.cc",
     "input_location_parser_unittest.cc",
     "line_input_unittest.cc",
     "memory_format_unittest.cc",
+    "format_register_unittest.cc",
     "string_util_unittest.cc",
   ]
 
   deps = [
     ":console",
+    "//garnet/bin/zxdb/client:test_support",
+    "//garnet/bin/zxdb/client/symbols:test_support",
+    "//garnet/bin/zxdb/common:test_support",
     "//third_party/googletest:gtest",
   ]
 }

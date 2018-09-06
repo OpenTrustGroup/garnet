@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_HCI_LOW_ENERGY_SCANNER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_HCI_LOW_ENERGY_SCANNER_H_
 
 #include <set>
 
@@ -83,7 +84,7 @@ class LowEnergyScanner {
 
   LowEnergyScanner(Delegate* delegate,
                    fxl::RefPtr<Transport> hci,
-                   async_t* dispatcher);
+                   async_dispatcher_t* dispatcher);
   virtual ~LowEnergyScanner() = default;
 
   // Returns the current Scan state.
@@ -154,7 +155,7 @@ class LowEnergyScanner {
   virtual bool StopScan() = 0;
 
  protected:
-  async_t* dispatcher() const { return dispatcher_; }
+  async_dispatcher_t* dispatcher() const { return dispatcher_; }
   Transport* transport() const { return transport_.get(); }
   SequentialCommandRunner* hci_cmd_runner() const {
     return hci_cmd_runner_.get();
@@ -169,7 +170,7 @@ class LowEnergyScanner {
   Delegate* delegate_;  // weak
 
   // Task runner for all asynchronous tasks.
-  async_t* dispatcher_;
+  async_dispatcher_t* dispatcher_;
 
   // The HCI transport.
   fxl::RefPtr<Transport> transport_;
@@ -182,3 +183,5 @@ class LowEnergyScanner {
 
 }  // namespace hci
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_HCI_LOW_ENERGY_SCANNER_H_

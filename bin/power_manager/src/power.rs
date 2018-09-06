@@ -6,18 +6,17 @@ extern crate libc;
 
 use self::libc::{int32_t, uint32_t};
 
-use async;
-use fdio::{self, fdio_sys};
-use futures::FutureExt;
-use futures::future::{loop_fn, Loop};
-use io::{self, Result};
+use fdio::{self, fdio_sys, make_ioctl};
+use fuchsia_async as fasync;
+use fuchsia_syslog::{fx_log, fx_log_err, fx_vlog};
+use fuchsia_zircon::{self as zx, Signals, sys::zx_handle_t};
+use futures::TryFutureExt;
 use std::fs::File;
+use std::io::{self, Result};
 use std::marker::Send;
 use std::mem;
 use std::os::raw;
 use std::ptr;
-use zx::{self, Signals};
-use zx::sys::zx_handle_t;
 
 const IOCTL_POWER_GET_INFO: raw::c_int = make_ioctl!(
     fdio_sys::IOCTL_KIND_DEFAULT,
@@ -129,18 +128,17 @@ where
         ).map_err(|e| e.into_io_error())?;
     };
     let h = unsafe { zx::Handle::from_raw(handle) };
-    let file_copy = file.try_clone()
+    let file_copy = file
+        .try_clone()
         .map_err(|e| io::Error::new(e.kind(), format!("error copying power device file: {}", e)))?;
 
-    let f = loop_fn((callback, h, file_copy), |(callback, handle, file)| {
-        // TODO: change OnSignals to wrap this so that is is not created again and again.
-        async::OnSignals::new(&handle, Signals::USER_0).and_then(|_| {
-            fx_vlog!(1, "callback called {:?}", file);
-            callback(&file);
-            Ok(Loop::Continue((callback, handle, file)))
-        })
-    });
-    async::spawn(f.recover(|e| {
+    fasync::spawn(async move {
+        loop {
+            let _signals = await!(fasync::OnSignals::new(&h, Signals::USER_0))?;
+            fx_vlog!(1, "callback called {:?}", file_copy);
+            callback(&file_copy);
+        }
+    }.unwrap_or_else(|e: failure::Error| {
         fx_log_err!(
             "not able to apply listener to power device, wait failed: {:?}",
             e

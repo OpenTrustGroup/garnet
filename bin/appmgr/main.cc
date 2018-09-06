@@ -7,20 +7,21 @@
 #include <zircon/processargs.h>
 
 #include "garnet/bin/appmgr/appmgr.h"
-#include "lib/fxl/command_line.h"
+#include "lib/component/cpp/environment_services_helper.h"
 
 int main(int argc, char** argv) {
-  auto command_line = fxl::CommandLineFromArgcArgv(argc, argv);
-
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
   auto request = zx_take_startup_handle(PA_DIRECTORY_REQUEST);
 
+  auto environment_services = component::GetEnvironmentServices();
+
   component::AppmgrArgs args{.pa_directory_request = std::move(request),
+                             .environment_services = environment_services,
                              .sysmgr_url = "sysmgr",
                              .sysmgr_args = {},
                              .run_virtual_console = true,
                              .retry_sysmgr_crash = true};
-  component::Appmgr appmgr(loop.async(), std::move(args));
+  component::Appmgr appmgr(loop.dispatcher(), std::move(args));
 
   loop.Run();
   return 0;

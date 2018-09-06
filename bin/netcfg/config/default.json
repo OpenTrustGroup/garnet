@@ -1,3 +1,5 @@
 {
-    "device_name": "fuchsia"
+  "dns_config": {
+    "servers": ["8.8.8.8"]
+  }
 }

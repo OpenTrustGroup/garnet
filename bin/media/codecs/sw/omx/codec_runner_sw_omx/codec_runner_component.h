@@ -7,7 +7,7 @@
 
 #include <fuchsia/mediacodec/cpp/fidl.h>
 
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fidl/cpp/binding.h"
 
 namespace codec_runner {
@@ -15,13 +15,13 @@ namespace codec_runner {
 class CodecRunnerComponent {
  public:
   CodecRunnerComponent(
-      async_t* fidl_async, thrd_t fidl_thread,
-      std::unique_ptr<fuchsia::sys::StartupContext> startup_context);
+      async_dispatcher_t* fidl_dispatcher, thrd_t fidl_thread,
+      std::unique_ptr<component::StartupContext> startup_context);
 
  private:
-  async_t* fidl_async_ = nullptr;
+  async_dispatcher_t* fidl_dispatcher_ = nullptr;
   thrd_t fidl_thread_ = 0;
-  std::unique_ptr<fuchsia::sys::StartupContext> startup_context_;
+  std::unique_ptr<component::StartupContext> startup_context_;
 };
 
 }  // namespace codec_runner

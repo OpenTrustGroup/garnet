@@ -2,114 +2,102 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <benchmark/benchmark.h>
-#include <zircon/syscalls.h>
+#include <lib/zx/event.h>
+#include <perftest/perftest.h>
+#include <zircon/assert.h>
 
-class Event : public benchmark::Fixture {
- private:
-  void SetUp(benchmark::State& state) override {
-    if (zx_event_create(0, &event) != ZX_OK) {
-      state.SkipWithError("Failed to create channel");
-    }
+namespace {
+
+bool EventSignalTest(perftest::RepeatState* state) {
+  zx::event event;
+  ZX_ASSERT(zx::event::create(0, &event) == ZX_OK);
+
+  while (state->KeepRunning()) {
+    ZX_ASSERT(event.signal(0, 0) == ZX_OK);
   }
-
-  void TearDown(benchmark::State& state) override {
-    zx_handle_close(event);
-  }
-
- protected:
-  zx_handle_t event;
-};
-
-BENCHMARK_F(Event, Signal)(benchmark::State& state) {
-  while (state.KeepRunning()) {
-    if (zx_object_signal(event, 0, 0) != 0) {
-      state.SkipWithError("Failed to signal event");
-      return;
-    }
-  }
+  return true;
 }
 
-BENCHMARK_F(Event, Duplicate)(benchmark::State& state) {
-  zx_handle_t dup_event;
-  while (state.KeepRunning()) {
-    if (zx_handle_duplicate(event, ZX_RIGHT_SAME_RIGHTS, &dup_event) != 0) {
-      state.SkipWithError("Failed to duplicate event");
-      return;
-    }
-    state.PauseTiming();
-    zx_handle_close(dup_event);
-    state.ResumeTiming();
+bool EventDuplicateTest(perftest::RepeatState* state) {
+  state->DeclareStep("duplicate_handle");
+  state->DeclareStep("close_handle");
+
+  zx::event event;
+  ZX_ASSERT(zx::event::create(0, &event) == ZX_OK);
+
+  while (state->KeepRunning()) {
+    zx::event dup_event;
+    ZX_ASSERT(event.duplicate(ZX_RIGHT_SAME_RIGHTS, &dup_event) == ZX_OK);
+
+    state->NextStep();
+    // This step covers the work done by dup_event's destructor.
   }
+  return true;
 }
 
-BENCHMARK_F(Event, Replace)(benchmark::State& state) {
-  zx_handle_t dup_event;
-  zx_handle_t replaced_event;
-  while (state.KeepRunning()) {
-    state.PauseTiming();
-    if (zx_handle_duplicate(event, ZX_RIGHT_SAME_RIGHTS, &dup_event) != 0) {
-      state.SkipWithError("Failed to duplicate event");
-      return;
-    }
-    state.ResumeTiming();
-    if (zx_handle_replace(dup_event, ZX_RIGHT_SAME_RIGHTS, &replaced_event) != 0) {
-      zx_handle_close(dup_event);
-      state.SkipWithError("Failed to replace event");
-      return;
-    }
-    state.PauseTiming();
-    zx_handle_close(replaced_event);
-    state.ResumeTiming();
+bool EventReplaceTest(perftest::RepeatState* state) {
+  state->DeclareStep("duplicate_handle");
+  state->DeclareStep("replace_handle");
+  state->DeclareStep("close_handle");
+
+  zx::event event;
+  ZX_ASSERT(zx::event::create(0, &event) == ZX_OK);
+
+  while (state->KeepRunning()) {
+    zx::event dup_event;
+    ZX_ASSERT(event.duplicate(ZX_RIGHT_SAME_RIGHTS, &dup_event) == ZX_OK);
+
+    state->NextStep();
+    zx::event replaced_event;
+    ZX_ASSERT(dup_event.replace(ZX_RIGHT_SAME_RIGHTS, &replaced_event) ==
+              ZX_OK);
+
+    state->NextStep();
+    // This step covers the work done by replaced_event's destructor.
   }
+  return true;
 }
 
-class WaitItems : public benchmark::Fixture {
- private:
-  void SetUp(benchmark::State& state) override {
-    for (size_t i = 0; i < num_items; i++) {
-      if (zx_event_create(0, &(items[i].handle)) != 0) {
-        state.SkipWithError("Failed to create event");
-        return;
-      }
-      items[i].waitfor = ZX_EVENT_SIGNALED;
-    }
-  }
+bool WaitForAlreadySignaledEventTest(perftest::RepeatState* state) {
+  zx::event event;
+  ZX_ASSERT(zx::event::create(0, &event) == ZX_OK);
+  ZX_ASSERT(event.signal(0, ZX_EVENT_SIGNALED) == ZX_OK);
 
-  void TearDown(benchmark::State& state) override {
-    for (size_t i = 0; i < num_items; i++) {
-      zx_handle_close(items[i].handle);
-    }
-  }
-
- protected:
-  static constexpr size_t num_items = 4u;
-  zx_wait_item_t items[num_items];
-};
-
-BENCHMARK_F(WaitItems, WaitForAlreadySignaledEvent)(benchmark::State& state) {
-  if (zx_object_signal(items[0].handle, 0u, ZX_EVENT_SIGNALED) != 0) {
-    state.SkipWithError("Failed to signal event");
-    return;
-  }
-  while (state.KeepRunning()) {
+  while (state->KeepRunning()) {
     zx_signals_t pending = 0;
-    if (zx_object_wait_one(items[0].handle, ZX_EVENT_SIGNALED, 0u, &pending) != 0) {
-      state.SkipWithError("Failed to get signaled event");
-      return;
-    }
+    ZX_ASSERT(event.wait_one(ZX_EVENT_SIGNALED, zx::time(0), &pending) ==
+              ZX_OK);
   }
+  return true;
 }
 
-BENCHMARK_F(WaitItems, WaitForManyWithAlreadySignaledEvent)(benchmark::State& state) {
-  if (zx_object_signal(items[0].handle, 0u, ZX_EVENT_SIGNALED) != 0) {
-    state.SkipWithError("Failed to signal event");
-    return;
+bool WaitForManyWithAlreadySignaledEventTest(perftest::RepeatState* state) {
+  constexpr size_t kNumItems = 4;
+  zx::event events[kNumItems];
+  zx_wait_item_t wait_items[kNumItems] = {};
+  for (size_t i = 0; i < kNumItems; ++i) {
+    ZX_ASSERT(zx::event::create(0, &events[i]) == ZX_OK);
+    wait_items[i].handle = events[i].get();
+    wait_items[i].waitfor = ZX_EVENT_SIGNALED;
   }
-  while (state.KeepRunning()) {
-    if (zx_object_wait_many(items, num_items, 0u) != 0) {
-      state.SkipWithError("Failed to get signaled event");
-      return;
-    }
+  ZX_ASSERT(events[0].signal(0, ZX_EVENT_SIGNALED) == ZX_OK);
+
+  while (state->KeepRunning()) {
+    ZX_ASSERT(zx::event::wait_many(wait_items, kNumItems, zx::time(0)) ==
+              ZX_OK);
   }
+  return true;
 }
+
+void RegisterTests() {
+  perftest::RegisterTest("Event/Signal", EventSignalTest);
+  perftest::RegisterTest("Event/Duplicate", EventDuplicateTest);
+  perftest::RegisterTest("Event/Replace", EventReplaceTest);
+  perftest::RegisterTest("Event/WaitForAlreadySignaledEvent",
+                         WaitForAlreadySignaledEventTest);
+  perftest::RegisterTest("Event/WaitForManyWithAlreadySignaledEvent",
+                         WaitForManyWithAlreadySignaledEventTest);
+}
+PERFTEST_CTOR(RegisterTests);
+
+}  // namespace

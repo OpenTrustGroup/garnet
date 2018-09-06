@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"syscall"
 	"syscall/zx"
@@ -166,6 +167,9 @@ func (f *Filesystem) Serve(c zx.Channel) error {
 	f.mountInfo.serveChannel = c
 
 	// TODO(raggi): serve has no quit/shutdown path.
+	for i := runtime.NumCPU(); i > 1; i-- {
+		go vfs.Serve()
+	}
 	vfs.Serve()
 	return nil
 }
@@ -193,7 +197,8 @@ func (f *Filesystem) Mount(path string) error {
 		return fmt.Errorf("channel creation: %s", err)
 	}
 
-	if err := syscall.FDIOForFD(f.mountInfo.parentFd).IoctlSetHandle(fdio.IoctlVFSMountFS, zx.Handle(mountChan)); err != nil {
+	handles := []zx.Handle{zx.Handle(mountChan)}
+	if _, _, err := syscall.FDIOForFD(f.mountInfo.parentFd).Ioctl(fdio.IoctlVFSMountFS, 0, nil, handles); err != nil {
 		mountChan.Close()
 		rpcChan.Close()
 		syscall.Close(f.mountInfo.parentFd)
@@ -209,7 +214,7 @@ func (f *Filesystem) Unmount() {
 	f.mountInfo.unmountOnce.Do(func() {
 		// parentFd is -1 in the case where f was just Serve()'d instead of Mount()'d
 		if f.mountInfo.parentFd != -1 {
-			syscall.FDIOForFD(f.mountInfo.parentFd).Ioctl(fdio.IoctlVFSUnmountNode, nil, nil)
+			syscall.FDIOForFD(f.mountInfo.parentFd).Ioctl(fdio.IoctlVFSUnmountNode, 0, nil, nil)
 			syscall.Close(f.mountInfo.parentFd)
 			f.mountInfo.parentFd = -1
 		}

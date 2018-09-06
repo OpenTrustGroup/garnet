@@ -2,47 +2,31 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#![feature(async_await, await_macro, futures_api)]
 #![deny(warnings)]
 
-extern crate fidl;
-extern crate fuchsia_app as app;
-extern crate fuchsia_async as async;
-extern crate fuchsia_vfs_watcher as vfs_watcher;
-extern crate fuchsia_zircon as zx;
-extern crate futures;
-extern crate parking_lot;
-
-#[macro_use(make_ioctl)]
-extern crate fdio;
-
-#[macro_use(format_err)]
-extern crate failure;
-
-#[macro_use]
-extern crate fuchsia_syslog as syslog;
-
-mod power;
-
-use app::server::ServicesServer;
 use failure::{Error, ResultExt};
-use fidl::endpoints2::ServiceMarker;
-use futures::StreamExt;
-use futures::future::ok as fok;
+use fidl::endpoints2::{RequestStream, ServiceMarker};
+use fidl_fuchsia_power::{BatteryStatus, PowerManagerMarker, PowerManagerRequest,
+                         PowerManagerRequestStream, PowerManagerWatcherProxy,
+                         Status as power_status};
+use fuchsia_app::server::ServicesServer;
+use fuchsia_async as fasync;
+use fuchsia_syslog::{self as syslog, fx_log, fx_log_err, fx_log_info, fx_vlog};
+use fuchsia_vfs_watcher as vfs_watcher;
+use fuchsia_zircon as zx;
 use futures::prelude::*;
 use parking_lot::Mutex;
 use std::fs::File;
-use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-extern crate fidl_fuchsia_power;
-use fidl_fuchsia_power::{BatteryStatus, PowerManager, PowerManagerImpl, PowerManagerMarker,
-                         PowerManagerWatcherProxy, Status as power_status};
+mod power;
 
 static POWER_DEVICE: &str = "/dev/class/power";
 
 // Time to sleep between status update in seconds.
-static SLEEP_TIME: u64 = 180;
+static SLEEP_TIME: i64 = 180;
 
 struct BatteryStatusHelper {
     battery_status: BatteryStatus,
@@ -188,107 +172,91 @@ fn process_watch_event(
     if powerbuffer.power_type == power::POWER_TYPE_BATTERY {
         *battery_device_found = true;
         let bsh = bsh.clone();
-        let timer = async::Interval::new(zx::Duration::from_seconds(SLEEP_TIME));
-        let f = timer
-            .for_each(move |_| {
+        let mut timer = fasync::Interval::new(zx::Duration::from_seconds(SLEEP_TIME));
+        fasync::spawn(async move {
+            while let Some(()) = await!(timer.next()) {
                 let mut bsh = bsh.lock();
                 if let Err(e) = bsh.update_status(&file) {
                     fx_log_err!("{}", e);
                 }
-                Ok(())
-            })
-            .map(|_| ());
-
-        async::spawn(f);
+            }
+        });
     } else {
         *adapter_device_found = true;
     }
     Ok(WatchSuccess::Completed)
 }
 
-fn watch_power_device(
-    bsh: Arc<Mutex<BatteryStatusHelper>>
-) -> impl Future<Item = (), Error = Error> {
-    File::open(POWER_DEVICE)
-        .into_future()
-        .map_err(|e| format_err!("cannot find power device: {:?}", e))
-        .and_then(|file| {
-            vfs_watcher::Watcher::new(&file)
-                .map_err(|e| format_err!("error watching power device: {:?}", e))
-        })
-        .and_then(|watcher| {
-            let mut adapter_device_found = false;
-            let mut battery_device_found = false;
-            watcher
-                .for_each(move |msg| {
-                    if battery_device_found && adapter_device_found {
-                        return Ok(());
-                    }
-                    let mut filepath = PathBuf::from(POWER_DEVICE);
-                    filepath.push(msg.filename);
-                    match process_watch_event(
-                        &filepath,
-                        bsh.clone(),
-                        &mut battery_device_found,
-                        &mut adapter_device_found,
-                    ) {
-                        Ok(WatchSuccess::Completed) => {}
-                        Ok(early_return) => {
-                            let device_type = match early_return {
-                                WatchSuccess::Completed => unreachable!(),
-                                WatchSuccess::BatteryAlreadyFound => "battery",
-                                WatchSuccess::AdapterAlreadyFound => "adapter",
-                            };
-                            fx_log_info!(
-                                "Skip '{:?}' as {} device already found",
-                                filepath,
-                                device_type
-                            );
-                        }
-                        Err(err) => {
-                            fx_log_err!(
-                                "error for file while adding watch event '{:?}': {}",
-                                filepath,
-                                err
-                            );
-                        }
-                    }
-                    Ok(())
-                })
-                .map(|_s| ())
-                .err_into()
-        })
+async fn watch_power_device(bsh: Arc<Mutex<BatteryStatusHelper>>) -> Result<(), Error> {
+    let file = File::open(POWER_DEVICE).context("cannot find power device")?;
+    let mut watcher = vfs_watcher::Watcher::new(&file).context("error watching power device")?;
+    let mut adapter_device_found = false;
+    let mut battery_device_found = false;
+    while let Some(msg) = await!(watcher.try_next())? {
+        if battery_device_found && adapter_device_found {
+           continue;
+        }
+        let mut filepath = PathBuf::from(POWER_DEVICE);
+        filepath.push(msg.filename);
+        match process_watch_event(
+            &filepath,
+            bsh.clone(),
+            &mut battery_device_found,
+            &mut adapter_device_found,
+            ) {
+            Ok(WatchSuccess::Completed) => {}
+            Ok(early_return) => {
+                let device_type = match early_return {
+                    WatchSuccess::Completed => unreachable!(),
+                    WatchSuccess::BatteryAlreadyFound => "battery",
+                    WatchSuccess::AdapterAlreadyFound => "adapter",
+                };
+                fx_log_info!(
+                    "Skip '{:?}' as {} device already found",
+                    filepath,
+                    device_type
+                    );
+            }
+            Err(err) => {
+                fx_log_err!(
+                    "error for file while adding watch event '{:?}': {}",
+                    filepath,
+                    err
+                    );
+            }
+        }
+    }
+    Ok(())
 }
 
-fn spawn_power_manager(pm: PowerManagerServer, chan: async::Channel) {
-    async::spawn(
-        PowerManagerImpl {
-            state: pm,
-            on_open: |_, _| fok(()),
-            get_battery_status: |pm, c| {
-                fx_log_info!("get_battery_status called");
-                let mut bsh = pm.battery_status_helper.lock();
-                if let Err(e) = c.send(&mut bsh.battery_status) {
-                    fx_log_err!("sending battery status: {:?}", e);
-                }
-                fok(())
-            },
-            watch: |pm, watcher, _| {
-                fx_log_info!("watch called");
-                match watcher.into_proxy() {
-                    Err(e) => {
-                        fx_log_err!("getting watcher proxy: {:?}", e);
-                    }
-                    Ok(w) => {
-                        let mut bsh = pm.battery_status_helper.lock();
-                        bsh.add_watcher(w);
+fn spawn_power_manager(pm: PowerManagerServer, chan: fasync::Channel) {
+    fasync::spawn(async move {
+        let mut stream = PowerManagerRequestStream::from_channel(chan);
+        while let Some(req) = await!(stream.try_next())? {
+            match req {
+                PowerManagerRequest::GetBatteryStatus { responder, .. } => {
+                    fx_log_info!("get_battery_status called");
+                    let mut bsh = pm.battery_status_helper.lock();
+                    if let Err(e) = responder.send(&mut bsh.battery_status) {
+                        fx_log_err!("sending battery status: {:?}", e);
                     }
                 }
-                fok(())
-            },
-        }.serve(chan)
-            .recover(|e| fx_log_err!("{:?}", e)),
-    )
+                PowerManagerRequest::Watch { watcher, .. } => {
+                    fx_log_info!("watch called");
+                    match watcher.into_proxy() {
+                        Err(e) => {
+                            fx_log_err!("getting watcher proxy: {:?}", e);
+                        }
+                        Ok(w) => {
+                            let mut bsh = pm.battery_status_helper.lock();
+                            bsh.add_watcher(w);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }.unwrap_or_else(|e: failure::Error| fx_log_err!("{:?}", e)));
 }
 
 fn main() {
@@ -301,12 +269,12 @@ fn main() {
 }
 
 fn main_pm() -> Result<(), Error> {
-    let mut executor = async::Executor::new().context("unable to create executor")?;
+    let mut executor = fasync::Executor::new().context("unable to create executor")?;
     let bsh = Arc::new(Mutex::new(BatteryStatusHelper::new()));
     let bsh2 = bsh.clone();
     let f = watch_power_device(bsh2);
 
-    async::spawn(f.recover(|e| {
+    fasync::spawn(f.unwrap_or_else(|e| {
         fx_log_err!("watch_power_device failed {:?}", e);
     }));
 
@@ -316,8 +284,7 @@ fn main_pm() -> Result<(), Error> {
                 battery_status_helper: bsh.clone(),
             };
             spawn_power_manager(pm, chan);
-        }))
-        .start()
+        })).start()
         .map_err(|e| e.context("starting service server"))?;
     Ok(executor.run(server_fut, 2).context("running server")?) // 2 threads
 }

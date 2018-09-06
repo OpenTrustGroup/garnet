@@ -89,15 +89,18 @@ void NamespaceBuilder::AddSandbox(
     } else if (feature == "system-temp") {
       PushDirectoryFromPath("/tmp");
     } else if (feature == "vulkan") {
-      PushDirectoryFromPath("/dev/class/display-controller");
       PushDirectoryFromPath("/dev/class/gpu");
-      PushDirectoryFromPath("/system/data/vulkan");
-      // TODO(abarth): Teach the gpu devices to provide a protocol for fetching
+      PushDirectoryFromPathAs("/system/data/vulkan/icd.d",
+                              "/config/vulkan/icd.d");
+      // TODO(jamesr): Teach the gpu devices to provide a protocol for fetching
       // the device specific vulkan library by message, rather than loading it
       // from the filesystem.
       PushDirectoryFromPath("/system/lib");
     }
   }
+
+  for (const auto& path : sandbox.boot())
+    PushDirectoryFromPath("/boot/" + path);
 }
 
 void NamespaceBuilder::AddDeprecatedDefaultDirectories() {
@@ -159,6 +162,8 @@ fdio_flat_namespace_t* NamespaceBuilder::Build() {
 
 fuchsia::sys::FlatNamespace NamespaceBuilder::BuildForRunner() {
   fuchsia::sys::FlatNamespace flat_namespace;
+  flat_namespace.paths.reset({});
+  flat_namespace.directories.reset({});
 
   for (auto& path : paths_) {
     flat_namespace.paths.push_back(std::move(path));

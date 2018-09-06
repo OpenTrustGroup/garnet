@@ -3,7 +3,10 @@
 # found in the LICENSE file.
 
 static_library("client") {
-  friend = [ ":tests" ]
+  friend = [
+    ":tests",
+    ":test_support",
+  ]
 
   public = [
     "arch_info.h",
@@ -11,42 +14,62 @@ static_library("client") {
     "breakpoint_location.h",
     "breakpoint_observer.h",
     "breakpoint_settings.h",
+    "client_object.h",
     "disassembler.h",
+    "finish_thread_controller.h",
     "frame.h",
     "input_location.h",
     "memory_dump.h",
     "process.h",
     "process_observer.h",
+    "register.h",
+    "register_dwarf.h",
     "session.h",
+    "step_in_range_thread_controller.h",
+    "step_into_thread_controller.h",
     "system.h",
     "system_observer.h",
     "target.h",
     "target_observer.h",
     "thread.h",
+    "thread_controller.h",
     "thread_observer.h",
+    "until_thread_controller.h",
   ]
 
   sources = [
     "arch_info.cc",
     "breakpoint.cc",
+    "breakpoint_action.cc",
     "breakpoint_impl.cc",
     "breakpoint_impl.h",
     "breakpoint_location.cc",
     "breakpoint_location_impl.cc",
     "breakpoint_location_impl.h",
+    "client_object.cc",
     "disassembler.cc",
+    "finish_thread_controller.cc",
     "frame.cc",
     "frame_impl.cc",
     "frame_impl.h",
+    "frame_symbol_data_provider.cc",
+    "frame_symbol_data_provider.h",
     "memory_dump.cc",
     "process.cc",
     "process_impl.cc",
     "process_impl.h",
+    "register.cc",
+    "register.h",
+    "register_dwarf.cc",
+    "register_dwarf.h",
     "remote_api.cc",
     "remote_api.h",
     "remote_api_impl.cc",
     "remote_api_impl.h",
     "session.cc",
+    "session.h",
+    "step_in_range_thread_controller.cc",
+    "step_into_thread_controller.cc",
     "system.cc",
     "system_impl.cc",
     "system_impl.h",
@@ -54,13 +77,16 @@ static_library("client") {
     "target_impl.cc",
     "target_impl.h",
     "thread.cc",
+    "thread_controller.cc",
     "thread_impl.cc",
     "thread_impl.h",
+    "until_thread_controller.cc",
   ]
 
   public_deps = [
-    ":common",
     "symbols",
+    "//garnet/bin/zxdb/common",
+    "//garnet/bin/zxdb/expr",
     "//garnet/lib/debug_ipc:client",
     "//garnet/lib/debug_ipc/helper",
     "//garnet/public/lib/fxl",
@@ -74,27 +100,23 @@ static_library("client") {
   ]
 }
 
-# Shared low-level stuff between "client" and "symbols".
-static_library("common") {
-  public = [
-    "address_range.h",
-    "client_object.h",
-    "err.h",
-    "file_util.h",
-    "host_util.h",
-    "string_util.h",
-  ]
+source_set("test_support") {
+  testonly = true
   sources = [
-    "address_range.cc",
-    "client_object.cc",
-    "err.cc",
-    "file_util.cc",
-    "host_util.cc",
-    "string_util.cc",
+    "mock_frame.cc",
+    "mock_frame.h",
+    "mock_process.cc",
+    "mock_process.h",
+    "remote_api_test.cc",
+    "remote_api_test.h",
+    "thread_impl_test_support.cc",
+    "thread_impl_test_support.h",
   ]
 
   public_deps = [
-    "//garnet/public/lib/fxl",
+    ":client",
+    "symbols:test_support",
+    "//third_party/googletest:gtest",
   ]
 }
 
@@ -103,14 +125,19 @@ source_set("tests") {
   sources = [
     "breakpoint_impl_unittest.cc",
     "disassembler_unittest.cc",
-    "file_util_unittest.cc",
+    "finish_thread_controller_unittest.cc",
     "memory_dump_unittest.cc",
+    "process_impl_unittest.cc",
+    "register_unittest.cc",
+    "session_unittest.cc",
     "string_util_unittest.cc",
     "target_impl_unittest.cc",
+    "thread_impl_unittest.cc",
   ]
 
   deps = [
     ":client",
+    ":test_support",
     "symbols:test_support",
     "symbols:tests",
     "//third_party/googletest:gtest",

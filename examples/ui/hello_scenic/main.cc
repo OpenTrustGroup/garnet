@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <lib/async/cpp/task.h>
 #include <lib/async-loop/cpp/loop.h>
+#include <lib/async/cpp/task.h>
 #include <zx/time.h>
 
 #include "garnet/examples/ui/hello_scenic/app.h"
@@ -15,9 +15,9 @@ int main(int argc, const char** argv) {
   if (!fxl::SetLogSettingsFromCommandLine(command_line))
     return 1;
 
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
   hello_scenic::App app(&loop);
-  async::PostDelayedTask(loop.async(),
+  async::PostDelayedTask(loop.dispatcher(),
                          [&loop] {
                            FXL_LOG(INFO) << "Quitting.";
                            loop.Quit();

@@ -17,8 +17,10 @@
 #include "lib/fidl/cpp/vector.h"
 
 #include <fbl/unique_ptr.h>
+#include <lib/fxl/arraysize.h>
 #include <lib/zx/time.h>
 #include <zircon/assert.h>
+#include <zircon/status.h>
 
 #include <cinttypes>
 #include <utility>
@@ -27,12 +29,55 @@ namespace wlan {
 
 namespace wlan_mlme = ::fuchsia::wlan::mlme;
 
+static constexpr size_t kMaxBssPerChannel = 100;
+
+static void SendScanEnd(DeviceInterface* device, uint64_t txn_id, wlan_mlme::ScanResultCodes code) {
+    if (txn_id != 0) {
+        wlan_mlme::ScanEnd msg;
+        msg.txn_id = txn_id;
+        msg.code = code;
+        zx_status_t s = SendServiceMsg(device, &msg, fuchsia_wlan_mlme_MLMEOnScanEndOrdinal);
+        if (s != ZX_OK) { errorf("failed to send OnScanEnd event: %d\n", s); }
+    } else {
+        // TODO(gbonik): remove legacy support
+        wlan_mlme::ScanConfirm msg;
+        msg.result_code = code;
+        msg.bss_description_set.resize(0);
+        zx_status_t s = SendServiceMsg(device, &msg, fuchsia_wlan_mlme_MLMEScanConfOrdinal);
+        if (s != ZX_OK) { errorf("failed to send ScanConf event: %d\n", s); }
+    }
+}
+
+static zx_status_t SendResults(DeviceInterface* device, uint64_t txn_id,
+                               const std::unordered_map<uint64_t, Bss>& bss_map) {
+    for (auto& p : bss_map) {
+        wlan_mlme::ScanResult r;
+        r.txn_id = txn_id;
+        r.bss = p.second.ToFidl();
+        zx_status_t status = SendServiceMsg(device, &r, fuchsia_wlan_mlme_MLMEOnScanResultOrdinal);
+        if (status != ZX_OK) { return status; }
+    }
+    return ZX_OK;
+}
+
+static zx_status_t SendLegacyScanConf(DeviceInterface* device,
+                                      const std::unordered_map<uint64_t, Bss>& bss_map) {
+    wlan_mlme::ScanConfirm conf;
+    conf.result_code = wlan_mlme::ScanResultCodes::SUCCESS;
+    conf.bss_description_set.resize(0);
+    for (auto& p : bss_map) {
+        conf.bss_description_set.push_back(p.second.ToFidl());
+    }
+    zx_status_t status = SendServiceMsg(device, &conf, fuchsia_wlan_mlme_MLMEScanConfOrdinal);
+    if (status != ZX_OK) { errorf("failed to send ScanConf: %d\n", status); }
+    return status;
+}
+
 // TODO(NET-500): The way we handle Beacons and ProbeResponses in here is kinda gross. Refactor.
 
-Scanner::Scanner(DeviceInterface* device, fbl::unique_ptr<Timer> timer)
-    : device_(device), timer_(std::move(timer)) {
-    ZX_DEBUG_ASSERT(timer_.get());
-}
+Scanner::Scanner(DeviceInterface* device, ChannelScheduler* chan_sched)
+    : off_channel_handler_(this), device_(device), chan_sched_(chan_sched)
+{ }
 
 zx_status_t Scanner::HandleMlmeScanReq(const MlmeMsg<wlan_mlme::ScanRequest>& req) {
     return Start(req);
@@ -41,77 +86,124 @@ zx_status_t Scanner::HandleMlmeScanReq(const MlmeMsg<wlan_mlme::ScanRequest>& re
 zx_status_t Scanner::Start(const MlmeMsg<wlan_mlme::ScanRequest>& req) {
     debugfn();
 
-    if (IsRunning()) { return ZX_ERR_UNAVAILABLE; }
-    ZX_DEBUG_ASSERT(channel_index_ == 0);
-    ZX_DEBUG_ASSERT(channel_start_.get() == 0);
+    if (IsRunning()) {
+        SendScanEnd(device_, req.body()->txn_id, wlan_mlme::ScanResultCodes::NOT_SUPPORTED);
+        return ZX_ERR_UNAVAILABLE;
+    }
 
-    resp_ = wlan_mlme::ScanConfirm::New();
-    resp_->bss_description_set = fidl::VectorPtr<wlan_mlme::BSSDescription>::New(0);
-    resp_->result_code = wlan_mlme::ScanResultCodes::NOT_SUPPORTED;
-
-    if (req.body()->channel_list->size() == 0) { return SendScanConfirm(); }
-    if (req.body()->max_channel_time < req.body()->min_channel_time) { return SendScanConfirm(); }
+    if (req.body()->channel_list->size() == 0 ||
+        req.body()->max_channel_time < req.body()->min_channel_time) {
+        SendScanEnd(device_, req.body()->txn_id, wlan_mlme::ScanResultCodes::INVALID_ARGS);
+        return ZX_ERR_INVALID_ARGS;
+    }
     // TODO(NET-629): re-enable checking the enum value after fidl2 lands
     // if (!BSSTypes_IsValidValue(req.body()->bss_type) ||
     // !ScanTypes_IsValidValue(req.body()->scan_type)) {
     //    return SendScanConfirm();
     //}
 
-    // TODO(tkilbourn): define another result code (out of spec) for errors that aren't
-    // NOT_SUPPORTED errors. Then set SUCCESS only when we've successfully finished scanning.
-    resp_->result_code = wlan_mlme::ScanResultCodes::SUCCESS;
     req_ = wlan_mlme::ScanRequest::New();
     zx_status_t status = req.body()->Clone(req_.get());
     if (status != ZX_OK) {
         errorf("could not clone Scanrequest: %d\n", status);
+        SendScanEnd(device_, req.body()->txn_id, wlan_mlme::ScanResultCodes::INTERNAL_ERROR);
         Reset();
         return status;
     }
 
-    channel_start_ = timer_->Now();
-    zx::time timeout = InitialTimeout();
-    status = device_->SetChannel(ScanChannel());
+    if (device_->GetWlanInfo().ifc_info.driver_features & WLAN_DRIVER_FEATURE_SCAN_OFFLOAD) {
+        debugscan("starting a hardware scan\n");
+        return StartHwScan();
+    } else {
+        debugscan("starting a software scan\n");
+        ZX_DEBUG_ASSERT(channel_index_ == 0);
+        chan_sched_->RequestOffChannelTime(CreateOffChannelRequest());
+        return ZX_OK;
+    }
+}
+
+zx_status_t Scanner::StartHwScan() {
+    wlan_hw_scan_config_t config = {};
+    const auto& chans = req_->channel_list;
+    if (chans->size() > arraysize(config.channels)) {
+        errorf("too many channels to scan: %zu\n", chans->size());
+        SendScanEnd(device_, req_->txn_id, wlan_mlme::ScanResultCodes::INVALID_ARGS);
+        Reset();
+        return ZX_ERR_INVALID_ARGS;
+    }
+    config.num_channels = chans->size();
+    std::copy(chans->begin(), chans->end(), config.channels);
+
+    zx_status_t status = device_->StartHwScan(&config);
     if (status != ZX_OK) {
-        errorf("could not queue set channel: %d\n", status);
-        SendScanConfirm();
+        errorf("StartHwScan returned an error: %s\n", zx_status_get_string(status));
+        SendScanEnd(device_, req_->txn_id, wlan_mlme::ScanResultCodes::INTERNAL_ERROR);
         Reset();
         return status;
     }
-
-    status = timer_->SetTimer(timeout);
-    if (status != ZX_OK) {
-        errorf("could not start scan timer: %d\n", status);
-        resp_->result_code = wlan_mlme::ScanResultCodes::NOT_SUPPORTED;
-        SendScanConfirm();
-        Reset();
-        return status;
-    }
-
     return ZX_OK;
+}
+
+void Scanner::OffChannelHandlerImpl::BeginOffChannelTime() {
+    // Don't do anything for now. For active scans, we should send a probe request,
+    // or set a timer to send a probe request.
+    // TODO(NET-1294)
+}
+
+void Scanner::OffChannelHandlerImpl::HandleOffChannelFrame(fbl::unique_ptr<Packet> pkt) {
+    if (auto mgmt_frame = MgmtFrameView<>::CheckType(pkt.get()).CheckLength()) {
+        if (auto bcn_frame = mgmt_frame.CheckBodyType<Beacon>().CheckLength()) {
+            scanner_->HandleBeacon(bcn_frame);
+        }
+    }
+}
+
+bool Scanner::OffChannelHandlerImpl::EndOffChannelTime(bool interrupted,
+                                                       OffChannelRequest* next_req) {
+    // If we were interrupted before the timeout ended, scan the channel again
+    if (interrupted) {
+        *next_req = scanner_->CreateOffChannelRequest();
+        return true;
+    }
+
+    // TODO(gbonik): remove the 'if' once we remove legacy support
+    if (scanner_->req_->txn_id != 0) {
+        zx_status_t status = SendResults(scanner_->device_, scanner_->req_->txn_id,
+                                         scanner_->current_bss_);
+        if (status != ZX_OK) {
+            errorf("scanner: failed to send results: %d\n", status);
+            SendScanEnd(scanner_->device_, scanner_->req_->txn_id,
+                        wlan_mlme::ScanResultCodes::INTERNAL_ERROR);
+            scanner_->Reset();
+            return false;
+        }
+        scanner_->current_bss_.clear();
+    }
+    if (++scanner_->channel_index_ >= scanner_->req_->channel_list->size()) {
+        // TODO(gbonik): remove legacy support
+        if (scanner_->req_->txn_id != 0) {
+            SendScanEnd(scanner_->device_, scanner_->req_->txn_id,
+                        wlan_mlme::ScanResultCodes::SUCCESS);
+        } else {
+            SendLegacyScanConf(scanner_->device_, scanner_->current_bss_);
+        }
+        scanner_->Reset();
+        return false;
+    } else {
+        *next_req = scanner_->CreateOffChannelRequest();
+        return true;
+    }
 }
 
 void Scanner::Reset() {
     debugfn();
     req_.reset();
-    resp_.reset();
     channel_index_ = 0;
-    channel_start_ = zx::time();
-    timer_->CancelTimer();
-    nbrs_bss_.Clear();
+    current_bss_.clear();
 }
 
 bool Scanner::IsRunning() const {
     return req_ != nullptr;
-}
-
-Scanner::Type Scanner::ScanType() const {
-    ZX_DEBUG_ASSERT(IsRunning());
-    switch (req_->scan_type) {
-    case wlan_mlme::ScanTypes::PASSIVE:
-        return Type::kPassive;
-    case wlan_mlme::ScanTypes::ACTIVE:
-        return Type::kActive;
-    }
 }
 
 wlan_channel_t Scanner::ScanChannel() const {
@@ -140,228 +232,73 @@ bool Scanner::ShouldDropMgmtFrame(const MgmtFrameHeader& hdr) {
     return false;
 }
 
-void Scanner::RemoveStaleBss() {
-    // TODO(porce): call this periodically and delete stale entries.
-    // TODO(porce): Implement a complex preemption logic here.
-
-    // Only prune if necessary time passed.
-    static zx::time ts_last_prune;
-    auto now = zx::clock::get(ZX_CLOCK_UTC);
-    if (ts_last_prune + kBssPruneDelay > now) { return; }
-
-    // Prune stale entries.
-    ts_last_prune = now;
-    nbrs_bss_.RemoveIf(
-        [now](fbl::RefPtr<Bss> bss) -> bool { return (bss->ts_refreshed() + kBssExpiry <= now); });
+void Scanner::HandleBeacon(const MgmtFrameView<Beacon>& frame) {
+    debugfn();
+    if (!ShouldDropMgmtFrame(*frame.hdr())) { ProcessBeacon(frame); }
 }
 
-zx_status_t Scanner::HandleBeacon(const MgmtFrameView<Beacon>& frame) {
+void Scanner::ProcessBeacon(const MgmtFrameView<Beacon>& bcn_frame) {
     debugfn();
-    if (ShouldDropMgmtFrame(*frame.hdr())) { return ZX_OK; }
+    auto bssid = bcn_frame.hdr()->addr3;
 
-    return ProcessBeacon(frame);
-}
-
-zx_status_t Scanner::HandleProbeResponse(const MgmtFrameView<ProbeResponse>& frame) {
-    debugfn();
-    if (ShouldDropMgmtFrame(*frame.hdr())) { return ZX_OK; }
-
-    // ProbeResponse holds the same fields as a Beacon with the only difference in their IEs.
-    // Thus, we can safely convert a ProbeResponse to a Beacon.
-    auto bcn_frame = frame.Specialize<Beacon>();
-    return ProcessBeacon(bcn_frame);
-}
-
-zx_status_t Scanner::ProcessBeacon(const MgmtFrameView<Beacon>& bcn_frame) {
-    debugfn();
-    common::MacAddr bssid(bcn_frame.hdr()->addr3);
-
-    // Before processing Beacon, remove stale entries.
-    RemoveStaleBss();
-
-    // Update existing BSS or insert if already in map.
-    zx_status_t status = ZX_OK;
-    auto bss = nbrs_bss_.Lookup(bssid);
-    if (bss != nullptr) {
-        status = bss->ProcessBeacon(*bcn_frame.body(), bcn_frame.body_len(), bcn_frame.rx_info());
-    } else if (nbrs_bss_.IsFull()) {
-        errorf("error, maximum number of BSS reached: %lu\n", nbrs_bss_.Count());
-    } else {
-        bss = fbl::AdoptRef(new Bss(bssid));
-        bss->ProcessBeacon(*bcn_frame.body(), bcn_frame.body_len(), bcn_frame.rx_info());
-        status = nbrs_bss_.Insert(bssid, bss);
+    auto it = current_bss_.find(bssid.ToU64());
+    if (it == current_bss_.end()) {
+        if (current_bss_.size() >= kMaxBssPerChannel) {
+            errorf("maximum number of BSS per channel reached: %lu\n", current_bss_.size());
+            return;
+        }
+        it = current_bss_
+                 .emplace(std::piecewise_construct, std::forward_as_tuple(bssid.ToU64()),
+                          std::forward_as_tuple(bssid))
+                 .first;
     }
 
+    zx_status_t status =
+        it->second.ProcessBeacon(*bcn_frame.body(), bcn_frame.body_len(), bcn_frame.rx_info());
     if (status != ZX_OK) {
         debugbcn("Failed to handle beacon (err %3d): BSSID %s timestamp: %15" PRIu64 "\n", status,
                  MACSTR(bssid), bcn_frame.body()->timestamp);
     }
-
-    return ZX_OK;
 }
 
-zx_status_t Scanner::HandleTimeout() {
-    debugfn();
-    ZX_DEBUG_ASSERT(IsRunning());
+OffChannelRequest Scanner::CreateOffChannelRequest() {
+   return OffChannelRequest {
+       .chan = ScanChannel(),
+       .duration = WLAN_TU(req_->max_channel_time),
+       .handler = &off_channel_handler_
+   };
+}
 
-    zx::time now = timer_->Now();
-    zx_status_t status = ZX_OK;
-
-    // Reached max channel dwell time
-    if (now >= channel_start_ + WLAN_TU(req_->max_channel_time)) {
-        if (++channel_index_ >= req_->channel_list->size()) {
-            timer_->CancelTimer();
-            status = SendScanConfirm();
-            Reset();
-            return status;
-        } else {
-            channel_start_ = timer_->Now();
-            status = timer_->SetTimer(InitialTimeout());
-            if (status != ZX_OK) { goto timer_fail; }
-            return device_->SetChannel(ScanChannel());
-        }
+void Scanner::HandleHwScanAborted() {
+    if (!IsRunning()) {
+        errorf("got a HwScanAborted event while the scanner is not running\n");
+        return;
     }
-
-    // TODO(tkilbourn): can probe delay come after min_channel_time?
-
-    // Reached min channel dwell time
-    if (now >= channel_start_ + WLAN_TU(req_->min_channel_time)) {
-        // TODO(tkilbourn): if there was no sign of activity on this channel, skip ahead to the next
-        // one
-        // For now, just continue the scan.
-        zx::time timeout = channel_start_ + WLAN_TU(req_->max_channel_time);
-        status = timer_->SetTimer(timeout);
-        if (status != ZX_OK) { goto timer_fail; }
-        return ZX_OK;
-    }
-
-    // Reached probe delay for an active scan
-    if (req_->scan_type == wlan_mlme::ScanTypes::ACTIVE &&
-        now >= channel_start_ + WLAN_TU(req_->probe_delay)) {
-        debugf("Reached probe delay\n");
-        // TODO(hahnr): Add support for CCA as described in IEEE Std 802.11-2016 11.1.4.3.2 f)
-        zx::time timeout = channel_start_ + WLAN_TU(req_->min_channel_time);
-        status = timer_->SetTimer(timeout);
-        if (status != ZX_OK) { goto timer_fail; }
-        SendProbeRequest();
-        return ZX_OK;
-    }
-
-    // Haven't reached a timeout yet; continue scanning
-    return ZX_OK;
-
-timer_fail:
-    errorf("could not set scan timer: %d\n", status);
-    status = SendScanConfirm();
+    errorf("scanner: hardware scan was aborted. Throwing out %zu BSS descriptions\n",
+            current_bss_.size());
+    SendScanEnd(device_, req_->txn_id, wlan_mlme::ScanResultCodes::INTERNAL_ERROR);
     Reset();
-    return status;
 }
 
-zx_status_t Scanner::HandleError(zx_status_t error_code) {
-    debugfn();
-    resp_ = wlan_mlme::ScanConfirm::New();
-    // TODO(tkilbourn): report the error code somehow
-    resp_->result_code = wlan_mlme::ScanResultCodes::NOT_SUPPORTED;
-    return SendScanConfirm();
-}
-
-zx::time Scanner::InitialTimeout() const {
-    if (req_->scan_type == wlan_mlme::ScanTypes::PASSIVE) {
-        return channel_start_ + WLAN_TU(req_->min_channel_time);
-    } else {
-        return channel_start_ + WLAN_TU(req_->probe_delay);
-    }
-}
-
-// TODO(hahnr): support SSID list (IEEE Std 802.11-2016 11.1.4.3.2)
-zx_status_t Scanner::SendProbeRequest() {
-    debugfn();
-
-    size_t body_payload_len = 128;  // TODO(porce): Revisit this value choice.
-    MgmtFrame<ProbeRequest> frame;
-    auto status = BuildMgmtFrame(&frame, body_payload_len);
-    if (status != ZX_OK) { return status; }
-
-    auto hdr = frame.hdr();
-    const common::MacAddr& mymac = device_->GetState()->address();
-    const common::MacAddr& bssid = common::MacAddr(req_->bssid.data());
-
-    hdr->addr1 = common::kBcastMac;
-    hdr->addr2 = mymac;
-    hdr->addr3 = bssid;
-    // TODO(NET-556): Clarify 'Sequence' ownership of MLME and STA. Don't set sequence number for
-    // now.
-    hdr->sc.set_seq(0);
-    frame.FillTxInfo();
-
-    auto body = frame.body();
-    ElementWriter w(body->elements, body_payload_len);
-
-    if (!w.write<SsidElement>(req_->ssid->data())) {
-        errorf("could not write ssid \"%s\" to probe request\n", req_->ssid->data());
-        return ZX_ERR_IO;
+void Scanner::HandleHwScanComplete() {
+    if (!IsRunning()) {
+        errorf("got a HwScanComplete event while the scanner is not running\n");
+        return;
     }
 
-    // TODO(hahnr): determine these rates based on hardware
-    // Rates (in Mbps): 1, 2, 5.5, 6, 9, 11, 12, 18
-    std::vector<uint8_t> rates = {0x02, 0x04, 0x0b, 0x0c, 0x12, 0x16, 0x18, 0x24};
-    if (!w.write<SupportedRatesElement>(std::move(rates))) {
-        errorf("could not write supported rates\n");
-        return ZX_ERR_IO;
-    }
-
-    // Rates (in Mbps): 24, 36, 48, 54
-    std::vector<uint8_t> ext_rates = {0x30, 0x48, 0x60, 0x6c};
-    if (!w.write<ExtendedSupportedRatesElement>(std::move(ext_rates))) {
-        errorf("could not write extended supported rates\n");
-        return ZX_ERR_IO;
-    }
-
-    // Validate the request in debug mode
-    ZX_DEBUG_ASSERT(body->Validate(w.size()));
-
-    // Update the length with final values
-    // TODO(porce): implement methods to replace sizeof(ProbeRequest) with body.some_len()
-    size_t body_len = sizeof(ProbeRequest) + w.size();
-    status = frame.set_body_len(body_len);
-    if (status != ZX_OK) {
-        errorf("could not set body length to %zu: %d\n", body_len, status);
-        return status;
-    }
-
-    status = device_->SendWlan(frame.Take());
-    if (status != ZX_OK) { errorf("could not send probe request packet: %d\n", status); }
-
-    return status;
-}
-
-// TODO(hahnr): Move to service.cpp.
-zx_status_t Scanner::SendScanConfirm() {
-    debugfn();
-
-    nbrs_bss_.ForEach([this](fbl::RefPtr<Bss> bss) {
-        if (req_->ssid->size() == 0 || req_->ssid == bss->SsidToString()) {
-            debugbss("%s\n", bss->ToString().c_str());
-            resp_->bss_description_set->push_back(bss->ToFidl());
+    // TODO(gbonik): remove legacy support once wlanstack2 lands
+    if (req_->txn_id != 0) {
+        zx_status_t status = SendResults(device_, req_->txn_id, current_bss_);
+        if (status != ZX_OK) {
+            errorf("scanner: failed to send results: %d\n", status);
+            SendScanEnd(device_, req_->txn_id, wlan_mlme::ScanResultCodes::INTERNAL_ERROR);
+        } else {
+            SendScanEnd(device_, req_->txn_id, wlan_mlme::ScanResultCodes::SUCCESS);
         }
-    });
-
-    // TODO(FIDL-2): replace this when we can get the size of the serialized response.
-    size_t buf_len = 16384;
-    fbl::unique_ptr<Buffer> buffer = GetBuffer(buf_len);
-    if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
-
-    auto packet = fbl::unique_ptr<Packet>(new Packet(std::move(buffer), buf_len));
-    packet->set_peer(Packet::Peer::kService);
-    zx_status_t status = SerializeServiceMsg(packet.get(), fuchsia_wlan_mlme_MLMEScanConfOrdinal, resp_.get());
-    if (status != ZX_OK) {
-        errorf("could not serialize ScanResponse: %d\n", status);
     } else {
-        status = device_->SendService(std::move(packet));
+        SendLegacyScanConf(device_, current_bss_);
     }
-
-    nbrs_bss_.Clear();  // TODO(porce): Decouple BSS management from Scanner.
-    return status;
+    Reset();
 }
 
 }  // namespace wlan

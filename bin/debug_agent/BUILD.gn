@@ -56,12 +56,19 @@ static_library("lib") {
     "//garnet/lib/debug_ipc/helper",
     "//garnet/lib/process",
     "//garnet/public/lib/fxl",
+    "//garnet/public/lib/svc/cpp",
     "//zircon/public/lib/ngunwind",
   ]
 }
 
 if (include_test_app) {
   executable("zxdb_test_app") {
+    if (is_debug) {
+      # Force no optimization in debug builds.
+      configs -= [ "//build/config:debug" ]
+      cflags = [ "-O0" ]
+    }
+
     sources = [
       "zxdb_test_app.cc",
     ]
@@ -79,6 +86,7 @@ executable("bin") {
 
   deps = [
     ":lib",
+    "//garnet/public/lib/component/cpp:environment_services",
   ]
 }
 
@@ -116,7 +124,6 @@ executable("unittests") {
 
 package("debug_agent_tests") {
   testonly = true
-  deprecated_system_image = true
 
   package_name = "debug_agent_tests"
 

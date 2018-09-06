@@ -29,7 +29,7 @@ DevAuthProviderImpl::~DevAuthProviderImpl() {}
 
 void DevAuthProviderImpl::GetPersistentCredential(
     fidl::InterfaceHandle<AuthenticationUIContext> auth_ui_context,
-    GetPersistentCredentialCallback callback) {
+    fidl::StringPtr user_profile_id, GetPersistentCredentialCallback callback) {
   fuchsia::auth::UserProfileInfoPtr ui = fuchsia::auth::UserProfileInfo::New();
   ui->id = GenerateRandomString() + "@example.com";
   ui->display_name = "test_user_display_name";
@@ -41,8 +41,7 @@ void DevAuthProviderImpl::GetPersistentCredential(
 }
 
 void DevAuthProviderImpl::GetAppAccessToken(
-    fidl::StringPtr credential,
-    fidl::StringPtr app_client_id,
+    fidl::StringPtr credential, fidl::StringPtr app_client_id,
     const fidl::VectorPtr<fidl::StringPtr> app_scopes,
     GetAppAccessTokenCallback callback) {
   AuthTokenPtr access_token = fuchsia::auth::AuthToken::New();
@@ -66,13 +65,12 @@ void DevAuthProviderImpl::GetAppIdToken(fidl::StringPtr credential,
 }
 
 void DevAuthProviderImpl::GetAppFirebaseToken(
-    fidl::StringPtr id_token,
-    fidl::StringPtr firebase_api_key,
+    fidl::StringPtr id_token, fidl::StringPtr firebase_api_key,
     GetAppFirebaseTokenCallback callback) {
   FirebaseTokenPtr fb_token = fuchsia::auth::FirebaseToken::New();
   fb_token->id_token =
       std::string(firebase_api_key) + ":fbt_" + GenerateRandomString();
-  fb_token->email = GenerateRandomString() + "@devauthprovider.com";
+  fb_token->email = GenerateRandomString() + "@firebase.example.com";
   fb_token->local_id = "local_id_" + GenerateRandomString();
   fb_token->expires_in = 3600;
 
@@ -83,6 +81,25 @@ void DevAuthProviderImpl::RevokeAppOrPersistentCredential(
     fidl::StringPtr credential,
     RevokeAppOrPersistentCredentialCallback callback) {
   callback(AuthProviderStatus::OK);
+}
+
+void DevAuthProviderImpl::GetPersistentCredentialFromAttestationJWT(
+    fidl::InterfaceHandle<AttestationSigner> attestation_signer,
+    AttestationJWTParams jwt_params,
+    fidl::InterfaceHandle<AuthenticationUIContext> auth_ui_context,
+    fidl::StringPtr user_profile_id,
+    GetPersistentCredentialFromAttestationJWTCallback callback) {
+  // TODO(ukode): Remote attestation flow will be added later.
+  callback(AuthProviderStatus::BAD_REQUEST, nullptr, nullptr, nullptr, nullptr);
+}
+
+void DevAuthProviderImpl::GetAppAccessTokenFromAssertionJWT(
+    fidl::InterfaceHandle<AttestationSigner> attestation_signer,
+    AssertionJWTParams jwt_params, fidl::StringPtr credential,
+    fidl::VectorPtr<::fidl::StringPtr> scopes,
+    GetAppAccessTokenFromAssertionJWTCallback callback) {
+  // TODO(ukode): Remote attestation flow will be added later.
+  callback(AuthProviderStatus::BAD_REQUEST, nullptr, nullptr, nullptr);
 }
 
 }  // namespace dev_auth_provider

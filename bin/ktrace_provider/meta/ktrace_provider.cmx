@@ -3,6 +3,7 @@
         "binary": "bin/app"
     },
     "sandbox": {
+        "services": [ "fuchsia.tracelink.Registry" ],
         "dev": [ "misc" ]
     }
 }

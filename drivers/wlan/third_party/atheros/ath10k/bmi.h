@@ -48,17 +48,16 @@
  */
 
 /* Maximum data size used for BMI transfers */
-#define BMI_MAX_DATA_SIZE       256
+#define BMI_MAX_DATA_SIZE 256
 
 /* len = cmd + addr + length */
-#define BMI_MAX_CMDBUF_SIZE (BMI_MAX_DATA_SIZE + \
-                        sizeof(uint32_t) + \
-                        sizeof(uint32_t) + \
-                        sizeof(uint32_t))
+#define BMI_MAX_CMDBUF_SIZE \
+    (BMI_MAX_DATA_SIZE + sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint32_t))
 
 /* BMI Commands */
 
 enum bmi_cmd_id {
+    // clang-format off
     BMI_NO_COMMAND          = 0,
     BMI_DONE                = 1,
     BMI_READ_MEMORY         = 2,
@@ -78,13 +77,15 @@ enum bmi_cmd_id {
     BMI_LZ_STREAM_START     = 13, /* should be followed by LZ_DATA */
     BMI_LZ_DATA             = 14,
     BMI_NVRAM_PROCESS       = 15,
+    // clang-format on
 };
 
-#define BMI_NVRAM_SEG_NAME_SZ 16
+// clang-format off
+#define BMI_NVRAM_SEG_NAME_SZ         16
 
 #define BMI_PARAM_GET_EEPROM_BOARD_ID 0x10
-#define BMI_PARAM_GET_FLASH_BOARD_ID 0x8000
-#define BMI_PARAM_FLASH_SECTION_ALL 0x10000
+#define BMI_PARAM_GET_FLASH_BOARD_ID  0x8000
+#define BMI_PARAM_FLASH_SECTION_ALL   0x10000
 
 #define ATH10K_BMI_BOARD_ID_FROM_OTP_MASK   0x7c00
 #define ATH10K_BMI_BOARD_ID_FROM_OTP_LSB    10
@@ -92,7 +93,8 @@ enum bmi_cmd_id {
 #define ATH10K_BMI_CHIP_ID_FROM_OTP_MASK    0x18000
 #define ATH10K_BMI_CHIP_ID_FROM_OTP_LSB     15
 
-#define ATH10K_BMI_BOARD_ID_STATUS_MASK 0xff
+#define ATH10K_BMI_BOARD_ID_STATUS_MASK     0xff
+// clang-format on
 
 struct bmi_cmd {
     uint32_t id; /* enum bmi_cmd_id */
@@ -145,7 +147,7 @@ struct bmi_cmd {
             uint32_t addr;
         } lz_start;
         struct {
-            uint32_t len; /* max BMI_MAX_DATA_SIZE */
+            uint32_t len;       /* max BMI_MAX_DATA_SIZE */
             uint8_t payload[0]; /* length of @len */
         } lz_data;
         struct {
@@ -197,46 +199,42 @@ struct bmi_target_info {
 
 void ath10k_bmi_start(struct ath10k* ar);
 zx_status_t ath10k_bmi_done(struct ath10k* ar);
-zx_status_t ath10k_bmi_get_target_info_sdio(struct ath10k* ar,
-                                            struct bmi_target_info* target_info);
-zx_status_t ath10k_bmi_get_target_info(struct ath10k* ar,
-                                       struct bmi_target_info* target_info);
-zx_status_t ath10k_bmi_read_memory(struct ath10k* ar, uint32_t address,
-                                   void* buffer, uint32_t length);
-zx_status_t ath10k_bmi_write_memory(struct ath10k* ar, uint32_t address,
-                                    const void* buffer, uint32_t length);
+zx_status_t ath10k_bmi_get_target_info_sdio(struct ath10k* ar, struct bmi_target_info* target_info);
+zx_status_t ath10k_bmi_get_target_info(struct ath10k* ar, struct bmi_target_info* target_info);
+zx_status_t ath10k_bmi_read_memory(struct ath10k* ar, uint32_t address, void* buffer,
+                                   uint32_t length);
+zx_status_t ath10k_bmi_write_memory(struct ath10k* ar, uint32_t address, const void* buffer,
+                                    uint32_t length);
 
-#define ath10k_bmi_read32(ar, item, val)                                     \
-        ({                                                                   \
-                zx_status_t ret;                                             \
-                uint32_t addr;                                               \
-                uint32_t tmp;                                                \
-                                                                             \
-                addr = host_interest_item_address(HI_ITEM(item));            \
-                ret = ath10k_bmi_read_memory(ar, addr, (uint8_t *)&tmp, 4);  \
-                if (ret == ZX_OK)                                            \
-                        *val = tmp;                                          \
-                ret;                                                         \
-         })
+#define ath10k_bmi_read32(ar, item, val)                           \
+    ({                                                             \
+        zx_status_t ret;                                           \
+        uint32_t addr;                                             \
+        uint32_t tmp;                                              \
+                                                                   \
+        addr = host_interest_item_address(HI_ITEM(item));          \
+        ret = ath10k_bmi_read_memory(ar, addr, (uint8_t*)&tmp, 4); \
+        if (ret == ZX_OK) *val = tmp;                              \
+        ret;                                                       \
+    })
 
 #define ath10k_bmi_write32(ar, item, val)                                    \
-        ({                                                                   \
-                zx_status_t ret;                                             \
-                uint32_t address;                                            \
-                uint32_t v = val;                                            \
+    ({                                                                       \
+        zx_status_t ret;                                                     \
+        uint32_t address;                                                    \
+        uint32_t v = val;                                                    \
                                                                              \
-                address = host_interest_item_address(HI_ITEM(item));         \
-                ret = ath10k_bmi_write_memory(ar, address,                   \
-                                              (uint8_t *)&v, sizeof(v));     \
-                ret;                                                         \
-        })
+        address = host_interest_item_address(HI_ITEM(item));                 \
+        ret = ath10k_bmi_write_memory(ar, address, (uint8_t*)&v, sizeof(v)); \
+        ret;                                                                 \
+    })
 
 zx_status_t ath10k_bmi_execute(struct ath10k* ar, uint32_t address, uint32_t param,
                                uint32_t* result);
 zx_status_t ath10k_bmi_lz_stream_start(struct ath10k* ar, uint32_t address);
 zx_status_t ath10k_bmi_lz_data(struct ath10k* ar, const void* buffer, uint32_t length);
-zx_status_t ath10k_bmi_fast_download(struct ath10k* ar, uint32_t address,
-                                     const void* buffer, uint32_t length);
+zx_status_t ath10k_bmi_fast_download(struct ath10k* ar, uint32_t address, const void* buffer,
+                                     uint32_t length);
 zx_status_t ath10k_bmi_read_soc_reg(struct ath10k* ar, uint32_t address, uint32_t* reg_val);
 zx_status_t ath10k_bmi_write_soc_reg(struct ath10k* ar, uint32_t address, uint32_t reg_val);
 #endif /* _BMI_H_ */

@@ -13,6 +13,7 @@
 
 #include "lib/fxl/files/directory.h"
 #include "lib/fxl/files/eintr_wrapper.h"
+#include "lib/fxl/files/file.h"
 #include "lib/fxl/files/path.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/logging.h"
@@ -50,7 +51,7 @@ fxl::UniqueFD MksTempAt(int root_fd, char* tp, size_t tp_length) {
   do {
     GenerateRandName(tp + tp_length - 6);
     fxl::UniqueFD result(
-        HANDLE_EINTR(openat(root_fd, tp, O_WRONLY | O_CREAT | O_EXCL)));
+        HANDLE_EINTR(openat(root_fd, tp, O_CREAT | O_EXCL, 0700)));
     if (result.is_valid()) {
       return result;
     }
@@ -114,6 +115,24 @@ bool ScopedTempDirAt::NewTempFile(std::string* output) {
   return true;
 }
 
+bool ScopedTempDirAt::NewTempFileWithData(const std::string& data,
+                                          std::string* output) {
+  if (!NewTempFile(output)) {
+    return false;
+  }
+  return WriteFile(*output, data.data(), data.size());
+}
+
+bool ScopedTempDirAt::NewTempDir(std::string* output) {
+  std::string dir_path = directory_path_ + "/XXXXXX";
+  char* out_path = MkdTempAt(root_fd_, &dir_path[0], dir_path.size());
+  if (out_path == nullptr) {
+    return false;
+  }
+  output->swap(dir_path);
+  return true;
+}
+
 ScopedTempDir::ScopedTempDir() : ScopedTempDir("") {}
 
 ScopedTempDir::ScopedTempDir(fxl::StringView parent_path)
@@ -125,6 +144,15 @@ const std::string& ScopedTempDir::path() { return base_.path(); }
 
 bool ScopedTempDir::NewTempFile(std::string* output) {
   return base_.NewTempFile(output);
+}
+
+bool ScopedTempDir::NewTempFileWithData(const std::string& data,
+                                        std::string* output) {
+  return base_.NewTempFileWithData(data, output);
+}
+
+bool ScopedTempDir::NewTempDir(std::string* path) {
+  return base_.NewTempDir(path);
 }
 
 }  // namespace files

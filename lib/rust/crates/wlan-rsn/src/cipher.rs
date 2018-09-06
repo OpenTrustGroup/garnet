@@ -1,12 +1,12 @@
 // Copyright 2018 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-#![allow(dead_code)]
 
-use super::{Error, Result};
+use crate::Error;
 use bytes::Bytes;
+use failure::{self, bail, ensure};
 use std::fmt;
-use suite_selector;
+use crate::suite_selector;
 
 macro_rules! return_none_if_unknown_usage {
     ($e:expr) => {
@@ -33,7 +33,7 @@ pub const BIP_GMAC_256: u8 = 12;
 pub const BIP_CMAC_256: u8 = 13;
 // 14-255 - Reserved.
 
-#[derive(PartialOrd, PartialEq)]
+#[derive(PartialOrd, PartialEq, Clone)]
 pub struct Cipher {
     pub oui: Bytes,
     pub suite_type: u8,
@@ -120,12 +120,9 @@ impl Cipher {
 impl suite_selector::Factory for Cipher {
     type Suite = Cipher;
 
-    fn new(oui: Bytes, suite_type: u8) -> Result<Self::Suite> {
-        if oui.len() != 3 {
-            Err(Error::InvalidOuiLength(oui.len()))
-        } else {
-            Ok(Cipher { oui, suite_type })
-        }
+    fn new(oui: Bytes, suite_type: u8) -> Result<Self::Suite, failure::Error> {
+        ensure!(oui.len() == 3, Error::InvalidOuiLength(oui.len()));
+        Ok(Cipher { oui, suite_type })
     }
 }
 

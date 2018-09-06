@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#pragma once
+#ifndef GARNET_DRIVERS_BLUETOOTH_LIB_ATT_BEARER_H_
+#define GARNET_DRIVERS_BLUETOOTH_LIB_ATT_BEARER_H_
 
 #include <map>
 #include <memory>
@@ -10,6 +11,7 @@
 
 #include <lib/async/cpp/task.h>
 #include <lib/fit/function.h>
+#include <zircon/assert.h>
 
 #include "garnet/drivers/bluetooth/lib/att/att.h"
 #include "garnet/drivers/bluetooth/lib/att/packet.h"
@@ -23,7 +25,6 @@
 #include "garnet/drivers/bluetooth/lib/l2cap/sdu.h"
 
 #include "lib/fxl/functional/cancelable_callback.h"
-#include "lib/fxl/logging.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/ref_counted.h"
 #include "lib/fxl/synchronization/thread_checker.h"
@@ -62,7 +63,7 @@ class Bearer final : public fxl::RefCountedThreadSafe<Bearer> {
   // for unit tests.
   uint16_t mtu() const { return mtu_; }
   void set_mtu(uint16_t value) {
-    FXL_VLOG(1) << "att: Bearer: new MTU: " << value;
+    bt_log(TRACE, "att", "bearer: new MTU %u", value);
     mtu_ = value;
   }
 
@@ -71,7 +72,7 @@ class Bearer final : public fxl::RefCountedThreadSafe<Bearer> {
   // procedures.
   uint16_t preferred_mtu() const { return preferred_mtu_; }
   void set_preferred_mtu(uint16_t value) {
-    FXL_DCHECK(value >= kLEMinMTU);
+    ZX_DEBUG_ASSERT(value >= kLEMinMTU);
     preferred_mtu_ = value;
   }
 
@@ -81,7 +82,7 @@ class Bearer final : public fxl::RefCountedThreadSafe<Bearer> {
   // Sets a callback to be invoked invoked when the underlying channel has
   // closed. |callback| should disconnect the underlying logical link.
   void set_closed_callback(fit::closure callback) {
-    FXL_DCHECK(thread_checker_.IsCreationThreadCurrent());
+    ZX_DEBUG_ASSERT(thread_checker_.IsCreationThreadCurrent());
     closed_cb_ = std::move(callback);
   }
 
@@ -316,3 +317,5 @@ class Bearer final : public fxl::RefCountedThreadSafe<Bearer> {
 
 }  // namespace att
 }  // namespace btlib
+
+#endif  // GARNET_DRIVERS_BLUETOOTH_LIB_ATT_BEARER_H_

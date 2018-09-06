@@ -6,18 +6,22 @@
 
 #include <ddk/device.h>
 #include <fbl/limits.h>
+#include <fuchsia/wlan/mlme/cpp/fidl.h>
 #include <lib/zx/thread.h>
 #include <lib/zx/time.h>
 #include <wlan/common/channel.h>
 #include <wlan/common/logging.h>
 #include <wlan/mlme/ap/ap_mlme.h>
+#include <wlan/mlme/client/bss.h>
 #include <wlan/mlme/client/client_mlme.h>
+#include <wlan/mlme/debug.h>
 #include <wlan/mlme/service.h>
 #include <wlan/mlme/timer.h>
 #include <wlan/mlme/wlan.h>
 #include <wlan/protocol/ioctl.h>
 #include <zircon/assert.h>
 #include <zircon/compiler.h>
+#include <zircon/status.h>
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/port.h>
 
@@ -29,6 +33,8 @@
 #include <utility>
 
 namespace wlan {
+
+namespace wlan_mlme = ::fuchsia::wlan::mlme;
 
 #define DEV(c) static_cast<Device*>(c)
 static zx_protocol_device_t wlan_device_ops = {
@@ -54,6 +60,14 @@ static wlanmac_ifc_t wlanmac_ifc_ops = {
     .complete_tx = [](void* cookie, wlan_tx_packet_t* pkt,
                       zx_status_t status) { DEV(cookie)->WlanmacCompleteTx(pkt, status); },
     .indication = [](void* cookie, uint32_t ind) { DEV(cookie)->WlanmacIndication(ind); },
+    .report_tx_status =
+        [](void* cookie, const wlan_tx_status_t* tx_status) {
+            DEV(cookie)->WlanmacReportTxStatus(tx_status);
+        },
+    .hw_scan_complete =
+        [](void* cookie, const wlan_hw_scan_result_t* result) {
+            DEV(cookie)->WlanmacHwScanComplete(result);
+        },
 };
 
 static ethmac_protocol_ops_t ethmac_ops = {
@@ -73,8 +87,9 @@ static ethmac_protocol_ops_t ethmac_ops = {
 };
 #undef DEV
 
-Device::Device(zx_device_t* device, wlanmac_protocol_t wlanmac_proto)
-    : parent_(device), wlanmac_proxy_(wlanmac_proto) {
+Device::Device(zx_device_t* device, wlanmac_protocol_t wlanmac_proto,
+               std::shared_ptr<component::Services> services)
+    : parent_(device), wlanmac_proxy_(wlanmac_proto), services_(services) {
     debugfn();
     state_ = fbl::AdoptRef(new DeviceState);
 }
@@ -101,18 +116,35 @@ zx_status_t Device::Bind() __TA_NO_THREAD_SAFETY_ANALYSIS {
         errorf("could not query wlanmac device: %d\n", status);
         return status;
     }
-    state_->set_address(common::MacAddr(wlanmac_info_.mac_addr));
+
+    status = ValidateWlanMacInfo(wlanmac_info_);
+    if (status != ZX_OK) {
+        errorf("could not bind wlanmac device with invalid wlanmac info\n");
+        return status;
+    }
+
+    status = wlanmac_proxy_.Start(&wlanmac_ifc_ops, this);
+    if (status != ZX_OK) {
+        errorf("failed to start wlanmac device: %s\n", zx_status_get_string(status));
+        return status;
+    }
+
+    state_->set_address(common::MacAddr(wlanmac_info_.ifc_info.mac_addr));
 
     fbl::unique_ptr<Mlme> mlme;
-    switch (wlanmac_info_.mac_role) {
+
+    // mac_role is a bitfield, but only a single value is supported for an interface
+    switch (wlanmac_info_.ifc_info.mac_role) {
     case WLAN_MAC_ROLE_CLIENT:
+        infof("Initialize a client MLME.\n");
         mlme.reset(new ClientMlme(this));
         break;
     case WLAN_MAC_ROLE_AP:
+        infof("Initialize an AP MLME.\n");
         mlme.reset(new ApMlme(this));
         break;
     default:
-        errorf("unsupported MAC role: %u\n", wlanmac_info_.mac_role);
+        errorf("unsupported MAC role: %u\n", wlanmac_info_.ifc_info.mac_role);
         return ZX_ERR_NOT_SUPPORTED;
     }
     ZX_DEBUG_ASSERT(mlme != nullptr);
@@ -122,6 +154,11 @@ zx_status_t Device::Bind() __TA_NO_THREAD_SAFETY_ANALYSIS {
         return status;
     }
     dispatcher_.reset(new Dispatcher(this, std::move(mlme)));
+    if ((wlanmac_info_.ifc_info.driver_features & WLAN_DRIVER_FEATURE_TX_STATUS_REPORT) &&
+        !(wlanmac_info_.ifc_info.driver_features & WLAN_DRIVER_FEATURE_RATE_SELECTION)) {
+        zx_status_t status = CreateMinstrel();
+        if (ZX_OK == status) { debugmstl("Minstrel Manager created successfully.\n"); }
+    }
 
     work_thread_ = std::thread(&Device::MainLoop, this);
 
@@ -260,9 +297,9 @@ zx_status_t Device::EthmacQuery(uint32_t options, ethmac_info_t* info) {
     if (info == nullptr) return ZX_ERR_INVALID_ARGS;
 
     memset(info, 0, sizeof(*info));
-    memcpy(info->mac, wlanmac_info_.mac_addr, ETH_MAC_SIZE);
+    memcpy(info->mac, wlanmac_info_.ifc_info.mac_addr, ETH_MAC_SIZE);
     info->features = ETHMAC_FEATURE_WLAN;
-    if (wlanmac_info_.driver_features & WLAN_DRIVER_FEATURE_SYNTH) {
+    if (wlanmac_info_.ifc_info.driver_features & WLAN_DRIVER_FEATURE_SYNTH) {
         info->features |= ETHMAC_FEATURE_SYNTH;
     }
     info->mtu = 1500;
@@ -276,13 +313,8 @@ zx_status_t Device::EthmacStart(ethmac_ifc_t* ifc, void* cookie) {
 
     std::lock_guard<std::mutex> lock(lock_);
     if (ethmac_proxy_ != nullptr) { return ZX_ERR_ALREADY_BOUND; }
-    zx_status_t status = wlanmac_proxy_.Start(&wlanmac_ifc_ops, this);
-    if (status != ZX_OK) {
-        errorf("could not start wlanmac: %d\n", status);
-    } else {
-        ethmac_proxy_.reset(new EthmacIfcProxy(ifc, cookie));
-    }
-    return status;
+    ethmac_proxy_.reset(new EthmacIfcProxy(ifc, cookie));
+    return ZX_OK;
 }
 
 void Device::EthmacStop() {
@@ -343,6 +375,20 @@ void Device::WlanmacIndication(uint32_t ind) {
     if (status != ZX_OK) { warnf("could not queue driver indication packet err=%d\n", status); }
 }
 
+void Device::WlanmacReportTxStatus(const wlan_tx_status_t* tx_status) {
+    zx_packet_user_t user_pkt;
+    static_assert(sizeof(zx_packet_user_t) >= sizeof(wlan_tx_status_t), "tx_status size > 32");
+    memcpy(user_pkt.c8, reinterpret_cast<const uint8_t*>(tx_status), sizeof(wlan_tx_status_t));
+    auto status = QueueDevicePortPacketUser(DevicePacket::kReportTxStatus, user_pkt);
+    if (status != ZX_OK) { warnf("could not queue tx status report packet err=%d\n", status); }
+}
+
+void Device::WlanmacHwScanComplete(const wlan_hw_scan_result_t* result) {
+    debugf("WlanmacHwScanComplete %u\n", result->code);
+    auto status = QueueDevicePortPacket(DevicePacket::kHwScanComplete, result->code);
+    if (status != ZX_OK) { errorf("could not queue hw scan complete packet err=%d\n", status); }
+}
+
 zx_status_t Device::GetTimer(uint64_t id, fbl::unique_ptr<Timer>* timer) {
     ZX_DEBUG_ASSERT(timer != nullptr);
     ZX_DEBUG_ASSERT(timer->get() == nullptr);
@@ -375,14 +421,8 @@ zx_status_t Device::SendEthernet(fbl::unique_ptr<Packet> packet) {
 zx_status_t Device::SendWlan(fbl::unique_ptr<Packet> packet) {
     ZX_DEBUG_ASSERT(packet->len() <= fbl::numeric_limits<uint16_t>::max());
 
-    wlan_tx_packet_t tx_pkt;
-    auto status = packet->AsWlanTxPacket(&tx_pkt);
-    if (status != ZX_OK) {
-        errorf("could not convert packet to wlan_tx_packet when sending wlan frame: %d\n", status);
-        return status;
-    }
-
-    status = wlanmac_proxy_.QueueTx(0u, &tx_pkt);
+    wlan_tx_packet_t tx_pkt = packet->AsWlanTxPacket();
+    auto status = wlanmac_proxy_.QueueTx(0u, &tx_pkt);
     // TODO(tkilbourn): remove this once we implement WlanmacCompleteTx and allow wlanmac drivers to
     // complete transmits asynchronously.
     ZX_DEBUG_ASSERT(status != ZX_ERR_SHOULD_WAIT);
@@ -417,28 +457,13 @@ zx_status_t Device::SetChannel(wlan_channel_t chan) __TA_NO_THREAD_SAFETY_ANALYS
         return ZX_OK;
     }
 
-    zx_status_t status = dispatcher_->PreChannelChange(chan);
+    zx_status_t status = wlanmac_proxy_.SetChannel(0u, &chan);
     if (status != ZX_OK) {
-        errorf("%s prechange failed (status %d)\n", buf, status);
-        return status;
-    }
-
-    status = wlanmac_proxy_.SetChannel(0u, &chan);
-    if (status != ZX_OK) {
-        // TODO(porce): Revert the successful PreChannelChange()
         errorf("%s change failed (status %d)\n", buf, status);
         return status;
     }
 
     state_->set_channel(chan);
-
-    status = dispatcher_->PostChannelChange();
-    if (status != ZX_OK) {
-        // TODO(porce): Revert the successful PreChannelChange(), wlanmac_proxy_.SetChannel(),
-        // and state_->set_channel()
-        errorf("%s postchange failed (status %d)\n", buf, status);
-        return status;
-    }
 
     verbosef("%s succeeded\n", buf);
     return ZX_OK;
@@ -468,17 +493,23 @@ zx_status_t Device::ConfigureBeacon(fbl::unique_ptr<Packet> beacon) {
     ZX_DEBUG_ASSERT(beacon.get() != nullptr);
     if (beacon.get() == nullptr) { return ZX_ERR_INVALID_ARGS; }
 
-    wlan_tx_packet_t tx_packet;
-    auto status = beacon->AsWlanTxPacket(&tx_packet);
-    if (status != ZX_OK) {
-        errorf("error turning Beacon into wlan_tx_packet: %d\n", status);
-        return status;
-    }
+    wlan_tx_packet_t tx_packet = beacon->AsWlanTxPacket();
     return wlanmac_proxy_.ConfigureBeacon(0u, &tx_packet);
 }
 
 zx_status_t Device::SetKey(wlan_key_config_t* key_config) {
     return wlanmac_proxy_.SetKey(0u, key_config);
+}
+
+zx_status_t Device::StartHwScan(const wlan_hw_scan_config_t* scan_config) {
+    return wlanmac_proxy_.StartHwScan(scan_config);
+}
+
+zx_status_t Device::ConfigureAssoc(wlan_assoc_ctx_t* assoc_ctx) {
+    ZX_DEBUG_ASSERT(assoc_ctx != nullptr);
+    // TODO(NET-1385): Minstrel only supports client mode. Add AP mode support later.
+    AddMinstrelPeer(*assoc_ctx);
+    return wlanmac_proxy_.ConfigureAssoc(0u, assoc_ctx);
 }
 
 fbl::RefPtr<DeviceState> Device::GetState() {
@@ -492,7 +523,7 @@ const wlanmac_info_t& Device::GetWlanInfo() const {
 void Device::MainLoop() {
     infof("starting MainLoop\n");
     const char kThreadName[] = "wlan-mainloop";
-    zx::thread::self().set_property(ZX_PROP_NAME, kThreadName, sizeof(kThreadName));
+    zx::thread::self()->set_property(ZX_PROP_NAME, kThreadName, sizeof(kThreadName));
 
     zx_port_packet_t pkt;
     bool running = true;
@@ -523,6 +554,9 @@ void Device::MainLoop() {
             case to_enum_type(DevicePacket::kIndication):
                 dispatcher_->HwIndication(pkt.status);
                 break;
+            case to_enum_type(DevicePacket::kHwScanComplete):
+                dispatcher_->HwScanComplete(pkt.status);
+                break;
             case to_enum_type(DevicePacket::kPacketQueued): {
                 fbl::unique_ptr<Packet> packet;
                 {
@@ -532,6 +566,11 @@ void Device::MainLoop() {
                 }
                 zx_status_t status = dispatcher_->HandlePacket(fbl::move(packet));
                 if (status != ZX_OK) { errorf("could not handle packet err=%d\n", status); }
+                break;
+            }
+            case to_enum_type(DevicePacket::kReportTxStatus): {
+                auto tx_status = reinterpret_cast<wlan_tx_status_t*>(pkt.user.c8);
+                minstrel_->HandleTxStatusReport(*tx_status);
                 break;
             }
             default:
@@ -544,6 +583,18 @@ void Device::MainLoop() {
             case PortKeyType::kMlme:
                 dispatcher_->HandlePortPacket(pkt.key);
                 break;
+            case PortKeyType::kDevice: {
+                ZX_DEBUG_ASSERT(minstrel_ != nullptr);
+                minstrel_->UpdateStats();
+                break;
+            }
+            default:
+                errorf("unknown port key: %" PRIu64 "\n", pkt.key);
+                break;
+            }
+            break;
+        case ZX_PKT_TYPE_SIGNAL_ONE:
+            switch (ToPortKeyType(pkt.key)) {
             case PortKeyType::kService:
                 ProcessChannelPacketLocked(pkt);
                 break;
@@ -565,22 +616,24 @@ void Device::MainLoop() {
 }
 
 void Device::ProcessChannelPacketLocked(const zx_port_packet_t& pkt) {
-    const auto& sig = pkt.signal;
-    if (sig.observed & ZX_CHANNEL_PEER_CLOSED) {
-        infof("channel closed\n");
-        channel_.reset();
-    } else if (sig.observed & ZX_CHANNEL_READABLE) {
+    for (size_t i = 0; i < pkt.signal.count; ++i) {
         auto buffer = LargeBufferAllocator::New();
         if (buffer == nullptr) {
             errorf("no free buffers available!\n");
             // TODO: reply on the channel
+            channel_.reset();
             return;
         }
         uint32_t read = 0;
         zx_status_t status =
             channel_.read(0, buffer->data(), buffer->capacity(), &read, nullptr, 0, nullptr);
+        if (status == ZX_ERR_SHOULD_WAIT) { break; }
         if (status != ZX_OK) {
-            errorf("could not read channel: %d\n", status);
+            if (status == ZX_ERR_PEER_CLOSED) {
+                infof("channel closed\n");
+            } else {
+                errorf("could not read channel: %d\n", status);
+            }
             channel_.reset();
             return;
         }
@@ -595,17 +648,18 @@ void Device::ProcessChannelPacketLocked(const zx_port_packet_t& pkt) {
                 warnf("could not send packet queued msg err=%d\n", status);
                 packet_queue_.UndoEnqueue();
                 // TODO(tkilbourn): recover as gracefully as possible
+                channel_.reset();
+                return;
             }
         }
     }
+    RegisterChannelWaitLocked();
 }
 
 zx_status_t Device::RegisterChannelWaitLocked() {
     zx_signals_t sigs = ZX_CHANNEL_READABLE | ZX_CHANNEL_PEER_CLOSED;
-    // TODO(tkilbourn): ZX_WAIT_ASYNC_REPEATING can go horribly wrong with multiple threads waiting
-    // on the port. If we ever go to a multi-threaded event loop, fix the channel wait.
     return channel_.wait_async(port_, ToPortKey(PortKeyType::kService, 0u), sigs,
-                               ZX_WAIT_ASYNC_REPEATING);
+                               ZX_WAIT_ASYNC_ONCE);
 }
 
 zx_status_t Device::QueueDevicePortPacket(DevicePacket id, uint32_t status) {
@@ -614,6 +668,15 @@ zx_status_t Device::QueueDevicePortPacket(DevicePacket id, uint32_t status) {
     pkt.key = ToPortKey(PortKeyType::kDevice, to_enum_type(id));
     pkt.type = ZX_PKT_TYPE_USER;
     pkt.status = status;
+    return port_.queue(&pkt);
+}
+
+zx_status_t Device::QueueDevicePortPacketUser(DevicePacket id, zx_packet_user_t user_pkt) {
+    debugfn();
+    zx_port_packet_t pkt = {};
+    pkt.key = ToPortKey(PortKeyType::kDevice, to_enum_type(id));
+    pkt.type = ZX_PKT_TYPE_USER;
+    pkt.user = user_pkt;
     return port_.queue(&pkt);
 }
 
@@ -643,4 +706,70 @@ zx_status_t Device::GetChannel(zx::channel* out) {
     return ZX_OK;
 }
 
+zx_status_t ValidateWlanMacInfo(const wlanmac_info& wlanmac_info) {
+    for (uint8_t i = 0; i < wlanmac_info.ifc_info.num_bands; i++) {
+        auto bandinfo = wlanmac_info.ifc_info.bands[i];
+
+        // Validate channels
+        auto& supported_channels = bandinfo.supported_channels;
+        switch (supported_channels.base_freq) {
+        case common::kBaseFreq5Ghz:
+            for (auto c : supported_channels.channels) {
+                if (c == 0) {  // End of the valid channel
+                    break;
+                }
+                auto chan = wlan_channel_t{.primary = c, .cbw = CBW20};
+                if (!common::IsValidChan5Ghz(chan)) {
+                    errorf("wlanmac band info for %u MHz has invalid channel %u\n",
+                           supported_channels.base_freq, c);
+                    errorf("wlanmac info: %s\n", debug::Describe(wlanmac_info).c_str());
+                    return ZX_ERR_NOT_SUPPORTED;
+                }
+            }
+            break;
+        case common::kBaseFreq2Ghz:
+            for (auto c : supported_channels.channels) {
+                if (c == 0) {  // End of the valid channel
+                    break;
+                }
+                auto chan = wlan_channel_t{.primary = c, .cbw = CBW20};
+                if (!common::IsValidChan2Ghz(chan)) {
+                    errorf("wlanmac band info for %u MHz has invalid cahnnel %u\n",
+                           supported_channels.base_freq, c);
+                    errorf("wlanmac info: %s\n", debug::Describe(wlanmac_info).c_str());
+                    return ZX_ERR_NOT_SUPPORTED;
+                }
+            }
+            break;
+        default:
+            errorf("wlanmac band info for %u MHz not supported\n", supported_channels.base_freq);
+            errorf("wlanmac info: %s\n", debug::Describe(wlanmac_info).c_str());
+            return ZX_ERR_NOT_SUPPORTED;
+        }
+    }
+    // Add more sanity check here
+
+    return ZX_OK;
+}
+
+zx_status_t Device::CreateMinstrel() {
+    debugfn();
+    fbl::unique_ptr<Timer> timer;
+    ObjectId timer_id;
+    timer_id.set_subtype(to_enum_type(ObjectSubtype::kTimer));
+    timer_id.set_target(to_enum_type(ObjectTarget::kMinstrel));
+    auto status = GetTimer(ToPortKey(PortKeyType::kDevice, timer_id.val()), &timer);
+    if (status != ZX_OK) {
+        errorf("could not create minstrel timer: %d\n", status);
+        return status;
+    }
+    minstrel_.reset(new MinstrelRateSelector(fbl::move(timer)));
+    return ZX_OK;
+}
+
+void Device::AddMinstrelPeer(const wlan_assoc_ctx_t& assoc_ctx) {
+    ZX_DEBUG_ASSERT(wlanmac_info_.ifc_info.mac_role == WLAN_MAC_ROLE_CLIENT);
+    if (minstrel_ == nullptr) { return; }
+    minstrel_->AddPeer(assoc_ctx);
+}
 }  // namespace wlan

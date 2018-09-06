@@ -19,7 +19,7 @@
 #define _HTC_H_
 
 #include <ddk/io-buffer.h>
-#include <sync/completion.h>
+#include <lib/sync/completion.h>
 #include <zircon/listnode.h>
 #include <zircon/threads.h>
 
@@ -52,20 +52,24 @@ struct ath10k_msg_buf;
  * 4-byte aligned.
  */
 
-#define HTC_HOST_MAX_MSG_PER_BUNDLE        8
+#define HTC_HOST_MAX_MSG_PER_BUNDLE 8
 
 enum ath10k_htc_tx_flags {
+    // clang-format off
     ATH10K_HTC_FLAG_NEED_CREDIT_UPDATE = 0x01,
     ATH10K_HTC_FLAG_SEND_BUNDLE        = 0x02
+    // clang-format on
 };
 
 enum ath10k_htc_rx_flags {
+    // clang-format off
     ATH10K_HTC_FLAG_TRAILER_PRESENT = 0x02,
     ATH10K_HTC_FLAG_BUNDLE_MASK     = 0xF0
+    // clang-format on
 };
 
 struct ath10k_htc_hdr {
-    uint8_t eid; /* @enum ath10k_htc_ep_id */
+    uint8_t eid;   /* @enum ath10k_htc_ep_id */
     uint8_t flags; /* @enum ath10k_htc_tx_flags, ath10k_htc_rx_flags */
     uint16_t len;
     union {
@@ -81,20 +85,25 @@ struct ath10k_htc_hdr {
 } __PACKED __ALIGNED(4);
 
 enum ath10k_ath10k_htc_msg_id {
+    // clang-format off
     ATH10K_HTC_MSG_READY_ID                = 1,
     ATH10K_HTC_MSG_CONNECT_SERVICE_ID      = 2,
     ATH10K_HTC_MSG_CONNECT_SERVICE_RESP_ID = 3,
     ATH10K_HTC_MSG_SETUP_COMPLETE_ID       = 4,
     ATH10K_HTC_MSG_SETUP_COMPLETE_EX_ID    = 5,
     ATH10K_HTC_MSG_SEND_SUSPEND_COMPLETE   = 6
+    // clang-format on
 };
 
 enum ath10k_htc_version {
+    // clang-format off
     ATH10K_HTC_VERSION_2P0 = 0x00, /* 2.0 */
     ATH10K_HTC_VERSION_2P1 = 0x01, /* 2.1 */
+    // clang-format on
 };
 
 enum ath10k_htc_conn_flags {
+    // clang-format off
     ATH10K_HTC_CONN_FLAGS_THRESHOLD_LEVEL_ONE_FOURTH    = 0x0,
     ATH10K_HTC_CONN_FLAGS_THRESHOLD_LEVEL_ONE_HALF      = 0x1,
     ATH10K_HTC_CONN_FLAGS_THRESHOLD_LEVEL_THREE_FOURTHS = 0x2,
@@ -104,19 +113,20 @@ enum ath10k_htc_conn_flags {
     ATH10K_HTC_CONN_FLAGS_DISABLE_CREDIT_FLOW_CTRL = 1 << 3
 #define ATH10K_HTC_CONN_FLAGS_RECV_ALLOC_MASK 0xFF00
 #define ATH10K_HTC_CONN_FLAGS_RECV_ALLOC_LSB  8
+    // clang-format on
 };
 
 enum ath10k_htc_conn_svc_status {
+    // clang-format off
     ATH10K_HTC_CONN_SVC_STATUS_SUCCESS      = 0,
     ATH10K_HTC_CONN_SVC_STATUS_NOT_FOUND    = 1,
     ATH10K_HTC_CONN_SVC_STATUS_FAILED       = 2,
     ATH10K_HTC_CONN_SVC_STATUS_NO_RESOURCES = 3,
     ATH10K_HTC_CONN_SVC_STATUS_NO_MORE_EP   = 4
+    // clang-format on
 };
 
-enum ath10k_htc_setup_complete_flags {
-    ATH10K_HTC_SETUP_COMPLETE_FLAGS_RX_BNDL_EN = 1
-};
+enum ath10k_htc_setup_complete_flags { ATH10K_HTC_SETUP_COMPLETE_FLAGS_RX_BNDL_EN = 1 };
 
 struct ath10k_ath10k_htc_msg_hdr {
     uint16_t message_id; /* @enum htc_message_id */
@@ -182,10 +192,12 @@ struct ath10k_htc_msg {
 } __PACKED __ALIGNED(4);
 
 enum ath10k_ath10k_htc_record_id {
+    // clang-format off
     ATH10K_HTC_RECORD_NULL             = 0,
     ATH10K_HTC_RECORD_CREDITS          = 1,
     ATH10K_HTC_RECORD_LOOKAHEAD        = 2,
     ATH10K_HTC_RECORD_LOOKAHEAD_BUNDLE = 3,
+    // clang-format on
 };
 
 struct ath10k_ath10k_htc_record_hdr {
@@ -255,10 +267,10 @@ enum ath10k_htc_svc_gid {
     ATH10K_HTC_SVC_GRP_LAST = 255,
 };
 
-#define SVC(group, idx) \
-    (int)(((int)(group) << 8) | (int)(idx))
+#define SVC(group, idx) (int)(((int)(group) << 8) | (int)(idx))
 
 enum ath10k_htc_svc_id {
+    // clang-format off
     /* NOTE: service ID of 0x0000 is reserved and should never be used */
     ATH10K_HTC_SVC_ID_RESERVED      = 0x0000,
     ATH10K_HTC_SVC_ID_UNUSED        = ATH10K_HTC_SVC_ID_RESERVED,
@@ -277,6 +289,7 @@ enum ath10k_htc_svc_id {
 
     /* raw stream service (i.e. flash, tcmd, calibration apps) */
     ATH10K_HTC_SVC_ID_TEST_RAW_STREAMS = SVC(ATH10K_HTC_SVC_GRP_TEST, 0),
+    // clang-format on
 };
 
 #undef SVC
@@ -325,9 +338,7 @@ struct ath10k_htc_svc_conn_resp {
 #define ATH10K_HTC_MAX_LEN 4096
 #define ATH10K_HTC_MAX_CTRL_MSG_LEN 256
 #define ATH10K_HTC_WAIT_TIMEOUT (ZX_SEC(1))
-#define ATH10K_HTC_CONTROL_BUFFER_SIZE (ATH10K_HTC_MAX_CTRL_MSG_LEN + \
-                                        sizeof(struct ath10k_htc_hdr))
-#define ATH10K_HTC_CONN_SVC_TIMEOUT (ZX_SEC(1))
+#define ATH10K_HTC_CONTROL_BUFFER_SIZE (ATH10K_HTC_MAX_CTRL_MSG_LEN + sizeof(struct ath10k_htc_hdr))
 
 struct ath10k_htc_ep {
     struct ath10k_htc* htc;
@@ -347,7 +358,7 @@ struct ath10k_htc_ep {
 
 struct ath10k_htc_svc_tx_credits {
     uint16_t service_id;
-    uint8_t  credit_allocation;
+    uint8_t credit_allocation;
 };
 
 struct ath10k_htc {
@@ -362,7 +373,7 @@ struct ath10k_htc {
     uint8_t control_resp_buffer[ATH10K_HTC_MAX_CTRL_MSG_LEN];
     int control_resp_len;
 
-    completion_t ctl_resp;
+    sync_completion_t ctl_resp;
 
     int total_transmit_credits;
     int target_credit_size;
@@ -371,36 +382,34 @@ struct ath10k_htc {
 
 #define HTC_MSG_PFX(x) ATH10K_MSG_TYPE_HTC_##x
 
-#define HTC_MSG(type, hdr) \
-    MSG(HTC_MSG_PFX(type), ATH10K_MSG_TYPE_HTC_MSG, sizeof(struct hdr))
+#define HTC_MSG(type, hdr) MSG(HTC_MSG_PFX(type), ATH10K_MSG_TYPE_HTC_MSG, sizeof(struct hdr))
 
 // NB: MSG_TYPE_HTC are used by all messages (HTC, WMI, WMI-TLV, HTT). MSG_TYPE_HTC_MSG,
 //     on the other hand, are for messages that are intended for the HTC interface.
+// clang-format off
 #define HTC_MSGS \
-    MSG(ATH10K_MSG_TYPE_HTC,     ATH10K_MSG_TYPE_BASE, sizeof(struct ath10k_htc_hdr)), \
-    MSG(ATH10K_MSG_TYPE_HTC_MSG, ATH10K_MSG_TYPE_HTC, sizeof(struct ath10k_ath10k_htc_msg_hdr)), \
-    HTC_MSG(CONN_SVC,           ath10k_htc_conn_svc),               \
-    HTC_MSG(READY,              ath10k_htc_ready),                  \
-    HTC_MSG(READY_EXT,          ath10k_htc_ready_extended),         \
-    HTC_MSG(UNKNOWN,            ath10k_htc_unknown),                \
-    HTC_MSG(SETUP_COMPLETE_EXT, ath10k_htc_setup_complete_extended)
+    MSG(ATH10K_MSG_TYPE_HTC,     ATH10K_MSG_TYPE_BASE, sizeof(struct ath10k_htc_hdr)),            \
+    MSG(ATH10K_MSG_TYPE_HTC_MSG, ATH10K_MSG_TYPE_HTC,  sizeof(struct ath10k_ath10k_htc_msg_hdr)), \
+    HTC_MSG(CONN_SVC,            ath10k_htc_conn_svc),                                            \
+    HTC_MSG(READY,               ath10k_htc_ready),                                               \
+    HTC_MSG(READY_EXT,           ath10k_htc_ready_extended),                                      \
+    HTC_MSG(UNKNOWN,             ath10k_htc_unknown),                                             \
+    HTC_MSG(SETUP_COMPLETE_EXT,  ath10k_htc_setup_complete_extended)
+// clang-format on
 
 zx_status_t ath10k_htc_init(struct ath10k* ar);
 zx_status_t ath10k_htc_wait_target(struct ath10k_htc* htc);
 zx_status_t ath10k_htc_start(struct ath10k_htc* htc);
 zx_status_t ath10k_htc_connect_service(struct ath10k_htc* htc,
-                                       struct ath10k_htc_svc_conn_req*  conn_req,
+                                       struct ath10k_htc_svc_conn_req* conn_req,
                                        struct ath10k_htc_svc_conn_resp* conn_resp);
 int ath10k_htc_send(struct ath10k_htc* htc, enum ath10k_htc_ep_id eid,
                     struct ath10k_msg_buf* msg_buf);
 void ath10k_htc_tx_completion_handler(struct ath10k* ar, struct ath10k_msg_buf* msg_buf);
 void ath10k_htc_rx_completion_handler(struct ath10k* ar, struct ath10k_msg_buf* buf);
 void ath10k_htc_notify_tx_completion(struct ath10k_htc_ep* ep, struct ath10k_msg_buf* msg_buf);
-zx_status_t ath10k_htc_process_trailer(struct ath10k_htc* htc,
-                                       uint8_t* buffer,
-                                       int length,
-                                       enum ath10k_htc_ep_id src_eid,
-                                       void* next_lookaheads,
+zx_status_t ath10k_htc_process_trailer(struct ath10k_htc* htc, uint8_t* buffer, int length,
+                                       enum ath10k_htc_ep_id src_eid, void* next_lookaheads,
                                        int* next_lookaheads_len);
 
 #endif

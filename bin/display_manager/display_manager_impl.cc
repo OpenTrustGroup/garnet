@@ -1,18 +1,22 @@
+// Copyright 2018 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #include "display_manager_impl.h"
 #include "lib/fxl/logging.h"
 
 namespace display {
+
 DisplayManagerImpl::DisplayManagerImpl()
-    : DisplayManagerImpl(
-          fuchsia::sys::StartupContext::CreateFromStartupInfo()) {}
+    : DisplayManagerImpl(component::StartupContext::CreateFromStartupInfo()) {}
 
 DisplayManagerImpl::DisplayManagerImpl(
-    std::unique_ptr<fuchsia::sys::StartupContext> context)
+    std::unique_ptr<component::StartupContext> context)
     : context_(std::move(context)) {
   display_ = std::unique_ptr<Display>(Display::GetDisplay());
 
-  context_->outgoing().AddPublicService<DisplayManager>(
-      [this](fidl::InterfaceRequest<DisplayManager> request) {
+  context_->outgoing().AddPublicService<Manager>(
+      [this](fidl::InterfaceRequest<Manager> request) {
         bindings_.AddBinding(this, std::move(request));
       });
 }

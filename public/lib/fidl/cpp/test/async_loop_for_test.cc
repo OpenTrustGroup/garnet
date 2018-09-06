@@ -11,7 +11,7 @@ namespace test {
 
 class AsyncLoopForTestImpl {
  public:
-  AsyncLoopForTestImpl() : loop_(&kAsyncLoopConfigMakeDefault) {}
+  AsyncLoopForTestImpl() : loop_(&kAsyncLoopConfigAttachToThread) {}
   ~AsyncLoopForTestImpl() = default;
 
   async::Loop* loop() { return &loop_; }
@@ -31,7 +31,9 @@ zx_status_t AsyncLoopForTest::RunUntilIdle() {
 
 zx_status_t AsyncLoopForTest::Run() { return impl_->loop()->Run(); }
 
-async_t* AsyncLoopForTest::async() { return impl_->loop()->async(); }
+async_dispatcher_t* AsyncLoopForTest::dispatcher() {
+  return impl_->loop()->dispatcher();
+}
 
 }  // namespace test
 }  // namespace fidl

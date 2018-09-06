@@ -9,11 +9,11 @@
 
 #include "garnet/bin/zxdb/client/arch_info.h"
 #include "garnet/bin/zxdb/client/disassembler.h"
-#include "garnet/bin/zxdb/client/file_util.h"
 #include "garnet/bin/zxdb/client/memory_dump.h"
 #include "garnet/bin/zxdb/client/process.h"
 #include "garnet/bin/zxdb/client/session.h"
 #include "garnet/bin/zxdb/client/symbols/location.h"
+#include "garnet/bin/zxdb/common/file_util.h"
 #include "garnet/bin/zxdb/console/console.h"
 #include "garnet/bin/zxdb/console/format_table.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
@@ -100,15 +100,17 @@ OutputBuffer HighlightLine(std::string str, int column) {
 
 }  // namespace
 
-Err OutputSourceContext(Process* process, const Location& location) {
-  if (location.has_symbols()) {
+Err OutputSourceContext(Process* process, const Location& location,
+                        SourceAffinity source_affinity) {
+  if (source_affinity != SourceAffinity::kAssembly && location.has_symbols()) {
     // Synchronous source output.
     FormatSourceOpts source_opts;
     source_opts.active_line = location.file_line().line();
-    source_opts.active_column = location.column();
+    source_opts.highlight_line = source_opts.active_line;
+    source_opts.highlight_column = location.column();
     source_opts.first_line = source_opts.active_line - 2;
     source_opts.last_line = source_opts.active_line + 2;
-    source_opts.dim_nonactive = true;
+    source_opts.dim_others = true;
 
     OutputBuffer out;
     Err err = FormatSourceFileContext(
@@ -146,25 +148,26 @@ Err OutputSourceContext(Process* process, const Location& location) {
 
     size_t size = options.max_instructions * arch_info->max_instr_len();
 
-    process->ReadMemory(
-        start_address, size, [ options, weak_process = process->GetWeakPtr() ](
-                                 const Err& in_err, MemoryDump dump) {
-          if (!weak_process)
-            return;  // Give up when the process went away.
+    process->ReadMemory(start_address, size,
+                        [options, weak_process = process->GetWeakPtr()](
+                            const Err& in_err, MemoryDump dump) {
+                          if (!weak_process)
+                            return;  // Give up when the process went away.
 
-          Console* console = Console::get();
-          if (in_err.has_error()) {
-            console->Output(in_err);
-            return;
-          }
-          OutputBuffer out;
-          Err err = FormatAsmContext(weak_process->session()->arch_info(), dump,
-                                     options, &out);
-          if (err.has_error())
-            console->Output(err);
-          else
-            console->Output(out);
-        });
+                          Console* console = Console::get();
+                          if (in_err.has_error()) {
+                            console->Output(in_err);
+                            return;
+                          }
+                          OutputBuffer out;
+                          Err err = FormatAsmContext(
+                              weak_process->session()->arch_info(), dump,
+                              options, &out);
+                          if (err.has_error())
+                            console->Output(err);
+                          else
+                            console->Output(out);
+                        });
   }
   return Err();
 }
@@ -197,12 +200,13 @@ Err FormatSourceFileContext(const std::string& file_name,
 Err FormatSourceContext(const std::string& file_name_for_errors,
                         const std::string& file_contents,
                         const FormatSourceOpts& opts, OutputBuffer* out) {
-  FXL_DCHECK(opts.active_line == 0 || (opts.active_line >= opts.first_line &&
-                                       opts.active_line <= opts.last_line));
+  FXL_DCHECK(opts.active_line == 0 || !opts.require_active_line ||
+             (opts.active_line >= opts.first_line &&
+              opts.active_line <= opts.last_line));
 
   LineVector context = ExtractSourceContext(file_contents, opts);
-  if (context.empty() ||
-      (opts.active_line != 0 && context.back().first < opts.active_line)) {
+  if (context.empty() || (opts.active_line != 0 && opts.require_active_line &&
+                          context.back().first < opts.active_line)) {
     return Err(fxl::StringPrintf("There is no line %d in the file %s",
                                  opts.active_line,
                                  file_name_for_errors.c_str()));
@@ -241,14 +245,15 @@ Err FormatSourceContext(const std::string& file_name_for_errors,
     row.push_back(std::move(margin));
 
     std::string number = fxl::StringPrintf("%d", info.first);
-    if (info.first == opts.active_line) {
+    if (info.first == opts.highlight_line) {
       // This is the line to mark.
       row.push_back(
           OutputBuffer::WithContents(Syntax::kHeading, std::move(number)));
-      row.push_back(HighlightLine(std::move(info.second), opts.active_column));
+      row.push_back(
+          HighlightLine(std::move(info.second), opts.highlight_column));
     } else {
       // Normal context line.
-      Syntax syntax = opts.dim_nonactive ? Syntax::kComment : Syntax::kNormal;
+      Syntax syntax = opts.dim_others ? Syntax::kComment : Syntax::kNormal;
       row.push_back(OutputBuffer::WithContents(syntax, std::move(number)));
       row.push_back(OutputBuffer::WithContents(syntax, std::move(info.second)));
     }
@@ -369,6 +374,7 @@ Err FormatBreakpointContext(const Location& location,
   FormatSourceOpts opts;
   opts.first_line = line - kBreakpointContext;
   opts.last_line = line + kBreakpointContext;
+  opts.highlight_line = line;
   opts.bp_lines[line] = enabled;
   return FormatSourceFileContext(location.file_line().file(), build_dir, opts,
                                  out);

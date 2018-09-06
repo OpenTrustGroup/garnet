@@ -9,6 +9,8 @@
 #include <wlan/common/element_id.h>
 #include <wlan/common/logging.h>
 #include <wlan/common/macaddr.h>
+#include <wlan/protocol/info.h>
+
 #include <zircon/assert.h>
 #include <zircon/compiler.h>
 #include <zircon/types.h>
@@ -141,14 +143,37 @@ struct SsidElement : public Element<SsidElement, element_id::kSsid> {
     char ssid[];
 } __PACKED;
 
+// IEEE 802.11-2016 9.4.2.3.
+// The MSB in a rate indicates "basic rate" and is ignored during comparison.
+// Rates are in 0.5Mbps increment: 12 -> 6 Mbps, 11 -> 5.5 Mbps, etc.
+struct SupportedRate : public common::BitField<uint8_t> {
+    constexpr SupportedRate() = default;
+    constexpr explicit SupportedRate(uint8_t val) : common::BitField<uint8_t>(val) {}
+    constexpr explicit SupportedRate(uint8_t val, bool is_basic) : common::BitField<uint8_t>(val) {
+        set_is_basic(static_cast<uint8_t>(is_basic));
+    }
+
+    static SupportedRate basic(uint8_t rate) { return SupportedRate(rate, true); }
+
+    WLAN_BIT_FIELD(rate, 0, 7);
+    WLAN_BIT_FIELD(is_basic, 7, 1);
+
+    operator uint8_t() const { return val(); }
+    bool operator==(const SupportedRate& other) const { return rate() == other.rate(); }
+    bool operator!=(const SupportedRate& other) const { return !this->operator==(other); }
+    bool operator<(const SupportedRate& other) const { return rate() < other.rate(); }
+    bool operator>(const SupportedRate& other) const { return rate() > other.rate(); }
+} __PACKED;
+
 // IEEE Std 802.11-2016, 9.4.2.3
 struct SupportedRatesElement : public Element<SupportedRatesElement, element_id::kSuppRates> {
-    static bool Create(void* buf, size_t len, size_t* actual, const std::vector<uint8_t>& rates);
+    static bool Create(void* buf, size_t len, size_t* actual,
+                       const std::vector<SupportedRate>& rates);
     static const size_t kMinLen = 1;
     static const size_t kMaxLen = 8;
 
     ElementHeader hdr;
-    uint8_t rates[];
+    SupportedRate rates[];
 } __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.4
@@ -246,12 +271,13 @@ struct CountryElement : public Element<CountryElement, element_id::kCountry> {
 // IEEE Std 802.11-2016, 9.4.2.13
 struct ExtendedSupportedRatesElement
     : public Element<ExtendedSupportedRatesElement, element_id::kExtSuppRates> {
-    static bool Create(void* buf, size_t len, size_t* actual, const std::vector<uint8_t>& rates);
+    static bool Create(void* buf, size_t len, size_t* actual,
+                       const std::vector<SupportedRate>& rates);
     static const size_t kMinLen = 1;
     static const size_t kMaxLen = 255;
 
     ElementHeader hdr;
-    uint8_t rates[];
+    SupportedRate rates[];
 } __PACKED;
 
 const uint16_t kEapolProtocolId = 0x888E;
@@ -481,6 +507,8 @@ class SupportedMcsRxMcsHead : public common::BitField<uint64_t> {
     constexpr explicit SupportedMcsRxMcsHead(uint64_t val) : common::BitField<uint64_t>(val) {}
     constexpr SupportedMcsRxMcsHead() = default;
 
+    bool Support(uint8_t mcs_index) const { return 1 == (1 & (bitmask() >> mcs_index)); }
+
     // HT-MCS table in IEEE Std 802.11-2016, Annex B.4.17.2
     // VHT-MCS tables in IEEE Std 802.11-2016, 21.5
     WLAN_BIT_FIELD(bitmask, 0, 64);
@@ -610,7 +638,7 @@ class TxBfCapability : public common::BitField<uint32_t> {
         MIN_GROUP_ONE_TWO_FOUR = 3,
     };
 
-    uint8_t csi_antennas_human() { return csi_antennas() + 1; }
+    uint8_t csi_antennas_human() const { return csi_antennas() + 1; }
     void set_csi_antennas_human(uint8_t num) {
         constexpr uint8_t kLowerbound = 1;
         constexpr uint8_t kUpperbound = 4;
@@ -619,7 +647,7 @@ class TxBfCapability : public common::BitField<uint32_t> {
         set_csi_antennas(num - 1);
     };
 
-    uint8_t noncomp_steering_ants_human() { return noncomp_steering_ants() + 1; }
+    uint8_t noncomp_steering_ants_human() const { return noncomp_steering_ants() + 1; }
     void set_noncomp_steering_ants_human(uint8_t num) {
         constexpr uint8_t kLowerbound = 1;
         constexpr uint8_t kUpperbound = 4;
@@ -628,7 +656,7 @@ class TxBfCapability : public common::BitField<uint32_t> {
         set_noncomp_steering_ants(num - 1);
     }
 
-    uint8_t comp_steering_ants_human() { return comp_steering_ants() + 1; }
+    uint8_t comp_steering_ants_human() const { return comp_steering_ants() + 1; }
     void set_comp_steering_ants_human(uint8_t num) {
         constexpr uint8_t kLowerbound = 1;
         constexpr uint8_t kUpperbound = 4;
@@ -637,7 +665,7 @@ class TxBfCapability : public common::BitField<uint32_t> {
         set_comp_steering_ants(num - 1);
     }
 
-    uint8_t csi_rows_human() { return csi_rows() + 1; }
+    uint8_t csi_rows_human() const { return csi_rows() + 1; }
     void set_csi_rows_human(uint8_t num) {
         constexpr uint8_t kLowerbound = 1;
         constexpr uint8_t kUpperbound = 4;
@@ -646,7 +674,7 @@ class TxBfCapability : public common::BitField<uint32_t> {
         set_csi_rows(num - 1);
     }
 
-    uint8_t chan_estimation_human() { return chan_estimation() + 1; }
+    uint8_t chan_estimation_human() const { return chan_estimation() + 1; }
     void set_chan_estimation_human(uint8_t num) {
         constexpr uint8_t kLowerbound = 1;
         constexpr uint8_t kUpperbound = 4;
@@ -688,6 +716,34 @@ struct HtCapabilities : public Element<HtCapabilities, element_id::kHtCapabiliti
     TxBfCapability txbf_cap;
     AselCapability asel_cap;
 
+    static HtCapabilities FromDdk(const wlan_ht_caps_t& ddk) {
+        HtCapabilities dst{};
+        dst.hdr.id = element_id::kHtCapabilities;
+        dst.hdr.len = HtCapabilities::kMaxLen;  // same as kMinLen
+        dst.ht_cap_info.set_val(ddk.ht_capability_info);
+        dst.ampdu_params.set_val(ddk.ampdu_params);
+        dst.mcs_set.rx_mcs_head.set_val(ddk.mcs_set.rx_mcs_head);
+        dst.mcs_set.rx_mcs_tail.set_val(ddk.mcs_set.rx_mcs_tail);
+        dst.mcs_set.tx_mcs.set_val(ddk.mcs_set.tx_mcs);
+        dst.ht_ext_cap.set_val(ddk.ht_ext_capabilities);
+        dst.txbf_cap.set_val(ddk.tx_beamforming_capabilities);
+        dst.asel_cap.set_val(ddk.asel_capabilities);
+        return dst;
+    }
+
+    wlan_ht_caps_t ToDdk() const {
+        wlan_ht_caps_t ddk{};
+        ddk.ht_capability_info = ht_cap_info.val();
+        ddk.ampdu_params = ampdu_params.val();
+        ddk.mcs_set.rx_mcs_head = mcs_set.rx_mcs_head.val();
+        ddk.mcs_set.rx_mcs_tail = mcs_set.rx_mcs_tail.val();
+        ddk.mcs_set.tx_mcs = mcs_set.tx_mcs.val();
+        ddk.ht_ext_capabilities = ht_ext_cap.val();
+        ddk.tx_beamforming_capabilities = txbf_cap.val();
+        ddk.asel_capabilities = asel_cap.val();
+        return ddk;
+    }
+
 } __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.57
@@ -705,10 +761,12 @@ class HtOpInfoHead : public common::BitField<uint32_t> {
     WLAN_BIT_FIELD(ht_protect, 8, 2);
     WLAN_BIT_FIELD(nongreenfield_present, 10, 1);  // Nongreenfield HT STAs present.
 
-    WLAN_BIT_FIELD(reserved2, 11, 1);          // Note 802.11n D1.10 implementaions use these.
-    WLAN_BIT_FIELD(obss_non_ht, 12, 1);        // OBSS Non-HT STAs present.
-    WLAN_BIT_FIELD(center_freq_seg2, 13, 11);  // VHT
-    WLAN_BIT_FIELD(reserved3, 21, 2);
+    WLAN_BIT_FIELD(reserved2, 11, 1);    // Note 802.11n D1.10 implementations use these.
+    WLAN_BIT_FIELD(obss_non_ht, 12, 1);  // OBSS Non-HT STAs present.
+    // IEEE 802.11-2016 Figure 9-339 has an incosistency so this is Fuchsia interpretation:
+    // The channel number for the second segment in a 80+80 Mhz channel
+    WLAN_BIT_FIELD(center_freq_seg2, 13, 8);  // VHT
+    WLAN_BIT_FIELD(reserved3, 21, 3);
 
     WLAN_BIT_FIELD(reserved4, 24, 6);
     WLAN_BIT_FIELD(dual_beacon, 30, 1);
@@ -749,7 +807,7 @@ class HtOpInfoTail : public common::BitField<uint8_t> {
 // IEEE Std 802.11-2016, 9.4.2.57
 struct HtOperation : public Element<HtOperation, element_id::kHtOperation> {
     static bool Create(void* buf, size_t len, size_t* actual, uint8_t primary_chan,
-                       HtOpInfoHead head, HtOpInfoTail tail, SupportedMcsSet mcs_set);
+                       HtOpInfoHead head, HtOpInfoTail tail, SupportedMcsSet basic_mcs_set);
     static constexpr size_t kMinLen = 22;
     static constexpr size_t kMaxLen = 22;
 
@@ -760,7 +818,32 @@ struct HtOperation : public Element<HtOperation, element_id::kHtOperation> {
     // Implementation hack to support 40bits bitmap.
     HtOpInfoHead head;
     HtOpInfoTail tail;
-    SupportedMcsSet mcs_set;
+    SupportedMcsSet basic_mcs_set;
+
+    static HtOperation FromDdk(const wlan_ht_op_t& ddk) {
+        HtOperation dst{};
+        dst.hdr.id = element_id::kHtOperation;
+        dst.hdr.id = HtOperation::kMaxLen;  // same as kMinLen
+        dst.primary_chan = ddk.primary_chan;
+        dst.head.set_val(ddk.head);
+        dst.tail.set_val(ddk.tail);
+        dst.basic_mcs_set.rx_mcs_head.set_val(ddk.basic_mcs_set.rx_mcs_head);
+        dst.basic_mcs_set.rx_mcs_tail.set_val(ddk.basic_mcs_set.rx_mcs_tail);
+        dst.basic_mcs_set.tx_mcs.set_val(ddk.basic_mcs_set.tx_mcs);
+        return dst;
+    }
+
+    wlan_ht_op_t ToDdk() const {
+        wlan_ht_op_t ddk{};
+        ddk.primary_chan = primary_chan;
+        ddk.head = head.val();
+        ddk.tail = tail.val();
+        ddk.basic_mcs_set.rx_mcs_head = basic_mcs_set.rx_mcs_head.val();
+        ddk.basic_mcs_set.rx_mcs_tail = basic_mcs_set.rx_mcs_tail.val();
+        ddk.basic_mcs_set.tx_mcs = basic_mcs_set.tx_mcs.val();
+        return ddk;
+    }
+
 } __PACKED;
 
 // IEEE Std 802.11-2016, 9.4.2.126
@@ -772,5 +855,231 @@ struct GcrGroupAddressElement {
     ElementHeader hdr;
     common::MacAddr gcr_group_addr;
 } __PACKED;
+
+// IEEE Std 802.11-2016, 9.4.2.158.2
+// Note this is a field of VhtCapabilities element
+struct VhtCapabilitiesInfo : public common::BitField<uint32_t> {
+   public:
+    constexpr explicit VhtCapabilitiesInfo(uint32_t vht_cap_info)
+        : common::BitField<uint32_t>(vht_cap_info) {}
+    constexpr VhtCapabilitiesInfo() = default;
+
+    WLAN_BIT_FIELD(max_mpdu_len, 0, 2);
+
+    // Supported channel width set. See IEEE Std 80.211-2016, Table 9-250.
+    WLAN_BIT_FIELD(supported_cbw_set, 2, 2);
+
+    WLAN_BIT_FIELD(rx_ldpc, 4, 1);
+    WLAN_BIT_FIELD(sgi_cbw80, 5, 1);   // CBW80 only
+    WLAN_BIT_FIELD(sgi_cbw160, 6, 1);  // CBW160 and CBW80P80
+    WLAN_BIT_FIELD(tx_stbc, 7, 1);
+    WLAN_BIT_FIELD(rx_stbc, 8, 3);
+    WLAN_BIT_FIELD(su_bfer, 11, 1);       // Single user beamformer capable
+    WLAN_BIT_FIELD(su_bfee, 12, 1);       // Single user beamformee capable
+    WLAN_BIT_FIELD(bfee_sts, 13, 3);      // Beamformee Space-time spreading
+    WLAN_BIT_FIELD(num_sounding, 16, 3);  // number of sounding dimensions
+    WLAN_BIT_FIELD(mu_bfer, 19, 1);       // Multi user beamformer capable
+    WLAN_BIT_FIELD(mu_bfee, 20, 1);       // Multi user beamformee capable
+    WLAN_BIT_FIELD(txop_ps, 21, 1);       // Txop power save mode
+    WLAN_BIT_FIELD(htc_vht, 22, 1);
+    WLAN_BIT_FIELD(max_ampdu_exp, 23, 3);
+    WLAN_BIT_FIELD(link_adapt, 26, 2);  // VHT link adaptation capable
+    WLAN_BIT_FIELD(rx_ant_pattern, 28, 1);
+    WLAN_BIT_FIELD(tx_ant_pattern, 29, 1);
+
+    // Extended number of spatial stream bandwidth supported
+    // See IEEE Std 80.211-2016, Table 9-250.
+    WLAN_BIT_FIELD(ext_nss_bw, 30, 2);
+
+    enum MaxMpduLen {
+        OCTETS_3895 = 0,
+        OCTETS_7991 = 1,
+        OCTETS_11454 = 2,
+        // 3 reserved
+    };
+
+    enum VhtLinkAdaptation {
+        LINK_ADAPT_NO_FEEDBACK = 0,
+        // 1 reserved
+        LINK_ADAPT_UNSOLICITED = 2,
+        LINK_ADAPT_BOTH = 3,
+    };
+
+} __PACKED;
+
+// IEEE Std 802.11-2016, 9.4.2.158.3
+struct VhtMcsNss : public common::BitField<uint64_t> {
+   public:
+    constexpr explicit VhtMcsNss(uint64_t vht_mcs_nss) : common::BitField<uint64_t>(vht_mcs_nss) {}
+    constexpr VhtMcsNss() = default;
+
+    // Rx VHT-MCS Map
+    WLAN_BIT_FIELD(rx_max_mcs_ss1, 0, 2);
+    WLAN_BIT_FIELD(rx_max_mcs_ss2, 2, 2);
+    WLAN_BIT_FIELD(rx_max_mcs_ss3, 4, 2);
+    WLAN_BIT_FIELD(rx_max_mcs_ss4, 6, 2);
+    WLAN_BIT_FIELD(rx_max_mcs_ss5, 8, 2);
+    WLAN_BIT_FIELD(rx_max_mcs_ss6, 10, 2);
+    WLAN_BIT_FIELD(rx_max_mcs_ss7, 12, 2);
+    WLAN_BIT_FIELD(rx_max_mcs_ss8, 14, 2);
+
+    WLAN_BIT_FIELD(rx_max_data_rate, 16, 13);
+    WLAN_BIT_FIELD(max_nsts, 29, 3);
+
+    // Tx VHT-MCS Map
+    WLAN_BIT_FIELD(tx_max_mcs_ss1, 32, 2);
+    WLAN_BIT_FIELD(tx_max_mcs_ss2, 34, 2);
+    WLAN_BIT_FIELD(tx_max_mcs_ss3, 36, 2);
+    WLAN_BIT_FIELD(tx_max_mcs_ss4, 38, 2);
+    WLAN_BIT_FIELD(tx_max_mcs_ss5, 40, 2);
+    WLAN_BIT_FIELD(tx_max_mcs_ss6, 42, 2);
+    WLAN_BIT_FIELD(tx_max_mcs_ss7, 44, 2);
+    WLAN_BIT_FIELD(tx_max_mcs_ss8, 46, 2);
+    WLAN_BIT_FIELD(tx_max_data_rate, 48, 13);
+
+    WLAN_BIT_FIELD(ext_nss_bw, 61, 1);
+    // bit 62, 63 reserved
+
+    enum VhtMcsSet {
+        VHT_MCS_0_TO_7 = 0,
+        VHT_MCS_0_TO_8 = 1,
+        VHT_MCS_0_TO_9 = 2,
+        VHT_MCS_NONE = 3,
+    };
+
+    uint8_t get_rx_max_mcs_ss(uint8_t ss_num) const {
+        ZX_DEBUG_ASSERT(1 <= ss_num && ss_num <= 8);
+        constexpr uint8_t kMcsBitOffset = 0;  // rx_max_mcs_ss1
+        constexpr uint8_t kBitWidth = 2;
+        uint8_t offset = kMcsBitOffset + (ss_num - 1) * kBitWidth;
+        uint64_t mask = ((1ull << kBitWidth) - 1) << offset;
+        return (val() & mask) >> offset;
+    }
+
+    uint8_t get_tx_max_mcs_ss(uint8_t ss_num) const {
+        ZX_DEBUG_ASSERT(1 <= ss_num && ss_num <= 8);
+        constexpr uint8_t kMcsBitOffset = 32;  // tx_max_mcs_ss1
+        constexpr uint8_t kBitWidth = 2;
+        uint8_t offset = kMcsBitOffset + (ss_num - 1) * kBitWidth;
+        uint64_t mask = ((1ull << kBitWidth) - 1) << offset;
+        return (val() & mask) >> offset;
+    }
+} __PACKED;
+
+// IEEE Std 802.11-2016, 9.4.2.158
+struct VhtCapabilities : public Element<VhtCapabilities, element_id::kVhtCapabilities> {
+    static bool Create(void* buf, size_t len, size_t* actual,
+                       const VhtCapabilitiesInfo& vht_cap_info, const VhtMcsNss& vht_mcs_nss);
+    static constexpr size_t kMinLen = 12;
+    static constexpr size_t kMaxLen = 12;
+
+    ElementHeader hdr;
+
+    VhtCapabilitiesInfo vht_cap_info;
+    VhtMcsNss vht_mcs_nss;
+
+    static VhtCapabilities FromDdk(const wlan_vht_caps_t& ddk) {
+        VhtCapabilities dst{};
+        dst.hdr.id = element_id::kVhtCapabilities;
+        dst.hdr.len = VhtCapabilities::kMaxLen;  // same as kMinLen
+        dst.vht_cap_info.set_val(ddk.vht_capability_info);
+        dst.vht_mcs_nss.set_val(ddk.supported_vht_mcs_and_nss_set);
+        return dst;
+    }
+
+    wlan_vht_caps_t ToDdk() const {
+        wlan_vht_caps_t ddk{};
+        ddk.vht_capability_info = vht_cap_info.val();
+        ddk.supported_vht_mcs_and_nss_set = vht_mcs_nss.val();
+        return ddk;
+    }
+
+} __PACKED;
+
+// IEEE Std 802.11-2016, Figure 9-562
+struct BasicVhtMcsNss : public common::BitField<uint16_t> {
+   public:
+    constexpr explicit BasicVhtMcsNss(uint16_t basic_mcs) : common::BitField<uint16_t>(basic_mcs) {}
+    constexpr BasicVhtMcsNss() = default;
+
+    WLAN_BIT_FIELD(ss1, 0, 2);
+    WLAN_BIT_FIELD(ss2, 2, 2);
+    WLAN_BIT_FIELD(ss3, 4, 2);
+    WLAN_BIT_FIELD(ss4, 6, 2);
+    WLAN_BIT_FIELD(ss5, 8, 2);
+    WLAN_BIT_FIELD(ss6, 10, 2);
+    WLAN_BIT_FIELD(ss7, 12, 2);
+    WLAN_BIT_FIELD(ss8, 14, 2);
+
+    enum VhtMcsEncoding {
+        VHT_MCS_0_TO_7 = 0,
+        VHT_MCS_0_TO_8 = 1,
+        VHT_MCS_0_TO_9 = 2,
+        VHT_MCS_NONE = 3,
+    };
+
+    uint8_t get_max_mcs_ss(uint8_t ss_num) const {
+        ZX_DEBUG_ASSERT(1 <= ss_num && ss_num <= 8);
+        constexpr uint8_t kMcsBitOffset = 0;  // ss1
+        constexpr uint8_t kBitWidth = 2;
+        uint8_t offset = kMcsBitOffset + (ss_num - 1) * kBitWidth;
+        uint64_t mask = ((1ull << kBitWidth) - 1) << offset;
+        return (val() & mask) >> offset;
+    }
+};
+
+// IEEE Std 802.11-2016, 9.4.2.159
+struct VhtOperation : public Element<VhtOperation, element_id::kVhtOperation> {
+    static bool Create(void* buf, size_t len, size_t* actual, uint8_t vht_cbw,
+                       uint8_t center_freq_seg0, uint8_t center_freq_seg1,
+                       const BasicVhtMcsNss& basic_mcs);
+    static constexpr size_t kMinLen = 5;
+    static constexpr size_t kMaxLen = 5;
+
+    ElementHeader hdr;
+
+    uint8_t vht_cbw;
+    uint8_t center_freq_seg0;
+    uint8_t center_freq_seg1;
+
+    BasicVhtMcsNss basic_mcs;
+
+    enum VhtChannelBandwidth {
+        VHT_CBW_20_40 = 0,
+        VHT_CBW_80_160_80P80 = 1,
+        VHT_CBW_160 = 2,    // Deprecated
+        VHT_CBW_80P80 = 3,  // Deprecated
+
+        // 4 - 255 reserved
+    };
+
+    static VhtOperation FromDdk(const wlan_vht_op_t& ddk) {
+        VhtOperation dst{};
+        dst.vht_cbw = ddk.vht_cbw;
+        dst.center_freq_seg0 = ddk.center_freq_seg0;
+        dst.center_freq_seg1 = ddk.center_freq_seg1;
+        dst.basic_mcs.set_val(ddk.basic_mcs);
+        return dst;
+    }
+
+    wlan_vht_op_t ToDdk() const {
+        wlan_vht_op_t dst{};
+        dst.vht_cbw = vht_cbw;
+        dst.center_freq_seg0 = center_freq_seg0;
+        dst.center_freq_seg1 = center_freq_seg1;
+        dst.basic_mcs = basic_mcs.val();
+        return dst;
+    }
+
+} __PACKED;
+
+SupportedMcsSet IntersectMcs(const SupportedMcsSet& lhs, const SupportedMcsSet& rhs);
+HtCapabilities IntersectHtCap(const HtCapabilities& lhs, const HtCapabilities& rhs);
+VhtCapabilities IntersectVhtCap(const VhtCapabilities& lhs, const VhtCapabilities& rhs);
+
+// Find common legacy rates between AP and client.
+// The outcoming "Basic rates" follows those specified in AP
+std::vector<SupportedRate> IntersectRatesAp(const std::vector<SupportedRate>& ap_rates,
+                                            const std::vector<SupportedRate>& client_rates);
 
 }  // namespace wlan

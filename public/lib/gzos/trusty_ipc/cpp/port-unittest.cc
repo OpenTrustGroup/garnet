@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include <lib/async-loop/cpp/loop.h>
-#include <ree_agent/cpp/fidl.h>
+#include <gzos/reeagent/cpp/fidl.h>
 #include <zircon/compiler.h>
 
 #include "gtest/gtest.h"
@@ -16,7 +16,7 @@ namespace trusty_ipc {
 class TipcPortTest : public ::testing::Test {
  public:
   TipcPortTest()
-      : loop_(&kAsyncLoopConfigMakeDefault),
+      : loop_(&kAsyncLoopConfigAttachToThread),
         s_port_(kNumItems, kItemSize, IPC_PORT_ALLOW_TA_CONNECT),
         ns_port_(kNumItems, kItemSize, IPC_PORT_ALLOW_NS_CONNECT) {}
 
@@ -30,7 +30,7 @@ class TipcPortTest : public ::testing::Test {
 };
 
 TEST_F(TipcPortTest, SecurePortConnect) {
-  TipcPortPtr port_client;
+  gzos::trusty::ipc::TipcPortPtr port_client;
   s_port_.Bind(port_client.NewRequest());
 
   fbl::RefPtr<TipcChannelImpl> channel = fbl::MakeRefCounted<TipcChannelImpl>();
@@ -49,7 +49,7 @@ TEST_F(TipcPortTest, SecurePortConnect) {
   auto uuid = fidl::StringPtr(fxl::GenerateUUID());
   port_client->Connect(
       std::move(local_handle), uuid,
-      [](zx_status_t status, fidl::InterfaceHandle<TipcChannel> handle) {
+      [](zx_status_t status, fidl::InterfaceHandle<gzos::trusty::ipc::TipcChannel> handle) {
         ASSERT_EQ(status, ZX_OK);
       });
   loop_.RunUntilIdle();
@@ -74,7 +74,7 @@ TEST_F(TipcPortTest, SecurePortConnect) {
 }
 
 TEST_F(TipcPortTest, SecurePortConnectFromNonSecureClient) {
-  TipcPortPtr port_client;
+  gzos::trusty::ipc::TipcPortPtr port_client;
   s_port_.Bind(port_client.NewRequest());
 
   fbl::RefPtr<TipcChannelImpl> channel = fbl::MakeRefCounted<TipcChannelImpl>();
@@ -84,7 +84,7 @@ TEST_F(TipcPortTest, SecurePortConnectFromNonSecureClient) {
   port_client->Connect(
       std::move(local_handle), nullptr,
       [&channel](zx_status_t status,
-                 fidl::InterfaceHandle<TipcChannel> peer_handle) {
+                 fidl::InterfaceHandle<gzos::trusty::ipc::TipcChannel> peer_handle) {
         ASSERT_EQ(status, ZX_ERR_ACCESS_DENIED);
       });
 
@@ -92,7 +92,7 @@ TEST_F(TipcPortTest, SecurePortConnectFromNonSecureClient) {
 }
 
 TEST_F(TipcPortTest, NonSecurePortConnectFromSecureClient) {
-  TipcPortPtr port_client;
+  gzos::trusty::ipc::TipcPortPtr port_client;
   ns_port_.Bind(port_client.NewRequest());
 
   fbl::RefPtr<TipcChannelImpl> channel = fbl::MakeRefCounted<TipcChannelImpl>();
@@ -103,7 +103,7 @@ TEST_F(TipcPortTest, NonSecurePortConnectFromSecureClient) {
   port_client->Connect(
       std::move(local_handle), uuid,
       [&channel](zx_status_t status,
-                 fidl::InterfaceHandle<TipcChannel> peer_handle) {
+                 fidl::InterfaceHandle<gzos::trusty::ipc::TipcChannel> peer_handle) {
         ASSERT_EQ(status, ZX_ERR_ACCESS_DENIED);
       });
 

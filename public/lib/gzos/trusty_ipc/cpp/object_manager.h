@@ -7,7 +7,7 @@
 #include <fbl/auto_lock.h>
 #include <fbl/mutex.h>
 #include <fbl/ref_ptr.h>
-#include <ree_agent/cpp/fidl.h>
+#include <gzos/reeagent/cpp/fidl.h>
 #include <zx/port.h>
 
 #include "lib/fxl/logging.h"

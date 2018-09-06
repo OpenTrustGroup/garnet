@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library trusty_ipc;
+library gzos.trusty.ipc;
+
+using zx;
 
 interface TipcPort {
   1: GetInfo() -> (uint32 num_items, uint64 item_size);
 
-  2: Connect(TipcChannel local_handle, string? uuid) -> (status s, TipcChannel? peer_handle);
+  2: Connect(TipcChannel local_handle, string? uuid) -> (zx.status s, TipcChannel? peer_handle);
 };

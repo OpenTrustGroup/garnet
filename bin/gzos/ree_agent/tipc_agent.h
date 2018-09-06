@@ -8,7 +8,7 @@
 #include <fbl/unique_ptr.h>
 #include <lib/async-loop/cpp/loop.h>
 
-#include <ree_agent/cpp/fidl.h>
+#include <gzos/reeagent/cpp/fidl.h>
 
 #include "garnet/bin/gzos/ree_agent/ree_agent.h"
 #include "garnet/bin/gzos/ree_agent/ta_service.h"

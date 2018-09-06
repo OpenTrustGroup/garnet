@@ -6,15 +6,15 @@
 
 #include <fbl/auto_call.h>
 #include <lib/async-loop/cpp/loop.h>
-#include <sysmgr/cpp/fidl.h>
+#include <gzos/sysmgr/cpp/fidl.h>
 
 #include "lib/gzos/trusty_app/manifest.h"
 #include "lib/gzos/trusty_ipc/cpp/channel.h"
 #include "lib/gzos/trusty_ipc/cpp/object_manager.h"
 #include "lib/gzos/trusty_ipc/cpp/port.h"
 
-#include "lib/app/cpp/environment_services.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/environment_services.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fxl/logging.h"
 
 #include "trusty_std.h"
@@ -23,9 +23,9 @@
 using namespace trusty_ipc;
 
 static fbl::Mutex context_lock;
-static std::unique_ptr<fuchsia::sys::StartupContext> startup_context;
-static sysmgr::ServiceRegistrySyncPtr service_registry;
-static sysmgr::ServiceRegistryPtr service_registry_async;
+static std::unique_ptr<component::StartupContext> startup_context;
+static gzos::sysmgr::ServiceRegistrySyncPtr service_registry;
+static gzos::sysmgr::ServiceRegistryPtr service_registry_async;
 
 static fbl::Mutex async_loop_lock;
 static bool async_loop_started = false;
@@ -138,19 +138,19 @@ long port_create(const char* path, uint32_t num_recv_bufs,
   // async_loop and startup_context objects should be created in main thread
   // so they can't be declared as global variable. We assume that the first time
   // TA to do port_create() is always in main thread.
-  static async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  static async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
   fbl::AutoLock lock(&context_lock);
   if (startup_context == nullptr) {
     startup_context =
-        fbl::move(fuchsia::sys::StartupContext::CreateFromStartupInfo());
+        fbl::move(component::StartupContext::CreateFromStartupInfo());
 
     fbl::AutoLock lock(&async_loop_lock);
     loop_ptr = &loop;
 
-    fuchsia::sys::ConnectToEnvironmentService<sysmgr::ServiceRegistry>(
+    component::ConnectToEnvironmentService<gzos::sysmgr::ServiceRegistry>(
         service_registry.NewRequest());
-    fuchsia::sys::ConnectToEnvironmentService<sysmgr::ServiceRegistry>(
+    component::ConnectToEnvironmentService<gzos::sysmgr::ServiceRegistry>(
         service_registry_async.NewRequest());
   }
 
@@ -182,8 +182,8 @@ long port_create(const char* path, uint32_t num_recv_bufs,
   auto remove_port = fbl::MakeAutoCall(
       [&obj_mgr, &port]() { obj_mgr->RemoveObject(port->handle_id()); });
 
-  status = startup_context->outgoing().AddPublicService<TipcPort>(
-      [port](fidl::InterfaceRequest<TipcPort> request) {
+  status = startup_context->outgoing().AddPublicService<gzos::trusty::ipc::TipcPort>(
+      [port](fidl::InterfaceRequest<gzos::trusty::ipc::TipcPort> request) {
         port->Bind(std::move(request));
       },
       service_name);
@@ -204,8 +204,8 @@ static void wait_for_port(fbl::RefPtr<TipcChannelImpl> channel,
                           std::string path) {
   auto port_connect = [path, channel] {
     PortConnectFacade facade(
-        std::move(channel), [](TipcPortSyncPtr& port, std::string path) {
-          fuchsia::sys::ConnectToEnvironmentService<TipcPort>(port.NewRequest(),
+        std::move(channel), [](gzos::trusty::ipc::TipcPortSyncPtr& port, std::string path) {
+          component::ConnectToEnvironmentService<gzos::trusty::ipc::TipcPort>(port.NewRequest(),
                                                               path);
           return ZX_OK;
         });
@@ -245,7 +245,7 @@ long connect(const char* path, uint32_t flags) {
       [channel] { channel->SignalEvent(TipcEvent::READY); });
 
   PortConnectFacade facade(
-      channel, [flags, channel](TipcPortSyncPtr& port, std::string path) {
+      channel, [flags, channel](gzos::trusty::ipc::TipcPortSyncPtr& port, std::string path) {
         bool found;
         service_registry->LookupService(path, &found);
         if (!found) {
@@ -256,7 +256,7 @@ long connect(const char* path, uint32_t flags) {
 
           return ZX_ERR_NOT_FOUND;
         }
-        fuchsia::sys::ConnectToEnvironmentService<TipcPort>(port.NewRequest(),
+        component::ConnectToEnvironmentService<gzos::trusty::ipc::TipcPort>(port.NewRequest(),
                                                             path);
         return ZX_OK;
       });
@@ -344,7 +344,7 @@ long trusty_close(uint32_t handle_id) {
     auto port = fbl::RefPtr<TipcPortImpl>::Downcast(obj);
 
     status =
-        startup_context->outgoing().RemovePublicService<TipcPort>(port->name());
+        startup_context->outgoing().RemovePublicService<gzos::trusty::ipc::TipcPort>(port->name());
     if (status == ZX_OK) {
       service_registry->RemoveService(port->name());
     }

@@ -12,7 +12,7 @@
 namespace trusty_virtio {
 
 TrustyVirtioDevice::TrustyVirtioDevice(const trusty_vdev_descr& descr,
-                                       async_t* async, zx::channel channel)
+                                       async_dispatcher_t* async, zx::channel channel)
     : descr_(descr),
       channel_(fbl::move(channel)),
       rx_stream_(async, rx_queue(), channel_.get()),
@@ -143,7 +143,7 @@ zx_status_t TrustyVirtioDevice::Kick(uint32_t vq_id) {
   return queues_[vq_id].Signal();
 }
 
-TrustyVirtioDevice::Stream::Stream(async_t* async, VirtioQueue* queue,
+TrustyVirtioDevice::Stream::Stream(async_dispatcher_t* async, VirtioQueue* queue,
                                    zx_handle_t channel)
     : async_(async),
       channel_(channel),
@@ -209,7 +209,7 @@ zx_status_t TrustyVirtioDevice::Stream::WaitOnChannel() {
 }
 
 void TrustyVirtioDevice::Stream::OnChannelReady(
-    async_t* async, async::WaitBase* wait, zx_status_t status,
+    async_dispatcher_t* async, async::WaitBase* wait, zx_status_t status,
     const zx_packet_signal_t* signal) {
   if (status != ZX_OK) {
     OnStreamClosed(status, "async wait on channel");

@@ -5,7 +5,7 @@
 #include <string.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/fidl/cpp/binding.h>
-#include <ree_agent/cpp/fidl.h>
+#include <gzos/reeagent/cpp/fidl.h>
 #include <zx/channel.h>
 
 #include "garnet/bin/gzos/smc_service/smc_service.h"
@@ -31,14 +31,14 @@
 
 namespace ree_agent {
 
-class ReeMessageFake : public ReeMessage {
+class ReeMessageFake : public gzos::reeagent::ReeMessage {
  public:
   ReeMessageFake() : binding_(this) {}
 
   void Bind(zx::channel ch) {
     binding_.Bind(std::move(ch));
   }
-  void AddMessageChannel(::fidl::VectorPtr<MessageChannelInfo> infos,
+  void AddMessageChannel(::fidl::VectorPtr<gzos::reeagent::MessageChannelInfo> infos,
                          AddMessageChannelCallback callback) {
     callback(ZX_OK);
   }
@@ -73,7 +73,7 @@ class SmcTestEntity : public SmcEntity {
 class SmcServiceTest : public testing::Test {
  public:
   SmcServiceTest()
-      : loop_(&kAsyncLoopConfigMakeDefault),
+      : loop_(&kAsyncLoopConfigAttachToThread),
         smc_service_(SmcService::GetInstance()) {}
 
  protected:
@@ -83,7 +83,7 @@ class SmcServiceTest : public testing::Test {
     zx_status_t st = smc_service_->AddSmcEntity(SMC_ENTITY_TRUSTED_OS,
                                                 new SmcTestEntity(&smc_args));
     ASSERT_EQ(st, ZX_OK);
-    smc_service_->Start(loop_.async());
+    smc_service_->Start(loop_.dispatcher());
   }
 
   virtual void TearDown() { smc_service_->Stop(); }
@@ -151,11 +151,10 @@ class TrustySmcTest : public SmcServiceTest {
     zx_status_t status = zx::channel::create(0, &ch1, &ch2);
     ASSERT_EQ(status, ZX_OK);
 
-    async_set_default(loop_.async());
     ree_message_fake_.Bind(fbl::move(ch2));
     loop_.StartThread();
 
-    entity_ = fbl::make_unique<TrustySmcEntity>(loop_.async(), fbl::move(ch1));
+    entity_ = fbl::make_unique<TrustySmcEntity>(loop_.dispatcher(), fbl::move(ch1));
     ASSERT_TRUE(entity_ != nullptr);
 
     ASSERT_EQ(entity_->Init(), ZX_OK);

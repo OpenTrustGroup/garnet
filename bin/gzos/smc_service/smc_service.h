@@ -50,7 +50,7 @@ class SmcService {
   ~SmcService() { Stop(); }
 
   zx_status_t AddSmcEntity(uint32_t entity_nr, SmcEntity* e);
-  zx_status_t Start(async_t* async);
+  zx_status_t Start(async_dispatcher_t* async);
   void Stop();
   fbl::RefPtr<SharedMem> GetSharedMem() {
     fbl::AutoLock lock(&lock_);
@@ -68,8 +68,8 @@ class SmcService {
 
   SmcEntity* GetSmcEntity(uint32_t entity_nr);
   zx_status_t InitSmcEntities();
-  zx_status_t WaitOnSmc(async_t* async);
-  void OnSmcReady(async_t* async, async::WaitBase* wait, zx_status_t status,
+  zx_status_t WaitOnSmc(async_dispatcher_t* async);
+  void OnSmcReady(async_dispatcher_t* async, async::WaitBase* wait, zx_status_t status,
                   const zx_packet_signal_t* signal);
   void OnSmcClosed(zx_status_t status, const char* action);
   zx_status_t CreateSmcKernelObject();

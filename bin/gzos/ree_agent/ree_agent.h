@@ -12,7 +12,7 @@
 #include "lib/fxl/logging.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
 
-#include <ree_agent/cpp/fidl.h>
+#include <gzos/reeagent/cpp/fidl.h>
 
 namespace ree_agent {
 
@@ -34,7 +34,7 @@ class ReeAgent {
   virtual zx_status_t HandleMessage(void* buf, size_t size) = 0;
 
  private:
-  void OnChannelReady(async_t* async, async::WaitBase* wait, zx_status_t status,
+  void OnChannelReady(async_dispatcher_t* async, async::WaitBase* wait, zx_status_t status,
                       const zx_packet_signal_t* sig);
   void OnChannelClosed(zx_status_t status, const char* action);
 
@@ -44,7 +44,7 @@ class ReeAgent {
   size_t max_message_size_;
   State state FXL_GUARDED_BY(lock_);
   fbl::unique_ptr<char> read_buffer_ FXL_GUARDED_BY(lock_);
-  async_t* async_;
+  async_dispatcher_t* async_;
   async::WaitMethod<ReeAgent, &ReeAgent::OnChannelReady> channel_wait_{this};
 
   FXL_DISALLOW_COPY_AND_ASSIGN(ReeAgent);

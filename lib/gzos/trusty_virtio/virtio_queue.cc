@@ -208,13 +208,13 @@ zx_status_t VirtioQueue::Poll(virtio_queue_poll_fn_t handler,
   return ZX_OK;
 }
 
-zx_status_t VirtioQueue::PollAsync(async_t* async,
+zx_status_t VirtioQueue::PollAsync(async_dispatcher_t* async,
                                    async::Wait* wait,
                                    virtio_queue_poll_fn_t handler,
                                    void* ctx) {
   wait->set_object(event_.get());
   wait->set_trigger(SIGNAL_QUEUE_AVAIL);
-  wait->set_handler([this, handler, ctx](async_t* async, async::Wait* wait,
+  wait->set_handler([this, handler, ctx](async_dispatcher_t* async, async::Wait* wait,
                                          zx_status_t status,
                                          const zx_packet_signal_t* signal) {
     InvokeAsyncHandler(async, wait, status, handler, ctx);
@@ -222,7 +222,7 @@ zx_status_t VirtioQueue::PollAsync(async_t* async,
   return wait->Begin(async);
 }
 
-void VirtioQueue::InvokeAsyncHandler(async_t* async,
+void VirtioQueue::InvokeAsyncHandler(async_dispatcher_t* async,
                                      async::Wait* wait,
                                      zx_status_t status,
                                      virtio_queue_poll_fn_t handler,

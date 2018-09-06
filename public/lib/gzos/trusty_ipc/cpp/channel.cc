@@ -35,11 +35,11 @@ zx_status_t TipcChannelImpl::Init(uint32_t num_items, size_t item_size) {
 }
 
 zx_status_t TipcChannelImpl::PopulatePeerSharedItemsLocked() {
-  fidl::VectorPtr<SharedMessageItem> shared_items;
-  bool ret = peer_->RequestSharedMessageItems(&shared_items);
-  if (!ret) {
+  fidl::VectorPtr<gzos::trusty::ipc::SharedMessageItem> shared_items;
+  zx_status_t ret = peer_->RequestSharedMessageItems(&shared_items);
+  if (ret != ZX_OK) {
     UnBindLocked();
-    return ZX_ERR_INTERNAL;
+    return ret;
   }
 
   if (!shared_items) {
@@ -85,10 +85,10 @@ void TipcChannelImpl::RequestSharedMessageItems(
   fbl::AutoLock lock(&lock_);
   FXL_CHECK(initialized_);
 
-  fidl::VectorPtr<SharedMessageItem> shared_items;
+  fidl::VectorPtr<gzos::trusty::ipc::SharedMessageItem> shared_items;
 
   for (const auto& item : free_list_) {
-    SharedMessageItem shared_item;
+    gzos::trusty::ipc::SharedMessageItem shared_item;
 
     shared_item.vmo = item.GetDuplicateVmo();
     shared_item.size = item.size();
@@ -174,8 +174,8 @@ void TipcChannelImpl::Close() {
 }
 
 void TipcChannelImpl::NotifyReady() {
-  bool ret = peer_->Ready();
-  if (!ret) {
+  zx_status_t ret = peer_->Ready();
+  if (ret != ZX_OK) {
     FXL_LOG(ERROR) << "failed to notify peer ready";
     return;
   }
@@ -257,10 +257,10 @@ zx_status_t TipcChannelImpl::SendMessage(ipc_msg_t* msg, size_t& actual_send) {
     return status;
   }
 
-  bool ret = peer_->GetFreeMessageItem(&status, &msg_id);
-  if (!ret) {
+  zx_status_t ret = peer_->GetFreeMessageItem(&status, &msg_id);
+  if (ret != ZX_OK) {
     UnBindLocked();
-    return ZX_ERR_INTERNAL;
+    return ret;
   }
 
   if (status != ZX_OK) {
@@ -288,9 +288,9 @@ zx_status_t TipcChannelImpl::SendMessage(ipc_msg_t* msg, size_t& actual_send) {
   }
 
   ret = peer_->NotifyMessageItemIsFilled(msg_id, actual_send);
-  if (!ret) {
+  if (ret != ZX_OK) {
     UnBindLocked();
-    return ZX_ERR_INTERNAL;
+    return ret;
   }
 
   return ZX_OK;
@@ -395,12 +395,12 @@ zx_status_t TipcChannelImpl::PutMessage(uint32_t msg_id) {
   free_list_.push_back(fbl::move(item));
 
   if (no_free_item_) {
-    async::PostTask(async_get_default(), [this] {
+    async::PostTask(async_get_default_dispatcher(), [this] {
       fbl::AutoLock lock(&lock_);
       no_free_item_ = false;
 
-      bool ret = peer_->NotifyFreeItemAvailable();
-      if (!ret) {
+      zx_status_t ret = peer_->NotifyFreeItemAvailable();
+      if (ret != ZX_OK) {
         FXL_LOG(ERROR) << "failed to notify peer we have free item available";
         UnBindLocked();
       }

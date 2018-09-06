@@ -215,7 +215,7 @@ class VirtioQueue {
   // when one is available.
   //
   // TODO(PD-103): Use a c++ style function object here.
-  zx_status_t PollAsync(async_t* async,
+  zx_status_t PollAsync(async_dispatcher_t* async,
                         async::Wait* wait,
                         virtio_queue_poll_fn_t handler,
                         void* ctx);
@@ -235,7 +235,7 @@ class VirtioQueue {
   // Returns a circular index into a Virtio ring.
   uint32_t RingIndexLocked(uint32_t index) const __TA_REQUIRES(mutex_);
 
-  void InvokeAsyncHandler(async_t* async,
+  void InvokeAsyncHandler(async_dispatcher_t* async,
                           async::Wait* wait,
                           zx_status_t status,
                           virtio_queue_poll_fn_t handler,

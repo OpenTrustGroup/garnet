@@ -4,9 +4,7 @@
 
 import("//build/fidl/fidl.gni")
 
-fidl("fidl") {
-  name = "ree_agent"
-
+fidl("gzos.reeagent") {
   sources = [
     "ree_message.fidl",
   ]

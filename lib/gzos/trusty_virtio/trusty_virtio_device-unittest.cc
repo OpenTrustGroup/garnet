@@ -42,6 +42,9 @@ static zx_status_t alloc_shm_vmo(zx::vmo* out, zx_info_ns_shm_t* vmo_info) {
 }
 
 class ResourceTableTest : public ::testing::Test {
+ public:
+  ResourceTableTest() : loop_(&kAsyncLoopConfigAttachToThread) {}
+
  protected:
   virtual void SetUp() {
     // Create Shared Memory
@@ -66,7 +69,7 @@ class ResourceTableTest : public ::testing::Test {
       ASSERT_EQ(zx::channel::create(0, &h0, &h1), ZX_OK);
       fbl::RefPtr<TrustyVirtioDevice> dev =
           fbl::AdoptRef(new TrustyVirtioDevice(kVdevDescriptors[i],
-                                               loop_.async(), fbl::move(h1)));
+                                               loop_.dispatcher(), fbl::move(h1)));
       ASSERT_TRUE(dev != nullptr);
 
       ASSERT_EQ(bus_->AddDevice(dev), ZX_OK);
@@ -133,6 +136,9 @@ TEST_F(ResourceTableTest, FailedToGetResourceTable) {
 }
 
 class VirtioBusStateTest : public ::testing::Test {
+ public:
+  VirtioBusStateTest() : loop_(&kAsyncLoopConfigAttachToThread) {}
+
  protected:
   virtual void SetUp() {
     // Create Shared Memory
@@ -154,7 +160,7 @@ class VirtioBusStateTest : public ::testing::Test {
     zx::channel connector;
     ASSERT_EQ(zx::channel::create(0, &channel_, &connector), ZX_OK);
     trusty_vdev_ = fbl::AdoptRef(new TrustyVirtioDevice(
-        kVdevDescriptors[0], loop_.async(), fbl::move(connector)));
+        kVdevDescriptors[0], loop_.dispatcher(), fbl::move(connector)));
     ASSERT_TRUE(trusty_vdev_ != nullptr);
     ASSERT_EQ(bus_->AddDevice(trusty_vdev_), ZX_OK);
 

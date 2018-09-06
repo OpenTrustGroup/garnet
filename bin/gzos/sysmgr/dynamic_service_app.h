@@ -13,10 +13,10 @@
 #include <fbl/unique_ptr.h>
 #include <fs/synchronous-vfs.h>
 #include <fuchsia/sys/cpp/fidl.h>
-#include <sysmgr/cpp/fidl.h>
+#include <gzos/sysmgr/cpp/fidl.h>
 
-#include "lib/app/cpp/service_provider_impl.h"
-#include "lib/app/cpp/startup_context.h"
+#include "lib/component/cpp/service_provider_impl.h"
+#include "lib/component/cpp/startup_context.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/synchronization/thread_annotations.h"
 
@@ -31,7 +31,7 @@
 namespace sysmgr {
 
 class DynamicServiceApp;
-class LaunchedApp : public ServiceRegistry {
+class LaunchedApp : public gzos::sysmgr::ServiceRegistry {
  public:
   LaunchedApp(DynamicServiceApp* app, std::string app_name);
   LaunchedApp() = delete;
@@ -55,14 +55,14 @@ class LaunchedApp : public ServiceRegistry {
   void CancelWaitOnService(fidl::StringPtr service_name) override;
 
  private:
-  fidl::BindingSet<ServiceRegistry> bindings_;
+  fidl::BindingSet<gzos::sysmgr::ServiceRegistry> bindings_;
 
   DynamicServiceApp* app_;
   std::string app_name_;
 
   fuchsia::sys::ComponentControllerPtr controller_;
-  fuchsia::sys::Services service_;
-  fuchsia::sys::ServiceProviderImpl service_provider_;
+  component::Services service_;
+  component::ServiceProviderImpl service_provider_;
 
   std::vector<std::string> registered_services_;
 
@@ -75,12 +75,12 @@ class DynamicServiceApp {
   ~DynamicServiceApp() = default;
 
   void AddService(std::string app_name, std::string service_name,
-                  std::function<void()> callback);
+                  fit::function<void()> callback);
   void RemoveService(std::string service_name);
   void LookupService(std::string service_name,
-                     ServiceRegistry::LookupServiceCallback callback);
+                     gzos::sysmgr::ServiceRegistry::LookupServiceCallback callback);
   void WaitOnService(std::string app_name, std::string service_name,
-                     ServiceRegistry::WaitOnServiceCallback callback);
+                     gzos::sysmgr::ServiceRegistry::WaitOnServiceCallback callback);
   void CancelWaitOnService(std::string app_name, std::string service_name);
 
  private:
@@ -88,7 +88,7 @@ class DynamicServiceApp {
   void ScanPublicServices();
   void RegisterService(std::string service_name);
 
-  std::unique_ptr<fuchsia::sys::StartupContext> startup_context_;
+  std::unique_ptr<component::StartupContext> startup_context_;
 
   // map of service name and app name
   std::map<std::string, std::string> services_;
@@ -109,7 +109,7 @@ class DynamicServiceApp {
       : public fbl::DoublyLinkedListable<fbl::unique_ptr<ServiceWaiter>> {
     std::string app_name;
     std::string service_name;
-    ServiceRegistry::WaitOnServiceCallback callback;
+    gzos::sysmgr::ServiceRegistry::WaitOnServiceCallback callback;
   };
 
   fbl::Mutex mutex_;

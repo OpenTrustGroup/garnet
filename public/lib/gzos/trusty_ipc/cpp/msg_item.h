@@ -47,7 +47,7 @@ class MessageItem
   void Reset() {
     if (buffer_ptr_ != nullptr) {
       FXL_DCHECK(size_ != 0);
-      zx_status_t status = zx::vmar::root_self().unmap(
+      zx_status_t status = zx::vmar::root_self()->unmap(
           reinterpret_cast<uintptr_t>(buffer_ptr_), size_);
       FXL_CHECK(status == ZX_OK);
       buffer_ptr_ = nullptr;
@@ -89,7 +89,7 @@ class MessageItem
     filled_size_ = 0;
 
     uintptr_t mapped_buffer = 0u;
-    status = zx::vmar::root_self().map(
+    status = zx::vmar::root_self()->map(
         0, vmo, 0u, vmo_size, ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE,
         &mapped_buffer);
     if (status != ZX_OK) {

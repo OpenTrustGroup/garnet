@@ -16,14 +16,14 @@ namespace trusty_virtio {
 class VirtioQueueWaiter {
  public:
   using Handler = fbl::Function<void(zx_status_t, uint16_t index)>;
-  VirtioQueueWaiter(async_t* async, VirtioQueue* queue, Handler handler);
+  VirtioQueueWaiter(async_dispatcher_t* async, VirtioQueue* queue, Handler handler);
   ~VirtioQueueWaiter();
 
   zx_status_t Begin();
   void Cancel();
 
  private:
-  void WaitHandler(async_t* async,
+  void WaitHandler(async_dispatcher_t* async,
                    async::WaitBase* wait,
                    zx_status_t status,
                    const zx_packet_signal_t* signal);
@@ -32,7 +32,7 @@ class VirtioQueueWaiter {
   async::WaitMethod<VirtioQueueWaiter,
                     &VirtioQueueWaiter::WaitHandler> wait_
                     __TA_GUARDED(mutex_) {this};
-  async_t* const async_;
+  async_dispatcher_t* const async_;
   VirtioQueue* const queue_ __TA_GUARDED(mutex_);
   const Handler handler_;
   bool pending_ __TA_GUARDED(mutex_) = false;

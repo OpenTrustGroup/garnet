@@ -4,7 +4,7 @@
     <project name="garnet"
              path="garnet"
              remote="https://review.gerrithub.io/OpenTrustGroup/garnet"
-             remotebranch="gzos"
+             remotebranch="gzos_dev"
              gerrithost="https://review.gerrithub.io"/>
   </projects>
   <hooks>

@@ -36,7 +36,7 @@ bool TipcPortImpl::HasPendingRequests() {
   return !pending_requests_.is_empty();
 }
 
-void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
+void TipcPortImpl::Connect(fidl::InterfaceHandle<gzos::trusty::ipc::TipcChannel> peer_handle,
                            fidl::StringPtr uuid, ConnectCallback callback) {
   fbl::RefPtr<TipcChannelImpl> channel;
   channel = fbl::MakeRefCounted<TipcChannelImpl>();
@@ -77,7 +77,7 @@ void TipcPortImpl::Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
   };
 
   channel->SetHupCallback([handle_hup] {
-    async::PostTask(async_get_default(), [handle_hup] { handle_hup(); });
+    async::PostTask(async_get_default_dispatcher(), [handle_hup] { handle_hup(); });
   });
 
   zx_status_t status = channel->Init(num_items_, item_size_);
@@ -157,7 +157,7 @@ void TipcPortImpl::Close() {
 zx_status_t PortConnectFacade::Connect(std::string path, fidl::StringPtr uuid) {
   FXL_DCHECK(port_service_connector_);
 
-  TipcPortSyncPtr port_client;
+  gzos::trusty::ipc::TipcPortSyncPtr port_client;
   zx_status_t status = port_service_connector_(port_client, path);
 
   // We can simply return ZX_OK if the user wants to wait for port
@@ -173,8 +173,8 @@ zx_status_t PortConnectFacade::Connect(std::string path, fidl::StringPtr uuid) {
 
   uint32_t num_items;
   uint64_t item_size;
-  bool ret = port_client->GetInfo(&num_items, &item_size);
-  if (!ret) {
+  zx_status_t ret = port_client->GetInfo(&num_items, &item_size);
+  if (ret != ZX_OK) {
     FXL_LOG(ERROR) << "bind to a non-existed port service";
     return ZX_ERR_NOT_FOUND;
   }
@@ -185,13 +185,13 @@ zx_status_t PortConnectFacade::Connect(std::string path, fidl::StringPtr uuid) {
     return status;
   }
 
-  fidl::InterfaceHandle<TipcChannel> peer_handle;
+  fidl::InterfaceHandle<gzos::trusty::ipc::TipcChannel> peer_handle;
   auto local_handle = channel_->GetInterfaceHandle();
   ret = port_client->Connect(std::move(local_handle), uuid, &status,
                              &peer_handle);
-  if (!ret) {
-    FXL_LOG(ERROR) << "internal error on calling port->Connect()";
-    return ZX_ERR_INTERNAL;
+  if (ret != ZX_OK) {
+    FXL_LOG(ERROR) << "failed to call port->Connect(), ret=" << ret;
+    return ret;
   }
 
   if (status != ZX_OK) {

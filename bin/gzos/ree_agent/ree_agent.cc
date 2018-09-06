@@ -13,7 +13,7 @@ ReeAgent::ReeAgent(uint32_t id, zx::channel ch, size_t max_msg_size)
       message_channel_(fbl::move(ch)),
       max_message_size_(max_msg_size),
       state(State::STOP),
-      async_(async_get_default()) {}
+      async_(async_get_default_dispatcher()) {}
 
 ReeAgent::~ReeAgent() {}
 
@@ -65,7 +65,7 @@ zx_status_t ReeAgent::Stop() {
   return ZX_OK;
 };
 
-void ReeAgent::OnChannelReady(async_t* async, async::WaitBase* wait,
+void ReeAgent::OnChannelReady(async_dispatcher_t* async, async::WaitBase* wait,
                               zx_status_t status,
                               const zx_packet_signal_t* sig) {
   if (status != ZX_OK) {

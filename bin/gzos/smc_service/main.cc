@@ -30,7 +30,7 @@ int main(int argc, const char** argv) {
   if (status != ZX_OK)
     return 1;
 
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
   SmcService* s = SmcService::GetInstance();
   if (s == nullptr)
@@ -38,13 +38,13 @@ int main(int argc, const char** argv) {
 
   status = s->AddSmcEntity(
       SMC_ENTITY_TRUSTED_OS,
-      new TrustySmcEntity(loop.async(), fbl::move(ree_agent_cli)));
+      new TrustySmcEntity(loop.dispatcher(), fbl::move(ree_agent_cli)));
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to add Trusty smc entity, status=" << status;
     return 1;
   }
 
-  s->Start(loop.async());
+  s->Start(loop.dispatcher());
   loop.Run();
   return 0;
 }

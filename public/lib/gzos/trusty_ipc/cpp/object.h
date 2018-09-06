@@ -9,7 +9,7 @@
 #include <fbl/mutex.h>
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
-#include <ree_agent/cpp/fidl.h>
+#include <gzos/reeagent/cpp/fidl.h>
 #include <zx/event.h>
 #include <zx/port.h>
 

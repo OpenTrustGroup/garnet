@@ -11,6 +11,12 @@ declare_args() {
 
 source_set("lib") {
   sources = [
+    "app.cc",
+    "app.h",
+    "config.cc",
+    "config.h",
+    "delegating_loader.cc",
+    "delegating_loader.h",
     "manifest_parser.cc",
     "manifest_parser.h",
   ]
@@ -23,9 +29,12 @@ source_set("lib") {
   }
 
   public_deps = [
-    "//garnet/public/lib/app/cpp",
+    "//garnet/lib/json",
+    "//garnet/public/lib/component/cpp",
+    "//garnet/public/lib/fidl/cpp",
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/fsl",
+    "//garnet/public/lib/svc/cpp",
     "//third_party/rapidjson",
     "//zircon/public/lib/fs",
   ]
@@ -35,23 +44,12 @@ executable("bin") {
   output_name = "sysmgr"
 
   sources = [
-    "app.cc",
-    "app.h",
-    "config.cc",
-    "config.h",
-    "delegating_loader.cc",
-    "delegating_loader.h",
     "main.cc",
   ]
 
   deps = [
     ":lib",
-    "//garnet/public/lib/app/cpp",
-    "//garnet/public/lib/fidl/cpp",
     "//garnet/public/lib/fxl",
-    "//garnet/public/lib/fsl",
-    "//garnet/public/lib/svc/cpp",
-    "//third_party/rapidjson",
     "//zircon/public/lib/async-default",
     "//zircon/public/lib/async-loop-cpp",
   ]
@@ -59,7 +57,7 @@ executable("bin") {
   defines = []
   if (enable_dynamic_service) {
     defines += [ "WITH_DYNAMIC_SERVICE" ]
-    deps += [ "//garnet/public/lib/gzos/sysmgr/fidl" ]
+    deps += [ "//garnet/public/fidl/gzos.sysmgr" ]
   }
 }
 

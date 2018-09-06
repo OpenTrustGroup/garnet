@@ -22,7 +22,7 @@ namespace trusty_virtio {
 zx_status_t SharedMem::Create(zx::vmo vmo, zx_info_ns_shm_t vmo_info, fbl::RefPtr<SharedMem>* out) {
   uintptr_t vaddr;
   zx_status_t status =
-      zx::vmar::root_self().map(0, vmo, 0, vmo_info.size, kMapFlags, &vaddr);
+      zx::vmar::root_self()->map(0, vmo, 0, vmo_info.size, kMapFlags, &vaddr);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to map vmo: " << status;
     return status;
@@ -39,7 +39,7 @@ zx_status_t SharedMem::Create(zx::vmo vmo, zx_info_ns_shm_t vmo_info, fbl::RefPt
 
 SharedMem::~SharedMem() {
   if (vaddr_ != 0) {
-    zx::vmar::root_self().unmap(vaddr_, vmo_size_);
+    zx::vmar::root_self()->unmap(vaddr_, vmo_size_);
   }
 }
 

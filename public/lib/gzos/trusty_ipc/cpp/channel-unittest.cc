@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include <lib/async-loop/cpp/loop.h>
-#include <ree_agent/cpp/fidl.h>
+#include <gzos/reeagent/cpp/fidl.h>
 
 #include "gtest/gtest.h"
 #include "lib/fxl/strings/string_printf.h"
@@ -13,7 +13,7 @@ namespace trusty_ipc {
 
 class TipcChannelTest : public ::testing::Test {
  public:
-  TipcChannelTest() : loop_(&kAsyncLoopConfigMakeDefault) {}
+  TipcChannelTest() : loop_(&kAsyncLoopConfigAttachToThread) {}
 
  protected:
   static constexpr uint32_t kNumItems = 3u;

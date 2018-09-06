@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-library ree_agent;
+library gzos.reeagent;
+
+using zx;
 
 enum MessageType {
   Tipc = 0;
@@ -18,11 +20,11 @@ struct MessageChannelInfo {
 
 interface ReeMessage {
   // Add message channel(s)
-  1: AddMessageChannel(vector<MessageChannelInfo> infos) -> (status err);
+  1: AddMessageChannel(vector<MessageChannelInfo> infos) -> (zx.status err);
 
   // Start to service ree message channels
-  2: Start(vector<uint32>? ids) -> (status err);
+  2: Start(vector<uint32>? ids) -> (zx.status err);
 
   // Stop to service ree message channels
-  3: Stop(vector<uint32>? ids) -> (status err);
+  3: Stop(vector<uint32>? ids) -> (zx.status err);
 };

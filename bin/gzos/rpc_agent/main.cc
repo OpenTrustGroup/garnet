@@ -27,7 +27,7 @@ class TaServiceProvider : public TaServices {
   }
 
  private:
-  fuchsia::sys::Services service_provider_;
+  component::Services service_provider_;
 };
 
 }  // namespace ree_agent
@@ -65,7 +65,7 @@ int main(int argc, const char** argv) {
   if (status != ZX_OK)
     return 1;
 
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
   // Start ree agent
   ree_agent::TaServiceProvider ta_service_provider(std::move(appmgr_svc));
@@ -81,13 +81,13 @@ int main(int argc, const char** argv) {
 
   status = s->AddSmcEntity(
       SMC_ENTITY_TRUSTED_OS,
-      new smc_service::TrustySmcEntity(loop.async(), fbl::move(ree_agent_cli)));
+      new smc_service::TrustySmcEntity(loop.dispatcher(), fbl::move(ree_agent_cli)));
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to add Trusty smc entity, status=" << status;
     return 1;
   }
 
-  s->Start(loop.async());
+  s->Start(loop.dispatcher());
 
   loop.Run();
   return 0;

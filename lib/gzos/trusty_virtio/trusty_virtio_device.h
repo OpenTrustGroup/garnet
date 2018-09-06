@@ -78,7 +78,7 @@ struct trusty_vdev_descr {
 
 class TrustyVirtioDevice : public VirtioDevice {
  public:
-  explicit TrustyVirtioDevice(const trusty_vdev_descr& descr, async_t* async,
+  explicit TrustyVirtioDevice(const trusty_vdev_descr& descr, async_dispatcher_t* async,
                               zx::channel channel);
   ~TrustyVirtioDevice() override {}
 
@@ -108,7 +108,7 @@ class TrustyVirtioDevice : public VirtioDevice {
   // Represents an single, unidirectional TX or RX channel.
   class Stream {
    public:
-    Stream(async_t* async, VirtioQueue* queue, zx_handle_t channel);
+    Stream(async_dispatcher_t* async, VirtioQueue* queue, zx_handle_t channel);
     zx_status_t Start();
     void Stop();
 
@@ -116,13 +116,13 @@ class TrustyVirtioDevice : public VirtioDevice {
     zx_status_t WaitOnQueue();
     void OnQueueReady(zx_status_t status, uint16_t index);
     zx_status_t WaitOnChannel();
-    void OnChannelReady(async_t* async, async::WaitBase* wait,
+    void OnChannelReady(async_dispatcher_t* async, async::WaitBase* wait,
                         zx_status_t status, const zx_packet_signal_t* signal);
 
     void OnStreamClosed(zx_status_t status, const char* action);
     void DropBuffer();
 
-    async_t* async_;
+    async_dispatcher_t* async_;
     zx_handle_t channel_;
     VirtioQueue* queue_;
     VirtioQueueWaiter queue_wait_;

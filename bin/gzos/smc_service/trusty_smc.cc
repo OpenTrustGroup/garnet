@@ -87,7 +87,7 @@ using trusty_virtio::TrustyVirtioDevice;
 using trusty_virtio::VirtioBus;
 using trusty_virtio::VirtioDevice;
 
-TrustySmcEntity::TrustySmcEntity(async_t* async, zx::channel ch)
+TrustySmcEntity::TrustySmcEntity(async_dispatcher_t* async, zx::channel ch)
     : async_(async), vbus_(nullptr) {
   ree_message_.Bind(fbl::move(ch));
 }
@@ -103,7 +103,7 @@ zx_status_t TrustySmcEntity::Init() {
 
   auto delete_vbus = fbl::MakeAutoCall([&]() { vbus_.reset(nullptr); });
 
-  fidl::VectorPtr<ree_agent::MessageChannelInfo> ch_infos;
+  fidl::VectorPtr<gzos::reeagent::MessageChannelInfo> ch_infos;
 
   zx_status_t status = ZX_OK;
   // Create trusty virtio devices and add to virtio bus
@@ -130,8 +130,8 @@ zx_status_t TrustySmcEntity::Init() {
       return ZX_ERR_NO_MEMORY;
     }
 
-    ree_agent::MessageChannelInfo ch_info{
-        ree_agent::MessageType::Tipc, vdev->notify_id(),
+    gzos::reeagent::MessageChannelInfo ch_info{
+        gzos::reeagent::MessageType::Tipc, vdev->notify_id(),
         desc->config.msg_buf_max_size, fbl::move(h1)};
     ch_infos.push_back(fbl::move(ch_info));
 
@@ -143,10 +143,10 @@ zx_status_t TrustySmcEntity::Init() {
     }
   }
 
-  bool res = ree_message_->AddMessageChannel(std::move(ch_infos), &status);
-  if (!res) {
-    FXL_LOG(ERROR) << "Failed to invoke AddMessageChannel fidl function";
-    return ZX_ERR_INTERNAL;
+  zx_status_t ret = ree_message_->AddMessageChannel(std::move(ch_infos), &status);
+  if (ret != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to invoke AddMessageChannel fidl function, ret:" << ret;
+    return ret;
   }
 
   if (status != ZX_OK) {
@@ -279,7 +279,7 @@ long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
   zx_status_t status;
   void* ns_buf;
   size_t size;
-  bool ret;
+  zx_status_t ret;
 
   switch (args->smc_nr) {
     case SMC_SC_NOP:
@@ -304,9 +304,10 @@ long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
         break;
 
       ret = ree_message_->Start(nullptr, &status);
-      if (!ret || (status != ZX_OK)) {
-        if (!ret) {
-          FXL_LOG(ERROR) << "Failed to invoke ree_message Start() function";
+      if ((ret != ZX_OK) || (status != ZX_OK)) {
+        if (ret != ZX_OK) {
+          FXL_LOG(ERROR) << "Failed to invoke ree_message Start() function, ret:" << ret;
+          status = ret;
         }
         vbus_->Stop(ns_buf, size);
       }
@@ -319,9 +320,9 @@ long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
         break;
 
       ret = ree_message_->Stop(nullptr, &status);
-      if (!ret) {
-        FXL_LOG(ERROR) << "Failed to invoke ree_message Stop() function";
-        status = ZX_ERR_INTERNAL;
+      if (ret != ZX_OK) {
+        FXL_LOG(ERROR) << "Failed to invoke ree_message Stop() function, ret:" << ret;
+        status = ret;
       }
       break;
 
@@ -333,9 +334,9 @@ long TrustySmcEntity::InvokeSmcFunction(smc32_args_t* args) {
         fidl::VectorPtr<uint32_t> ids;
         ids.push_back(args->params[0]);
         ret = ree_message_->Stop(fbl::move(ids), &status);
-        if (!ret) {
-          FXL_LOG(ERROR) << "Failed to invoke ree_message Stop() function";
-          status = ZX_ERR_INTERNAL;
+        if (ret != ZX_OK) {
+          FXL_LOG(ERROR) << "Failed to invoke ree_message Stop() function, ret:" << ret;
+          status = ret;
         }
       }
       break;

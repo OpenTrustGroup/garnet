@@ -18,10 +18,10 @@ source_set("cpp") {
   ]
 
   public_deps = [
+    "//garnet/public/fidl/gzos.sysmgr",
+    "//garnet/public/fidl/gzos.trusty.ipc",
     "//garnet/public/lib/fxl",
-    "//garnet/public/lib/gzos/sysmgr/fidl",
     "//garnet/public/lib/gzos/trusty_app/include",
-    "//garnet/public/lib/gzos/trusty_ipc/fidl",
     "//zircon/public/lib/async-loop-cpp",
     "//zircon/public/lib/bitmap",
     "//zircon/public/lib/fbl",

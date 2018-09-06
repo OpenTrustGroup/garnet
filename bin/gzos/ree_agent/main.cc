@@ -24,7 +24,7 @@ class TaServiceProvider : public TaServices {
   }
 
  private:
-  fuchsia::sys::Services service_provider_;
+  component::Services service_provider_;
 };
 
 }  // namespace ree_agent
@@ -45,7 +45,7 @@ static zx_status_t get_startup_channels(zx::channel* ree_agent_out,
 }
 
 int main(int argc, const char** argv) {
-  async::Loop loop(&kAsyncLoopConfigMakeDefault);
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
 
   zx::channel ree_agent_srv;
   zx::channel appmgr_cli;

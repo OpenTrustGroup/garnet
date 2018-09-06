@@ -11,7 +11,7 @@
 #include <fs/managed-vfs.h>
 #include <lib/async/default.h>
 #include <lib/fdio/util.h>
-#include "lib/app/cpp/connect.h"
+#include "lib/component/cpp/connect.h"
 #include "lib/fidl/cpp/clone.h"
 #include "lib/fxl/files/unique_fd.h"
 #include "lib/fxl/functional/make_copyable.h"
@@ -47,8 +47,8 @@ void App::ScanPublicServices() {
 }
 
 App::App(Config config)
-    : startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()),
-      vfs_(async_get_default()),
+    : startup_context_(component::StartupContext::CreateFromStartupInfo()),
+      vfs_(async_get_default_dispatcher()),
       svc_root_(fbl::AdoptRef(new fs::PseudoDir())) {
   FXL_DCHECK(startup_context_);
 
@@ -116,7 +116,7 @@ void App::RegisterSingleton(std::string service_name,
         if (it == services_.end()) {
           FXL_VLOG(1) << "Starting singleton " << launch_info->url
                       << " for service " << service_name;
-          fuchsia::sys::Services services;
+          component::Services services;
           fuchsia::sys::LaunchInfo dup_launch_info;
           dup_launch_info.url = launch_info->url;
           fidl::Clone(launch_info->arguments, &dup_launch_info.arguments);

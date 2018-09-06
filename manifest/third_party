@@ -7,7 +7,7 @@
             name="third_party/boringssl"
             revision="7ae3682570b4547e3a9b8ff41de5c69e0253fd49"/>
     <import remote="https://review.gerrithub.io/OpenTrustGroup/manifest"
-            remotebranch="gzos"
+            remotebranch="gzos_dev"
             manifest="gzos"
             name="manifest"/>
   </imports>

@@ -36,7 +36,7 @@ void TipcAgent::OnChannelReady(uint32_t dst_addr) {
 }
 
 void TipcAgent::OnChannelHup(uint32_t dst_addr) {
-  async::PostTask(async_get_default(), [this, dst_addr] {
+  async::PostTask(async_get_default_dispatcher(), [this, dst_addr] {
     fbl::AutoLock lock(&lock_);
     auto ep = ep_table_->LookupByAddr(dst_addr);
     FXL_DCHECK(ep);
@@ -56,7 +56,7 @@ void TipcAgent::OnChannelHup(uint32_t dst_addr) {
 }
 
 void TipcAgent::OnChannelMessage(uint32_t dst_addr) {
-  async::PostTask(async_get_default(), [this, dst_addr] {
+  async::PostTask(async_get_default_dispatcher(), [this, dst_addr] {
     fbl::AutoLock lock(&lock_);
     auto ep = ep_table_->LookupByAddr(dst_addr);
     FXL_DCHECK(ep);
@@ -332,7 +332,7 @@ zx_status_t TipcAgent::HandleConnectRequest(uint32_t src_addr, void* req) {
 
   PortConnectFacade facade(
       std::move(channel),
-      [this](TipcPortSyncPtr& port_client, std::string path) {
+      [this](gzos::trusty::ipc::TipcPortSyncPtr& port_client, std::string path) {
         ta_service_provider_.ConnectToService(
             port_client.NewRequest().TakeChannel(), path);
         return ZX_OK;

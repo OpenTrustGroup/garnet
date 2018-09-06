@@ -4,10 +4,9 @@
 
 import("//build/fidl/fidl.gni")
 
-fidl("fidl") {
-  name = "sysmgr"
-
+fidl("gzos.trusty.ipc") {
   sources = [
-    "service_registry.fidl",
+    "channel.fidl",
+    "port.fidl",
   ]
 }

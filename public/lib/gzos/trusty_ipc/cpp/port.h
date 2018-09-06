@@ -7,7 +7,7 @@
 #include <fbl/intrusive_double_list.h>
 #include <fbl/mutex.h>
 #include <fbl/string.h>
-#include <ree_agent/cpp/fidl.h>
+#include <gzos/reeagent/cpp/fidl.h>
 
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/logging.h"
@@ -21,7 +21,7 @@ static constexpr uint32_t kTipcPortPathMax = 64;
 
 class TipcChannelImpl;
 
-class TipcPortImpl : public TipcPort, public TipcObject {
+class TipcPortImpl : public gzos::trusty::ipc::TipcPort, public TipcObject {
  public:
   TipcPortImpl(uint32_t num_items, size_t item_size, uint32_t flags)
       : num_items_(num_items), item_size_(item_size), flags_(flags) {}
@@ -30,7 +30,7 @@ class TipcPortImpl : public TipcPort, public TipcObject {
   zx_status_t Accept(std::string* uuid_out,
                      fbl::RefPtr<TipcChannelImpl>* channel_out);
 
-  void Bind(fidl::InterfaceRequest<TipcPort> request) {
+  void Bind(fidl::InterfaceRequest<gzos::trusty::ipc::TipcPort> request) {
     bindings_.AddBinding(this, std::move(request));
   }
 
@@ -43,12 +43,12 @@ class TipcPortImpl : public TipcPort, public TipcObject {
  protected:
   ObjectType get_type() override { return ObjectType::PORT; }
 
-  void Connect(fidl::InterfaceHandle<TipcChannel> peer_handle,
+  void Connect(fidl::InterfaceHandle<gzos::trusty::ipc::TipcChannel> peer_handle,
                fidl::StringPtr uuid, ConnectCallback callback) override;
   void GetInfo(GetInfoCallback callback) override;
 
  private:
-  fidl::BindingSet<TipcPort> bindings_;
+  fidl::BindingSet<gzos::trusty::ipc::TipcPort> bindings_;
   std::string name_;
 
   uint32_t num_items_;
@@ -68,7 +68,7 @@ class TipcPortImpl : public TipcPort, public TipcObject {
 class PortConnectFacade {
  public:
   using PortServiceConnector =
-      std::function<zx_status_t(TipcPortSyncPtr& port, std::string path)>;
+      fit::function<zx_status_t(gzos::trusty::ipc::TipcPortSyncPtr& port, std::string path)>;
 
   PortConnectFacade(fbl::RefPtr<TipcChannelImpl> channel,
                     PortServiceConnector connector)

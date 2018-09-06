@@ -10,7 +10,9 @@
 #include <utility>
 
 #include <fuchsia/sys/cpp/fidl.h>
+#include "garnet/lib/json/json_parser.h"
 #include "lib/fxl/macros.h"
+#include "third_party/rapidjson/rapidjson/document.h"
 
 namespace sysmgr {
 
@@ -24,29 +26,43 @@ class Config {
   using StartupServiceVector = std::vector<std::string>;
   using AppVector = std::vector<fuchsia::sys::LaunchInfoPtr>;
 
-  Config();
+  Config() = default;
+  Config(Config&&) = default;
+  Config& operator=(Config&&) = default;
 
-  Config(Config&& other);
-  Config& operator=(Config&& other);
+  // Initializes the Config from a config directory, merging its files together.
+  // Returns false if there were any errors.
+  bool ParseFromDirectory(const std::string& dir);
 
-  ~Config();
+  // Initializes the Config from a JSON string. |pseudo_file| is used as the
+  // 'file' in the error string.
+  bool ParseFromString(const std::string& data, const std::string& pseudo_file);
 
-  bool ReadFrom(const std::string& config_file);
-
-  bool Parse(const std::string& data, const std::string& config_file);
+  bool HasError() const;
+  std::string error_str() const;
 
   ServiceMap TakeServices() { return std::move(services_); }
+
   StartupServiceVector TakeStartupServices() {
     return std::move(startup_services_);
   }
+
   ServiceMap TakeAppLoaders() { return std::move(app_loaders_); }
+
   AppVector TakeApps() { return std::move(apps_); }
 
  private:
+  void ParseDocument(rapidjson::Document document);
+  bool ParseServiceMap(const rapidjson::Document& document,
+                       const std::string& key, Config::ServiceMap* services);
+  fuchsia::sys::LaunchInfoPtr GetLaunchInfo(
+      const rapidjson::Document::ValueType& value, const std::string& name);
+
   ServiceMap services_;
   StartupServiceVector startup_services_;
   ServiceMap app_loaders_;
   AppVector apps_;
+  json::JSONParser json_parser_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Config);
 };

@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #include <lib/async-loop/cpp/loop.h>
-#include <ree_agent/cpp/fidl.h>
+#include <gzos/reeagent/cpp/fidl.h>
 
 #include "gtest/gtest.h"
 
@@ -123,7 +123,7 @@ class TaServiceFake : public TaServices {
 
   void ConnectToService(zx::channel ch, const std::string& service_name) {
     if (service_name.compare(port_name) == 0) {
-      fidl::InterfaceRequest<TipcPort> request(std::move(ch));
+      fidl::InterfaceRequest<gzos::trusty::ipc::TipcPort> request(std::move(ch));
       port_.Bind(std::move(request));
     }
   }
@@ -136,7 +136,7 @@ class TaServiceFake : public TaServices {
 
 class TipcAgentTest : public ::testing::Test {
  public:
-  TipcAgentTest() : loop_(&kAsyncLoopConfigMakeDefault) {}
+  TipcAgentTest() : loop_(&kAsyncLoopConfigAttachToThread) {}
 
  protected:
   virtual void SetUp() override {

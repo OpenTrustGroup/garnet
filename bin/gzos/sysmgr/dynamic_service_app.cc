@@ -24,9 +24,9 @@ constexpr char kDefaultLabel[] = "trusty";
 namespace sysmgr {
 
 DynamicServiceApp::DynamicServiceApp()
-    : startup_context_(fuchsia::sys::StartupContext::CreateFromStartupInfo()),
+    : startup_context_(component::StartupContext::CreateFromStartupInfo()),
       root_(fbl::AdoptRef(new fs::PseudoDir)),
-      vfs_(async_get_default()) {
+      vfs_(async_get_default_dispatcher()) {
   FXL_DCHECK(startup_context_);
 
   // Set up environment for the programs we will run.
@@ -90,7 +90,7 @@ void DynamicServiceApp::RegisterService(std::string service_name) {
         auto additional_services = fuchsia::sys::ServiceList::New();
         FXL_CHECK(additional_services);
         app->BindServiceProvider(additional_services->provider.NewRequest());
-        additional_services->names->push_back(sysmgr::ServiceRegistry::Name_);
+        additional_services->names->push_back(gzos::sysmgr::ServiceRegistry::Name_);
 
         fuchsia::sys::LaunchInfo launch_info;
         launch_info.url = app_name;
@@ -129,7 +129,7 @@ void DynamicServiceApp::RegisterService(std::string service_name) {
 
 void DynamicServiceApp::WaitOnService(
     std::string app_name, std::string service_name,
-    ServiceRegistry::WaitOnServiceCallback callback) {
+    gzos::sysmgr::ServiceRegistry::WaitOnServiceCallback callback) {
   auto waiter = fbl::make_unique<ServiceWaiter>();
   FXL_DCHECK(waiter);
 
@@ -151,7 +151,7 @@ void DynamicServiceApp::CancelWaitOnService(std::string app_name,
 }
 
 void DynamicServiceApp::LookupService(
-    std::string service_name, ServiceRegistry::LookupServiceCallback callback) {
+    std::string service_name, gzos::sysmgr::ServiceRegistry::LookupServiceCallback callback) {
   auto it = services_.find(service_name);
   if (it == services_.end()) {
     it = startup_services_.find(service_name);
@@ -167,7 +167,7 @@ void DynamicServiceApp::LookupService(
 
 void DynamicServiceApp::AddService(std::string app_name,
                                    std::string service_name,
-                                   std::function<void()> callback) {
+                                   fit::function<void()> callback) {
   auto it = startup_services_.find(service_name);
   if (it != startup_services_.end()) {
     // Don't need to add service for startup service, since it is already
@@ -221,8 +221,8 @@ void DynamicServiceApp::RemoveService(std::string service_name) {
 
 LaunchedApp::LaunchedApp(DynamicServiceApp* app, std::string app_name)
     : app_(app), app_name_(app_name) {
-  service_provider_.AddService<sysmgr::ServiceRegistry>(
-      [this](fidl::InterfaceRequest<sysmgr::ServiceRegistry> request) {
+  service_provider_.AddService<gzos::sysmgr::ServiceRegistry>(
+      [this](fidl::InterfaceRequest<gzos::sysmgr::ServiceRegistry> request) {
         bindings_.AddBinding(this, std::move(request));
       });
 }

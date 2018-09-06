@@ -7,7 +7,7 @@
 #include <fbl/intrusive_double_list.h>
 #include <fbl/mutex.h>
 #include <fbl/string.h>
-#include <trusty_ipc/cpp/fidl.h>
+#include <gzos/trusty/ipc/cpp/fidl.h>
 
 #include "lib/fidl/cpp/binding.h"
 #include "lib/fxl/logging.h"
@@ -24,11 +24,11 @@ static constexpr uint32_t kTipcChanMaxBufItems = 32;
 static constexpr uint32_t kTipcChanMaxBufSize = 4096;
 
 class TipcChannelImpl
-    : public TipcChannel,
+    : public gzos::trusty::ipc::TipcChannel,
       public TipcObject,
       public fbl::DoublyLinkedListable<fbl::RefPtr<TipcChannelImpl>> {
  public:
-  using Callback = std::function<void()>;
+  using Callback = fit::function<void()>;
 
   TipcChannelImpl()
       : initialized_(false),
@@ -44,12 +44,12 @@ class TipcChannelImpl
   uint32_t ReadEvent() override;
 
   auto GetInterfaceHandle() {
-    fidl::InterfaceHandle<TipcChannel> handle;
+    fidl::InterfaceHandle<gzos::trusty::ipc::TipcChannel> handle;
     binding_.Bind(handle.NewRequest());
     return handle;
   }
 
-  void Bind(fidl::InterfaceHandle<TipcChannel> handle);
+  void Bind(fidl::InterfaceHandle<gzos::trusty::ipc::TipcChannel> handle);
   void UnBind();
   bool IsBound();
 
@@ -109,9 +109,9 @@ class TipcChannelImpl
   bool peer_shared_items_ready_ FXL_GUARDED_BY(lock_);
   bool no_free_item_ FXL_GUARDED_BY(lock_);
 
-  fidl::Binding<TipcChannel> binding_;
+  fidl::Binding<gzos::trusty::ipc::TipcChannel> binding_;
 
-  TipcChannelSyncPtr peer_;
+  gzos::trusty::ipc::TipcChannelSyncPtr peer_;
   std::vector<fbl::unique_ptr<MessageItem>> peer_shared_items_;
 
   bool ready_ FXL_GUARDED_BY(lock_);

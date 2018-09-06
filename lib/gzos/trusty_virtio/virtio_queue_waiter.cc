@@ -8,7 +8,7 @@
 
 namespace trusty_virtio {
 
-VirtioQueueWaiter::VirtioQueueWaiter(async_t* async,
+VirtioQueueWaiter::VirtioQueueWaiter(async_dispatcher_t* async,
                                      VirtioQueue* queue,
                                      Handler handler)
     : wait_(this, queue->event(), VirtioQueue::SIGNAL_QUEUE_AVAIL),
@@ -43,7 +43,7 @@ void VirtioQueueWaiter::Cancel() {
 }
 
 void VirtioQueueWaiter::WaitHandler(
-    async_t* async,
+    async_dispatcher_t* async,
     async::WaitBase* wait,
     zx_status_t status,
     const zx_packet_signal_t* signal) {

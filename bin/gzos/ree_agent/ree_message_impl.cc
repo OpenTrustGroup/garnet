@@ -10,7 +10,7 @@
 namespace ree_agent {
 
 void ReeMessageImpl::AddMessageChannel(
-    fidl::VectorPtr<MessageChannelInfo> msg_chan_infos,
+    fidl::VectorPtr<gzos::reeagent::MessageChannelInfo> msg_chan_infos,
     AddMessageChannelCallback cb) {
   fbl::AutoLock lock(&lock_);
 
@@ -27,7 +27,7 @@ void ReeMessageImpl::AddMessageChannel(
 
     ReeAgent* agent = nullptr;
     switch (info.type) {
-      case MessageType::Tipc: {
+      case gzos::reeagent::MessageType::Tipc: {
         TipcEndpointTable* ep_table = new TipcEndpointTable();
         if (ep_table == nullptr) {
           cb(ZX_ERR_NO_MEMORY);

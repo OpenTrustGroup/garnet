@@ -155,7 +155,7 @@ zx_status_t SmcService::CreateNopThreads() {
   return ZX_OK;
 }
 
-zx_status_t SmcService::Start(async_t* async) {
+zx_status_t SmcService::Start(async_dispatcher_t* async) {
   auto stop_service = fbl::MakeAutoCall([&]() { Stop(); });
 
   zx_status_t status = CreateSmcKernelObject();
@@ -211,13 +211,13 @@ void SmcService::JoinNopThreads() {
   }
 }
 
-zx_status_t SmcService::WaitOnSmc(async_t* async) {
+zx_status_t SmcService::WaitOnSmc(async_dispatcher_t* async) {
   smc_wait_.set_object(GetHandle());
   smc_wait_.set_trigger(ZX_SMC_READABLE);
   return smc_wait_.Begin(async);
 }
 
-void SmcService::OnSmcReady(async_t* async, async::WaitBase* wait,
+void SmcService::OnSmcReady(async_dispatcher_t* async, async::WaitBase* wait,
                             zx_status_t status,
                             const zx_packet_signal_t* signal) {
   if (status != ZX_OK) {

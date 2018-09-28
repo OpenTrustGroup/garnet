@@ -6,7 +6,7 @@
 
 use {
     failure::{bail, Error, ResultExt},
-    fdio::fdio_sys::*,
+    ::fdio::fdio_sys::*,
     fidl_fuchsia_mediaplayer::*,
     fuchsia_app::client::connect_to_service,
     fuchsia_async as fasync,
@@ -79,7 +79,7 @@ impl App {
             let channel = channel_from_file(file)?;
             player.set_file_source(channel)?;
         } else {
-            player.set_http_source(url.as_str())?;
+            player.set_http_source(url.as_str(), None)?;
         }
         player.play()?;
 

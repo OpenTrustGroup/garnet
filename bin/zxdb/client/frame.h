@@ -7,7 +7,7 @@
 #include <stdint.h>
 
 #include "garnet/bin/zxdb/client/client_object.h"
-#include "garnet/bin/zxdb/client/symbols/symbol_data_provider.h"
+#include "garnet/bin/zxdb/symbols/symbol_data_provider.h"
 #include "garnet/public/lib/fxl/macros.h"
 #include "garnet/public/lib/fxl/memory/weak_ptr.h"
 
@@ -17,6 +17,9 @@ class ExprEvalContext;
 class Location;
 class Thread;
 
+// Represents one stack frame.
+//
+// See also FrameFingerprint (the getter for a fingerprint is on Thread).
 class Frame : public ClientObject {
  public:
   explicit Frame(Session* session);

@@ -21,6 +21,8 @@
 #include <wlan/mlme/packet.h>
 #include <zircon/compiler.h>
 
+#include <fuchsia/wlan/minstrel/cpp/fidl.h>
+
 #include <mutex>
 #include <thread>
 
@@ -71,13 +73,16 @@ class Device : public DeviceInterface {
     zx_status_t SetChannel(wlan_channel_t chan) override final;
     zx_status_t SetStatus(uint32_t status) override final;
     zx_status_t ConfigureBss(wlan_bss_config_t* cfg) override final;
-    zx_status_t EnableBeaconing(bool enabled) override final;
+    zx_status_t EnableBeaconing(wlan_bcn_config_t* bcn_cfg) override final;
     zx_status_t ConfigureBeacon(fbl::unique_ptr<Packet> beacon) override final;
     zx_status_t SetKey(wlan_key_config_t* key_config) override final;
     zx_status_t StartHwScan(const wlan_hw_scan_config_t* scan_config) override final;
     zx_status_t ConfigureAssoc(wlan_assoc_ctx_t* assoc_ctx) override final;
     fbl::RefPtr<DeviceState> GetState() override final;
     const wlanmac_info_t& GetWlanInfo() const override final;
+    zx_status_t GetMinstrelPeers(::fuchsia::wlan::minstrel::Peers* peers_fidl) override final;
+    zx_status_t GetMinstrelStats(const common::MacAddr& addr,
+                             ::fuchsia::wlan::minstrel::Peer* peer_fidl) override final;
 
    private:
     enum class DevicePacket : uint64_t {

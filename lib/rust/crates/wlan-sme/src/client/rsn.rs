@@ -1,16 +1,15 @@
 use bytes::Bytes;
 use failure::{bail, ensure, format_err};
 use fidl_fuchsia_wlan_mlme::BssDescription;
-use wlan_rsn::{akm, auth, cipher, rsne::{self, Rsne}, suite_selector::OUI};
-use wlan_rsn::key::exchange;
-use wlan_rsn::rsna::{esssa::EssSa, NegotiatedRsne, Role};
+use wlan_rsn::{akm, cipher, rsne::{self, Rsne}, Supplicant, suite_selector::OUI};
+use wlan_rsn::rsna::NegotiatedRsne;
 
 use crate::DeviceInfo;
 
 #[derive(Debug, PartialEq)]
 pub struct Rsna {
     pub negotiated_rsne: NegotiatedRsne,
-    pub esssa: EssSa,
+    pub supplicant: Supplicant,
 }
 
 /// Supported Ciphers and AKMs:
@@ -18,21 +17,21 @@ pub struct Rsna {
 /// Pairwise Cipher: CCMP-128
 /// AKM: PSK
 pub fn is_rsn_compatible(a_rsne: &Rsne) -> bool {
-    let has_supported_group_data_cipher = match a_rsne.group_data_cipher_suite.as_ref() {
-        Some(c) if c.has_known_usage() => match c.suite_type {
-            // IEEE allows TKIP usage only in GTKSAs for compatibility reasons.
-            // TKIP is considered broken and should never be used in a PTKSA or IGTKSA.
-            cipher::CCMP_128 | cipher::TKIP => true,
-            _ => false,
-        },
-        _ => false,
-    };
-    let has_supported_pairwise_cipher = a_rsne.pairwise_cipher_suites.iter()
+    let group_data_supported = a_rsne.group_data_cipher_suite.as_ref().map_or(false, |c| {
+        // IEEE allows TKIP usage only in GTKSAs for compatibility reasons.
+        // TKIP is considered broken and should never be used in a PTKSA or IGTKSA.
+        c.has_known_usage() && (c.suite_type == cipher::CCMP_128 || c.suite_type == cipher::TKIP)
+    });
+    let pairwise_supported = a_rsne.pairwise_cipher_suites.iter()
         .any(|c| c.has_known_usage() && c.suite_type == cipher::CCMP_128);
-    let has_supported_akm_suite = a_rsne.akm_suites.iter()
+    let akm_supported = a_rsne.akm_suites.iter()
         .any(|a| a.has_known_algorithm() && a.suite_type == akm::PSK);
+    let caps_supported = a_rsne.rsn_capabilities.as_ref().map_or(true, |caps|
+        !(caps.preauth() || caps.no_pairwise() || caps.mgmt_frame_protection_req() ||
+            caps.joint_multiband() || caps.peerkey_enabled() || caps.ssp_amsdu_req() ||
+            caps.pbac() || caps.extended_key_id()));
 
-    has_supported_group_data_cipher && has_supported_pairwise_cipher && has_supported_akm_suite
+    group_data_supported && pairwise_supported && akm_supported && caps_supported
 }
 
 pub fn get_rsna(device_info: &DeviceInfo, password: &[u8], bss: &BssDescription)
@@ -46,22 +45,13 @@ pub fn get_rsna(device_info: &DeviceInfo, password: &[u8], bss: &BssDescription)
     let a_rsne = rsne::from_bytes(&a_rsne_bytes[..]).to_full_result()
         .map_err(|e| format_err!("invalid RSNE {:?}: {:?}", &a_rsne_bytes[..], e))?;
     let s_rsne = derive_s_rsne(&a_rsne)?;
-    let esssa = make_ess_sa(bss.ssid.as_bytes(), &password[..], device_info.addr,
-                            s_rsne.clone(), bss.bssid, a_rsne)
-        .map_err(|e| format_err!("failed to create ESS-SA: {:?}", e))?;
     let negotiated_rsne = NegotiatedRsne::from_rsne(&s_rsne)?;
-    Ok(Some(Box::new(Rsna { negotiated_rsne, esssa })))
-}
-
-fn make_ess_sa(ssid: &[u8], passphrase: &[u8], sta_addr: [u8; 6], sta_rsne: Rsne, bssid: [u8; 6],
-               bss_rsne: Rsne)
-    -> Result<EssSa, failure::Error>
-{
-    let negotiated_rsne = NegotiatedRsne::from_rsne(&sta_rsne)?;
-    let auth_cfg = auth::Config::for_psk(passphrase, ssid)?;
-    let ptk_cfg = exchange::Config::for_4way_handshake(Role::Supplicant, sta_addr, sta_rsne, bssid, bss_rsne)?;
-    let gtk_cfg = exchange::Config::for_groupkey_handshake(Role::Supplicant, negotiated_rsne.akm.clone());
-    EssSa::new(Role::Supplicant, negotiated_rsne, auth_cfg, ptk_cfg, gtk_cfg)
+    let supplicant = Supplicant::new_wpa2psk_ccmp128(
+            &bss.ssid[..], &password[..],
+            device_info.addr, s_rsne,
+            bss.bssid, a_rsne)
+        .map_err(|e| format_err!("failed to create ESS-SA: {:?}", e))?;
+    Ok(Some(Box::new(Rsna { negotiated_rsne, supplicant })))
 }
 
 /// Constructs Supplicant's RSNE with:
@@ -81,6 +71,7 @@ fn derive_s_rsne(a_rsne: &Rsne) -> Result<Rsne, failure::Error> {
     s_rsne.pairwise_cipher_suites.push(pairwise_cipher);
     let akm = akm::Akm{oui: Bytes::from(&OUI[..]), suite_type: akm::PSK };
     s_rsne.akm_suites.push(akm);
+    s_rsne.rsn_capabilities = a_rsne.rsn_capabilities.clone();
     Ok(s_rsne)
 }
 
@@ -88,10 +79,23 @@ fn derive_s_rsne(a_rsne: &Rsne) -> Result<Rsne, failure::Error> {
 mod tests {
     use super::*;
     use crate::client::test_utils::{fake_protected_bss_description, fake_unprotected_bss_description};
-    use crate::client::test_utils::{make_rsne, rsne_as_bytes};
+    use crate::client::test_utils::{make_rsne, rsne_as_bytes, wpa2_psk_ccmp_rsne_with_caps};
     use std::collections::HashSet;
+    use wlan_rsn::rsne::RsnCapabilities;
 
     const CLIENT_ADDR: [u8; 6] = [0x7A, 0xE7, 0x76, 0xD9, 0xF2, 0x67];
+
+    #[test]
+    fn test_rsn_capabilities() {
+        let a_rsne = wpa2_psk_ccmp_rsne_with_caps(RsnCapabilities(0x000C));
+        assert!(is_rsn_compatible(&a_rsne));
+
+        let a_rsne = wpa2_psk_ccmp_rsne_with_caps(RsnCapabilities(0));
+        assert!(is_rsn_compatible(&a_rsne));
+
+        let a_rsne = wpa2_psk_ccmp_rsne_with_caps(RsnCapabilities(1));
+        assert!(!is_rsn_compatible(&a_rsne));
+    }
 
     #[test]
     fn test_incompatible_group_data_cipher() {

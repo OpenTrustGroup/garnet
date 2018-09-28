@@ -30,7 +30,7 @@ OnOpenFut: Future<Output = ()> + Send,
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct {{ $interface.Name }}Marker;
 
-impl fidl::endpoints2::ServiceMarker for {{ $interface.Name }}Marker {
+impl fidl::endpoints::ServiceMarker for {{ $interface.Name }}Marker {
 	type Proxy = {{ $interface.Name }}Proxy;
 	type RequestStream = {{ $interface.Name }}RequestStream;
 	const NAME: &'static str = "{{ $interface.ServiceName }}";
@@ -62,19 +62,78 @@ pub trait {{ $interface.Name }}ProxyInterface: Send + Sync {
 	{{- end }}
 }
 
-#[derive(Debug, Clone)]
-pub struct {{ $interface.Name }}Proxy {
-	client: fidl::client2::Client,
+#[derive(Debug)]
+pub struct {{ $interface.Name }}SynchronousProxy {
+	client: fidl::client::sync::Client,
 }
 
-impl fidl::endpoints2::Proxy for {{ $interface.Name }}Proxy {
+impl {{ $interface.Name }}SynchronousProxy {
+	pub fn new(channel: zx::Channel) -> Self {
+		Self { client: fidl::client::sync::Client::new(channel) }
+	}
+
+	pub fn into_channel(self) -> zx::Channel {
+		self.client.into_channel()
+	}
+
+	{{- range $method := $interface.Methods }}
+	{{- if $method.HasRequest }}
+        {{- range $index, $line := $method.DocStrings }}
+          {{if ne "" $line }}
+          ///{{ $line }}
+          {{ end }}
+        {{- end }}
+	pub fn {{ $method.Name }}(&mut self,
+		{{- range $request := $method.Request }}
+		mut {{ $request.Name }}: {{ $request.BorrowedType }},
+		{{- end }}
+		{{- if $method.HasResponse -}}
+		___deadline: zx::Time,
+		{{- end -}}
+	) -> Result<(
+		{{- range $index, $response := $method.Response -}}
+		{{- if (eq $index 0) -}} {{ $response.Type }}
+		{{- else -}}, {{ $response.Type }} {{- end -}}
+		{{- end -}}
+	), fidl::Error> {
+		{{- if $method.HasResponse -}}
+			self.client.send_query(&mut (
+				{{- range $index, $request := $method.Request -}}
+				{{- if (eq $index 0) -}} {{ $request.Name }}
+				{{- else -}}, {{ $request.Name }} {{- end -}}
+				{{- end -}}
+				),
+				{{ $method.Ordinal }},
+				___deadline,
+			)
+		{{- else -}}
+			self.client.send(&mut (
+				{{- range $index, $request := $method.Request -}}
+				{{- if (eq $index 0) -}} {{ $request.Name }}
+				{{- else -}}, {{ $request.Name }} {{- end -}}
+				{{- end -}}
+				),
+				{{ $method.Ordinal }},
+			)
+		{{- end -}}
+	}
+	{{- end -}}
+	{{- end }}
+}
+
+#[derive(Debug, Clone)]
+pub struct {{ $interface.Name }}Proxy {
+	client: fidl::client::Client,
+}
+
+impl fidl::endpoints::Proxy for {{ $interface.Name }}Proxy {
 	fn from_channel(inner: async::Channel) -> Self {
 		Self::new(inner)
 	}
 }
 
 impl Deref for {{ $interface.Name }}Proxy {
-	type Target = fidl::client2::Client;
+	type Target = fidl::client::Client;
 
 	fn deref(&self) -> &Self::Target {
 		&self.client
@@ -85,7 +144,16 @@ impl Deref for {{ $interface.Name }}Proxy {
 impl {{ $interface.Name }}Proxy {
         /// Create a new Proxy for {{ $interface.Name }}
 	pub fn new(channel: async::Channel) -> Self {
-		Self { client: fidl::client2::Client::new(channel) }
+		Self { client: fidl::client::Client::new(channel) }
+	}
+
+	/// Attempt to convert the Proxy back into a channel.
+	///
+	/// This will only succeed if there are no active clones of this Proxy
+	/// and no currently-alive EventStream or response futures that came from
+	/// this Proxy.
+	pub fn into_channel(self) -> Result<async::Channel, Self> {
+		self.client.into_channel().map_err(|client| Self { client })
 	}
 
         /// Get a Stream of events from the remote end of the {{ $interface.Name }} interface
@@ -108,7 +176,7 @@ impl {{ $interface.Name }}Proxy {
 		{{- end }}
 	)
 	{{- if $method.HasResponse -}}
-	-> fidl::client2::QueryResponseFut<(
+	-> fidl::client::QueryResponseFut<(
 		{{- range $index, $response := $method.Response -}}
 		{{- if (eq $index 0) -}} {{ $response.Type }}
 		{{- else -}}, {{ $response.Type }} {{- end -}}
@@ -130,7 +198,7 @@ impl {{ $interface.Name }}Proxy {
 impl {{ $interface.Name}}ProxyInterface for {{ $interface.Name}}Proxy {
 	{{- range $method := $interface.Methods }}
 	{{- if $method.HasResponse }}
-	type {{ $method.CamelName }}ResponseFut = fidl::client2::QueryResponseFut<(
+	type {{ $method.CamelName }}ResponseFut = fidl::client::QueryResponseFut<(
 		{{- range $index, $response := $method.Response -}}
 		{{- if (eq $index 0) -}} {{ $response.Type }}
 		{{- else -}}, {{ $response.Type }} {{- end -}}
@@ -162,7 +230,7 @@ impl {{ $interface.Name}}ProxyInterface for {{ $interface.Name}}Proxy {
 }
 
 pub struct {{ $interface.Name }}EventStream {
-	event_receiver: fidl::client2::EventReceiver,
+	event_receiver: fidl::client::EventReceiver,
 }
 
 impl ::std::marker::Unpin for {{ $interface.Name }}EventStream {}
@@ -170,7 +238,7 @@ impl ::std::marker::Unpin for {{ $interface.Name }}EventStream {}
 impl Stream for {{ $interface.Name }}EventStream {
 	type Item = Result<{{ $interface.Name }}Event, fidl::Error>;
 
-	fn poll_next(mut self: ::std::mem::PinMut<Self>, cx: &mut futures::task::Context)
+	fn poll_next(mut self: ::std::pin::PinMut<Self>, cx: &mut futures::task::Context)
 		-> futures::Poll<Option<Self::Item>>
 	{
 		let mut buf = match ready!(self.event_receiver.poll_next_unpin(cx)?) {
@@ -178,7 +246,7 @@ impl Stream for {{ $interface.Name }}EventStream {
 			None => return futures::Poll::Ready(None),
 		};
 		let (bytes, handles) = buf.split_mut();
-		let (tx_header, body_bytes) = fidl::encoding2::decode_transaction_header(bytes)?;
+		let (tx_header, body_bytes) = fidl::encoding::decode_transaction_header(bytes)?;
 		futures::Poll::Ready(Some(match tx_header.ordinal {
 			{{- range $method := $interface.Methods }}
 			{{- if not $method.HasRequest }}
@@ -189,8 +257,8 @@ impl Stream for {{ $interface.Name }}EventStream {
 					{{- else -}} {{- $param.Type -}}
 					{{- end -}}
 					{{- end -}}
-				) = fidl::encoding2::Decodable::new_empty();
-				fidl::encoding2::Decoder::decode_into(body_bytes, handles, &mut out_tuple)?;
+				) = fidl::encoding::Decodable::new_empty();
+				fidl::encoding::Decoder::decode_into(body_bytes, handles, &mut out_tuple)?;
 				Ok((
 					{{ $interface.Name }}Event::{{ $method.CamelName }} {
 						{{- range $index, $param := $method.Response -}}
@@ -207,7 +275,7 @@ impl Stream for {{ $interface.Name }}EventStream {
 			{{- end }}
 			_ => Err(fidl::Error::UnknownOrdinal {
 				ordinal: tx_header.ordinal,
-				service_name: <{{ $interface.Name }}Marker as fidl::endpoints2::ServiceMarker>::NAME,
+				service_name: <{{ $interface.Name }}Marker as fidl::endpoints::ServiceMarker>::NAME,
 			})
 		}))
 	}
@@ -226,6 +294,7 @@ pub enum {{ $interface.Name }}Event {
 	{{- end -}}
 }
 
+#[deprecated(note = "use {{ $interface.Name }}RequestStream instead")]
 pub trait {{ $interface.Name }} {
 	type OnOpenFut: Future<Output = ()> + Send;
 	fn on_open(&mut self, control_handle: {{ $interface.Name }}ControlHandle) -> Self::OnOpenFut;
@@ -301,12 +370,12 @@ impl<T: {{ $interface.Name }}> futures::Future for {{ $interface.Name }}Server<T
 	type Output = Result<(), fidl::Error>;
 
 	fn poll(
-		mut self: ::std::mem::PinMut<Self>,
+		mut self: ::std::pin::PinMut<Self>,
 		cx: &mut futures::task::Context,
 	) -> futures::Poll<Self::Output> {
 		// safety: the only potentially !Unpin field is on_open_fut, which we make sure
 		// isn't moved below
-		let this = unsafe { ::std::mem::PinMut::get_mut_unchecked(self) };
+		let this = unsafe { ::std::pin::PinMut::get_mut_unchecked(self) };
 		loop {
 		let mut made_progress_this_loop_iter = false;
 
@@ -317,7 +386,7 @@ impl<T: {{ $interface.Name }}> futures::Future for {{ $interface.Name }}Server<T
 		unsafe {
 			// Safety: ensure that on_open isn't moved
 			let completed_on_open = if let Some(on_open_fut) = &mut this.on_open_fut {
-				match ::std::mem::PinMut::new_unchecked(on_open_fut).poll(cx) {
+				match ::std::pin::PinMut::new_unchecked(on_open_fut).poll(cx) {
 					futures::Poll::Ready(()) => true,
 					futures::Poll::Pending => false,
 				}
@@ -359,7 +428,7 @@ impl<T: {{ $interface.Name }}> futures::Future for {{ $interface.Name }}Server<T
 		{
 			// A message has been received from the channel
 			let (bytes, handles) = this.msg_buf.split_mut();
-			let (header, body_bytes) = fidl::encoding2::decode_transaction_header(bytes)?;
+			let (header, body_bytes) = fidl::encoding::decode_transaction_header(bytes)?;
 
 			match header.ordinal {
 				{{- range $method := $interface.Methods }}
@@ -371,8 +440,8 @@ impl<T: {{ $interface.Name }}> futures::Future for {{ $interface.Name }}Server<T
 								{{- else -}} {{- $param.Type -}}
 								{{- end -}}
 							{{- end -}}
-						) = fidl::encoding2::Decodable::new_empty();
-						fidl::encoding2::Decoder::decode_into(body_bytes, handles, &mut req)?;
+						) = fidl::encoding::Decodable::new_empty();
+						fidl::encoding::Decoder::decode_into(body_bytes, handles, &mut req)?;
 						let control_handle = {{ $interface.Name }}ControlHandle {
 							inner: this.inner.clone(),
 						};
@@ -387,7 +456,7 @@ impl<T: {{ $interface.Name }}> futures::Future for {{ $interface.Name }}Server<T
 								{{- end -}}
 								{{- if $method.HasResponse -}}
 									{{- $interface.Name -}}{{- $method.CamelName -}}Responder {
-										control_handle,
+										control_handle: ::std::mem::ManuallyDrop::new(control_handle),
 										tx_id: header.tx_id,
 									}
 									{{- else -}}
@@ -401,7 +470,7 @@ impl<T: {{ $interface.Name }}> futures::Future for {{ $interface.Name }}Server<T
 				// TODO(cramertj) handle control/fileio messages
 				_ => return futures::Poll::Ready(Err(fidl::Error::UnknownOrdinal {
 					ordinal: header.ordinal,
-					service_name: "unknown fidl2", // TODO(cramertj)
+					service_name: "unknown fidl", // TODO(cramertj)
 				})),
 			}
 		}
@@ -417,7 +486,7 @@ pub struct {{ $interface.Name }}RequestStream {
 
 impl ::std::marker::Unpin for {{ $interface.Name }}RequestStream {}
 
-impl fidl::endpoints2::RequestStream for {{ $interface.Name }}RequestStream {
+impl fidl::endpoints::RequestStream for {{ $interface.Name }}RequestStream {
         /// Consume a channel to make a {{ $interface.Name }}RequestStream
 	fn from_channel(channel: async::Channel) -> Self {
 		Self {
@@ -438,7 +507,7 @@ impl fidl::endpoints2::RequestStream for {{ $interface.Name }}RequestStream {
 impl Stream for {{ $interface.Name }}RequestStream {
 	type Item = Result<{{ $interface.Name }}Request, fidl::Error>;
 
-	fn poll_next(mut self: ::std::mem::PinMut<Self>, cx: &mut futures::task::Context)
+	fn poll_next(mut self: ::std::pin::PinMut<Self>, cx: &mut futures::task::Context)
 		-> futures::Poll<Option<Self::Item>>
 	{
 		let this = &mut *self;
@@ -457,7 +526,7 @@ impl Stream for {{ $interface.Name }}RequestStream {
 		let res = {
 			// A message has been received from the channel
 			let (bytes, handles) = this.msg_buf.split_mut();
-			let (header, body_bytes) = fidl::encoding2::decode_transaction_header(bytes)?;
+			let (header, body_bytes) = fidl::encoding::decode_transaction_header(bytes)?;
 
 			match header.ordinal {
 				{{- range $method := $interface.Methods }}
@@ -469,8 +538,8 @@ impl Stream for {{ $interface.Name }}RequestStream {
 							{{- else -}} {{- $param.Type -}}
 							{{- end -}}
 						{{- end -}}
-					) = fidl::encoding2::Decodable::new_empty();
-					fidl::encoding2::Decoder::decode_into(body_bytes, handles, &mut req)?;
+					) = fidl::encoding::Decodable::new_empty();
+					fidl::encoding::Decoder::decode_into(body_bytes, handles, &mut req)?;
 					let control_handle = {{ $interface.Name }}ControlHandle {
 						inner: this.inner.clone(),
 					};
@@ -485,7 +554,7 @@ impl Stream for {{ $interface.Name }}RequestStream {
 						{{- end -}}
 						{{- if $method.HasResponse -}}
 							responder: {{- $interface.Name -}}{{- $method.CamelName -}}Responder {
-								control_handle,
+								control_handle: ::std::mem::ManuallyDrop::new(control_handle),
 								tx_id: header.tx_id,
 							},
 							{{- else -}}
@@ -497,7 +566,7 @@ impl Stream for {{ $interface.Name }}RequestStream {
 				{{- end }}
 				_ => return futures::Poll::Ready(Some(Err(fidl::Error::UnknownOrdinal {
 					ordinal: header.ordinal,
-					service_name: <{{ $interface.Name }}Marker as fidl::endpoints2::ServiceMarker>::NAME,
+					service_name: <{{ $interface.Name }}Marker as fidl::endpoints::ServiceMarker>::NAME,
 				}))),
 			}
 		};
@@ -534,6 +603,7 @@ pub enum {{ $interface.Name }}Request {
 	{{- end }}
 }
 
+#[deprecated(note = "use {{ $interface.Name }}RequestStream instead")]
 pub struct {{ $interface.Name }}Impl<
 	{{ template "GenerateImplGenerics" $interface }}
 > {
@@ -627,7 +697,7 @@ impl {{ $interface.Name }}ControlHandle {
 		mut {{ $param.Name -}}: {{ $param.BorrowedType -}}
 		{{- end -}}
 	) -> Result<(), fidl::Error> {
-		let header = fidl::encoding2::TransactionHeader {
+		let header = fidl::encoding::TransactionHeader {
 			tx_id: 0,
 			flags: 0,
 			ordinal: {{ $method.Ordinal }},
@@ -641,13 +711,13 @@ impl {{ $interface.Name }}ControlHandle {
 			{{- end -}}
 		);
 
-		let mut msg = fidl::encoding2::TransactionMessage {
+		let mut msg = fidl::encoding::TransactionMessage {
 			header,
 			body: &mut response,
 		};
 
 		let (bytes, handles) = (&mut vec![], &mut vec![]);
-		fidl::encoding2::Encoder::encode(bytes, handles, &mut msg)?;
+		fidl::encoding::Encoder::encode(bytes, handles, &mut msg)?;
 		self.inner.channel().write(&*bytes, &mut *handles).map_err(fidl::Error::ServerResponseWrite)?;
 		Ok(())
 	}
@@ -660,8 +730,19 @@ impl {{ $interface.Name }}ControlHandle {
 {{- if and $method.HasRequest $method.HasResponse }}
 #[must_use = "FIDL methods require a response to be sent"]
 pub struct {{ $interface.Name }}{{ $method.CamelName }}Responder {
-	control_handle: {{ $interface.Name }}ControlHandle,
+	control_handle: ::std::mem::ManuallyDrop<{{ $interface.Name }}ControlHandle>,
 	tx_id: u32,
+}
+
+impl ::std::ops::Drop for {{ $interface.Name }}{{ $method.CamelName }}Responder {
+	fn drop(&mut self) {
+		// Shutdown the channel if the responder is dropped without sending a response
+		// so that the client doesn't hang. To prevent this behavior, some methods
+		// call "drop_without_shutdown"
+		self.control_handle.shutdown();
+		// Safety: drops once, never accessed again
+		unsafe { ::std::mem::ManuallyDrop::drop(&mut self.control_handle) };
+	}
 }
 
 impl {{ $interface.Name }}{{ $method.CamelName }}Responder {
@@ -669,28 +750,59 @@ impl {{ $interface.Name }}{{ $method.CamelName }}Responder {
 		&self.control_handle
 	}
 
-	pub fn send_or_shutdown(&self,
+	/// Drop the Responder without setting the channel to shutdown.
+	///
+	/// This method shouldn't normally be used-- instead, send a response
+	/// to prevent the channel from shutting down.
+	pub fn drop_without_shutdown(mut self) {
+		// Safety: drops once, never accessed again due to mem::forget
+		unsafe { ::std::mem::ManuallyDrop::drop(&mut self.control_handle) };
+		// Prevent Drop from running (which would shut down the channel)
+		::std::mem::forget(self);
+	}
+
+	/// Sends a response to the FIDL transaction.
+	///
+	/// Sets the channel to shutdown if an error occurs.
+	pub fn send(self,
 		{{- range $param := $method.Response -}}
 		mut {{ $param.Name -}}: {{ $param.BorrowedType -}},
 		{{- end -}}
 	) -> Result<(), fidl::Error> {
-		let r = self.send(
+		let r = self.send_raw(
 			{{- range $index, $param := $method.Response -}}
 			{{ $param.Name -}},
 			{{- end -}}
 		);
 		if r.is_err() {
-			self.control_handle().shutdown();
+			self.control_handle.shutdown();
 		}
+		self.drop_without_shutdown();
 		r
 	}
 
-	pub fn send(&self,
+	/// Similar to "send" but does not shutdown the channel if
+	/// an error occurs.
+	fn send_no_shutdown_on_err(self,
 		{{- range $param := $method.Response -}}
 		mut {{ $param.Name -}}: {{ $param.BorrowedType -}},
 		{{- end -}}
 	) -> Result<(), fidl::Error> {
-		let header = fidl::encoding2::TransactionHeader {
+		let r = self.send_raw(
+			{{- range $index, $param := $method.Response -}}
+			{{ $param.Name -}},
+			{{- end -}}
+		);
+		self.drop_without_shutdown();
+		r
+	}
+
+	fn send_raw(&self,
+		{{- range $param := $method.Response -}}
+		mut {{ $param.Name -}}: {{ $param.BorrowedType -}},
+		{{- end -}}
+	) -> Result<(), fidl::Error> {
+		let header = fidl::encoding::TransactionHeader {
 			tx_id: self.tx_id,
 			flags: 0,
 			ordinal: {{ $method.Ordinal }},
@@ -704,13 +816,13 @@ impl {{ $interface.Name }}{{ $method.CamelName }}Responder {
 			{{- end -}}
 		);
 
-		let mut msg = fidl::encoding2::TransactionMessage {
+		let mut msg = fidl::encoding::TransactionMessage {
 			header,
 			body: &mut response,
 		};
 
 		let (bytes, handles) = (&mut vec![], &mut vec![]);
-		fidl::encoding2::Encoder::encode(bytes, handles, &mut msg)?;
+		fidl::encoding::Encoder::encode(bytes, handles, &mut msg)?;
 		self.control_handle.inner.channel().write(&*bytes, &mut *handles).map_err(fidl::Error::ServerResponseWrite)?;
 		Ok(())
 	}

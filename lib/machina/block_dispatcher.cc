@@ -11,7 +11,6 @@
 #include <block-client/client.h>
 #include <fbl/auto_call.h>
 #include <fbl/unique_fd.h>
-#include <fbl/unique_ptr.h>
 #include <lib/fdio/watcher.h>
 #include <trace/event.h>
 #include <virtio/virtio_ids.h>
@@ -19,7 +18,7 @@
 #include <zircon/compiler.h>
 #include <zircon/device/block.h>
 
-#include "garnet/lib/machina/phys_mem.h"
+#include "garnet/lib/machina/device/phys_mem.h"
 #include "garnet/lib/machina/qcow.h"
 #include "garnet/lib/machina/volatile_write_block_dispatcher.h"
 #include "lib/fxl/logging.h"

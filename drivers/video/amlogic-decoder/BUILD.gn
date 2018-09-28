@@ -4,6 +4,7 @@
 
 import("//build/config/fuchsia/rules.gni")
 import("//build/package.gni")
+import("//garnet/tools/cipd.gni")
 
 declare_args() {
   amlogic_decoder_tests = false
@@ -14,11 +15,27 @@ driver_module("amlogic_decoder") {
 
   deps = [
     ":sources",
+    ":test_support",
   ]
-  if (amlogic_decoder_tests) {
-    testonly = true
-    deps += [ ":tests" ]
-  }
+
+  sources = [
+    "tests/test_support_disabled.cc",
+  ]
+
+  configs -= [ "//build/config/fuchsia:no_cpp_standard_library" ]
+  configs += [ "//build/config/fuchsia:static_cpp_standard_library" ]
+}
+
+# This version of the driver runs tests on startup.
+driver_module("amlogic_decoder_test") {
+  output_name = "amlogic_video_decoder_test"
+
+  testonly = true
+
+  deps = [
+    ":sources",
+    ":tests",
+  ]
 
   configs -= [ "//build/config/fuchsia:no_cpp_standard_library" ]
   configs += [ "//build/config/fuchsia:static_cpp_standard_library" ]
@@ -73,6 +90,8 @@ source_set("sources") {
     "video_frame.h",
     "vp9_decoder.cc",
     "vp9_decoder.h",
+    "vp9_utils.cc",
+    "vp9_utils.h",
 
     # CodecFactory+Codec interface handling:
     "codec_adapter.cc",
@@ -83,6 +102,8 @@ source_set("sources") {
     "codec_adapter_h264.h",
     "codec_adapter_mpeg2.cc",
     "codec_adapter_mpeg2.h",
+    "codec_adapter_vp9.cc",
+    "codec_adapter_vp9.h",
     "codec_admission_control.cc",
     "codec_admission_control.h",
     "codec_buffer.cc",
@@ -112,12 +133,7 @@ source_set("sources") {
     "third_party/libvpx",
     "//garnet/public/fidl/fuchsia.mediacodec",
     "//garnet/public/lib/fidl/cpp",
-    "//garnet/public/lib/fxl",
   ]
-  if (amlogic_decoder_tests) {
-    testonly = true
-    defines = [ "ENABLE_DECODER_TESTS" ]
-  }
   public_configs = [ ":sources_include_config" ]
   cflags = []
 }
@@ -128,7 +144,6 @@ source_set("tests") {
     ":sources",
     ":test_support",
     "//garnet/public/fidl/fuchsia.mediacodec",
-    "//garnet/public/lib/fxl",
     "//third_party/googletest:gtest",
   ]
   sources = [
@@ -156,6 +171,7 @@ copy("test_files") {
     "//garnet/test_data/media/third_party/chromium_media_test_data/test-25fps.h264",
     "//garnet/test_data/media/third_party/chromium_media_test_data/test-25fps.vp9",
     "//garnet/test_data/media/third_party/chromium_media_test_data/test-25fps.vp9_2",
+    "//garnet/test_data/media/third_party/chromium_media_test_data_downstream/bear.mpeg2",
   ]
   outputs = [
     "$root_out_dir/firmware/video_test_data/{{source_file_part}}",
@@ -165,21 +181,16 @@ copy("test_files") {
 package("amlogic_video_decoder") {
   deprecated_system_image = true
 
-  if (target_cpu == "arm64") {
+  # internal access is needed to get the firmware
+  if (target_cpu == "arm64" && internal_access) {
     if (amlogic_decoder_tests) {
       testonly = true
     }
 
     deps = [
-      ":amlogic_decoder",
       ":video-ucode($shlib_toolchain)",
     ]
 
-    drivers = [
-      {
-        name = "amlogic_video_decoder.so"
-      },
-    ]
     libraries = [
       {
         name = "firmware/amlogic_video_ucode.bin"
@@ -187,11 +198,22 @@ package("amlogic_video_decoder") {
     ]
 
     if (amlogic_decoder_tests) {
-      deps += [ ":test_files($shlib_toolchain)" ]
+      deps += [
+        ":amlogic_decoder_test",
+        ":test_files($shlib_toolchain)",
+      ]
+      drivers = [
+        {
+          name = "amlogic_video_decoder_test.so"
+        },
+      ]
 
       # The test data is stored as a firmware file, because that's the only way
       # that a file can be read from a driver.
       libraries += [
+        {
+          name = "firmware/video_test_data/bear.mpeg2"
+        },
         {
           name = "firmware/video_test_data/bear.h264"
         },
@@ -205,7 +227,30 @@ package("amlogic_video_decoder") {
           name = "firmware/video_test_data/test-25fps.vp9_2"
         },
       ]
+    } else {
+      deps += [ ":amlogic_decoder" ]
+      drivers = [
+        {
+          name = "amlogic_video_decoder.so"
+        },
+      ]
     }
+  } else {
+    assert(!amlogic_decoder_tests, "amlogic decoder not built")
+  }
+}
+
+# This package causes both versions of the driver to be built, so compile
+# errors in tests are hit on the CQ. It doesn't actually package any files.
+package("amlogic_video_decoder_test_build") {
+  deprecated_system_image = true
+  testonly = true
+
+  if (target_cpu == "arm64") {
+    deps = [
+      ":amlogic_decoder",
+      ":amlogic_decoder_test",
+    ]
   }
 }
 

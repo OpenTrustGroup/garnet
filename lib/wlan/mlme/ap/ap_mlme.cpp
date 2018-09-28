@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include <wlan/mlme/ap/ap_mlme.h>
-#include <wlan/mlme/frame_dispatcher.h>
 #include <wlan/mlme/service.h>
 
 #include <fbl/ref_ptr.h>
@@ -49,9 +48,7 @@ zx_status_t ApMlme::HandleMlmeMsg(const BaseMlmeMsg& msg) {
     } else if (auto stop_req = msg.As<wlan_mlme::StopRequest>()) {
         return HandleMlmeStopReq(*stop_req);
     }
-
-    // TODO(hahnr): Forward MLME primitives to BSS.
-    return ZX_OK;
+    return bss_->HandleMlmeMsg(msg);
 }
 
 zx_status_t ApMlme::HandleFramePacket(fbl::unique_ptr<Packet> pkt) {

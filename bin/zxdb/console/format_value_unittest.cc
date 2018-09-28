@@ -3,15 +3,15 @@
 // found in the LICENSE file.
 
 #include "garnet/bin/zxdb/console/format_value.h"
-#include "garnet/bin/zxdb/client/symbols/array_type.h"
-#include "garnet/bin/zxdb/client/symbols/base_type.h"
-#include "garnet/bin/zxdb/client/symbols/mock_symbol_data_provider.h"
-#include "garnet/bin/zxdb/client/symbols/modified_type.h"
-#include "garnet/bin/zxdb/client/symbols/struct_class.h"
-#include "garnet/bin/zxdb/client/symbols/type_test_support.h"
 #include "garnet/bin/zxdb/common/test_with_loop.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
 #include "garnet/bin/zxdb/expr/expr_value.h"
+#include "garnet/bin/zxdb/symbols/array_type.h"
+#include "garnet/bin/zxdb/symbols/base_type.h"
+#include "garnet/bin/zxdb/symbols/mock_symbol_data_provider.h"
+#include "garnet/bin/zxdb/symbols/modified_type.h"
+#include "garnet/bin/zxdb/symbols/struct_class.h"
+#include "garnet/bin/zxdb/symbols/type_test_support.h"
 #include "gtest/gtest.h"
 
 namespace zxdb {
@@ -348,6 +348,28 @@ TEST_F(FormatValueTest, TruncatedArray) {
   opts.max_array_size = 1;
   EXPECT_EQ(R"([1, ...])",
             SyncFormatValue(ExprValue(array_type, addr_data), opts));
+}
+
+TEST_F(FormatValueTest, Reference) {
+  FormatValueOptions opts;
+
+  auto base_type =
+      fxl::MakeRefCounted<BaseType>(BaseType::kBaseTypeSigned, 1, "int");
+  auto ref_type = fxl::MakeRefCounted<ModifiedType>(Symbol::kTagReferenceType,
+                                                    LazySymbol(base_type));
+  constexpr uint64_t kAddress = 0x1100;
+  provider()->AddMemory(kAddress, {123, 0, 0, 0, 0, 0, 0, 0});
+
+  // This data refers to the address above.
+  std::vector<uint8_t> data = {0x00, 0x11, 0, 0, 0, 0, 0, 0};
+  ExprValue value(ref_type, data);
+  EXPECT_EQ("(int&) 0x1100 = 123", SyncFormatValue(value, opts));
+
+  // Test an invalid one with an invalud address.
+  std::vector<uint8_t> bad_data = {0x00, 0x22, 0, 0, 0, 0, 0, 0};
+  value = ExprValue(ref_type, bad_data);
+  EXPECT_EQ("(int&) 0x2200 = <Invalid pointer 0x2200>",
+            SyncFormatValue(value, opts));
 }
 
 // TODO(brettw) check nested arrays.

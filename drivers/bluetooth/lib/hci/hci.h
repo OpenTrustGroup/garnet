@@ -1080,9 +1080,6 @@ struct InquiryResultRSSI {
   // Reserved (no meaning as of v1.2)
   uint8_t page_scan_period_mode;
 
-  // Reserved (no meaning as of v1.2)
-  uint8_t page_scan_mode;
-
   // Class of device
   common::DeviceClass class_of_device;
 
@@ -1093,7 +1090,7 @@ struct InquiryResultRSSI {
 
   // RSSI
   // Valid range: -127 to +20
-  uint8_t rssi;
+  int8_t rssi;
 } __PACKED;
 
 struct InquiryResultWithRSSIEventParams {

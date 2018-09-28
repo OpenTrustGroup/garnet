@@ -34,16 +34,36 @@ class RealmRunnerTest : public TestWithEnvironment {
  protected:
   void SetUp() override {
     TestWithEnvironment::SetUp();
-    enclosing_environment_ = CreateNewEnclosingEnvironment(kRealm);
-    enclosing_environment_->AddService(runner_registry_.GetHandler());
+    auto services = CreateServices();
+    ASSERT_EQ(ZX_OK, services->AddService(runner_registry_.GetHandler()));
+    enclosing_environment_ =
+        CreateNewEnclosingEnvironment(kRealm, std::move(services));
     ASSERT_TRUE(WaitForEnclosingEnvToStart(enclosing_environment_.get()));
   }
 
-  bool WaitForRunnerToRegister() {
+  std::pair<std::unique_ptr<EnclosingEnvironment>,
+            std::unique_ptr<MockRunnerRegistry>>
+  MakeNestedEnvironment(const fuchsia::sys::EnvironmentOptions& options) {
+    fuchsia::sys::EnvironmentPtr env;
+    enclosing_environment_->ConnectToService(fuchsia::sys::Environment::Name_,
+                                             env.NewRequest().TakeChannel());
+    auto registry = std::make_unique<MockRunnerRegistry>();
+    auto services = testing::EnvironmentServices::Create(env);
+    EXPECT_EQ(ZX_OK, services->AddService(registry->GetHandler()));
+    auto nested_environment = EnclosingEnvironment::Create(
+        "nested-environment", env, std::move(services), std::move(options));
+    EXPECT_TRUE(WaitForEnclosingEnvToStart(nested_environment.get()));
+    return std::make_pair(std::move(nested_environment), std::move(registry));
+  }
+
+  bool WaitForRunnerToRegister(MockRunnerRegistry* runner_registry = nullptr) {
+    if (!runner_registry) {
+      runner_registry = &runner_registry_;
+    }
     const bool ret = RunLoopWithTimeoutOrUntil(
-        [&] { return runner_registry_.runner(); }, kTimeout);
+        [&] { return runner_registry->runner(); }, kTimeout);
     EXPECT_TRUE(ret) << "Waiting for connection timed out: "
-                     << runner_registry_.connect_count();
+                     << runner_registry->connect_count();
     return ret;
   }
 
@@ -62,7 +82,12 @@ class RealmRunnerTest : public TestWithEnvironment {
   }
 
   bool WaitForComponentCount(size_t expected_components_count) {
-    auto runner = runner_registry_.runner();
+    return WaitForComponentCount(&runner_registry_, expected_components_count);
+  }
+
+  bool WaitForComponentCount(MockRunnerRegistry* runner_registry,
+                             size_t expected_components_count) {
+    auto runner = runner_registry->runner();
     const bool ret = RunLoopWithTimeoutOrUntil(
         [&] {
           return runner->components().size() == expected_components_count;
@@ -139,6 +164,48 @@ TEST_F(RealmRunnerTest, RunnerLaunchedAgainWhenKilled) {
   ASSERT_EQ(components[0].url, kComponentForRunnerUrl);
 }
 
+TEST_F(RealmRunnerTest, RunnerLaunchedForEachEnvironment) {
+  auto component1 =
+      enclosing_environment_->CreateComponentFromUrl(kComponentForRunner);
+  ASSERT_TRUE(WaitForRunnerToRegister());
+
+  std::unique_ptr<EnclosingEnvironment> nested_environment;
+  std::unique_ptr<MockRunnerRegistry> nested_registry;
+  std::tie(nested_environment, nested_registry) = MakeNestedEnvironment({});
+
+  // launch again and check that runner was created for the nested environment
+  auto component2 =
+      nested_environment->CreateComponentFromUrl(kComponentForRunner);
+  WaitForRunnerToRegister(nested_registry.get());
+
+  ASSERT_TRUE(WaitForComponentCount(&runner_registry_, 1));
+  ASSERT_TRUE(WaitForComponentCount(nested_registry.get(), 1));
+  EXPECT_EQ(1, runner_registry_.connect_count());
+  EXPECT_EQ(1, nested_registry->connect_count());
+}
+
+TEST_F(RealmRunnerTest, RunnerSharedFromParent) {
+  auto component1 =
+      enclosing_environment_->CreateComponentFromUrl(kComponentForRunner);
+  ASSERT_TRUE(WaitForRunnerToRegister());
+
+  std::unique_ptr<EnclosingEnvironment> nested_environment;
+  std::unique_ptr<MockRunnerRegistry> nested_registry;
+  {
+    std::tie(nested_environment, nested_registry) =
+        MakeNestedEnvironment({.allow_parent_runners = true});
+  }
+
+  // launch again and check that the runner from the parent environment was
+  // shared.
+  auto component2 =
+      nested_environment->CreateComponentFromUrl(kComponentForRunner);
+
+  ASSERT_TRUE(WaitForComponentCount(&runner_registry_, 2));
+  EXPECT_EQ(1, runner_registry_.connect_count());
+  EXPECT_EQ(0, nested_registry->connect_count());
+}
+
 TEST_F(RealmRunnerTest, ComponentBridgeReturnsRightReturnCode) {
   auto component =
       enclosing_environment_->CreateComponentFromUrl(kComponentForRunner);
@@ -191,10 +258,21 @@ TEST_F(RealmRunnerTest, KillComponentController) {
       [&] { return reason == TerminationReason::EXITED; }, kTimeout));
 }
 
-TEST_F(RealmRunnerTest, ComponentCanConnectToEnvService) {
-  ASSERT_EQ(ZX_OK, enclosing_environment_->AddServiceWithLaunchInfo(
-                       CreateLaunchInfo("echo2_server_cpp"),
-                       fidl::examples::echo::Echo::Name_));
+class RealmRunnerServiceTest : public RealmRunnerTest {
+ protected:
+  void SetUp() override {
+    TestWithEnvironment::SetUp();
+    auto env_services = CreateServices();
+    ASSERT_EQ(ZX_OK, env_services->AddService(runner_registry_.GetHandler()));
+    ASSERT_EQ(ZX_OK, env_services->AddServiceWithLaunchInfo(
+                         CreateLaunchInfo("echo2_server_cpp"),
+                         fidl::examples::echo::Echo::Name_));
+    enclosing_environment_ =
+        CreateNewEnclosingEnvironment(kRealm, std::move(env_services));
+  }
+};
+
+TEST_F(RealmRunnerServiceTest, ComponentCanConnectToEnvService) {
   auto component =
       enclosing_environment_->CreateComponentFromUrl(kComponentForRunner);
   ASSERT_TRUE(WaitForRunnerToRegister());

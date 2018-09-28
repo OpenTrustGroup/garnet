@@ -4,8 +4,8 @@
 
 #include "garnet/examples/media/wav_recorder/wav_recorder.h"
 
-#include <fbl/auto_call.h>
 #include <lib/async-loop/loop.h>
+#include <lib/fit/defer.h>
 
 #include "garnet/lib/media/wav_writer/wav_writer.h"
 #include "lib/fxl/logging.h"
@@ -21,6 +21,7 @@ constexpr uint32_t kMaxChannels = 8;
 static const std::string kShowUsageOption1 = "?";
 static const std::string kShowUsageOption2 = "help";
 static const std::string kVerboseOption = "v";
+static const std::string kGainOption = "gain";
 static const std::string kLoopbackOption = "loopback";
 static const std::string kAsyncModeOption = "async";
 static const std::string kFloatFormatOption = "float";
@@ -39,7 +40,7 @@ WavRecorder::~WavRecorder() {
 }
 
 void WavRecorder::Run(component::StartupContext* app_context) {
-  auto cleanup = fbl::MakeAutoCall([this]() { Shutdown(); });
+  auto cleanup = fit::defer([this]() { Shutdown(); });
   const auto& pos_args = cmd_line_.positional_args();
 
   // Parse our args.
@@ -59,14 +60,15 @@ void WavRecorder::Run(component::StartupContext* app_context) {
 
   filename_ = pos_args[0].c_str();
 
-  // Connect to the audio service and obtain AudioIn and Gain interfaces.
+  // Connect to the audio service and obtain AudioCapturer and Gain interfaces.
   fuchsia::media::AudioPtr audio =
       app_context->ConnectToEnvironmentService<fuchsia::media::Audio>();
 
-  audio->CreateAudioIn(audio_in_.NewRequest(), loopback_);
-  audio_in_->BindGainControl(gain_control_.NewRequest());
-  audio_in_.set_error_handler([this]() {
-    FXL_LOG(ERROR) << "AudioIn connection lost unexpectedly, shutting down.";
+  audio->CreateAudioCapturer(audio_capturer_.NewRequest(), loopback_);
+  audio_capturer_->BindGainControl(gain_control_.NewRequest());
+  audio_capturer_.set_error_handler([this]() {
+    FXL_LOG(ERROR)
+        << "AudioCapturer connection lost unexpectedly, shutting down.";
     Shutdown();
   });
   gain_control_.set_error_handler([this]() {
@@ -76,7 +78,7 @@ void WavRecorder::Run(component::StartupContext* app_context) {
   });
 
   // Fetch the initial media type and figure out what we need to do from there.
-  audio_in_->GetStreamType([this](fuchsia::media::StreamType type) {
+  audio_capturer_->GetStreamType([this](fuchsia::media::StreamType type) {
     OnDefaultFormatFetched(std::move(type));
   });
 
@@ -94,6 +96,11 @@ void WavRecorder::Usage() {
 
   printf("  --%s\t\t\t: Be verbose; display per-packet info\n",
          kVerboseOption.c_str());
+
+  printf("\n    Default is to not set gain, leaving this as 0 dB (unity)\n");
+  printf("  --%s=<gain_db>      : Set input gain (range [%.1f, +%.1f])\n",
+         kGainOption.c_str(), fuchsia::media::MUTED_GAIN_DB,
+         fuchsia::media::MAX_GAIN_DB);
 
   printf("\n    Default is to capture from the preferred input device\n");
   printf("  --%s\t\t: Capture final-mix-output from preferred output device\n",
@@ -132,9 +139,9 @@ void WavRecorder::Shutdown() {
     gain_control_.set_error_handler(nullptr);
     gain_control_.Unbind();
   }
-  if (audio_in_.is_bound()) {
-    audio_in_.set_error_handler(nullptr);
-    audio_in_.Unbind();
+  if (audio_capturer_.is_bound()) {
+    audio_capturer_.set_error_handler(nullptr);
+    audio_capturer_.Unbind();
   }
 
   if (clean_shutdown_) {
@@ -168,7 +175,7 @@ bool WavRecorder::SetupPayloadBuffer() {
 
   uintptr_t tmp;
   res = zx::vmar::root_self()->map(0, payload_buf_vmo_, 0, payload_buf_size_,
-                                   ZX_VM_FLAG_PERM_READ, &tmp);
+                                   ZX_VM_PERM_READ, &tmp);
   if (res != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to map " << payload_buf_size_
                    << " byte payload buffer (res " << res << ")";
@@ -187,7 +194,7 @@ void WavRecorder::SendCaptureJob() {
   ++outstanding_capture_jobs_;
 
   // clang-format off
-  audio_in_->CaptureAt(0,
+  audio_capturer_->CaptureAt(0,
       capture_frame_offset_,
       capture_frames_per_chunk_,
       [this](fuchsia::media::StreamPacket packet) {
@@ -205,7 +212,7 @@ void WavRecorder::SendCaptureJob() {
 // We open our .wav file for recording, set our capture format, set input gain,
 // setup our VMO and add it as a payload buffer, send a series of empty packets
 void WavRecorder::OnDefaultFormatFetched(fuchsia::media::StreamType type) {
-  auto cleanup = fbl::MakeAutoCall([this]() { Shutdown(); });
+  auto cleanup = fit::defer([this]() { Shutdown(); });
   zx_status_t res;
 
   if (!type.medium_specific.is_audio()) {
@@ -231,6 +238,7 @@ void WavRecorder::OnDefaultFormatFetched(fuchsia::media::StreamType type) {
   frames_per_second_ = fmt.frames_per_second;
 
   bool change_format = false;
+  bool change_gain = false;
 
   if (fmt.sample_format != sample_format_) {
     change_format = true;
@@ -256,6 +264,23 @@ void WavRecorder::OnDefaultFormatFetched(fuchsia::media::StreamType type) {
       frames_per_second_ = rate;
       change_format = true;
     }
+  }
+
+  if (cmd_line_.GetOptionValue(kGainOption, &opt)) {
+    if (::sscanf(opt.c_str(), "%f", &stream_gain_db_) != 1) {
+      Usage();
+      return;
+    }
+
+    if ((stream_gain_db_ < fuchsia::media::MUTED_GAIN_DB) ||
+        (stream_gain_db_ > fuchsia::media::MAX_GAIN_DB)) {
+      printf("Gain (%.3f dB) must be within range [%.1f, %.1f]\n",
+             stream_gain_db_, fuchsia::media::MUTED_GAIN_DB,
+             fuchsia::media::MAX_GAIN_DB);
+      return;
+    }
+
+    change_gain = true;
   }
 
   if (cmd_line_.GetOptionValue(kChannelsOption, &opt)) {
@@ -299,13 +324,13 @@ void WavRecorder::OnDefaultFormatFetched(fuchsia::media::StreamType type) {
 
   // If desired format differs from default capturer format, change formats now.
   if (change_format) {
-    audio_in_->SetPcmStreamType(media::CreateAudioStreamType(
+    audio_capturer_->SetPcmStreamType(media::CreateAudioStreamType(
         sample_format_, channel_count_, frames_per_second_));
   }
 
-  // Record at unity gain.
-  if (change_format) {
-    gain_control_->SetGain(0.0f);
+  // Set the specified gain (if specified) for the recording.
+  if (change_gain) {
+    gain_control_->SetGain(stream_gain_db_);
   }
 
   // Create our shared payload buffer, map it into place, then dup the handle
@@ -314,15 +339,15 @@ void WavRecorder::OnDefaultFormatFetched(fuchsia::media::StreamType type) {
     return;
   }
 
-  zx::vmo audio_in_vmo;
+  zx::vmo audio_capturer_vmo;
   res = payload_buf_vmo_.duplicate(
       ZX_RIGHT_TRANSFER | ZX_RIGHT_READ | ZX_RIGHT_WRITE | ZX_RIGHT_MAP,
-      &audio_in_vmo);
+      &audio_capturer_vmo);
   if (res != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to duplicate VMO handle (res " << res << ")";
     return;
   }
-  audio_in_->AddPayloadBuffer(0, std::move(audio_in_vmo));
+  audio_capturer_->AddPayloadBuffer(0, std::move(audio_capturer_vmo));
 
   // Will we operate in synchronous or asynchronous mode?  If synchronous, queue
   // all our capture buffers to get the ball rolling. If asynchronous, set an
@@ -335,11 +360,11 @@ void WavRecorder::OnDefaultFormatFetched(fuchsia::media::StreamType type) {
     FXL_DCHECK(payload_buf_frames_);
     FXL_DCHECK(capture_frames_per_chunk_);
     FXL_DCHECK((payload_buf_frames_ % capture_frames_per_chunk_) == 0);
-    audio_in_.events().OnPacketProduced =
+    audio_capturer_.events().OnPacketProduced =
         [this](fuchsia::media::StreamPacket pkt) {
           OnPacketProduced(std::move(pkt));
         };
-    audio_in_->StartAsyncCapture(capture_frames_per_chunk_);
+    audio_capturer_->StartAsyncCapture(capture_frames_per_chunk_);
   }
 
   if (sample_format_ == fuchsia::media::AudioSampleFormat::SIGNED_24_IN_32) {
@@ -351,15 +376,20 @@ void WavRecorder::OnDefaultFormatFetched(fuchsia::media::StreamType type) {
   }
 
   printf(
-      "Recording %s, %u Hz, %u channel linear PCM from %s into '%s'\n",
+      "Recording %s, %u Hz, %u-channel linear PCM\n",
       sample_format_ == fuchsia::media::AudioSampleFormat::FLOAT
           ? "32-bit float"
           : sample_format_ == fuchsia::media::AudioSampleFormat::SIGNED_24_IN_32
                 ? (pack_24bit_samples_ ? "packed 24-bit signed int"
                                        : "24-bit-in-32-bit signed int")
                 : "16-bit signed int",
-      frames_per_second_, channel_count_,
-      loopback_ ? "loopback" : "default input", filename_);
+      frames_per_second_, channel_count_);
+  printf("from %s into '%s'", loopback_ ? "loopback" : "default input",
+         filename_);
+  if (change_gain) {
+    printf(", applying gain of %.2f dB", stream_gain_db_);
+  }
+  printf("\n");
 
   cleanup.cancel();
 }
@@ -372,7 +402,7 @@ void WavRecorder::OnPacketProduced(fuchsia::media::StreamPacket pkt) {
   }
 
   // If operating in sync-mode, track how many submitted packets are pending.
-  if (audio_in_.events().OnPacketProduced == nullptr) {
+  if (audio_capturer_.events().OnPacketProduced == nullptr) {
     --outstanding_capture_jobs_;
   }
 
@@ -413,7 +443,7 @@ void WavRecorder::OnPacketProduced(fuchsia::media::StreamPacket pkt) {
   }
 
   // In sync-mode, we send/track packets as they are sent/returned.
-  if (audio_in_.events().OnPacketProduced == nullptr) {
+  if (audio_capturer_.events().OnPacketProduced == nullptr) {
     // If not shutting down, then send another capture job to keep things going.
     if (!clean_shutdown_) {
       SendCaptureJob();
@@ -431,13 +461,13 @@ void WavRecorder::OnQuit() {
   clean_shutdown_ = true;
 
   // If async-mode, we can shutdown now (need not wait for packets to return).
-  if (audio_in_.events().OnPacketProduced != nullptr) {
-    audio_in_->StopAsyncCaptureNoReply();
+  if (audio_capturer_.events().OnPacketProduced != nullptr) {
+    audio_capturer_->StopAsyncCaptureNoReply();
     Shutdown();
   }
   // If operating in sync-mode, wait for all packets to return, then Shutdown.
   else {
-    audio_in_->DiscardAllPacketsNoReply();
+    audio_capturer_->DiscardAllPacketsNoReply();
   }
 }
 

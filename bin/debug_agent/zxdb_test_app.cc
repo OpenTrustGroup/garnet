@@ -73,6 +73,14 @@ void DoFoo(Foo* f) {
   PrintHello();
 }
 
+void DoRefs(int& a, const Foo& f) {
+  int array[5] = { 100, 101, 102, 103, 104 };
+
+  a = 56;
+  if (f.bar > 1)
+    zx_debug_write("         ", array[a] - 100);
+}
+
 int main(int argc, char* argv[]) {
   // Print out the address of main to the system debug log.
   char buf[128];
@@ -90,5 +98,7 @@ int main(int argc, char* argv[]) {
   DoFoo(&foo);
   foo.bar = 100;
   DoFoo(&foo);
+  int i = 2;
+  DoRefs(i, foo);
   return 0;
 }

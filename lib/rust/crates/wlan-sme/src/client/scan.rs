@@ -4,7 +4,7 @@
 
 use failure::Fail;
 use fidl_fuchsia_wlan_mlme::{self as fidl_mlme, BssDescription, ScanResultCodes, ScanRequest};
-use log::{error, log};
+use log::error;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::cmp::Ordering;
@@ -155,7 +155,7 @@ impl<D, J> ScanScheduler<D, J> {
         match &mut self.current {
             ScanState::NotScanning => {},
             ScanState::ScanningToJoin { cmd, best_bss, .. } => {
-                if cmd.ssid == msg.bss.ssid.as_bytes() {
+                if cmd.ssid == msg.bss.ssid {
                     match best_bss {
                         Some(best_bss) if
                             compare_bss(best_bss, &msg.bss) != Ordering::Less => {},
@@ -282,8 +282,7 @@ fn new_join_scan_request<T>(mlme_txn_id: u64,
         txn_id: mlme_txn_id,
         bss_type: fidl_mlme::BssTypes::Infrastructure,
         bssid: WILDCARD_BSS_ID.clone(),
-        // TODO(gbonik): change MLME interface to use bytes instead of string for SSID
-        ssid: String::from_utf8_lossy(&join_scan.ssid).to_string(),
+        ssid: join_scan.ssid.clone(),
         scan_type: fidl_mlme::ScanTypes::Passive,
         probe_delay: 0,
         channel_list: Some(get_channels_to_scan(&device_info)),
@@ -299,7 +298,7 @@ fn new_discovery_scan_request(mlme_txn_id: u64,
         txn_id: mlme_txn_id,
         bss_type: fidl_mlme::BssTypes::Infrastructure,
         bssid: WILDCARD_BSS_ID.clone(),
-        ssid: String::new(),
+        ssid: vec![],
         scan_type: fidl_mlme::ScanTypes::Passive,
         probe_delay: 0,
         channel_list: Some(get_channels_to_scan(&device_info)),
@@ -323,19 +322,24 @@ fn convert_discovery_result(msg: fidl_mlme::ScanEnd,
 }
 
 fn group_networks(bss_set: Vec<BssDescription>) -> Vec<EssInfo> {
-    let mut best_bss_by_ssid: HashMap<Ssid, BssDescription> = HashMap::new();
+    let mut best_bss_by_ssid: HashMap<Ssid, (BssDescription, usize)> = HashMap::new();
     for bss in bss_set {
-        match best_bss_by_ssid.entry(bss.ssid.bytes().collect()) {
-            Entry::Vacant(e) => { e.insert(bss); },
-            Entry::Occupied(mut e) =>
-                if compare_bss(e.get(), &bss) == Ordering::Less {
-                    e.insert(bss);
+        match best_bss_by_ssid.entry(bss.ssid.clone()) {
+            Entry::Vacant(e) => { e.insert((bss, 1)); },
+            Entry::Occupied(mut e) => {
+                let (bss_desc, bss_count) = e.get_mut();
+                *bss_count += 1;
+                if compare_bss(bss_desc, &bss) == Ordering::Less {
+                    *bss_desc = bss;
                 }
+            }
+
         };
     }
     best_bss_by_ssid.values()
-        .map(|bss| EssInfo {
-                best_bss: convert_bss_description(&bss)
+        .map(|(bss, bss_count)| EssInfo {
+                best_bss: convert_bss_description(&bss),
+                bss_count: *bss_count,
             })
         .collect()
 }

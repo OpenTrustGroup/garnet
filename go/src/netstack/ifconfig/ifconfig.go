@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"syscall/zx"
 
 	"app/context"
 
@@ -43,14 +44,6 @@ func getIfaceByNameFromIfaces(name string, ifaces []netstack.NetInterface) *nets
 		}
 	}
 	return nil
-}
-
-func (a *netstackClientApp) getIfaceByName(name string) (*netstack.NetInterface, error) {
-	ifaces, err := a.netstack.GetInterfaces()
-	if err != nil {
-		return nil, err
-	}
-	return getIfaceByNameFromIfaces(name, ifaces), nil
 }
 
 func getIfaceByIdFromIfaces(id uint32, ifaces []netstack.NetInterface) *netstack.NetInterface {
@@ -119,7 +112,11 @@ func (a *netstackClientApp) parseRouteAttribute(in *netstack.RouteTableEntry, ar
 	case "gateway":
 		in.Gateway = toNetAddress(net.ParseIP(val))
 	case "iface":
-		iface, err := a.getIfaceByName(val)
+		ifaces, err := a.netstack.GetInterfaces()
+		if err != nil {
+			return remaining, err
+		}
+		iface := getIfaceByNameFromIfaces(val, ifaces)
 		if err != nil {
 			return remaining, err
 		}
@@ -160,40 +157,126 @@ func (a *netstackClientApp) newRouteFromArgs(args []string) (route netstack.Rout
 }
 
 func (a *netstackClientApp) addRoute(r netstack.RouteTableEntry) error {
-	rs, err := a.netstack.GetRouteTable()
+	if (r.Gateway == netstack.NetAddress{}) && r.Nicid == 0 {
+		return fmt.Errorf("either gateway or iface must be provided when adding a route")
+	}
+	req, transactionInterface, err := netstack.NewRouteTableTransactionInterfaceRequest()
 	if err != nil {
-		return fmt.Errorf("Could not get route table from netstack: %s", err)
+		return fmt.Errorf("could not make a new route table transaction: %s", err)
+	}
+	defer req.Close()
+	status, err := a.netstack.StartRouteTableTransaction(req)
+	if err != nil || zx.Status(status) != zx.ErrOk {
+		return fmt.Errorf("could not start a route table transaction: %s (%s)", err, zx.Status(status))
+	}
+	rs, err := transactionInterface.GetRouteTable()
+	if err != nil {
+		return fmt.Errorf("could not get route table from netstack: %s", err)
+	}
+	err = transactionInterface.SetRouteTable(append(rs, r))
+	if err != nil {
+		return fmt.Errorf("could not set route table in netstack: %s", err)
+	}
+	status, err = transactionInterface.Commit()
+	if err != nil || zx.Status(status) != zx.ErrOk {
+		return fmt.Errorf("could not commit route table in netstack: %s (%s)", err, zx.Status(status))
+	}
+	return nil
+}
+
+func equalNetAddress(a netstack.NetAddress, b netstack.NetAddress) bool {
+	if a.Family != b.Family {
+		return false
+	}
+	switch a.Family {
+	case netstack.NetAddressFamilyIpv4:
+		return a.Ipv4.Addr == b.Ipv4.Addr
+	case netstack.NetAddressFamilyIpv6:
+		return a.Ipv6.Addr == b.Ipv6.Addr
+	default:
+		return false
+	}
+}
+
+// Returns true if the target matches the source.  If the target is
+// missing the gateway or nicid then those are considered to be
+// matching.
+func matchRoute(target netstack.RouteTableEntry, source netstack.RouteTableEntry) bool {
+	if !equalNetAddress(target.Destination, source.Destination) {
+		return false
+	}
+	if !equalNetAddress(target.Netmask, source.Netmask) {
+		return false
+	}
+	if target.Gateway.Family != netstack.NetAddressFamilyUnspecified &&
+		!equalNetAddress(source.Gateway, target.Gateway) {
+		// The gateway is neither wildcard nor a match.
+		return false
+	}
+	if target.Nicid != 0 && source.Nicid != target.Nicid {
+		// The Nicid is neither wildcard nor a match.
+		return false
+	}
+	return true
+}
+
+func (a *netstackClientApp) deleteRoute(target netstack.RouteTableEntry) error {
+	req, transactionInterface, err := netstack.NewRouteTableTransactionInterfaceRequest()
+	if err != nil {
+		return fmt.Errorf("could not make a new route table transaction: %s", err)
+	}
+	defer req.Close()
+	status, err := a.netstack.StartRouteTableTransaction(req)
+	if err != nil || zx.Status(status) != zx.ErrOk {
+		return fmt.Errorf("could not start a route table transaction (maybe the route table is locked?): %s", err)
 	}
 
-	return a.netstack.SetRouteTable(append(rs, r))
+	rs, err := transactionInterface.GetRouteTable()
+	if err != nil {
+		return fmt.Errorf("could not get route table from netstack: %s", err)
+	}
+	for i, r := range rs {
+		if matchRoute(target, r) {
+			transactionInterface.SetRouteTable(append(rs[:i], rs[i+1:]...))
+			_, err = transactionInterface.Commit()
+			if err != nil {
+				return fmt.Errorf("could not commit route table in netstack: %s", err)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("could not find route to delete in route table")
+}
+
+func routeTableEntryToString(r netstack.RouteTableEntry, ifaces []netstack.NetInterface) string {
+	iface := getIfaceByIdFromIfaces(r.Nicid, ifaces)
+	var ifaceName string
+	if iface == nil {
+		ifaceName = fmt.Sprintf("Nicid:%d", r.Nicid)
+	} else {
+		ifaceName = iface.Name
+	}
+	var netAndMask net.IPNet
+	switch r.Destination.Family {
+	case netstack.NetAddressFamilyIpv4:
+		netAndMask = net.IPNet{IP: r.Destination.Ipv4.Addr[:], Mask: r.Netmask.Ipv4.Addr[:]}
+	case netstack.NetAddressFamilyIpv6:
+		netAndMask = net.IPNet{IP: r.Destination.Ipv6.Addr[:], Mask: r.Netmask.Ipv6.Addr[:]}
+	}
+	return fmt.Sprintf("%s via %s %s", netAndMask.String(), netAddrToString(r.Gateway), ifaceName)
 }
 
 func (a *netstackClientApp) showRoutes() error {
 	rs, err := a.netstack.GetRouteTable()
 	if err != nil {
-		return fmt.Errorf("could not get route table from netstack: %s", err)
+		return fmt.Errorf("Could not get route table from netstack: %s", err)
 	}
-
 	ifaces, err := a.netstack.GetInterfaces()
 	if err != nil {
 		return err
 	}
 	for _, r := range rs {
-		iface := getIfaceByIdFromIfaces(r.Nicid, ifaces)
-		var ifaceName string
-		if iface == nil {
-			ifaceName = fmt.Sprintf("Nicid:%d", r.Nicid)
-		} else {
-			ifaceName = iface.Name
-		}
-		netAndMask := net.IPNet{}
-		switch r.Destination.Family {
-		case netstack.NetAddressFamilyIpv4:
-			netAndMask = net.IPNet{IP: r.Destination.Ipv4.Addr[:], Mask: r.Netmask.Ipv4.Addr[:]}
-		case netstack.NetAddressFamilyIpv6:
-			netAndMask = net.IPNet{IP: r.Destination.Ipv6.Addr[:], Mask: r.Netmask.Ipv6.Addr[:]}
-		}
-		fmt.Printf("%s via %s %s\n", netAndMask.String(), netAddrToString(r.Gateway), ifaceName)
+		fmt.Printf("%s\n", routeTableEntryToString(r, ifaces))
 	}
 	return nil
 }
@@ -376,7 +459,7 @@ func usage() {
 	fmt.Printf("  %s [<interface>] [up|down]\n", os.Args[0])
 	fmt.Printf("  %s [<interface>] [add|del] [<address>]/[<mask>]\n", os.Args[0])
 	fmt.Printf("  %s [<interface>] dhcp [start|stop]\n", os.Args[0])
-	fmt.Printf("  %s route [add|del] [<address>]/[<mask>]\n", os.Args[0])
+	fmt.Printf("  %s route [add|del] [<address>/<mask>] [iface <name>] [gateway <address>/<mask>]\n", os.Args[0])
 	fmt.Printf("  %s route show\n", os.Args[0])
 	fmt.Printf("  %s bridge [<interface>]+\n", os.Args[0])
 	os.Exit(1)
@@ -415,20 +498,29 @@ func main() {
 			}
 			return
 		}
+		if len(os.Args) < 4 {
+			fmt.Printf("Not enough arguments to `ifconfig route`; at least a destination and one of iface name or gateway must be provided\n")
+			usage()
+		}
 		routeFlags := os.Args[3:]
 		r, err := a.newRouteFromArgs(routeFlags)
 		if err != nil {
 			fmt.Printf("Error parsing route from args: %s, error: %s\n", routeFlags, err)
+			usage()
 		}
 
 		switch op {
 		case "add":
-			err = a.addRoute(r)
-			if err != nil {
+			if err = a.addRoute(r); err != nil {
 				fmt.Printf("Error adding route to route table: %s", err)
+				usage()
 			}
 		case "del":
-			fmt.Printf("Deleting routes from the route table is not yet supported.\n")
+			err = a.deleteRoute(r)
+			if err != nil {
+				fmt.Printf("Error deleting route from route table: %s", err)
+				usage()
+			}
 		default:
 			fmt.Printf("Unknown route operation: %s", op)
 			usage()
@@ -448,7 +540,12 @@ func main() {
 		usage()
 		return
 	default:
-		iface, err = a.getIfaceByName(os.Args[1])
+		ifaces, err := a.netstack.GetInterfaces()
+		if err != nil {
+			fmt.Printf("Error finding interface name: %s\n", err)
+			return
+		}
+		iface = getIfaceByNameFromIfaces(os.Args[1], ifaces)
 		if err != nil {
 			fmt.Printf("Error finding interface name: %s\n", err)
 			return

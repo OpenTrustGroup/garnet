@@ -4,7 +4,6 @@
 
 #include "amlogic-video.h"
 #include "gtest/gtest.h"
-#include "pts_manager.h"
 #include "tests/test_support.h"
 #include "vp9_decoder.h"
 
@@ -63,7 +62,6 @@ class FakeOwner : public VideoDecoder::Owner {
     }
     return ZX_OK;
   }
-  PtsManager* pts_manager() override { return &pts_manager_; }
   bool IsDecoderCurrent(VideoDecoder* decoder) override { return true; }
 
  private:
@@ -71,7 +69,6 @@ class FakeOwner : public VideoDecoder::Owner {
   FakeDecoderCore core_;
   uint64_t phys_map_start_ = 0x1000;
   FirmwareBlob blob_;
-  PtsManager pts_manager_;
 };
 
 constexpr uint32_t kDosbusMemorySize = 0x4000;
@@ -106,6 +103,8 @@ class Vp9UnitTest {
     uint32_t dosbus_memory_copy[kDosbusMemorySize];
     memcpy(dosbus_memory_copy, dosbus_memory, sizeof(dosbus_memory));
     memset(dosbus_memory, 0, sizeof(dosbus_memory));
+
+    decoder->state_ = Vp9Decoder::DecoderState::kSwappedOut;
 
     EXPECT_EQ(ZX_OK, decoder->InitializeHardware());
     EXPECT_EQ(0, memcmp(dosbus_memory, dosbus_memory_copy,

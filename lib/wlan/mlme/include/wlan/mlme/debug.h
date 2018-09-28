@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <wlan/common/tx_vector.h>
 #include <wlan/mlme/client/station.h>
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/packet.h>
@@ -16,9 +17,13 @@ std::string Describe(const FrameControl& fc);
 std::string Describe(const QosControl& qc);
 std::string Describe(const LlcHeader& hdr);
 std::string Describe(const SequenceControl& sc);
-std::string Describe(const FrameHeader& hdr);
 std::string Describe(const MgmtFrameHeader& hdr);
 std::string Describe(const DataFrameHeader& hdr);
+
+std::string Describe(const PHY& phy);
+std::string Describe(const GI& gi);
+std::string Describe(const TxVector& tx_vec, tx_vec_idx_t tx_vec_idx = kInvalidTxVectorIdx);
+std::string Describe(tx_vec_idx_t tx_vec_idx);
 
 std::string HexDump(const uint8_t bytes[], size_t bytes_len);
 std::string HexDumpOneline(const uint8_t bytes[], size_t bytes_len);
@@ -52,6 +57,9 @@ std::string Describe(const wlanmac_info& wi);
 std::string Describe(const CapabilityInfo& cap);
 std::string Describe(const AssocContext& assoc_ctx);
 std::string Describe(const std::vector<SupportedRate> rates);
+
+std::string ToAsciiOrHexStr(const uint8_t bytes[], size_t len);
+std::string ToAsciiOrHexStr(const std::vector<uint8_t>& vec);
 
 }  // namespace debug
 }  // namespace wlan

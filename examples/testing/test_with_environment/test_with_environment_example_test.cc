@@ -12,8 +12,10 @@
 
 namespace echo2 {
 namespace testing {
+namespace {
 
 using component::testing::EnclosingEnvironment;
+using component::testing::EnvironmentServices;
 using component::testing::TestWithEnvironment;
 using fidl::examples::echo::EchoPtr;
 using fuchsia::sys::LaunchInfo;
@@ -26,19 +28,19 @@ const char kFakeEchoUrl[] =
 
 class TestWithEnvironmentExampleTest : public TestWithEnvironment {
  protected:
-  void SetUp() override {
-    TestWithEnvironment::SetUp();
-    enclosing_environment_ = CreateNewEnclosingEnvironment(kEnvironment);
-  }
-
   std::unique_ptr<EnclosingEnvironment> enclosing_environment_;
   fidl::StringPtr answer_ = "Goodbye World!";
 };
 
 // Demonstrates use adding fake service to EnclosingEnvironment.
 TEST_F(TestWithEnvironmentExampleTest, AddFakeEchoAsService) {
+  // Start enclosing environment with an injected service.
+  std::unique_ptr<EnvironmentServices> services = CreateServices();
   FakeEcho fake_echo;
-  enclosing_environment_->AddService(fake_echo.GetHandler());
+  services->AddService(fake_echo.GetHandler());
+  enclosing_environment_ =
+      CreateNewEnclosingEnvironment(kEnvironment, std::move(services));
+
   fidl::StringPtr message = "bogus";
   fake_echo.SetAnswer(answer_);
   EchoPtr echo_ptr;
@@ -55,11 +57,16 @@ TEST_F(TestWithEnvironmentExampleTest, AddFakeEchoAsService) {
 // |enclosing_environment_| launches kFakeEchoUrl when anything tries to connect
 // to echo service in |enclosing_environment_|;
 TEST_F(TestWithEnvironmentExampleTest, AddFakeEchoAsServiceComponent) {
+  // Start enclosing environment with an injected service served by a
+  // component.
+  std::unique_ptr<EnvironmentServices> services = CreateServices();
   LaunchInfo launch_info;
   launch_info.url = kFakeEchoUrl;
   launch_info.arguments.push_back(answer_);
-  enclosing_environment_->AddServiceWithLaunchInfo(std::move(launch_info),
-                                                   Echo::Name_);
+  services->AddServiceWithLaunchInfo(std::move(launch_info), Echo::Name_);
+  enclosing_environment_ =
+      CreateNewEnclosingEnvironment(kEnvironment, std::move(services));
+
   fidl::StringPtr message = "bogus";
   EchoPtr echo_ptr;
   // You can also launch your component which connects to echo service using
@@ -71,5 +78,6 @@ TEST_F(TestWithEnvironmentExampleTest, AddFakeEchoAsServiceComponent) {
       RunLoopWithTimeoutOrUntil([&] { return message == answer_; }, kTimeout));
 }
 
+}  // namespace
 }  // namespace testing
 }  // namespace echo2

@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#![feature(async_await, await_macro, futures_api)]
+#![feature(async_await, await_macro, futures_api, pin)]
 
 #[macro_use]
 mod macros;
@@ -14,11 +14,11 @@ mod token_manager_factory;
 
 use crate::token_manager_factory::TokenManagerFactory;
 use failure::{Error, ResultExt};
-use fidl::endpoints2::ServiceMarker;
+use fidl::endpoints::ServiceMarker;
 use fidl_fuchsia_auth::TokenManagerFactoryMarker;
 use fuchsia_app::server::ServicesServer;
 use fuchsia_async as fasync;
-use log::{info, log};
+use log::info;
 
 fn main() -> Result<(), Error> {
     fuchsia_syslog::init_with_tags(&["auth"]).expect("Can't init logger");

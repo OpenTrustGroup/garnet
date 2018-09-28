@@ -33,10 +33,6 @@
 #include "pts_manager.h"
 #include "registers.h"
 
-#if ENABLE_DECODER_TESTS
-#include "tests/test_support.h"
-#endif
-
 // These match the regions exported when the bus device was added.
 enum MmioRegion {
   kCbus,
@@ -61,6 +57,11 @@ AmlogicVideo::~AmlogicVideo() {
     zx_interrupt_destroy(parser_interrupt_handle_.get());
     if (parser_interrupt_thread_.joinable())
       parser_interrupt_thread_.join();
+  }
+  CancelParsing();
+  if (parser_input_) {
+    io_buffer_release(parser_input_.get());
+    parser_input_.reset();
   }
   if (vdec0_interrupt_handle_) {
     zx_interrupt_destroy(vdec0_interrupt_handle_.get());
@@ -121,6 +122,25 @@ void AmlogicVideo::GateClocks() {
       .ReadFrom(hiubus_.get())
       .set_dos(false)
       .WriteTo(hiubus_.get());
+}
+
+void AmlogicVideo::InitializeCore(std::unique_ptr<DecoderCore> core) {
+  core_ = std::move(core);
+}
+
+void AmlogicVideo::ResetCore() {
+  if (core_) {
+    core_->PowerOff();
+    core_.reset();
+  }
+}
+
+void AmlogicVideo::ClearDecoderInstance() {
+  std::lock_guard<std::mutex> lock(video_decoder_lock_);
+  assert(decoder_instances_.size() <= 1u);
+  decoder_instances_.clear();
+  video_decoder_ = nullptr;
+  stream_buffer_ = nullptr;
 }
 
 zx_status_t AmlogicVideo::AllocateStreamBuffer(StreamBuffer* buffer,
@@ -296,6 +316,11 @@ zx_status_t AmlogicVideo::InitializeEsParser() {
         if (zx_status != ZX_OK)
           return;
 
+        std::lock_guard<std::mutex> lock(parser_running_lock_);
+        if (!parser_running_)
+          continue;
+        // Continue holding parser_running_lock_ to ensure a cancel doesn't
+        // execute while signaling is happening.
         auto status = ParserIntStatus::Get().ReadFrom(parser_.get());
         // Clear interrupt.
         status.WriteTo(parser_.get());
@@ -319,12 +344,20 @@ zx_status_t AmlogicVideo::InitializeEsParser() {
 }
 
 zx_status_t AmlogicVideo::ParseVideo(void* data, uint32_t len) {
-  io_buffer_t input_file;
-  zx_status_t status = io_buffer_init(&input_file, bti_.get(), len,
-                                      IO_BUFFER_RW | IO_BUFFER_CONTIG);
-  if (status != ZX_OK) {
-    DECODE_ERROR("Failed to create input file");
-    return ZX_ERR_NO_MEMORY;
+  ZX_DEBUG_ASSERT(!parser_running_);
+  if (!parser_input_ || io_buffer_size(parser_input_.get(), 0) < len) {
+    if (parser_input_) {
+      io_buffer_release(parser_input_.get());
+      parser_input_ = nullptr;
+    }
+    parser_input_ = std::make_unique<io_buffer_t>();
+    zx_status_t status = io_buffer_init(parser_input_.get(), bti_.get(), len,
+                                        IO_BUFFER_RW | IO_BUFFER_CONTIG);
+    if (status != ZX_OK) {
+      parser_input_.reset();
+      DECODE_ERROR("Failed to create input file");
+      return ZX_ERR_NO_MEMORY;
+    }
   }
 
   PfifoRdPtr::Get().FromValue(0).WriteTo(parser_.get());
@@ -340,13 +373,13 @@ zx_status_t AmlogicVideo::ParseVideo(void* data, uint32_t len) {
       .set_command(ParserControl::kAutoSearch)
       .WriteTo(parser_.get());
 
-  memcpy(io_buffer_virt(&input_file), data, len);
-  io_buffer_cache_flush(&input_file, 0, len);
+  memcpy(io_buffer_virt(parser_input_.get()), data, len);
+  io_buffer_cache_flush(parser_input_.get(), 0, len);
 
   BarrierAfterFlush();
 
   ParserFetchAddr::Get()
-      .FromValue(truncate_to_32(io_buffer_phys(&input_file)))
+      .FromValue(truncate_to_32(io_buffer_phys(parser_input_.get())))
       .WriteTo(parser_.get());
   ParserFetchCmd::Get().FromValue(0).set_len(len).set_fetch_endian(7).WriteTo(
       parser_.get());
@@ -365,36 +398,57 @@ zx_status_t AmlogicVideo::ParseVideo(void* data, uint32_t len) {
       .set_fetch_endian(7)
       .WriteTo(parser_.get());
 
-  status = parser_finished_event_.wait_one(
-      ZX_USER_SIGNAL_0, zx::deadline_after(zx::msec(10000)), nullptr);
-  parser_finished_event_.signal(ZX_USER_SIGNAL_0, 0);
-  if (status != ZX_OK) {
-    DECODE_ERROR("Parser timed out\n");
-    ParserFetchCmd::Get().FromValue(0).WriteTo(parser_.get());
-    BarrierBeforeRelease();
-    // TODO(dustingreen): Evaluate whether it's safe to immediately do this
-    // io_buffer_release().  If the ParserFetchCmd write of 0 just above
-    // guarantees the HW will immediately stop reading input data from the
-    // input_file buffer, vs. potentially reading a bit more and allowing those
-    // reads to influence a lower-capability-client-visible output buffer.  We
-    // might need to find a way to round-trip that we've stopped the parser
-    // before deleting the input buffer.
-    io_buffer_release(&input_file);
-    return ZX_ERR_TIMED_OUT;
+  {
+    std::lock_guard<std::mutex> lock(parser_running_lock_);
+    parser_running_ = true;
   }
-  BarrierBeforeRelease();
-  io_buffer_release(&input_file);
 
   return ZX_OK;
 }
 
-zx_status_t AmlogicVideo::ProcessVideoNoParser(void* data, uint32_t len,
+zx_status_t AmlogicVideo::WaitForParsingCompleted(zx_duration_t deadline) {
+  ZX_DEBUG_ASSERT(parser_running_);
+  zx_status_t status = parser_finished_event_.wait_one(
+      ZX_USER_SIGNAL_0, zx::deadline_after(zx::duration(deadline)), nullptr);
+  if (status == ZX_OK) {
+    std::lock_guard<std::mutex> lock(parser_running_lock_);
+    parser_running_ = false;
+    parser_finished_event_.signal(ZX_USER_SIGNAL_0, 0);
+    // Ensure the parser finishes before parser_input_ is written into again or
+    // released. dsb is needed instead of the dmb we get from the mutex.
+    BarrierBeforeRelease();
+  }
+  return status;
+}
+
+void AmlogicVideo::CancelParsing() {
+  std::lock_guard<std::mutex> lock(parser_running_lock_);
+  if (parser_running_) {
+    DECODE_ERROR("Parser cancelled\n");
+    parser_running_ = false;
+
+    ParserFetchCmd::Get().FromValue(0).WriteTo(parser_.get());
+    // Ensure the parser finishes before parser_input_ is written into again or
+    // released. dsb is needed instead of the dmb we get from the mutex.
+    BarrierBeforeRelease();
+    // Clear the parser interrupt to ensure that if the parser happened to
+    // finish before the ParserFetchCmd was processed that the finished event
+    // won't be signaled accidentally for the next parse.
+    auto status = ParserIntStatus::Get().ReadFrom(parser_.get());
+    // Writing 1 to a bit clears it.
+    status.WriteTo(parser_.get());
+    parser_finished_event_.signal(ZX_USER_SIGNAL_0, 0);
+  }
+}
+
+zx_status_t AmlogicVideo::ProcessVideoNoParser(const void* data, uint32_t len,
                                                uint32_t* written_out) {
   return ProcessVideoNoParserAtOffset(data, len, core_->GetStreamInputOffset(),
                                       written_out);
 }
 
-zx_status_t AmlogicVideo::ProcessVideoNoParserAtOffset(void* data, uint32_t len,
+zx_status_t AmlogicVideo::ProcessVideoNoParserAtOffset(const void* data,
+                                                       uint32_t len,
                                                        uint32_t write_offset,
                                                        uint32_t* written_out) {
   uint32_t read_offset = core_->GetReadOffset();
@@ -426,7 +480,7 @@ zx_status_t AmlogicVideo::ProcessVideoNoParserAtOffset(void* data, uint32_t len,
       write_length = io_buffer_size(stream_buffer_->buffer(), 0) - write_offset;
     memcpy(static_cast<uint8_t*>(io_buffer_virt(stream_buffer_->buffer())) +
                write_offset,
-           static_cast<uint8_t*>(data) + input_offset, write_length);
+           static_cast<const uint8_t*>(data) + input_offset, write_length);
     io_buffer_cache_flush(stream_buffer_->buffer(), write_offset, write_length);
     write_offset += write_length;
     if (write_offset == io_buffer_size(stream_buffer_->buffer(), 0))

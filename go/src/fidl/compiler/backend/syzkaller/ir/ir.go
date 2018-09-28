@@ -15,11 +15,16 @@ import (
 const (
 	OutOfLineSuffix = "OutOfLine"
 	InLineSuffix    = "InLine"
+	RequestSuffix   = "Request"
+	ResponseSuffix  = "Response"
+	EventSuffix     = "Event"
+	HandlesSuffix   = "Handles"
 )
 
 // Type represents a syzkaller type including type-options.
 type Type string
 
+// Enum represents a set of syzkaller flags
 type Enum struct {
 	Name    string
 	Type    string
@@ -28,18 +33,21 @@ type Enum struct {
 
 // Struct represents a syzkaller struct.
 type Struct struct {
-	Name string
-
+	Name    string
 	Members []StructMember
-
-	Size int
 }
 
 // StructMember represents a member of a syzkaller struct.
 type StructMember struct {
 	Name string
-
 	Type Type
+}
+
+// Union represents a syzkaller union.
+type Union struct {
+	Name    string
+	Members []StructMember
+	VarLen  bool
 }
 
 // Interface represents a FIDL interface in terms of syzkaller structures.
@@ -70,8 +78,14 @@ type Method struct {
 	// Response represents an optional struct containing the response parameters.
 	Response *Struct
 
+	// ResponseHandles represents a struct containing the handles in the response parameters.
+	ResponseHandles *Struct
+
 	// Structs contain all the structs generated during depth-first traversal of Request/Response.
 	Structs []Struct
+
+	// Unions contain all the unions generated during depth-first traversal of Request/Response.
+	Unions []Union
 }
 
 // Root is the root of the syzkaller backend IR structure.
@@ -88,11 +102,15 @@ type Root struct {
 	// Structs correspond to syzkaller structs.
 	Structs []Struct
 
+	// Unions correspond to syzkaller unions.
+	Unions []Union
+
 	// Enums correspond to syzkaller flags.
 	Enums []Enum
 }
 
 type StructMap map[types.EncodedCompoundIdentifier]types.Struct
+type UnionMap map[types.EncodedCompoundIdentifier]types.Union
 type EnumMap map[types.EncodedCompoundIdentifier]types.Enum
 
 type compiler struct {
@@ -101,6 +119,9 @@ type compiler struct {
 
 	// structs contain all top-level struct definitions for the FIDL source.
 	structs StructMap
+
+	// unions contain all top-level union definitions for the FIDL source.
+	unions UnionMap
 
 	// enums contain all top-level enum definitions for the FIDL source.
 	enums EnumMap
@@ -191,7 +212,7 @@ func formatLibraryPath(library types.LibraryIdentifier) string {
 	return formatLibrary(library, "/")
 }
 
-func (_ *compiler) compileIdentifier(id types.Identifier, ext string) string {
+func (c *compiler) compileIdentifier(id types.Identifier, ext string) string {
 	str := string(id)
 	str = common.ToSnakeCase(str)
 	return changeIfReserved(types.Identifier(str), ext)
@@ -237,11 +258,10 @@ func (c *compiler) compileEnum(val types.Enum) Enum {
 	return e
 }
 
-func (c *compiler) compileStructMember(p types.StructMember) (StructMember, *StructMember, *StructMember, []Struct) {
+func (c *compiler) compileStructMember(p types.StructMember) (StructMember, *StructMember, *StructMember) {
 	var i StructMember
 	var o *StructMember
 	var h *StructMember
-	var s []Struct
 
 	switch p.Type.Kind {
 	case types.PrimitiveType:
@@ -271,6 +291,32 @@ func (c *compiler) compileStructMember(p types.StructMember) (StructMember, *Str
 			Type: Type(fmt.Sprintf("zx_chan_%s_server", c.compileCompoundIdentifier(p.Type.RequestSubtype, ""))),
 			Name: c.compileIdentifier(p.Name, ""),
 		}
+	case types.ArrayType:
+		inLine, outOfLine, handle := c.compileStructMember(types.StructMember{
+			Name: types.Identifier(c.compileIdentifier(p.Name, OutOfLineSuffix)),
+			Type: (*p.Type.ElementType),
+		})
+
+		i = StructMember{
+			Type: Type(fmt.Sprintf("array[%s, %v]", inLine.Type, *p.Type.ElementCount)),
+			Name: c.compileIdentifier(p.Name, InLineSuffix),
+		}
+
+		// Variable-size, out-of-line data
+		if outOfLine != nil {
+			o = &StructMember{
+				Type: Type(fmt.Sprintf("array[%s, %v]", outOfLine.Type, *p.Type.ElementCount)),
+				Name: c.compileIdentifier(p.Name, OutOfLineSuffix),
+			}
+		}
+
+		// Out-of-line handles
+		if handle != nil {
+			h = &StructMember{
+				Type: Type(fmt.Sprintf("array[%s, %v]", handle.Type, *p.Type.ElementCount)),
+				Name: c.compileIdentifier(p.Name, HandlesSuffix),
+			}
+		}
 	case types.StringType:
 		// Constant-size, in-line data
 		i = StructMember{
@@ -291,11 +337,10 @@ func (c *compiler) compileStructMember(p types.StructMember) (StructMember, *Str
 		}
 
 		// Variable-size, out-of-line data
-		inLine, outOfLine, handle, structs := c.compileStructMember(types.StructMember{
+		inLine, outOfLine, handle := c.compileStructMember(types.StructMember{
 			Name: types.Identifier(c.compileIdentifier(p.Name, OutOfLineSuffix)),
 			Type: (*p.Type.ElementType),
 		})
-		s = append(s, structs...)
 		o = &StructMember{
 			Type: Type(fmt.Sprintf("array[%s]", inLine.Type)),
 			Name: c.compileIdentifier(p.Name, OutOfLineSuffix),
@@ -327,16 +372,22 @@ func (c *compiler) compileStructMember(p types.StructMember) (StructMember, *Str
 				Type: Type(fmt.Sprintf("flags[%s, %s]", c.compileCompoundIdentifier(p.Type.Identifier, ""), c.compilePrimitiveSubtype(c.enums[p.Type.Identifier].Type))),
 				Name: c.compileIdentifier(p.Name, ""),
 			}
-		case types.StructDeclType:
-			inLine, outOfLine, handles, structs := c.compileStruct(c.structs[p.Type.Identifier])
-			s = append(s, structs...)
+		case types.InterfaceDeclType:
+			i = StructMember{
+				Type: Type("flags[fidl_handle_presence, int32]"),
+				Name: c.compileIdentifier(p.Name, ""),
+			}
+
+			// Out-of-line handles
+			h = &StructMember{
+				Type: Type(fmt.Sprintf("zx_chan_%s_client", c.compileCompoundIdentifier(p.Type.Identifier, ""))),
+				Name: c.compileIdentifier(p.Name, ""),
+			}
+		case types.UnionDeclType:
+			_, outOfLine, handles := c.compileUnion(c.unions[p.Type.Identifier])
 
 			// Constant-size, in-line data
 			t := c.compileCompoundIdentifier(p.Type.Identifier, InLineSuffix)
-			s = append(s, Struct{
-				Name:    t,
-				Members: inLine,
-			})
 			i = StructMember{
 				Type: Type(t),
 				Name: c.compileIdentifier(p.Name, InLineSuffix),
@@ -345,10 +396,6 @@ func (c *compiler) compileStructMember(p types.StructMember) (StructMember, *Str
 			// Variable-size, out-of-line data
 			if outOfLine != nil {
 				t := c.compileCompoundIdentifier(p.Type.Identifier, OutOfLineSuffix)
-				s = append(s, Struct{
-					Name:    t,
-					Members: outOfLine,
-				})
 				o = &StructMember{
 					Type: Type(t),
 					Name: c.compileIdentifier(p.Name, OutOfLineSuffix),
@@ -357,11 +404,34 @@ func (c *compiler) compileStructMember(p types.StructMember) (StructMember, *Str
 
 			// Out-of-line handles
 			if handles != nil {
-				t := c.compileCompoundIdentifier(p.Type.Identifier, "")
-				s = append(s, Struct{
-					Name:    t,
-					Members: handles,
-				})
+				t := c.compileCompoundIdentifier(p.Type.Identifier, HandlesSuffix)
+				h = &StructMember{
+					Type: Type(t),
+					Name: c.compileIdentifier(p.Name, ""),
+				}
+			}
+		case types.StructDeclType:
+			_, outOfLine, handles := c.compileStruct(c.structs[p.Type.Identifier])
+
+			// Constant-size, in-line data
+			t := c.compileCompoundIdentifier(p.Type.Identifier, InLineSuffix)
+			i = StructMember{
+				Type: Type(t),
+				Name: c.compileIdentifier(p.Name, InLineSuffix),
+			}
+
+			// Variable-size, out-of-line data
+			if outOfLine != nil {
+				t := c.compileCompoundIdentifier(p.Type.Identifier, OutOfLineSuffix)
+				o = &StructMember{
+					Type: Type(t),
+					Name: c.compileIdentifier(p.Name, OutOfLineSuffix),
+				}
+			}
+
+			// Out-of-line handles
+			if handles != nil {
+				t := c.compileCompoundIdentifier(p.Type.Identifier, HandlesSuffix)
 				h = &StructMember{
 					Type: Type(t),
 					Name: c.compileIdentifier(p.Name, ""),
@@ -370,7 +440,7 @@ func (c *compiler) compileStructMember(p types.StructMember) (StructMember, *Str
 		}
 	}
 
-	return i, o, h, s
+	return i, o, h
 }
 
 func (c *compiler) compileMessageHeader(Ordinal types.Ordinal) StructMember {
@@ -380,12 +450,11 @@ func (c *compiler) compileMessageHeader(Ordinal types.Ordinal) StructMember {
 	}
 }
 
-func (c *compiler) compileStruct(p types.Struct) ([]StructMember, []StructMember, []StructMember, []Struct) {
+func (c *compiler) compileStruct(p types.Struct) ([]StructMember, []StructMember, []StructMember) {
 	var i, o, h []StructMember
-	var s []Struct
 
 	for _, m := range p.Members {
-		inLine, outOfLine, handles, structs := c.compileStructMember(m)
+		inLine, outOfLine, handles := c.compileStructMember(m)
 
 		i = append(i, inLine)
 
@@ -396,11 +465,79 @@ func (c *compiler) compileStruct(p types.Struct) ([]StructMember, []StructMember
 		if handles != nil {
 			h = append(h, *handles)
 		}
-
-		s = append(s, structs...)
 	}
 
-	return i, o, h, s
+	if len(o) == 0 {
+		o = append(o, StructMember{
+			Name: "void",
+			Type: "void",
+		})
+	}
+
+	if len(h) == 0 {
+		h = append(h, StructMember{
+			Name: "void",
+			Type: "void",
+		})
+	}
+
+	return i, o, h
+}
+
+func (c *compiler) compileUnion(p types.Union) ([]StructMember, []StructMember, []StructMember) {
+	var i, o, h []StructMember
+
+	for _, m := range p.Members {
+		inLine, outOfLine, handles := c.compileStructMember(types.StructMember{
+			Type:   m.Type,
+			Name:   m.Name,
+			Offset: m.Offset,
+		})
+
+		i = append(i, StructMember{
+			Type: Type(fmt.Sprintf("fidl_union_member[%sTag%s, %s]", c.compileCompoundIdentifier(p.Name, ""), m.Name, inLine.Type)),
+			Name: inLine.Name,
+		})
+
+		if outOfLine != nil {
+			o = append(o, *outOfLine)
+		}
+
+		if handles != nil {
+			h = append(h, *handles)
+		}
+	}
+
+	return i, o, h
+}
+
+func (c *compiler) compileParameters(name string, ordinal types.Ordinal, params []types.Parameter) (Struct, Struct) {
+	var args types.Struct
+	for _, p := range params {
+		args.Members = append(args.Members, types.StructMember{
+			Type:   p.Type,
+			Name:   p.Name,
+			Offset: p.Offset,
+		})
+	}
+
+	i, o, h := c.compileStruct(args)
+
+	if len(o) == 1 && o[0].Type == "void" {
+		o = []StructMember{}
+	}
+
+	msg := Struct{
+		Name:    name,
+		Members: append(append([]StructMember{c.compileMessageHeader(ordinal)}, i...), o...),
+	}
+
+	handles := Struct{
+		Name:    name + HandlesSuffix,
+		Members: h,
+	}
+
+	return msg, handles
 }
 
 func (c *compiler) compileMethod(ifaceName types.EncodedCompoundIdentifier, val types.Method) Method {
@@ -410,35 +547,22 @@ func (c *compiler) compileMethod(ifaceName types.EncodedCompoundIdentifier, val 
 		Ordinal: val.Ordinal,
 	}
 
-	var args types.Struct
-	for _, p := range val.Request {
-		args.Members = append(args.Members, types.StructMember{
-			Type:   p.Type,
-			Name:   p.Name,
-			Offset: p.Offset,
-		})
+	if val.HasRequest {
+		request, requestHandles := c.compileParameters(r.Name+RequestSuffix, r.Ordinal, val.Request)
+		r.Request = &request
+		r.RequestHandles = &requestHandles
 	}
 
-	i, o, h, structs := c.compileStruct(args)
-
-	r.Request = &Struct{
-		Name:    methodName + "Request",
-		Members: append(append([]StructMember{c.compileMessageHeader(val.Ordinal)}, i...), o...),
+	// For response, we only extract handles for now.
+	if val.HasResponse {
+		suffix := ResponseSuffix
+		if !val.HasRequest {
+			suffix = EventSuffix
+		}
+		response, responseHandles := c.compileParameters(r.Name+suffix, r.Ordinal, val.Response)
+		r.Response = &response
+		r.ResponseHandles = &responseHandles
 	}
-
-	if len(h) == 0 {
-		h = append(h, StructMember{
-			Type: "void",
-			Name: "void",
-		})
-	}
-
-	r.RequestHandles = &Struct{
-		Name:    methodName + "RequestHandles",
-		Members: h,
-	}
-
-	r.Structs = structs
 
 	return r
 }
@@ -460,20 +584,73 @@ func Compile(fidlData types.Root) Root {
 	c := compiler{
 		decls:   fidlData.Decls,
 		structs: make(StructMap),
+		unions:  make(UnionMap),
 		enums:   make(EnumMap),
 		library: libraryName,
 	}
 
 	root.HeaderPath = fmt.Sprintf("%s/c/fidl.h", formatLibraryPath(libraryName))
 
-	for _, v := range fidlData.Structs {
-		c.structs[v.Name] = v
-	}
-
 	for _, v := range fidlData.Enums {
 		c.enums[v.Name] = v
 
 		root.Enums = append(root.Enums, c.compileEnum(v))
+	}
+
+	for _, v := range fidlData.Structs {
+		c.structs[v.Name] = v
+
+		i, o, h := c.compileStruct(v)
+		root.Structs = append(root.Structs, Struct{
+			Name:    c.compileCompoundIdentifier(v.Name, InLineSuffix),
+			Members: i,
+		})
+
+		root.Structs = append(root.Structs, Struct{
+			Name:    c.compileCompoundIdentifier(v.Name, OutOfLineSuffix),
+			Members: o,
+		})
+
+		root.Structs = append(root.Structs, Struct{
+			Name:    c.compileCompoundIdentifier(v.Name, HandlesSuffix),
+			Members: h,
+		})
+	}
+
+	for _, v := range fidlData.Unions {
+		c.unions[v.Name] = v
+
+		i, o, h := c.compileUnion(v)
+		root.Unions = append(root.Unions, Union{
+			Name:    c.compileCompoundIdentifier(v.Name, InLineSuffix),
+			Members: i,
+		})
+
+		if len(o) == 0 {
+			o = append(o, StructMember{
+				Name: "void",
+				Type: "void",
+			})
+		}
+
+		if len(h) == 0 {
+			h = append(h, StructMember{
+				Name: "void",
+				Type: "void",
+			})
+		}
+
+		root.Unions = append(root.Unions, Union{
+			Name:    c.compileCompoundIdentifier(v.Name, OutOfLineSuffix),
+			Members: o,
+			VarLen:  true,
+		})
+
+		root.Unions = append(root.Unions, Union{
+			Name:    c.compileCompoundIdentifier(v.Name, HandlesSuffix),
+			Members: h,
+			VarLen:  true,
+		})
 	}
 
 	for _, v := range fidlData.Interfaces {
@@ -486,6 +663,12 @@ func Compile(fidlData types.Root) Root {
 			for _, s := range m.Structs {
 				if _, ok := exists[s.Name]; !ok {
 					root.Structs = append(root.Structs, s)
+					exists[s.Name] = true
+				}
+			}
+			for _, s := range m.Unions {
+				if _, ok := exists[s.Name]; !ok {
+					root.Unions = append(root.Unions, s)
 					exists[s.Name] = true
 				}
 			}

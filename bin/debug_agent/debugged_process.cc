@@ -77,11 +77,19 @@ void DebuggedProcess::OnKill(const debug_ipc::KillRequest& request,
   reply->status = process_.kill();
 }
 
-DebuggedThread* DebuggedProcess::GetThread(zx_koid_t thread_koid) {
+DebuggedThread* DebuggedProcess::GetThread(zx_koid_t thread_koid) const {
   auto found_thread = threads_.find(thread_koid);
   if (found_thread == threads_.end())
     return nullptr;
   return found_thread->second.get();
+}
+
+std::vector<DebuggedThread*> DebuggedProcess::GetThreads() const {
+  std::vector<DebuggedThread*> threads;
+  threads.reserve(threads_.size());
+  for (auto& kv : threads_)
+    threads.emplace_back(kv.second.get());
+  return threads;
 }
 
 void DebuggedProcess::PopulateCurrentThreads() {
@@ -145,7 +153,7 @@ zx_status_t DebuggedProcess::RegisterBreakpoint(Breakpoint* bp,
   auto found = breakpoints_.find(address);
   if (found == breakpoints_.end()) {
     auto process_breakpoint =
-        std::make_unique<ProcessBreakpoint>(bp, this, koid_, address);
+        std::make_unique<ProcessBreakpoint>(bp, this, this, address);
     zx_status_t status = process_breakpoint->Init();
     if (status != ZX_OK)
       return status;

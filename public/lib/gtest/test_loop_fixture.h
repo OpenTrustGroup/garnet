@@ -43,10 +43,6 @@ class TestLoopFixture : public ::testing::Test {
   // Returns the current fake clock time.
   zx::time Now() { return loop_.Now(); }
 
-  // Advances the fake clock time by |time|, if |time| is greater than the
-  // current time; else, nothing happens.
-  void AdvanceTimeTo(zx::time time) { loop_.AdvanceTimeTo(time); }
-
   // Dispatches all waits and all tasks posted to the message loop with
   // deadlines up until |deadline|, progressively advancing the fake clock.
   // Returns true iff any tasks or waits were invoked during the run.
@@ -78,6 +74,9 @@ class TestLoopFixture : public ::testing::Test {
   fit::closure QuitLoopClosure() {
     return [this] { loop_.Quit(); };
   }
+
+  // Accessor for the underlying TestLoop.
+  async::TestLoop& test_loop() { return loop_; }
 
  private:
   // The test message loop for the test fixture.

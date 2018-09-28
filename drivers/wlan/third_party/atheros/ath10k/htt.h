@@ -1706,7 +1706,6 @@ struct ath10k_htt {
      * used to avoid further failures
      */
     bool rx_confused;
-    atomic_int num_mpdus_ready;
 
     struct {
         io_buffer_t handle;
@@ -1804,7 +1803,8 @@ struct htt_rx_desc {
     HTT_CMD_MSG(VER_REQ,            htt_ver_req),            \
     HTT_CMD_MSG(FRAG_DESC_BANK_CFG, htt_frag_desc_bank_cfg), \
     HTT_CMD_MSG(RX_SETUP,           htt_rx_ring_setup),      \
-    HTT_CMD_MSG(AGGR_CONF,          htt_aggr_conf)
+    HTT_CMD_MSG(AGGR_CONF,          htt_aggr_conf),          \
+    HTT_CMD_MSG(MGMT_TX,            htt_mgmt_tx_desc)        \
 
 #define HTT_RESP_PFX(x) ATH10K_MSG_TYPE_HTT_RESP_##x
 #define HTT_RESP_MSG(type, hdr) \

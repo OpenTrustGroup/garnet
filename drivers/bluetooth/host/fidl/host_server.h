@@ -35,11 +35,12 @@ class HostServer : public AdapterServerBase<fuchsia::bluetooth::host::Host>,
  public:
   HostServer(zx::channel channel, fxl::WeakPtr<btlib::gap::Adapter> adapter,
              fbl::RefPtr<GattHost> gatt_host);
-  ~HostServer() override = default;
+  ~HostServer() override;
 
  private:
   // ::fuchsia::bluetooth::Host overrides:
   void GetInfo(GetInfoCallback callback) override;
+  void ListDevices(ListDevicesCallback callback) override;
   void AddBondedDevices(
       ::fidl::VectorPtr<fuchsia::bluetooth::control::BondingData> bonds,
       AddBondedDevicesCallback callback) override;
@@ -97,6 +98,10 @@ class HostServer : public AdapterServerBase<fuchsia::bluetooth::host::Host>,
 
   // Helper to start LE Discovery (called by StartDiscovery)
   void StartLEDiscovery(StartDiscoveryCallback callback);
+
+  // Resets the I/O capability of this server to no I/O and tells the GAP layer
+  // to reject incoming pairing requests.
+  void ResetPairingDelegate();
 
   // Helper for binding a fidl::InterfaceRequest to a FIDL server of type
   // ServerType.

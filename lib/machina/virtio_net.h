@@ -6,8 +6,8 @@
 #define GARNET_LIB_MACHINA_VIRTIO_NET_H_
 
 #include <atomic>
+#include <vector>
 
-#include <fbl/array.h>
 #include <fbl/unique_fd.h>
 #include <lib/async/cpp/wait.h>
 #include <trace-engine/types.h>
@@ -29,8 +29,9 @@ static_assert(kVirtioNetRxQueueIndex != kVirtioNetTxQueueIndex,
               "RX and TX queues must be distinct");
 
 // Implements a Virtio Ethernet device.
-class VirtioNet : public VirtioDevice<VIRTIO_ID_NET, kVirtioNetNumQueues,
-                                      virtio_net_config_t> {
+class VirtioNet
+    : public VirtioInprocessDevice<VIRTIO_ID_NET, kVirtioNetNumQueues,
+                                   virtio_net_config_t> {
  public:
   VirtioNet(const PhysMem& phys_mem, async_dispatcher_t* dispatcher);
   ~VirtioNet() override;
@@ -38,10 +39,15 @@ class VirtioNet : public VirtioDevice<VIRTIO_ID_NET, kVirtioNetNumQueues,
   // Starts the Virtio Ethernet device based on the path provided.
   zx_status_t Start(const char* path);
 
-  zx_status_t WaitOnFifos(const eth_fifos_t& fifos);
-
   VirtioQueue* rx_queue() { return queue(kVirtioNetRxQueueIndex); }
   VirtioQueue* tx_queue() { return queue(kVirtioNetTxQueueIndex); }
+
+ protected:
+  // Helper function to initialize the IO bufs structure that gets shared with
+  // the ethdriver. This is protected to allow for a mock VirtioNet to be easily
+  // constructed for testing without needing a fully mocked ethernet driver.
+  zx_status_t InitIoBuffer(size_t count, size_t elem_size);
+  zx_status_t WaitOnFifos(const eth_fifos_t& fifos);
 
  private:
   // Ethernet control plane.
@@ -56,11 +62,28 @@ class VirtioNet : public VirtioDevice<VIRTIO_ID_NET, kVirtioNetNumQueues,
     return trace_flow_id(kVirtioNetTxQueueIndex);
   }
 
+  class IoBuffer {
+   public:
+    IoBuffer() {}
+
+    zx::vmo& vmo() { return vmo_; }
+
+    zx_status_t Init(size_t count, size_t elem_size);
+    zx_status_t Allocate(uintptr_t* offset);
+    void Free(uintptr_t offset);
+
+   private:
+    std::vector<uint16_t> free_list_;
+    size_t elem_size_;
+    zx::vmo vmo_;
+  };
+
   // A single data stream (either RX or TX).
   class Stream {
    public:
     Stream(const PhysMem& phys_mem, async_dispatcher_t* dispatcher,
-           VirtioQueue* queue, std::atomic<trace_async_id_t>* trace_flow_id);
+           VirtioQueue* queue, std::atomic<trace_async_id_t>* trace_flow_id,
+           IoBuffer* iobufs);
     zx_status_t Start(zx_handle_t fifo, size_t fifo_num_entries, bool rx);
 
    private:
@@ -76,15 +99,18 @@ class VirtioNet : public VirtioDevice<VIRTIO_ID_NET, kVirtioNetNumQueues,
     void OnFifoReadable(async_dispatcher_t* dispatcher, async::WaitBase* wait,
                         zx_status_t status, const zx_packet_signal_t* signal);
 
+    virtio_net_hdr_t* ReadPacketInfo(uint16_t index, uintptr_t* offset,
+                                     uintptr_t* length);
+
     const PhysMem& phys_mem_;
     async_dispatcher_t* dispatcher_;
     VirtioQueue* queue_;
     std::atomic<trace_async_id_t>* trace_flow_id_;
     zx_handle_t fifo_ = ZX_HANDLE_INVALID;
     bool rx_ = false;
+    IoBuffer* io_buf_;
 
-    fbl::Array<eth_fifo_entry_t> fifo_write_entries_;
-    fbl::Array<eth_fifo_entry_t> fifo_entries_;
+    std::vector<eth_fifo_entry_t> fifo_entries_;
     // Number of entries in |fifo_entries_| that have not yet been written
     // to the fifo.
     size_t fifo_num_entries_ = 0;
@@ -102,6 +128,8 @@ class VirtioNet : public VirtioDevice<VIRTIO_ID_NET, kVirtioNetNumQueues,
 
   Stream rx_stream_;
   Stream tx_stream_;
+
+  IoBuffer io_buf_;
 };
 
 }  // namespace machina

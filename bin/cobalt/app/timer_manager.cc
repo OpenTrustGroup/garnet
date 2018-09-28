@@ -6,11 +6,12 @@
 
 #include <thread>
 
+#include <lib/async/cpp/time.h>
+
 namespace cobalt {
 
 using fuchsia::cobalt::Status;
 using std::string;
-using wlan::SystemClock;
 
 const uint32_t kMaxTimerTimeout = 300;
 
@@ -21,16 +22,13 @@ void TimerVal::AddStart(uint32_t metric_id, uint32_t encoding_id,
   this->start_timestamp = timestamp;
 }
 
-void TimerVal::AddEnd(
-    int64_t timestamp, const std::string& part_name,
-    fidl::VectorPtr<fuchsia::cobalt::ObservationValue> observation) {
+void TimerVal::AddEnd(int64_t timestamp, const std::string& part_name) {
   this->end_timestamp = timestamp;
   this->part_name = std::move(part_name);
-  this->observation = std::move(observation);
 }
 
 TimerManager::TimerManager(async_dispatcher_t* dispatcher)
-    : clock_(new SystemClock()), dispatcher_(dispatcher) {}
+    : dispatcher_(dispatcher) {}
 
 TimerManager::~TimerManager() {}
 
@@ -42,10 +40,6 @@ bool TimerManager::isReady(const std::unique_ptr<TimerVal>& timer_val_ptr) {
              timer_val_ptr->end_timestamp > 0)
       << "Incomplete timer was returned.";
   return true;
-}
-
-bool TimerManager::isMultipart(const std::unique_ptr<TimerVal>& timer_val_ptr) {
-  return timer_val_ptr && timer_val_ptr->part_name != "";
 }
 
 bool TimerManager::isValidTimerArguments(fidl::StringPtr timer_id,
@@ -80,7 +74,7 @@ Status TimerManager::GetTimerValWithStart(
 
   // An expired timer with that timer_id exists.
   if (timer_val_iter != timer_values_.end() &&
-      timer_val_iter->second->expiry_time < clock_->Now()) {
+      timer_val_iter->second->expiry_time < async::Now(dispatcher_)) {
     timer_values_.erase(timer_val_iter);
     timer_val_iter = timer_values_.end();
   }
@@ -97,7 +91,7 @@ Status TimerManager::GetTimerValWithStart(
   // A valid start to a timer already exists with that timer_id.
   if (timer_val_iter->second->start_timestamp > 0) {
     timer_values_.erase(timer_id);
-    return Status::FAILED_PRECONDITION;
+    return Status::INVALID_ARGUMENTS;
   }
 
   // Return TimerVal with start_timestamp and end_timestamp.
@@ -119,7 +113,7 @@ Status TimerManager::GetTimerValWithEnd(
 
   // An expired timer with that timer_id exists.
   if (timer_val_iter != timer_values_.end() &&
-      timer_val_iter->second->expiry_time < clock_->Now()) {
+      timer_val_iter->second->expiry_time < async::Now(dispatcher_)) {
     timer_values_.erase(timer_val_iter);
     timer_val_iter = timer_values_.end();
   }
@@ -136,7 +130,7 @@ Status TimerManager::GetTimerValWithEnd(
   // A valid end to a timer already exists with that timer_id.
   if (timer_val_iter->second->end_timestamp > 0) {
     timer_values_.erase(timer_val_iter);
-    return Status::FAILED_PRECONDITION;
+    return Status::INVALID_ARGUMENTS;
   }
 
   // Return TimerVal with start_timestamp and end_timestamp.
@@ -147,9 +141,7 @@ Status TimerManager::GetTimerValWithEnd(
 
 Status TimerManager::GetTimerValWithEnd(
     const std::string& timer_id, int64_t timestamp, uint32_t timeout_s,
-    const std::string& part_name,
-    fidl::VectorPtr<fuchsia::cobalt::ObservationValue> observation,
-    std::unique_ptr<TimerVal>* timer_val_ptr) {
+    const std::string& part_name, std::unique_ptr<TimerVal>* timer_val_ptr) {
   if (!timer_val_ptr ||
       !isValidTimerArguments(timer_id, timestamp, timeout_s)) {
     return Status::INVALID_ARGUMENTS;
@@ -160,7 +152,7 @@ Status TimerManager::GetTimerValWithEnd(
 
   // An expired timer with that timer_id exists.
   if (timer_val_iter != timer_values_.end() &&
-      timer_val_iter->second->expiry_time < clock_->Now()) {
+      timer_val_iter->second->expiry_time < async::Now(dispatcher_)) {
     timer_values_.erase(timer_val_iter);
     timer_val_iter = timer_values_.end();
   }
@@ -169,7 +161,6 @@ Status TimerManager::GetTimerValWithEnd(
   if (timer_val_iter == timer_values_.end()) {
     auto& timer = timer_values_[timer_id];
     timer.reset(new TimerVal());
-    timer->AddEnd(timestamp, part_name, std::move(observation));
     ScheduleExpiryTask(timer_id, timeout_s, &timer);
     return Status::OK;
   }
@@ -177,11 +168,10 @@ Status TimerManager::GetTimerValWithEnd(
   // A valid end to a timer already exists with that timer_id.
   if (timer_val_iter->second->end_timestamp > 0) {
     timer_values_.erase(timer_val_iter);
-    return Status::FAILED_PRECONDITION;
+    return Status::INVALID_ARGUMENTS;
   }
 
   // Return TimerVal with start_timestamp and end_timestamp.
-  timer_val_iter->second->AddEnd(timestamp, part_name, std::move(observation));
   MoveTimerToTimerVal(&timer_val_iter, timer_val_ptr);
   return Status::OK;
 }
@@ -202,7 +192,7 @@ void TimerManager::MoveTimerToTimerVal(
 void TimerManager::ScheduleExpiryTask(
     const std::string& timer_id, uint32_t timeout_s,
     std::unique_ptr<TimerVal>* timer_val_ptr) {
-  (*timer_val_ptr)->expiry_time = clock_->Now() + zx::sec(timeout_s);
+  (*timer_val_ptr)->expiry_time = async::Now(dispatcher_) + zx::sec(timeout_s);
 
   (*timer_val_ptr)
       ->expiry_task.set_handler(

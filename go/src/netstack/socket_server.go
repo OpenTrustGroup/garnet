@@ -21,17 +21,16 @@ import (
 
 	"github.com/google/netstack/tcpip"
 	"github.com/google/netstack/tcpip/buffer"
-	"github.com/google/netstack/tcpip/header"
 	"github.com/google/netstack/tcpip/network/ipv4"
 	"github.com/google/netstack/tcpip/network/ipv6"
 	"github.com/google/netstack/tcpip/stack"
+	"github.com/google/netstack/tcpip/transport/ping"
 	"github.com/google/netstack/tcpip/transport/tcp"
 	"github.com/google/netstack/tcpip/transport/udp"
 	"github.com/google/netstack/waiter"
 )
 
-const debug = true
-const debug2 = false
+const debug = false
 
 // TODO: Replace these with a better tracing mechanism (NET-757)
 const logListen = false
@@ -198,12 +197,12 @@ func (ios *iostate) loopStreamWrite(stk *stack.Stack) {
 			continue
 		}
 
-		if debug2 {
+		if debug {
 			log.Printf("loopStreamWrite: sending packet n=%d, v=%q", n, v[:n])
 		}
 		ios.wq.EventRegister(&waitEntry, waiter.EventOut)
 		for {
-			_, err := ios.ep.Write(v[:n], nil)
+			_, err := ios.ep.Write(tcpip.SlicePayload(v[:n]), tcpip.WriteOptions{})
 			if err == tcpip.ErrWouldBlock {
 				// Note that Close should not interrupt this wait.
 				<-notifyCh
@@ -268,20 +267,20 @@ func (ios *iostate) loopStreamRead(stk *stack.Stack) {
 		var v buffer.View
 		var err *tcpip.Error
 		for {
-			v, err = ios.ep.Read(nil)
+			v, _, err = ios.ep.Read(nil)
 			if err == nil {
 				break
 			} else if err == tcpip.ErrWouldBlock || err == tcpip.ErrInvalidEndpointState || err == tcpip.ErrNotConnected {
-				if debug2 {
+				if debug {
 					log.Printf("loopStreamRead read err=%v", err)
 				}
 				select {
 				case <-notifyCh:
 					continue
-				// TODO: Uncomment this after writing an unit test.
-				//
-				// case <-ios.loopReadClosing:
-				//	return
+					// TODO: Uncomment this after writing an unit test.
+					//
+					// case <-ios.loopReadClosing:
+					//	return
 				}
 			} else if err == tcpip.ErrClosedForReceive || err == tcpip.ErrConnectionRefused {
 				if err == tcpip.ErrConnectionRefused {
@@ -300,7 +299,7 @@ func (ios *iostate) loopStreamRead(stk *stack.Stack) {
 			return
 		}
 		ios.wq.EventUnregister(&waitEntry)
-		if debug2 {
+		if debug {
 			log.Printf("loopStreamRead: got a buffer, len(v)=%d", len(v))
 		}
 
@@ -319,7 +318,7 @@ func (ios *iostate) loopStreamRead(stk *stack.Stack) {
 				}
 				return
 			case zx.ErrShouldWait:
-				if debug2 {
+				if debug {
 					log.Printf("loopStreamRead: got zx.ErrShouldWait")
 				}
 				obs, err := zxwait.Wait(zx.Handle(ios.dataHandle),
@@ -365,7 +364,7 @@ func (ios *iostate) loopDgramRead(stk *stack.Stack) {
 		var v buffer.View
 		var err *tcpip.Error
 		for {
-			v, err = ios.ep.Read(&sender)
+			v, _, err = ios.ep.Read(&sender)
 			if err == nil {
 				break
 			} else if err == tcpip.ErrWouldBlock {
@@ -376,7 +375,7 @@ func (ios *iostate) loopDgramRead(stk *stack.Stack) {
 					return
 				}
 			} else if err == tcpip.ErrClosedForReceive {
-				if debug2 {
+				if debug {
 					log.Printf("TODO loopDgramRead closed")
 				}
 				// TODO _, err := ios.dataHandle.Write(nil, ZX_SOCKET_HALF_CLOSE)
@@ -389,7 +388,10 @@ func (ios *iostate) loopDgramRead(stk *stack.Stack) {
 		ios.wq.EventUnregister(&waitEntry)
 
 		out := make([]byte, c_fdio_socket_msg_hdr_len+len(v))
-		writeSocketMsgHdr(out, sender)
+		if err := writeSocketMsgHdr(out, sender); err != nil {
+			// TODO communicate to user
+			log.Printf("writeSocketMsgHdr failed: %v (TODO)", err)
+		}
 		copy(out[c_fdio_socket_msg_hdr_len:], v)
 
 	writeLoop:
@@ -460,7 +462,7 @@ func (ios *iostate) loopDgramWrite(stk *stack.Stack) {
 
 		ios.wq.EventRegister(&waitEntry, waiter.EventOut)
 		for {
-			_, err := ios.ep.Write(v[c_fdio_socket_msg_hdr_len:], receiver)
+			_, err := ios.ep.Write(tcpip.SlicePayload(v[c_fdio_socket_msg_hdr_len:]), tcpip.WriteOptions{To: receiver})
 			if err == tcpip.ErrWouldBlock {
 				// Note that Close should not interrupt this wait.
 				<-notifyCh
@@ -480,14 +482,17 @@ func (ios *iostate) loopControl(s *socketServer, cookie int64) {
 	synthesizeClose := true
 	defer func() {
 		if synthesizeClose {
-			zxsocket.Handler(0, zxsocket.ServerHandler(s.zxsocketHandler), cookie)
+			switch err := zxsocket.Handler(0, zxsocket.ServerHandler(s.zxsocketHandler), cookie); mxerror.Status(err) {
+			case zx.ErrOk:
+			default:
+				log.Printf("synethsize close failed: %v", err)
+			}
 		}
 		ios.loopControlDone <- struct{}{}
 	}()
 
 	for {
-		err := zxsocket.Handler(ios.dataHandle, zxsocket.ServerHandler(s.zxsocketHandler), cookie)
-		switch mxerror.Status(err) {
+		switch err := zxsocket.Handler(ios.dataHandle, zxsocket.ServerHandler(s.zxsocketHandler), cookie); mxerror.Status(err) {
 		case zx.ErrOk:
 			// Success. Pass the data to the endpoint and loop.
 		case zx.ErrBadState:
@@ -526,30 +531,30 @@ func (ios *iostate) loopControl(s *socketServer, cookie int64) {
 	}
 }
 
-func (s *socketServer) newIostate(netProto tcpip.NetworkProtocolNumber, transProto tcpip.TransportProtocolNumber, wq *waiter.Queue, ep tcpip.Endpoint, isAccept bool) (localS, peerS zx.Socket, reterr error) {
+func (s *socketServer) newIostate(netProto tcpip.NetworkProtocolNumber, transProto tcpip.TransportProtocolNumber, wq *waiter.Queue, ep tcpip.Endpoint, isAccept bool) (localS, peerS zx.Socket, err error) {
 	ios := &iostate{
-		netProto:         netProto,
-		transProto:       transProto,
-		wq:               wq,
-		ep:               ep,
-		refs:             1,
-		loopControlDone:  make(chan struct{}),
-		loopWriteDone:    make(chan struct{}),
-		loopReadClosing:  make(chan struct{}, 1),
+		netProto:        netProto,
+		transProto:      transProto,
+		wq:              wq,
+		ep:              ep,
+		refs:            1,
+		loopControlDone: make(chan struct{}),
+		loopWriteDone:   make(chan struct{}),
+		loopReadClosing: make(chan struct{}, 1),
 	}
 	switch transProto {
-	case tcp.ProtocolNumber, udp.ProtocolNumber, ipv4.PingProtocolNumber:
+	case tcp.ProtocolNumber, udp.ProtocolNumber, ping.ProtocolNumber4:
 		var t uint32
-		if transProto == tcp.ProtocolNumber {
+		switch transProto {
+		case tcp.ProtocolNumber:
 			t = zx.SocketStream
-		} else {
+		case udp.ProtocolNumber:
 			t = zx.SocketDatagram
 		}
 		t |= zx.SocketHasControl
 		if !isAccept {
 			t |= zx.SocketHasAccept
 		}
-		var err error
 		localS, peerS, err = zx.NewSocket(t)
 		if err != nil {
 			return zx.Socket(zx.HandleInvalid), zx.Socket(zx.HandleInvalid), err
@@ -566,9 +571,13 @@ func (s *socketServer) newIostate(netProto tcpip.NetworkProtocolNumber, transPro
 	s.mu.Unlock()
 
 	defer func() {
-		if reterr != nil {
-			ios.dataHandle.Close()
-			peerS.Close()
+		if err != nil {
+			if err := ios.dataHandle.Close(); err != nil {
+				log.Printf("data handle close failed: %v", err)
+			}
+			if err := peerS.Close(); err != nil {
+				log.Printf("peer socket close failed: %v", err)
+			}
 
 			s.mu.Lock()
 			delete(s.io, newCookie)
@@ -582,7 +591,7 @@ func (s *socketServer) newIostate(netProto tcpip.NetworkProtocolNumber, transPro
 	case tcp.ProtocolNumber:
 		go ios.loopStreamRead(s.stack)
 		go ios.loopStreamWrite(s.stack)
-	case udp.ProtocolNumber, ipv4.PingProtocolNumber:
+	case udp.ProtocolNumber, ping.ProtocolNumber4:
 		go ios.loopDgramRead(s.stack)
 		go ios.loopDgramWrite(s.stack)
 	}
@@ -749,12 +758,12 @@ func (s *socketServer) opGetSockOpt(ios *iostate, msg *zxsocket.Msg) zx.Status {
 			ios.ep.GetSockOpt(&o)
 			binary.LittleEndian.PutUint32(val.optval[:], uint32(o))
 			val.optlen = c_socklen(4)
-		case tcpip.InfoOption:
+		case tcpip.TCPInfoOption:
 			ios.ep.GetSockOpt(&o)
 			info := c_mxrio_sockopt_tcp_info{
 				// Microseconds.
-				rtt:    uint32(o.Rtt.Nanoseconds() / 1000),
-				rttvar: uint32(o.Rttvar.Nanoseconds() / 1000),
+				rtt:    uint32(o.RTT.Nanoseconds() / 1000),
+				rttvar: uint32(o.RTTVar.Nanoseconds() / 1000),
 			}
 			info.Encode(&val)
 		default:
@@ -794,7 +803,7 @@ func (s *socketServer) opBind(ios *iostate, msg *zxsocket.Msg) (status zx.Status
 		}
 		return errStatus(err)
 	}
-	if debug2 {
+	if debug {
 		defer func() {
 			log.Printf("bind(%+v): %v", *addr, status)
 		}()
@@ -822,21 +831,27 @@ func (s *socketServer) buildIfInfos() *c_netc_get_if_info {
 	defer s.ns.mu.Unlock()
 	index := uint32(0)
 	for nicid, ifs := range s.ns.ifStates {
-		if ifs.nic.Addr == header.IPv4Loopback {
+		if ifs.nic.Addr == ipv4Loopback {
 			continue
 		}
 		rep.info[index].index = uint16(index + 1)
 		rep.info[index].flags |= NETC_IFF_UP
 		copy(rep.info[index].name[:], ifs.nic.Name)
-		writeSockaddrStorage(&rep.info[index].addr, tcpip.FullAddress{NIC: nicid, Addr: ifs.nic.Addr})
-		writeSockaddrStorage(&rep.info[index].netmask, tcpip.FullAddress{NIC: nicid, Addr: tcpip.Address(ifs.nic.Netmask)})
+		if _, err := writeSockaddrStorage(&rep.info[index].addr, tcpip.FullAddress{NIC: nicid, Addr: ifs.nic.Addr}); err != nil {
+			log.Printf("writeSockaddrStorage of address failed: %v", err)
+		}
+		if _, err := writeSockaddrStorage(&rep.info[index].netmask, tcpip.FullAddress{NIC: nicid, Addr: tcpip.Address(ifs.nic.Netmask)}); err != nil {
+			log.Printf("writeSockaddrStorage of netmask failed: %v", err)
+		}
 
 		// Long-hand for: broadaddr = ifs.nic.Addr | ^ifs.nic.Netmask
 		broadaddr := []byte(ifs.nic.Addr)
 		for i := range broadaddr {
 			broadaddr[i] |= ^ifs.nic.Netmask[i]
 		}
-		writeSockaddrStorage(&rep.info[index].broadaddr, tcpip.FullAddress{NIC: nicid, Addr: tcpip.Address(broadaddr)})
+		if _, err := writeSockaddrStorage(&rep.info[index].broadaddr, tcpip.FullAddress{NIC: nicid, Addr: tcpip.Address(broadaddr)}); err != nil {
+			log.Printf("writeSockaddrStorage of broadaddr failed: %v", err)
+		}
 		index++
 	}
 	rep.n_info = index
@@ -879,7 +894,7 @@ func (s *socketServer) opIoctl(ios *iostate, msg *zxsocket.Msg) zx.Status {
 		lastIfInfo.info[requestedIndex].Encode(msg)
 		return zx.ErrOk
 	case ioctlNetcGetNodename:
-		nodename, status, err := ns.deviceSettings.GetString(deviceSettingsManagerNodenameKey)
+		nodename, status, err := s.ns.deviceSettings.GetString(deviceSettingsManagerNodenameKey)
 		if err != nil {
 			log.Printf("ioctlNetcGetNodename: error accessing device settings: %s\n", err)
 			nodename = defaultNodename // defined in netstack.go
@@ -931,7 +946,7 @@ func (s *socketServer) opGetSockName(ios *iostate, msg *zxsocket.Msg) zx.Status 
 	if err != nil {
 		return mxNetError(err)
 	}
-	if debug2 {
+	if debug {
 		log.Printf("getsockname(): %v", a)
 	}
 	return fdioSockAddrReply(a, msg)
@@ -1074,7 +1089,7 @@ func (s *socketServer) opConnect(ios *iostate, msg *zxsocket.Msg) (status zx.Sta
 		}
 		return errStatus(err)
 	}
-	if debug2 {
+	if debug {
 		defer func() {
 			log.Printf("connect(%+v): %v", *addr, status)
 		}()
@@ -1086,9 +1101,9 @@ func (s *socketServer) opConnect(ios *iostate, msg *zxsocket.Msg) (status zx.Sta
 		// connect to. Until that exists, we assume localhost.
 		switch ios.netProto {
 		case ipv4.ProtocolNumber:
-			addr.Addr = header.IPv4Loopback
+			addr.Addr = ipv4Loopback
 		case ipv6.ProtocolNumber:
-			addr.Addr = header.IPv6Loopback
+			addr.Addr = ipv6Loopback
 		}
 	}
 
@@ -1127,10 +1142,12 @@ func (s *socketServer) opConnect(ios *iostate, msg *zxsocket.Msg) (status zx.Sta
 	}
 	ios.wq.EventUnregister(&waitEntry)
 	if e != nil {
-		log.Printf("connect: addr=%v, %v", *addr, e)
+		if debug {
+			log.Printf("connect: addr=%v, %v", *addr, e)
+		}
 		return mxNetError(e)
 	}
-	if debug2 {
+	if debug {
 		log.Printf("connect: connected")
 	}
 	if ios.transProto == tcp.ProtocolNumber {
@@ -1179,7 +1196,9 @@ func (s *socketServer) opClose(ios *iostate, cookie cookie) zx.Status {
 		}
 
 		ios.ep.Close()
-		ios.dataHandle.Close()
+		if err := ios.dataHandle.Close(); err != nil {
+			log.Printf("data handle close failed: %v", err)
+		}
 	}()
 
 	return zx.ErrOk
@@ -1188,7 +1207,7 @@ func (s *socketServer) opClose(ios *iostate, cookie cookie) zx.Status {
 func (s *socketServer) zxsocketHandler(msg *zxsocket.Msg, rh zx.Socket, cookieVal int64) zx.Status {
 	cookie := cookie(cookieVal)
 	op := msg.Op()
-	if debug2 {
+	if debug {
 		log.Printf("zxsocketHandler: op=%v, len=%d, arg=%v, hcount=%d", op, msg.Datalen, msg.Arg, msg.Hcount)
 	}
 

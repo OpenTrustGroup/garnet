@@ -6,7 +6,7 @@
 
 #include "mock_device.h"
 
-#include <wlan/mlme/clock.h>
+#include <lib/timekeeper/clock.h>
 #include <wlan/mlme/client/channel_scheduler.h>
 #include <wlan/mlme/device_interface.h>
 #include <wlan/mlme/mac_frame.h>
@@ -21,6 +21,7 @@
 #include <fuchsia/wlan/mlme/c/fidl.h>
 #include <fuchsia/wlan/mlme/cpp/fidl.h>
 #include <gtest/gtest.h>
+#include <zircon/status.h>
 
 #include <cstring>
 
@@ -40,14 +41,11 @@ template <typename T>
 static fbl::unique_ptr<Packet> IntoPacket(const T& msg, uint32_t ordinal = 42) {
     // fidl2 doesn't have a way to get the serialized size yet. 4096 bytes should be enough for
     // everyone.
-    constexpr size_t kBufLen = 4096;
-
-    auto buffer = GetBuffer(kBufLen);
-    memset(buffer->data(), 0, kBufLen);
-    auto pkt = fbl::make_unique<Packet>(fbl::move(buffer), kBufLen);
-    pkt->set_peer(Packet::Peer::kService);
-    SerializeServiceMsg(pkt.get(), ordinal, msg.get());
-    return fbl::move(pkt);
+    const size_t kBufLen = 4096;
+    auto packet = GetSvcPacket(kBufLen);
+    memset(packet->mut_data(), 0, kBufLen);
+    SerializeServiceMsg(packet.get(), ordinal, msg.get());
+    return fbl::move(packet);
 }
 
 struct MockOnChannelHandler : OnChannelHandler {
@@ -59,9 +57,8 @@ struct MockOnChannelHandler : OnChannelHandler {
 class ScannerTest : public ::testing::Test {
    public:
     ScannerTest()
-      : chan_sched_(&on_channel_handler_, &mock_dev_, mock_dev_.CreateTimer(1u)),
-        scanner_(&mock_dev_, &chan_sched_)
-    {
+        : chan_sched_(&on_channel_handler_, &mock_dev_, mock_dev_.CreateTimer(1u)),
+          scanner_(&mock_dev_, &chan_sched_) {
         mock_dev_.SetChannel(wlan_channel_t{.primary = 11, .cbw = CBW20});
         SetupMessages();
     }
@@ -69,14 +66,15 @@ class ScannerTest : public ::testing::Test {
    protected:
     void SetupMessages() {
         req_ = wlan_mlme::ScanRequest::New();
+        req_->txn_id = 123;
         req_->channel_list.resize(0);
         req_->channel_list->push_back(1);
         req_->max_channel_time = 1u;
-        req_->ssid = "";
+        req_->ssid.resize(0);
     }
 
     zx_status_t Start() {
-        auto pkt = IntoPacket(req_, fuchsia_wlan_mlme_MLMEScanConfOrdinal);
+        auto pkt = IntoPacket(req_, fuchsia_wlan_mlme_MLMEStartScanOrdinal);
         MlmeMsg<wlan_mlme::ScanRequest> start_req;
         if (MlmeMsg<wlan_mlme::ScanRequest>::FromPacket(fbl::move(pkt), &start_req) != ZX_OK) {
             return ZX_ERR_IO;
@@ -84,12 +82,24 @@ class ScannerTest : public ::testing::Test {
         return scanner_.Start(start_req);
     }
 
-    zx_status_t DeserializeScanResponse() {
-        return mock_dev_.GetQueuedServiceMsg(fuchsia_wlan_mlme_MLMEScanConfOrdinal, &resp_);
+    wlan_mlme::ScanResult ExpectScanResult() {
+        wlan_mlme::ScanResult result;
+        zx_status_t st =
+            mock_dev_.GetQueuedServiceMsg(fuchsia_wlan_mlme_MLMEOnScanResultOrdinal, &result);
+        EXPECT_EQ(ZX_OK, st);
+        return result;
+    }
+
+    wlan_mlme::ScanEnd ExpectScanEnd() {
+        wlan_mlme::ScanEnd scan_end;
+        zx_status_t st =
+            mock_dev_.GetQueuedServiceMsg(fuchsia_wlan_mlme_MLMEOnScanEndOrdinal, &scan_end);
+        EXPECT_EQ(ZX_OK, st);
+        EXPECT_EQ(123u, scan_end.txn_id);
+        return scan_end;
     }
 
     wlan_mlme::ScanRequestPtr req_;
-    wlan_mlme::ScanConfirm resp_;
     MockDevice mock_dev_;
     MockOnChannelHandler on_channel_handler_;
     ChannelScheduler chan_sched_;
@@ -116,9 +126,8 @@ TEST_F(ScannerTest, Start_InvalidChannelTimes) {
     EXPECT_FALSE(scanner_.IsRunning());
     EXPECT_EQ(11u, mock_dev_.GetChannelNumber());
 
-    EXPECT_EQ(ZX_OK, DeserializeScanResponse());
-    EXPECT_EQ(0u, resp_.bss_description_set->size());
-    EXPECT_EQ(wlan_mlme::ScanResultCodes::INVALID_ARGS, resp_.result_code);
+    auto scan_end = ExpectScanEnd();
+    EXPECT_EQ(wlan_mlme::ScanResultCodes::INVALID_ARGS, scan_end.code);
 }
 
 TEST_F(ScannerTest, Start_NoChannels) {
@@ -131,9 +140,8 @@ TEST_F(ScannerTest, Start_NoChannels) {
     EXPECT_FALSE(scanner_.IsRunning());
     EXPECT_EQ(11u, mock_dev_.GetChannelNumber());
 
-    EXPECT_EQ(ZX_OK, DeserializeScanResponse());
-    EXPECT_EQ(0u, resp_.bss_description_set->size());
-    EXPECT_EQ(wlan_mlme::ScanResultCodes::INVALID_ARGS, resp_.result_code);
+    auto scan_end = ExpectScanEnd();
+    EXPECT_EQ(wlan_mlme::ScanResultCodes::INVALID_ARGS, scan_end.code);
 }
 
 TEST_F(ScannerTest, Reset) {
@@ -191,13 +199,12 @@ TEST_F(ScannerTest, ScanResponse) {
     mock_dev_.SetTime(zx::time(1));
     chan_sched_.HandleTimeout();
 
-    EXPECT_EQ(ZX_OK, DeserializeScanResponse());
-    ASSERT_EQ(1u, resp_.bss_description_set->size());
-    EXPECT_EQ(wlan_mlme::ScanResultCodes::SUCCESS, resp_.result_code);
-
-    auto& bss = resp_.bss_description_set->at(0);
+    auto bss = ExpectScanResult().bss;
     EXPECT_EQ(0, std::memcmp(kBeacon + 16, bss.bssid.data(), 6));
-    EXPECT_STREQ("test ssid", bss.ssid.get().c_str());
+    EXPECT_EQ(bss.ssid->size(), static_cast<size_t>(9));
+
+    const uint8_t ssid[] = {'t', 'e', 's', 't', ' ', 's', 's', 'i', 'd'};
+    EXPECT_EQ(0, std::memcmp(ssid, bss.ssid->data(), sizeof(ssid)));
     EXPECT_EQ(wlan_mlme::BSSTypes::INFRASTRUCTURE, bss.bss_type);
     EXPECT_EQ(100u, bss.beacon_period);
     EXPECT_EQ(1024u, bss.timestamp);
@@ -205,6 +212,9 @@ TEST_F(ScannerTest, ScanResponse) {
     EXPECT_EQ(-75, bss.rssi_dbm);
     EXPECT_EQ(WLAN_RCPI_DBMH_INVALID, bss.rcpi_dbmh);
     EXPECT_EQ(30, bss.rsni_dbh);
+
+    auto scan_end = ExpectScanEnd();
+    EXPECT_EQ(wlan_mlme::ScanResultCodes::SUCCESS, scan_end.code);
 }
 
 }  // namespace

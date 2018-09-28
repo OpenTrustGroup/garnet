@@ -12,14 +12,14 @@
 #include <wlan/mlme/client/client_mlme.h>
 #include <wlan/mlme/debug.h>
 #include <wlan/mlme/device_interface.h>
-#include <wlan/mlme/frame_dispatcher.h>
-#include <wlan/mlme/frame_handler.h>
 #include <wlan/mlme/packet.h>
 #include <wlan/mlme/service.h>
 #include <wlan/protocol/mac.h>
 #include <zircon/fidl.h>
+#include <zircon/status.h>
 #include <zircon/types.h>
 
+#include <fuchsia/wlan/minstrel/cpp/fidl.h>
 #include <fuchsia/wlan/mlme/c/fidl.h>
 #include <fuchsia/wlan/mlme/cpp/fidl.h>
 
@@ -34,6 +34,7 @@
 namespace wlan {
 
 namespace wlan_mlme = ::fuchsia::wlan::mlme;
+namespace wlan_minstrel = ::fuchsia::wlan::minstrel;
 namespace wlan_stats = ::fuchsia::wlan::stats;
 
 Dispatcher::Dispatcher(DeviceInterface* device, fbl::unique_ptr<Mlme> mlme)
@@ -74,25 +75,25 @@ zx_status_t Dispatcher::HandlePacket(fbl::unique_ptr<Packet> packet) {
     case Packet::Peer::kEthernet:
         status = mlme_->HandleFramePacket(fbl::move(packet));
         break;
-    case Packet::Peer::kWlan: {
-        auto fc = packet->field<FrameControl>(0);
-        switch (fc->type()) {
-        case FrameType::kManagement:
-            WLAN_STATS_INC(mgmt_frame.in);
-            break;
-        case FrameType::kControl:
-            WLAN_STATS_INC(ctrl_frame.in);
-            break;
-        case FrameType::kData:
-            WLAN_STATS_INC(data_frame.in);
-            break;
-        default:
-            break;
-        }
+    case Packet::Peer::kWlan:
+        if (auto fc = packet->field<FrameControl>(0)) {
+            switch (fc->type()) {
+            case FrameType::kManagement:
+                WLAN_STATS_INC(mgmt_frame.in);
+                break;
+            case FrameType::kControl:
+                WLAN_STATS_INC(ctrl_frame.in);
+                break;
+            case FrameType::kData:
+                WLAN_STATS_INC(data_frame.in);
+                break;
+            default:
+                break;
+            }
 
-        status = mlme_->HandleFramePacket(fbl::move(packet));
+            status = mlme_->HandleFramePacket(fbl::move(packet));
+        }
         break;
-    }
     default:
         break;
     }
@@ -140,8 +141,14 @@ zx_status_t Dispatcher::HandleSvcPacket(fbl::unique_ptr<Packet> packet) {
         return HandleDeviceQueryRequest();
     }
 
-    if (hdr->ordinal == fuchsia_wlan_mlme_MLMEStatsQueryReqOrdinal) {
+    // Messages in wlan_mlme_ext.fidl does not involve MLME.
+    switch (hdr->ordinal) {
+    case fuchsia_wlan_mlme_MLMEStatsQueryReqOrdinal:
         return HandleMlmeStats(hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEMinstrelListReqOrdinal:
+        return HandleMinstrelPeerList(hdr->ordinal);
+    case fuchsia_wlan_mlme_MLMEMinstrelStatsReqOrdinal:
+        return HandleMinstrelTxStats(fbl::move(packet), hdr->ordinal);
     }
 
     switch (hdr->ordinal) {
@@ -188,24 +195,6 @@ zx_status_t Dispatcher::HandleMlmeMessage(fbl::unique_ptr<Packet> packet, uint32
     return mlme_->HandleMlmeMsg(msg);
 }
 
-template <typename T> zx_status_t Dispatcher::SendServiceMessage(uint32_t ordinal, T* msg) const {
-    // fidl2 doesn't have a way to get the serialized size yet. 4096 bytes should be enough for
-    // everyone.
-    size_t buf_len = 4096;
-    // size_t buf_len = sizeof(fidl_message_header_t) + resp->GetSerializedSize();
-    fbl::unique_ptr<Buffer> buffer = GetBuffer(buf_len);
-    if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
-
-    auto packet = fbl::make_unique<Packet>(std::move(buffer), buf_len);
-    packet->set_peer(Packet::Peer::kService);
-    zx_status_t status = SerializeServiceMsg(packet.get(), ordinal, msg);
-    if (status != ZX_OK) {
-        errorf("could not serialize MLME primitive: %d\n", ordinal);
-        return status;
-    }
-    return device_->SendService(fbl::move(packet));
-}
-
 zx_status_t Dispatcher::HandleDeviceQueryRequest() {
     debugfn();
 
@@ -248,7 +237,7 @@ zx_status_t Dispatcher::HandleDeviceQueryRequest() {
         resp.bands->push_back(std::move(band));
     }
 
-    return SendServiceMessage(fuchsia_wlan_mlme_MLMEDeviceQueryConfOrdinal, &resp);
+    return SendServiceMsg(device_, &resp, fuchsia_wlan_mlme_MLMEDeviceQueryConfOrdinal);
 }
 
 zx_status_t Dispatcher::HandleMlmeStats(uint32_t ordinal) const {
@@ -256,7 +245,45 @@ zx_status_t Dispatcher::HandleMlmeStats(uint32_t ordinal) const {
     ZX_DEBUG_ASSERT(ordinal == fuchsia_wlan_mlme_MLMEStatsQueryReqOrdinal);
 
     wlan_mlme::StatsQueryResponse resp = GetStatsToFidl();
-    return SendServiceMessage(fuchsia_wlan_mlme_MLMEStatsQueryRespOrdinal, &resp);
+    return SendServiceMsg(device_, &resp, fuchsia_wlan_mlme_MLMEStatsQueryRespOrdinal);
+}
+
+zx_status_t Dispatcher::HandleMinstrelPeerList(uint32_t ordinal) const {
+    debugfn();
+    ZX_DEBUG_ASSERT(ordinal == fuchsia_wlan_mlme_MLMEMinstrelListReqOrdinal);
+
+    wlan_mlme::MinstrelListResponse resp{};
+    zx_status_t status = device_->GetMinstrelPeers(&resp.peers);
+    if (status != ZX_OK) {
+        errorf("cannot get minstrel peer list: %s\n", zx_status_get_string(status));
+    }
+    return SendServiceMsg(device_, &resp, fuchsia_wlan_mlme_MLMEMinstrelListRespOrdinal);
+}
+
+zx_status_t Dispatcher::HandleMinstrelTxStats(fbl::unique_ptr<wlan::Packet> packet,
+                                              uint32_t ordinal) const {
+    debugfn();
+    ZX_DEBUG_ASSERT(ordinal == fuchsia_wlan_mlme_MLMEMinstrelStatsReqOrdinal);
+
+    wlan_mlme::MinstrelStatsResponse resp{};
+    MlmeMsg<wlan_mlme::MinstrelStatsRequest> req;
+    zx_status_t status =
+        MlmeMsg<wlan_mlme::MinstrelStatsRequest>::FromPacket(fbl::move(packet), &req);
+    if (status != ZX_OK) {
+        errorf("could not deserialize MLME primitive %d: %s\n", ordinal,
+               zx_status_get_string(status));
+        return status;
+    }
+    common::MacAddr addr(req.body()->mac_addr);
+
+    wlan_minstrel::Peer peer;
+    status = device_->GetMinstrelStats(addr, &peer);
+    if (status == ZX_OK) {
+        resp.peer = std::make_unique<wlan_minstrel::Peer>(std::move(peer));
+    } else {
+        errorf("could not get peer stats: %s\n", zx_status_get_string(status));
+    }
+    return SendServiceMsg(device_, &resp, fuchsia_wlan_mlme_MLMEMinstrelStatsRespOrdinal);
 }
 
 void Dispatcher::HwIndication(uint32_t ind) {

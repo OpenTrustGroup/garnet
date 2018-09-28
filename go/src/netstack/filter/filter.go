@@ -15,8 +15,7 @@ import (
 	"github.com/google/netstack/tcpip/ports"
 )
 
-const debugFilter = false
-const debugFilter2 = false
+const debug = false
 
 type Filter struct {
 	enabled     atomic.Value // bool
@@ -54,17 +53,14 @@ func (f *Filter) IsEnabled() bool {
 // Run is the entry point to the packet filter. It should be called from
 // two hook locations in the network stack: one for incoming packets, another
 // for outgoing packets.
-func (f *Filter) Run(dir Direction, netProto tcpip.NetworkProtocolNumber, vv *buffer.VectorisedView) Action {
+func (f *Filter) Run(dir Direction, netProto tcpip.NetworkProtocolNumber, hdr buffer.Prependable, vv buffer.VectorisedView) Action {
 	if f.enabled.Load().(bool) == false {
 		// The filter is disabled.
 		return Pass
 	}
 
-	b := vv.First()
-	var plb []byte
-	if len(vv.Views()) >= 2 {
-		plb = (vv.Views())[1]
-	}
+	b := hdr.View()
+	plb := vv.First()
 
 	// Lock the state maps.
 	// TODO: Improve concurrency with more granular locking.
@@ -82,7 +78,7 @@ func (f *Filter) Run(dir Direction, netProto tcpip.NetworkProtocolNumber, vv *bu
 	case header.IPv4ProtocolNumber:
 		ipv4 := header.IPv4(b)
 		if !ipv4.IsValid(len(b) + len(plb)) {
-			if debugFilter {
+			if debug {
 				log.Printf("packet filter: ipv4 packet is not valid")
 			}
 			return Drop
@@ -95,7 +91,7 @@ func (f *Filter) Run(dir Direction, netProto tcpip.NetworkProtocolNumber, vv *bu
 	case header.IPv6ProtocolNumber:
 		ipv6 := header.IPv6(b)
 		if !ipv6.IsValid(len(b) + len(plb)) {
-			if debugFilter {
+			if debug {
 				log.Printf("packet filter: ipv6 packet is not valid")
 			}
 			return Drop
@@ -109,7 +105,7 @@ func (f *Filter) Run(dir Direction, netProto tcpip.NetworkProtocolNumber, vv *bu
 		// TODO: Anything?
 		return Pass
 	default:
-		if debugFilter {
+		if debug {
 			log.Printf("packet filter: drop unknown network protocol: %v (%s)", netProto, dir)
 		}
 		return Drop
@@ -126,7 +122,7 @@ func (f *Filter) Run(dir Direction, netProto tcpip.NetworkProtocolNumber, vv *bu
 	case header.TCPProtocolNumber:
 		return f.runForTCP(dir, netProto, srcAddr, dstAddr, payloadLength, b, th, plb)
 	default:
-		if debugFilter {
+		if debug {
 			log.Printf("packet filter: %d: drop unknown transport protocol: %d", dir, transProto)
 		}
 		return Drop
@@ -135,7 +131,7 @@ func (f *Filter) Run(dir Direction, netProto tcpip.NetworkProtocolNumber, vv *bu
 
 func (f *Filter) runForICMPv4(dir Direction, srcAddr, dstAddr tcpip.Address, payloadLength uint16, b, th, plb []byte) Action {
 	if s, err := f.states.findStateICMPv4(dir, header.IPv4ProtocolNumber, header.ICMPv4ProtocolNumber, srcAddr, dstAddr, payloadLength, th, plb); s != nil {
-		if debugFilter2 {
+		if debug {
 			log.Printf("packet filter: icmp state found: %v", s)
 		}
 
@@ -175,7 +171,7 @@ func (f *Filter) runForICMPv4(dir Direction, srcAddr, dstAddr tcpip.Address, pay
 
 		return Pass
 	} else if err != nil {
-		if debugFilter {
+		if debug {
 			log.Printf("packet filter: %v", err)
 		}
 		return Drop
@@ -199,7 +195,7 @@ func (f *Filter) runForICMPv4(dir Direction, srcAddr, dstAddr tcpip.Address, pay
 	if rm != nil {
 		if rm.log {
 			// TODO: Improve the log format.
-			log.Printf("packet filter: Rule matched: %v", rm)
+			log.Printf("packet filter: Rule matched: %+v", rm)
 		}
 		if rm.action == DropReset {
 			if nat != nil {
@@ -221,7 +217,7 @@ func (f *Filter) runForICMPv4(dir Direction, srcAddr, dstAddr tcpip.Address, pay
 
 func (f *Filter) runForUDP(dir Direction, netProto tcpip.NetworkProtocolNumber, srcAddr, dstAddr tcpip.Address, payloadLength uint16, b, th, plb []byte) Action {
 	if len(th) < header.UDPMinimumSize {
-		if debugFilter2 {
+		if debug {
 			log.Printf("packet filter: udp packet too short")
 		}
 		return Drop
@@ -231,7 +227,7 @@ func (f *Filter) runForUDP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 	dstPort := udp.DestinationPort()
 
 	if s, err := f.states.findStateUDP(dir, netProto, header.UDPProtocolNumber, srcAddr, srcPort, dstAddr, dstPort, payloadLength, th); s != nil {
-		if debugFilter2 {
+		if debug {
 			log.Printf("packet filter: udp state found: %v", s)
 		}
 		// If NAT or RDR is in effect, rewrite address and port.
@@ -256,7 +252,7 @@ func (f *Filter) runForUDP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 
 		return Pass
 	} else if err != nil {
-		if debugFilter {
+		if debug {
 			log.Printf("packet filter: %v", err)
 		}
 		return Drop
@@ -272,7 +268,7 @@ func (f *Filter) runForUDP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 	switch dir {
 	case Incoming:
 		if rdr = f.matchRDR(header.UDPProtocolNumber, dstAddr, dstPort); rdr != nil {
-			if debugFilter2 {
+			if debug {
 				log.Printf("packet filter: RDR rule matched: proto: %d, dstAddr: %s, dstPort: %d, newDstAddr: %s, newDstPort: %d, nic: %d", rdr.transProto, rdr.dstAddr, rdr.dstPort, rdr.newDstAddr, rdr.newDstPort, rdr.nic)
 			}
 			// Rewrite dstAddr and dstPort in the packet.
@@ -281,7 +277,7 @@ func (f *Filter) runForUDP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 			dstAddr = rdr.newDstAddr
 			origPort = dstPort
 			dstPort = rdr.newDstPort
-			if debugFilter2 {
+			if debug {
 				log.Printf("packet filter: RDR: rewrite orig(%s:%d) with new(%s:%d)", origAddr, origPort, dstAddr, dstPort)
 			}
 			switch netProto {
@@ -293,7 +289,7 @@ func (f *Filter) runForUDP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 		}
 	case Outgoing:
 		if nat = f.matchNAT(header.UDPProtocolNumber, srcAddr); nat != nil {
-			if debugFilter2 {
+			if debug {
 				log.Printf("packet filter: NAT rule matched: proto: %d, srcNet: %s(%s), srcAddr: %s, nic: %d", nat.transProto, nat.srcNet.ID(), tcpip.Address(nat.srcNet.Mask()), nat.newSrcAddr, nat.nic)
 			}
 			newAddr = nat.newSrcAddr
@@ -302,7 +298,7 @@ func (f *Filter) runForUDP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 			var e *tcpip.Error
 			newPort, e = f.portManager.ReservePort(netProtos, header.UDPProtocolNumber, newAddr, 0)
 			if e != nil {
-				if debugFilter {
+				if debug {
 					log.Printf("packet filter: ReservePort: %v", e)
 				}
 				return Drop
@@ -313,7 +309,7 @@ func (f *Filter) runForUDP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 			srcAddr = newAddr
 			origPort = srcPort
 			srcPort = newPort
-			if debugFilter2 {
+			if debug {
 				log.Printf("packet filter: NAT: rewrite orig(%s:%d) with new(%s:%d)", origAddr, origPort, srcAddr, srcPort)
 			}
 			switch netProto {
@@ -330,7 +326,7 @@ func (f *Filter) runForUDP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 	if rm != nil {
 		if rm.log {
 			// TODO: Improve the log format.
-			log.Printf("packet filter: Rule matched: %v", rm)
+			log.Printf("packet filter: Rule matched: %+v", rm)
 		}
 		if rm.action == DropReset {
 			if nat != nil {
@@ -366,7 +362,7 @@ func (f *Filter) runForUDP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 
 func (f *Filter) runForTCP(dir Direction, netProto tcpip.NetworkProtocolNumber, srcAddr, dstAddr tcpip.Address, payloadLength uint16, b, th, plb []byte) Action {
 	if len(th) < header.TCPMinimumSize {
-		if debugFilter {
+		if debug {
 			log.Printf("packet filter: tcp packet too short")
 		}
 		return Drop
@@ -376,7 +372,7 @@ func (f *Filter) runForTCP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 	dstPort := tcp.DestinationPort()
 
 	if s, err := f.states.findStateTCP(dir, netProto, header.TCPProtocolNumber, srcAddr, srcPort, dstAddr, dstPort, payloadLength, th); s != nil {
-		if debugFilter2 {
+		if debug {
 			log.Printf("packet filter: tcp state found: %v", s)
 		}
 
@@ -402,7 +398,7 @@ func (f *Filter) runForTCP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 
 		return Pass
 	} else if err != nil {
-		if debugFilter {
+		if debug {
 			log.Printf("packet filter: %v", err)
 		}
 		return Drop
@@ -439,7 +435,7 @@ func (f *Filter) runForTCP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 			var e *tcpip.Error
 			newPort, e = f.portManager.ReservePort(netProtos, header.TCPProtocolNumber, newAddr, 0)
 			if e != nil {
-				if debugFilter {
+				if debug {
 					log.Printf("packet filter: ReservePort: %v", e)
 				}
 				return Drop
@@ -464,7 +460,7 @@ func (f *Filter) runForTCP(dir Direction, netProto tcpip.NetworkProtocolNumber, 
 	if rm != nil {
 		if rm.log {
 			// TODO: Improve the log format.
-			log.Printf("packet filter: Rule matched: %v", rm)
+			log.Printf("packet filter: Rule matched: %+v", rm)
 		}
 		if rm.action == DropReset {
 			if nat != nil {

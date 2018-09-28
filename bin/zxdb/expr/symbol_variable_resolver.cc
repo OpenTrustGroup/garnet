@@ -8,42 +8,15 @@
 
 #include <algorithm>
 
-#include "garnet/bin/zxdb/client/symbols/symbol_context.h"
-#include "garnet/bin/zxdb/client/symbols/symbol_data_provider.h"
-#include "garnet/bin/zxdb/client/symbols/type.h"
-#include "garnet/bin/zxdb/client/symbols/variable.h"
 #include "garnet/bin/zxdb/expr/expr_value.h"
-#include "garnet/bin/zxdb/expr/resolve_pointer.h"
+#include "garnet/bin/zxdb/expr/resolve_ptr_ref.h"
+#include "garnet/bin/zxdb/symbols/symbol_context.h"
+#include "garnet/bin/zxdb/symbols/symbol_data_provider.h"
+#include "garnet/bin/zxdb/symbols/type.h"
+#include "garnet/bin/zxdb/symbols/variable.h"
 #include "lib/fxl/strings/string_printf.h"
 
 namespace zxdb {
-
-namespace {
-
-// Generates some text describing the validity ranges for a VariableLocation
-// for use in error messages where a variable is not valid.
-//
-// When the debugger is stable we probably want to remove this as it is very
-// noisy and not useful. But with symbol and variable handling is in active
-// development, listing this information can be very helpful.
-std::string DescribeLocationMissError(const SymbolContext& symbol_context,
-                                      uint64_t ip,
-                                      const VariableLocation& loc) {
-  if (loc.locations().empty())
-    return "Completely optimized out.";
-
-  // Describe ranges.
-  std::string result = fxl::StringPrintf("IP = 0x%" PRIx64 ", valid", ip);
-  for (const auto& entry : loc.locations()) {
-    result.append(
-        fxl::StringPrintf(" [0x%" PRIx64 ", 0x%" PRIx64 ")",
-                          symbol_context.RelativeToAbsolute(entry.begin),
-                          symbol_context.RelativeToAbsolute(entry.end)));
-  }
-  return result;
-}
-
-}  // namespace
 
 SymbolVariableResolver::SymbolVariableResolver(
     fxl::RefPtr<SymbolDataProvider> data_provider)
@@ -73,12 +46,17 @@ void SymbolVariableResolver::ResolveVariable(
       var->location().EntryForIP(symbol_context, ip);
   if (!loc_entry) {
     // No DWARF location applies to the current instruction pointer.
-    OnComplete(
-        Err(ErrType::kOptimizedOut,
-            fxl::StringPrintf("The variable '%s' has been optimized out. ",
-                              var->GetAssignedName().c_str()) +
-                DescribeLocationMissError(symbol_context, ip, var->location())),
-        ExprValue());
+    std::string err_str;
+    if (var->location().is_null()) {
+      // With no locations, this variable has been completely optimized out.
+      err_str = fxl::StringPrintf("'%s' has been optimized out.",
+                                  var->GetAssignedName().c_str());
+    } else {
+      // There are locations but none of them match the current IP.
+      err_str = fxl::StringPrintf("'%s' is not available at this address. ",
+                                  var->GetAssignedName().c_str());
+    }
+    OnComplete(Err(ErrType::kOptimizedOut, std::move(err_str)), ExprValue());
     return;
   }
 
@@ -137,18 +115,13 @@ void SymbolVariableResolver::OnDwarfEvalComplete(const Err& err,
     OnComplete(Err(), ExprValue(std::move(type), std::move(data)));
   } else {
     // The DWARF result is a pointer to the value.
-    DoResolveFromAddress(result_int, std::move(type));
+    ResolvePointer(data_provider_, result_int, std::move(type),
+                   [weak_this = weak_factory_.GetWeakPtr()](const Err& err,
+                                                            ExprValue value) {
+                     if (weak_this)
+                       weak_this->OnComplete(err, std::move(value));
+                   });
   }
-}
-
-void SymbolVariableResolver::DoResolveFromAddress(uint64_t address,
-                                                  fxl::RefPtr<Type> type) {
-  ResolvePointer(data_provider_, address, type,
-                 [weak_this = weak_factory_.GetWeakPtr()](const Err& err,
-                                                          ExprValue value) {
-                   if (weak_this)
-                     weak_this->OnComplete(err, std::move(value));
-                 });
 }
 
 void SymbolVariableResolver::OnComplete(const Err& err, ExprValue value) {

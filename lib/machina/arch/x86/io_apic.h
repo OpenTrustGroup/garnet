@@ -10,6 +10,7 @@
 #include <zircon/compiler.h>
 
 #include "garnet/lib/machina/io.h"
+#include "garnet/lib/machina/platform_device.h"
 
 namespace machina {
 
@@ -17,10 +18,12 @@ class Guest;
 class Vcpu;
 
 // Implements the IO APIC.
-class IoApic : public IoHandler {
+class IoApic : public IoHandler, public PlatformDevice {
  public:
   static constexpr size_t kNumRedirects = 48u;
   static constexpr size_t kNumRedirectOffsets = kNumRedirects * 2;
+  static constexpr uint64_t kPhysBase = 0xf8000000;
+  static constexpr uint64_t kMemSize = 0x1000;
 
   // An entry in the redirect table.
   struct RedirectEntry {

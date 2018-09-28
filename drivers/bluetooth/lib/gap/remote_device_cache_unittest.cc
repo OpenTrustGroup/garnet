@@ -16,146 +16,412 @@ namespace btlib {
 namespace gap {
 namespace {
 
+using common::CreateStaticByteBuffer;
+using common::DeviceAddress;
+using common::MutableBufferView;
+using common::StaticByteBuffer;
+
 // All fields are initialized to zero as they are unused in these tests.
 const hci::LEConnectionParameters kTestParams;
 
 constexpr int8_t kTestRSSI = 10;
 
-const common::DeviceAddress kAddrPublic(common::DeviceAddress::Type::kLEPublic,
-                                        "01:02:03:04:05:06");
+const DeviceAddress kAddrBrEdr(DeviceAddress::Type::kBREDR,
+                               "AA:BB:CC:DD:EE:FF");
+const DeviceAddress kAddrLePublic(DeviceAddress::Type::kLEPublic,
+                                  "01:02:03:04:05:06");
 
 // TODO(armansito): Make these adhere to privacy specfication.
-const common::DeviceAddress kAddrRandom(common::DeviceAddress::Type::kLERandom,
-                                        "06:05:04:03:02:01");
-const common::DeviceAddress kAddrAnon(common::DeviceAddress::Type::kLEAnonymous,
-                                      "06:05:04:03:02:01");
+const DeviceAddress kAddrLeRandom(DeviceAddress::Type::kLERandom,
+                                  "06:05:04:03:02:01");
+const DeviceAddress kAddrLeRandom2(DeviceAddress::Type::kLERandom,
+                                   "FF:EE:DD:CC:BB:AA");
+const DeviceAddress kAddrLeAnon(DeviceAddress::Type::kLEAnonymous,
+                                "06:05:04:03:02:01");
+
+const auto kAdvData =
+    CreateStaticByteBuffer(0x05,  // Length
+                           0x09,  // AD type: Complete Local Name
+                           'T', 'e', 's', 't');
+const auto kEirData = kAdvData;
+
 const btlib::sm::LTK kLTK;
+const btlib::sm::Key kKey{};
 
 class GAP_RemoteDeviceCacheTest : public ::gtest::TestLoopFixture {
  public:
   void SetUp() {}
   void TearDown() { RunLoopUntilIdle(); }
+
+ protected:
+  bool NewDevice(const DeviceAddress& addr, bool connectable) {
+    auto* dev = cache_.NewDevice(addr, connectable);
+    if (!dev) {
+      return false;
+    }
+    device_ = dev;
+    return true;
+  }
+
+  RemoteDeviceCache* cache() { return &cache_; }
+  RemoteDevice* device() { return device_; }
+
+ private:
+  RemoteDeviceCache cache_;
+  RemoteDevice* device_;
 };
 
 TEST_F(GAP_RemoteDeviceCacheTest, LookUp) {
-  auto kAdvData0 =
-      common::CreateStaticByteBuffer(0x05, 0x09, 'T', 'e', 's', 't');
-  auto kAdvData1 = common::CreateStaticByteBuffer(
-      0x0C, 0x09, 'T', 'e', 's', 't', ' ', 'D', 'e', 'v', 'i', 'c', 'e');
+  auto kAdvData0 = CreateStaticByteBuffer(0x05, 0x09, 'T', 'e', 's', 't');
+  auto kAdvData1 = CreateStaticByteBuffer(0x0C, 0x09, 'T', 'e', 's', 't', ' ',
+                                          'D', 'e', 'v', 'i', 'c', 'e');
 
-  RemoteDeviceCache cache;
+  EXPECT_FALSE(cache()->FindDeviceByAddress(kAddrLePublic));
+  EXPECT_FALSE(cache()->FindDeviceById("foo"));
 
-  EXPECT_FALSE(cache.FindDeviceByAddress(kAddrPublic));
-  EXPECT_FALSE(cache.FindDeviceById("foo"));
-
-  auto device = cache.NewDevice(kAddrPublic, true);
+  auto device = cache()->NewDevice(kAddrLePublic, true);
   ASSERT_TRUE(device);
+  ASSERT_TRUE(device->le());
   EXPECT_EQ(TechnologyType::kLowEnergy, device->technology());
   EXPECT_TRUE(device->connectable());
   EXPECT_TRUE(device->temporary());
-  EXPECT_EQ(kAddrPublic, device->address());
-  EXPECT_EQ(0u, device->advertising_data().size());
+  EXPECT_EQ(kAddrLePublic, device->address());
+  EXPECT_EQ(0u, device->le()->advertising_data().size());
   EXPECT_EQ(hci::kRSSIInvalid, device->rssi());
 
   // A look up should return the same instance.
-  EXPECT_EQ(device, cache.FindDeviceById(device->identifier()));
-  EXPECT_EQ(device, cache.FindDeviceByAddress(device->address()));
+  EXPECT_EQ(device, cache()->FindDeviceById(device->identifier()));
+  EXPECT_EQ(device, cache()->FindDeviceByAddress(device->address()));
 
   // Adding a device with the same address should return nullptr.
-  EXPECT_FALSE(cache.NewDevice(kAddrPublic, true));
+  EXPECT_FALSE(cache()->NewDevice(kAddrLePublic, true));
 
-  device->SetLEAdvertisingData(kTestRSSI, kAdvData1);
-  EXPECT_TRUE(common::ContainersEqual(kAdvData1, device->advertising_data()));
+  device->MutLe().SetAdvertisingData(kTestRSSI, kAdvData1);
+  EXPECT_TRUE(
+      common::ContainersEqual(kAdvData1, device->le()->advertising_data()));
   EXPECT_EQ(kTestRSSI, device->rssi());
 
-  device->SetLEAdvertisingData(kTestRSSI, kAdvData0);
-  EXPECT_TRUE(common::ContainersEqual(kAdvData0, device->advertising_data()));
+  device->MutLe().SetAdvertisingData(kTestRSSI, kAdvData0);
+  EXPECT_TRUE(
+      common::ContainersEqual(kAdvData0, device->le()->advertising_data()));
   EXPECT_EQ(kTestRSSI, device->rssi());
-}
-
-TEST_F(GAP_RemoteDeviceCacheTest, TryMakeNonTemporaryNonConn) {
-  RemoteDeviceCache cache;
-  auto device = cache.NewDevice(kAddrPublic, false);
-  EXPECT_TRUE(device->temporary());
-  EXPECT_FALSE(device->TryMakeNonTemporary());
-  EXPECT_TRUE(device->temporary());
-}
-
-TEST_F(GAP_RemoteDeviceCacheTest, TryMakeNonTemporaryRandomAddr) {
-  RemoteDeviceCache cache;
-  auto device = cache.NewDevice(kAddrRandom, true);
-  EXPECT_TRUE(device->temporary());
-  EXPECT_FALSE(device->TryMakeNonTemporary());
-  EXPECT_TRUE(device->temporary());
-}
-
-TEST_F(GAP_RemoteDeviceCacheTest, TryMakeNonTemporaryAnonAddr) {
-  RemoteDeviceCache cache;
-  auto device = cache.NewDevice(kAddrAnon, true);
-  EXPECT_TRUE(device->temporary());
-  EXPECT_FALSE(device->TryMakeNonTemporary());
-  EXPECT_TRUE(device->temporary());
-}
-
-TEST_F(GAP_RemoteDeviceCacheTest, TryMakeNonTemporarySuccess) {
-  RemoteDeviceCache cache;
-  auto device = cache.NewDevice(kAddrPublic, true);
-  EXPECT_TRUE(device->temporary());
-  EXPECT_TRUE(device->TryMakeNonTemporary());
-  EXPECT_FALSE(device->temporary());
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest,
-       NewDeviceDoesNotCrashWhenNoCallbackIsReigstered) {
-  RemoteDeviceCache().NewDevice(kAddrPublic, true);
+       NewDeviceDoesNotCrashWhenNoCallbackIsRegistered) {
+  RemoteDeviceCache().NewDevice(kAddrLePublic, true);
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest, ForEachEmpty) {
+  bool found = false;
+  cache()->ForEach([&](const auto&) { found = true; });
+  EXPECT_FALSE(found);
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest, ForEach) {
+  int count = 0;
+  NewDevice(kAddrLePublic, true);
+  cache()->ForEach([&](const auto& dev) {
+    count++;
+    EXPECT_EQ(device()->identifier(), dev.identifier());
+    EXPECT_EQ(device()->address(), dev.address());
+  });
+  EXPECT_EQ(1, count);
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest,
        NewDeviceInvokesCallbackWhenDeviceIsFirstRegistered) {
-  RemoteDeviceCache cache;
   bool was_called = false;
-  cache.set_device_updated_callback(
+  cache()->set_device_updated_callback(
       [&was_called](const auto&) { was_called = true; });
-  cache.NewDevice(kAddrPublic, true);
+  cache()->NewDevice(kAddrLePublic, true);
   EXPECT_TRUE(was_called);
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest,
        NewDeviceDoesNotInvokeCallbackWhenDeviceIsReRegistered) {
-  RemoteDeviceCache cache;
   int call_count = 0;
-  cache.set_device_updated_callback(
+  cache()->set_device_updated_callback(
       [&call_count](const auto&) { ++call_count; });
-  cache.NewDevice(kAddrPublic, true);
-  cache.NewDevice(kAddrPublic, true);
+  cache()->NewDevice(kAddrLePublic, true);
+  cache()->NewDevice(kAddrLePublic, true);
   EXPECT_EQ(1, call_count);
 }
 
-class GAP_RemoteDeviceCacheTest_BondedCallbackTest : public GAP_RemoteDeviceCacheTest {
+TEST_F(GAP_RemoteDeviceCacheTest, NewDeviceIdentityKnown) {
+  EXPECT_TRUE(cache()->NewDevice(kAddrBrEdr, true)->identity_known());
+  EXPECT_TRUE(cache()->NewDevice(kAddrLePublic, true)->identity_known());
+  EXPECT_FALSE(cache()->NewDevice(kAddrLeRandom, true)->identity_known());
+  EXPECT_FALSE(cache()->NewDevice(kAddrLeAnon, false)->identity_known());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest, NewDeviceInitialTechnologyIsClassic) {
+  NewDevice(kAddrBrEdr, true);
+
+  // A device initialized with a BR/EDR address should start out as a
+  // classic-only.
+  ASSERT_TRUE(device());
+  EXPECT_TRUE(device()->bredr());
+  EXPECT_FALSE(device()->le());
+  EXPECT_TRUE(device()->identity_known());
+  EXPECT_EQ(TechnologyType::kClassic, device()->technology());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest, NewDeviceInitialTechnologyLowEnergy) {
+  // LE address types should initialize the device as LE-only.
+  auto* le_publ_dev = cache()->NewDevice(kAddrLePublic, true /*connectable*/);
+  auto* le_rand_dev = cache()->NewDevice(kAddrLeRandom, true /*connectable*/);
+  auto* le_anon_dev = cache()->NewDevice(kAddrLeAnon, false /*connectable*/);
+  ASSERT_TRUE(le_publ_dev);
+  ASSERT_TRUE(le_rand_dev);
+  ASSERT_TRUE(le_anon_dev);
+  EXPECT_TRUE(le_publ_dev->le());
+  EXPECT_TRUE(le_rand_dev->le());
+  EXPECT_TRUE(le_anon_dev->le());
+  EXPECT_FALSE(le_publ_dev->bredr());
+  EXPECT_FALSE(le_rand_dev->bredr());
+  EXPECT_FALSE(le_anon_dev->bredr());
+  EXPECT_EQ(TechnologyType::kLowEnergy, le_publ_dev->technology());
+  EXPECT_EQ(TechnologyType::kLowEnergy, le_rand_dev->technology());
+  EXPECT_EQ(TechnologyType::kLowEnergy, le_anon_dev->technology());
+  EXPECT_TRUE(le_publ_dev->identity_known());
+  EXPECT_FALSE(le_rand_dev->identity_known());
+  EXPECT_FALSE(le_anon_dev->identity_known());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest,
+       ClassicDeviceBecomesDualModeWithAdvertisingData) {
+  NewDevice(kAddrBrEdr, true);
+  ASSERT_TRUE(device());
+  ASSERT_TRUE(device()->bredr());
+  ASSERT_FALSE(device()->le());
+
+  device()->MutLe().SetAdvertisingData(kTestRSSI, kAdvData);
+  EXPECT_TRUE(device()->le());
+  EXPECT_EQ(TechnologyType::kDualMode, device()->technology());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest,
+       ClassicDeviceBecomesDualModeWhenConnectedOverLowEnergy) {
+  NewDevice(kAddrBrEdr, true);
+  ASSERT_TRUE(device());
+  ASSERT_TRUE(device()->bredr());
+  ASSERT_FALSE(device()->le());
+
+  device()->MutLe().SetConnectionState(
+      RemoteDevice::ConnectionState::kConnected);
+  EXPECT_TRUE(device()->le());
+  EXPECT_EQ(TechnologyType::kDualMode, device()->technology());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest,
+       ClassicDeviceBecomesDualModeWithLowEnergyConnParams) {
+  NewDevice(kAddrBrEdr, true);
+  ASSERT_TRUE(device());
+  ASSERT_TRUE(device()->bredr());
+  ASSERT_FALSE(device()->le());
+
+  device()->MutLe().SetConnectionParameters({});
+  EXPECT_TRUE(device()->le());
+  EXPECT_EQ(TechnologyType::kDualMode, device()->technology());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest,
+       ClassicDeviceBecomesDualModeWithLowEnergyPreferredConnParams) {
+  NewDevice(kAddrBrEdr, true);
+  ASSERT_TRUE(device());
+  ASSERT_TRUE(device()->bredr());
+  ASSERT_FALSE(device()->le());
+
+  device()->MutLe().SetPreferredConnectionParameters({});
+  EXPECT_TRUE(device()->le());
+  EXPECT_EQ(TechnologyType::kDualMode, device()->technology());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest,
+       LowEnergyDeviceBecomesDualModeWithInquiryData) {
+  NewDevice(kAddrLePublic, true);
+  ASSERT_TRUE(device());
+  ASSERT_TRUE(device()->le());
+  ASSERT_FALSE(device()->bredr());
+
+  hci::InquiryResult ir;
+  ir.bd_addr = kAddrLePublic.value();
+  device()->MutBrEdr().SetInquiryData(ir);
+  EXPECT_TRUE(device()->bredr());
+  EXPECT_EQ(TechnologyType::kDualMode, device()->technology());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest,
+       LowEnergyDeviceBecomesDualModeWhenConnectedOverClassic) {
+  NewDevice(kAddrLePublic, true);
+  ASSERT_TRUE(device());
+  ASSERT_TRUE(device()->le());
+  ASSERT_FALSE(device()->bredr());
+
+  device()->MutBrEdr().SetConnectionState(
+      RemoteDevice::ConnectionState::kConnected);
+  EXPECT_TRUE(device()->bredr());
+  EXPECT_EQ(TechnologyType::kDualMode, device()->technology());
+}
+
+class GAP_RemoteDeviceCacheTest_BondingTest : public GAP_RemoteDeviceCacheTest {
  public:
   void SetUp() {
     was_called_ = false;
-    device_ = cache_.NewDevice(kAddrPublic, true);
-    cache_.set_device_bonded_callback(
+    NewDevice(kAddrLePublic, true);
+    cache()->set_device_bonded_callback(
         [this](const auto&) { was_called_ = true; });
     EXPECT_FALSE(was_called_);
   }
 
  protected:
-  RemoteDeviceCache* cache() { return &cache_; }
-  RemoteDevice* device() { return device_; }
-  bool was_called() const { return was_called_; }
+  bool bonded_callback_called() const { return was_called_; }
 
  private:
-  RemoteDeviceCache cache_;
-  RemoteDevice* device_;
   bool was_called_;
 };
 
-TEST_F(GAP_RemoteDeviceCacheTest_BondedCallbackTest,
-       StoreLTKTriggersBondedCallback) {
-  cache()->StoreLTK(device()->identifier(), kLTK);
-  EXPECT_TRUE(was_called());
+TEST_F(GAP_RemoteDeviceCacheTest_BondingTest,
+       AddBondedDeviceFailsWithExistingId) {
+  sm::PairingData data;
+  data.ltk = kLTK;
+  EXPECT_FALSE(
+      cache()->AddBondedDevice(device()->identifier(), kAddrLePublic, data));
+  EXPECT_FALSE(bonded_callback_called());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest_BondingTest,
+       AddBondedDeviceFailsWithExistingAddress) {
+  sm::PairingData data;
+  data.ltk = kLTK;
+  EXPECT_FALSE(cache()->AddBondedDevice("foo", device()->address(), data));
+  EXPECT_FALSE(bonded_callback_called());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest_BondingTest,
+       AddBondedDeviceFailsWithoutMandatoryKeys) {
+  sm::PairingData data;
+  EXPECT_FALSE(cache()->AddBondedDevice("foo", kAddrLePublic, data));
+  EXPECT_FALSE(bonded_callback_called());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest_BondingTest, AddBondedDeviceSuccess) {
+  const std::string kId("test-id");
+  sm::PairingData data;
+  data.ltk = kLTK;
+
+  EXPECT_TRUE(cache()->AddBondedDevice(kId, kAddrLeRandom, data));
+  auto* dev = cache()->FindDeviceById(kId);
+  ASSERT_TRUE(dev);
+  EXPECT_EQ(dev, cache()->FindDeviceByAddress(kAddrLeRandom));
+  EXPECT_EQ(kId, dev->identifier());
+  EXPECT_EQ(kAddrLeRandom, dev->address());
+  EXPECT_TRUE(dev->identity_known());
+  ASSERT_TRUE(dev->le());
+  EXPECT_TRUE(dev->le()->bonded());
+  ASSERT_TRUE(dev->le()->bond_data());
+  EXPECT_EQ(data, *dev->le()->bond_data());
+
+  // The "new bond" callback should be called when restoring a previously bonded
+  // device.
+  EXPECT_FALSE(bonded_callback_called());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest_BondingTest,
+       StoreLowEnergyBondFailsWithNoKeys) {
+  sm::PairingData data;
+  EXPECT_FALSE(cache()->StoreLowEnergyBond(device()->identifier(), data));
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest_BondingTest, StoreLowEnergyBondDeviceUnknown) {
+  sm::PairingData data;
+  data.ltk = kLTK;
+  EXPECT_FALSE(cache()->StoreLowEnergyBond("foo", data));
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest_BondingTest, StoreLowEnergyBondWithLtk) {
+  ASSERT_TRUE(device()->temporary());
+  ASSERT_TRUE(device()->le());
+  ASSERT_FALSE(device()->le()->bonded());
+
+  sm::PairingData data;
+  data.ltk = kLTK;
+  EXPECT_TRUE(cache()->StoreLowEnergyBond(device()->identifier(), data));
+
+  EXPECT_TRUE(bonded_callback_called());
+  EXPECT_FALSE(device()->temporary());
+  EXPECT_TRUE(device()->le()->bonded());
+  EXPECT_TRUE(device()->le()->bond_data());
+  EXPECT_EQ(data, *device()->le()->bond_data().value());
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest_BondingTest, StoreLowEnergyBondWithCsrk) {
+  ASSERT_TRUE(device()->temporary());
+  ASSERT_TRUE(device()->le());
+  ASSERT_FALSE(device()->le()->bonded());
+
+  sm::PairingData data;
+  data.csrk = kKey;
+  EXPECT_TRUE(cache()->StoreLowEnergyBond(device()->identifier(), data));
+
+  EXPECT_TRUE(bonded_callback_called());
+  EXPECT_FALSE(device()->temporary());
+  EXPECT_TRUE(device()->le()->bonded());
+  EXPECT_TRUE(device()->le()->bond_data());
+  EXPECT_EQ(data, *device()->le()->bond_data().value());
+}
+
+// StoreLowEnergyBond fails if it contains the address of a different,
+// previously known device.
+TEST_F(GAP_RemoteDeviceCacheTest_BondingTest,
+       StoreLowEnergyBondWithExistingDifferentIdentity) {
+  auto* dev = cache()->NewDevice(kAddrLeRandom, true);
+
+  // Assign the other device's address as identity.
+  sm::PairingData data;
+  data.ltk = kLTK;
+  data.identity_address = device()->address();
+  EXPECT_FALSE(cache()->StoreLowEnergyBond(dev->identifier(), data));
+  EXPECT_FALSE(dev->le()->bonded());
+  EXPECT_TRUE(dev->temporary());
+}
+
+// StoreLowEnergyBond success if it contains an identity address that already
+// matches the target device.
+TEST_F(GAP_RemoteDeviceCacheTest_BondingTest,
+       StoreLowEnergyBondWithExistingMatchingIdentity) {
+  sm::PairingData data;
+  data.ltk = kLTK;
+  data.identity_address = device()->address();
+  EXPECT_TRUE(cache()->StoreLowEnergyBond(device()->identifier(), data));
+  EXPECT_TRUE(device()->le()->bonded());
+  EXPECT_EQ(device(), cache()->FindDeviceByAddress(*data.identity_address));
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest_BondingTest,
+       StoreLowEnergyBondWithNewIdentity) {
+  ASSERT_TRUE(NewDevice(kAddrLeRandom, true));
+  ASSERT_FALSE(device()->identity_known());
+
+  sm::PairingData data;
+  data.ltk = kLTK;
+  data.identity_address = kAddrLeRandom2;  // assign a new identity address
+  const auto old_address = device()->address();
+  ASSERT_EQ(device(), cache()->FindDeviceByAddress(old_address));
+  ASSERT_EQ(nullptr, cache()->FindDeviceByAddress(*data.identity_address));
+
+  EXPECT_TRUE(cache()->StoreLowEnergyBond(device()->identifier(), data));
+  EXPECT_TRUE(device()->le()->bonded());
+
+  // Address should have been updated.
+  ASSERT_NE(*data.identity_address, old_address);
+  EXPECT_EQ(*data.identity_address, device()->address());
+  EXPECT_TRUE(device()->identity_known());
+  EXPECT_EQ(device(), cache()->FindDeviceByAddress(*data.identity_address));
+
+  // The old address should still map to |dev|.
+  ASSERT_EQ(device(), cache()->FindDeviceByAddress(old_address));
 }
 
 class GAP_RemoteDeviceCacheTest_UpdateCallbackTest
@@ -163,30 +429,29 @@ class GAP_RemoteDeviceCacheTest_UpdateCallbackTest
  public:
   void SetUp() {
     was_called_ = false;
-    device_ = cache_.NewDevice(kAddrPublic, true);
-    cache_.set_device_updated_callback(
+    NewDevice(kAddrLePublic, true);
+    cache()->set_device_updated_callback(
         [this](const auto&) { was_called_ = true; });
-    ir_.bd_addr = device_->address().value();
-    irr_.bd_addr = device_->address().value();
-    eirep_.bd_addr = device_->address().value();
-    common::MutableBufferView(&eirep_.extended_inquiry_response,
-                              sizeof(eirep_.extended_inquiry_response))
-        .SetToZeros();
+    ir_.bd_addr = device()->address().value();
+    irr_.bd_addr = device()->address().value();
+    eirep_.bd_addr = device()->address().value();
+    eir_data().SetToZeros();
     EXPECT_FALSE(was_called_);
   }
 
  protected:
-  RemoteDeviceCache* cache() { return &cache_; }
-  RemoteDevice* device() { return device_; }
   hci::InquiryResult& ir() { return ir_; }
   hci::InquiryResultRSSI& irr() { return irr_; }
   hci::ExtendedInquiryResultEventParams& eirep() { return eirep_; }
+
+  MutableBufferView eir_data() {
+    return MutableBufferView(&eirep_.extended_inquiry_response,
+                             sizeof(eirep_.extended_inquiry_response));
+  }
   bool was_called() const { return was_called_; }
   void ClearWasCalled() { was_called_ = false; }
 
  private:
-  RemoteDeviceCache cache_;
-  RemoteDevice* device_;
   bool was_called_;
   hci::InquiryResult ir_;
   hci::InquiryResultRSSI irr_;
@@ -195,260 +460,227 @@ class GAP_RemoteDeviceCacheTest_UpdateCallbackTest
 
 TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
        ChangingLEConnectionStateTriggersUpdateCallback) {
-  device()->SetLEConnectionState(RemoteDevice::ConnectionState::kConnected);
+  device()->MutLe().SetConnectionState(
+      RemoteDevice::ConnectionState::kConnected);
   EXPECT_TRUE(was_called());
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
        ChangingBrEdrConnectionStateTriggersUpdateCallback) {
-  device()->SetBREDRConnectionState(RemoteDevice::ConnectionState::kConnected);
+  device()->MutBrEdr().SetConnectionState(
+      RemoteDevice::ConnectionState::kConnected);
   EXPECT_TRUE(was_called());
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       SetLEAdvertisingDataTriggersUpdateCallbackOnNameSet) {
-  device()->SetLEAdvertisingData(
-      kTestRSSI,
-      common::CreateStaticByteBuffer(0x05,  // Length
-                                     0x09,  // AD Type: Complete Local Name
-                                     'T', 'e', 's', 't'));
+       SetAdvertisingDataTriggersUpdateCallbackOnNameSet) {
+  device()->MutLe().SetAdvertisingData(kTestRSSI, kAdvData);
   EXPECT_TRUE(was_called());
+  ASSERT_TRUE(device()->name());
+  EXPECT_EQ("Test", *device()->name());
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       AddExistingBondedDeviceFails) {
-  auto res = cache()->AddBondedDevice(device()->identifier(),
-                                      device()->address(), kLTK);
-  EXPECT_FALSE(res);
-}
-
-TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       SetLEAdvertisingDataUpdateCallbackProvidesUpdatedDevice) {
-  const auto kAdvData =
-      common::CreateStaticByteBuffer(0x05, 0x09, 'T', 'e', 's', 't');
+       SetLowEnergyAdvertisingDataUpdateCallbackProvidesUpdatedDevice) {
   ASSERT_NE(device()->rssi(), kTestRSSI);
   cache()->set_device_updated_callback([&](const auto& updated_dev) {
-    EXPECT_TRUE(
-        common::ContainersEqual(kAdvData, updated_dev.advertising_data()));
+    ASSERT_TRUE(updated_dev.le());
+    EXPECT_TRUE(common::ContainersEqual(kAdvData,
+                                        updated_dev.le()->advertising_data()));
     EXPECT_EQ(updated_dev.rssi(), kTestRSSI);
   });
-  device()->SetLEAdvertisingData(
-      kTestRSSI,
-      common::CreateStaticByteBuffer(0x05,  // Length
-                                     0x09,  // AD Type: Complete Local Name
-                                     'T', 'e', 's', 't'));
+  device()->MutLe().SetAdvertisingData(kTestRSSI, kAdvData);
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       SetLEAdvertisingDataDoesNotTriggerUpdateCallbackOnSameName) {
-  device()->SetLEAdvertisingData(
-      kTestRSSI,
-      common::CreateStaticByteBuffer(0x05,  // Length
-                                     0x09,  // AD Type: Complete Local Name
-                                     'T', 'e', 's', 't'));
+       SetAdvertisingDataDoesNotTriggerUpdateCallbackOnSameName) {
+  device()->MutLe().SetAdvertisingData(kTestRSSI, kAdvData);
   ASSERT_TRUE(was_called());
 
   ClearWasCalled();
-  device()->SetLEAdvertisingData(
-      kTestRSSI,
-      common::CreateStaticByteBuffer(0x05,  // Length
-                                     0x09,  // AD Type: Complete Local Name
-                                     'T', 'e', 's', 't'));
+  device()->MutLe().SetAdvertisingData(kTestRSSI, kAdvData);
   EXPECT_FALSE(was_called());
 }
 
-TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       SetInquiryDataFromInquiryResultTriggersUpdateCallbackOnDeviceClassSet) {
+TEST_F(
+    GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
+    SetBrEdrInquiryDataFromInquiryResultTriggersUpdateCallbackOnDeviceClassSet) {
   ir().class_of_device = common::DeviceClass({0x06, 0x02, 0x02});  // Phone.
-  device()->SetInquiryData(ir());
+  device()->MutBrEdr().SetInquiryData(ir());
   EXPECT_TRUE(was_called());
 }
 
-TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       SetInquiryDataFromInquiryResultUpdateCallbackProvidesUpdatedDevice) {
+TEST_F(
+    GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
+    SetBrEdrInquiryDataFromInquiryResultUpdateCallbackProvidesUpdatedDevice) {
   ir().class_of_device = common::DeviceClass({0x06, 0x02, 0x02});  // Phone.
-  ASSERT_FALSE(device()->device_class().HasValue());
+  ASSERT_FALSE(device()->bredr());
   cache()->set_device_updated_callback([](const auto& updated_dev) {
-    ASSERT_TRUE(updated_dev.device_class().HasValue());
-    EXPECT_EQ(updated_dev.device_class()->major_class(),
+    ASSERT_TRUE(updated_dev.bredr());
+    ASSERT_TRUE(updated_dev.bredr()->device_class());
+    EXPECT_EQ(updated_dev.bredr()->device_class()->major_class(),
               common::DeviceClass::MajorClass(0x02));
   });
-  device()->SetInquiryData(ir());
+  device()->MutBrEdr().SetInquiryData(ir());
 }
 
 TEST_F(
     GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-    SetInquiryDataFromInquiryResultDoesNotTriggerUpdateCallbackOnSameDeviceClass) {
+    SetBrEdrInquiryDataFromInquiryResultDoesNotTriggerUpdateCallbackOnSameDeviceClass) {
   ir().class_of_device = common::DeviceClass({0x06, 0x02, 0x02});  // Phone.
-  device()->SetInquiryData(ir());
+  device()->MutBrEdr().SetInquiryData(ir());
   ASSERT_TRUE(was_called());
 
   ClearWasCalled();
-  device()->SetInquiryData(ir());
+  device()->MutBrEdr().SetInquiryData(ir());
   EXPECT_FALSE(was_called());
 }
 
 TEST_F(
     GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-    SetInquiryDataFromInquiryResultRSSITriggersUpdateCallbackOnDeviceClassSet) {
+    SetBrEdrInquiryDataFromInquiryResultRSSITriggersUpdateCallbackOnDeviceClassSet) {
   irr().class_of_device = common::DeviceClass({0x06, 0x02, 0x02});  // Phone.
-  device()->SetInquiryData(irr());
+  device()->MutBrEdr().SetInquiryData(irr());
   EXPECT_TRUE(was_called());
 }
 
-TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       SetInquiryDataFromInquiryResultRSSIUpdateCallbackProvidesUpdatedDevice) {
+TEST_F(
+    GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
+    SetBrEdrInquiryDataFromInquiryResultRSSIUpdateCallbackProvidesUpdatedDevice) {
   irr().class_of_device = common::DeviceClass({0x06, 0x02, 0x02});  // Phone.
-  ASSERT_FALSE(device()->device_class().HasValue());
+  ASSERT_FALSE(device()->bredr());
   cache()->set_device_updated_callback([](const auto& updated_dev) {
-    ASSERT_TRUE(updated_dev.device_class().HasValue());
-    EXPECT_EQ(updated_dev.device_class()->major_class(),
+    ASSERT_TRUE(updated_dev.bredr()->device_class());
+    EXPECT_EQ(updated_dev.bredr()->device_class()->major_class(),
               common::DeviceClass::MajorClass(0x02));
   });
-  device()->SetInquiryData(irr());
+  device()->MutBrEdr().SetInquiryData(irr());
 }
 
 TEST_F(
     GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-    SetInquiryDataFromInquiryResultRSSIDoesNotTriggerUpdateCallbackOnSameDeviceClass) {
+    SetBrEdrInquiryDataFromInquiryResultRSSIDoesNotTriggerUpdateCallbackOnSameDeviceClass) {
   irr().class_of_device = common::DeviceClass({0x06, 0x02, 0x02});  // Phone.
-  device()->SetInquiryData(irr());
+  device()->MutBrEdr().SetInquiryData(irr());
   ASSERT_TRUE(was_called());
 
   ClearWasCalled();
-  device()->SetInquiryData(irr());
+  device()->MutBrEdr().SetInquiryData(irr());
   EXPECT_FALSE(was_called());
 }
 
-TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       SetInquiryDataFromInquiryResultRSSIDoesNotTriggerUpdateCallbackOnRSSI) {
+TEST_F(
+    GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
+    SetBrEdrInquiryDataFromInquiryResultRSSIDoesNotTriggerUpdateCallbackOnRSSI) {
   irr().rssi = 1;
-  device()->SetInquiryData(irr());
+  device()->MutBrEdr().SetInquiryData(irr());
   ASSERT_TRUE(was_called());  // Callback due to |class_of_device|.
 
   ClearWasCalled();
   irr().rssi = 20;
-  device()->SetInquiryData(irr());
+  device()->MutBrEdr().SetInquiryData(irr());
   EXPECT_FALSE(was_called());
 }
 
 TEST_F(
     GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-    SetInquiryDataFromExtendedInquiryResultEventParamsTriggersUpdateCallbackOnDeviceClassSet) {
+    SetBrEdrInquiryDataFromExtendedInquiryResultEventParamsTriggersUpdateCallbackOnDeviceClassSet) {
   eirep().class_of_device = common::DeviceClass({0x06, 0x02, 0x02});  // Phone.
-  device()->SetInquiryData(eirep());
+  device()->MutBrEdr().SetInquiryData(eirep());
   EXPECT_TRUE(was_called());
 }
 
 TEST_F(
     GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-    SetInquiryDataFromExtendedInquiryResultEventParamsTriggersUpdateCallbackOnNameSet) {
-  device()->SetInquiryData(eirep());
+    SetBrEdrInquiryDataFromExtendedInquiryResultEventParamsTriggersUpdateCallbackOnNameSet) {
+  device()->MutBrEdr().SetInquiryData(eirep());
   ASSERT_TRUE(was_called());  // Callback due to |class_of_device|.
 
   ClearWasCalled();
-  common::MutableBufferView(&eirep().extended_inquiry_response,
-                            sizeof(eirep().extended_inquiry_response))
-      .Write(common::CreateStaticByteBuffer(
-          0x05,  // Payload length.
-          0x09,  // Complete Local Name Data Type.
-          'N', 'a', 'm', 'e'));
-  device()->SetInquiryData(eirep());
+  eir_data().Write(kEirData);
+  device()->MutBrEdr().SetInquiryData(eirep());
   EXPECT_TRUE(was_called());
 }
 
 TEST_F(
     GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-    SetInquiryDataFromExtendedInquiryResultEventParamsUpdateCallbackProvidesUpdatedDevice) {
+    SetBrEdrInquiryDataFromExtendedInquiryResultEventParamsUpdateCallbackProvidesUpdatedDevice) {
   eirep().clock_offset = htole16(1);
   eirep().page_scan_repetition_mode = hci::PageScanRepetitionMode::kR1;
   eirep().rssi = kTestRSSI;
   eirep().class_of_device = common::DeviceClass({0x06, 0x02, 0x02});  // Phone.
-  common::MutableBufferView(&eirep().extended_inquiry_response,
-                            sizeof(eirep().extended_inquiry_response))
-      .Write(common::CreateStaticByteBuffer(
-          0x05,  // Payload length.
-          0x09,  // Complete Local Name Data Type.
-          'N', 'a', 'm', 'e'));
-  ASSERT_FALSE(device()->clock_offset().HasValue());
-  ASSERT_FALSE(device()->page_scan_repetition_mode().HasValue());
-  ASSERT_FALSE(device()->device_class().HasValue());
+  eir_data().Write(kEirData);
+  ASSERT_FALSE(device()->bredr().HasValue());
   ASSERT_FALSE(device()->name().HasValue());
+  ASSERT_EQ(device()->rssi(), hci::kRSSIInvalid);
   cache()->set_device_updated_callback([](const auto& updated_dev) {
-    ASSERT_TRUE(updated_dev.clock_offset().HasValue());
-    ASSERT_TRUE(updated_dev.page_scan_repetition_mode().HasValue());
-    ASSERT_TRUE(updated_dev.device_class().HasValue());
+    const auto& data = updated_dev.bredr();
+    ASSERT_TRUE(data);
+    ASSERT_TRUE(data->clock_offset().HasValue());
+    ASSERT_TRUE(data->page_scan_repetition_mode().HasValue());
+    ASSERT_TRUE(data->device_class().HasValue());
     ASSERT_TRUE(updated_dev.name().HasValue());
-    EXPECT_EQ(*updated_dev.clock_offset(), 0x8001);
-    EXPECT_EQ(*updated_dev.page_scan_repetition_mode(),
+
+    EXPECT_EQ(*data->clock_offset(), 0x8001);
+    EXPECT_EQ(*data->page_scan_repetition_mode(),
               hci::PageScanRepetitionMode::kR1);
-    EXPECT_EQ(updated_dev.rssi(), kTestRSSI);
-    EXPECT_EQ(updated_dev.device_class()->major_class(),
+    EXPECT_EQ(data->device_class()->major_class(),
               common::DeviceClass::MajorClass(0x02));
-    EXPECT_EQ(*updated_dev.name(), "Name");
+    EXPECT_EQ(updated_dev.rssi(), kTestRSSI);
+    EXPECT_EQ(*updated_dev.name(), "Test");
   });
-  device()->SetInquiryData(eirep());
+  device()->MutBrEdr().SetInquiryData(eirep());
 }
 
 TEST_F(
     GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-    SetInquiryDataFromExtendedInquiryResultEventParamsGeneratesExactlyOneUpdateCallbackRegardlessOfNumberOfFieldsChanged) {
+    SetBrEdrInquiryDataFromExtendedInquiryResultEventParamsGeneratesExactlyOneUpdateCallbackRegardlessOfNumberOfFieldsChanged) {
   eirep().clock_offset = htole16(1);
   eirep().page_scan_repetition_mode = hci::PageScanRepetitionMode::kR1;
   eirep().rssi = kTestRSSI;
   eirep().class_of_device = common::DeviceClass({0x06, 0x02, 0x02});  // Phone.
-  common::MutableBufferView(&eirep().extended_inquiry_response,
-                            sizeof(eirep().extended_inquiry_response))
-      .Write(common::CreateStaticByteBuffer(
-          0x05,  // Payload length.
-          0x09,  // Complete Local Name Data Type.
-          'N', 'a', 'm', 'e'));
+  eir_data().Write(kEirData);
 
   size_t call_count = 0;
   cache()->set_device_updated_callback([&](const auto&) { ++call_count; });
-  device()->SetInquiryData(eirep());
+  device()->MutBrEdr().SetInquiryData(eirep());
   EXPECT_EQ(call_count, 1U);
 }
 
 TEST_F(
     GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-    SetInquiryDataFromExtendedInquiryResultEventParamsDoesNotTriggerUpdateCallbackOnSameDeviceClass) {
+    SetBrEdrInquiryDataFromExtendedInquiryResultEventParamsDoesNotTriggerUpdateCallbackOnSameDeviceClass) {
   eirep().class_of_device = common::DeviceClass({0x06, 0x02, 0x02});  // Phone.
-  device()->SetInquiryData(eirep());
+  device()->MutBrEdr().SetInquiryData(eirep());
   ASSERT_TRUE(was_called());
 
   ClearWasCalled();
-  device()->SetInquiryData(eirep());
+  device()->MutBrEdr().SetInquiryData(eirep());
   EXPECT_FALSE(was_called());
 }
 
 TEST_F(
     GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-    SetInquiryDataFromExtendedInquiryResultEventParamsDoesNotTriggerUpdateCallbackOnSameName) {
-  common::MutableBufferView(&eirep().extended_inquiry_response,
-                            sizeof(eirep().extended_inquiry_response))
-      .Write(common::CreateStaticByteBuffer(
-          0x05,  // Payload length.
-          0x09,  // Complete Local Name data type.
-          'N', 'a', 'm', 'e'));
-  device()->SetInquiryData(eirep());
+    SetBrEdrInquiryDataFromExtendedInquiryResultEventParamsDoesNotTriggerUpdateCallbackOnSameName) {
+  eir_data().Write(kEirData);
+  device()->MutBrEdr().SetInquiryData(eirep());
   ASSERT_TRUE(was_called());
 
   ClearWasCalled();
-  device()->SetInquiryData(eirep());
+  device()->MutBrEdr().SetInquiryData(eirep());
   EXPECT_FALSE(was_called());
 }
 
 TEST_F(
     GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-    SetInquiryDataFromExtendedInquiryResultEventParamsDoesNotTriggerUpdateCallbackOnRSSI) {
+    SetBrEdrInquiryDataFromExtendedInquiryResultEventParamsDoesNotTriggerUpdateCallbackOnRSSI) {
   eirep().rssi = 1;
-  device()->SetInquiryData(eirep());
+  device()->MutBrEdr().SetInquiryData(eirep());
   ASSERT_TRUE(was_called());  // Callback due to |class_of_device|.
 
   ClearWasCalled();
   eirep().rssi = 20;
-  device()->SetInquiryData(eirep());
+  device()->MutBrEdr().SetInquiryData(eirep());
   EXPECT_FALSE(was_called());
 }
 
@@ -471,211 +703,209 @@ TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       SetLEConnectionParamsDoesNotTriggerUpdateCallback) {
-  device()->set_le_connection_params({});
+       SetLowEnergyConnectionParamsDoesNotTriggerUpdateCallback) {
+  device()->MutLe().SetConnectionParameters({});
   EXPECT_FALSE(was_called());
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       SetLEPreferredConnectionParamsDoesNotTriggerUpdateCallback) {
-  device()->set_le_preferred_connection_params({});
+       SetLowEnergyPreferredConnectionParamsDoesNotTriggerUpdateCallback) {
+  device()->MutLe().SetPreferredConnectionParameters({});
   EXPECT_FALSE(was_called());
-}
-
-TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       TryMakeTemporaryTriggersUpdateCallbackOnSuccessfulChange) {
-  ASSERT_TRUE(device()->TryMakeNonTemporary());
-  EXPECT_TRUE(was_called());
-}
-
-TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest,
-       TryMakeTemporaryDoesNotTriggerUpdateCallbackWhenAlreadyTemporary) {
-  ASSERT_TRUE(device()->TryMakeNonTemporary());
-  ASSERT_TRUE(was_called());
-
-  bool was_called_again = false;
-  cache()->set_device_updated_callback(
-      [&](const auto&) { was_called_again = true; });
-  ASSERT_TRUE(device()->TryMakeNonTemporary());
-  EXPECT_FALSE(was_called_again);
-}
-
-using GAP_RemoteDeviceCacheTest_UpdateCallbackTest_NoConnectablePublicDevice =
-    GAP_RemoteDeviceCacheTest;
-TEST_F(GAP_RemoteDeviceCacheTest_UpdateCallbackTest_NoConnectablePublicDevice,
-       TryMakeTemporaryDoesNotTriggerUpdateCallbackOnFailure) {
-  RemoteDeviceCache cache;
-  RemoteDevice* unconnectable_device = cache.NewDevice(kAddrPublic, false);
-  bool was_called = false;
-  cache.set_device_updated_callback([&](const auto&) { was_called = true; });
-  ASSERT_FALSE(was_called);
-  ASSERT_FALSE(unconnectable_device->TryMakeNonTemporary());
-  EXPECT_FALSE(was_called);
 }
 
 class GAP_RemoteDeviceCacheTest_ExpirationTest
     : public GAP_RemoteDeviceCacheTest {
  public:
   void SetUp() {
-    device_ptr_ = cache_.NewDevice(kAddrPublic, true);
-    device_id_ = device_ptr_->identifier();
-    device_addr_ = device_ptr_->address();
+    NewDevice(kAddrLePublic, true);
+    device_id_ = device()->identifier();
+    device_addr_ = device()->address();
+    ASSERT_TRUE(device()->temporary());
   }
 
- protected:
-  RemoteDeviceCache* cache() { return &cache_; }
-  RemoteDevice* device_ptr() { return device_ptr_; }
-  std::string device_id() { return device_id_; }
-  common::DeviceAddress device_addr() { return device_addr_; }
-
  private:
-  RemoteDeviceCache cache_;
-  RemoteDevice* device_ptr_;
   std::string device_id_;
-  common::DeviceAddress device_addr_;
+  DeviceAddress device_addr_;
 };
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
        TemporaryDiesSixtySecondsAfterBirth) {
-  RunLoopFor(zx::sec(60));
-  EXPECT_FALSE(cache()->FindDeviceById(device_id()));
+  RunLoopFor(kCacheTimeout);
+  EXPECT_FALSE(cache()->FindDeviceById(device()->identifier()));
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
        TemporaryLivesForSixtySecondsAfterBirth) {
-  RunLoopFor(zx::sec(60) - zx::msec(1));
-  EXPECT_TRUE(cache()->FindDeviceById(device_id()));
+  RunLoopFor(kCacheTimeout - zx::msec(1));
+  EXPECT_TRUE(cache()->FindDeviceById(device()->identifier()));
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
        TemporaryLivesForSixtySecondsSinceLastSeen) {
-  RunLoopFor(zx::sec(60) - zx::msec(1));
-  ASSERT_EQ(device_ptr(), cache()->FindDeviceById(device_id()));
+  RunLoopFor(kCacheTimeout - zx::msec(1));
+  ASSERT_EQ(device(), cache()->FindDeviceById(device()->identifier()));
 
   // Tickle device, and verify it sticks around for another cache timeout.
-  device_ptr()->SetName("nombre");
-  RunLoopFor(zx::sec(60) - zx::msec(1));
-  EXPECT_TRUE(cache()->FindDeviceById(device_id()));
+  device()->SetName("nombre");
+  RunLoopFor(kCacheTimeout - zx::msec(1));
+  EXPECT_TRUE(cache()->FindDeviceById(device()->identifier()));
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
        TemporaryDiesSixtySecondsAfterLastSeen) {
-  RunLoopFor(zx::sec(60) - zx::msec(1));
-  ASSERT_EQ(device_ptr(), cache()->FindDeviceById(device_id()));
+  RunLoopFor(kCacheTimeout - zx::msec(1));
+  ASSERT_EQ(device(), cache()->FindDeviceById(device()->identifier()));
 
   // Tickle device, and verify it expires after cache timeout.
-  device_ptr()->SetName("nombre");
-  RunLoopFor(zx::sec(60));
-  EXPECT_FALSE(cache()->FindDeviceById(device_id()));
-}
-
-TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
-       NonTemporaryLivesMuchMoreThanSixtySeconds) {
-  ASSERT_TRUE(device_ptr()->TryMakeNonTemporary());
-  RunLoopFor(zx::sec(60) * 10);
-  EXPECT_TRUE(cache()->FindDeviceById(device_id()));
+  device()->SetName("nombre");
+  RunLoopFor(kCacheTimeout);
+  EXPECT_FALSE(cache()->FindDeviceById(device()->identifier()));
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
        CanMakeNonTemporaryJustBeforeSixtySeconds) {
   // At last possible moment, make device non-temporary,
-  RunLoopFor(zx::sec(60) - zx::msec(1));
-  ASSERT_EQ(device_ptr(), cache()->FindDeviceById(device_id()));
-  ASSERT_TRUE(device_ptr()->TryMakeNonTemporary());
+  RunLoopFor(kCacheTimeout - zx::msec(1));
+  ASSERT_EQ(device(), cache()->FindDeviceById(device()->identifier()));
+  device()->MutLe().SetConnectionState(
+      RemoteDevice::ConnectionState::kConnected);
+  ASSERT_FALSE(device()->temporary());
 
   // Verify that devices survives.
-  RunLoopFor(zx::sec(60) * 10);
-  EXPECT_TRUE(cache()->FindDeviceById(device_id()));
+  RunLoopFor(kCacheTimeout * 10);
+  EXPECT_EQ(device(), cache()->FindDeviceById(device()->identifier()));
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
        LEConnectedDeviceLivesMuchMoreThanSixtySeconds) {
-  device_ptr()->SetLEConnectionState(RemoteDevice::ConnectionState::kConnected);
-  RunLoopFor(zx::sec(60) * 10);
-  EXPECT_TRUE(cache()->FindDeviceById(device_id()));
+  device()->MutLe().SetConnectionState(
+      RemoteDevice::ConnectionState::kConnected);
+  RunLoopFor(kCacheTimeout * 10);
+  EXPECT_TRUE(cache()->FindDeviceById(device()->identifier()));
+  EXPECT_FALSE(device()->temporary());
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
        BREDRConnectedDeviceLivesMuchMoreThanSixtySeconds) {
-  device_ptr()->SetBREDRConnectionState(
+  device()->MutBrEdr().SetConnectionState(
       RemoteDevice::ConnectionState::kConnected);
-  RunLoopFor(zx::sec(60) * 10);
-  EXPECT_TRUE(cache()->FindDeviceById(device_id()));
+  RunLoopFor(kCacheTimeout * 10);
+  EXPECT_TRUE(cache()->FindDeviceById(device()->identifier()));
+  EXPECT_FALSE(device()->temporary());
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
-       LEDisconnectTriggersExpirationAfterSixtySeconds) {
-  device_ptr()->SetLEConnectionState(RemoteDevice::ConnectionState::kConnected);
-  RunLoopFor(zx::sec(60) * 10);
-  ASSERT_TRUE(cache()->FindDeviceById(device_id()));
+       LEPublicDeviceRemainsNonTemporaryOnDisconnect) {
+  ASSERT_EQ(kAddrLePublic, device()->address());
+  device()->MutLe().SetConnectionState(
+      RemoteDevice::ConnectionState::kConnected);
+  ASSERT_FALSE(device()->temporary());
 
-  device_ptr()->SetLEConnectionState(
+  RunLoopFor(zx::sec(61));
+  ASSERT_EQ(device(), cache()->FindDeviceById(device()->identifier()));
+  ASSERT_TRUE(device()->identity_known());
+
+  device()->MutLe().SetConnectionState(
       RemoteDevice::ConnectionState::kNotConnected);
-  RunLoopFor(zx::sec(60));
-  EXPECT_FALSE(cache()->FindDeviceById(device_id()));
+  EXPECT_FALSE(device()->temporary());
+
+  RunLoopFor(kCacheTimeout);
+  EXPECT_EQ(device(), cache()->FindDeviceById(device()->identifier()));
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
-       BREDRDisconnectTriggersExpirationAfterSixySeconds) {
-  device_ptr()->SetBREDRConnectionState(
-      RemoteDevice::ConnectionState::kConnected);
-  RunLoopFor(zx::sec(60) * 10);
-  ASSERT_TRUE(cache()->FindDeviceById(device_id()));
+       LERandomDeviceBecomesTemporaryOnDisconnect) {
+  ASSERT_TRUE(NewDevice(kAddrLeRandom, true));
+  ASSERT_TRUE(device()->temporary());
+  ASSERT_FALSE(device()->identity_known());
 
-  device_ptr()->SetBREDRConnectionState(
+  device()->MutLe().SetConnectionState(
+      RemoteDevice::ConnectionState::kConnected);
+  ASSERT_FALSE(device()->temporary());
+  ASSERT_FALSE(device()->identity_known());
+
+  RunLoopFor(zx::sec(61));
+  ASSERT_EQ(device(), cache()->FindDeviceById(device()->identifier()));
+  ASSERT_FALSE(device()->identity_known());
+
+  device()->MutLe().SetConnectionState(
       RemoteDevice::ConnectionState::kNotConnected);
-  RunLoopFor(zx::sec(60));
-  EXPECT_FALSE(cache()->FindDeviceById(device_id()));
+  EXPECT_TRUE(device()->temporary());
+  EXPECT_FALSE(device()->identity_known());
+
+  RunLoopFor(zx::sec(61));
+  EXPECT_FALSE(cache()->FindDeviceById(device()->identifier()));
+}
+
+TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
+       BREDRDeviceRemainsNonTemporaryOnDisconnect) {
+  NewDevice(kAddrBrEdr, true);
+  device()->MutBrEdr().SetConnectionState(
+      RemoteDevice::ConnectionState::kConnected);
+  RunLoopFor(kCacheTimeout * 10);
+  ASSERT_EQ(device(), cache()->FindDeviceById(device()->identifier()));
+  ASSERT_TRUE(device()->identity_known());
+  EXPECT_FALSE(device()->temporary());
+
+  device()->MutBrEdr().SetConnectionState(
+      RemoteDevice::ConnectionState::kNotConnected);
+  EXPECT_EQ(device(), cache()->FindDeviceById(device()->identifier()));
+  EXPECT_FALSE(device()->temporary());
+
+  RunLoopFor(kCacheTimeout);
+  EXPECT_EQ(device(), cache()->FindDeviceById(device()->identifier()));
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest, ExpirationUpdatesAddressMap) {
-  RunLoopFor(zx::sec(60));
-  EXPECT_FALSE(cache()->FindDeviceByAddress(device_addr()));
+  RunLoopFor(kCacheTimeout);
+  EXPECT_FALSE(cache()->FindDeviceByAddress(device()->address()));
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
-       SetLEAdvertisingDataUpdatesExpiration) {
-  RunLoopFor(zx::sec(60) - zx::msec(1));
-  device_ptr()->SetLEAdvertisingData(kTestRSSI, common::StaticByteBuffer<1>{});
+       SetAdvertisingDataUpdatesExpiration) {
+  RunLoopFor(kCacheTimeout - zx::msec(1));
+  device()->MutLe().SetAdvertisingData(kTestRSSI, StaticByteBuffer<1>{});
   RunLoopFor(zx::msec(1));
-  EXPECT_TRUE(cache()->FindDeviceById(device_id()));
+  EXPECT_TRUE(cache()->FindDeviceById(device()->identifier()));
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
-       SetInquiryDataFromInquiryResultUpdatesExpiration) {
+       SetBrEdrInquiryDataFromInquiryResultUpdatesExpiration) {
   hci::InquiryResult ir;
-  ir.bd_addr = device_addr().value();
-  RunLoopFor(zx::sec(60) - zx::msec(1));
-  device_ptr()->SetInquiryData(ir);
+  ir.bd_addr = device()->address().value();
+  RunLoopFor(kCacheTimeout - zx::msec(1));
+  device()->MutBrEdr().SetInquiryData(ir);
   RunLoopFor(zx::msec(1));
-  EXPECT_TRUE(cache()->FindDeviceById(device_id()));
+  EXPECT_TRUE(cache()->FindDeviceById(device()->identifier()));
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
-       SetInquiryDataFromInquiryResultRSSIUpdatesExpiration) {
+       SetBrEdrInquiryDataFromInquiryResultRSSIUpdatesExpiration) {
   hci::InquiryResultRSSI irr;
-  irr.bd_addr = device_addr().value();
-  RunLoopFor(zx::sec(60) - zx::msec(1));
-  device_ptr()->SetInquiryData(irr);
+  irr.bd_addr = device()->address().value();
+  RunLoopFor(kCacheTimeout - zx::msec(1));
+  device()->MutBrEdr().SetInquiryData(irr);
   RunLoopFor(zx::msec(1));
-  EXPECT_TRUE(cache()->FindDeviceById(device_id()));
+  EXPECT_TRUE(cache()->FindDeviceById(device()->identifier()));
 }
 
-TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest,
-       SetInquiryDataFromExtendedInquiryResultEventParamsUpdatesExpiration) {
+TEST_F(
+    GAP_RemoteDeviceCacheTest_ExpirationTest,
+    SetBrEdrInquiryDataFromExtendedInquiryResultEventParamsUpdatesExpiration) {
   hci::ExtendedInquiryResultEventParams eirep;
-  eirep.bd_addr = device_addr().value();
-  RunLoopFor(zx::sec(60) - zx::msec(1));
-  device_ptr()->SetInquiryData(eirep);
+  eirep.bd_addr = device()->address().value();
+  RunLoopFor(kCacheTimeout - zx::msec(1));
+  device()->MutBrEdr().SetInquiryData(eirep);
   RunLoopFor(zx::msec(1));
-  EXPECT_TRUE(cache()->FindDeviceById(device_id()));
+  EXPECT_TRUE(cache()->FindDeviceById(device()->identifier()));
 }
 
 TEST_F(GAP_RemoteDeviceCacheTest_ExpirationTest, SetNameUpdatesExpiration) {
-  RunLoopFor(zx::sec(60) - zx::msec(1));
-  device_ptr()->SetName({});
+  RunLoopFor(kCacheTimeout - zx::msec(1));
+  device()->SetName({});
   RunLoopFor(zx::msec(1));
-  EXPECT_TRUE(cache()->FindDeviceById(device_id()));
+  EXPECT_TRUE(cache()->FindDeviceById(device()->identifier()));
 }
 
 }  // namespace

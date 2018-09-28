@@ -17,7 +17,6 @@ import (
 	"thinfs/fs"
 
 	"syscall/zx"
-	"syscall/zx/fdio"
 	"syscall/zx/fidl"
 	"syscall/zx/io"
 )
@@ -48,7 +47,7 @@ func NewServer(filesys fs.FileSystem, h zx.Handle) (*ThinVFS, error) {
 		dirs: make(map[fidl.BindingKey]*directoryWrapper),
 		fs:   filesys,
 	}
-	ireq := io.ObjectInterfaceRequest(fidl.InterfaceRequest{Channel: zx.Channel(h)})
+	ireq := io.NodeInterfaceRequest(fidl.InterfaceRequest{Channel: zx.Channel(h)})
 	if _, err := vfs.addDirectory(filesys.RootDirectory(), ireq); err != nil {
 		h.Close()
 		return nil, err
@@ -66,14 +65,14 @@ func (vfs *ThinVFS) Serve() {
 	fidl.Serve()
 }
 
-func (vfs *ThinVFS) addDirectory(dir fs.Directory, object io.ObjectInterfaceRequest) (fidl.BindingKey, error) {
+func (vfs *ThinVFS) addDirectory(dir fs.Directory, node io.NodeInterfaceRequest) (fidl.BindingKey, error) {
 	d := &directoryWrapper{vfs: vfs, dir: dir}
 
 	vfs.Lock()
 	defer vfs.Unlock()
 	tok, err := d.vfs.DirectoryService.Add(
 		d,
-		(fidl.InterfaceRequest(object)).Channel,
+		(fidl.InterfaceRequest(node)).Channel,
 		nil,
 	)
 	if err != nil {
@@ -84,14 +83,14 @@ func (vfs *ThinVFS) addDirectory(dir fs.Directory, object io.ObjectInterfaceRequ
 	return tok, nil
 }
 
-func (vfs *ThinVFS) addFile(file fs.File, object io.ObjectInterfaceRequest) (fidl.BindingKey, error) {
+func (vfs *ThinVFS) addFile(file fs.File, node io.NodeInterfaceRequest) (fidl.BindingKey, error) {
 	f := &fileWrapper{vfs: vfs, file: file}
 
 	vfs.Lock()
 	defer vfs.Unlock()
 	tok, err := vfs.FileService.Add(
 		f,
-		(fidl.InterfaceRequest(object)).Channel,
+		(fidl.InterfaceRequest(node)).Channel,
 		nil,
 	)
 	if err != nil {
@@ -110,21 +109,21 @@ type directoryWrapper struct {
 	e       zx.Event
 }
 
-func (d *directoryWrapper) Clone(flags uint32, object io.ObjectInterfaceRequest) error {
+func (d *directoryWrapper) Clone(flags uint32, node io.NodeInterfaceRequest) error {
 	newDir, err := d.dir.Dup()
 	zxErr := errorToZx(err)
 	if zxErr == zx.ErrOk {
-		_, err := d.vfs.addDirectory(newDir, object)
+		_, err := d.vfs.addDirectory(newDir, node)
 		if err != nil {
 			return err
 		}
 	}
 	// Only send an OnOpen message if OpenFlagDescribe is set.
-	if flags&io.KOpenFlagDescribe != 0 {
-		c := fidl.InterfaceRequest(object).Channel
-		pxy := io.ObjectEventProxy(fidl.Proxy{Channel: c})
-		info := &io.ObjectInfo{
-			ObjectInfoTag: io.ObjectInfoDirectory,
+	if flags&io.OpenFlagDescribe != 0 {
+		c := fidl.InterfaceRequest(node).Channel
+		pxy := io.NodeEventProxy(fidl.Proxy{Channel: c})
+		info := &io.NodeInfo{
+			NodeInfoTag: io.NodeInfoDirectory,
 		}
 		return pxy.OnOpen(zxErr, info)
 	}
@@ -149,13 +148,9 @@ func (d *directoryWrapper) ListInterfaces() ([]string, error) {
 	return nil, nil
 }
 
-func (d *directoryWrapper) Bind(iface string) error {
-	return nil
-}
-
-func (d *directoryWrapper) Describe() (io.ObjectInfo, error) {
-	return io.ObjectInfo{
-		ObjectInfoTag: io.ObjectInfoDirectory,
+func (d *directoryWrapper) Describe() (io.NodeInfo, error) {
+	return io.NodeInfo{
+		NodeInfoTag: io.NodeInfoDirectory,
 	}, nil
 }
 
@@ -185,53 +180,10 @@ func (d *directoryWrapper) SetAttr(flags uint32, attr io.NodeAttributes) (zx.Sta
 }
 
 func (d *directoryWrapper) Ioctl(opcode uint32, maxOut uint64, handles []zx.Handle, in []uint8) (zx.Status, []zx.Handle, []uint8, error) {
-	switch opcode {
-	case fdio.IoctlVFSGetTokenFS:
-		// Legacy compatibility. Just call into GetToken directly.
-		status, handle, err := d.GetToken()
-		return status, []zx.Handle{handle}, nil, err
-	case fdio.IoctlVFSUnmountFS:
-		// Shut down filesystem
-		err := d.vfs.fs.Close()
-		if err != nil {
-			fmt.Printf("error unmounting filesystem: %#v\n", err)
-		}
-		// While normally this would explode as the bindings will fail to
-		// send a response, we exit immediately after, so it's OK.
-		d.vfs.FileService.Close()
-		d.vfs.DirectoryService.Close()
-		os.Exit(0)
-	case fdio.IoctlVFSQueryFS:
-		totalBytes := uint64(d.vfs.fs.Size())
-		usedBytes := totalBytes - uint64(d.vfs.fs.FreeSize())
-
-		queryInfo := VFSQueryInfo{
-			TotalBytes: totalBytes,
-			UsedBytes:  usedBytes,
-			TotalNodes: 0,
-			UsedNodes:  0,
-		}
-
-		name := append([]byte(d.vfs.fs.Type()), 0)
-
-		const infoSize = uint32(unsafe.Sizeof(queryInfo))
-		totalSize := infoSize + uint32(len(name))
-		if uint64(totalSize) > maxOut {
-			return zx.ErrBufferTooSmall, nil, nil, nil
-		}
-
-		buf := make([]byte, totalSize)
-		copy(buf[0:], (*[infoSize]byte)(unsafe.Pointer(&queryInfo))[:])
-		copy(buf[infoSize:], name)
-
-		return zx.ErrOk, nil, buf, nil
-	case fdio.IoctlVFSGetDevicePath:
-		return zx.ErrOk, nil, []byte(d.vfs.fs.DevicePath()), nil
-	}
 	return zx.ErrNotSupported, nil, nil, nil
 }
 
-func (d *directoryWrapper) Open(inFlags, inMode uint32, path string, object io.ObjectInterfaceRequest) error {
+func (d *directoryWrapper) Open(inFlags, inMode uint32, path string, node io.NodeInterfaceRequest) error {
 	flags := openFlagsFromFIDL(inFlags, inMode)
 	if flags.Path() {
 		flags &= fs.OpenFlagPath | fs.OpenFlagDirectory | fs.OpenFlagDescribe
@@ -242,10 +194,10 @@ func (d *directoryWrapper) Open(inFlags, inMode uint32, path string, object io.O
 	if fsRemote != nil {
 		fwd := ((*io.DirectoryInterface)(&fidl.Proxy{Channel: fsRemote.Channel}))
 		flags, mode := openFlagsToFIDL(fsRemote.Flags)
-		if inFlags&io.KOpenFlagDescribe != 0 {
-			flags |= io.KOpenFlagDescribe
+		if inFlags&io.OpenFlagDescribe != 0 {
+			flags |= io.OpenFlagDescribe
 		}
-		return fwd.Open(flags, mode, fsRemote.Path, object)
+		return fwd.Open(flags, mode, fsRemote.Path, node)
 	}
 
 	// Handle the file and directory cases. They're mostly the same, except where noted.
@@ -253,9 +205,9 @@ func (d *directoryWrapper) Open(inFlags, inMode uint32, path string, object io.O
 	if zxErr == zx.ErrOk {
 		var err error
 		if fsFile != nil {
-			_, err = d.vfs.addFile(fsFile, object)
+			_, err = d.vfs.addFile(fsFile, node)
 		} else {
-			_, err = d.vfs.addDirectory(fsDir, object)
+			_, err = d.vfs.addDirectory(fsDir, node)
 		}
 		if err != nil {
 			return err
@@ -264,27 +216,27 @@ func (d *directoryWrapper) Open(inFlags, inMode uint32, path string, object io.O
 		// We got an error, so we want to make sure we close the channel.
 		// However, if we were asked to Describe, we might still want to notify
 		// about the status, so just close on exit.
-		c := fidl.InterfaceRequest(object).Channel
+		c := fidl.InterfaceRequest(node).Channel
 		defer c.Close()
 	}
 
 	// Only send an OnOpen message if OpenFlagDescribe is set.
-	if inFlags&io.KOpenFlagDescribe != 0 {
-		var info *io.ObjectInfo
+	if inFlags&io.OpenFlagDescribe != 0 {
+		var info *io.NodeInfo
 		if fsFile != nil {
-			info = &io.ObjectInfo{
-				ObjectInfoTag: io.ObjectInfoFile,
+			info = &io.NodeInfo{
+				NodeInfoTag: io.NodeInfoFile,
 				File: io.FileObject{
 					Event: zx.Event(zx.HandleInvalid),
 				},
 			}
 		} else {
-			info = &io.ObjectInfo{
-				ObjectInfoTag: io.ObjectInfoDirectory,
+			info = &io.NodeInfo{
+				NodeInfoTag: io.NodeInfoDirectory,
 			}
 		}
-		c := fidl.InterfaceRequest(object).Channel
-		pxy := io.ObjectEventProxy(fidl.Proxy{Channel: c})
+		c := fidl.InterfaceRequest(node).Channel
+		pxy := io.NodeEventProxy(fidl.Proxy{Channel: c})
 		return pxy.OnOpen(zxErr, info)
 	}
 
@@ -295,8 +247,10 @@ func (d *directoryWrapper) Unlink(path string) (zx.Status, error) {
 	return errorToZx(d.dir.Unlink(path)), nil
 }
 
+const direntSize = int(unsafe.Offsetof(syscall.Dirent{}.Name))
+
 func (d *directoryWrapper) ReadDirents(maxOut uint64) (zx.Status, []byte, error) {
-	if maxOut > io.KMaxBuf {
+	if maxOut > io.MaxBuf {
 		return zx.ErrInvalidArgs, nil, nil
 	}
 	if d.reading && len(d.dirents) == 0 {
@@ -317,20 +271,16 @@ func (d *directoryWrapper) ReadDirents(maxOut uint64) (zx.Status, []byte, error)
 	for i = range d.dirents {
 		dirent := d.dirents[i]
 		sysDirent := syscall.Dirent{}
-		// Include the null character in the dirent name (BEFORE alignment)
-		name := append([]byte(dirent.GetName()), 0)
-		// The dirent size is rounded up to four bytes
-		align := func(a int) int {
-			return (a + 3) &^ 3
-		}
-		size := align(len(name)) + 8
-		sysDirent.Size = uint32(size)
-		sysDirent.Type = (fileTypeToFIDL(dirent.GetType()) >> 12) & 15
+		name := dirent.GetName()
+		size := direntSize + len(name)
+		sysDirent.Ino = dirent.GetIno()
+		sysDirent.Size = uint8(len(name))
+		sysDirent.Type = uint8((fileTypeToFIDL(dirent.GetType()) >> 12) & 15)
 		if uint64(written+size) > maxOut {
 			break
 		}
-		copy(bytes[written:], (*(*[8]byte)(unsafe.Pointer(&sysDirent)))[:])
-		copy(bytes[written+8:], name)
+		copy(bytes[written:], (*(*[direntSize]byte)(unsafe.Pointer(&sysDirent)))[:])
+		copy(bytes[written+direntSize:], name)
 		written += size
 	}
 	if i == len(d.dirents)-1 { // We finished reading the directory. Next readdir will be empty.
@@ -358,7 +308,7 @@ func (d *directoryWrapper) GetToken() (zx.Status, zx.Handle, error) {
 		}
 	}
 
-	// Create a new event which may later be used to refer to this object
+	// Create a new event which may later be used to refer to this node
 	e0, err := zx.NewEvent(0)
 	if err != nil {
 		return errorToZx(err), zx.HandleInvalid, nil
@@ -406,27 +356,87 @@ func (d *directoryWrapper) Link(src string, token zx.Handle, dst string) (zx.Sta
 	return zx.ErrNotSupported, nil
 }
 
+func (d *directoryWrapper) Watch(mask uint32, options uint32, watcher zx.Channel) (zx.Status, error) {
+	watcher.Close()
+	return zx.ErrNotSupported, nil
+}
+
+func (d *directoryWrapper) Mount(remote io.DirectoryInterfaceRequest) (zx.Status, error) {
+	remote.Close()
+	return zx.ErrNotSupported, nil
+}
+
+func (d *directoryWrapper) MountAndCreate(remote io.DirectoryInterfaceRequest, name string, flags uint32) (zx.Status, error) {
+	remote.Close()
+	return zx.ErrNotSupported, nil
+}
+
+func (d *directoryWrapper) Unmount() (zx.Status, error) {
+	// Shut down filesystem
+	err := d.vfs.fs.Close()
+	if err != nil {
+		fmt.Printf("error unmounting filesystem: %#v\n", err)
+	}
+	// While normally this would explode as the bindings will fail to
+	// send a response, we exit immediately after, so it's OK.
+	d.vfs.FileService.Close()
+	d.vfs.DirectoryService.Close()
+	os.Exit(0)
+	return zx.ErrOk, nil
+}
+
+func (d *directoryWrapper) UnmountNode() (zx.Status, io.DirectoryInterfaceRequest, error) {
+	return zx.ErrNotSupported, io.DirectoryInterfaceRequest(fidl.InterfaceRequest{Channel: zx.Channel(zx.HandleInvalid)}), nil
+}
+
+func (d *directoryWrapper) QueryFilesystem() (zx.Status, *io.FilesystemInfo, error) {
+	totalBytes := uint64(d.vfs.fs.Size())
+	usedBytes := totalBytes - uint64(d.vfs.fs.FreeSize())
+
+	info := io.FilesystemInfo{
+		TotalBytes:      totalBytes,
+		UsedBytes:       usedBytes,
+		TotalNodes:      0,
+		UsedNodes:       0,
+		FsId:            0,
+		BlockSize:       0,
+		MaxFilenameSize: 255,
+		FsType:          0,
+		Padding:         0,
+	}
+	name := d.vfs.fs.Type()
+	nameData := *(*[]int8)(unsafe.Pointer(&name))
+	copy(info.Name[:], nameData)
+	info.Name[len(name)] = 0
+	return zx.ErrOk, &info, nil
+}
+
+func (d *directoryWrapper) GetDevicePath() (zx.Status, *string, error) {
+	name := d.vfs.fs.DevicePath()
+	return zx.ErrOk, &name, nil
+}
+
 type fileWrapper struct {
 	vfs   *ThinVFS
 	token fidl.BindingKey
 	file  fs.File
 }
 
-func (f *fileWrapper) Clone(flags uint32, object io.ObjectInterfaceRequest) error {
+func (f *fileWrapper) Clone(flags uint32, node io.NodeInterfaceRequest) error {
 	newFile, err := f.file.Dup()
 	zxErr := errorToZx(err)
 	if zxErr == zx.ErrOk {
-		_, err := f.vfs.addFile(newFile, object)
+		_, err := f.vfs.addFile(newFile, node)
 		if err != nil {
 			return err
 		}
 	}
 	// Only send an OnOpen message if OpenFlagDescribe is set.
-	if flags&io.KOpenFlagDescribe != 0 {
-		c := fidl.InterfaceRequest(object).Channel
-		pxy := io.ObjectEventProxy(fidl.Proxy{Channel: c})
-		return pxy.OnOpen(zx.ErrOk, &io.ObjectInfo{
-			ObjectInfoTag: io.ObjectInfoFile,
+	if flags&io.OpenFlagDescribe != 0 {
+		c := fidl.InterfaceRequest(node).Channel
+		pxy := io.NodeEventProxy(fidl.Proxy{Channel: c})
+		return pxy.OnOpen(zx.ErrOk, &io.NodeInfo{
+			NodeInfoTag: io.NodeInfoFile,
 			File: io.FileObject{
 				Event: zx.Event(zx.HandleInvalid),
 			},
@@ -449,13 +459,9 @@ func (f *fileWrapper) ListInterfaces() ([]string, error) {
 	return nil, nil
 }
 
-func (f *fileWrapper) Bind(iface string) error {
-	return nil
-}
-
-func (f *fileWrapper) Describe() (io.ObjectInfo, error) {
-	return io.ObjectInfo{
-		ObjectInfoTag: io.ObjectInfoFile,
+func (f *fileWrapper) Describe() (io.NodeInfo, error) {
+	return io.NodeInfo{
+		NodeInfoTag: io.NodeInfoFile,
 		File: io.FileObject{
 			Event: zx.Event(zx.HandleInvalid),
 		},
@@ -543,12 +549,6 @@ func (f *fileWrapper) SetFlags(inFlags uint32) (zx.Status, error) {
 }
 
 func (f *fileWrapper) GetVmo(flags uint32) (zx.Status, zx.VMO, error) {
-	// This will fail catastrophically because the VMO cannot actually
-	// be invalid by the FIDL file.
-	return zx.ErrNotSupported, zx.VMO(zx.HandleInvalid), nil
-}
-
-func (f *fileWrapper) GetVmoAt(flags uint32, offset, length uint64) (zx.Status, zx.VMO, error) {
 	// This will fail catastrophically because the VMO cannot actually
 	// be invalid by the FIDL file.
 	return zx.ErrNotSupported, zx.VMO(zx.HandleInvalid), nil

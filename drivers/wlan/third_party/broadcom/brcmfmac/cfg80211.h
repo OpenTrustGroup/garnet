@@ -374,6 +374,14 @@ static inline struct brcmf_cfg80211_info* ndev_to_cfg(struct net_device* ndev) {
     return wdev_to_cfg(ndev->ieee80211_ptr);
 }
 
+static inline struct wiphy* ndev_to_wiphy(struct net_device* ndev) {
+    return ndev->ieee80211_ptr->wiphy;
+}
+
+static inline struct net_device* wiphy_to_ndev(struct wiphy* wiphy) {
+    return cfg_to_ndev(wiphy_to_cfg(wiphy));
+}
+
 static inline struct brcmf_if* ndev_to_if(struct net_device* ndev) {
     return ndev->priv;
 }
@@ -384,6 +392,10 @@ static inline struct brcmf_if* cfg_to_if(struct brcmf_cfg80211_info* cfg) {
 
 static inline struct brcmf_cfg80211_vif* ndev_to_vif(struct net_device* ndev) {
     return ndev_to_if(ndev)->vif;
+}
+
+static inline struct wireless_dev* ndev_to_wdev(struct net_device* ndev) {
+    return &ndev_to_vif(ndev)->wdev;
 }
 
 static inline struct brcmf_cfg80211_profile* ndev_to_prof(struct net_device* ndev) {
@@ -400,9 +412,9 @@ struct brcmf_cfg80211_info* brcmf_cfg80211_attach(struct brcmf_pub* drvr,
 void brcmf_cfg80211_detach(struct brcmf_cfg80211_info* cfg);
 zx_status_t brcmf_cfg80211_up(struct net_device* ndev);
 zx_status_t brcmf_cfg80211_down(struct net_device* ndev);
-enum nl80211_iftype brcmf_cfg80211_get_iftype(struct brcmf_if* ifp);
+uint16_t brcmf_cfg80211_get_iftype(struct brcmf_if* ifp);
 
-zx_status_t brcmf_alloc_vif(struct brcmf_cfg80211_info* cfg, enum nl80211_iftype type,
+zx_status_t brcmf_alloc_vif(struct brcmf_cfg80211_info* cfg, uint16_t type,
                             struct brcmf_cfg80211_vif** vif_out);
 void brcmf_free_vif(struct brcmf_cfg80211_vif* vif);
 
@@ -422,10 +434,10 @@ void brcmf_set_mpc(struct brcmf_if* ndev, int mpc);
 void brcmf_abort_scanning(struct brcmf_cfg80211_info* cfg);
 void brcmf_free_net_device_vif(struct net_device* ndev);
 
-// TODO(cphoenix): These three are temporary, for hard-coded testing in usb.c
-zx_status_t brcmf_cfg80211_scan(struct wiphy* wiphy, struct cfg80211_scan_request* request);
-zx_status_t brcmf_cfg80211_connect(struct wiphy* wiphy, struct net_device* ndev,
-                                   struct cfg80211_connect_params* sme);
+zx_status_t brcmf_phy_create_iface(void* ctx, uint16_t role, uint16_t* iface_id);
+void brcmf_cfg80211_rx(struct brcmf_if* ifp, struct brcmf_netbuf* packet);
+
+// TODO: Move to core.h
 zx_status_t brcmf_netdev_open(struct net_device* ndev);
 
 #endif /* BRCMFMAC_CFG80211_H */

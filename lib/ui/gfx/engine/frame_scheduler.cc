@@ -6,6 +6,7 @@
 
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
+#include <lib/async/time.h>
 #include <trace/event.h>
 #include <zircon/syscalls.h>
 
@@ -62,7 +63,7 @@ FrameScheduler::ComputeTargetPresentationAndWakeupTimes(
     const zx_time_t requested_presentation_time) const {
   const zx_time_t last_vsync_time = display_->GetLastVsyncTime();
   const zx_time_t vsync_interval = display_->GetVsyncInterval();
-  const zx_time_t now = zx_clock_get(ZX_CLOCK_MONOTONIC);
+  const zx_time_t now = async_now(dispatcher_);
   const zx_time_t required_render_time = PredictRequiredFrameRenderTime();
 
   // Compute the number of full vsync intervals between the last vsync and the
@@ -231,7 +232,7 @@ void FrameScheduler::OnFramePresented(FrameTimings* timings) {
                              timings->target_presentation_time()) /
         1000;
 
-    zx_time_t now = zx_clock_get(ZX_CLOCK_MONOTONIC);
+    zx_time_t now = async_now(dispatcher_);
     FXL_DCHECK(now >= timings->actual_presentation_time());
     uint64_t elapsed_since_presentation_usecs =
         static_cast<int64_t>(now - timings->actual_presentation_time()) / 1000;

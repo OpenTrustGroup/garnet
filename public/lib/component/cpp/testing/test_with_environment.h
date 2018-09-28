@@ -60,34 +60,41 @@ class TestWithEnvironment : public gtest::RealLoopFixture {
     return real_services_;
   }
 
-  // Creates a new enclosing environment inside current real environment.
+  // Creates a new enclosing environment inside current real environment with
+  // the given services.
   //
   // This environment and components created in it will not have access to any
-  // of services(except Loader) and resources from real environment unless
+  // of services(except Loader) and resources from the real environment unless
   // explicitly allowed by calling AllowPublicService.
+  //
+  // After all services are added/passed through to the environment, you must
+  // call Launch() to actually start it.
   std::unique_ptr<EnclosingEnvironment> CreateNewEnclosingEnvironment(
-      const std::string& label) const {
-    return EnclosingEnvironment::Create(std::move(label), real_env_);
+      const std::string& label,
+      std::unique_ptr<EnvironmentServices> services) const {
+    return EnclosingEnvironment::Create(label, real_env_, std::move(services));
   }
 
-  // Creates a new enclosing environment inside current real environment with
-  // custom loader service.
+  // Returns an EnvironmentServices object that the caller can use to pass
+  // services to a new EnclosingEnvironment.
   //
-  // This environment and components created in it will not have access to any
-  // of services and resources from real environment unless explicitly allowed
-  // by calling AllowPublicService.
-  std::unique_ptr<EnclosingEnvironment> CreateNewEnclosingEnvironmentWithLoader(
-      const std::string& label,
-      const fbl::RefPtr<fs::Service> loader_service) const {
-    return EnclosingEnvironment::CreateWithCustomLoader(
-        std::move(label), real_env_, loader_service);
+  // The returned object has the parent's loader, but no other services by
+  // default.
+  std::unique_ptr<EnvironmentServices> CreateServices() {
+    return EnvironmentServices::Create(real_env_);
+  }
+
+  std::unique_ptr<EnvironmentServices> CreateServicesWithCustomLoader(
+      const fbl::RefPtr<fs::Service>& loader_service) {
+    return EnvironmentServices::CreateWithCustomLoader(real_env_,
+                                                       loader_service);
   }
 
   // Creates component in current real environment. This component will have
   // access to the services, directories and other resources from the
   // environment in which your test was launched.
   //
-  // This should be moslty used for observing the state of system and for
+  // This should be mostly used for observing the state of system and for
   // nothing else. For eg. Try launching "glob" component and validate how it
   // behaves in various environments.
   void CreateComponentInCurrentEnvironment(

@@ -8,16 +8,12 @@ executable("bin") {
   output_name = "chrealm"
 
   sources = [
-    "chrealm.cc",
-    "chrealm.h",
     "main.cc",
   ]
 
   deps = [
-    "//garnet/public/fidl/fuchsia.sys",
+    "//garnet/lib/chrealm",
     "//garnet/public/lib/fxl",
-    "//zircon/public/lib/fs",
-    "//zircon/public/lib/zx",
   ]
 }
 

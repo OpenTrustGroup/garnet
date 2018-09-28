@@ -5,12 +5,13 @@
 #include "amlogic-video.h"
 
 #include <byteswap.h>
+#include <zircon/compiler.h>
 
 #include "gtest/gtest.h"
 #include "hevcdec.h"
-#include "lib/fxl/logging.h"
 #include "tests/test_support.h"
 #include "vp9_decoder.h"
+#include "vp9_utils.h"
 
 #include "macros.h"
 #include "pts_manager.h"
@@ -33,104 +34,10 @@ struct __attribute__((__packed__)) IvfFrameHeader {
   uint64_t presentation_timestamp;
 };
 
-std::vector<uint32_t> TryParseSuperframeHeader(const uint8_t* data,
-                                               uint32_t frame_size) {
-  std::vector<uint32_t> frame_sizes;
-  if (frame_size < 1)
-    return frame_sizes;
-  uint8_t superframe_header = data[frame_size - 1];
-
-  // Split out superframes into separate frames - see
-  // https://storage.googleapis.com/downloads.webmproject.org/docs/vp9/vp9-bitstream-specification-v0.6-20160331-draft.pdf
-  // Annex B.
-  if ((superframe_header & 0xc0) != 0xc0)
-    return frame_sizes;
-  uint8_t bytes_per_framesize = ((superframe_header >> 3) & 3) + 1;
-  uint8_t superframe_count = (superframe_header & 7) + 1;
-  uint32_t superframe_index_size = 2 + bytes_per_framesize * superframe_count;
-  if (superframe_index_size > frame_size)
-    return frame_sizes;
-  if (data[frame_size - superframe_index_size] != superframe_header) {
-    return frame_sizes;
-  }
-  const uint8_t* index_data = &data[frame_size - superframe_index_size + 1];
-  uint32_t total_size = 0;
-  for (uint32_t i = 0; i < superframe_count; i++) {
-    uint32_t sub_frame_size;
-    switch (bytes_per_framesize) {
-      case 1:
-        sub_frame_size = index_data[i];
-        break;
-      case 2:
-        sub_frame_size = reinterpret_cast<const uint16_t*>(index_data)[i];
-        break;
-      case 4:
-        sub_frame_size = reinterpret_cast<const uint32_t*>(index_data)[i];
-        break;
-      default:
-        DECODE_ERROR("Unsupported bytes_per_framesize: %d\n",
-                     bytes_per_framesize);
-        frame_sizes.clear();
-        return frame_sizes;
-    }
-    total_size += sub_frame_size;
-    if (total_size > frame_size) {
-      DECODE_ERROR("Total superframe size too large: %u > %u\n", total_size,
-                   frame_size);
-      frame_sizes.clear();
-      return frame_sizes;
-    }
-    frame_sizes.push_back(sub_frame_size);
-  }
-  return frame_sizes;
-}
-
-void SplitSuperframe(const uint8_t* data, uint32_t frame_size,
-                     std::vector<uint8_t>* output_vector) {
-  std::vector<uint32_t> frame_sizes =
-      TryParseSuperframeHeader(data, frame_size);
-
-  if (frame_sizes.empty())
-    frame_sizes.push_back(frame_size);
-  uint32_t frame_offset = 0;
-  uint32_t total_frame_bytes = 0;
-  for (auto& size : frame_sizes) {
-    total_frame_bytes += size;
-  }
-  const uint32_t kOutputHeaderSize = 16;
-  uint32_t output_offset = output_vector->size();
-  // This can be called multiple times on the same output_vector overall, but
-  // should be amortized O(1), since resizing larger inserts elements at the end
-  // and inserting elements at the end is amortized O(1) for std::vector.  Also,
-  // for now this is for testing.
-  output_vector->resize(output_offset + total_frame_bytes +
-                        kOutputHeaderSize * frame_sizes.size());
-  uint8_t* output = &(*output_vector)[output_offset];
-  for (auto& size : frame_sizes) {
-    FXL_DCHECK(output + 16 - output_vector->data() <=
-               static_cast<int64_t>(output_vector->size()));
-    *reinterpret_cast<uint32_t*>(output) = bswap_32(size + 4);
-    output += 4;
-    *reinterpret_cast<uint32_t*>(output) = ~bswap_32(size + 4);
-    output += 4;
-    *output++ = 0;
-    *output++ = 0;
-    *output++ = 0;
-    *output++ = 1;
-    *output++ = 'A';
-    *output++ = 'M';
-    *output++ = 'L';
-    *output++ = 'V';
-
-    FXL_DCHECK(output + size - output_vector->data() <=
-               static_cast<int64_t>(output_vector->size()));
-    memcpy(output, &data[frame_offset], size);
-    output += size;
-    frame_offset += size;
-  }
-  FXL_DCHECK(output - output_vector->data() ==
-             static_cast<int64_t>(output_vector->size()));
-}
+struct FrameData {
+  uint64_t presentation_timestamp;
+  std::vector<uint8_t> data;
+};
 
 std::vector<uint8_t> ConvertIvfToAmlV(const uint8_t* data, uint32_t length) {
   uint32_t offset = sizeof(IvfHeader);
@@ -151,10 +58,6 @@ std::vector<uint8_t> ConvertIvfToAmlV(const uint8_t* data, uint32_t length) {
   return output_vector;
 }
 
-struct FrameData {
-  uint64_t presentation_timestamp;
-  std::vector<uint8_t> data;
-};
 // Split IVF-level frames
 std::vector<FrameData> ConvertIvfToAmlVFrames(const uint8_t* data,
                                               uint32_t length) {
@@ -186,10 +89,12 @@ class TestFrameProvider : public Vp9Decoder::FrameDataProvider {
 
   // Always claim that 50 more bytes are available. Due to the 16kB of padding
   // at the end this is always true.
-  uint32_t GetInputDataSize() override { return 50; }
+  void ReadMoreInputData(Vp9Decoder* decoder) override {
+    decoder->UpdateDecodeSize(50);
+  }
 
   // Called while the decoder lock is held.
-  void FrameWasOutput() override FXL_NO_THREAD_SAFETY_ANALYSIS {
+  void FrameWasOutput() override __TA_NO_THREAD_SAFETY_ANALYSIS {
     DLOG("Resetting hardware\n");
     SaveCurrentInstanceState();
     if (multi_instance_) {
@@ -210,7 +115,7 @@ class TestFrameProvider : public Vp9Decoder::FrameDataProvider {
 
  private:
   // Called while the decoder lock is held.
-  void SaveCurrentInstanceState() FXL_NO_THREAD_SAFETY_ANALYSIS {
+  void SaveCurrentInstanceState() __TA_NO_THREAD_SAFETY_ANALYSIS {
     DecoderInstance* current_instance = &video_->decoder_instances_.front();
     // FrameWasOutput() is called during handling of kVp9CommandNalDecodeDone on
     // the interrupt thread, which means the decoder HW is currently paused,
@@ -223,6 +128,8 @@ class TestFrameProvider : public Vp9Decoder::FrameDataProvider {
       EXPECT_EQ(ZX_OK, video_->core_->InitializeInputContext(
                            current_instance->input_context()));
     }
+    static_cast<Vp9Decoder*>(current_instance->decoder())->state_ =
+        Vp9Decoder::DecoderState::kSwappedOut;
     video_->core_->SaveInputContext(current_instance->input_context());
     video_->core_->StopDecoding();
     video_->core()->WaitForIdle();
@@ -232,13 +139,15 @@ class TestFrameProvider : public Vp9Decoder::FrameDataProvider {
   }
 
   // Called while the decoder lock is held.
-  void RestoreInstanceState() FXL_NO_THREAD_SAFETY_ANALYSIS {
+  void RestoreInstanceState() __TA_NO_THREAD_SAFETY_ANALYSIS {
     DecoderInstance* current_instance = &video_->decoder_instances_.front();
 
     video_->video_decoder_ = current_instance->decoder();
     video_->stream_buffer_ = current_instance->stream_buffer();
     video_->core()->PowerOn();
-    static_cast<Vp9Decoder*>(video_->video_decoder_)->InitializeHardware();
+    EXPECT_EQ(
+        ZX_OK,
+        static_cast<Vp9Decoder*>(video_->video_decoder_)->InitializeHardware());
     if (!current_instance->input_context()) {
       video_->InitializeStreamInput(false);
       video_->core_->InitializeDirectInput();
@@ -249,7 +158,7 @@ class TestFrameProvider : public Vp9Decoder::FrameDataProvider {
     } else {
       video_->core_->RestoreInputContext(current_instance->input_context());
     }
-    video_->core()->StartDecoding();
+    static_cast<Vp9Decoder*>(video_->video_decoder())->UpdateDecodeSize(50);
   }
 
   AmlogicVideo* video_;
@@ -264,8 +173,6 @@ class TestVP9 {
     ASSERT_TRUE(video);
 
     EXPECT_EQ(ZX_OK, video->InitRegisters(TestSupport::parent_device()));
-
-    video->pts_manager_ = std::make_unique<PtsManager>();
 
     video->core_ = std::make_unique<HevcDec>(video.get());
     video->core_->PowerOn();
@@ -322,6 +229,7 @@ class TestVP9 {
       auto aml_data = ConvertIvfToAmlV(test_ivf->ptr, test_ivf->size);
       if (use_parser) {
         EXPECT_EQ(ZX_OK, video->ParseVideo(aml_data.data(), aml_data.size()));
+        EXPECT_EQ(ZX_OK, video->WaitForParsingCompleted(ZX_SEC(10)));
       } else {
         video->core_->InitializeDirectInput();
         uint32_t current_offset = 0;
@@ -368,8 +276,6 @@ class TestVP9 {
     auto test_ivf =
         TestSupport::LoadFirmwareFile("video_test_data/test-25fps.vp9");
     ASSERT_NE(nullptr, test_ivf);
-    video->pts_manager_ = std::make_unique<PtsManager>();
-
     video->core_ = std::make_unique<HevcDec>(video.get());
     video->core_->PowerOn();
     {
@@ -424,9 +330,10 @@ class TestVP9 {
       auto aml_data = ConvertIvfToAmlVFrames(test_ivf->ptr, test_ivf->size);
       uint32_t stream_offset = 0;
       for (auto& data : aml_data) {
-        video->pts_manager_->InsertPts(stream_offset,
-                                       data.presentation_timestamp);
+        video->pts_manager()->InsertPts(stream_offset,
+                                        data.presentation_timestamp);
         EXPECT_EQ(ZX_OK, video->ParseVideo(data.data.data(), data.data.size()));
+        EXPECT_EQ(ZX_OK, video->WaitForParsingCompleted(ZX_SEC(10)));
         stream_offset += data.data.size();
       }
     });
@@ -444,8 +351,6 @@ class TestVP9 {
     ASSERT_TRUE(video);
 
     EXPECT_EQ(ZX_OK, video->InitRegisters(TestSupport::parent_device()));
-
-    video->pts_manager_ = std::make_unique<PtsManager>();
 
     video->core_ = std::make_unique<HevcDec>(video.get());
     video->core_->PowerOn();
@@ -502,11 +407,19 @@ class TestVP9 {
     // Force all frames to be processed.
     uint8_t padding[16384] = {};
     EXPECT_EQ(ZX_OK, video->ProcessVideoNoParser(padding, sizeof(padding)));
-    video->core()->StartDecoding();
+    {
+      std::lock_guard<std::mutex> lock(video->video_decoder_lock_);
+      static_cast<Vp9Decoder*>(video->video_decoder())->UpdateDecodeSize(50);
+    }
 
     EXPECT_EQ(std::future_status::ready,
               wait_valid.get_future().wait_for(std::chrono::seconds(2)));
 
+    {
+      std::lock_guard<std::mutex> lock(video->video_decoder_lock_);
+      video->decoder_instances_.clear();
+      video->video_decoder_ = nullptr;
+    }
     video.reset();
   }
 
@@ -515,8 +428,6 @@ class TestVP9 {
     ASSERT_TRUE(video);
 
     EXPECT_EQ(ZX_OK, video->InitRegisters(TestSupport::parent_device()));
-
-    video->pts_manager_ = std::make_unique<PtsManager>();
 
     video->core_ = std::make_unique<HevcDec>(video.get());
     video->core_->PowerOn();
@@ -627,7 +538,10 @@ class TestVP9 {
       offset += sizeof(padding);
       io_buffer_cache_flush(buffer->buffer(), 0, offset);
     }
-    video->core()->StartDecoding();
+    {
+      std::lock_guard<std::mutex> lock(video->video_decoder_lock_);
+      static_cast<Vp9Decoder*>(video->video_decoder())->UpdateDecodeSize(50);
+    }
 
     EXPECT_EQ(std::future_status::ready,
               wait_valid.get_future().wait_for(std::chrono::seconds(10)));
@@ -647,7 +561,7 @@ class TestVP9 {
   // This is called from the interrupt handler, which already holds the lock.
   static void ReturnFrame(AmlogicVideo* video,
                           std::shared_ptr<VideoFrame> frame)
-      FXL_NO_THREAD_SAFETY_ANALYSIS {
+      __TA_NO_THREAD_SAFETY_ANALYSIS {
     video->video_decoder_->ReturnFrame(frame);
   }
 };

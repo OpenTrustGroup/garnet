@@ -16,18 +16,13 @@
 namespace tracing {
 namespace measure {
 
-// A group of recorded samples.
-struct SampleGroup {
-  std::vector<double> values;
-  std::string label;
-};
-
 // Result of a single measurement.
 struct Result {
-  std::vector<SampleGroup> samples;
+  std::vector<double> values;
   std::string unit;
   std::string label;
   std::string test_suite;
+  bool split_first;
 };
 
 // Computes the results of a benchmark from the measurement spec and the raw

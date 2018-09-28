@@ -61,12 +61,8 @@ const char kRootSchema[] = R"({
           "type": {
             "type": "string"
           },
-          "split_samples_at": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 0
-            }
+          "split_first": {
+            "type": "boolean"
           },
           "expected_sample_count": {
             "type": "integer",
@@ -92,7 +88,7 @@ const char kBufferingModeKey[] = "buffering_mode";
 const char kBufferSizeInMbKey[] = "buffer_size_in_mb";
 const char kMeasurementsKey[] = "measure";
 const char kTypeKey[] = "type";
-const char kSplitSamplesAtKey[] = "split_samples_at";
+const char kSplitFirstKey[] = "split_first";
 const char kExpectedSampleCountKey[] = "expected_sample_count";
 const char kTestSuiteNameKey[] = "test_suite_name";
 const char kMeasureDurationType[] = "duration";
@@ -363,18 +359,9 @@ bool DecodeSpec(const std::string& json, Spec* spec) {
       return false;
     }
 
-    if (measurement.HasMember(kSplitSamplesAtKey)) {
-      for (auto& value : measurement[kSplitSamplesAtKey].GetArray()) {
-        if (!result.measurements->split_samples_at[counter].empty() &&
-            value.GetUint() <=
-                result.measurements->split_samples_at[counter].back()) {
-          FXL_LOG(ERROR)
-              << "Incorrect split samples at values - not strictly increasing.";
-          return false;
-        }
-        result.measurements->split_samples_at[counter].push_back(
-            value.GetUint());
-      }
+    if (measurement.HasMember(kSplitFirstKey)) {
+      result.measurements->split_first[counter] =
+          measurement[kSplitFirstKey].GetBool();
     }
 
     if (measurement.HasMember(kExpectedSampleCountKey)) {
@@ -387,4 +374,19 @@ bool DecodeSpec(const std::string& json, Spec* spec) {
   *spec = std::move(result);
   return true;
 }
+
+bool GetBufferingMode(const std::string& buffering_mode_name,
+                      BufferingMode* out_mode) {
+  if (buffering_mode_name == "oneshot") {
+    *out_mode = BufferingMode::kOneshot;
+  } else if (buffering_mode_name == "circular") {
+    *out_mode = BufferingMode::kCircular;
+  } else if (buffering_mode_name == "streaming") {
+    *out_mode = BufferingMode::kStreaming;
+  } else {
+    return false;
+  }
+  return true;
+}
+
 }  // namespace tracing

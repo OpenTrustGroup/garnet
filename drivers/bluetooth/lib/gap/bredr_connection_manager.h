@@ -12,6 +12,7 @@
 #include "garnet/drivers/bluetooth/lib/hci/command_channel.h"
 #include "garnet/drivers/bluetooth/lib/hci/connection.h"
 #include "garnet/drivers/bluetooth/lib/hci/control_packets.h"
+#include "garnet/drivers/bluetooth/lib/l2cap/l2cap.h"
 
 namespace btlib {
 
@@ -28,10 +29,11 @@ class RemoteDeviceCache;
 // Manages all activity related to connections in the BR/EDR section of the
 // controller, including whether the device can be connected to, incoming
 // connections, and initiating connections.
-class BrEdrConnectionManager {
+class BrEdrConnectionManager final {
  public:
   BrEdrConnectionManager(fxl::RefPtr<hci::Transport> hci,
                          RemoteDeviceCache* device_cache,
+                         fbl::RefPtr<l2cap::L2CAP> l2cap,
                          bool use_interlaced_scan);
   ~BrEdrConnectionManager();
 
@@ -43,6 +45,9 @@ class BrEdrConnectionManager {
   // procedures. If a delegate is not set then all pairing requests will be
   // rejected.
   void SetPairingDelegate(fxl::WeakPtr<PairingDelegate> delegate);
+
+  // Retrieves the device id that is connected to the connection |handle|.
+  std::string GetPeerId(hci::ConnectionHandle handle) const;
 
  private:
   // Reads the controller page scan settings.
@@ -81,15 +86,15 @@ class BrEdrConnectionManager {
   // Device cache is used to look up parameters for connecting to devices and
   // update the state of connected devices as well as introduce unknown devices.
   // This object must outlive this instance.
-  // TODO(NET-410) - put newly found devices OnConnectionRequest/Complete
-  // and use for Connect()
-  RemoteDeviceCache* cache_ __UNUSED;
+  RemoteDeviceCache* cache_;
+
+  fbl::RefPtr<l2cap::L2CAP> l2cap_;
 
   // Interregator for new connections to pass.
   BrEdrInterrogator interrogator_;
 
-  // Connections that are active.
-  std::unordered_map<std::string, hci::ConnectionPtr> connections_;
+  // Holds the connections that are active.
+  std::unordered_map<hci::ConnectionHandle, hci::ConnectionPtr> connections_;
 
   // Handler ID for connection events
   hci::CommandChannel::EventHandlerId conn_complete_handler_id_;

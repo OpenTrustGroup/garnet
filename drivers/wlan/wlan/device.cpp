@@ -6,7 +6,6 @@
 
 #include <ddk/device.h>
 #include <fbl/limits.h>
-#include <fuchsia/wlan/mlme/cpp/fidl.h>
 #include <lib/zx/thread.h>
 #include <lib/zx/time.h>
 #include <wlan/common/channel.h>
@@ -17,6 +16,7 @@
 #include <wlan/mlme/debug.h>
 #include <wlan/mlme/service.h>
 #include <wlan/mlme/timer.h>
+#include <wlan/mlme/timer_manager.h>
 #include <wlan/mlme/wlan.h>
 #include <wlan/protocol/ioctl.h>
 #include <zircon/assert.h>
@@ -34,7 +34,7 @@
 
 namespace wlan {
 
-namespace wlan_mlme = ::fuchsia::wlan::mlme;
+namespace wlan_minstrel = ::fuchsia::wlan::minstrel;
 
 #define DEV(c) static_cast<Device*>(c)
 static zx_protocol_device_t wlan_device_ops = {
@@ -407,10 +407,10 @@ zx_status_t Device::GetTimer(uint64_t id, fbl::unique_ptr<Timer>* timer) {
 
 zx_status_t Device::SendEthernet(fbl::unique_ptr<Packet> packet) {
     ZX_DEBUG_ASSERT(packet != nullptr);
-    ZX_DEBUG_ASSERT(packet->len() <= ETH_FRAME_MAX_SIZE);
 
     if (packet->len() > ETH_FRAME_MAX_SIZE) {
         errorf("SendEthernet drops Ethernet frame of invalid length: %zu\n", packet->len());
+        ZX_DEBUG_ASSERT(false);
         return ZX_ERR_INVALID_ARGS;
     }
 
@@ -485,8 +485,8 @@ zx_status_t Device::ConfigureBss(wlan_bss_config_t* cfg) {
     return wlanmac_proxy_.ConfigureBss(0u, cfg);
 }
 
-zx_status_t Device::EnableBeaconing(bool enabled) {
-    return wlanmac_proxy_.EnableBeaconing(0u, enabled);
+zx_status_t Device::EnableBeaconing(wlan_bcn_config_t* bcn_cfg) {
+    return wlanmac_proxy_.EnableBeaconing(0u, bcn_cfg);
 }
 
 zx_status_t Device::ConfigureBeacon(fbl::unique_ptr<Packet> beacon) {
@@ -518,6 +518,19 @@ fbl::RefPtr<DeviceState> Device::GetState() {
 
 const wlanmac_info_t& Device::GetWlanInfo() const {
     return wlanmac_info_;
+}
+
+zx_status_t Device::GetMinstrelPeers(wlan_minstrel::Peers* peers_fidl) {
+    if (minstrel_ == nullptr) { return ZX_ERR_NOT_SUPPORTED; }
+    std::lock_guard<std::mutex> lock(lock_);
+    return minstrel_->GetListToFidl(peers_fidl);
+}
+
+zx_status_t Device::GetMinstrelStats(const common::MacAddr& addr,
+                                       wlan_minstrel::Peer* peer_fidl) {
+    if (minstrel_ == nullptr) { return ZX_ERR_NOT_SUPPORTED; }
+    std::lock_guard<std::mutex> lock(lock_);
+    return minstrel_->GetStatsToFidl(addr, peer_fidl);
 }
 
 void Device::MainLoop() {
@@ -585,7 +598,7 @@ void Device::MainLoop() {
                 break;
             case PortKeyType::kDevice: {
                 ZX_DEBUG_ASSERT(minstrel_ != nullptr);
-                minstrel_->UpdateStats();
+                minstrel_->HandleTimeout();
                 break;
             }
             default:
@@ -763,7 +776,7 @@ zx_status_t Device::CreateMinstrel() {
         errorf("could not create minstrel timer: %d\n", status);
         return status;
     }
-    minstrel_.reset(new MinstrelRateSelector(fbl::move(timer)));
+    minstrel_.reset(new MinstrelRateSelector(TimerManager(fbl::move(timer))));
     return ZX_OK;
 }
 

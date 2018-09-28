@@ -64,6 +64,14 @@ std::ostream& operator<<(std::ostream& str, const quat& q) {
   return str << "(" << q.x << ", " << q.y << ", " << q.z << ", " << q.w << ")";
 }
 
+std::ostream& operator<<(std::ostream& str, const plane2& p) {
+  return str << "plane2[dir:" << p.dir() << " dist:" << p.dist() << "]";
+}
+
+std::ostream& operator<<(std::ostream& str, const plane3& p) {
+  return str << "plane3[dir:" << p.dir() << " dist:" << p.dist() << "]";
+}
+
 std::ostream& operator<<(std::ostream& str, const MeshAttribute& attr) {
   switch (attr) {
     case MeshAttribute::kPosition2D:
@@ -81,6 +89,9 @@ std::ostream& operator<<(std::ostream& str, const MeshAttribute& attr) {
     case MeshAttribute::kPerimeterPos:
       str << "kPerimeterPos";
       break;
+    case MeshAttribute::kBlendWeight1:
+      str << "kBlendWeight1";
+      break;
     case MeshAttribute::kStride:
       str << "kStride";
       break;
@@ -89,12 +100,12 @@ std::ostream& operator<<(std::ostream& str, const MeshAttribute& attr) {
 }
 
 std::ostream& operator<<(std::ostream& str, const MeshAttributes& attributes) {
-  static_assert(uint32_t(MeshAttribute::kStride) == (1 << 5), "missing enum");
+  static_assert(uint32_t(MeshAttribute::kStride) == (1 << 6), "missing enum");
 
-  constexpr std::array<MeshAttribute, 5> all_flags = {
+  constexpr std::array<MeshAttribute, 6> all_flags = {
       {MeshAttribute::kPosition2D, MeshAttribute::kPosition3D,
        MeshAttribute::kPositionOffset, MeshAttribute::kUV,
-       MeshAttribute::kPerimeterPos}};
+       MeshAttribute::kPerimeterPos, MeshAttribute::kBlendWeight1}};
 
   bool has_flag = false;  // has a flag already been seen?
   for (auto flag : all_flags) {

@@ -8,11 +8,12 @@
 #include "lib/fxl/logging.h"
 
 namespace {
+// Set the AudioRenderer stream type to: 48 kHz, mono, 32-bit float.
+constexpr float kFrameRate = 48000.0f;
+
 // This example feeds the system 1 second of audio, in 10-millisecond payloads.
 constexpr size_t kNumPayloads = 100;
-// Set the renderer stream type to: 48 kHz, mono, 32-bit float.
-constexpr float kRendererFrameRate = 48000.0f;
-constexpr size_t kFramesPerPayload = kRendererFrameRate / kNumPayloads;
+constexpr size_t kFramesPerPayload = kFrameRate / kNumPayloads;
 
 // Play a 439 Hz sine wave at 1/8 of full-scale volume.
 constexpr double kFrequency = 439.0;
@@ -28,7 +29,7 @@ MediaApp::MediaApp(fit::closure quit_callback)
 
 // Prepare for playback, submit initial data and start the presentation timeline
 void MediaApp::Run(component::StartupContext* app_context) {
-  AcquireRenderer(app_context);
+  AcquireAudioRenderer(app_context);
   SetStreamType();
 
   if (CreateMemoryMapping() != ZX_OK) {
@@ -41,17 +42,25 @@ void MediaApp::Run(component::StartupContext* app_context) {
     SendPacket(CreatePacket(payload_num));
   }
 
+  // By not explicitly setting timestamp values for reference clock or media
+  // clock, we indicate that we want to start playback, with default timing.
+  // I.e., at a system reference_time of "as soon as safely possible", we will
+  // present audio corresponding to an initial media_time (PTS) of zero.
+  //
+  // AudioRenderer defaults to unity gain, unmuted; we need not change our
+  // volume. (Although not shown here, we would do so via the GainControl
+  // interface.)
   audio_renderer_->PlayNoReply(fuchsia::media::NO_TIMESTAMP,
                                fuchsia::media::NO_TIMESTAMP);
 }
 
 // Use StartupContext to acquire AudioPtr, which we only need in order to get
 // an AudioRendererPtr. Set an error handler, in case of channel closure.
-void MediaApp::AcquireRenderer(component::StartupContext* app_context) {
+void MediaApp::AcquireAudioRenderer(component::StartupContext* app_context) {
   fuchsia::media::AudioPtr audio =
       app_context->ConnectToEnvironmentService<fuchsia::media::Audio>();
 
-  audio->CreateAudioOut(audio_renderer_.NewRequest());
+  audio->CreateAudioRenderer(audio_renderer_.NewRequest());
 
   audio_renderer_.set_error_handler([this]() {
     FXL_LOG(ERROR)
@@ -60,7 +69,7 @@ void MediaApp::AcquireRenderer(component::StartupContext* app_context) {
   });
 }
 
-// Set the renderer's audio stream_type: mono 48kHz 32-bit float.
+// Set the AudioRenderer's audio stream_type: mono 48kHz 32-bit float.
 void MediaApp::SetStreamType() {
   FXL_DCHECK(audio_renderer_);
 
@@ -68,7 +77,7 @@ void MediaApp::SetStreamType() {
 
   stream_type.sample_format = fuchsia::media::AudioSampleFormat::FLOAT;
   stream_type.channels = 1;
-  stream_type.frames_per_second = kRendererFrameRate;
+  stream_type.frames_per_second = kFrameRate;
 
   audio_renderer_->SetPcmStreamType(std::move(stream_type));
 }
@@ -82,8 +91,8 @@ zx_status_t MediaApp::CreateMemoryMapping() {
   total_mapping_size_ = payload_size_ * kNumPayloads;
 
   zx_status_t status = payload_buffer_.CreateAndMap(
-      total_mapping_size_, ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE,
-      nullptr, &payload_vmo, ZX_RIGHT_READ | ZX_RIGHT_MAP | ZX_RIGHT_TRANSFER);
+      total_mapping_size_, ZX_VM_PERM_READ | ZX_VM_PERM_WRITE, nullptr,
+      &payload_vmo, ZX_RIGHT_READ | ZX_RIGHT_MAP | ZX_RIGHT_TRANSFER);
 
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "VmoMapper:::CreateAndMap failed - " << status;
@@ -101,14 +110,23 @@ void MediaApp::WriteAudioIntoBuffer() {
 
   for (size_t frame = 0; frame < kFramesPerPayload * kNumPayloads; ++frame) {
     float_buffer[frame] =
-        kAmplitude * sin(frame * kFrequency * 2 * M_PI / kRendererFrameRate);
+        kAmplitude * sin(frame * kFrequency * 2 * M_PI / kFrameRate);
   }
 }
 
 // We divide our cross-proc buffer into different zones, called payloads.
 // Create a packet that corresponds to this particular payload.
+// By specifying NO_TIMESTAMP for each packet's presentation timestamp, we rely
+// on the AudioRenderer to treat the sequence of packets as a contiguous
+// unbroken stream of audio. We just need to make sure we present packets early
+// enough, and for this example we actually submit all packets before starting
+// playback.
 fuchsia::media::StreamPacket MediaApp::CreatePacket(size_t payload_num) {
   fuchsia::media::StreamPacket packet;
+
+  // leave packet.pts as the default (fuchsia::media::NO_TIMESTAMP)
+  // leave packet.payload_buffer_id as default (0): we only map a single buffer
+
   packet.payload_offset = (payload_num * payload_size_) % total_mapping_size_;
   packet.payload_size = payload_size_;
   return packet;

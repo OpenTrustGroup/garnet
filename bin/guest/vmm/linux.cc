@@ -18,8 +18,6 @@
 #include <zircon/boot/e820.h>
 
 #include "garnet/bin/guest/vmm/guest_config.h"
-#include "garnet/bin/guest/vmm/kernel.h"
-#include "garnet/lib/machina/address.h"
 #include "garnet/lib/machina/bits.h"
 #include "garnet/lib/machina/guest.h"
 #include "lib/fxl/strings/string_printf.h"
@@ -60,6 +58,7 @@ struct SetupData {
 } __PACKED;
 
 static constexpr char kDtbPath[] = "/pkg/data/board.dtb";
+static constexpr uintptr_t kRamdiskOffset = 0x4000000;
 static constexpr uintptr_t kDtbOffset = kRamdiskOffset - PAGE_SIZE;
 static constexpr uintptr_t kDtbOverlayOffset = kDtbOffset - PAGE_SIZE;
 static constexpr uintptr_t kDtbBootParamsOffset =
@@ -156,6 +155,10 @@ static bool is_mz(const MzHeader* header) {
          header->pe_off >= sizeof(MzHeader);
 }
 
+static inline bool is_within(uintptr_t x, uintptr_t addr, uintptr_t size) {
+  return x >= addr && x < addr + size;
+}
+
 static zx_status_t read_fd(const int fd, const machina::PhysMem& phys_mem,
                            const uintptr_t off, size_t* file_size) {
   struct stat stat;
@@ -170,6 +173,23 @@ static zx_status_t read_fd(const int fd, const machina::PhysMem& phys_mem,
     return ZX_ERR_IO;
   }
   *file_size = stat.st_size;
+  return ZX_OK;
+}
+
+zx_status_t load_kernel(const std::string& kernel_path,
+                        const machina::PhysMem& phys_mem,
+                        const uintptr_t kernel_off) {
+  fbl::unique_fd fd(open(kernel_path.c_str(), O_RDONLY));
+  if (!fd) {
+    FXL_LOG(ERROR) << "Failed to open kernel image " << kernel_path;
+    return ZX_ERR_IO;
+  }
+  size_t kernel_size;
+  read_fd(fd.get(), phys_mem, kernel_off, &kernel_size);
+  if (is_within(kRamdiskOffset, kernel_off, kernel_size)) {
+    FXL_LOG(ERROR) << "Kernel location overlaps RAM disk location";
+    return ZX_ERR_OUT_OF_RANGE;
+  }
   return ZX_OK;
 }
 
@@ -231,6 +251,7 @@ static zx_status_t read_boot_params(const machina::PhysMem& phys_mem,
 }
 
 static zx_status_t write_boot_params(const machina::PhysMem& phys_mem,
+                                     const machina::DevMem& dev_mem,
                                      const std::string& cmdline,
                                      const int dtb_overlay_fd,
                                      const size_t initrd_size) {
@@ -278,16 +299,20 @@ static zx_status_t write_boot_params(const machina::PhysMem& phys_mem,
 
 #if __x86_64__
   // Setup e820 memory map.
-  size_t e820_entries = machina::e820_entries(phys_mem.size());
+  machina::E820Map e820_map(phys_mem.size(), dev_mem);
+  for (const auto& range : dev_mem) {
+    e820_map.AddReservedRegion(range.addr, range.size);
+  }
+  size_t e820_entries = e820_map.size();
   if (e820_entries > kMaxE820Entries) {
     FXL_LOG(ERROR) << "Not enough space for e820 memory map";
     return ZX_ERR_BAD_STATE;
   }
   bp(phys_mem, E820_COUNT) = static_cast<uint8_t>(e820_entries);
   const size_t e820_size = e820_entries * sizeof(e820entry_t);
-  void* e820_addr =
-      phys_mem.as<void>(kKernelOffset + kE820MapOffset, e820_size);
-  machina::create_e820(e820_addr, phys_mem.size());
+  e820entry_t* e820_addr =
+      phys_mem.as<e820entry_t>(kKernelOffset + kE820MapOffset, e820_size);
+  e820_map.copy(e820_addr);
 #endif
   return ZX_OK;
 }
@@ -321,12 +346,12 @@ static zx_status_t add_memory_entry(void* dtb, int memory_off, zx_gpaddr_t addr,
   return ZX_OK;
 }
 
-static zx_status_t load_device_tree(const int dtb_fd,
-                                    const machina::PhysMem& phys_mem,
-                                    const std::string& cmdline,
-                                    const int dtb_overlay_fd,
-                                    const size_t initrd_size,
-                                    const GuestConfig& cfg) {
+static zx_status_t load_device_tree(
+    const int dtb_fd, const machina::PhysMem& phys_mem,
+    const machina::DevMem& dev_mem,
+    const std::vector<machina::PlatformDevice*>& devices,
+    const std::string& cmdline, const int dtb_overlay_fd,
+    const size_t initrd_size, const GuestConfig& cfg) {
   void* dtb;
   size_t dtb_size;
   zx_status_t status = read_device_tree(dtb_fd, phys_mem, kDtbOffset,
@@ -417,69 +442,41 @@ static zx_status_t load_device_tree(const int dtb_fd,
   }
 
   // Add memory to device tree.
-  int memory_off = fdt_path_offset(dtb, "/memory@0");
-  if (memory_off < 0) {
-    FXL_LOG(ERROR) << "Failed to find \"/memory\" in device tree";
+  int root_off = fdt_path_offset(dtb, "/");
+  if (root_off < 0) {
+    FXL_LOG(ERROR) << "Failed to find root node in device tree";
     return ZX_ERR_BAD_STATE;
   }
-  status = add_memory_entry(dtb, memory_off, 0, phys_mem.size());
+  status = ZX_OK;
+  dev_mem.YieldInverseRange(0, phys_mem.size(), [&status, dtb, root_off](auto range) {
+    if (status != ZX_OK) {
+      return;
+    }
+    std::stringstream ss;
+    ss << "/memory@" << std::hex << range.addr;
+    int memory_off = fdt_add_subnode(dtb, root_off, ss.str().c_str());
+    if (memory_off < 0) {
+      status = ZX_ERR_BAD_STATE;
+      return;
+    }
+    int ret = fdt_setprop_string(dtb, memory_off, "device_type", "memory");
+    if (ret != 0) {
+      status = ZX_ERR_BAD_STATE;
+      return;
+    }
+    status = add_memory_entry(dtb, memory_off, range.addr, range.size);
+  });
   if (status != ZX_OK) {
     return status;
   }
 
-#if __aarch64__
-  int gic_off = fdt_path_offset(dtb, "/interrupt-controller@800000000");
-  if (gic_off < 0) {
-    FXL_LOG(ERROR) << "Failed to find \"/interrupt-controller\" in device tree";
-    return ZX_ERR_BAD_STATE;
-  }
-  if (cfg.gic_version() == machina::GicVersion::V2) {
-    ret = fdt_setprop_string(dtb, gic_off, "compatible", "arm,gic-400");
-    if (ret != 0) {
-      device_tree_error_msg("compatible");
-      return ZX_ERR_BAD_STATE;
-    }
-    // GICD memory map
-    status = add_memory_entry(dtb, gic_off, machina::kGicv2DistributorPhysBase,
-                              machina::kGicv2DistributorSize);
-    if (status != ZX_OK) {
-      return status;
-    }
-    // GICC memory map
-    status = add_memory_entry(
-        dtb, gic_off,
-        machina::kGicv2DistributorPhysBase + machina::kGicv2DistributorSize,
-        0x2000);
-    if (status != ZX_OK) {
-      return status;
-    }
-  } else {
-    ret = fdt_setprop_string(dtb, gic_off, "compatible", "arm,gic-v3");
-    if (ret != 0) {
-      device_tree_error_msg("compatible");
-      return ZX_ERR_BAD_STATE;
-    }
-    // GICD memory map
-    status = add_memory_entry(dtb, gic_off, machina::kGicv3DistributorPhysBase,
-                              machina::kGicv3DistributorSize);
-    if (status != ZX_OK) {
-      return status;
-    }
-    ret = fdt_setprop_u32(dtb, gic_off, "#redistributor-regions", 1);
-    if (ret != 0) {
-      device_tree_error_msg("#redistributor-regions");
-      return ZX_ERR_BAD_STATE;
-    }
-    // GICR memory map
-    uint32_t gicr_size = static_cast<uint32_t>(
-        machina::kGicv3RedistributorStride * cfg.num_cpus());
-    status = add_memory_entry(dtb, gic_off,
-                              machina::kGicv3RedistributorPhysBase, gicr_size);
+  // Add all platform devices to device tree.
+  for (auto device : devices) {
+    status = device->ConfigureDtb(dtb);
     if (status != ZX_OK) {
       return status;
     }
   }
-#endif  // __aarch64__
 
   return ZX_OK;
 }
@@ -493,12 +490,11 @@ static std::string linux_cmdline(std::string cmdline) {
 #endif
 }
 
-// NOTE(abdulla): dev_mem is currently unused, but will be used in the future to
-// modify the e820 or DTS memory map.
 zx_status_t setup_linux(const GuestConfig& cfg,
                         const machina::PhysMem& phys_mem,
-                        const machina::DevMem& dev_mem, uintptr_t* guest_ip,
-                        uintptr_t* boot_ptr) {
+                        const machina::DevMem& dev_mem,
+                        const std::vector<machina::PlatformDevice*>& devices,
+                        uintptr_t* guest_ip, uintptr_t* boot_ptr) {
   // Read the kernel image.
   zx_status_t status = load_kernel(cfg.kernel_path(), phys_mem, kKernelOffset);
   if (status != ZX_OK) {
@@ -538,8 +534,8 @@ zx_status_t setup_linux(const GuestConfig& cfg,
     if (status != ZX_OK) {
       return status;
     }
-    status =
-        write_boot_params(phys_mem, cmdline, dtb_overlay_fd.get(), initrd_size);
+    status = write_boot_params(phys_mem, dev_mem, cmdline, dtb_overlay_fd.get(),
+                               initrd_size);
     if (status != ZX_OK) {
       return status;
     }
@@ -554,7 +550,7 @@ zx_status_t setup_linux(const GuestConfig& cfg,
       FXL_LOG(ERROR) << "Failed to open device tree " << kDtbPath;
       return ZX_ERR_IO;
     }
-    status = load_device_tree(dtb_fd.get(), phys_mem, cmdline,
+    status = load_device_tree(dtb_fd.get(), phys_mem, dev_mem, devices, cmdline,
                               dtb_overlay_fd.get(), initrd_size, cfg);
     if (status != ZX_OK) {
       return status;

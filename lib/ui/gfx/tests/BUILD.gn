@@ -17,6 +17,7 @@ source_set("testing_deps") {
   sources = [
     "error_reporting_test.cc",
     "error_reporting_test.h",
+    "gfx_test.h",
     "mocks.cc",
     "mocks.h",
     "session_test.cc",
@@ -27,14 +28,14 @@ source_set("testing_deps") {
   public_deps = [
     ":util",
     "//garnet/lib/ui/gfx",
+    "//garnet/lib/ui/scenic/tests:testing_deps",
     "//garnet/lib/ui/scenic/util",
     "//garnet/public/lib/escher",
-    "//garnet/public/lib/escher/test:gtest_vulkan",
+    "//garnet/public/lib/escher/test:gtest_escher",
     "//garnet/public/lib/fostr/fidl/fuchsia.ui.scenic",
     "//garnet/public/lib/gtest",
     "//garnet/public/lib/ui/input/cpp",
     "//garnet/public/lib/ui/scenic/cpp",
-    "//third_party/googletest:gtest_main",
   ]
 }
 
@@ -67,13 +68,16 @@ executable("unittests") {
     "object_linker_unittest.cc",
     "pose_buffer_unit_test.cc",
     "resource_linker_unittest.cc",
+    "run_all_unittests.cc",
     "session_unittest.cc",
     "shape_unittest.cc",
+    "snapshotter_unittest.cc",
     "stereo_camera_unittest.cc",
     "view_unittest.cc",
   ]
   deps = [
     ":testing_deps",
+    "//garnet/lib/ui/gfx:object_linker",
   ]
   include_dirs = [
     "//garnet/public/lib/escher",
@@ -87,11 +91,9 @@ executable("apptests") {
   testonly = true
   sources = [
     "gfx_apptest.cc",
-    "gfx_test.h",
   ]
   deps = [
     ":testing_deps",
-    "//garnet/lib/ui/scenic/tests:testing_deps",
   ]
 }
 

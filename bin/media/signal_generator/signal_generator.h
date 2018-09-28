@@ -47,6 +47,9 @@ class MediaApp {
   void set_save_to_file(bool save_to_file) { save_to_file_ = save_to_file; }
   void set_save_file_name(std::string file_name) { file_name_ = file_name; }
 
+  void set_will_set_stream_gain(bool set_stream_gain) {
+    set_stream_gain_ = set_stream_gain;
+  }
   void set_stream_gain(float stream_gain_db) {
     stream_gain_db_ = stream_gain_db;
   }
@@ -68,7 +71,7 @@ class MediaApp {
   bool ParameterRangeChecks();
   void SetupPayloadCoefficients();
   void DisplayConfigurationSettings();
-  void AcquireAudioOut(component::StartupContext* app_context);
+  void AcquireAudioRenderer(component::StartupContext* app_context);
   void SetStreamType();
 
   zx_status_t CreateMemoryMapping();
@@ -91,7 +94,7 @@ class MediaApp {
 
   fit::closure quit_callback_;
 
-  fuchsia::media::AudioOutPtr audio_out_;
+  fuchsia::media::AudioRendererPtr audio_renderer_;
   fuchsia::media::GainControlPtr gain_control_;
 
   fzl::VmoMapper payload_buffer_;
@@ -128,6 +131,7 @@ class MediaApp {
   media::audio::WavWriter<> wav_writer_;
   bool wav_writer_is_initialized_ = false;
 
+  bool set_stream_gain_ = false;
   float stream_gain_db_;
   bool set_system_gain_ = false;
   float system_gain_db_;

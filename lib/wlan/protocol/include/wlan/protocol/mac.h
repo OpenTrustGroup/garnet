@@ -75,12 +75,15 @@ enum {
 
 enum {
     WLAN_TX_INFO_VALID_DATA_RATE = (1 << 0),
-    WLAN_TX_INFO_VALID_RATE_IDX = (1 << 1),
+    WLAN_TX_INFO_VALID_TX_VECTOR_IDX = (1 << 1),
     WLAN_TX_INFO_VALID_PHY = (1 << 2),
     WLAN_TX_INFO_VALID_CHAN_WIDTH = (1 << 3),
     WLAN_TX_INFO_VALID_MCS = (1 << 4),
     // Bits 5-31 reserved
 };
+
+// TxVector is defined in //garnet/lib/wlan/common/tx_vector.h
+typedef uint16_t tx_vec_idx_t;
 
 typedef struct wlan_tx_info {
     // Transmit flags. These represent boolean options as opposed to enums or other value-based
@@ -93,9 +96,9 @@ typedef struct wlan_tx_info {
     uint32_t valid_fields;
     // The data rate to be used to transmit this packet, measured in units of 0.5 Mb/s.
     uint32_t data_rate;
-    // Used by Minstrel as an index into its rate table, will be sent back in wlan_tx_status_t if
-    // Minstrel is enabled for the device.
-    uint16_t rate_idx;
+    // Will be sent back in wlan_tx_status_t if Minstrel is enabled for the device, indicated by
+    // WLAN_TX_INFO_VALID_TX_VECTOR_IDX.
+    tx_vec_idx_t tx_vector_idx;
     // The PHY format to be used to transmit this packet.
     uint16_t phy;
     // The channel width to be used to transmit this packet.
@@ -105,16 +108,25 @@ typedef struct wlan_tx_info {
     uint8_t mcs;
 } wlan_tx_info_t;
 
+#define WLAN_TX_VECTOR_IDX_INVALID 0
+#define WLAN_TX_STATUS_MAX_ENTRY 8
+
+typedef struct wlan_tx_status_entry {
+    tx_vec_idx_t tx_vector_idx;
+    // Number of total attempts with this specific tx vector, including successful attempts.
+    // DDK assumes the number of attempts per packet will not exceed 255. (usually <= 8)
+    uint8_t attempts;
+} __PACKED wlan_tx_status_entry_t;
+
 typedef struct wlan_tx_status {
+    // up to 8 different tx_vector for one PPDU frame.
+    // WLAN_TX_VECTOR_IDX_INVALID indicates no more entries.
+    wlan_tx_status_entry_t tx_status_entry[WLAN_TX_STATUS_MAX_ENTRY];
     // Destination mac address, or addr1 in packet header.
     uint8_t peer_addr[6];
-    // Used by Minstrel as an index into its rate table.
-    uint16_t rate_idx;
-    // Number of retries after the first attempt.  0 if transmission succeeds on first attempt.
-    uint16_t retries;
     // Outcome of packet transmission. True iff ACK was received from peer.
     bool success;
-} wlan_tx_status_t;
+} __PACKED wlan_tx_status_t;
 
 enum {
     WLAN_PROTECTION_NONE = 0,
@@ -189,6 +201,19 @@ typedef struct wlan_hw_scan_result {
     uint8_t code;
 } wlan_hw_scan_result_t;
 
+// Includes the information about beacon template.
+typedef struct wlan_bcn_config {
+    // Points to the beacon template. Since this is just the template, some packet content can
+    // contain only minimum valid info. They will be changed later by hardware/firmware or software.
+    // Note that the driver must copy the packet content into its own memory and cannot rely on
+    // the pointers in the struct.
+    wlan_tx_packet_t tmpl;
+
+    // TIM offset (in bytes) to the start of |bcn_tmpl|. This points to the first byte of TIM IE,
+    // which is the tag ID.
+    size_t tim_ele_offset;
+} wlan_bcn_config_t;
+
 typedef struct wlanmac_ifc {
     // Report the status of the wlanmac device.
     void (*status)(void* cookie, uint32_t status);
@@ -251,10 +276,12 @@ typedef struct wlanmac_protocol_ops {
     zx_status_t (*configure_bss)(void* ctx, uint32_t options, wlan_bss_config_t* config);
 
     // Enables or disables hardware Beaconing.
-    zx_status_t (*enable_beaconing)(void* ctx, uint32_t options, bool enabled);
+    // * bcn_cfg: Pass `nullptr` to disable hardware Beacons. Used by hardware beacon offload.
+    zx_status_t (*enable_beaconing)(void* ctx, uint32_t options, wlan_bcn_config_t* bcn_cfg);
 
     // Configures a Beacon frame in hardware to announce the BSS' existence.
-    // Pass `nullptr` to disable hardware Beacons.
+    // * pkt: Pass `nullptr` to disable hardware Beacons. Used by software generated beacon.
+    // TODO(NET-1565): Rename to update_beacon.
     zx_status_t (*configure_beacon)(void* ctx, uint32_t options, wlan_tx_packet_t* pkt);
 
     // Specify a key for frame protection.

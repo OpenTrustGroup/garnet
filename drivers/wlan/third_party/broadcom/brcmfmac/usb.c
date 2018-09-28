@@ -138,7 +138,7 @@ struct brcmf_usb_image {
 
 struct brcmf_usbdev_info {
     struct brcmf_usbdev bus_pub; /* MUST BE FIRST */
-    usb_protocol_t* protocol;
+    usb_protocol_t protocol;
     //spinlock_t qlock;
     struct list_node rx_freeq;
     struct list_node rx_postq;
@@ -208,7 +208,7 @@ void brcmf_usb_free_urb(struct brcmf_urb* urb) {
     if (urb->devinfo == NULL) {
         return;
     }
-    usb_req_release(urb->devinfo->protocol, urb->zxurb);
+    usb_req_release(&urb->devinfo->protocol, urb->zxurb);
     free(urb);
 }
 
@@ -236,7 +236,7 @@ static void brcmf_usb_init_urb(struct brcmf_urb* urb, struct brcmf_usbdev_info* 
     zxurb->header.send_zlp = zero_packet;
     if (out) {
         if (size > 0) {
-            usb_req_copy_to(devinfo->protocol, zxurb, buf, size, 0);
+            usb_req_copy_to(&devinfo->protocol, zxurb, buf, size, 0);
         }
         urb->recv_buffer = 0;
         urb->desired_length = 0;
@@ -266,7 +266,7 @@ static void brcmf_usb_init_bulk_urb(struct brcmf_urb* urb, struct brcmf_usbdev_i
 }
 
 zx_status_t brcmf_usb_queue_urb(struct brcmf_urb* urb) {
-    usb_protocol_t* usb_proto = urb->devinfo->protocol;
+    usb_protocol_t* usb_proto = &urb->devinfo->protocol;
     usb_request_queue(usb_proto, urb->zxurb);
     return ZX_OK;
 }
@@ -332,7 +332,7 @@ static void brcmf_usb_ctlread_complete(usb_request_t* zxurb, struct brcmf_urb* u
         }
         // TODO(cphoenix): At least some transfers malloc a buffer and copy to/from it, which
         // is unnecessary given we're in userspace and already copying here. Clean that up.
-        usb_req_copy_from(devinfo->protocol, zxurb, urb->recv_buffer, urb->actual_length, 0);
+        usb_req_copy_from(&devinfo->protocol, zxurb, urb->recv_buffer, urb->actual_length, 0);
     }
 
     pthread_mutex_lock(&irq_callback_lock);
@@ -440,7 +440,7 @@ static zx_status_t brcmf_usb_rx_ctlpkt(struct brcmf_device* dev, uint8_t* buf, u
     bool timeout;
     struct brcmf_usbdev_info* devinfo = brcmf_usb_get_businfo(dev);
 
-    brcmf_dbg(USB, "Enter\n");
+    //brcmf_dbg(USB, "Enter\n");
     if (devinfo->bus_pub.state != BRCMFMAC_USB_STATE_UP) {
         return ZX_ERR_IO;
     }
@@ -521,7 +521,7 @@ static struct brcmf_usbreq* brcmf_usbdev_qinit(struct brcmf_usbdev_info* devinfo
     req = reqs;
 
     for (i = 0; i < qsize; i++) {
-        req->urb = brcmf_usb_allocate_urb(devinfo->protocol);
+        req->urb = brcmf_usb_allocate_urb(&devinfo->protocol);
         if (!req->urb) {
             goto fail;
         }
@@ -553,7 +553,7 @@ static void brcmf_usb_free_q(struct brcmf_usbdev_info* devinfo, struct list_node
             break; // TODO(cphoenix): Should this be a "continue"?
         }
         if (pending) {
-            usb_cancel_all(devinfo->protocol, req->urb->zxurb->header.ep_address);
+            usb_cancel_all(&devinfo->protocol, req->urb->zxurb->header.ep_address);
         } else {
             brcmf_usb_free_urb(req->urb);
             list_delete(&req->list);
@@ -578,7 +578,7 @@ static void brcmf_usb_tx_complete(usb_request_t* zxurb, struct brcmf_urb* urb) {
     urb->actual_length = zxurb->response.actual;
     urb->status = zxurb->response.status;
     if (urb->status == ZX_ERR_IO_REFUSED) {
-        usb_reset_endpoint(devinfo->protocol, urb->zxurb->header.ep_address);
+        usb_reset_endpoint(&devinfo->protocol, urb->zxurb->header.ep_address);
     }
 
     pthread_mutex_lock(&irq_callback_lock);
@@ -605,7 +605,7 @@ static void brcmf_usb_rx_complete(usb_request_t* zxurb, struct brcmf_urb* urb) {
     urb->actual_length = zxurb->response.actual;
     urb->status = zxurb->response.status;
     if (urb->status == ZX_ERR_IO_REFUSED) {
-        usb_reset_endpoint(devinfo->protocol, urb->zxurb->header.ep_address);
+        usb_reset_endpoint(&devinfo->protocol, urb->zxurb->header.ep_address);
     }
 
     pthread_mutex_lock(&irq_callback_lock);
@@ -620,7 +620,7 @@ static void brcmf_usb_rx_complete(usb_request_t* zxurb, struct brcmf_urb* urb) {
                     urb->desired_length);
             urb->actual_length = urb->desired_length;
         }
-        usb_req_copy_from(devinfo->protocol, zxurb, urb->recv_buffer, urb->actual_length, 0);
+        usb_req_copy_from(&devinfo->protocol, zxurb, urb->recv_buffer, urb->actual_length, 0);
     }
 
     /* zero length packets indicate usb "failure". Do not refill */
@@ -789,10 +789,10 @@ static zx_status_t brcmf_usb_up(struct brcmf_device* dev) {
 static void brcmf_cancel_all_urbs(struct brcmf_usbdev_info* devinfo) {
     brcmf_dbg(TEMP, "* * Entered cancel_all_urbs");
     if (devinfo->ctl_urb) {
-        usb_cancel_all(devinfo->protocol, 0);
+        usb_cancel_all(&devinfo->protocol, 0);
     }
     if (devinfo->bulk_urb) {
-        usb_cancel_all(devinfo->protocol, devinfo->bulk_urb->zxurb->header.ep_address);
+        usb_cancel_all(&devinfo->protocol, devinfo->bulk_urb->zxurb->header.ep_address);
     }
     brcmf_usb_free_q(devinfo, &devinfo->tx_postq, true);
     brcmf_usb_free_q(devinfo, &devinfo->rx_postq, true);
@@ -827,7 +827,7 @@ static void brcmf_usb_sync_complete(usb_request_t* zxurb, struct brcmf_urb* urb)
                     urb->desired_length);
             urb->actual_length = urb->desired_length;
         }
-        usb_req_copy_from(devinfo->protocol, zxurb, urb->recv_buffer, urb->actual_length, 0);
+        usb_req_copy_from(&devinfo->protocol, zxurb, urb->recv_buffer, urb->actual_length, 0);
     }
 
     brcmf_usb_ioctl_resp_wake(devinfo);
@@ -867,7 +867,7 @@ static zx_status_t brcmf_usb_dl_cmd(struct brcmf_usbdev_info* devinfo, uint8_t c
 
     if (brcmf_usb_ioctl_resp_wait(devinfo) != ZX_OK) {
         brcmf_dbg(TEMP, "Timed out. Canceling endpoint 0.");
-        usb_cancel_all(devinfo->protocol, 0);
+        usb_cancel_all(&devinfo->protocol, 0);
         ret = ZX_ERR_SHOULD_WAIT;
     } else {
         ret = devinfo->ctl_urb->status;
@@ -876,7 +876,7 @@ static zx_status_t brcmf_usb_dl_cmd(struct brcmf_usbdev_info* devinfo, uint8_t c
                       devinfo->ctl_urb->actual_length, buflen, devinfo->ctl_urb->status);
             if (ret == ZX_ERR_IO_REFUSED) {
                 brcmf_dbg(USB, "Resetting endpoint 0");
-                usb_reset_endpoint(devinfo->protocol, 0);
+                usb_reset_endpoint(&devinfo->protocol, 0);
             }
             goto finalize;
         }
@@ -1243,11 +1243,11 @@ static struct brcmf_usbdev* brcmf_usb_attach(struct brcmf_usbdev_info* devinfo, 
     }
     devinfo->tx_freecount = ntxq;
 
-    devinfo->ctl_urb = brcmf_usb_allocate_urb(devinfo->protocol);
+    devinfo->ctl_urb = brcmf_usb_allocate_urb(&devinfo->protocol);
     if (!devinfo->ctl_urb) {
         goto error;
     }
-    devinfo->bulk_urb = brcmf_usb_allocate_urb(devinfo->protocol);
+    devinfo->bulk_urb = brcmf_usb_allocate_urb(&devinfo->protocol);
     if (!devinfo->bulk_urb) {
         goto error;
     }
@@ -1295,24 +1295,6 @@ static const struct brcmf_bus_ops brcmf_usb_bus_ops = {
     .get_fwname = brcmf_usb_get_fwname,
 };
 
-// TODO(cphoenix): Remove the code inside TRY_TEMP_SCAN once we have an end-to-end integrated
-// system that can be tested. For now, uncomment the next line to test whether scanning works.
-//#define TRY_TEMP_SCAN
-#ifdef TRY_TEMP_SCAN
-#include "cfg80211.h" // Temp, for call to Scan
-
-static uint8_t* brcmf_fill_ie(uint8_t* ieptr, uint8_t ie_num, void* ie_data, size_t ie_len) {
-    if (ie_len > 255) {
-        brcmf_err("Length too big to fit IE: %ld", ie_len);
-        return ieptr;
-    }
-    ieptr[0] = ie_num;
-    ieptr[1] = ie_len;
-    memcpy(ieptr + 2, ie_data, ie_len);
-    return ieptr + 2 + ie_len;
-}
-#endif
-
 static zx_status_t brcmf_usb_bus_setup(struct brcmf_usbdev_info* devinfo) {
     zx_status_t ret;
 
@@ -1332,84 +1314,7 @@ static zx_status_t brcmf_usb_bus_setup(struct brcmf_usbdev_info* devinfo) {
     if (ret != ZX_OK) {
         goto fail;
     }
-#ifdef TRY_TEMP_SCAN
-    brcmf_dbg(TEMP, "Starting scan prepare");
-    PAUSE;
-    struct brcmf_bus* bus_if = dev_to_bus(devinfo->dev);
-    struct wiphy* wiphy = bus_if->drvr->config->wiphy;
-    struct cfg80211_scan_request request;
-    memset(&request, 0, sizeof(request));
-    struct ieee80211_channel channels[11];
-    memset(channels, 0, sizeof(channels));
-    request.n_channels = 11;
-    request.wdev = &bus_if->drvr->iflist[0]->vif->wdev;
-    struct net_device* ndev = bus_if->drvr->iflist[0]->ndev;
-    brcmf_dbg(TEMP, "About to netdev_open");
-    PAUSE;
-    brcmf_netdev_open(ndev);
-    brcmf_dbg(TEMP, "Survived netdev_open");
-    PAUSE;
-    for (int i = 0; i < 11; i++) {
-        // TODO(cphoenix): Fix this hack along with ieee80211_frequency_to_channel() hack
-        // in device.h
-        channels[i].center_freq = i+1;
-        channels[i].hw_value = i+1;
-        request.channels[i] = &channels[i];
-    }
-    brcmf_dbg(TEMP, "About to scan! Wiphy %p", wiphy);
-    PAUSE;
-    ret = brcmf_cfg80211_scan(wiphy, &request);
-    brcmf_dbg(TEMP, "Back from scan, ret %d. About to sleep 3 sec....", ret);
-    msleep(3000);
-    brcmf_dbg(TEMP, "Back from sleep.");
-    struct cfg80211_connect_params sme;
-    memset(&sme, 0, sizeof(sme));
-    uint8_t ssid[32] = "GoogleGuest-Legacy";
-    char ie_0[] = "GoogleGuest-Legacy";
-    brcmf_dbg(TEMP, "About to connect to '%s'", ssid);
-    sme.ssid = ssid;
-    sme.ssid_len = strlen((char*)ssid);
-    sme.auth_type = NL80211_AUTHTYPE_OPEN_SYSTEM;
-    uint8_t ie_1[] = {0x82, 0x84, 0x8b, 0x96, 0x24, 0x30, 0x48, 0x6c};
-    uint8_t ie_50[] = {0x0c, 0x12, 0x18, 0x60};
-    sme.ie_len = strlen(ie_0) + sizeof(ie_1) + sizeof(ie_50) + 2 * 3;
-    sme.ie = malloc(sme.ie_len);
-    uint8_t* ieptr = sme.ie;
-    ieptr = brcmf_fill_ie(ieptr, 0, ie_0, strlen(ie_0));
-    ieptr = brcmf_fill_ie(ieptr, 1, ie_1, sizeof(ie_1));
-    ieptr = brcmf_fill_ie(ieptr, 50, ie_50, sizeof(ie_50));
-    brcmf_dbg(TEMP, "Here's the IEs I didn't send...");
-    brcmf_hexdump(sme.ie, sme.ie_len);
-    sme.ie = NULL;
-    sme.ie_len = 0;
-    /*
-    struct {
-        int wpa_versions;
-        int ciphers_pairwise[555];
-        int n_ciphers_pairwise;
-        int cipher_group;
-        int n_akm_suites;
-        int akm_suites[555];
-        uint8_t* psk;
-    } crypto;
-    uint8_t* ie;
-    int ie_len;
-    int privacy;
-    uint32_t key_len;
-    int key_idx;
-    void* key;
-    int want_1x;
-    struct ieee80211_channel* channel;
-    void* ssid;
-    int ssid_len;
-    uint8_t* bssid;
-    struct cfg80211_bss_selection bss_select;
-    */
-    brcmf_cfg80211_connect(wiphy, ndev, &sme);
-    brcmf_dbg(TEMP, "Back from connect, about to sleep 10 seconds....");
-    msleep(10000);
-    brcmf_dbg(TEMP, "Back from sleep, all done!");
-#endif // TRY_TEMP_SCAN
+
     return ZX_OK;
 fail:
     brcmf_detach(devinfo->dev);
@@ -1551,7 +1456,7 @@ static zx_status_t brcmf_usb_probe(struct brcmf_usb_interface* intf, usb_protoco
     }
 
     devinfo->usbdev = usb;
-    devinfo->protocol = usb_proto;
+    memcpy(&devinfo->protocol, usb_proto, sizeof(devinfo->protocol));
     devinfo->dev = &usb->dev;
     /* Take an init lock, to protect for disconnect while still loading.
      * Necessary because of the asynchronous firmware load construction

@@ -7,9 +7,9 @@ import("//build/package.gni")
 group("tests") {
   testonly = true
   public_deps = [
+    ":ap_tests",
     ":client_tests",
     ":common_tests",
-    ":dispatcher_tests",
     ":mac_tests",
     ":scanner_tests",
     ":service_tests",
@@ -22,15 +22,18 @@ source_set("test_main") {
 
   sources = [
     "mock_device.h",
-    "test_bss.h",
     "test_bss.cpp",
-    "test_data.h",
+    "test_bss.h",
     "test_data.cpp",
+    "test_data.h",
     "test_main.cpp",
+    "test_timer.cpp",
+    "test_timer.h",
   ]
 
   public_deps = [
     "//garnet/lib/wlan/mlme",
+    "//garnet/public/lib/timekeeper:testing",
   ]
 
   deps = [
@@ -40,17 +43,39 @@ source_set("test_main") {
   configs += [ "//garnet/lib/wlan/mlme:wlan_mlme_config" ]
 }
 
+executable("ap_tests") {
+  output_name = "wlan_ap_unittest"
+
+  testonly = true
+
+  sources = [
+    "ap_infra_bss_unittest.cpp"
+  ]
+
+  deps = [
+    ":test_main",
+    "//garnet/lib/wlan/common",
+    "//garnet/lib/wlan/mlme",
+    "//third_party/googletest:gtest",
+  ]
+
+  configs += [ "//garnet/lib/wlan/mlme:wlan_mlme_config" ]
+  configs += [ "//build/config/fuchsia:enable_zircon_asserts" ]
+}
+
 executable("client_tests") {
   output_name = "wlan_client_unittest"
 
   testonly = true
 
   sources = [
+    "bss_unittest.cpp",
     "client_unittest.cpp",
   ]
 
   deps = [
     ":test_main",
+    "//garnet/lib/wlan/common",
     "//garnet/lib/wlan/mlme",
     "//third_party/googletest:gtest",
   ]
@@ -65,8 +90,8 @@ executable("mac_tests") {
   testonly = true
 
   sources = [
-    "bss_unittest.cpp",
     "channel_unittest.cpp",
+    "element_fidl_unittest.cpp",
     "element_unittest.cpp",
     "energy_unittest.cpp",
     "frame_validation_unittest.cpp",
@@ -76,6 +101,7 @@ executable("mac_tests") {
     "packet_unittest.cpp",
     "sequence_unittest.cpp",
     "tim_unittest.cpp",
+    "tx_vector_unittest.cpp",
   ]
 
   deps = [
@@ -100,26 +126,6 @@ executable("scanner_tests") {
     ":test_main",
     "//garnet/lib/wlan/mlme",
     "//third_party/googletest:gtest",
-  ]
-
-  configs += [ "//garnet/lib/wlan/mlme:wlan_mlme_config" ]
-}
-
-executable("dispatcher_tests") {
-  output_name = "wlan_dispatcher_unittest"
-
-  testonly = true
-
-  sources = [
-    "frame_dispatcher_unittest.cpp",
-  ]
-
-  deps = [
-    ":test_main",
-    "//garnet/lib/wlan/mlme",
-    "//third_party/googletest:gmock",
-    "//third_party/googletest:gtest",
-    "//zircon/public/lib/fit",
   ]
 
   configs += [ "//garnet/lib/wlan/mlme:wlan_mlme_config" ]
@@ -170,9 +176,9 @@ executable("common_tests") {
   testonly = true
 
   sources = [
+    "channel_scheduler_unittest.cpp",
     "moving_average_unittest.cpp",
     "stats_unittest.cpp",
-    "channel_scheduler_unittest.cpp",
   ]
 
   deps = [
@@ -203,15 +209,15 @@ package("wlan_tests") {
 
   tests = [
     {
+      name = "wlan_ap_unittest"
+    },
+
+    {
       name = "wlan_client_unittest"
     },
 
     {
       name = "wlan_mac_unittest"
-    },
-
-    {
-      name = "wlan_dispatcher_unittest"
     },
 
     {

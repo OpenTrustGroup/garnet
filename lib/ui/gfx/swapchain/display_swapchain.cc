@@ -104,15 +104,21 @@ bool DisplaySwapchain::InitializeFramebuffers(
   FXL_CHECK(escher_);
   vk::ImageUsageFlags image_usage = GetFramebufferImageUsage();
 
-#if !defined(__x86_64__)
-  FXL_DLOG(ERROR) << "Display swapchain only supported on intel";
+#if !defined(__aarch64__) && !defined(__x86_64__)
+  FXL_DLOG(ERROR) << "Display swapchain only supported on intel and arm";
   return false;
 #endif
 
   const uint32_t width_in_px = display_->width_in_px();
   const uint32_t height_in_px = display_->height_in_px();
-  display_manager_->SetImageConfig(width_in_px, height_in_px,
-                                   ZX_PIXEL_FORMAT_ARGB_8888);
+  zx_pixel_format_t pixel_format;
+#if defined(__aarch64__)
+  pixel_format = ZX_PIXEL_FORMAT_RGB_x888;
+#else
+  pixel_format = ZX_PIXEL_FORMAT_ARGB_8888;
+#endif
+
+  display_manager_->SetImageConfig(width_in_px, height_in_px, pixel_format);
   for (uint32_t i = 0; i < kSwapchainImageCount; i++) {
     // Allocate a framebuffer.
 
@@ -124,15 +130,22 @@ bool DisplaySwapchain::InitializeFramebuffers(
     create_info.mipLevels = 1;
     create_info.arrayLayers = 1;
     create_info.samples = vk::SampleCountFlagBits::e1;
+#if defined(__x86_64__)
     create_info.tiling = vk::ImageTiling::eOptimal;
+#else
+    create_info.tiling = vk::ImageTiling::eLinear;
+    // TODO(SCN-79): Use vulkan extension to allocate with correct stride.
+    create_info.extent.width =
+        display_manager_->FetchLinearStride(width_in_px, pixel_format);
+#endif
     create_info.usage = image_usage;
     create_info.sharingMode = vk::SharingMode::eExclusive;
     create_info.initialLayout = vk::ImageLayout::eUndefined;
 
     auto image_result = device_.createImage(create_info);
     if (image_result.result != vk::Result::eSuccess) {
-      FXL_DLOG(ERROR) << "VkCreateImage failed: "
-                      << vk::to_string(image_result.result);
+      FXL_LOG(ERROR) << "VkCreateImage failed: "
+                     << vk::to_string(image_result.result);
       return false;
     }
 
@@ -141,22 +154,34 @@ bool DisplaySwapchain::InitializeFramebuffers(
         device_.getImageMemoryRequirements(image_result.value);
 
     uint32_t memory_type_index = 0;
+
+    zx::vmo memory =
+        display_manager_->AllocateDisplayMemory(memory_requirements.size);
+    if (!memory) {
+      FXL_LOG(ERROR) << "allocating vmo failed";
+      return false;
+    }
+    vk::ImportMemoryFuchsiaHandleInfoKHR import_info;
+    import_info.setHandle(memory.release());
+    import_info.setHandleType(
+        vk::ExternalMemoryHandleTypeFlagBitsKHR::eFuchsiaVmo);
     vk::MemoryAllocateInfo alloc_info;
+    alloc_info.setPNext(&import_info);
     alloc_info.allocationSize = memory_requirements.size;
     alloc_info.memoryTypeIndex = memory_type_index;
 
     auto mem_result = device_.allocateMemory(alloc_info);
 
     if (mem_result.result != vk::Result::eSuccess) {
-      FXL_DLOG(ERROR) << "vkAllocMemory failed: "
-                      << vk::to_string(mem_result.result);
+      FXL_LOG(ERROR) << "vkAllocMemory failed: "
+                     << vk::to_string(mem_result.result);
       return false;
     }
 
     Framebuffer buffer;
     buffer.device_memory = escher::GpuMem::New(
         device_, mem_result.value, memory_requirements.size, memory_type_index);
-    FXL_DCHECK(buffer.device_memory);
+    FXL_CHECK(buffer.device_memory);
 
     // Wrap the image and device memory in a escher::Image.
     escher::ImageInfo image_info;
@@ -171,7 +196,7 @@ bool DisplaySwapchain::InitializeFramebuffers(
                            buffer.device_memory);
 
     if (!buffer.escher_image) {
-      FXL_DLOG(ERROR) << "Creating escher::EscherImage failed.";
+      FXL_LOG(ERROR) << "Creating escher::EscherImage failed.";
       device_.destroyImage(image_result.value);
       return false;
     }
@@ -198,15 +223,15 @@ bool DisplaySwapchain::InitializeFramebuffers(
             device_, export_memory_info);
 
     if (export_result.result != vk::Result::eSuccess) {
-      FXL_DLOG(ERROR) << "VkGetMemoryFuchsiaHandleKHR failed: "
-                      << vk::to_string(export_result.result);
+      FXL_LOG(ERROR) << "VkGetMemoryFuchsiaHandleKHR failed: "
+                     << vk::to_string(export_result.result);
       return false;
     }
 
     buffer.vmo = zx::vmo(export_result.value);
     buffer.fb_id = display_manager_->ImportImage(buffer.vmo);
     if (buffer.fb_id == fuchsia::display::invalidId) {
-      FXL_DLOG(ERROR) << "Importing image failed.";
+      FXL_LOG(ERROR) << "Importing image failed.";
       return false;
     }
 
@@ -215,7 +240,7 @@ bool DisplaySwapchain::InitializeFramebuffers(
 
   if (!display_manager_->EnableVsync(
           fit::bind_member(this, &DisplaySwapchain::OnVsync))) {
-    FXL_DLOG(ERROR) << "Failed to enable vsync";
+    FXL_LOG(ERROR) << "Failed to enable vsync";
     return false;
   }
 
@@ -266,12 +291,29 @@ std::unique_ptr<DisplaySwapchain::FrameRecord> DisplaySwapchain::NewFrameRecord(
     return std::unique_ptr<FrameRecord>();
   }
 
+  zx::event retired_event;
+  zx_status_t status = zx::event::create(0, &retired_event);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR)
+        << "DisplaySwapchain::NewFrameRecord() failed to create retired event";
+    return std::unique_ptr<FrameRecord>();
+  }
+
+  uint64_t retired_event_id = display_manager_->ImportEvent(retired_event);
+  if (retired_event_id == fuchsia::display::invalidId) {
+    FXL_LOG(ERROR)
+        << "DisplaySwapchain::NewFrameRecord() failed to import retired event";
+    return std::unique_ptr<FrameRecord>();
+  }
+
   auto record = std::make_unique<FrameRecord>();
   record->frame_timings = frame_timings;
   record->swapchain_index = frame_timings->AddSwapchain(this);
   record->render_finished_escher_semaphore =
       std::move(render_finished_escher_semaphore);
   record->render_finished_event_id = render_finished_event_id;
+  record->retired_event = std::move(retired_event);
+  record->retired_event_id = retired_event_id;
 
   record->render_finished_watch = EventTimestamper::Watch(
       timestamper_, std::move(render_finished_event), escher::kFenceSignalled,
@@ -293,8 +335,15 @@ bool DisplaySwapchain::DrawAndPresentFrame(const FrameTimingsPtr& frame_timings,
   // There must not already exist a pending record.  If there is, it indicates
   // an error in the FrameScheduler logic (or somewhere similar), which should
   // not have scheduled another frame when there are no framebuffers available.
-  FXL_CHECK(!frames_[next_frame_index_] ||
-            frames_[next_frame_index_]->frame_timings->finalized());
+  if (frames_[next_frame_index_]) {
+    FXL_CHECK(frames_[next_frame_index_]->frame_timings->finalized());
+    if (frames_[next_frame_index_]->retired_event.wait_one(
+            ZX_EVENT_SIGNALED, zx::time(), nullptr) != ZX_OK) {
+      FXL_LOG(WARNING) << "DisplaySwapchain::DrawAndPresentFrame rendering "
+                          "into in-use backbuffer";
+    }
+  }
+
   auto& frame_record = frames_[next_frame_index_] =
       NewFrameRecord(frame_timings);
 
@@ -314,11 +363,12 @@ bool DisplaySwapchain::DrawAndPresentFrame(const FrameTimingsPtr& frame_timings,
   // When the image is completely rendered, present it.
   TRACE_DURATION("gfx", "DisplaySwapchain::DrawAndPresent() present");
 
-  display_manager_->Flip(
-      display_, buffer.fb_id, frame_record->render_finished_event_id,
-      fuchsia::display::invalidId /* frame_signal_event_id */);
+  display_manager_->Flip(display_, buffer.fb_id,
+                         frame_record->render_finished_event_id,
+                         frame_record->retired_event_id);
 
   display_manager_->ReleaseEvent(frame_record->render_finished_event_id);
+  display_manager_->ReleaseEvent(frame_record->retired_event_id);
 
   return true;
 }
@@ -417,6 +467,11 @@ vk::ImageUsageFlags GetFramebufferImageUsage() {
 }
 
 vk::Format GetDisplayImageFormat(escher::VulkanDeviceQueues* device_queues) {
+#if defined(__aarch64__)
+  // Format has to match pixel format for the display.
+  // device_queues->vk_surface() is null on ARM, so it can't be used.
+  return vk::Format::eB8G8R8A8Unorm;
+#else
   vk::PhysicalDevice physical_device = device_queues->vk_physical_device();
   vk::SurfaceKHR surface = device_queues->vk_surface();
   FXL_DCHECK(surface);
@@ -449,6 +504,7 @@ vk::Format GetDisplayImageFormat(escher::VulkanDeviceQueues* device_queues) {
   }
   FXL_CHECK(format != vk::Format::eUndefined);
   return format;
+#endif
 }
 
 }  // namespace

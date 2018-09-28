@@ -4,18 +4,22 @@
 
 #pragma once
 
-#include <wlan/mlme/clock.h>
+#include <lib/timekeeper/test_clock.h>
 #include <wlan/mlme/device_interface.h>
 #include <wlan/mlme/mlme.h>
 #include <wlan/mlme/packet.h>
 #include <wlan/mlme/service.h>
 #include <wlan/mlme/timer.h>
 
+#include <fuchsia/wlan/minstrel/cpp/fidl.h>
+
 #include <fbl/ref_ptr.h>
 #include <fbl/unique_ptr.h>
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <unordered_set>
+
+#include "test_timer.h"
 
 namespace wlan {
 
@@ -53,6 +57,7 @@ struct MockDevice : public DeviceInterface {
                     .base_freq = 2407,
                     .channels = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14},
                 },
+            .ht_supported = false,
             .vht_supported = false,
         };
         state->set_channel(wlan_channel_t{.cbw = CBW20, .primary = 1});
@@ -110,8 +115,8 @@ struct MockDevice : public DeviceInterface {
         return ZX_OK;
     }
 
-    zx_status_t EnableBeaconing(bool enable) override final {
-        beaconing_enabled = enable;
+    zx_status_t EnableBeaconing(wlan_bcn_config_t* bcn_cfg) override final {
+        beaconing_enabled = (bcn_cfg != nullptr);
         return ZX_OK;
     }
 
@@ -136,6 +141,17 @@ struct MockDevice : public DeviceInterface {
 
     const wlanmac_info_t& GetWlanInfo() const override final { return wlanmac_info; }
 
+    zx_status_t GetMinstrelPeers(
+        ::fuchsia::wlan::minstrel::Peers* peers_fidl) override final {
+        return ZX_ERR_NOT_SUPPORTED;
+    }
+
+    zx_status_t GetMinstrelStats(
+        const common::MacAddr& addr,
+        ::fuchsia::wlan::minstrel::Peer* resp) override final {
+        return ZX_ERR_NOT_SUPPORTED;
+    }
+
     // Convenience methods.
 
     void AdvanceTime(zx::duration duration) { clock_.Set(zx::time() + duration); }
@@ -149,7 +165,6 @@ struct MockDevice : public DeviceInterface {
     uint16_t GetChannelNumber() { return state->channel().primary; }
 
     template <typename T> zx_status_t GetQueuedServiceMsg(uint32_t ordinal, T* out) {
-        EXPECT_EQ(1u, svc_queue.size());
         auto iter = svc_queue.begin();
         auto packet = std::move(*iter);
         svc_queue.erase(iter);
@@ -189,7 +204,7 @@ struct MockDevice : public DeviceInterface {
         return matches;
     }
 
-    TestClock clock_;
+    timekeeper::TestClock clock_;
 };
 
 }  // namespace

@@ -85,6 +85,7 @@ class OutputBuffer {
   // Creates an output buffer with one substring in it.
   explicit OutputBuffer(std::string str);
   OutputBuffer(Syntax syntax, std::string str);
+  OutputBuffer(TextForegroundColor color, std::string str);
 
   ~OutputBuffer();
 
@@ -117,9 +118,12 @@ class OutputBuffer {
   void SetBackgroundColor(TextBackgroundColor);
   void SetForegroundColor(TextForegroundColor);
 
+  bool empty() const { return spans_.empty(); }
+
  private:
   struct Span {
     Span(Syntax s, std::string t);
+    Span(TextForegroundColor fg, std::string t);
 
     Syntax syntax = Syntax::kNormal;
     // This will only be used when Syntax is kNormal.

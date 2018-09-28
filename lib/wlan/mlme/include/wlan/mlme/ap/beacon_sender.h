@@ -5,7 +5,6 @@
 #pragma once
 
 #include <wlan/mlme/device_interface.h>
-#include <wlan/mlme/frame_handler.h>
 
 #include <fuchsia/wlan/mlme/cpp/fidl.h>
 
@@ -32,6 +31,8 @@ class BeaconSender {
    private:
     bool ShouldSendProbeResponse(const MgmtFrameView<ProbeRequest>&);
 
+    zx_status_t BuildBeacon(const PsCfg& ps_cfg, MgmtFrame<Beacon>* frame, size_t* tim_ele_offset);
+
     zx_status_t WriteSsid(ElementWriter* w);
     zx_status_t WriteSupportedRates(ElementWriter* w);
     zx_status_t WriteDsssParamSet(ElementWriter* w);
@@ -40,6 +41,7 @@ class BeaconSender {
     zx_status_t WriteExtendedSupportedRates(ElementWriter* w);
     zx_status_t WriteHtCapabilities(ElementWriter* w);
     zx_status_t WriteHtOperation(ElementWriter* w);
+    zx_status_t WriteRsne(ElementWriter* w);
     bool IsStarted();
 
     DeviceInterface* const device_;

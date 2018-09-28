@@ -1,8 +1,0 @@
-{
-    "program": {
-        "binary": "data/integration_test_app"
-    },
-    "sandbox": {
-        "features": [ "deprecated-all-services", "persistent-storage" ]
-    }
-}

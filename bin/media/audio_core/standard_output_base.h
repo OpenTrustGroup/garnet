@@ -11,8 +11,8 @@
 #include "garnet/bin/media/audio_core/audio_link.h"
 #include "garnet/bin/media/audio_core/audio_link_packet_source.h"
 #include "garnet/bin/media/audio_core/audio_output.h"
-#include "garnet/bin/media/audio_core/constants.h"
-#include "garnet/bin/media/audio_core/gain.h"
+#include "garnet/bin/media/audio_core/mixer/constants.h"
+#include "garnet/bin/media/audio_core/mixer/gain.h"
 #include "garnet/bin/media/audio_core/mixer/mixer.h"
 #include "garnet/bin/media/audio_core/mixer/output_producer.h"
 #include "lib/fxl/time/time_delta.h"
@@ -39,7 +39,7 @@ class StandardOutputBase : public AudioOutput {
     bool accumulate;
     const TimelineFunction* local_to_output;
 
-    float sw_output_db_gain;
+    float sw_output_gain_db;
     bool sw_output_muted;
 
     // State for the job which is set up for each audio out during SetupMix
@@ -49,9 +49,9 @@ class StandardOutputBase : public AudioOutput {
   // TODO(mpuryear): per MTWN-129, combine this with CaptureLinkBookkeeping, and
   // integrate it into the Mixer class itself.
   // TODO(mpuryear): Rationalize naming and usage of the bookkeeping structs.
-  void UpdateSourceTrans(const fbl::RefPtr<AudioOutImpl>& audio_out,
-                         AudioLink::Bookkeeping* bk);
-  void UpdateDestTrans(const MixJob& job, AudioLink::Bookkeeping* bk);
+  void UpdateSourceTrans(const fbl::RefPtr<AudioRendererImpl>& audio_renderer,
+                         Bookkeeping* bk);
+  void UpdateDestTrans(const MixJob& job, Bookkeeping* bk);
 
   explicit StandardOutputBase(AudioDeviceManager* manager);
 
@@ -74,7 +74,6 @@ class StandardOutputBase : public AudioOutput {
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token()) = 0;
   virtual bool FinishMixJob(const MixJob& job)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token()) = 0;
-  virtual AudioLink::Bookkeeping* AllocBookkeeping();
   void SetupMixBuffer(uint32_t max_mix_frames)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token());
 
@@ -90,19 +89,18 @@ class StandardOutputBase : public AudioOutput {
   void ForeachLink(TaskType task_type)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token());
 
-  bool SetupMix(const fbl::RefPtr<AudioOutImpl>& audio_out,
-                AudioLink::Bookkeeping* info)
+  bool SetupMix(const fbl::RefPtr<AudioRendererImpl>& audio_renderer,
+                Bookkeeping* info)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token());
-  bool ProcessMix(const fbl::RefPtr<AudioOutImpl>& audio_out,
-                  AudioLink::Bookkeeping* info,
-                  const fbl::RefPtr<AudioPacketRef>& pkt_ref)
+  bool ProcessMix(const fbl::RefPtr<AudioRendererImpl>& audio_renderer,
+                  Bookkeeping* info, const fbl::RefPtr<AudioPacketRef>& pkt_ref)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token());
 
-  bool SetupTrim(const fbl::RefPtr<AudioOutImpl>& audio_out,
-                 AudioLink::Bookkeeping* info)
+  bool SetupTrim(const fbl::RefPtr<AudioRendererImpl>& audio_renderer,
+                 Bookkeeping* info)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token());
-  bool ProcessTrim(const fbl::RefPtr<AudioOutImpl>& audio_out,
-                   AudioLink::Bookkeeping* info,
+  bool ProcessTrim(const fbl::RefPtr<AudioRendererImpl>& audio_renderer,
+                   Bookkeeping* info,
                    const fbl::RefPtr<AudioPacketRef>& pkt_ref)
       FXL_EXCLUSIVE_LOCKS_REQUIRED(mix_domain_->token());
 

@@ -19,6 +19,8 @@
 #include <stdarg.h>
 #include <string.h>
 
+#include <zircon/status.h>
+
 #include "brcmu_utils.h"
 #include "brcmu_wifi.h"
 #include "bus.h"
@@ -30,7 +32,6 @@
 #include "fwil_types.h"
 #include "linuxisms.h"
 #include "of.h"
-#include "tracepoint.h"
 
 MODULE_AUTHOR("Broadcom Corporation");
 MODULE_DESCRIPTION("Broadcom 802.11 wireless LAN fullmac driver.");
@@ -361,41 +362,6 @@ done:
     return err;
 }
 
-#ifndef CONFIG_BRCM_TRACING
-void __brcmf_err(const char* func, const char* fmt, ...) {
-    struct va_format vaf;
-    va_list args;
-
-    va_start(args, fmt);
-
-    vaf.fmt = fmt;
-    vaf.va = &args;
-    zxlogf(ERROR, "brcmfmac: %s: %pV", func, &vaf);
-
-    va_end(args);
-}
-#endif
-
-#if defined(CONFIG_BRCM_TRACING) || defined(CONFIG_BRCMDBG)
-void __brcmf_dbg(uint32_t filter, const char* func, const char* fmt, ...) {
-    va_list args;
-
-    if (true || brcmf_msg_filter & filter) {
-        // TODO(cphoenix): After bringup: Re-enable filter check
-        char msg[512]; // Same value hard-coded throughout devhost.c
-        va_start(args, fmt);
-        int n_printed = vsnprintf(msg, 512, fmt, args);
-        va_end(args);
-        if (n_printed < 0) {
-            snprintf(msg, 512, "(Formatting error from string '%s')", fmt);
-        } else if (n_printed > 0 && msg[n_printed - 1] == '\n') {
-            msg[--n_printed] = 0;
-        }
-        zxlogf(INFO, "brcmfmac (%s): '%s'\n", func, msg);
-    }
-}
-#endif
-
 static void brcmf_mp_attach(void) {
     /* If module param firmware path is set then this will always be used,
      * if not set then if available use the platform data version. To make
@@ -431,7 +397,6 @@ struct brcmf_mp_device* brcmf_get_module_param(struct brcmf_device* dev,
         settings->bus.sdio.drive_strength = 0; // Use default
         settings->bus.sdio.txglomsz = brcmf_sdiod_txglomsz;
         settings->bus.sdio.oob_irq_supported = true;    // TODO(cphoenix): Always?
-        settings->bus.sdio.oob_irq_flags = 0; // TODO(cphoenix): Maybe IRQ_FLAG_LEVEL_HIGH
     }
 #ifdef USE_PLATFORM_DATA
 // TODO(NET-831): Do we need to do this?
@@ -489,11 +454,13 @@ zx_status_t brcmfmac_module_init(zx_device_t* device) {
     memset(&async_config, 0, sizeof(async_config));
     err = async_loop_create(&async_config, &async_loop);
     if (err != ZX_OK) {
+        brcmf_err("Returning err %d %s", err, zx_status_get_string(err));
         return err;
     }
     err = async_loop_start_thread(async_loop, "async_thread", NULL);
     if (err != ZX_OK) {
         async_loop_destroy(async_loop);
+        brcmf_err("Returning err %d %s", err, zx_status_get_string(err));
         return err;
     }
     default_dispatcher = async_loop_get_dispatcher(async_loop);
@@ -505,6 +472,7 @@ zx_status_t brcmfmac_module_init(zx_device_t* device) {
     err = brcmf_core_init(device);
     if (err != ZX_OK) {
         brcmf_debugfs_exit();
+        brcmf_err("Returning err %d %s", err, zx_status_get_string(err));
     }
 
     return err;

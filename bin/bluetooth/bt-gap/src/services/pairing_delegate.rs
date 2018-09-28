@@ -4,7 +4,7 @@
 
 use crate::host_dispatcher::HostDispatcher;
 use fidl;
-use fidl::endpoints2::RequestStream;
+use fidl::endpoints::RequestStream;
 use fidl_fuchsia_bluetooth_control::{PairingDelegateRequest, PairingDelegateRequestStream};
 use fuchsia_async::{self as fasync,
                     temp::Either::{Left, Right}};
@@ -30,7 +30,7 @@ pub fn start_pairing_delegate(
             displayed_passkey,
             responder,
         } => {
-            let pd = hd.read().pairing_delegate.clone();
+            let pd = hd.write().pairing_delegate();
             let passkey_ref = displayed_passkey.as_ref().map(|x| &**x);
             Left(Left(
                 match pd {

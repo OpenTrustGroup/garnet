@@ -4,6 +4,9 @@
 
 library fuchsia.netstack;
 
+using zircon.ethernet;
+using zx;
+
 enum Protocol {
   UNSPECIFIED = 0;
   UDP = 1;
@@ -50,7 +53,6 @@ struct NetInterfaceStats {
 struct IpStats {
   uint64 packets_received;
   uint64 invalid_addresses_received;
-  uint64 packets_discarded;
   uint64 packets_delivered;
   uint64 packets_sent;
   uint64 outgoing_packet_errors;
@@ -134,6 +136,7 @@ interface Netstack {
   // Returns the netstack's node name.
   // 5: GetNodeName() -> (string node_name);
 
+  // Don't use this for read-modify-write.  Use StartRouteTableTransaction instead.
   5: GetRouteTable() -> (vector<RouteTableEntry> rt);
 
   // TODO (porce): Separate interfaces.
@@ -145,7 +148,8 @@ interface Netstack {
   // Sets the status (up or down) for the interface with the given nicid.
   8: SetInterfaceStatus(uint32 nicid, bool enabled);
 
-  9: SetRouteTable(vector<RouteTableEntry> rt);
+  // DEPRECATED: Use StartRouteTableTransaction and SetRouteTable from there.
+  // 9: SetRouteTable(vector<RouteTableEntry> rt);
 
   // Sets the address for the interface with the given nicid.
   // Masks off addr.PrefixLen bits from addr.Addr to set the subnet.
@@ -168,5 +172,22 @@ interface Netstack {
   // TODO(NET-1263): remove once we can use the ResolverAdmin interface
   16: SetNameServers(vector<NetAddress> servers);
 
+  17: AddEthernetDevice(string topological_path, zircon.ethernet.Device device);
+
+  // Begin a route transaction for atomically getting and setting the route
+  // table.  Returns true if a transaction can be started.
+  18: StartRouteTableTransaction(request<RouteTableTransaction> routeTableTransaction) -> (zx.status @status);
+
   0x1000: -> OnInterfacesChanged(vector<NetInterface> interfaces);
+};
+
+// When Commit is called, the most recent SetRouteTable will be
+// committed to the route tables.  Commit may be called multiple times.
+[Discoverable]
+interface RouteTableTransaction {
+  1: GetRouteTable() -> (vector<RouteTableEntry> rt);
+
+  2: SetRouteTable(vector<RouteTableEntry> rt);
+
+  3: Commit() -> (zx.status @status);
 };

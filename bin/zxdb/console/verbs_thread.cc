@@ -9,11 +9,8 @@
 #include "garnet/bin/zxdb/client/process.h"
 #include "garnet/bin/zxdb/client/register.h"
 #include "garnet/bin/zxdb/client/session.h"
-#include "garnet/bin/zxdb/client/step_into_thread_controller.h"
-#include "garnet/bin/zxdb/client/symbols/code_block.h"
-#include "garnet/bin/zxdb/client/symbols/function.h"
-#include "garnet/bin/zxdb/client/symbols/location.h"
-#include "garnet/bin/zxdb/client/symbols/variable.h"
+#include "garnet/bin/zxdb/client/step_over_thread_controller.h"
+#include "garnet/bin/zxdb/client/step_thread_controller.h"
 #include "garnet/bin/zxdb/client/thread.h"
 #include "garnet/bin/zxdb/client/until_thread_controller.h"
 #include "garnet/bin/zxdb/common/err.h"
@@ -29,12 +26,18 @@
 #include "garnet/bin/zxdb/console/verbs.h"
 #include "garnet/bin/zxdb/expr/expr.h"
 #include "garnet/bin/zxdb/expr/symbol_eval_context.h"
+#include "garnet/bin/zxdb/symbols/code_block.h"
+#include "garnet/bin/zxdb/symbols/function.h"
+#include "garnet/bin/zxdb/symbols/location.h"
+#include "garnet/bin/zxdb/symbols/variable.h"
 #include "garnet/lib/debug_ipc/helper/message_loop.h"
 #include "lib/fxl/strings/string_printf.h"
 
 namespace zxdb {
 
 namespace {
+
+constexpr int kStepIntoUnsymbolized = 1;
 
 // If the system has at least one running process, returns true. If not,
 // returns false and sets the err.
@@ -189,7 +192,8 @@ Err DoFinish(ConsoleContext* context, const Command& cmd) {
   if (err.has_error())
     return err;
 
-  auto controller = std::make_unique<FinishThreadController>(cmd.frame());
+  auto controller = std::make_unique<FinishThreadController>(
+      FinishThreadController::FromFrame(), cmd.frame());
   cmd.thread()->ContinueWith(std::move(controller), [](const Err& err) {
     if (err.has_error())
       Console::get()->Output(err);
@@ -288,6 +292,111 @@ Err DoLocals(ConsoleContext* context, const Command& cmd) {
   }
   helper->Complete(
       [helper](OutputBuffer out) { Console::get()->Output(std::move(out)); });
+  return Err();
+}
+
+// next ------------------------------------------------------------------------
+
+const char kNextShortHelp[] = "next / n: Single-step over one source line.";
+const char kNextHelp[] =
+    R"(next / n
+
+  When a thread is stopped, "next" will execute one source line, stepping over
+  subroutine call instructions, and stop the thread again. If the thread is
+  running it will issue an error.
+
+  By default, "next" will operate on the current thread. If a thread context
+  is given, the specified thread will be single-stepped. You can't single-step
+  a process.
+
+  See also "step" to step into subroutine calls or "nexti" to step machine
+  instructions.
+
+Examples
+
+  n
+  next
+      Step the current thread.
+
+  t 2 n
+  thread 2 next
+      Steps thread 2 in the current process.
+
+  pr 3 n
+  process 3 next
+      Steps the current thread in process 3 (regardless of which process is
+      the current process).
+
+  pr 3 t 2 n
+  process 3 thread 2 next
+      Steps thread 2 in process 3.
+)";
+Err DoNext(ConsoleContext* context, const Command& cmd) {
+  Err err = AssertStoppedThreadCommand(context, cmd, true, "next");
+  if (err.has_error())
+    return err;
+
+  auto controller =
+      std::make_unique<StepOverThreadController>(StepMode::kSourceLine);
+  cmd.thread()->ContinueWith(std::move(controller), [](const Err& err) {
+    if (err.has_error())
+      Console::get()->Output(err);
+  });
+  return Err();
+}
+
+// nexti -----------------------------------------------------------------------
+
+const char kNextiShortHelp[] =
+    "nexti / ni: Single-step over one machine instruction.";
+const char kNextiHelp[] =
+    R"(nexti / ni
+
+  When a thread is stopped, "nexti" will execute one machine instruction,
+  stepping over subroutine call instructions, and stop the thread again.
+  If the thread is running it will issue an error.
+
+  Only machine call instructions ("call" on x86 and "bl" on ARM) will be
+  stepped over with this command. This is not the only way to do a subroutine
+  call, as code can manually set up a call frame and jump. These jumps will not
+  count as a call and this command will step into the resulting frame.
+
+  By default, "nexti" will operate on the current thread. If a thread context
+  is given, the specified thread will be single-stepped. You can't single-step
+  a process.
+
+  See also "stepi" to step into subroutine calls.
+
+Examples
+
+  ni
+  nexti
+      Step the current thread.
+
+  t 2 ni
+  thread 2 nexti
+      Steps thread 2 in the current process.
+
+  pr 3 ni
+  process 3 nexti
+      Steps the current thread in process 3 (regardless of which process is
+      the current process).
+
+  pr 3 t 2 ni
+  process 3 thread 2 nexti
+      Steps thread 2 in process 3.
+)";
+Err DoNexti(ConsoleContext* context, const Command& cmd) {
+  Err err = AssertStoppedThreadCommand(context, cmd, true, "nexti");
+  if (err.has_error())
+    return err;
+
+  auto controller =
+      std::make_unique<StepOverThreadController>(StepMode::kInstruction);
+  cmd.thread()->ContinueWith(std::move(controller), [](const Err& err) {
+    if (err.has_error())
+      Console::get()->Output(err);
+  });
   return Err();
 }
 
@@ -469,6 +578,13 @@ const char kStepHelp[] =
 
   See also "stepi".
 
+Arguments
+
+  --unsymbolized | -u
+      Force stepping into functions with no symbols. Normally "step" will
+      skip over library calls or thunks with no symbols. This option allows
+      one to step into these unsymbolized calls.
+
 Examples
 
   s
@@ -480,11 +596,14 @@ Examples
       Steps thread 2 in the current process.
 )";
 Err DoStep(ConsoleContext* context, const Command& cmd) {
-  Err err = AssertStoppedThreadCommand(context, cmd, true, "stepi");
+  Err err = AssertStoppedThreadCommand(context, cmd, true, "step");
   if (err.has_error())
     return err;
 
-  auto controller = std::make_unique<StepIntoThreadController>();
+  auto controller =
+      std::make_unique<StepThreadController>(StepMode::kSourceLine);
+  controller->set_stop_on_no_symbols(cmd.HasSwitch(kStepIntoUnsymbolized));
+
   cmd.thread()->ContinueWith(std::move(controller), [](const Err& err) {
     if (err.has_error())
       Console::get()->Output(err);
@@ -505,6 +624,8 @@ const char kStepiHelp[] =
   By default, "stepi" will single-step the current thread. If a thread context
   is given, the specified thread will be single-stepped. You can't single-step
   a process.
+
+  See also "nexti" to step over subroutine calls.
 
 Examples
 
@@ -553,7 +674,7 @@ const char kRegsHelp[] =
         The interpretation of which bits are the MSB will vary across different
         endianess.
 
-Arguments:
+Arguments
 
   --category=<category> | -c <category>
       Which categories if registers to show.
@@ -581,11 +702,9 @@ Examples
 
 // Switches
 constexpr int kRegsCategoriesSwitch = 1;
-const std::vector<std::string> kRegsCategoriesValues = {"general", "fp",
-                                                        "vector", "all"};
 
-void OnRegsComplete(const Err& cmd_err, const RegisterSet& registers,
-                    const std::string& reg_name,
+void OnRegsComplete(const Err& cmd_err, const RegisterSet& register_set,
+                    const std::string& search_regexp,
                     const std::vector<RegisterCategory::Type>& cats_to_show) {
   Console* console = Console::get();
   if (cmd_err.has_error()) {
@@ -593,13 +712,20 @@ void OnRegsComplete(const Err& cmd_err, const RegisterSet& registers,
     return;
   }
 
-  OutputBuffer out;
-  Err err = FormatRegisters(registers, reg_name, &out, cats_to_show);
-  if (err.has_error()) {
+  FilteredRegisterSet filtered_set;
+  Err err =
+      FilterRegisters(register_set, &filtered_set, cats_to_show, search_regexp);
+  if (!err.ok()) {
     console->Output(err);
     return;
   }
 
+  OutputBuffer out;
+  err = FormatRegisters(register_set.arch(), filtered_set, &out);
+  if (!err.ok()) {
+    console->Output(err);
+    return;
+  }
   console->Output(out);
 }
 
@@ -629,6 +755,7 @@ Err DoRegs(ConsoleContext* context, const Command& cmd) {
       cats_to_show = {debug_ipc::RegisterCategory::Type::kGeneral,
                       debug_ipc::RegisterCategory::Type::kFloatingPoint,
                       debug_ipc::RegisterCategory::Type::kVector,
+                      debug_ipc::RegisterCategory::Type::kDebug,
                       debug_ipc::RegisterCategory::Type::kMisc};
     } else if (option == "general") {
       cats_to_show = {RegisterCategory::Type::kGeneral};
@@ -636,6 +763,8 @@ Err DoRegs(ConsoleContext* context, const Command& cmd) {
       cats_to_show = {RegisterCategory::Type::kFloatingPoint};
     } else if (option == "vector") {
       cats_to_show = {RegisterCategory::Type::kVector};
+    } else if (option == "debug") {
+      cats_to_show = {RegisterCategory::Type::kDebug};
     } else {
       return Err(fxl::StringPrintf("Unknown category: %s", option.c_str()));
     }
@@ -789,6 +918,12 @@ void AppendThreadVerbs(std::map<Verb, VerbRecord>* verbs) {
                  CommandGroup::kStep);
   (*verbs)[Verb::kLocals] = VerbRecord(&DoLocals, {"locals"}, kLocalsShortHelp,
                                        kLocalsHelp, CommandGroup::kQuery);
+  (*verbs)[Verb::kNext] =
+      VerbRecord(&DoNext, {"next", "n"}, kNextShortHelp, kNextHelp,
+                 CommandGroup::kStep, SourceAffinity::kSource);
+  (*verbs)[Verb::kNexti] =
+      VerbRecord(&DoNexti, {"nexti", "ni"}, kNextiShortHelp, kNextiHelp,
+                 CommandGroup::kAssembly, SourceAffinity::kAssembly);
   (*verbs)[Verb::kPause] =
       VerbRecord(&DoPause, {"pause", "pa"}, kPauseShortHelp, kPauseHelp,
                  CommandGroup::kProcess);
@@ -802,9 +937,13 @@ void AppendThreadVerbs(std::map<Verb, VerbRecord>* verbs) {
   regs.switches.push_back(regs_categories);
   (*verbs)[Verb::kRegs] = std::move(regs);
 
-  (*verbs)[Verb::kStep] =
-      VerbRecord(&DoStep, {"step", "s"}, kStepShortHelp, kStepHelp,
-                 CommandGroup::kStep, SourceAffinity::kSource);
+  // step
+  SwitchRecord step_force(kStepIntoUnsymbolized, false, "unsymbolized", 'u');
+  VerbRecord step(&DoStep, {"step", "s"}, kStepShortHelp, kStepHelp,
+                  CommandGroup::kStep, SourceAffinity::kSource);
+  step.switches.push_back(step_force);
+  (*verbs)[Verb::kStep] = std::move(step);
+
   (*verbs)[Verb::kStepi] =
       VerbRecord(&DoStepi, {"stepi", "si"}, kStepiShortHelp, kStepiHelp,
                  CommandGroup::kAssembly, SourceAffinity::kAssembly);

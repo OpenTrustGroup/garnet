@@ -2959,7 +2959,12 @@ static void ath10k_band_query_info(struct ath10k* ar, const struct ath10k_band* 
     strncpy(wlan_band->desc, dev_band->name, WLAN_BAND_DESC_MAX_LEN);
 
     // ht_caps
-    if (dev_band->ht_supported) { ath10k_get_ht_cap(ar, &wlan_band->ht_caps); }
+    if (dev_band->ht_supported) {
+        wlan_band->ht_supported = true;
+        ath10k_get_ht_cap(ar, &wlan_band->ht_caps);
+    } else {
+        wlan_band->ht_supported = false;
+    }
 
     // vht_caps
     if (dev_band->vht_supported) {
@@ -3075,14 +3080,34 @@ static zx_status_t ath10k_pci_configure_bss(void* ctx, uint32_t options,
     return ath10k_mac_set_bss(ar, config);
 }
 
-static zx_status_t ath10k_pci_enable_beaconing(void* ctx, uint32_t options, bool enabled) {
-    ath10k_err("Enabling beaconing is not supported yet.\n");
-    return ZX_ERR_NOT_SUPPORTED;
+static zx_status_t ath10k_pci_enable_beaconing(void* ctx, uint32_t options,
+                                               wlan_bcn_config_t* bcn_cfg) {
+    struct ath10k* ar = ctx;
+    struct ath10k_vif* arvif = &ar->arvif;
+
+    if (!bcn_cfg) {
+        ath10k_err("We don't support disabling beacon yet.\n");
+        return ZX_ERR_NOT_SUPPORTED;
+    }
+
+    if (bcn_cfg->tmpl.packet_head.len > ATH10K_MAX_BCN_TMPL_SIZE) {
+        ath10k_err("%s(): the given beacon template (%u) cannot be larger than the buffer (%d)\n",
+                   __func__, bcn_cfg->tmpl.packet_head.len, ATH10K_MAX_BCN_TMPL_SIZE);
+        return ZX_ERR_INVALID_ARGS;
+    }
+
+    // Copy the beacon template content and ask the hardware to broadcast it.
+    arvif->bcn_tmpl_len = bcn_cfg->tmpl.packet_head.len;
+    memcpy(arvif->bcn_tmpl_data, bcn_cfg->tmpl.packet_head.data, arvif->bcn_tmpl_len);
+    arvif->tim_ie_offset = bcn_cfg->tim_ele_offset;
+    return ath10k_mac_start_ap(arvif);
 }
 
 static zx_status_t ath10k_pci_configure_beacon(void* ctx, uint32_t options, wlan_tx_packet_t* pkt) {
-    ath10k_err("Configuring beacon is not supported yet.\n");
-    return ZX_ERR_NOT_SUPPORTED;
+
+    ath10k_warn("This should not be called since this is hardware offload beacon.\n");
+
+    return ZX_OK;
 }
 
 static zx_status_t ath10k_pci_set_key(void* ctx, uint32_t options, wlan_key_config_t* key_config) {

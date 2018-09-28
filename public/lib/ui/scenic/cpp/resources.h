@@ -287,6 +287,8 @@ class EntityNode : public ContainerNode {
   void SetClip(uint32_t clip_id, bool clip_to_self);
 
   void Attach(const ViewHolder& view_holder);
+
+  void Snapshot(fuchsia::ui::gfx::SnapshotCallbackHACKPtr callback);
 };
 
 // Represents an imported node resource in a session.
@@ -455,7 +457,7 @@ class CameraBase : public Resource {
                     const float eye_up[3]);
   // Sets the camera pose buffer
   void SetPoseBuffer(const Buffer& buffer, uint32_t num_entries,
-                     uint64_t base_time, uint64_t time_interval);
+                     int64_t base_time, uint64_t time_interval);
 };
 
 // Represents a camera resource in a session.
@@ -559,6 +561,21 @@ class DisplayCompositor final : public Resource {
   explicit DisplayCompositor(Session* session);
   DisplayCompositor(DisplayCompositor&& moved);
   ~DisplayCompositor();
+
+  // Sets the layer-stack that is to be composited.
+  void SetLayerStack(const LayerStack& layer_stack) {
+    ZX_DEBUG_ASSERT(session() == layer_stack.session());
+    SetLayerStack(layer_stack.id());
+  }
+  void SetLayerStack(uint32_t layer_stack_id);
+};
+
+// Represents a display-less compositor resource in a session.
+class Compositor final : public Resource {
+ public:
+  explicit Compositor(Session* session);
+  Compositor(Compositor&& moved);
+  ~Compositor();
 
   // Sets the layer-stack that is to be composited.
   void SetLayerStack(const LayerStack& layer_stack) {

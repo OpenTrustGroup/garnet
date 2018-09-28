@@ -5,8 +5,8 @@
 #include "garnet/bin/media/audio_core/audio_link_packet_source.h"
 
 #include "garnet/bin/media/audio_core/audio_object.h"
-#include "garnet/bin/media/audio_core/audio_out_format_info.h"
-#include "garnet/bin/media/audio_core/audio_out_impl.h"
+#include "garnet/bin/media/audio_core/audio_renderer_format_info.h"
+#include "garnet/bin/media/audio_core/audio_renderer_impl.h"
 #include "lib/fxl/logging.h"
 
 namespace media {
@@ -14,7 +14,7 @@ namespace audio {
 
 AudioLinkPacketSource::AudioLinkPacketSource(
     fbl::RefPtr<AudioObject> source, fbl::RefPtr<AudioObject> dest,
-    fbl::RefPtr<AudioOutFormatInfo> format_info)
+    fbl::RefPtr<AudioRendererFormatInfo> format_info)
     : AudioLink(SourceType::Packet, std::move(source), std::move(dest)),
       format_info_(std::move(format_info)) {}
 
@@ -32,17 +32,17 @@ std::shared_ptr<AudioLinkPacketSource> AudioLinkPacketSource::Create(
 
   // TODO(johngro): Relax this if we get to the point where other audio objects
   // may also be packet sources.
-  if (source->type() != AudioObject::Type::AudioOut) {
+  if (source->type() != AudioObject::Type::AudioRenderer) {
     FXL_LOG(ERROR) << "Cannot create packet source link, packet sources must "
                       "be audio outs";
     return nullptr;
   }
 
-  auto& audio_out = *(static_cast<AudioOutImpl*>(source.get()));
+  auto& audio_renderer = *(static_cast<AudioRendererImpl*>(source.get()));
 
-  FXL_DCHECK(audio_out.format_info_valid());
+  FXL_DCHECK(audio_renderer.format_info_valid());
   return std::shared_ptr<AudioLinkPacketSource>(new AudioLinkPacketSource(
-      std::move(source), std::move(dest), audio_out.format_info()));
+      std::move(source), std::move(dest), audio_renderer.format_info()));
 }
 
 void AudioLinkPacketSource::PushToPendingQueue(
@@ -67,9 +67,9 @@ void AudioLinkPacketSource::FlushPendingQueue(
       // our flush token (if any) to the pending flush token queue.  The sink's
       // thread will take are of releasing these objects back to the service
       // thread for cleanup when it has finished it's current job.
-      while (!pending_packet_queue_.size()) {
+      for (size_t i = 0; i < pending_packet_queue_.size(); ++i) {
         pending_flush_packet_queue_.emplace_back(
-            std::move(pending_packet_queue_[0]));
+            std::move(pending_packet_queue_[i]));
       }
       pending_packet_queue_.clear();
 

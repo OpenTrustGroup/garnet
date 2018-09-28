@@ -53,6 +53,8 @@ enum class RegisterID : uint32_t {
   kARMv8_lr = 1030,
   kARMv8_sp = 1031,
   kARMv8_pc = 1032,
+  // This register doesn't exist in ARMv8, but it's used as an abstraction for
+  // accessing the PSTATE. It's functionally equivalent to SPSR_EL1.
   kARMv8_cpsr = 1034,
 
   // FP (None on ARMv8).
@@ -181,6 +183,17 @@ enum class RegisterID : uint32_t {
   kX64_ymm15 = 2415,
 
   // TODO(donosoc): Add AVX-512 support.
+
+  // Debug.
+
+  kX64_dr0 = 2500,
+  kX64_dr1 = 2501,
+  kX64_dr2 = 2502,
+  kX64_dr3 = 2503,
+  // dr4 is reserved.
+  // dr5 is reserved.
+  kX64_dr6 = 2506,
+  kX64_dr7 = 2507
 };
 
 }  // namespace debug_ipc

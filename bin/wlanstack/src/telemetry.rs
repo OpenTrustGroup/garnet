@@ -2,312 +2,229 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use failure::{format_err, Error, ResultExt};
-use fdio;
-use fidl_fuchsia_cobalt::{BucketDistributionEntry, EncoderFactoryMarker, EncoderProxy,
-                          ObservationValue, ProjectProfile, Status, Value};
-use fidl_fuchsia_mem as fuchsia_mem;
+use fidl_fuchsia_cobalt::HistogramBucket;
+use fidl_fuchsia_wlan_mlme::{AssociateResultCodes, AuthenticateResultCodes, JoinResultCodes};
 use fidl_fuchsia_wlan_stats as fidl_stats;
 use fidl_fuchsia_wlan_stats::MlmeStats::{ApMlmeStats, ClientMlmeStats};
 use fuchsia_async as fasync;
+use fuchsia_zircon as zx;
 use fuchsia_zircon::DurationNum;
-use futures::channel::mpsc;
 use futures::prelude::*;
 use futures::stream::FuturesUnordered;
-use futures::{join, StreamExt};
-use log::{error, info, log};
+use futures::StreamExt;
+use log::error;
 use parking_lot::Mutex;
 use std::cmp::PartialOrd;
 use std::collections::HashMap;
 use std::default::Default;
-use std::fs::File;
-use std::io::Seek;
 use std::ops::Sub;
 use std::sync::Arc;
+use wlan_sme::client::{ConnectFailure, ConnectResult};
 
-use crate::device::{IfaceDevice, IfaceMap};
+use crate::cobalt_reporter::CobaltSender;
+use crate::device::IfaceMap;
 
 type StatsRef = Arc<Mutex<fidl_stats::IfaceStats>>;
 
-const COBALT_CONFIG_PATH: &'static str = "/pkg/data/cobalt_config.binproto";
-
 const REPORT_PERIOD_MINUTES: i64 = 1;
-const COBALT_BUFFER_SIZE: usize = 100;
 
 // These IDs must match the Cobalt config from //third_party/cobalt_config/fuchsia/wlan/config.yaml
 enum CobaltMetricId {
+    RsnaDelay = 2,
+    AssociationDelay = 3,
+    ScanDelay = 4,
     DispatcherPacketCounter = 5,
     ClientAssocDataRssi = 6,
     ClientBeaconRssi = 7,
-    ConnectionTime = 8,
-}
-enum CobaltEncodingId {
-    RawEncoding = 1,
-}
-
-enum CobaltValue {
-    Multipart(Vec<ObservationValue>),
-}
-
-pub struct Observation {
-    metric_id: u32,
-    value: CobaltValue,
-}
-
-#[derive(Clone)]
-pub struct CobaltSender {
-    sender: mpsc::Sender<Observation>,
-}
-
-impl CobaltSender {
-    fn add_multipart_observation(&mut self, metric_id: u32, values: Vec<ObservationValue>) {
-        let value = CobaltValue::Multipart(values);
-        let observation = Observation { metric_id, value };
-        if self.sender.try_send(observation).is_err() {
-            error!("Dropping a Cobalt observation because the buffer is full");
-        }
-    }
-}
-
-pub fn serve(ifaces_map: Arc<IfaceMap>) -> (CobaltSender, impl Future<Output = ()>) {
-    let (sender, receiver) = mpsc::channel(COBALT_BUFFER_SIZE);
-    let sender = CobaltSender { sender };
-    let fut = report_telemetry(ifaces_map.clone(), receiver);
-    (sender, fut)
-}
-
-async fn get_cobalt_encoder() -> Result<EncoderProxy, Error> {
-    let (proxy, server_end) =
-        fidl::endpoints2::create_endpoints().context("Failed to create endpoints")?;
-    let encoder_factory = fuchsia_app::client::connect_to_service::<EncoderFactoryMarker>()
-        .context("Failed to connect to the Cobalt EncoderFactory")?;
-
-    let mut cobalt_config = File::open(COBALT_CONFIG_PATH)?;
-    let vmo = fdio::get_vmo_copy_from_file(&cobalt_config)?;
-    let size = cobalt_config.seek(std::io::SeekFrom::End(0))?;
-
-    let config = fuchsia_mem::Buffer { vmo, size };
-    let resp =
-        await!(encoder_factory.get_encoder_for_project(&mut ProjectProfile { config }, server_end));
-
-    match resp {
-        Ok(Status::Ok) => Ok(proxy),
-        Ok(other) => Err(format_err!("Failed to obtain Encoder: {:?}", other)),
-        Err(e) => Err(format_err!("Failed to obtain Encoder: {}", e)),
-    }
-}
-
-async fn report_telemetry(ifaces_map: Arc<IfaceMap>, receiver: mpsc::Receiver<Observation>) {
-    let report_periodically_fut = report_telemetry_periodically(ifaces_map.clone());
-    let report_events_fut = report_telemetry_events(receiver);
-    join!(report_periodically_fut, report_events_fut);
-}
-
-async fn report_telemetry_events(mut receiver: mpsc::Receiver<Observation>) {
-    let encoder = match await!(get_cobalt_encoder()) {
-        Ok(encoder) => encoder,
-        Err(e) => {
-            error!("Error establishing connection to Cobalt encoder: {}", e);
-            return;
-        }
-    };
-    while let Some(observation) = await!(receiver.next()) {
-        match observation.value {
-            CobaltValue::Multipart(mut values) => {
-                let resp = await!(
-                    encoder
-                        .add_multipart_observation(observation.metric_id, &mut values.iter_mut())
-                );
-                handle_cobalt_response(resp, observation.metric_id);
-            }
-        }
-    }
+    ConnectionDelay = 8,
+    RxTxFrameCount = 9,
+    RxTxFrameBytes = 10,
+    NeighborNetworks = 11,
 }
 
 // Export MLME stats to Cobalt every REPORT_PERIOD_MINUTES.
-async fn report_telemetry_periodically(ifaces_map: Arc<IfaceMap>) {
+pub async fn report_telemetry_periodically(ifaces_map: Arc<IfaceMap>, mut sender: CobaltSender) {
     // TODO(NET-1386): Make this module resilient to Wlanstack2 downtime.
 
-    info!("Telemetry started");
     let mut last_reported_stats: HashMap<u16, StatsRef> = HashMap::new();
     let mut interval_stream = fasync::Interval::new(REPORT_PERIOD_MINUTES.minutes());
     while let Some(_) = await!(interval_stream.next()) {
         let mut futures = FuturesUnordered::new();
         for (id, iface) in ifaces_map.get_snapshot().iter() {
-            let fut = handle_iface(
-                *id,
-                last_reported_stats.get(id).map(|r| Arc::clone(r)),
-                Arc::clone(&iface),
-            );
+            let id = *id;
+            let iface = Arc::clone(iface);
+            let fut = iface.stats_sched.get_stats().map(move |r| (id, iface, r));
             futures.push(fut);
         }
-        while let Some((id, stats_result)) = await!(futures.next()) {
+
+        while let Some((id, iface, stats_result)) = await!(futures.next()) {
             match stats_result {
-                Some(reported_stats) => last_reported_stats.insert(id, reported_stats),
-                None => last_reported_stats.remove(&id),
+                Ok(current_stats) => {
+                    let last_stats_opt = last_reported_stats.get(&id);
+                    if let Some(last_stats) = last_stats_opt {
+                        let last_stats = last_stats.lock();
+                        let current_stats = current_stats.lock();
+                        report_stats(&last_stats, &current_stats, &mut sender);
+                    }
+
+                    last_reported_stats.insert(id, current_stats);
+                }
+                Err(e) => {
+                    last_reported_stats.remove(&id);
+                    error!(
+                        "Failed to get the stats for iface '{}': {}",
+                        iface.device.path().display(),
+                        e
+                    );
+                }
             };
         }
     }
 }
 
-async fn handle_iface(
-    id: u16, last_stats_opt: Option<StatsRef>, iface: Arc<IfaceDevice>,
-) -> (u16, Option<StatsRef>) {
-    let r = await!(try_handle_iface(id, last_stats_opt, Arc::clone(&iface)));
-    match r {
-        Ok((id, reported_stats)) => (id, Some(reported_stats)),
-        Err(e) => {
-            error!(
-                "Failed to report telemetry for iface '{}': {}",
-                iface.device.path().display(),
-                e
-            );
-            (id, None)
-        }
-    }
-}
+fn report_stats(
+    last_stats: &fidl_stats::IfaceStats, current_stats: &fidl_stats::IfaceStats,
+    sender: &mut CobaltSender,
+) {
+    report_mlme_stats(&last_stats.mlme_stats, &current_stats.mlme_stats, sender);
 
-async fn try_handle_iface(
-    id: u16, last_stats_opt: Option<StatsRef>, iface: Arc<IfaceDevice>,
-) -> Result<(u16, StatsRef), Error> {
-    let encoder_proxy = await!(get_cobalt_encoder())?;
-    let current_stats = await!(iface.stats_sched.get_stats())?;
-    if let Some(last_stats) = last_stats_opt {
-        await!(report_stats(
-            last_stats,
-            Arc::clone(&current_stats),
-            &encoder_proxy
-        ));
-    }
-    Ok((id, current_stats))
-}
-
-async fn report_stats(last_stats: StatsRef, current_stats: StatsRef, encoder_proxy: &EncoderProxy) {
-    await!(report_mlme_stats(
-        Arc::clone(&last_stats),
-        Arc::clone(&current_stats),
-        encoder_proxy.clone()
-    ));
-
-    let last_stats_guard = last_stats.lock();
-    let current_stats_guard = current_stats.lock();
-
-    await!(report_dispatcher_stats(
-        &last_stats_guard.dispatcher_stats,
-        &current_stats_guard.dispatcher_stats,
-        encoder_proxy.clone()
-    ));
+    report_dispatcher_stats(
+        &last_stats.dispatcher_stats,
+        &current_stats.dispatcher_stats,
+        sender,
+    );
 }
 
 fn report_dispatcher_stats(
     last_stats: &fidl_stats::DispatcherStats, current_stats: &fidl_stats::DispatcherStats,
-    encoder_proxy: EncoderProxy,
-) -> impl Future<Output = ()> {
+    sender: &mut CobaltSender,
+) {
     // These indexes must match the Cobalt config from
     // //third_party/cobalt_config/fuchsia/wlan/config.yaml
     const DISPATCHER_IN_PACKET_COUNT_INDEX: u32 = 0;
     const DISPATCHER_OUT_PACKET_COUNT_INDEX: u32 = 1;
     const DISPATCHER_DROP_PACKET_COUNT_INDEX: u32 = 2;
 
-    let report_in_fut = report_dispatcher_packets(
+    report_dispatcher_packets(
         DISPATCHER_IN_PACKET_COUNT_INDEX,
         get_diff(
             last_stats.any_packet.in_.count,
             current_stats.any_packet.in_.count,
         ),
-        encoder_proxy.clone(),
+        sender,
     );
-    let report_out_fut = report_dispatcher_packets(
+    report_dispatcher_packets(
         DISPATCHER_OUT_PACKET_COUNT_INDEX,
         get_diff(
             last_stats.any_packet.out.count,
             current_stats.any_packet.out.count,
         ),
-        encoder_proxy.clone(),
+        sender,
     );
-    let report_drop_fut = report_dispatcher_packets(
+    report_dispatcher_packets(
         DISPATCHER_DROP_PACKET_COUNT_INDEX,
         get_diff(
             last_stats.any_packet.drop.count,
             current_stats.any_packet.drop.count,
         ),
-        encoder_proxy.clone(),
+        sender,
     );
-
-    report_in_fut
-        .join3(report_out_fut, report_drop_fut)
-        .map(|_| ())
 }
 
-async fn report_dispatcher_packets(
-    packet_type_index: u32, packet_count: u64, encoder_proxy: EncoderProxy,
-) {
-    let index_value = ObservationValue {
-        name: String::from("packet_type_index"),
-        value: Value::IndexValue(packet_type_index),
-        encoding_id: CobaltEncodingId::RawEncoding as u32,
-    };
-    let count_value = ObservationValue {
-        name: String::from("packet_count"),
-        value: Value::IntValue(packet_count as i64),
-        encoding_id: CobaltEncodingId::RawEncoding as u32,
-    };
-    let mut values = vec![index_value, count_value];
-
-    let resp = await!(encoder_proxy.add_multipart_observation(
+fn report_dispatcher_packets(packet_type_index: u32, packet_count: u64, sender: &mut CobaltSender) {
+    sender.log_event_count(
         CobaltMetricId::DispatcherPacketCounter as u32,
-        &mut values.iter_mut()
-    ));
-    handle_cobalt_response(resp, CobaltMetricId::DispatcherPacketCounter as u32);
+        packet_type_index,
+        packet_count as i64,
+    );
 }
 
-async fn report_mlme_stats(
-    last_stats: StatsRef, current_stats: StatsRef, encoder_proxy: EncoderProxy,
+fn report_mlme_stats(
+    last: &Option<Box<fidl_stats::MlmeStats>>, current: &Option<Box<fidl_stats::MlmeStats>>,
+    sender: &mut CobaltSender,
 ) {
-    let last_stats_guard = last_stats.lock();
-    let current_stats_guard = current_stats.lock();
-
-    let last = &last_stats_guard.mlme_stats;
-    let current = &current_stats_guard.mlme_stats;
     if let (Some(ref last), Some(ref current)) = (last, current) {
         match (last.as_ref(), current.as_ref()) {
-            (ClientMlmeStats(last), ClientMlmeStats(current)) => await!(report_client_mlme_stats(
-                &last,
-                &current,
-                encoder_proxy.clone()
-            )),
+            (ClientMlmeStats(last), ClientMlmeStats(current)) => {
+                report_client_mlme_stats(&last, &current, sender)
+            }
             (ApMlmeStats(_), ApMlmeStats(_)) => {}
             _ => error!("Current MLME stats type is different from the last MLME stats type"),
         };
     }
 }
 
-fn report_client_mlme_stats<'a>(
-    last_stats: &'a fidl_stats::ClientMlmeStats, current_stats: &'a fidl_stats::ClientMlmeStats,
-    encoder_proxy: EncoderProxy,
-) -> impl Future<Output = ()> + 'a {
-    let report_assoc_rssi_fut = report_rssi_stats(
+fn report_client_mlme_stats(
+    last_stats: &fidl_stats::ClientMlmeStats, current_stats: &fidl_stats::ClientMlmeStats,
+    sender: &mut CobaltSender,
+) {
+    report_rssi_stats(
         CobaltMetricId::ClientAssocDataRssi as u32,
         &last_stats.assoc_data_rssi,
         &current_stats.assoc_data_rssi,
-        encoder_proxy.clone(),
+        sender,
     );
-    let report_beacon_rssi_fut = report_rssi_stats(
+    report_rssi_stats(
         CobaltMetricId::ClientBeaconRssi as u32,
         &last_stats.beacon_rssi,
         &current_stats.beacon_rssi,
-        encoder_proxy.clone(),
+        sender,
     );
 
-    report_assoc_rssi_fut
-        .join(report_beacon_rssi_fut)
-        .map(|_| ())
+    report_client_mlme_rx_tx_frames(&last_stats, &current_stats, sender);
+}
+
+fn report_client_mlme_rx_tx_frames(
+    last_stats: &fidl_stats::ClientMlmeStats, current_stats: &fidl_stats::ClientMlmeStats,
+    sender: &mut CobaltSender,
+) {
+    // These indexes must match the Cobalt config from
+    // //third_party/cobalt_config/fuchsia/wlan/config.yaml
+    const CLIENT_MLME_RX_FRAME_COUNT_INDEX: u32 = 0;
+    const CLIENT_MLME_TX_FRAME_COUNT_INDEX: u32 = 1;
+    sender.log_event_count(
+        CobaltMetricId::RxTxFrameCount as u32,
+        CLIENT_MLME_RX_FRAME_COUNT_INDEX,
+        get_diff(
+            last_stats.rx_frame.in_.count,
+            current_stats.rx_frame.in_.count,
+        ) as i64,
+    );
+    sender.log_event_count(
+        CobaltMetricId::RxTxFrameCount as u32,
+        CLIENT_MLME_TX_FRAME_COUNT_INDEX,
+        get_diff(
+            last_stats.tx_frame.out.count,
+            current_stats.tx_frame.out.count,
+        ) as i64,
+    );
+
+    // These indexes must match the Cobalt config from
+    // //third_party/cobalt_config/fuchsia/wlan/config.yaml
+    const CLIENT_MLME_RX_FRAME_BYTES_INDEX: u32 = 0;
+    const CLIENT_MLME_TX_FRAME_BYTES_INDEX: u32 = 1;
+    sender.log_event_count(
+        CobaltMetricId::RxTxFrameBytes as u32,
+        CLIENT_MLME_RX_FRAME_BYTES_INDEX,
+        get_diff(
+            last_stats.rx_frame.in_bytes.count,
+            current_stats.rx_frame.in_bytes.count,
+        ) as i64,
+    );
+    sender.log_event_count(
+        CobaltMetricId::RxTxFrameBytes as u32,
+        CLIENT_MLME_TX_FRAME_BYTES_INDEX,
+        get_diff(
+            last_stats.tx_frame.out_bytes.count,
+            current_stats.tx_frame.out_bytes.count,
+        ) as i64,
+    );
 }
 
 fn report_rssi_stats(
     rssi_metric_id: u32, last_stats: &fidl_stats::RssiStats, current_stats: &fidl_stats::RssiStats,
-    encoder_proxy: EncoderProxy,
-) -> impl Future<Output = ()> {
+    sender: &mut CobaltSender,
+) {
     // In the internal stats histogram, hist[x] represents the number of frames
     // with RSSI -x. For the Cobalt representation, buckets from -128 to 0 are
     // used. When data is sent to Cobalt, the concept of index is utilized.
@@ -321,62 +238,135 @@ fn report_rssi_stats(
     // The for loop below converts the stats internal representation to the
     // Cobalt representation and prepares the histogram that will be sent.
 
-    let mut distribution = Vec::new();
+    let mut histogram = Vec::new();
     for bin in 0..current_stats.hist.len() {
         let diff = get_diff(last_stats.hist[bin], current_stats.hist[bin]);
         if diff > 0 {
-            let entry = BucketDistributionEntry {
+            let entry = HistogramBucket {
                 index: (fidl_stats::RSSI_BINS - (bin as u8) - 1).into(),
                 count: diff.into(),
             };
-            distribution.push(entry);
+            histogram.push(entry);
         }
     }
 
-    report_int_bucket_distribution(distribution, rssi_metric_id, encoder_proxy)
+    if !histogram.is_empty() {
+        sender.log_int_histogram(rssi_metric_id, histogram);
+    }
 }
 
-async fn report_int_bucket_distribution(
-    mut distribution: Vec<BucketDistributionEntry>, rssi_metric_id: u32,
-    encoder_proxy: EncoderProxy,
+pub fn report_scan_delay(
+    sender: &mut CobaltSender, scan_started_time: zx::Time, scan_finished_time: zx::Time,
 ) {
-    if !distribution.is_empty() {
-        let resp = await!(encoder_proxy.add_int_bucket_distribution(
-            rssi_metric_id,
-            CobaltEncodingId::RawEncoding as u32,
-            &mut distribution.iter_mut()
-        ));
-        handle_cobalt_response(resp, rssi_metric_id);
+    let delay_micros = (scan_finished_time - scan_started_time).nanos() / 1000;
+    sender.log_elapsed_time(CobaltMetricId::ScanDelay as u32, 0, delay_micros);
+}
+
+pub fn report_connection_delay(
+    sender: &mut CobaltSender, conn_started_time: zx::Time, conn_finished_time: zx::Time,
+    result: &ConnectResult, failure: &Option<ConnectFailure>,
+) {
+    let delay_micros = (conn_finished_time - conn_started_time).nanos() / 1000;
+    let cobalt_index = match (result, failure) {
+        (ConnectResult::Success, None) => Some(ConnectionResultLabel::SuccessId),
+        (ConnectResult::Success, Some(_)) => None,
+        (_, Some(failure)) => convert_connect_failure(failure),
+        (_, None) => Some(ConnectionResultLabel::FailId),
+    };
+
+    if let Some(cobalt_index) = cobalt_index {
+        sender.log_elapsed_time(
+            CobaltMetricId::ConnectionDelay as u32,
+            cobalt_index as u32,
+            delay_micros,
+        );
     }
 }
 
-pub fn report_connection_time(cobalt_sender: &mut CobaltSender, time: i64, result_index: u32) {
-    let result_value = ObservationValue {
-        name: String::from("connection_result_index"),
-        value: Value::IndexValue(result_index),
-        encoding_id: CobaltEncodingId::RawEncoding as u32,
-    };
-    let time_value = ObservationValue {
-        name: String::from("connection_time"),
-        value: Value::IntValue(time),
-        encoding_id: CobaltEncodingId::RawEncoding as u32,
-    };
-    let values = vec![result_value, time_value];
-    cobalt_sender.add_multipart_observation(CobaltMetricId::ConnectionTime as u32, values);
+pub fn report_assoc_success_delay(
+    sender: &mut CobaltSender, assoc_started_time: zx::Time, assoc_finished_time: zx::Time,
+) {
+    let delay_micros = (assoc_finished_time - assoc_started_time).nanos() / 1000;
+    sender.log_elapsed_time(CobaltMetricId::AssociationDelay as u32, 0, delay_micros);
 }
 
-fn handle_cobalt_response(resp: Result<Status, fidl::Error>, metric_id: u32) {
-    match resp {
-        Ok(Status::Ok) => {}
-        Ok(other) => error!(
-            "Cobalt returned an error for metric {}: {:?}",
-            metric_id, other
-        ),
-        Err(e) => error!(
-            "Failed to send observation to Cobalt for metric {}: {}",
-            metric_id, e
-        ),
-    }
+pub fn report_rsna_established_delay(
+    sender: &mut CobaltSender, rsna_started_time: zx::Time, rsna_finished_time: zx::Time,
+) {
+    let delay_micros = (rsna_finished_time - rsna_started_time).nanos() / 1000;
+    sender.log_elapsed_time(CobaltMetricId::RsnaDelay as u32, 0, delay_micros);
+}
+
+pub fn report_neighbor_networks_count(
+    sender: &mut CobaltSender, bss_count: usize, ess_count: usize,
+) {
+    const BSS_COUNT_INDEX: u32 = 0;
+    const ESS_COUNT_INDEX: u32 = 1;
+    sender.log_event_count(
+        CobaltMetricId::NeighborNetworks as u32,
+        BSS_COUNT_INDEX,
+        bss_count as i64,
+    );
+    sender.log_event_count(
+        CobaltMetricId::NeighborNetworks as u32,
+        ESS_COUNT_INDEX,
+        ess_count as i64,
+    );
+}
+
+#[derive(Debug)]
+enum ConnectionResultLabel {
+    SuccessId = 0,
+    FailId = 1,
+    JoinFailureTimeoutId = 1000,
+    AuthRefusedId = 2000,
+    AuthAntiCloggingTokenRequiredId = 2001,
+    AuthFiniteCyclicGroupNotSupportedId = 2002,
+    AuthRejectedId = 2003,
+    AuthFailureTimeoutId = 2004,
+    AssocRefusedReasonUnspecifiedId = 3000,
+    AssocRefusedNotAuthenticatedId = 3001,
+    AssocRefusedCapabilitiesMismatchId = 3002,
+    AssocRefusedExternalReasonId = 3003,
+    AssocRefusedApOutOfMemoryId = 3004,
+    AssocRefusedBasicRatesMismatchId = 3005,
+    AssocRejectedEmergencyServicesNotSupportedId = 3006,
+    AssocRefusedTemporarilyId = 3007,
+}
+
+fn convert_connect_failure(result: &ConnectFailure) -> Option<ConnectionResultLabel> {
+    use crate::telemetry::ConnectionResultLabel::*;
+    use fidl_fuchsia_wlan_mlme::AssociateResultCodes::*;
+    use fidl_fuchsia_wlan_mlme::AuthenticateResultCodes::*;
+    use fidl_fuchsia_wlan_mlme::JoinResultCodes::*;
+
+    let result = match result {
+        ConnectFailure::JoinFailure(join_failure) => match join_failure {
+            JoinResultCodes::Success => { return None; }
+            JoinFailureTimeout => JoinFailureTimeoutId,
+        },
+        ConnectFailure::AuthenticationFailure(auth_failure) => match auth_failure {
+            AuthenticateResultCodes::Success => { return None; }
+            Refused => AuthRefusedId,
+            AntiCloggingTokenRequired => AuthAntiCloggingTokenRequiredId,
+            FiniteCyclicGroupNotSupported => AuthFiniteCyclicGroupNotSupportedId,
+            AuthenticationRejected => AuthRejectedId,
+            AuthFailureTimeout => AuthFailureTimeoutId,
+        },
+        ConnectFailure::AssociationFailure(assoc_failure) => match assoc_failure {
+            AssociateResultCodes::Success => { return None; }
+            RefusedReasonUnspecified => AssocRefusedReasonUnspecifiedId,
+            RefusedNotAuthenticated => AssocRefusedNotAuthenticatedId,
+            RefusedCapabilitiesMismatch => AssocRefusedCapabilitiesMismatchId,
+            RefusedExternalReason => AssocRefusedExternalReasonId,
+            RefusedApOutOfMemory => AssocRefusedApOutOfMemoryId,
+            RefusedBasicRatesMismatch => AssocRefusedBasicRatesMismatchId,
+            RejectedEmergencyServicesNotSupported => AssocRejectedEmergencyServicesNotSupportedId,
+            RefusedTemporarily => AssocRefusedTemporarilyId,
+        },
+    };
+
+    Some(result)
 }
 
 fn get_diff<T>(last_stat: T, current_stat: T) -> T

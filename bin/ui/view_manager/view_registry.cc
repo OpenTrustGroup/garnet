@@ -28,6 +28,29 @@
 namespace view_manager {
 namespace {
 
+class SnapshotCallbackImpl : public fuchsia::ui::gfx::SnapshotCallbackHACK {
+ private:
+  fit::function<void(::fuchsia::mem::Buffer)> callback_;
+  fidl::Binding<::fuchsia::ui::gfx::SnapshotCallbackHACK> binding_;
+  fit::function<void()> clear_fn_;
+
+ public:
+  explicit SnapshotCallbackImpl(
+      fidl::InterfaceRequest<fuchsia::ui::gfx::SnapshotCallbackHACK> request,
+      fit::function<void(::fuchsia::mem::Buffer)> callback)
+      : callback_(std::move(callback)), binding_(this, std::move(request)) {}
+  ~SnapshotCallbackImpl() {}
+  void SetClear(fit::function<void()> clear_fn) {
+    clear_fn_ = std::move(clear_fn);
+  }
+
+  virtual void OnData(::fuchsia::mem::Buffer data) override {
+    callback_(std::move(data));
+    if (clear_fn_)
+      clear_fn_();
+  }
+};
+
 bool Validate(const ::fuchsia::ui::viewsv1::ViewLayout& value) {
   return value.size.width >= 0 && value.size.height >= 0;
 }
@@ -144,20 +167,20 @@ void ViewRegistry::CreateView(
   FXL_DCHECK(view_listener);
   FXL_DCHECK(parent_export_token);
 
-  ::fuchsia::ui::viewsv1token::ViewToken view_token;
-  view_token.value = next_view_token_value_++;
-  FXL_CHECK(view_token.value);
-  FXL_CHECK(!FindView(view_token.value));
+  uint32_t view_token = next_view_token_value_++;
+  FXL_CHECK(view_token);
+  FXL_CHECK(!FindView(view_token));
 
   // Create the state and bind the interfaces to it.
-  ViewState* view_state =
-      new ViewState(this, std::move(view_token), std::move(view_request),
-                    std::move(view_listener), &session_, SanitizeLabel(label));
-  view_state->BindOwner(std::move(view_owner_request));
+  View1Linker::ImportLink view_owner_link =
+      viewv1_linker_.CreateImport(view_owner_request.TakeChannel(), this);
+  auto view_state = std::make_unique<ViewState>(
+      this, view_token, std::move(view_request), std::move(view_listener),
+      &session_, SanitizeLabel(label));
 
   // Export a node which represents the view's attachment point.
   view_state->top_node().Export(std::move(parent_export_token));
-  view_state->top_node().SetTag(view_state->view_token().value);
+  view_state->top_node().SetTag(view_state->view_token());
   view_state->top_node().SetLabel(view_state->FormattedLabel());
 
   // TODO(MZ-371): Avoid Z-fighting by introducing a smidgen of elevation
@@ -165,9 +188,13 @@ void ViewRegistry::CreateView(
   view_state->top_node().SetTranslation(0.f, 0.f, 0.1f);
   SchedulePresentSession();
 
-  // Add to registry and return token.
-  views_by_token_.emplace(view_state->view_token().value, view_state);
-  FXL_VLOG(1) << "CreateView: view=" << view_state;
+  // Begin tracking the view, and bind it to the owner link.  Binding may cause
+  // the ViewStub to be attached, so we make sure to begin tracking the view in
+  // the map beforehand.
+  ViewState* view_state_ptr = view_state.get();
+  views_by_token_.emplace(view_token, std::move(view_state));
+  view_state_ptr->BindOwner(std::move(view_owner_link));
+  FXL_VLOG(1) << "CreateView: view=" << view_state_ptr;
 }
 
 void ViewRegistry::OnViewDied(ViewState* view_state,
@@ -182,7 +209,9 @@ void ViewRegistry::UnregisterView(ViewState* view_state) {
   FXL_DCHECK(IsViewStateRegisteredDebug(view_state));
   FXL_VLOG(1) << "UnregisterView: view=" << view_state;
 
-  HijackView(view_state);
+  if (ViewStub* view_stub = view_state->view_stub()) {
+    view_stub->ReleaseView();
+  }
   UnregisterChildren(view_state);
 
   // Remove the view's content node from the session.
@@ -190,8 +219,7 @@ void ViewRegistry::UnregisterView(ViewState* view_state) {
   SchedulePresentSession();
 
   // Remove from registry.
-  views_by_token_.erase(view_state->view_token().value);
-  delete view_state;
+  views_by_token_.erase(view_state->view_token());
 }
 
 // CREATE / DESTROY VIEW TREES
@@ -209,13 +237,15 @@ void ViewRegistry::CreateViewTree(
   FXL_CHECK(!FindViewTree(view_tree_token.value));
 
   // Create the state and bind the interfaces to it.
-  ViewTreeState* tree_state =
-      new ViewTreeState(this, view_tree_token, std::move(view_tree_request),
-                        std::move(view_tree_listener), SanitizeLabel(label));
+  auto tree_state = std::make_unique<ViewTreeState>(
+      this, view_tree_token, std::move(view_tree_request),
+      std::move(view_tree_listener), SanitizeLabel(label));
 
   // Add to registry.
-  view_trees_by_token_.emplace(tree_state->view_tree_token().value, tree_state);
-  FXL_VLOG(1) << "CreateViewTree: tree=" << tree_state;
+  ViewTreeState* tree_state_ptr = tree_state.get();
+  view_trees_by_token_.emplace(tree_state->view_tree_token().value,
+                               std::move(tree_state));
+  FXL_VLOG(1) << "CreateViewTree: tree=" << tree_state_ptr;
 }
 
 void ViewRegistry::OnViewTreeDied(ViewTreeState* tree_state,
@@ -234,7 +264,6 @@ void ViewRegistry::UnregisterViewTree(ViewTreeState* tree_state) {
 
   // Remove from registry.
   view_trees_by_token_.erase(tree_state->view_tree_token().value);
-  delete tree_state;
 }
 
 // LIFETIME
@@ -310,8 +339,10 @@ void ViewRegistry::AddChild(
   // Add a stub, pending resolution of the view owner.
   // Assuming the stub isn't removed prematurely, |OnViewResolved| will be
   // called asynchronously with the result of the resolution.
+  View1Linker::ExportLink view_link =
+      viewv1_linker_.CreateExport(child_view_owner.TakeChannel(), this);
   container_state->LinkChild(child_key, std::unique_ptr<ViewStub>(new ViewStub(
-                                            this, std::move(child_view_owner),
+                                            this, std::move(view_link),
                                             std::move(host_import_token))));
 }
 
@@ -415,12 +446,45 @@ void ViewRegistry::RequestFocus(ViewContainerState* container_state,
   }
 }
 
-void ViewRegistry::OnViewResolved(
-    ViewStub* view_stub, ::fuchsia::ui::viewsv1token::ViewToken view_token,
-    bool success) {
+void ViewRegistry::RequestSnapshotHACK(
+    ViewContainerState* container_state, uint32_t child_key,
+    fit::function<void(::fuchsia::mem::Buffer)> callback) {
+  FXL_DCHECK(IsViewContainerStateRegisteredDebug(container_state));
+
+  // Check whether the child key exists in the container.
+  auto child_it = container_state->children().find(child_key);
+  if (child_it == container_state->children().end()) {
+    FXL_LOG(ERROR) << "Attempted to modify child with an invalid key: "
+                   << "container=" << container_state
+                   << ", child_key=" << child_key;
+    UnregisterViewContainer(container_state);
+    return;
+  }
+
+  // Immediately discard requests on unavailable views.
+  ViewStub* child_stub = child_it->second.get();
+  if (child_stub->is_unavailable() || child_stub->is_pending()) {
+    FXL_VLOG(1) << "RequestSnapshot called for view that is currently "
+                << (child_stub->is_unavailable() ? "unavailable" : "pending");
+    return;
+  }
+
+  fuchsia::ui::gfx::SnapshotCallbackHACKPtr snapshot_callback;
+  auto snapshot_callback_impl = std::make_shared<SnapshotCallbackImpl>(
+      snapshot_callback.NewRequest(), std::move(callback));
+  snapshot_callback_impl->SetClear([this, snapshot_callback_impl]() {
+    snapshot_bindings_.remove(snapshot_callback_impl);
+  });
+  snapshot_bindings_.push_back(std::move(snapshot_callback_impl));
+
+  // Snapshot the child.
+  child_stub->state()->top_node().Snapshot(std::move(snapshot_callback));
+  SchedulePresentSession();
+}
+
+void ViewRegistry::OnViewResolved(ViewStub* view_stub, ViewState* view_state) {
   FXL_DCHECK(view_stub);
 
-  ViewState* view_state = success ? FindView(view_token.value) : nullptr;
   if (view_state)
     AttachResolvedViewAndNotify(view_stub, view_state);
   else
@@ -428,15 +492,19 @@ void ViewRegistry::OnViewResolved(
 }
 
 void ViewRegistry::TransferViewOwner(
-    ::fuchsia::ui::viewsv1token::ViewToken view_token,
+    ViewState* view_state,
     fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
         transferred_view_owner_request) {
   FXL_DCHECK(transferred_view_owner_request.is_valid());
 
-  ViewState* view_state = FindView(view_token.value);
   if (view_state) {
-    view_state->ReleaseOwner();  // don't need the ViewOwner pipe anymore
-    view_state->BindOwner(std::move(transferred_view_owner_request));
+    InvalidateView(view_state, ViewState::INVALIDATION_PARENT_CHANGED);
+
+    // This will cause the view_state to be rebound, and released from the
+    // view_stub.
+    View1Linker::ImportLink view_owner_link = viewv1_linker_.CreateImport(
+        transferred_view_owner_request.TakeChannel(), this);
+    view_state->BindOwner(std::move(view_owner_link));
   }
 }
 
@@ -446,8 +514,10 @@ void ViewRegistry::AttachResolvedViewAndNotify(ViewStub* view_stub,
   FXL_DCHECK(IsViewStateRegisteredDebug(view_state));
   FXL_VLOG(2) << "AttachViewStubAndNotify: view=" << view_state;
 
-  // Hijack the view from its current container, if needed.
-  HijackView(view_state);
+  // Precondition:  The view_state will not have a view_stub attached.
+  FXL_CHECK(!view_state->view_stub())
+      << "Attempted to attach ViewState " << view_state
+      << " that already had a ViewStub";
 
   // Attach the view's content.
   if (view_stub->container()) {
@@ -460,7 +530,6 @@ void ViewRegistry::AttachResolvedViewAndNotify(ViewStub* view_stub,
   }
 
   // Attach the view.
-  view_state->ReleaseOwner();  // don't need the ViewOwner pipe anymore
   view_stub->AttachView(view_state);
   InvalidateView(view_state, ViewState::INVALIDATION_PARENT_CHANGED);
 }
@@ -476,17 +545,6 @@ void ViewRegistry::ReleaseUnavailableViewAndNotify(ViewStub* view_stub) {
     SendChildUnavailable(view_stub->container(), view_stub->key());
 }
 
-void ViewRegistry::HijackView(ViewState* view_state) {
-  FXL_DCHECK(IsViewStateRegisteredDebug(view_state));
-
-  ViewStub* view_stub = view_state->view_stub();
-  if (view_stub) {
-    view_stub->ReleaseView();
-    if (view_stub->container())
-      SendChildUnavailable(view_stub->container(), view_stub->key());
-  }
-}
-
 void ViewRegistry::TransferOrUnregisterViewStub(
     std::unique_ptr<ViewStub> view_stub,
     fidl::InterfaceRequest<::fuchsia::ui::viewsv1token::ViewOwner>
@@ -498,8 +556,8 @@ void ViewRegistry::TransferOrUnregisterViewStub(
 
     if (view_stub->state()) {
       ViewState* view_state = view_stub->ReleaseView();
-      InvalidateView(view_state, ViewState::INVALIDATION_PARENT_CHANGED);
-      view_state->BindOwner(std::move(transferred_view_owner_request));
+      TransferViewOwner(view_state, std::move(transferred_view_owner_request));
+
       return;
     }
 
@@ -555,7 +613,7 @@ void ViewRegistry::Traverse() {
 
   traversal_scheduled_ = false;
   for (const auto& pair : view_trees_by_token_)
-    TraverseViewTree(pair.second);
+    TraverseViewTree(pair.second.get());
 }
 
 void ViewRegistry::TraverseViewTree(ViewTreeState* tree_state) {
@@ -740,10 +798,7 @@ void ViewRegistry::HitTest(
            ray_direction](fidl::VectorPtr<fuchsia::ui::gfx::Hit> hits) {
             auto view_hits = fidl::VectorPtr<ViewHit>::New(0);
             for (auto& hit : *hits) {
-              auto it = views_by_token_.find(hit.tag_value);
-              if (it != views_by_token_.end()) {
-                ViewState* view_state = it->second;
-
+              if (ViewState* view_state = FindView(hit.tag_value)) {
                 view_hits->emplace_back(
                     ViewHit{view_state->view_token(), ray_origin, ray_direction,
                             hit.distance, ToTransform(hit.inverse_transform)});
@@ -766,17 +821,16 @@ void ViewRegistry::ResolveFocusChain(
   }
 }
 
-void ViewRegistry::ActivateFocusChain(
-    ::fuchsia::ui::viewsv1token::ViewToken view_token,
-    ActivateFocusChainCallback callback) {
+void ViewRegistry::ActivateFocusChain(uint32_t view_token,
+                                      ActivateFocusChainCallback callback) {
   FXL_VLOG(1) << "ActivateFocusChain: view_token=" << view_token;
 
   if (!IsViewFocusable(view_token)) {
     return;
   }
 
-  ViewState* view = FindView(view_token.value);
-  if (!view) {
+  ViewState* view = FindView(view_token);
+  if (!view || !view->view_stub()) {
     callback(nullptr);
     return;
   }
@@ -788,19 +842,18 @@ void ViewRegistry::ActivateFocusChain(
   callback(std::move(new_chain));
 }
 
-void ViewRegistry::HasFocus(::fuchsia::ui::viewsv1token::ViewToken view_token,
-                            HasFocusCallback callback) {
+void ViewRegistry::HasFocus(uint32_t view_token, HasFocusCallback callback) {
   FXL_VLOG(1) << "HasFocus: view_token=" << view_token;
-  ViewState* view = FindView(view_token.value);
-  if (!view) {
+  ViewState* view_state = FindView(view_token);
+  if (!view_state) {
     callback(false);
     return;
   }
-  auto tree_state = view->view_stub()->tree();
+  auto tree_state = view_state->view_stub()->tree();
   auto chain = tree_state->focus_chain();
   if (chain) {
     for (size_t index = 0; index < chain->chain.size(); ++index) {
-      if (chain->chain[index].value == view_token.value) {
+      if (chain->chain[index] == view_token) {
         callback(true);
         return;
       }
@@ -810,8 +863,7 @@ void ViewRegistry::HasFocus(::fuchsia::ui::viewsv1token::ViewToken view_token,
 }
 
 fuchsia::sys::ServiceProvider* ViewRegistry::FindViewServiceProvider(
-    uint32_t view_token, std::string service_name) {
-  ViewState* view_state = FindView(view_token);
+    ViewState* view_state, std::string service_name) {
   if (!view_state) {
     return nullptr;
   }
@@ -827,13 +879,14 @@ fuchsia::sys::ServiceProvider* ViewRegistry::FindViewServiceProvider(
 }
 
 void ViewRegistry::GetImeService(
-    ::fuchsia::ui::viewsv1token::ViewToken view_token,
+    uint32_t view_token,
     fidl::InterfaceRequest<fuchsia::ui::input::ImeService> ime_service) {
   FXL_DCHECK(ime_service.is_valid());
   FXL_VLOG(1) << "GetImeService: view_token=" << view_token;
 
+  ViewState* view_state = FindView(view_token);
   auto provider = FindViewServiceProvider(
-      view_token.value, fuchsia::ui::input::ImeService::Name_);
+      view_state, fuchsia::ui::input::ImeService::Name_);
   if (provider) {
     component::ConnectToService(provider, std::move(ime_service));
   } else {
@@ -901,14 +954,13 @@ void ViewRegistry::SendChildUnavailable(ViewContainerState* container_state,
                                                                  [] {});
 }
 
-void ViewRegistry::DeliverEvent(
-    ::fuchsia::ui::viewsv1token::ViewToken view_token,
-    fuchsia::ui::input::InputEvent event,
-    ViewInspector::OnEventDelivered callback) {
+void ViewRegistry::DeliverEvent(uint32_t view_token,
+                                fuchsia::ui::input::InputEvent event,
+                                ViewInspector::OnEventDelivered callback) {
   FXL_VLOG(1) << "DeliverEvent: view_token=" << view_token
               << ", event=" << event;
 
-  auto it = input_connections_by_view_token_.find(view_token.value);
+  auto it = input_connections_by_view_token_.find(view_token);
   if (it == input_connections_by_view_token_.end()) {
     FXL_VLOG(1)
         << "DeliverEvent: dropped because there was no input connection";
@@ -926,25 +978,24 @@ void ViewRegistry::DeliverEvent(
 }
 
 void ViewRegistry::CreateInputConnection(
-    ::fuchsia::ui::viewsv1token::ViewToken view_token,
+    uint32_t view_token,
     fidl::InterfaceRequest<fuchsia::ui::input::InputConnection> request) {
   FXL_DCHECK(request.is_valid());
   FXL_VLOG(1) << "CreateInputConnection: view_token=" << view_token;
 
-  const uint32_t view_token_value = view_token.value;
   input_connections_by_view_token_.emplace(
-      view_token_value, std::make_unique<InputConnectionImpl>(
-                            this, this, view_token, std::move(request)));
+      view_token, std::make_unique<InputConnectionImpl>(this, this, view_token,
+                                                        std::move(request)));
 }
 
 void ViewRegistry::OnInputConnectionDied(InputConnectionImpl* connection) {
   FXL_DCHECK(connection);
-  auto it =
-      input_connections_by_view_token_.find(connection->view_token().value);
-  FXL_DCHECK(it != input_connections_by_view_token_.end());
-  FXL_DCHECK(it->second.get() == connection);
   FXL_VLOG(1) << "OnInputConnectionDied: view_token="
               << connection->view_token();
+
+  auto it = input_connections_by_view_token_.find(connection->view_token());
+  FXL_DCHECK(it != input_connections_by_view_token_.end());
+  FXL_DCHECK(it->second.get() == connection);
 
   input_connections_by_view_token_.erase(it);
 }
@@ -958,8 +1009,8 @@ void ViewRegistry::CreateInputDispatcher(
   const uint32_t view_tree_token_value = view_tree_token.value;
   input_dispatchers_by_view_tree_token_.emplace(
       view_tree_token_value,
-      std::unique_ptr<InputDispatcherImpl>(new InputDispatcherImpl(
-          this, this, view_tree_token, std::move(request))));
+      std::make_unique<InputDispatcherImpl>(this, this, view_tree_token,
+                                            std::move(request)));
 }
 
 void ViewRegistry::OnInputDispatcherDied(InputDispatcherImpl* dispatcher) {
@@ -977,14 +1028,14 @@ void ViewRegistry::OnInputDispatcherDied(InputDispatcherImpl* dispatcher) {
 
 // LOOKUP
 
-ViewState* ViewRegistry::FindView(uint32_t view_token_value) {
-  auto it = views_by_token_.find(view_token_value);
-  return it != views_by_token_.end() ? it->second : nullptr;
+ViewState* ViewRegistry::FindView(uint32_t view_token) {
+  auto it = views_by_token_.find(view_token);
+  return it != views_by_token_.end() ? it->second.get() : nullptr;
 }
 
 ViewTreeState* ViewRegistry::FindViewTree(uint32_t view_tree_token_value) {
   auto it = view_trees_by_token_.find(view_tree_token_value);
-  return it != view_trees_by_token_.end() ? it->second : nullptr;
+  return it != view_trees_by_token_.end() ? it->second.get() : nullptr;
 }
 
 void ViewRegistry::PerformHitTest(
@@ -1011,8 +1062,8 @@ void ViewRegistry::PerformHitTest(
 }
 
 // Not focusable if this view or any ancestor is unfocusable.
-bool ViewRegistry::IsViewFocusable(::fuchsia::ui::viewsv1token::ViewToken view_token) {
-  ViewState* view = FindView(view_token.value);
+bool ViewRegistry::IsViewFocusable(uint32_t view_token) {
+  ViewState* view = FindView(view_token);
   if (!view) {
     return false;
   }

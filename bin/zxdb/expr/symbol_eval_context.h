@@ -6,9 +6,9 @@
 
 #include <vector>
 
-#include "garnet/bin/zxdb/client/symbols/symbol_context.h"
 #include "garnet/bin/zxdb/expr/expr_eval_context.h"
 #include "garnet/bin/zxdb/expr/symbol_variable_resolver.h"
+#include "garnet/bin/zxdb/symbols/symbol_context.h"
 #include "lib/fxl/memory/weak_ptr.h"
 
 namespace zxdb {
@@ -23,7 +23,7 @@ class Variable;
 // system. It will provide the values of variables currently in scope.
 class SymbolEvalContext : public ExprEvalContext {
  public:
-  using Callback = std::function<void(const Err&, ExprValue)>;
+  using ValueCallback = std::function<void(const Err&, ExprValue)>;
 
   explicit SymbolEvalContext(const SymbolEvalContext&) = default;
   SymbolEvalContext(const SymbolContext& symbol_context,
@@ -34,16 +34,16 @@ class SymbolEvalContext : public ExprEvalContext {
   ~SymbolEvalContext() override = default;
 
   // ExprEvalContext implementation.
-  void GetVariable(const std::string& name, Callback cb) override;
+  const Variable* GetVariableSymbol(const std::string& name) override;
+  void GetVariableValue(const std::string& name, ValueCallback cb) override;
   SymbolVariableResolver& GetVariableResolver() override;
   fxl::RefPtr<SymbolDataProvider> GetDataProvider() override;
 
  private:
   // Searches the given vector of values for one with the given name. If found,
-  // executes the given callback (possibly asynchronously in the future) with
-  // it and returns true. False means the variable was not found.
-  bool SearchVariableVector(const std::vector<LazySymbol>& vect,
-                            const std::string& search_for, Callback& cb);
+  // returns it, otherwise returns null.
+  const Variable* SearchVariableVector(const std::vector<LazySymbol>& vect,
+                                       const std::string& search_for);
 
   SymbolContext symbol_context_;
   fxl::RefPtr<SymbolDataProvider> data_provider_;

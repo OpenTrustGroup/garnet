@@ -36,11 +36,25 @@
 namespace component {
 
 struct RealmArgs {
+  static RealmArgs Make(
+      Realm* parent, fidl::StringPtr label,
+      const std::shared_ptr<component::Services>& env_services,
+      bool run_virtual_console, bool inherit_parent_services);
+
+ static RealmArgs MakeWithAdditionalServices(
+      Realm* parent, fidl::StringPtr label,
+      const std::shared_ptr<component::Services>& env_services,
+      bool run_virtual_console,
+      fuchsia::sys::ServiceListPtr additional_services,
+      bool inherit_parent_services);
+
   Realm* parent;
-  const std::shared_ptr<component::Services> environment_services;
-  zx::channel host_directory;
   fidl::StringPtr label;
+  std::shared_ptr<component::Services> environment_services;
   bool run_virtual_console;
+  fuchsia::sys::ServiceListPtr additional_services;
+  bool inherit_parent_services;
+  bool allow_parent_runners;
 };
 
 class Realm : public ComponentContainer<ComponentControllerImpl> {
@@ -62,11 +76,12 @@ class Realm : public ComponentContainer<ComponentControllerImpl> {
 
   zx::job DuplicateJob() const;
 
-  void CreateNestedJob(
-      zx::channel host_directory,
+  void CreateNestedEnvironment(
       fidl::InterfaceRequest<fuchsia::sys::Environment> environment,
-      fidl::InterfaceRequest<fuchsia::sys::EnvironmentController> controller,
-      fidl::StringPtr label);
+      fidl::InterfaceRequest<fuchsia::sys::EnvironmentController>
+          controller_request,
+      fidl::StringPtr label, fuchsia::sys::ServiceListPtr additional_services,
+      bool inherit_parent_services, bool allow_parent_runners);
 
   using ComponentObjectCreatedCallback =
       fit::function<void(ComponentControllerImpl* component)>;
@@ -99,6 +114,7 @@ class Realm : public ComponentContainer<ComponentControllerImpl> {
   static uint32_t next_numbered_label_;
 
   RunnerHolder* GetOrCreateRunner(const std::string& runner);
+  RunnerHolder* GetRunnerRecursive(const std::string& runner) const;
 
   void CreateComponentWithRunnerForScheme(
       std::string runner_url, fuchsia::sys::LaunchInfo launch_info,
@@ -108,13 +124,11 @@ class Realm : public ComponentContainer<ComponentControllerImpl> {
   void CreateComponentWithProcess(fuchsia::sys::PackagePtr package,
                                   fuchsia::sys::LaunchInfo launch_info,
                                   ComponentRequestWrapper component_request,
-                                  fxl::RefPtr<Namespace> ns,
                                   ComponentObjectCreatedCallback callback);
 
   void CreateComponentFromPackage(fuchsia::sys::PackagePtr package,
                                   fuchsia::sys::LaunchInfo launch_info,
                                   ComponentRequestWrapper component_request,
-                                  fxl::RefPtr<Namespace> ns,
                                   ComponentObjectCreatedCallback callback);
 
   void CreateElfBinaryComponentFromPackage(
@@ -127,7 +141,8 @@ class Realm : public ComponentContainer<ComponentControllerImpl> {
   void CreateRunnerComponentFromPackage(
       fuchsia::sys::PackagePtr package, fuchsia::sys::LaunchInfo launch_info,
       RuntimeMetadata& runtime, fuchsia::sys::FlatNamespace flat,
-      ComponentRequestWrapper component_request, fxl::RefPtr<Namespace> ns);
+      ComponentRequestWrapper component_request, fxl::RefPtr<Namespace> ns,
+      fidl::VectorPtr<fuchsia::sys::ProgramMetadata> program_metadata);
 
   zx::channel OpenInfoDir();
 
@@ -160,6 +175,8 @@ class Realm : public ComponentContainer<ComponentControllerImpl> {
   SchemeMap scheme_map_;
 
   const std::shared_ptr<component::Services> environment_services_;
+
+  bool allow_parent_runners_ = false;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Realm);
 };

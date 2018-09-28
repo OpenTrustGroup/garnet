@@ -6,14 +6,16 @@ import("//build/fidl/fidl.gni")
 
 fidl("fuchsia.guest") {
   sources = [
-    "guest_controller.fidl",
-    "guest_environment.fidl",
-    "guest_manager.fidl",
+    "instance_controller.fidl",
+    "environment_controller.fidl",
+    "environment_manager.fidl",
     "vsock.fidl",
+    "wayland_dispatcher.fidl",
   ]
 
   public_deps = [
     "//garnet/public/fidl/fuchsia.sys",
+    "//garnet/public/fidl/fuchsia.ui.input",
     "//garnet/public/fidl/fuchsia.ui.viewsv1",
   ]
 }

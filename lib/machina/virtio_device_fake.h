@@ -9,24 +9,20 @@
 #include "garnet/lib/machina/virtio_device.h"
 #include "garnet/lib/machina/virtio_queue_fake.h"
 
-#define QUEUE_SIZE 16
-#define VIRTIO_TEST_ID 30
-
 namespace machina {
 
 typedef struct test_config {
 } test_config_t;
 
-class VirtioDeviceFake : public VirtioDevice<VIRTIO_TEST_ID, 1, test_config_t> {
+class VirtioDeviceFake
+    : public VirtioInprocessDevice<UINT8_MAX, 1, test_config_t> {
  public:
   VirtioDeviceFake()
-      : VirtioDevice(phys_mem_, 0 /* device_features */),
-        queue_fake_(queue()) {}
+      : VirtioInprocessDevice(phys_mem_, 0 /* device_features */),
+        queue_fake_(queue(), 16 /* queue_size */) {}
 
-  zx_status_t Init() { return queue_fake_.Init(QUEUE_SIZE); }
-
-  VirtioQueue* queue() { return VirtioDevice::queue(0); }
-  VirtioQueueFake& queue_fake() { return queue_fake_; }
+  VirtioQueue* queue() { return VirtioInprocessDevice::queue(0); }
+  VirtioQueueFake* queue_fake() { return &queue_fake_; }
 
  private:
   PhysMemFake phys_mem_;

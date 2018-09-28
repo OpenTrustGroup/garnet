@@ -4,6 +4,7 @@
 
 #include "vp9_decoder.h"
 
+#include "codec_packet.h"
 #include "firmware_blob.h"
 #include "macros.h"
 #include "memory_barriers.h"
@@ -208,6 +209,7 @@ zx_status_t Vp9Decoder::InitializeBuffers() {
 }
 
 zx_status_t Vp9Decoder::InitializeHardware() {
+  ZX_DEBUG_ASSERT(state_ == DecoderState::kSwappedOut);
   assert(owner_->IsDecoderCurrent(this));
   uint8_t* firmware;
   uint32_t firmware_size;
@@ -319,8 +321,12 @@ zx_status_t Vp9Decoder::InitializeHardware() {
 
   // In the multi-stream case, don't start yet to give the caller the chance
   // to restore the input state.
-  if (input_type_ == InputType::kSingleStream)
+  if (input_type_ == InputType::kSingleStream) {
+    state_ = DecoderState::kRunning;
     owner_->core()->StartDecoding();
+  } else {
+    state_ = DecoderState::kInitialWaitingForInput;
+  }
   return ZX_OK;
 }
 
@@ -371,6 +377,69 @@ void Vp9Decoder::ProcessCompletedFrames() {
   }
   last_frame_ = current_frame_;
   current_frame_ = nullptr;
+
+  cached_mpred_buffer_ = std::move(last_mpred_buffer_);
+  last_mpred_buffer_ = std::move(current_mpred_buffer_);
+}
+
+void Vp9Decoder::InitializedFrames(std::vector<CodecFrame> frames,
+                                   uint32_t width, uint32_t height,
+                                   uint32_t stride) {
+  ZX_DEBUG_ASSERT(state_ == DecoderState::kPausedAtHeader);
+  uint32_t frame_vmo_bytes = height * stride + height * stride / 2;
+  for (uint32_t i = 0; i < frames_.size(); i++) {
+    auto video_frame = std::make_shared<VideoFrame>();
+    video_frame->width = width;
+    video_frame->height = height;
+    video_frame->stride = stride;
+    video_frame->uv_plane_offset = video_frame->stride * video_frame->height;
+    video_frame->index = i;
+
+    video_frame->codec_packet = frames[i].codec_packet;
+    if (frames[i].codec_packet) {
+      frames[i].codec_packet->SetVideoFrame(video_frame);
+    }
+
+    assert(video_frame->height % 2 == 0);
+    zx_status_t status = io_buffer_init_vmo(
+        &video_frame->buffer, owner_->bti(),
+        frames[i].codec_buffer.data.vmo().vmo_handle.get(), 0, IO_BUFFER_RW);
+    if (status != ZX_OK) {
+      DECODE_ERROR("Failed to io_buffer_init_vmo() for frame - status: %d\n",
+                   status);
+      return;
+    }
+    size_t vmo_size = io_buffer_size(&video_frame->buffer, 0);
+    if (vmo_size < frame_vmo_bytes) {
+      DECODE_ERROR("Insufficient frame vmo bytes: %ld < %d\n", vmo_size,
+                   frame_vmo_bytes);
+      return;
+    }
+    status = io_buffer_physmap(&video_frame->buffer);
+    if (status != ZX_OK) {
+      DECODE_ERROR("Failed to io_buffer_physmap - status: %d\n", status);
+      return;
+    }
+
+    for (uint32_t i = 1; i < vmo_size / PAGE_SIZE; i++) {
+      if (video_frame->buffer.phys_list[i - 1] + PAGE_SIZE !=
+          video_frame->buffer.phys_list[i]) {
+        DECODE_ERROR("VMO isn't contiguous\n");
+        return;
+      }
+    }
+
+    io_buffer_cache_flush(&video_frame->buffer, 0,
+                          io_buffer_size(&video_frame->buffer, 0));
+    frames_[i]->frame = std::move(video_frame);
+  }
+
+  BarrierAfterFlush();
+
+  ZX_DEBUG_ASSERT(waiting_for_empty_frames_);
+  waiting_for_empty_frames_ = false;
+  // Also updates state_.
+  PrepareNewFrame();
 }
 
 void Vp9Decoder::ReturnFrame(std::shared_ptr<VideoFrame> frame) {
@@ -391,13 +460,19 @@ enum Vp9Command {
   // that the compressed frame body should be decoded.
   kVp9CommandDecodeSlice = 5,
 
-  // Sent from the device to the host to say that all of the input data (from
-  // HevcDecodeSize) has been processed. Only sent in multi-stream mode.
-  kVp9CommandDecodingDataDone = 0xa,
-
   // Sent from the device to the host to say that a frame has finished decoding.
   // This is only sent in multi-stream mode.
+  kVp9CommandDecodingDataDone = 0xa,
+
+  // Sent from the device to the host to say that all of the input data (from
+  // HevcDecodeSize) has been processed. Only sent in multi-stream mode.
   kVp9CommandNalDecodeDone = 0xe,
+
+  // Sent from the device if it's attempted to read HevcDecodeSize bytes, but
+  // couldn't because there wasn't enough input data. This can happen if the
+  // ringbuffer is out of data or if there wasn't enough padding to flush enough
+  // data through the HEVC parser fifo.
+  kVp9InputBufferEmpty = 0x20,
 
   // Sent from the device to the host to say that a VP9 header has been
   // decoded and the parameter buffer has data. In single-stream mode this also
@@ -409,8 +484,31 @@ enum Vp9Command {
   kVp9ActionDone = 0xff,
 };
 
+void Vp9Decoder::UpdateDecodeSize(uint32_t size) {
+  ZX_DEBUG_ASSERT(state_ == DecoderState::kStoppedWaitingForInput ||
+                  state_ == DecoderState::kInitialWaitingForInput);
+  uint32_t old_decode_count =
+      HevcDecodeCount::Get().ReadFrom(owner_->dosbus()).reg_value();
+  if (old_decode_count != frame_done_count_) {
+    HevcDecodeSize::Get().FromValue(0).WriteTo(owner_->dosbus());
+    HevcDecodeCount::Get()
+        .FromValue(frame_done_count_)
+        .WriteTo(owner_->dosbus());
+  }
+  HevcDecodeSize::Get()
+      .FromValue(HevcDecodeSize::Get().ReadFrom(owner_->dosbus()).reg_value() +
+                 size)
+      .WriteTo(owner_->dosbus());
+  if (state_ == DecoderState::kStoppedWaitingForInput) {
+    HevcDecStatusReg::Get().FromValue(kVp9ActionDone).WriteTo(owner_->dosbus());
+  }
+  owner_->core()->StartDecoding();
+  state_ = DecoderState::kRunning;
+}
+
 void Vp9Decoder::HandleInterrupt() {
-  DLOG("Got VP9 interrupt\n");
+  DLOG("%p Got VP9 interrupt\n", this);
+  ZX_DEBUG_ASSERT(state_ == DecoderState::kRunning);
 
   HevcAssistMbox0ClrReg::Get().FromValue(1).WriteTo(owner_->dosbus());
 
@@ -421,21 +519,32 @@ void Vp9Decoder::HandleInterrupt() {
 
   DLOG("Decoder state: %x %x\n", dec_status, adapt_prob_status);
 
-  if (dec_status == kVp9CommandDecodingDataDone) {
-    // Signal that there's more data that can be decoded.
-    uint32_t new_input_data_size = frame_data_provider_->GetInputDataSize();
-    HevcDecodeSize::Get()
-        .FromValue(
-            HevcDecodeSize::Get().ReadFrom(owner_->dosbus()).reg_value() +
-            new_input_data_size)
-        .WriteTo(owner_->dosbus());
-    HevcDecStatusReg::Get().FromValue(kVp9ActionDone).WriteTo(owner_->dosbus());
+  if (dec_status == kVp9InputBufferEmpty) {
+    // TODO: We'll want to use this to continue filling input data of
+    // particularly large input frames, if we can get this to work. Currently
+    // attempting to restart decoding after this in frame-based decoding mode
+    // causes old data to be skipped.
+    DECODE_ERROR("Input buffer empty, insufficient padding?\n");
+    return;
+  }
+  if (dec_status == kVp9CommandNalDecodeDone) {
+    owner_->core()->StopDecoding();
+    state_ = DecoderState::kStoppedWaitingForInput;
+    frame_data_provider_->ReadMoreInputData(this);
     return;
   }
   ProcessCompletedFrames();
 
-  if (dec_status == kVp9CommandNalDecodeDone) {
+  if (dec_status == kVp9CommandDecodingDataDone) {
+    state_ = DecoderState::kFrameJustProduced;
+    frame_done_count_++;
     frame_data_provider_->FrameWasOutput();
+    if (state_ != DecoderState::kSwappedOut) {
+      state_ = DecoderState::kRunning;
+      HevcDecStatusReg::Get()
+          .FromValue(kVp9ActionDone)
+          .WriteTo(owner_->dosbus());
+    }
     return;
   }
   if (dec_status != kProcessedHeader) {
@@ -443,7 +552,10 @@ void Vp9Decoder::HandleInterrupt() {
     return;
   };
 
+  state_ = DecoderState::kPausedAtHeader;
+
   PrepareNewFrame();
+  DLOG("Done handling VP9 interrupt\n");
 
   // PrepareNewFrame will tell the firmware to continue decoding if necessary.
 }
@@ -478,6 +590,8 @@ void Vp9Decoder::ConfigureMcrcc() {
   HevcdMcrccCtl1::Get().FromValue(0xff0).WriteTo(owner_->dosbus());
 }
 
+Vp9Decoder::MpredBuffer::~MpredBuffer() { io_buffer_release(&mv_mpred_buffer); }
+
 void Vp9Decoder::ConfigureMotionPrediction() {
   // Intra frames and frames after intra frames can't use the previous
   // frame's mvs.
@@ -507,14 +621,14 @@ void Vp9Decoder::ConfigureMotionPrediction() {
       .WriteTo(owner_->dosbus());
 
   uint32_t mv_mpred_addr =
-      truncate_to_32(io_buffer_phys(&current_frame_->mv_mpred_buffer));
+      truncate_to_32(io_buffer_phys(&current_mpred_buffer_->mv_mpred_buffer));
   HevcMpredMvWrStartAddr::Get()
       .FromValue(mv_mpred_addr)
       .WriteTo(owner_->dosbus());
   HevcMpredMvWptr::Get().FromValue(mv_mpred_addr).WriteTo(owner_->dosbus());
-  if (last_frame_) {
+  if (last_mpred_buffer_) {
     uint32_t last_mv_mpred_addr =
-        truncate_to_32(io_buffer_phys(&last_frame_->mv_mpred_buffer));
+        truncate_to_32(io_buffer_phys(&last_mpred_buffer_->mv_mpred_buffer));
     HevcMpredMvRdStartAddr::Get()
         .FromValue(last_mv_mpred_addr)
         .WriteTo(owner_->dosbus());
@@ -523,7 +637,8 @@ void Vp9Decoder::ConfigureMotionPrediction() {
         .WriteTo(owner_->dosbus());
 
     uint32_t last_end_addr =
-        last_mv_mpred_addr + io_buffer_size(&last_frame_->mv_mpred_buffer, 0);
+        last_mv_mpred_addr +
+        io_buffer_size(&last_mpred_buffer_->mv_mpred_buffer, 0);
     HevcMpredMvRdEndAddr::Get()
         .FromValue(last_end_addr)
         .WriteTo(owner_->dosbus());
@@ -613,7 +728,7 @@ void Vp9Decoder::ConfigureFrameOutput(uint32_t width, uint32_t height,
   }
 
   uint32_t buffer_address =
-      truncate_to_32(io_buffer_phys(&current_frame_->frame->buffer));
+      truncate_to_32(current_frame_->frame->buffer.phys_list[0]);
 
   HevcSaoYStartAddr::Get().FromValue(buffer_address).WriteTo(owner_->dosbus());
   HevcSaoYWptr::Get().FromValue(buffer_address).WriteTo(owner_->dosbus());
@@ -680,8 +795,7 @@ void Vp9Decoder::ShowExistingFrame(HardwareRenderParams* params) {
   uint32_t stream_offset =
       HevcShiftByteCount::Get().ReadFrom(owner_->dosbus()).reg_value();
 
-  PtsManager::LookupResult result =
-      owner_->pts_manager()->Lookup(stream_offset);
+  PtsManager::LookupResult result = pts_manager_->Lookup(stream_offset);
   frame->frame->has_pts = result.has_pts();
   frame->frame->pts = result.pts();
   if (result.is_end_of_stream()) {
@@ -695,9 +809,11 @@ void Vp9Decoder::ShowExistingFrame(HardwareRenderParams* params) {
     frame->refcount++;
     notifier_(frame->frame);
   }
+  ZX_DEBUG_ASSERT(state_ == DecoderState::kPausedAtHeader);
   HevcDecStatusReg::Get()
       .FromValue(kVp9CommandDecodeSlice)
       .WriteTo(owner_->dosbus());
+  state_ = DecoderState::kRunning;
 }
 
 void Vp9Decoder::PrepareNewFrame() {
@@ -732,8 +848,7 @@ void Vp9Decoder::PrepareNewFrame() {
   uint32_t stream_offset =
       HevcShiftByteCount::Get().ReadFrom(owner_->dosbus()).reg_value();
 
-  PtsManager::LookupResult result =
-      owner_->pts_manager()->Lookup(stream_offset);
+  PtsManager::LookupResult result = pts_manager_->Lookup(stream_offset);
   current_frame_data_.has_pts = result.has_pts();
   current_frame_data_.pts = result.pts();
   if (result.is_end_of_stream()) {
@@ -769,9 +884,11 @@ void Vp9Decoder::PrepareNewFrame() {
 
   UpdateLoopFilter(&params);
 
+  ZX_DEBUG_ASSERT(state_ == DecoderState::kPausedAtHeader);
   HevcDecStatusReg::Get()
       .FromValue(kVp9CommandDecodeSlice)
       .WriteTo(owner_->dosbus());
+  state_ = DecoderState::kRunning;
 }
 
 void Vp9Decoder::SetFrameReadyNotifier(FrameReadyNotifier notifier) {
@@ -781,11 +898,11 @@ void Vp9Decoder::SetFrameReadyNotifier(FrameReadyNotifier notifier) {
 Vp9Decoder::Frame::~Frame() {
   io_buffer_release(&compressed_header);
   io_buffer_release(&compressed_data);
-  io_buffer_release(&mv_mpred_buffer);
 }
 
 bool Vp9Decoder::FindNewFrameBuffer(HardwareRenderParams* params) {
   assert(!current_frame_);
+  ZX_DEBUG_ASSERT(!waiting_for_empty_frames_);
   Frame* new_frame = nullptr;
   for (uint32_t i = 0; i < frames_.size(); i++) {
     if (frames_[i]->refcount == 0) {
@@ -799,58 +916,117 @@ bool Vp9Decoder::FindNewFrameBuffer(HardwareRenderParams* params) {
     return false;
   }
 
+  uint32_t display_width, display_height;
+  if (params->render_size_present) {
+    display_width = params->render_width;
+    display_height = params->render_height;
+  } else {
+    display_width = params->width;
+    display_height = params->height;
+  }
+  // TODO: keep old frames that are larger than the new frame size, to avoid
+  // reallocating as often.
   if (!new_frame->frame || (new_frame->frame->width != params->width) ||
       (new_frame->frame->height != params->height)) {
-    auto video_frame = std::make_unique<VideoFrame>();
-    video_frame->width = params->width;
-    video_frame->height = params->height;
-    video_frame->stride = fbl::round_up(video_frame->width, 32u);
-    video_frame->uv_plane_offset =
-        fbl::round_up(video_frame->stride * video_frame->height, 1u << 16);
-    video_frame->index = new_frame->index;
+    BarrierBeforeRelease();
+    // It's simplest to allocate all frames at once on resize, though that can
+    // cause problems if show_existing_frame happens after the resize.
+    for (uint32_t i = 0; i < frames_.size(); i++) {
+      frames_[i]->frame.reset();
+    }
 
-    assert(video_frame->height % 2 == 0);
-    zx_status_t status = io_buffer_init_aligned(
-        &video_frame->buffer, owner_->bti(),
-        video_frame->uv_plane_offset +
-            video_frame->stride * video_frame->height / 2,
-        16, IO_BUFFER_RW | IO_BUFFER_CONTIG);
-    if (status != ZX_OK) {
-      DECODE_ERROR("Failed to make video_frame: %d\n", status);
+    uint32_t stride = fbl::round_up(params->width, 32u);
+
+    uint32_t frame_vmo_bytes =
+        params->height * stride + params->height * stride / 2;
+    if (initialize_frames_handler_) {
+      ::zx::bti duplicated_bti;
+      zx_status_t dup_result =
+          ::zx::unowned_bti(owner_->bti())
+              ->duplicate(ZX_RIGHT_SAME_RIGHTS, &duplicated_bti);
+      if (dup_result != ZX_OK) {
+        DECODE_ERROR("Failed to duplicate BTI - status: %d\n", dup_result);
+        return false;
+      }
+      zx_status_t initialize_result = initialize_frames_handler_(
+          std::move(duplicated_bti), frames_.size(), params->width,
+          params->height, stride, display_width, display_height);
+      if (initialize_result != ZX_OK) {
+        if (initialize_result != ZX_ERR_STOP) {
+          DECODE_ERROR("initialize_frames_handler_() failed - status: %d\n",
+                       initialize_result);
+        }
+        return false;
+      }
+      waiting_for_empty_frames_ = true;
+      return false;
+    } else {
+      std::vector<CodecFrame> frames;
+      for (uint32_t i = 0; i < frames_.size(); i++) {
+        ::zx::vmo frame_vmo;
+        zx_status_t vmo_create_result =
+            zx_vmo_create_contiguous(owner_->bti(), frame_vmo_bytes, 0,
+                                     frame_vmo.reset_and_get_address());
+        if (vmo_create_result != ZX_OK) {
+          DECODE_ERROR("zx_vmo_create_contiguous failed - status: %d\n",
+                       vmo_create_result);
+          return false;
+        }
+        fuchsia::mediacodec::CodecBufferData codec_buffer_data;
+        codec_buffer_data.set_vmo(fuchsia::mediacodec::CodecBufferDataVmo{
+            .vmo_handle = std::move(frame_vmo),
+            .vmo_usable_start = 0,
+            .vmo_usable_size = frame_vmo_bytes,
+        });
+        frames.emplace_back(CodecFrame{
+            .codec_buffer =
+                fuchsia::mediacodec::CodecBuffer{
+                    .buffer_lifetime_ordinal =
+                        next_non_codec_buffer_lifetime_ordinal_,
+                    .buffer_index = 0,
+                    .data = std::move(codec_buffer_data),
+                },
+            .codec_packet = nullptr,
+        });
+      }
+      next_non_codec_buffer_lifetime_ordinal_++;
+      waiting_for_empty_frames_ = true;
+      InitializedFrames(std::move(frames), params->width, params->height,
+                        stride);
+      // InitializedFrames will call back into PrepareNewFrame to actually
+      // prepare for the decoding, so this call should return false so that the
+      // outer PrepareNewFrame call exits without trying to prepare decoding
+      // again.
       return false;
     }
-    io_buffer_cache_flush(&video_frame->buffer, 0,
-                          io_buffer_size(&video_frame->buffer, 0));
-
-    new_frame->frame = std::move(video_frame);
-
-    // The largest coding unit is assumed to be 64x32.
-    constexpr uint32_t kLcuMvBytes = 0x240;
-    constexpr uint32_t kLcuCount = 4096 * 2048 / (64 * 32);
-    status = io_buffer_init_aligned(&new_frame->mv_mpred_buffer, owner_->bti(),
-                                    kLcuCount * kLcuMvBytes, 16,
-                                    IO_BUFFER_CONTIG | IO_BUFFER_RW);
-    if (status != ZX_OK) {
-      DECODE_ERROR("Alloc buffer error: %d\n", status);
-      return false;
-    }
-    io_buffer_cache_flush_invalidate(&new_frame->mv_mpred_buffer, 0,
-                                     kLcuCount * kLcuMvBytes);
-
-    BarrierAfterFlush();
   }
 
-  if (params->render_size_present) {
-    new_frame->frame->display_width = params->render_width;
-    new_frame->frame->display_height = params->render_height;
-  } else {
-    new_frame->frame->display_width = params->width;
-    new_frame->frame->display_height = params->height;
-  }
+  new_frame->frame->display_width = display_width;
+  new_frame->frame->display_height = display_height;
 
   current_frame_ = new_frame;
   current_frame_->refcount++;
   current_frame_->decoded_index = decoded_frame_count_++;
+
+  if (cached_mpred_buffer_) {
+    current_mpred_buffer_ = std::move(cached_mpred_buffer_);
+  } else {
+    current_mpred_buffer_ = std::make_unique<MpredBuffer>();
+    // The largest coding unit is assumed to be 64x32.
+    constexpr uint32_t kLcuMvBytes = 0x240;
+    constexpr uint32_t kLcuCount = 4096 * 2048 / (64 * 32);
+    zx_status_t status = io_buffer_init_aligned(
+        &current_mpred_buffer_->mv_mpred_buffer, owner_->bti(),
+        kLcuCount * kLcuMvBytes, 16, IO_BUFFER_CONTIG | IO_BUFFER_RW);
+    if (status != ZX_OK) {
+      DECODE_ERROR("Alloc buffer error: %d\n", status);
+      return false;
+    }
+    io_buffer_cache_flush_invalidate(&current_mpred_buffer_->mv_mpred_buffer, 0,
+                                     kLcuCount * kLcuMvBytes);
+    BarrierAfterFlush();
+  }
+
   return true;
 }
 
@@ -973,6 +1149,14 @@ void Vp9Decoder::InitializeHardwarePictureList() {
   }
 }
 
+void Vp9Decoder::SetInitializeFramesHandler(InitializeFramesHandler handler) {
+  initialize_frames_handler_ = handler;
+}
+
+void Vp9Decoder::SetErrorHandler(fit::closure error_handler) {
+  error_handler_ = std::move(error_handler);
+}
+
 void Vp9Decoder::InitializeParser() {
   HevcParserIntControl::Get()
       .ReadFrom(owner_->dosbus())
@@ -1002,6 +1186,7 @@ void Vp9Decoder::InitializeParser() {
       owner_->dosbus());
   HevcParserCoreControl::Get().FromValue(0).set_clock_enable(true).WriteTo(
       owner_->dosbus());
+  ZX_DEBUG_ASSERT(state_ == DecoderState::kSwappedOut);
   HevcDecStatusReg::Get().FromValue(0).WriteTo(owner_->dosbus());
 
   HevcIqitScalelutWrAddr::Get().FromValue(0).WriteTo(owner_->dosbus());
@@ -1028,16 +1213,11 @@ void Vp9Decoder::InitializeParser() {
       break;
   }
   DecodeMode::Get().FromValue(decode_mode).WriteTo(owner_->dosbus());
+  // For multi-stream UpdateDecodeSize() should be called before
+  // StartDecoding(), because the hardware treats size 0 as infinite.
   if (input_type_ == InputType::kSingleStream) {
     HevcDecodeSize::Get().FromValue(0).WriteTo(owner_->dosbus());
     HevcDecodeCount::Get().FromValue(0).WriteTo(owner_->dosbus());
-  } else {
-    HevcDecodeSize::Get()
-        .FromValue(frame_data_provider_->GetInputDataSize())
-        .WriteTo(owner_->dosbus());
-    HevcDecodeCount::Get()
-        .FromValue(decoded_frame_count_)
-        .WriteTo(owner_->dosbus());
   }
 
   HevcParserCmdWrite::Get().FromValue(1 << 16).WriteTo(owner_->dosbus());

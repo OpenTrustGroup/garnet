@@ -36,15 +36,17 @@ class Namespace : public fuchsia::sys::Environment,
 
   zx::channel OpenServicesAsDirectory();
 
-  void SetServicesWhitelist(const std::vector<std::string>& services);
-
+  //
   // fuchsia::sys::Environment implementation:
+  //
 
   void CreateNestedEnvironment(
-      zx::channel host_directory,
       fidl::InterfaceRequest<fuchsia::sys::Environment> environment,
       fidl::InterfaceRequest<fuchsia::sys::EnvironmentController> controller,
-      fidl::StringPtr label) override;
+      fidl::StringPtr label,
+      fuchsia::sys::ServiceListPtr additional_services,
+      fuchsia::sys::EnvironmentOptions options) override;
+
 
   void GetLauncher(
       fidl::InterfaceRequest<fuchsia::sys::Launcher> launcher) override;
@@ -60,7 +62,9 @@ class Namespace : public fuchsia::sys::Environment,
     services_->set_component_url(url);
   }
 
+  //
   // fuchsia::sys::Launcher implementation:
+  //
 
   void CreateComponent(fuchsia::sys::LaunchInfo launch_info,
                        fidl::InterfaceRequest<fuchsia::sys::ComponentController>
@@ -70,7 +74,8 @@ class Namespace : public fuchsia::sys::Environment,
  private:
   FRIEND_MAKE_REF_COUNTED(Namespace);
   Namespace(fxl::RefPtr<Namespace> parent, Realm* realm,
-            fuchsia::sys::ServiceListPtr additional_services);
+            fuchsia::sys::ServiceListPtr additional_services,
+            const std::vector<std::string>* service_whitelist);
 
   FRIEND_REF_COUNTED_THREAD_SAFE(Namespace);
   ~Namespace() override;
@@ -81,9 +86,11 @@ class Namespace : public fuchsia::sys::Environment,
   fs::SynchronousVfs vfs_;
   fbl::RefPtr<ServiceProviderDirImpl> services_;
   fbl::RefPtr<JobProviderImpl> job_provider_;
-  fxl::RefPtr<Namespace> parent_;
   Realm* const realm_;
-  fuchsia::sys::ServiceProviderPtr additional_services_;
+  // Set if |additional_services.provider| was set.
+  fuchsia::sys::ServiceProviderPtr service_provider_;
+  // Set if |additional_services.host_directory| was set.
+  zx::channel service_host_directory_;
   fuchsia::sys::LoaderPtr loader_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(Namespace);

@@ -8,7 +8,7 @@ use fidl_fuchsia_wlan_sme as fidl_sme;
 use futures::{select, Stream};
 use futures::channel::{oneshot, mpsc};
 use futures::prelude::*;
-use log::{error, log};
+use log::error;
 use pin_utils::pin_mut;
 use std::marker::Unpin;
 use std::sync::{Arc, Mutex};
@@ -25,7 +25,7 @@ impl ap_sme::Tokens for Tokens {
     type StopToken = oneshot::Sender<()>;
 }
 
-pub type Endpoint = fidl::endpoints2::ServerEnd<fidl_sme::ApSmeMarker>;
+pub type Endpoint = fidl::endpoints::ServerEnd<fidl_sme::ApSmeMarker>;
 type Sme = ap_sme::ApSme<Tokens>;
 
 pub async fn serve<S>(proxy: MlmeProxy,
@@ -116,6 +116,7 @@ async fn start(sme: &Arc<Mutex<Sme>>, config: fidl_sme::ApConfig) -> fidl_sme::S
     let (sender, receiver) = oneshot::channel();
     let sme_config = ap_sme::Config {
         ssid: config.ssid,
+        password: config.password,
         channel: config.channel,
     };
     sme.lock().unwrap().on_start_command(sme_config, sender);

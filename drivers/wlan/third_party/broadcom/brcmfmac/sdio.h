@@ -18,6 +18,7 @@
 #define BRCMFMAC_SDIO_H
 
 #include <ddk/protocol/sdio.h>
+#include <ddk/protocol/gpio.h>
 
 #include "defs.h"
 #include "device.h"
@@ -170,6 +171,12 @@
  */
 enum brcmf_sdiod_state { BRCMF_SDIOD_DOWN, BRCMF_SDIOD_DATA, BRCMF_SDIOD_NOMEDIUM };
 
+enum {
+    WIFI_OOB_IRQ_GPIO_INDEX,
+    DEBUG_GPIO_INDEX,
+    GPIO_COUNT,
+};
+
 struct brcmf_sdreg {
     int func;
     int offset;
@@ -180,9 +187,12 @@ struct brcmf_sdio;
 struct brcmf_sdiod_freezer;
 
 struct brcmf_sdio_dev {
+    struct sdio_func *func1;
+    struct sdio_func *func2;
     uint32_t manufacturer_id;
     uint32_t product_id;
-    sdio_protocol_t* sdio_proto;
+    sdio_protocol_t sdio_proto;
+    gpio_protocol_t gpios[GPIO_COUNT];
     zx_handle_t irq_handle;
     thrd_t isr_thread;
     struct brcmf_device dev;
@@ -393,5 +403,6 @@ void brcmf_sdio_wd_timer(struct brcmf_sdio* bus, bool active);
 void brcmf_sdio_wowl_config(struct brcmf_device* dev, bool enabled);
 zx_status_t brcmf_sdio_sleep(struct brcmf_sdio* bus, bool sleep);
 void brcmf_sdio_trigger_dpc(struct brcmf_sdio* bus);
+int brcmf_sdio_oob_irqhandler(void* cookie);
 
 #endif /* BRCMFMAC_SDIO_H */

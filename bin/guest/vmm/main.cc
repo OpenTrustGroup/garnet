@@ -12,28 +12,28 @@
 #include <ios>
 #include <vector>
 
-#include <fbl/string_buffer.h>
 #include <fbl/unique_fd.h>
-#include <fbl/unique_ptr.h>
+#include <fuchsia/ui/input/cpp/fidl.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/async/cpp/task.h>
+#include <lib/component/cpp/startup_context.h>
 #include <trace-provider/provider.h>
 #include <zircon/process.h>
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/hypervisor.h>
 
 #include "garnet/bin/guest/vmm/guest_config.h"
-#include "garnet/bin/guest/vmm/guest_controller_impl.h"
 #include "garnet/bin/guest/vmm/guest_view.h"
+#include "garnet/bin/guest/vmm/instance_controller_impl.h"
 #include "garnet/bin/guest/vmm/linux.h"
 #include "garnet/bin/guest/vmm/zircon.h"
-#include "garnet/lib/machina/address.h"
 #include "garnet/lib/machina/framebuffer_scanout.h"
 #include "garnet/lib/machina/guest.h"
 #include "garnet/lib/machina/hid_event_source.h"
-#include "garnet/lib/machina/input_dispatcher.h"
+#include "garnet/lib/machina/input_dispatcher_impl.h"
 #include "garnet/lib/machina/interrupt_controller.h"
 #include "garnet/lib/machina/pci.h"
+#include "garnet/lib/machina/platform_device.h"
 #include "garnet/lib/machina/uart.h"
 #include "garnet/lib/machina/vcpu.h"
 #include "garnet/lib/machina/virtio_balloon.h"
@@ -43,17 +43,12 @@
 #include "garnet/lib/machina/virtio_input.h"
 #include "garnet/lib/machina/virtio_net.h"
 #include "garnet/lib/machina/virtio_vsock.h"
+#include "garnet/lib/machina/virtio_wl.h"
 #include "garnet/public/lib/fxl/files/file.h"
-#include "lib/component/cpp/startup_context.h"
 
 #if __aarch64__
 #include "garnet/lib/machina/arch/arm64/pl031.h"
 
-static constexpr size_t kNumUarts = 1;
-static constexpr uint64_t kUartBases[kNumUarts] = {
-    // TODO(abdulla): Considering parsing this from the MDI.
-    machina::kPl011PhysBase,
-};
 #elif __x86_64__
 #include "garnet/lib/machina/arch/x86/acpi.h"
 #include "garnet/lib/machina/arch/x86/io_port.h"
@@ -61,16 +56,13 @@ static constexpr uint64_t kUartBases[kNumUarts] = {
 
 static constexpr char kDsdtPath[] = "/pkg/data/dsdt.aml";
 static constexpr char kMcfgPath[] = "/pkg/data/mcfg.aml";
-static constexpr size_t kNumUarts = 4;
-static constexpr uint64_t kUartBases[kNumUarts] = {
-    machina::kI8250Base0,
-    machina::kI8250Base1,
-    machina::kI8250Base2,
-    machina::kI8250Base3,
-};
 #endif
 
 static constexpr size_t kInputQueueDepth = 64;
+
+// For devices that can have their addresses anywhere we run a dynamic
+// allocator that starts fairly high in the guest physical address space.
+static constexpr zx_gpaddr_t kFirstDynamicDeviceAddr = 0xc00000000;
 
 static void balloon_stats_handler(machina::VirtioBalloon* balloon,
                                   uint32_t threshold,
@@ -106,7 +98,7 @@ typedef struct balloon_task_args {
 } balloon_task_args_t;
 
 static int balloon_stats_task(void* ctx) {
-  fbl::unique_ptr<balloon_task_args_t> args(
+  std::unique_ptr<balloon_task_args_t> args(
       static_cast<balloon_task_args_t*>(ctx));
   machina::VirtioBalloon* balloon = args->balloon;
   zx_duration_t interval = args->cfg->balloon_interval();
@@ -143,32 +135,6 @@ static zx_status_t poll_balloon_stats(machina::VirtioBalloon* balloon,
   return ZX_OK;
 }
 
-static zx_status_t setup_zircon_framebuffer(
-    machina::VirtioGpu* gpu, fbl::unique_ptr<machina::GpuScanout>* scanout) {
-  // Try software framebuffer.
-  zx_status_t status = machina::FramebufferScanout::Create(scanout);
-  if (status != ZX_OK) {
-    return status;
-  }
-  return gpu->AddScanout(scanout->get());
-}
-
-static zx_status_t setup_scenic_framebuffer(
-    component::StartupContext* startup_context, machina::VirtioGpu* gpu,
-    machina::InputDispatcher* input_dispatcher,
-    GuestControllerImpl* guest_controller,
-    fbl::unique_ptr<machina::GpuScanout>* scanout) {
-  fbl::unique_ptr<ScenicScanout> scenic_scanout;
-  zx_status_t status =
-      ScenicScanout::Create(startup_context, input_dispatcher, &scenic_scanout);
-  if (status != ZX_OK) {
-    return status;
-  }
-  guest_controller->set_view_provider(scenic_scanout.get());
-  *scanout = std::move(scenic_scanout);
-  return gpu->AddScanout(scanout->get());
-}
-
 static zx_status_t read_guest_cfg(const char* cfg_path, int argc, char** argv,
                                   GuestConfig* cfg) {
   GuestConfigParser parser(cfg);
@@ -182,11 +148,22 @@ static zx_status_t read_guest_cfg(const char* cfg_path, int argc, char** argv,
   return parser.ParseArgcArgv(argc, argv);
 }
 
+static zx_gpaddr_t allocate_device_addr(size_t device_size) {
+  static zx_gpaddr_t next_device_addr = kFirstDynamicDeviceAddr;
+  zx_gpaddr_t ret = next_device_addr;
+  next_device_addr += device_size;
+  return ret;
+}
+
 int main(int argc, char** argv) {
   async::Loop loop(&kAsyncLoopConfigAttachToThread);
   trace::TraceProvider trace_provider(loop.dispatcher());
-  std::unique_ptr<component::StartupContext> startup_context =
+  std::unique_ptr<component::StartupContext> context =
       component::StartupContext::CreateFromStartupInfo();
+  InstanceControllerImpl instance_controller;
+
+  fuchsia::sys::LauncherPtr launcher;
+  context->environment()->GetLauncher(launcher.NewRequest());
 
   GuestConfig cfg;
   zx_status_t status =
@@ -195,29 +172,35 @@ int main(int argc, char** argv) {
     return status;
   }
 
+  // Having memory overlap with dynamic device assignment will work, as any
+  // devices will get subtracted from the RAM list later. But it will probably
+  // result in much less RAM than expected and so we shall consider it an error.
+  if (cfg.memory() >= kFirstDynamicDeviceAddr) {
+    FXL_LOG(ERROR) << "Requested memory should be less than "
+                   << kFirstDynamicDeviceAddr;
+    return ZX_ERR_INVALID_ARGS;
+  }
+
   machina::Guest guest;
   status = guest.Init(cfg.memory());
   if (status != ZX_OK) {
     return status;
   }
 
-  // Instantiate the controller service.
-  GuestControllerImpl guest_controller(startup_context.get(), guest.phys_mem());
+  std::vector<machina::PlatformDevice*> platform_devices;
 
   // Setup UARTs.
-  machina::Uart uart[kNumUarts];
-  for (size_t i = 0; i < kNumUarts; i++) {
-    status = uart[i].Init(&guest, kUartBases[i]);
-    if (status != ZX_OK) {
-      FXL_LOG(ERROR) << "Failed to create UART at " << std::hex << kUartBases[i]
-                     << " " << status;
-      return status;
-    }
+  machina::Uart uart;
+  status = uart.Init(&guest);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to create UART at " << status;
+    return status;
   }
+  platform_devices.push_back(&uart);
   // Setup interrupt controller.
   machina::InterruptController interrupt_controller;
 #if __aarch64__
-  status = interrupt_controller.Init(&guest, cfg.gic_version(), cfg.num_cpus());
+  status = interrupt_controller.Init(&guest, cfg.num_cpus());
 #elif __x86_64__
   status = interrupt_controller.Init(&guest);
 #endif
@@ -225,14 +208,17 @@ int main(int argc, char** argv) {
     FXL_LOG(ERROR) << "Failed to create interrupt controller " << status;
     return status;
   }
+  platform_devices.push_back(&interrupt_controller);
 
 #if __aarch64__
+  // Setup PL031 RTC.
   machina::Pl031 pl031;
   status = pl031.Init(&guest);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to create PL031 RTC " << status;
     return status;
   }
+  platform_devices.push_back(&pl031);
 #elif __x86_64__
   // Setup IO ports.
   machina::IoPort io_port;
@@ -250,6 +236,7 @@ int main(int argc, char** argv) {
     FXL_LOG(ERROR) << "Failed to create PCI bus " << status;
     return status;
   }
+  platform_devices.push_back(&bus);
 
   // Setup balloon device.
   machina::VirtioBalloon balloon(guest.phys_mem());
@@ -308,30 +295,35 @@ int main(int argc, char** argv) {
   }
 
   // Setup console
-  machina::VirtioConsole console(guest.phys_mem(), guest.device_dispatcher(),
-                                 guest_controller.TakeSocket());
-  status = console.Start();
+  machina::VirtioConsole console(guest.phys_mem());
+  status = bus.Connect(console.pci_device(), true);
   if (status != ZX_OK) {
     return status;
   }
-  status = bus.Connect(console.pci_device());
+  status = console.Start(*guest.object(), instance_controller.TakeSocket(),
+                         launcher.get(), guest.device_dispatcher());
   if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to start console device " << status;
     return status;
   }
 
-  machina::InputDispatcher input_dispatcher(kInputQueueDepth);
-  machina::HidEventSource hid_event_source(&input_dispatcher);
-  machina::VirtioKeyboard keyboard(input_dispatcher.Keyboard(),
+  machina::InputDispatcherImpl input_dispatcher_impl(kInputQueueDepth);
+  machina::HidEventSource hid_event_source(&input_dispatcher_impl);
+  machina::VirtioKeyboard keyboard(input_dispatcher_impl.Keyboard(),
                                    guest.phys_mem(), "machina-keyboard",
                                    "serial-number");
-  machina::VirtioRelativePointer mouse(input_dispatcher.Mouse(),
+  machina::VirtioRelativePointer mouse(input_dispatcher_impl.Mouse(),
                                        guest.phys_mem(), "machina-mouse",
                                        "serial-number");
-  machina::VirtioAbsolutePointer touch(
-      input_dispatcher.Touch(), guest.phys_mem(), "machina-touch",
-      "serial-number", kGuestViewDisplayWidth, kGuestViewDisplayHeight);
+  machina::VirtioAbsolutePointer touch(input_dispatcher_impl.Touch(),
+                                       guest.phys_mem(), "machina-touch",
+                                       "serial-number");
+  instance_controller.SetInputDispatcher(&input_dispatcher_impl);
+
   machina::VirtioGpu gpu(guest.phys_mem(), guest.device_dispatcher());
-  fbl::unique_ptr<machina::GpuScanout> gpu_scanout;
+
+  std::unique_ptr<machina::FramebufferScanout> framebuffer_scanout;
+  std::unique_ptr<ScenicScanout> scenic_scanout;
 
   if (cfg.display() != GuestDisplay::NONE) {
     // Setup keyboard device.
@@ -368,7 +360,8 @@ int main(int argc, char** argv) {
 
     if (cfg.display() == GuestDisplay::FRAMEBUFFER) {
       // Setup GPU device.
-      status = setup_zircon_framebuffer(&gpu, &gpu_scanout);
+      status = machina::FramebufferScanout::Create(gpu.scanout(),
+                                                   &framebuffer_scanout);
       if (status != ZX_OK) {
         FXL_LOG(ERROR) << "Failed to acquire framebuffer " << status;
         return status;
@@ -376,26 +369,26 @@ int main(int argc, char** argv) {
       // When displaying to the framebuffer, we should read input events
       // directly from the input devics.
       status = hid_event_source.Start();
+      if (status != ZX_OK) {
+        FXL_LOG(ERROR) << "Failed to start the HID event source " << status;
+        return status;
+      }
     } else {
       // Expose a view that can be composited by mozart. Input events will be
       // injected by the view events.
-      status = setup_scenic_framebuffer(startup_context.get(), &gpu,
-                                        &input_dispatcher, &guest_controller,
-                                        &gpu_scanout);
-      if (status != ZX_OK) {
-        FXL_LOG(ERROR) << "Failed to create scenic view " << status;
-        return status;
-      }
+      fuchsia::ui::input::InputDispatcherPtr input_dispatcher;
+      instance_controller.GetInputDispatcher(input_dispatcher.NewRequest());
+      scenic_scanout = std::make_unique<ScenicScanout>(
+          context.get(), std::move(input_dispatcher), gpu.scanout());
+      instance_controller.SetViewProvider(scenic_scanout.get());
     }
-    if (status == ZX_OK) {
-      status = gpu.Init();
-      if (status != ZX_OK) {
-        return status;
-      }
-      status = bus.Connect(gpu.pci_device());
-      if (status != ZX_OK) {
-        return status;
-      }
+    status = gpu.Init();
+    if (status != ZX_OK) {
+      return status;
+    }
+    status = bus.Connect(gpu.pci_device());
+    if (status != ZX_OK) {
+      return status;
     }
   }
 
@@ -415,10 +408,38 @@ int main(int argc, char** argv) {
   }
 
   // Setup vsock device.
-  machina::VirtioVsock vsock(startup_context.get(), guest.phys_mem(),
+  machina::VirtioVsock vsock(context.get(), guest.phys_mem(),
                              guest.device_dispatcher());
   status = bus.Connect(vsock.pci_device());
   if (status != ZX_OK) {
+    return status;
+  }
+
+  machina::DevMem dev_mem;
+
+  // Setup wayland device.
+  size_t wl_dev_mem_size = cfg.wayland_memory();
+  zx_gpaddr_t wl_dev_mem_offset = allocate_device_addr(wl_dev_mem_size);
+  if (!dev_mem.AddRange(wl_dev_mem_offset, wl_dev_mem_size)) {
+    FXL_LOG(INFO) << "Could not reserve device memory range for wayland device";
+    return status;
+  }
+  zx::vmar wl_vmar;
+  status = guest.CreateSubVmar(wl_dev_mem_offset, wl_dev_mem_size, &wl_vmar);
+  if (status != ZX_OK) {
+    FXL_LOG(INFO) << "Could not create VMAR for wayland device";
+    return status;
+  }
+  machina::VirtioWl wl(guest.phys_mem(), std::move(wl_vmar),
+                       guest.device_dispatcher(), [](zx::channel channel) {});
+  status = wl.Init();
+  if (status != ZX_OK) {
+    FXL_LOG(INFO) << "Could not init wayland device";
+    return status;
+  }
+  status = bus.Connect(wl.pci_device());
+  if (status != ZX_OK) {
+    FXL_LOG(INFO) << "Could not connect wayland device";
     return status;
   }
 
@@ -432,7 +453,7 @@ int main(int argc, char** argv) {
   machina::AcpiConfig acpi_cfg = {
       .dsdt_path = kDsdtPath,
       .mcfg_path = kMcfgPath,
-      .io_apic_addr = machina::kIoApicPhysBase,
+      .io_apic_addr = machina::IoApic::kPhysBase,
       .num_cpus = cfg.num_cpus(),
   };
   status = machina::create_acpi_table(acpi_cfg, guest.phys_mem());
@@ -442,18 +463,27 @@ int main(int argc, char** argv) {
   }
 #endif  // __x86_64__
 
+  // Add any trap ranges as device memory.
+  for (auto it = guest.mappings_begin(); it != guest.mappings_end(); it++) {
+    if (it->kind() == ZX_GUEST_TRAP_MEM || it->kind() == ZX_GUEST_TRAP_BELL) {
+      if (!dev_mem.AddRange(it->base(), it->size())) {
+        FXL_LOG(ERROR) << "Failed to add trap range as device memory";
+        return ZX_ERR_INTERNAL;
+      }
+    }
+  }
+
   // Setup kernel.
-  machina::DevMem dev_mem;
   uintptr_t guest_ip = 0;
   uintptr_t boot_ptr = 0;
   switch (cfg.kernel()) {
     case Kernel::ZIRCON:
-      status =
-          setup_zircon(cfg, guest.phys_mem(), dev_mem, &guest_ip, &boot_ptr);
+      status = setup_zircon(cfg, guest.phys_mem(), dev_mem, platform_devices,
+                            &guest_ip, &boot_ptr);
       break;
     case Kernel::LINUX:
-      status =
-          setup_linux(cfg, guest.phys_mem(), dev_mem, &guest_ip, &boot_ptr);
+      status = setup_linux(cfg, guest.phys_mem(), dev_mem, platform_devices,
+                           &guest_ip, &boot_ptr);
       break;
     default:
       FXL_LOG(ERROR) << "Unknown kernel";
@@ -494,23 +524,16 @@ int main(int argc, char** argv) {
 
   guest.RegisterVcpuFactory(initialize_vcpu);
 
-  // GPU back-ends can take some time to initialize. Wait for them to be
-  // created before starting the VCPU so that we can ensure we have the
-  // framebuffer allocated before software attempts to interface with it.
-  auto start_task = [&loop, &guest, guest_ip] {
-    zx_status_t status = guest.StartVcpu(guest_ip, 0 /* id */);
-    if (status != ZX_OK) {
-      FXL_LOG(ERROR) << "Failed to start VCPU-0 " << status;
-      loop.Quit();
-    }
-  };
-  if (gpu_scanout) {
-    gpu_scanout->WhenReady([&loop, &start_task] {
-      async::PostTask(loop.dispatcher(), start_task);
-    });
+  status = guest.StartVcpu(guest_ip, 0 /* id */);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to start VCPU-0 " << status;
+    loop.Quit();
+  }
 
-  } else {
-    start_task();
+  status = instance_controller.AddPublicService(context.get());
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to add public service " << status;
+    loop.Quit();
   }
 
   loop.Run();

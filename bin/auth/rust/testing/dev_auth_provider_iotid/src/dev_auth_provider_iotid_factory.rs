@@ -3,13 +3,13 @@
 // found in the LICENSE file.
 
 use crate::dev_auth_provider_iotid::AuthProvider;
-use fidl::endpoints2::RequestStream;
+use fidl::endpoints::RequestStream;
 use fidl::Error;
 use fidl_fuchsia_auth::{AuthProviderFactoryRequest, AuthProviderFactoryRequestStream,
                         AuthProviderStatus};
 use fuchsia_async as fasync;
 use futures::prelude::*;
-use log::{info, log, warn};
+use log::{info, warn};
 
 /// The AuthProviderFactory struct is holding implementation of
 /// the `AuthProviderFactory` fidl interface.

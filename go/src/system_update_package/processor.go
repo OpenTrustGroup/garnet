@@ -8,7 +8,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +20,7 @@ import (
 	"fidl/fuchsia/amber"
 	"syscall/zx"
 	"syscall/zx/zxwait"
+	"syslog/logger"
 )
 
 type Package struct {
@@ -33,7 +33,7 @@ func ConnectToUpdateSrvc() (*amber.ControlInterface, error) {
 	req, pxy, err := amber.NewControlInterfaceRequest()
 
 	if err != nil {
-		log.Println("control interface could not be acquired: %s", err)
+		logger.Errorf("control interface could not be acquired: %s", err)
 		return nil, err
 	}
 
@@ -93,7 +93,6 @@ func FetchPackages(pkgs []*Package, amber *amber.ControlInterface) error {
 
 	pkgChan := make(chan *Package, len(pkgs))
 	errChan := make(chan error, len(pkgs))
-	errCount := 0
 
 	for i := 0; i < workerCount; i++ {
 		go fetchWorker(pkgChan, amber, workerWg, errChan)
@@ -110,12 +109,14 @@ func FetchPackages(pkgs []*Package, amber *amber.ControlInterface) error {
 	workerWg.Wait()
 	close(errChan)
 
-	for range errChan {
-		errCount++
+	var errs []string
+
+	for err := range errChan {
+		errs = append(errs, err.Error())
 	}
 
-	if errCount > 0 {
-		return fmt.Errorf("%d packages had errors", errCount)
+	if len(errs) > 0 {
+		return fmt.Errorf("%d packages had errors: %s", len(errs), strings.Join(errs, ","))
 	}
 
 	return nil
@@ -132,7 +133,7 @@ func fetchWorker(c <-chan *Package, amber *amber.ControlInterface, done *sync.Wa
 }
 
 func fetchPackage(p *Package, amber *amber.ControlInterface) error {
-	log.Printf("requesting %s/%s from update system", p.name, p.merkle)
+	logger.Infof("requesting %s/%s from update system", p.name, p.merkle)
 	h, err := amber.GetUpdateComplete(p.name, nil, &p.merkle)
 	if err != nil {
 		return fmt.Errorf("fetch: failed submitting update request: %s", err)
@@ -148,7 +149,7 @@ func fetchPackage(p *Package, amber *amber.ControlInterface) error {
 
 	// we encountered a failure
 	if signals&zx.SignalUser0 == zx.SignalUser0 {
-		log.Printf("fetch: update service signaled failure getting %q, reading error", p.name)
+		logger.Errorf("fetch: update service signaled failure getting %q, reading error", p.name)
 
 		// if the channel isn't readable, do a bounded wait to try to get an error message from it
 		if signals&zx.SignalChannelReadable != zx.SignalChannelReadable {
@@ -176,7 +177,7 @@ func fetchPackage(p *Package, amber *amber.ControlInterface) error {
 		if err != nil {
 			return fmt.Errorf("fetch: error reading channel %s", err)
 		}
-		log.Printf("package %q installed at %q", p.name, string(buf))
+		logger.Infof("package %q installed at %q", p.name, string(buf))
 	} else {
 		return fmt.Errorf("fetch: reply channel was not readable")
 	}
@@ -205,21 +206,41 @@ func readBytesFromHandle(h *zx.Channel, buf []byte) ([]byte, error) {
 var diskImagerPath = filepath.Join("/boot", "bin", "install-disk-image")
 
 func WriteImgs(imgs []string, imgsPath string) error {
+	logger.Infof("Writing images %+v from %q", imgs, imgsPath)
+
 	for _, img := range imgs {
+		imgPath := filepath.Join(imgsPath, img)
+		if fi, err := os.Stat(imgPath); err != nil || fi.Size() == 0 {
+			logger.Errorf("img_writer: %s image not found or zero length, skipping", img)
+			continue
+		}
+
 		var c *exec.Cmd
 		switch img {
 		case "efi":
 			c = exec.Command(diskImagerPath, "install-efi")
 		case "kernc":
 			c = exec.Command(diskImagerPath, "install-kernc")
+		case "zbi", "zbi.signed":
+			c = exec.Command(diskImagerPath, "install-zircona")
+		case "zedboot", "zedboot.signed":
+			c = exec.Command(diskImagerPath, "install-zirconr")
+			// TODO(ZX-2689): remove once the bootloader is booting zirconr as recovery.
+			if img == "zedboot.signed" {
+				c = exec.Command(diskImagerPath, "install-zirconb")
+			}
+		case "bootloader":
+			c = exec.Command(diskImagerPath, "install-bootloader")
 		default:
 			return fmt.Errorf("unrecognized image %q", img)
 		}
 
-		err := writeImg(c, filepath.Join(imgsPath, img))
+		err := writeImg(c, imgPath)
 		if err != nil {
+			logger.Errorf("img_writer: error writing image: %s", err)
 			return err
 		}
+		logger.Infof("img_writer: wrote %s successfully from %s", img, imgPath)
 	}
 	return nil
 }

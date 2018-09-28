@@ -10,13 +10,13 @@
 #include "garnet/bin/zxdb/client/frame.h"
 #include "garnet/bin/zxdb/client/process.h"
 #include "garnet/bin/zxdb/client/session.h"
-#include "garnet/bin/zxdb/client/symbols/location.h"
 #include "garnet/bin/zxdb/client/thread.h"
 #include "garnet/bin/zxdb/console/command.h"
 #include "garnet/bin/zxdb/console/command_utils.h"
 #include "garnet/bin/zxdb/console/console.h"
 #include "garnet/bin/zxdb/console/format_context.h"
 #include "garnet/bin/zxdb/console/output_buffer.h"
+#include "garnet/bin/zxdb/symbols/location.h"
 #include "garnet/public/lib/fxl/logging.h"
 #include "garnet/public/lib/fxl/strings/string_printf.h"
 
@@ -458,10 +458,10 @@ void ConsoleContext::OnThreadStopped(
   const Location& location = frames[0]->GetLocation();
   out.Append("at ");
   out.Append(DescribeLocation(location, false));
-  if (location.file_line().file().empty()) {
-    out.Append(" (no symbol info)\n");
-  } else {
+  if (location.has_symbols()) {
     out.Append("\n");
+  } else {
+    out.Append(" (no symbol info)\n");
   }
   console->Output(std::move(out));
   Err err = OutputSourceContext(thread->GetProcess(), location,

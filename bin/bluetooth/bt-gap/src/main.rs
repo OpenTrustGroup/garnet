@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 
 #![deny(warnings)]
-#![feature(futures_api, pin, arbitrary_self_types)]
+#![feature(async_await, await_macro, futures_api, pin, arbitrary_self_types)]
 
 use failure::{Error, ResultExt};
-use fidl::endpoints2::{ServerEnd, ServiceMarker};
+use fidl::endpoints::{ServerEnd, ServiceMarker};
 use fidl_fuchsia_bluetooth_bredr::{ProfileMarker};
 use fidl_fuchsia_bluetooth_control::BondingMarker;
 use fidl_fuchsia_bluetooth_control::ControlMarker;

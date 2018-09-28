@@ -4,8 +4,9 @@
 
 #include "garnet/lib/machina/virtio_vsock.h"
 
-#include <fbl/auto_call.h>
+#include <lib/fit/defer.h>
 #include <lib/fsl/handles/object_info.h>
+#include <zircon/syscalls/object.h>
 #include <zircon/types.h>
 
 namespace machina {
@@ -261,22 +262,16 @@ void VirtioVsock::SocketConnection::OnReady(zx_status_t status,
 
 zx_status_t VirtioVsock::SocketConnection::WriteCredit(
     virtio_vsock_hdr_t* header) {
-  size_t max = 0;
+  zx_info_socket_t info;
   zx_status_t status =
-      socket_.get_property(ZX_PROP_SOCKET_TX_BUF_MAX, &max, sizeof(max));
-  if (status != ZX_OK) {
-    return status;
-  }
-  size_t used = 0;
-  status =
-      socket_.get_property(ZX_PROP_SOCKET_TX_BUF_SIZE, &used, sizeof(used));
+      socket_.get_info(ZX_INFO_SOCKET, &info, sizeof(info), nullptr, nullptr);
   if (status != ZX_OK) {
     return status;
   }
 
-  header->buf_alloc = max;
-  header->fwd_cnt = rx_cnt_ - used;
-  reported_buf_avail_ = max - used;
+  header->buf_alloc = info.tx_buf_max;
+  header->fwd_cnt = rx_cnt_ - info.tx_buf_size;
+  reported_buf_avail_ = info.tx_buf_max - info.tx_buf_size;
   return reported_buf_avail_ != 0 ? ZX_OK : ZX_ERR_UNAVAILABLE;
 }
 
@@ -495,7 +490,7 @@ zx_status_t VirtioVsock::ChannelConnection::Write(VirtioQueue* queue,
 VirtioVsock::VirtioVsock(component::StartupContext* context,
                          const PhysMem& phys_mem,
                          async_dispatcher_t* dispatcher)
-    : VirtioDevice(phys_mem, 0 /* device_features */),
+    : VirtioInprocessDevice(phys_mem, 0 /* device_features */),
       dispatcher_(dispatcher),
       rx_stream_(dispatcher, rx_queue(), this),
       tx_stream_(dispatcher, tx_queue(), this) {
@@ -530,18 +525,18 @@ void VirtioVsock::SetContextId(
   tx_stream_.WaitOnQueue();
 }
 
-static fbl::unique_ptr<VirtioVsock::Connection> create_connection(
+static std::unique_ptr<VirtioVsock::Connection> create_connection(
     zx::handle handle, async_dispatcher_t* dispatcher,
     fuchsia::guest::GuestVsockAcceptor::AcceptCallback accept_callback,
     fit::closure queue_callback) {
   zx_obj_type_t type = fsl::GetType(handle.get());
   switch (type) {
     case zx::socket::TYPE:
-      return fbl::make_unique<VirtioVsock::SocketConnection>(
+      return std::make_unique<VirtioVsock::SocketConnection>(
           std::move(handle), dispatcher, std::move(accept_callback),
           std::move(queue_callback));
     case zx::channel::TYPE:
-      return fbl::make_unique<VirtioVsock::ChannelConnection>(
+      return std::make_unique<VirtioVsock::ChannelConnection>(
           std::move(handle), dispatcher, std::move(accept_callback),
           std::move(queue_callback));
     default:
@@ -589,7 +584,7 @@ void VirtioVsock::ConnectCallback(ConnectionKey key, zx_status_t status,
         WaitOnQueueLocked(key);
       });
   if (!new_conn) {
-    new_conn = fbl::make_unique<NullConnection>();
+    new_conn = std::make_unique<NullConnection>();
   }
   Connection* conn = new_conn.get();
 
@@ -614,7 +609,7 @@ void VirtioVsock::ConnectCallback(ConnectionKey key, zx_status_t status,
 }
 
 zx_status_t VirtioVsock::AddConnectionLocked(ConnectionKey key,
-                                             fbl::unique_ptr<Connection> conn) {
+                                             std::unique_ptr<Connection> conn) {
   bool inserted;
   std::tie(std::ignore, inserted) = connections_.emplace(key, std::move(conn));
   if (!inserted) {
@@ -828,7 +823,7 @@ void VirtioVsock::Demux(zx_status_t status, uint16_t index) {
   std::lock_guard<std::mutex> lock(mutex_);
   do {
     auto free_desc =
-        fbl::MakeAutoCall([this, index]() { tx_queue()->Return(index, 0); });
+        fit::defer([this, index]() { tx_queue()->Return(index, 0); });
     auto header = get_header(tx_queue(), index, &desc, false);
     if (header == nullptr) {
       FXL_LOG(ERROR) << "Failed to get header from write queue";
@@ -872,7 +867,7 @@ void VirtioVsock::Demux(zx_status_t status, uint16_t index) {
 
     if (conn == nullptr) {
       // Build a connection to send a connection reset.
-      auto new_conn = fbl::make_unique<NullConnection>();
+      auto new_conn = std::make_unique<NullConnection>();
       conn = new_conn.get();
       status = AddConnectionLocked(key, std::move(new_conn));
       set_shutdown(header);

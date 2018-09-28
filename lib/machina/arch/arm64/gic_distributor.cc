@@ -4,21 +4,81 @@
 
 #include "garnet/lib/machina/arch/arm64/gic_distributor.h"
 
-#include "garnet/lib/machina/address.h"
+#include <endian.h>
+#include <fcntl.h>
+
+#include <fbl/unique_fd.h>
+#include <libzbi/zbi.h>
+#include <zircon/boot/driver-config.h>
+#include <zircon/device/sysinfo.h>
+
 #include "garnet/lib/machina/bits.h"
 #include "garnet/lib/machina/guest.h"
 #include "garnet/lib/machina/vcpu.h"
 #include "lib/fxl/logging.h"
 
+__BEGIN_CDECLS;
+#include <libfdt.h>
+__END_CDECLS;
+
 namespace machina {
 
+static constexpr char kSysInfoPath[] = "/dev/misc/sysinfo";
 static constexpr uint32_t kGicv2Revision = 2;
 static constexpr uint32_t kGicv3Revision = 3;
 static constexpr uint32_t kGicdCtlr = 0x7;
 static constexpr uint32_t kGicdCtlrARENSMask = 1u << 5;
 static constexpr uint32_t kGicdIrouteIRMMask = 1u << 31;
 
+static zx_status_t get_gic_version(GicVersion* version) {
+  fbl::unique_fd fd(open(kSysInfoPath, O_RDWR));
+  if (!fd) {
+    return ZX_ERR_IO;
+  }
+  interrupt_controller_info_t info;
+  ssize_t n = ioctl_sysinfo_get_interrupt_controller_info(fd.get(), &info);
+  if (n != sizeof(interrupt_controller_info_t)) {
+    return ZX_ERR_IO;
+  }
+  switch (info.type) {
+    case INTERRUPT_CONTROLLER_TYPE_GIC_V2:
+      *version = GicVersion::V2;
+      return ZX_OK;
+    case INTERRUPT_CONTROLLER_TYPE_GIC_V3:
+      *version = GicVersion::V3;
+      return ZX_OK;
+    default:
+      return ZX_ERR_NOT_SUPPORTED;
+  }
+}
+
 // clang-format off
+
+// For arm64, memory addresses must be in a 36-bit range. This is due to limits
+// placed within the MMU code based on the limits of a Cortex-A53.
+//
+//See ARM DDI 0487B.b, Table D4-25 for the maximum IPA range that can be used.
+
+// GIC v2 distributor memory range.
+static constexpr uint64_t kGicv2DistributorPhysBase      = 0x800001000;
+static constexpr uint64_t kGicv2DistributorSize          = 0x1000;
+
+// GIC v3 distributor memory range.
+static constexpr uint64_t kGicv3DistributorPhysBase      = 0x800000000;
+static constexpr uint64_t kGicv3DistributorSize          = 0x10000;
+
+// GIC v3 Redistributor memory range.
+//
+// See GIC v3.0/v4.0 Architecture Spec 8.10.
+static constexpr uint64_t kGicv3RedistributorPhysBase    = 0x800010000; // GICR_RD_BASE
+static constexpr uint64_t kGicv3RedistributorSize        = 0x10000;
+static constexpr uint64_t kGicv3RedistributorSgiPhysBase = 0x800020000; // GICR_SGI_BASE
+static constexpr uint64_t kGicv3RedistributorSgiSize     = 0x10000;
+static constexpr uint64_t kGicv3RedistributorStride      = 0x20000;
+static_assert(kGicv3RedistributorPhysBase + kGicv3RedistributorSize == kGicv3RedistributorSgiPhysBase,
+              "GICv3 Redistributor base and SGI base must be continguous");
+static_assert(kGicv3RedistributorStride >= kGicv3RedistributorSize + kGicv3RedistributorSgiSize,
+              "GICv3 Redistributor stride must be >= the size of a single mapping");
 
 // GIC Distributor registers.
 enum class GicdRegister : uint64_t {
@@ -122,19 +182,21 @@ static uint32_t pidr2_arch_rev(uint32_t revision) {
   return set_bits(revision, 7, 4);
 }
 
-zx_status_t GicDistributor::Init(Guest* guest, GicVersion version,
-                                 uint8_t num_cpus) {
-  gic_version_ = version;
+zx_status_t GicDistributor::Init(Guest* guest, uint8_t num_cpus) {
+  zx_status_t status = get_gic_version(&gic_version_);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to get GIC version from sysinfo " << status;
+    return status;
+  }
 
-  if (version == GicVersion::V2) {
+  if (gic_version_ == GicVersion::V2) {
     return guest->CreateMapping(TrapType::MMIO_SYNC, kGicv2DistributorPhysBase,
                                 kGicv2DistributorSize, 0, this);
   }
 
   // Map the distributor
-  zx_status_t status =
-      guest->CreateMapping(TrapType::MMIO_SYNC, kGicv3DistributorPhysBase,
-                           kGicv3DistributorSize, 0, this);
+  status = guest->CreateMapping(TrapType::MMIO_SYNC, kGicv3DistributorPhysBase,
+                                kGicv3DistributorSize, 0, this);
   if (status != ZX_OK) {
     return status;
   }
@@ -399,6 +461,95 @@ zx_status_t GicDistributor::TargetInterrupt(uint32_t global_irq,
     if (status != ZX_OK) {
       return status;
     }
+  }
+  return ZX_OK;
+}
+
+zx_status_t GicDistributor::ConfigureZbi(void* zbi_base, size_t zbi_max) const {
+  const dcfg_arm_gicv2_driver_t gic_v2 = {
+      .mmio_phys = machina::kGicv2DistributorPhysBase,
+      .gicd_offset = 0x0000,
+      .gicc_offset = machina::kGicv2DistributorSize,
+      .ipi_base = 12,
+      .optional = true,
+      .use_msi = true,
+  };
+
+  const dcfg_arm_gicv3_driver_t gic_v3 = {
+      .mmio_phys = machina::kGicv3DistributorPhysBase,
+      .gicd_offset = 0x00000,
+      .gicr_offset = machina::kGicv3RedistributorSize,
+      .gicr_stride = machina::kGicv3RedistributorStride,
+      .ipi_base = 12,
+      .optional = true,
+  };
+
+  zbi_result_t res;
+  if (gic_version_ == machina::GicVersion::V2) {
+    res =
+        zbi_append_section(zbi_base, zbi_max, sizeof(gic_v2),
+                           ZBI_TYPE_KERNEL_DRIVER, KDRV_ARM_GIC_V2, 0, &gic_v2);
+  } else {
+    // GICv3 driver.
+    res =
+        zbi_append_section(zbi_base, zbi_max, sizeof(gic_v3),
+                           ZBI_TYPE_KERNEL_DRIVER, KDRV_ARM_GIC_V3, 0, &gic_v3);
+  }
+  return res == ZBI_RESULT_OK ? ZX_OK : ZX_ERR_INTERNAL;
+}
+
+static inline void gic_dtb_error(const char* reg) {
+  FXL_LOG(ERROR) << "Failed to add GiC property \"" << reg << "\" to device "
+                 << "tree, space must be reserved in the device tree";
+}
+
+zx_status_t GicDistributor::ConfigureDtb(void* dtb) const {
+  int gic_off = fdt_path_offset(dtb, "/interrupt-controller@800000000");
+  if (gic_off < 0) {
+    FXL_LOG(ERROR) << "Failed to find \"/interrupt-controller\" in device tree";
+    return ZX_ERR_BAD_STATE;
+  }
+  const char* compatible;
+  uint64_t reg_prop[4];
+
+  if (gic_version_ == machina::GicVersion::V2) {
+    compatible = "arm,gic-400";
+    // GICD memory map
+    reg_prop[0] = machina::kGicv2DistributorPhysBase;
+    reg_prop[1] = machina::kGicv2DistributorSize;
+    // GICC memory map
+    reg_prop[2] =
+        machina::kGicv2DistributorPhysBase + machina::kGicv2DistributorSize;
+    reg_prop[3] = 0x2000;
+  } else {
+    // Set V3 only properties
+    int ret = fdt_setprop_u32(dtb, gic_off, "#redistributor-regions", 1);
+    if (ret != 0) {
+      gic_dtb_error("#redistributor-regions");
+      return ZX_ERR_BAD_STATE;
+    }
+
+    compatible = "arm,gic-v3";
+    // GICD memory map
+    reg_prop[0] = machina::kGicv3DistributorPhysBase;
+    reg_prop[1] = machina::kGicv3DistributorSize;
+    // GICR memory map
+    reg_prop[2] = machina::kGicv3RedistributorPhysBase;
+    std::lock_guard<std::mutex> lock(mutex_);
+    reg_prop[3] = machina::kGicv3RedistributorStride * redistributors_.size();
+  }
+  int ret = fdt_setprop_string(dtb, gic_off, "compatible", compatible);
+  if (ret != 0) {
+    gic_dtb_error("compatible");
+    return ZX_ERR_BAD_STATE;
+  }
+  for (auto& prop : reg_prop) {
+    prop = htobe64(prop);
+  }
+  ret = fdt_setprop(dtb, gic_off, "reg", reg_prop, sizeof(reg_prop));
+  if (ret != 0) {
+    gic_dtb_error("reg");
+    return ZX_ERR_BAD_STATE;
   }
   return ZX_OK;
 }

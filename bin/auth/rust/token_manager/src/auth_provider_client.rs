@@ -3,16 +3,14 @@
 // found in the LICENSE file.
 
 use failure::{format_err, Error, ResultExt};
-use fidl::endpoints2::ServerEnd;
-use fidl_fuchsia_auth::{AuthProviderConfig, AuthProviderFactoryMarker, AuthProviderFactoryProxy,
+use fidl::endpoints::ServerEnd;
+use fidl_fuchsia_auth::{AuthProviderConfig, AuthProviderFactoryMarker,
                         AuthProviderProxy, AuthProviderStatus};
 use fuchsia_app::client::{App, Launcher};
 use fuchsia_async as fasync;
 use fuchsia_zircon as zx;
-use futures::future::{ready as fready, FutureObj};
 use futures::prelude::*;
-use log::{info, log};
-use std::boxed::Box;
+use log::info;
 use std::sync::{Arc, RwLock};
 
 /// A simple wrapper to set an optional value after instantiation. The value

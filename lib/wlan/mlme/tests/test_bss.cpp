@@ -7,8 +7,9 @@
 
 #include <wlan/common/channel.h>
 #include <wlan/mlme/ap/bss_interface.h>
-#include <wlan/mlme/packet.h>
+#include <wlan/mlme/debug.h>
 #include <wlan/mlme/mac_frame.h>
+#include <wlan/mlme/packet.h>
 #include <wlan/mlme/service.h>
 
 #include <fbl/unique_ptr.h>
@@ -21,9 +22,10 @@ namespace wlan {
 
 namespace wlan_mlme = wlan_mlme;
 
-zx_status_t WriteSsid(ElementWriter* w, const char* ssid) {
-    if (!w->write<SsidElement>(ssid)) {
-        errorf("could not write ssid \"%s\" to Beacon\n", ssid);
+zx_status_t WriteSsid(ElementWriter* w, const uint8_t* ssid, size_t ssid_len) {
+    if (!w->write<SsidElement>(ssid, ssid_len)) {
+        errorf("could not write ssid \"%s\" to Beacon\n",
+               debug::ToAsciiOrHexStr(ssid, ssid_len).c_str());
         return ZX_ERR_IO;
     }
     return ZX_OK;
@@ -88,7 +90,8 @@ zx_status_t WriteCountry(ElementWriter* w, const wlan_channel_t chan) {
     return ZX_OK;
 }
 
-zx_status_t WriteExtendedSupportedRates(ElementWriter* w, const std::vector<SupportedRate>& ext_rates) {
+zx_status_t WriteExtendedSupportedRates(ElementWriter* w,
+                                        const std::vector<SupportedRate>& ext_rates) {
     if (!w->write<ExtendedSupportedRatesElement>(ext_rates)) {
         errorf("could not write extended supported rates\n");
         return ZX_ERR_IO;
@@ -114,6 +117,18 @@ zx_status_t WriteHtOperation(ElementWriter* w, const HtOperation& hto) {
     return ZX_OK;
 }
 
+zx_status_t CreateStartRequest(MlmeMsg<wlan_mlme::StartRequest>* out_msg) {
+    auto req = wlan_mlme::StartRequest::New();
+    std::vector<uint8_t> ssid(kSsid, kSsid + sizeof(kSsid));
+    req->ssid.reset(std::move(ssid));
+    req->bss_type = wlan_mlme::BSSTypes::INFRASTRUCTURE;
+    req->beacon_period = kBeaconPeriodTu;
+    req->dtim_period = kDtimPeriodTu;
+    req->channel = kBssChannel.primary;
+
+    return WriteServiceMessage(req.get(), fuchsia_wlan_mlme_MLMEStartReqOrdinal, out_msg);
+}
+
 zx_status_t CreateJoinRequest(MlmeMsg<wlan_mlme::JoinRequest>* out_msg) {
     common::MacAddr bssid(kBssid1);
 
@@ -124,7 +139,8 @@ zx_status_t CreateJoinRequest(MlmeMsg<wlan_mlme::JoinRequest>* out_msg) {
 
     auto bss_desc = &req->selected_bss;
     std::memcpy(bss_desc->bssid.mutable_data(), bssid.byte, common::kMacAddrLen);
-    bss_desc->ssid = kSsid;
+    std::vector<uint8_t> ssid(kSsid, kSsid + sizeof(kSsid));
+    bss_desc->ssid.reset(std::move(ssid));
     bss_desc->bss_type = wlan_mlme::BSSTypes::INFRASTRUCTURE;
     bss_desc->beacon_period = kBeaconPeriodTu;
     bss_desc->dtim_period = kDtimPeriodTu;
@@ -165,6 +181,17 @@ zx_status_t CreateAuthRequest(MlmeMsg<wlan_mlme::AuthenticateRequest>* out_msg) 
     return WriteServiceMessage(req.get(), fuchsia_wlan_mlme_MLMEAuthenticateReqOrdinal, out_msg);
 }
 
+zx_status_t CreateAuthResponse(MlmeMsg<wlan_mlme::AuthenticateResponse>* out_msg,
+                               wlan_mlme::AuthenticateResultCodes result_code) {
+    common::MacAddr client(kClientAddress);
+
+    auto resp = wlan_mlme::AuthenticateResponse::New();
+    std::memcpy(resp->peer_sta_address.mutable_data(), client.byte, common::kMacAddrLen);
+    resp->result_code = result_code;
+
+    return WriteServiceMessage(resp.get(), fuchsia_wlan_mlme_MLMEAuthenticateRespOrdinal, out_msg);
+}
+
 zx_status_t CreateAssocRequest(MlmeMsg<wlan_mlme::AssociateRequest>* out_msg) {
     common::MacAddr bssid(kBssid1);
 
@@ -173,6 +200,31 @@ zx_status_t CreateAssocRequest(MlmeMsg<wlan_mlme::AssociateRequest>* out_msg) {
     req->rsn.reset();
 
     return WriteServiceMessage(req.get(), fuchsia_wlan_mlme_MLMEAssociateReqOrdinal, out_msg);
+}
+
+zx_status_t CreateAssocResponse(MlmeMsg<wlan_mlme::AssociateResponse>* out_msg,
+                                wlan_mlme::AssociateResultCodes result_code) {
+    common::MacAddr client(kClientAddress);
+
+    auto resp = wlan_mlme::AssociateResponse::New();
+    std::memcpy(resp->peer_sta_address.mutable_data(), client.byte, common::kMacAddrLen);
+    resp->result_code = result_code;
+    resp->association_id = kAid;
+
+    return WriteServiceMessage(resp.get(), fuchsia_wlan_mlme_MLMEAssociateRespOrdinal, out_msg);
+}
+
+zx_status_t CreateEapolRequest(MlmeMsg<wlan_mlme::EapolRequest>* out_msg) {
+    common::MacAddr bssid(kBssid1);
+    common::MacAddr client(kClientAddress);
+
+    auto req = wlan_mlme::EapolRequest::New();
+    std::memcpy(req->dst_addr.mutable_data(), client.byte, common::kMacAddrLen);
+    std::memcpy(req->src_addr.mutable_data(), bssid.byte, common::kMacAddrLen);
+    std::vector<uint8_t> eapol_pdu(kEapolPdu, kEapolPdu + sizeof(kEapolPdu));
+    req->data.reset(std::move(eapol_pdu));
+
+    return WriteServiceMessage(req.get(), fuchsia_wlan_mlme_MLMEEapolReqOrdinal, out_msg);
 }
 
 zx_status_t CreateBeaconFrame(fbl::unique_ptr<Packet>* out_packet) {
@@ -198,7 +250,7 @@ zx_status_t CreateBeaconFrameWithBssid(fbl::unique_ptr<Packet>* out_packet, comm
     bcn->cap.set_short_preamble(1);
 
     ElementWriter w(bcn->elements, body_payload_len);
-    if (WriteSsid(&w, kSsid) != ZX_OK) { return ZX_ERR_IO; }
+    if (WriteSsid(&w, kSsid, sizeof(kSsid)) != ZX_OK) { return ZX_ERR_IO; }
 
     std::vector<SupportedRate> rates(std::cbegin(kSupportedRates), std::cend(kSupportedRates));
     if (WriteSupportedRates(&w, rates) != ZX_OK) { return ZX_ERR_IO; }
@@ -207,7 +259,8 @@ zx_status_t CreateBeaconFrameWithBssid(fbl::unique_ptr<Packet>* out_packet, comm
 
     if (WriteCountry(&w, kBssChannel) != ZX_OK) { return ZX_ERR_IO; }
 
-    std::vector<SupportedRate> ext_rates(std::cbegin(kExtendedSupportedRates), std::cend(kExtendedSupportedRates));
+    std::vector<SupportedRate> ext_rates(std::cbegin(kExtendedSupportedRates),
+                                         std::cend(kExtendedSupportedRates));
     if (WriteExtendedSupportedRates(&w, ext_rates) != ZX_OK) { return ZX_ERR_IO; }
 
     ZX_DEBUG_ASSERT(bcn->Validate(w.size()));
@@ -223,7 +276,35 @@ zx_status_t CreateBeaconFrameWithBssid(fbl::unique_ptr<Packet>* out_packet, comm
     return ZX_OK;
 }
 
-zx_status_t CreateAuthFrame(fbl::unique_ptr<Packet>* out_packet) {
+zx_status_t CreateAuthReqFrame(fbl::unique_ptr<Packet>* out_packet) {
+    common::MacAddr bssid(kBssid1);
+    common::MacAddr client(kClientAddress);
+
+    MgmtFrame<Authentication> frame;
+    auto status = CreateMgmtFrame(&frame);
+    if (status != ZX_OK) { return status; }
+
+    auto hdr = frame.hdr();
+    hdr->addr1 = bssid;
+    hdr->addr2 = client;
+    hdr->addr3 = bssid;
+    frame.FillTxInfo();
+
+    auto auth = frame.body();
+    auth->auth_algorithm_number = AuthAlgorithm::kOpenSystem;
+    auth->auth_txn_seq_number = 1;
+    auth->status_code = 0;  // Reserved: explicitly set to 0
+
+    auto pkt = frame.Take();
+    wlan_rx_info_t rx_info{.rx_flags = 0};
+    pkt->CopyCtrlFrom(rx_info);
+
+    *out_packet = fbl::move(pkt);
+
+    return ZX_OK;
+}
+
+zx_status_t CreateAuthRespFrame(fbl::unique_ptr<Packet>* out_packet) {
     common::MacAddr bssid(kBssid1);
     common::MacAddr client(kClientAddress);
 
@@ -242,6 +323,44 @@ zx_status_t CreateAuthFrame(fbl::unique_ptr<Packet>* out_packet) {
     auth->auth_txn_seq_number = 2;
     auth->status_code = status_code::kSuccess;
 
+    auto pkt = frame.Take();
+    wlan_rx_info_t rx_info{.rx_flags = 0};
+    pkt->CopyCtrlFrom(rx_info);
+
+    *out_packet = fbl::move(pkt);
+
+    return ZX_OK;
+}
+
+zx_status_t CreateAssocReqFrame(fbl::unique_ptr<Packet>* out_packet) {
+    common::MacAddr bssid(kBssid1);
+    common::MacAddr client(kClientAddress);
+
+    // arbitrarily large reserved len; will shrink down later
+    size_t reserved_len = 4096;
+    MgmtFrame<AssociationRequest> frame;
+    auto status = CreateMgmtFrame(&frame, reserved_len);
+    if (status != ZX_OK) { return status; }
+
+    auto hdr = frame.hdr();
+    hdr->addr1 = bssid;
+    hdr->addr2 = client;
+    hdr->addr3 = bssid;
+    frame.FillTxInfo();
+
+    auto assoc = frame.body();
+    CapabilityInfo cap = {};
+    cap.set_short_preamble(1);
+    cap.set_ess(1);
+    assoc->cap = cap;
+    assoc->listen_interval = kListenInterval;
+
+    size_t elems_len = sizeof(SsidElement) + sizeof(kSsid) + sizeof(kRsne);
+    ElementWriter w(assoc->elements, elems_len);
+    if (!w.write<SsidElement>(kSsid, sizeof(kSsid))) { return ZX_ERR_IO; }
+    if (!w.write<RsnElement>(kRsne, sizeof(kRsne))) { return ZX_ERR_IO; }
+
+    frame.set_body_len(sizeof(AssociationRequest) + elems_len);
     auto pkt = frame.Take();
     wlan_rx_info_t rx_info{.rx_flags = 0};
     pkt->CopyCtrlFrom(rx_info);
@@ -288,11 +407,8 @@ zx_status_t CreateDataFrame(fbl::unique_ptr<Packet>* out_packet, const uint8_t* 
     common::MacAddr client(kClientAddress);
 
     const size_t buf_len = DataFrameHeader::max_len() + LlcHeader::max_len() + len;
-    auto buffer = GetBuffer(buf_len);
-    if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
-
-    auto packet = fbl::make_unique<Packet>(std::move(buffer), buf_len);
-    packet->set_peer(Packet::Peer::kWlan);
+    auto packet = GetWlanPacket(buf_len);
+    if (packet == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
     DataFrame<LlcHeader> data_frame(fbl::move(packet));
     auto data_hdr = data_frame.hdr();
@@ -311,9 +427,7 @@ zx_status_t CreateDataFrame(fbl::unique_ptr<Packet>* out_packet, const uint8_t* 
     llc_hdr->control = kLlcUnnumberedInformation;
     std::memcpy(llc_hdr->oui, kLlcOui, sizeof(llc_hdr->oui));
     llc_hdr->protocol_id = 42;
-    if (len > 0) {
-        std::memcpy(llc_hdr->payload, payload, len);
-    }
+    if (len > 0) { std::memcpy(llc_hdr->payload, payload, len); }
 
     size_t actual_body_len = llc_hdr->len() + len;
     auto status = data_frame.set_body_len(actual_body_len);
@@ -332,11 +446,8 @@ zx_status_t CreateNullDataFrame(fbl::unique_ptr<Packet>* out_packet) {
     common::MacAddr bssid(kBssid1);
     common::MacAddr client(kClientAddress);
 
-    auto buffer = GetBuffer(DataFrameHeader::max_len());
-    if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
-
-    auto packet = fbl::make_unique<Packet>(std::move(buffer), DataFrameHeader::max_len());
-    packet->set_peer(Packet::Peer::kWlan);
+    auto packet = GetWlanPacket(DataFrameHeader::max_len());
+    if (packet == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
     DataFrame<> data_frame(fbl::move(packet));
     auto data_hdr = data_frame.hdr();
@@ -358,18 +469,14 @@ zx_status_t CreateNullDataFrame(fbl::unique_ptr<Packet>* out_packet) {
     return ZX_OK;
 }
 
-zx_status_t CreateEthFrame(fbl::unique_ptr<Packet>* out_packet,
-                           const uint8_t* payload,
+zx_status_t CreateEthFrame(fbl::unique_ptr<Packet>* out_packet, const uint8_t* payload,
                            size_t len) {
     common::MacAddr bssid(kBssid1);
     common::MacAddr client(kClientAddress);
 
-    size_t buf_len = sizeof(EthernetII) + len;
-    auto buffer = GetBuffer(buf_len);
-    if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
-
-    auto packet = fbl::make_unique<Packet>(std::move(buffer), buf_len);
-    packet->set_peer(Packet::Peer::kEthernet);
+    size_t buf_len = EthernetII::max_len() + len;
+    auto packet = GetEthPacket(buf_len);
+    if (packet == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
     EthFrame eth_frame(fbl::move(packet));
     auto eth_hdr = eth_frame.hdr();

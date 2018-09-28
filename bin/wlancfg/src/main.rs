@@ -9,7 +9,6 @@ mod config;
 mod client;
 mod device;
 mod known_ess_store;
-mod future_util;
 mod shim;
 mod state_machine;
 
@@ -17,7 +16,7 @@ use crate::{config::Config, known_ess_store::KnownEssStore};
 
 use {
     failure::{format_err, Error, ResultExt},
-    fidl::endpoints2::{RequestStream, ServiceMarker},
+    fidl::endpoints::{RequestStream, ServiceMarker},
     fidl_fuchsia_wlan_device_service::DeviceServiceMarker,
     fidl_fuchsia_wlan_service as legacy,
     fuchsia_app::server::ServicesServer,
@@ -57,12 +56,12 @@ fn main() -> Result<(), Error> {
     let legacy_client = shim::ClientRef::new();
     let fidl_fut = serve_fidl(legacy_client.clone());
 
-    let (watcher_proxy, watcher_server_end) = fidl::endpoints2::create_endpoints()?;
+    let (watcher_proxy, watcher_server_end) = fidl::endpoints::create_proxy()?;
     wlan_svc.watch_devices(watcher_server_end)?;
     let listener = device::Listener::new(wlan_svc, cfg, legacy_client);
     let ess_store = Arc::new(KnownEssStore::new()?);
     let fut = watcher_proxy.take_event_stream()
-        .try_for_each(move |evt| device::handle_event(&listener, evt, &ess_store).map(Ok))
+        .try_for_each(|evt| device::handle_event(&listener, evt, Arc::clone(&ess_store)).map(Ok))
         .err_into()
         .and_then(|_| future::ready(Err(format_err!("Device watcher future exited unexpectedly"))));
 

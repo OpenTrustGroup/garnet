@@ -90,15 +90,17 @@ void BrEdrCommandHandler::InformationResponder::SendConnectionlessMtu(
 }
 
 void BrEdrCommandHandler::InformationResponder::SendExtendedFeaturesSupported(
-    uint32_t mask) {
-  mask = htole32(mask);
-  Send(InformationResult::kSuccess, BufferView(&mask, sizeof(mask)));
+    ExtendedFeatures extended_features) {
+  extended_features = htole32(extended_features);
+  Send(InformationResult::kSuccess,
+       BufferView(&extended_features, sizeof(extended_features)));
 }
 
 void BrEdrCommandHandler::InformationResponder::SendFixedChannelsSupported(
-    uint64_t mask) {
-  mask = htole64(mask);
-  Send(InformationResult::kSuccess, BufferView(&mask, sizeof(mask)));
+    FixedChannelsSupported channels_supported) {
+  channels_supported = htole64(channels_supported);
+  Send(InformationResult::kSuccess,
+       BufferView(&channels_supported, sizeof(channels_supported)));
 }
 
 void BrEdrCommandHandler::InformationResponder::Send(InformationResult result,
@@ -244,8 +246,48 @@ bool BrEdrCommandHandler::SendInformationRequest(
 }
 
 void BrEdrCommandHandler::ServeConnectionRequest(ConnectionRequestCallback cb) {
-  // TODO(NET-1135): Serve inbound channels
-  bt_log(ERROR, "l2cap-bredr", "cmd: Connection Request not handled");
+  auto on_conn_req = [this, cb = std::move(cb)](
+                         const ByteBuffer& request_payload,
+                         SignalingChannel::Responder* sig_responder) {
+    if (request_payload.size() != sizeof(ConnectionRequestPayload)) {
+      bt_log(TRACE, "l2cap-bredr",
+             "cmd: rejecting malformed Connection Request, size %zu",
+             request_payload.size());
+      sig_responder->RejectNotUnderstood();
+      return;
+    }
+
+    const auto& conn_req = request_payload.As<ConnectionRequestPayload>();
+    const PSM psm = letoh16(conn_req.psm);
+    const ChannelId remote_cid = letoh16(conn_req.src_cid);
+
+    ConnectionResponder responder(sig_responder, remote_cid);
+
+    // v5.0 Vol 3, Part A, Sec 4.2: PSMs shall be odd and the least significant
+    // bit of the most significant byte shall be zero
+    if (((psm & 0x0001) != 0x0001) || ((psm & 0x0100) != 0x0000)) {
+      bt_log(TRACE, "l2cap-bredr",
+             "Rejecting connection for invalid PSM %#.4x from channel %#.4x",
+             psm, remote_cid);
+      responder.Send(kInvalidChannelId, ConnectionResult::kPSMNotSupported,
+                     ConnectionStatus::kNoInfoAvailable);
+      return;
+    }
+
+    // Check that source channel ID is in range (v5.0 Vol 3, Part A, Sec 2.1)
+    if (remote_cid < kFirstDynamicChannelId) {
+      bt_log(TRACE, "l2cap-bredr",
+             "Rejecting connection for PSM %#.4x from invalid channel %#.4x",
+             psm, remote_cid);
+      responder.Send(kInvalidChannelId, ConnectionResult::kInvalidSourceCID,
+                     ConnectionStatus::kNoInfoAvailable);
+      return;
+    }
+
+    cb(psm, remote_cid, &responder);
+  };
+
+  sig_->ServeRequest(kConnectionRequest, std::move(on_conn_req));
 }
 
 void BrEdrCommandHandler::ServeConfigurationRequest(

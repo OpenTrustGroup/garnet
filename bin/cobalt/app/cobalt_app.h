@@ -15,14 +15,14 @@
 #include <lib/async/cpp/task.h>
 
 #include "garnet/bin/cobalt/app/cobalt_controller_impl.h"
-#include "garnet/bin/cobalt/app/cobalt_encoder_factory_impl.h"
-#include "garnet/bin/cobalt/app/cobalt_encoder_impl.h"
+#include "garnet/bin/cobalt/app/logger_factory_impl.h"
 #include "garnet/bin/cobalt/app/timer_manager.h"
 #include "lib/component/cpp/startup_context.h"
 #include "lib/network_wrapper/network_wrapper_impl.h"
 #include "third_party/cobalt/encoder/client_secret.h"
+#include "third_party/cobalt/encoder/file_observation_store.h"
 #include "third_party/cobalt/encoder/send_retryer.h"
-#include "third_party/cobalt/encoder/shipping_dispatcher.h"
+#include "third_party/cobalt/encoder/shipping_manager.h"
 #include "third_party/cobalt/encoder/shuffler_client.h"
 
 namespace cobalt {
@@ -53,10 +53,10 @@ class CobaltApp {
   encoder::ShufflerClient shuffler_client_;
   encoder::send_retryer::SendRetryer send_retryer_;
   network_wrapper::NetworkWrapperImpl network_wrapper_;
-  encoder::ObservationStoreDispatcher store_dispatcher_;
+  encoder::FileObservationStore observation_store_;
   util::EncryptedMessageMaker encrypt_to_analyzer_;
-  encoder::ShippingDispatcher shipping_dispatcher_;
   util::EncryptedMessageMaker encrypt_to_shuffler_;
+  encoder::LegacyShippingManager shipping_manager_;
   TimerManager timer_manager_;
 
   std::shared_ptr<config::ClientConfig> client_config_;
@@ -64,8 +64,7 @@ class CobaltApp {
   std::unique_ptr<fuchsia::cobalt::Controller> controller_impl_;
   fidl::BindingSet<fuchsia::cobalt::Controller> controller_bindings_;
 
-  std::unique_ptr<encoder::CobaltEncoderFactoryImpl> factory_impl_;
-  fidl::BindingSet<fuchsia::cobalt::EncoderFactory> encoder_factory_bindings_;
+  std::unique_ptr<fuchsia::cobalt::LoggerFactory> logger_factory_impl_;
   fidl::BindingSet<fuchsia::cobalt::LoggerFactory> logger_factory_bindings_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(CobaltApp);

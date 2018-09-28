@@ -80,9 +80,8 @@ func (v *c_mxrio_sockopt_req_reply) Unpack() interface{} {
 			}
 			if v.optname == IP_ADD_MEMBERSHIP {
 				return tcpip.AddMembershipOption(option)
-			} else {
-				return tcpip.RemoveMembershipOption(option)
 			}
+			return tcpip.RemoveMembershipOption(option)
 		}
 		log.Printf("convSockOpt: TODO IPPROTO_IP optname=%d", v.optname)
 	case SOL_TCP:
@@ -90,7 +89,7 @@ func (v *c_mxrio_sockopt_req_reply) Unpack() interface{} {
 		case TCP_NODELAY:
 			return tcpip.NoDelayOption(v.intValue())
 		case TCP_INFO:
-			return tcpip.InfoOption{}
+			return tcpip.TCPInfoOption{}
 		case TCP_MAXSEG:
 		case TCP_CORK:
 		case TCP_KEEPIDLE:

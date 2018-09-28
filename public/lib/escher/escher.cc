@@ -192,6 +192,14 @@ TexturePtr Escher::NewTexture(ImagePtr image, vk::Filter filter,
                                       use_unnormalized_coordinates);
 }
 
+BufferPtr Escher::NewBuffer(vk::DeviceSize size,
+                            vk::BufferUsageFlags usage_flags,
+                            vk::MemoryPropertyFlags memory_property_flags) {
+  TRACE_DURATION("gfx", "Escher::NewBuffer");
+  return Buffer::New(resource_recycler(), gpu_allocator(), size, usage_flags,
+                     memory_property_flags);
+}
+
 TexturePtr Escher::NewTexture(vk::Format format, uint32_t width,
                               uint32_t height, uint32_t sample_count,
                               vk::ImageUsageFlags usage_flags,
@@ -242,10 +250,19 @@ FramePtr Escher::NewFrame(const char* trace_literal, uint64_t frame_number,
                           bool enable_gpu_logging,
                           escher::CommandBuffer::Type requested_type) {
   TRACE_DURATION("gfx", "escher::Escher::NewFrame ");
-  for (auto& pair : descriptor_set_allocators_) {
-    pair.second->BeginFrame();
+
+  // Check the type before cycling the framebuffer/descriptor-set allocators.
+  // Without these checks it is possible to write into a Vulkan resource before
+  // it is finished being used in a previous frame.
+  // TODO(ES-103): The correct solution is not to use multiple Frames per frame.
+  if (requested_type != CommandBuffer::Type::kTransfer) {
+    for (auto& pair : descriptor_set_allocators_) {
+      pair.second->BeginFrame();
+    }
   }
-  framebuffer_allocator_->BeginFrame();
+  if (requested_type == CommandBuffer::Type::kGraphics) {
+    framebuffer_allocator_->BeginFrame();
+  }
 
   return frame_manager_->NewFrame(trace_literal, frame_number,
                                   enable_gpu_logging, requested_type);

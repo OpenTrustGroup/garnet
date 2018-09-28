@@ -189,10 +189,11 @@ void Adapter::ShutDown() {
   CleanUp();
 }
 
-bool Adapter::AddBondedDevice(std::string identifier,
+bool Adapter::AddBondedDevice(const std::string& identifier,
                               const common::DeviceAddress& address,
-                              sm::LTK key) {
-  return remote_device_cache()->AddBondedDevice(identifier, address, key);
+                              const sm::PairingData& le_bond_data) {
+  return remote_device_cache()->AddBondedDevice(identifier, address,
+                                                le_bond_data);
   // TODO(bwb) auto-connect the device
 }
 
@@ -404,6 +405,10 @@ void Adapter::InitializeStep3(InitializeCallback callback) {
     return;
   }
 
+  // ACLDataChannel::Initialize is synchronous so L2CAP can be initialized
+  // immediately after.
+  l2cap_->Initialize();
+
   ZX_DEBUG_ASSERT(init_seq_runner_->IsReady());
   ZX_DEBUG_ASSERT(!init_seq_runner_->HasQueuedCommands());
 
@@ -532,7 +537,7 @@ void Adapter::InitializeStep4(InitializeCallback callback) {
 
   if (state_.IsBREDRSupported()) {
     bredr_connection_manager_ = std::make_unique<BrEdrConnectionManager>(
-        hci_, &device_cache_,
+        hci_, &device_cache_, l2cap_,
         state_.features().HasBit(0, hci::LMPFeature::kInterlacedPageScan));
 
     hci::InquiryMode mode = hci::InquiryMode::kStandard;
@@ -547,8 +552,7 @@ void Adapter::InitializeStep4(InitializeCallback callback) {
     bredr_discovery_manager_ =
         std::make_unique<BrEdrDiscoveryManager>(hci_, mode, &device_cache_);
 
-    // TODO(jamuraa): hook up l2cap here when it is done
-    sdp_server_ = std::make_unique<sdp::Server>();
+    sdp_server_ = std::make_unique<sdp::Server>(l2cap_);
   }
 
   // Set the local name default.

@@ -1,0 +1,61 @@
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+# This file is compiled for the target. It is not actually used for the
+# devide, but is read by the zxdb tests on the host to test the symbol handling
+# code.
+
+# This should be the shared library toolchain only. Normally one could
+# reference this in the default toolchain and that will redirect to the shared
+# one.
+assert(current_toolchain == "${default_toolchain}-shared")
+
+# This rule will be called as a dependency of the zxdb tests.
+shared_library("zxdb_symbol_test") {
+  sources = [
+    "line_lookup_symbol_test.cc",
+    "type_test.cc",
+    "zxdb_symbol_test.cc",
+    "zxdb_symbol_test2.cc",
+  ]
+}
+
+# Copies the test library to the host build directory for zxdb tests to use.
+copy("copy_test_so") {
+  sources = [
+    "$root_out_dir/lib.unstripped/libzxdb_symbol_test.so",
+  ]
+
+  # Use "host_x64" for the output directory since all hosts are currently
+  # x64 so this name is consistent across platforms, and this avoids polluting
+  # the root toolchain with this test file.
+  #
+  # Use a ".targetso" extension because this isn't a library that can actually
+  # loaded on the host platform.
+  outputs = [
+    "$root_build_dir/test_data/zxdb/libzxdb_symbol_test.targetso",
+  ]
+
+  deps = [
+    ":zxdb_symbol_test",
+  ]
+}
+
+## NOT RUN BY BUILD, REFERENCE ONLY --------------------------------------------
+
+## Generates a static line_lookup_test used in the ModuleSymbols tests.
+## This output should not change, as the tests heavily rely on the binary layout
+## being the same. Ideally, we would have a way of extracting only the debug
+## information and test against that, instead on relying on pre-compiled
+## binaries.
+##
+## This rule is ran offline for the x64 architecture and the result is checked
+## in for the testing.
+# shared_library("symbol_test_so") {
+#   sources = [
+#     "line_lookup_symbol_test.cc",
+#     "zxdb_symbol_test.cc",
+#     "zxdb_symbol_test2.cc",
+#   ]
+# }

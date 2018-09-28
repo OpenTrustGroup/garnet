@@ -11,7 +11,7 @@ use fuchsia_zircon::prelude::*;
 use futures::prelude::*;
 use futures::channel::mpsc;
 use futures::select;
-use log::{error, info, log, warn};
+use log::{error, info, warn};
 use pin_utils::pin_mut;
 use std::collections::HashSet;
 use std::future::FutureObj;
@@ -19,12 +19,12 @@ use std::marker::Unpin;
 use std::sync::Arc;
 use wlan_sme;
 
+use crate::cobalt_reporter::CobaltSender;
 use crate::device_watch::{self, NewIfaceDevice};
 use crate::future_util::ConcurrentTasks;
 use crate::Never;
 use crate::station;
 use crate::stats_scheduler::{self, StatsScheduler};
-use crate::telemetry::CobaltSender;
 use crate::watchable_map::WatchableMap;
 
 pub struct PhyDevice {

@@ -14,12 +14,18 @@ static_library("l2cap") {
   sources = [
     "bredr_command_handler.cc",
     "bredr_command_handler.h",
+    "bredr_dynamic_channel.cc",
+    "bredr_dynamic_channel.h",
     "bredr_signaling_channel.cc",
     "bredr_signaling_channel.h",
     "channel.cc",
     "channel.h",
     "channel_manager.cc",
     "channel_manager.h",
+    "dynamic_channel.cc",
+    "dynamic_channel.h",
+    "dynamic_channel_registry.cc",
+    "dynamic_channel_registry.h",
     "fragmenter.cc",
     "fragmenter.h",
     "l2cap.cc",
@@ -37,6 +43,10 @@ static_library("l2cap") {
     "sdu.h",
     "signaling_channel.cc",
     "signaling_channel.h",
+    "socket_channel_relay.cc",
+    "socket_channel_relay.h",
+    "socket_factory.cc",
+    "socket_factory.h",
   ]
 
   public_deps = [
@@ -76,14 +86,18 @@ source_set("tests") {
 
   sources = [
     "bredr_command_handler_unittest.cc",
+    "bredr_dynamic_channel_unittest.cc",
     "bredr_signaling_channel_unittest.cc",
     "channel_manager_unittest.cc",
+    "dynamic_channel_registry_unittest.cc",
     "fragmenter_unittest.cc",
     "le_signaling_channel_unittest.cc",
     "pdu_unittest.cc",
     "recombiner_unittest.cc",
     "scoped_channel_unittest.cc",
     "signaling_channel_unittest.cc",
+    "socket_channel_relay_unittest.cc",
+    "socket_factory_unittest.cc",
   ]
 
   deps = [

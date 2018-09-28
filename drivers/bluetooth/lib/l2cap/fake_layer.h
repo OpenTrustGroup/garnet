@@ -12,6 +12,7 @@
 #include "garnet/drivers/bluetooth/lib/hci/connection_parameters.h"
 #include "garnet/drivers/bluetooth/lib/l2cap/fake_channel.h"
 #include "garnet/drivers/bluetooth/lib/l2cap/l2cap.h"
+#include "garnet/drivers/bluetooth/lib/l2cap/socket_factory.h"
 
 namespace btlib {
 namespace l2cap {
@@ -43,6 +44,9 @@ class FakeLayer final : public L2CAP {
   void TriggerInboundChannel(hci::ConnectionHandle handle, PSM psm,
                              ChannelId id, ChannelId remote_id);
 
+  // Triggers a link error callback on the given link.
+  void TriggerLinkError(hci::ConnectionHandle handle);
+
   // L2CAP overrides
   void Initialize() override;
   void ShutDown() override;
@@ -58,7 +62,9 @@ class FakeLayer final : public L2CAP {
   void RemoveConnection(hci::ConnectionHandle handle) override;
   void OpenChannel(hci::ConnectionHandle handle, PSM psm, ChannelCallback cb,
                    async_dispatcher_t* dispatcher) override;
-  bool RegisterService(PSM psm, ChannelCallback cb,
+  void RegisterService(PSM psm, ChannelCallback channel_callback,
+                       async_dispatcher_t* dispatcher) override;
+  void RegisterService(PSM psm, SocketCallback channel_callback,
                        async_dispatcher_t* dispatcher) override;
   void UnregisterService(PSM psm) override;
 
@@ -107,6 +113,9 @@ class FakeLayer final : public L2CAP {
   std::unordered_map<hci::ConnectionHandle, LinkData> links_;
   FakeChannelCallback chan_cb_;
   std::unordered_map<PSM, ChannelDelivery> inbound_conn_cbs_;
+
+  // Makes sockets for RegisterService
+  SocketFactory socket_factory_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(FakeLayer);
 };

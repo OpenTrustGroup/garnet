@@ -23,7 +23,10 @@ use {
             raw,
             unix::{
                 ffi::OsStrExt,
-                io::AsRawFd,
+                io::{
+                    AsRawFd,
+                    IntoRawFd,
+                }
             },
         },
         path::Path,
@@ -80,6 +83,44 @@ pub fn service_connect_at(dir: &zx::Channel, service_path: &str, channel: zx::Ch
             c_service_path.as_ptr(),
             channel.into_raw())
     })
+}
+
+pub fn transfer_fd(file: std::fs::File) -> Result<(Vec<zx::Channel>, Vec<u32>), zx::Status> {
+    unsafe {
+        let mut channels: [zx::sys::zx_handle_t; fdio_sys::FDIO_MAX_HANDLES as usize] = [0, 0, 0];
+        let mut types: [u32; fdio_sys::FDIO_MAX_HANDLES as usize] = [0, 0, 0];
+        let res =
+            fdio_sys::fdio_transfer_fd(file.into_raw_fd(), 0, &mut channels[0], &mut types[0]);
+        if res < 0 {
+            return Err(zx::Status::from_raw(res));
+        }
+        let num_handles = res as usize;
+        Ok((
+            channels[0..num_handles]
+                .iter()
+                .map(|c| zx::Channel::from(zx::Handle::from_raw(*c)))
+                .collect(),
+            types[0..num_handles].to_vec(),
+        ))
+    }
+}
+
+/// Open a new connection to `file` by sending a request to open
+/// a new connection to the sever.
+pub fn clone_channel(file: &std::fs::File) -> Result<zx::Channel, zx::Status> {
+    unsafe {
+        // First, we must open a new connection to the handle, since
+        // we must return a newly owned copy.
+        let fdio = fdio_sys::__fdio_fd_to_io(file.as_raw_fd());
+        let unowned_handle = fdio_sys::__fdio_borrow_channel(fdio);
+        let handle = fdio_sys::fdio_service_clone(unowned_handle);
+        fdio_sys::__fdio_release(fdio);
+
+        match handle {
+            zx::sys::ZX_HANDLE_INVALID => Err(zx::Status::NOT_SUPPORTED),
+            _ => Ok(zx::Channel::from(zx::Handle::from_raw(handle))),
+        }
+    }
 }
 
 /// Retrieves the topological path for a device node.
@@ -216,15 +257,4 @@ pub const IOCTL_DEVICE_GET_TOPO_PATH: raw::c_int = make_ioctl!(
     fdio_sys::IOCTL_KIND_DEFAULT,
     fdio_sys::IOCTL_FAMILY_DEVICE,
     4
-);
-
-pub const IOCTL_VFS_MOUNT_FS: raw::c_int = make_ioctl!(
-    fdio_sys::IOCTL_KIND_SET_HANDLE,
-    fdio_sys::IOCTL_FAMILY_VFS,
-    0
-);
-pub const IOCTL_VFS_UNMOUNT_NODE: raw::c_int = make_ioctl!(
-    fdio_sys::IOCTL_KIND_GET_HANDLE,
-    fdio_sys::IOCTL_FAMILY_VFS,
-    2
 );

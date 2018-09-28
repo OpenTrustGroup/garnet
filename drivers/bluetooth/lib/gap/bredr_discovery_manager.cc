@@ -5,13 +5,13 @@
 #include "bredr_discovery_manager.h"
 
 #include <lib/async/default.h>
+#include <lib/fit/defer.h>
 #include <zircon/assert.h>
 
 #include "garnet/drivers/bluetooth/lib/common/log.h"
 #include "garnet/drivers/bluetooth/lib/gap/remote_device_cache.h"
 #include "garnet/drivers/bluetooth/lib/hci/transport.h"
 #include "garnet/drivers/bluetooth/lib/hci/util.h"
-#include "lib/fxl/functional/auto_call.h"
 
 namespace btlib {
 namespace gap {
@@ -26,8 +26,8 @@ std::unordered_set<RemoteDevice*> ProcessInquiryResult(
 
   size_t result_size = event.view().payload_size() - sizeof(EventParamType);
   if ((result_size % sizeof(ResultType)) != 0) {
-    bt_log(INFO, "gap-bredr", "ignoring malformed result (%zu bytes)",
-           event.view().payload_size());
+    bt_log(INFO, "gap-bredr", "ignoring wrong size result (%zu % %zu != 0)",
+           result_size, sizeof(ResultType));
     return updated;
   }
 
@@ -41,7 +41,7 @@ std::unordered_set<RemoteDevice*> ProcessInquiryResult(
     }
     ZX_DEBUG_ASSERT(device);
 
-    device->SetInquiryData(result.responses[i]);
+    device->MutBrEdr().SetInquiryData(result.responses[i]);
     updated.insert(device);
   }
   return updated;
@@ -283,7 +283,7 @@ void BrEdrDiscoveryManager::ExtendedInquiryResult(
   }
   ZX_DEBUG_ASSERT(device);
 
-  device->SetInquiryData(result);
+  device->MutBrEdr().SetInquiryData(result);
 
   if (!device->name()) {
     RequestRemoteDeviceName(device->identifier());
@@ -305,11 +305,13 @@ void BrEdrDiscoveryManager::RequestRemoteDeviceName(const std::string& id) {
   packet->mutable_view()->mutable_payload_data().SetToZeros();
   auto params = packet->mutable_view()
                     ->mutable_payload<hci::RemoteNameRequestCommandParams>();
-  ZX_DEBUG_ASSERT(device->page_scan_repetition_mode().HasValue());
+  ZX_DEBUG_ASSERT(device->bredr());
+  ZX_DEBUG_ASSERT(device->bredr()->page_scan_repetition_mode());
   params->bd_addr = device->address().value();
-  params->page_scan_repetition_mode = *(device->page_scan_repetition_mode());
-  if (device->clock_offset()) {
-    params->clock_offset = *(device->clock_offset());
+  params->page_scan_repetition_mode =
+      *(device->bredr()->page_scan_repetition_mode());
+  if (device->bredr()->clock_offset()) {
+    params->clock_offset = htole16(*(device->bredr()->clock_offset()));
   }
 
   auto cb = [id, self = weak_ptr_factory_.GetWeakPtr()](auto,
@@ -387,7 +389,7 @@ void BrEdrDiscoveryManager::SetInquiryScan() {
     }
 
     auto status = event.ToStatus();
-    auto resolve_pending = fxl::MakeAutoCall([self, &status]() {
+    auto resolve_pending = fit::defer([self, &status]() {
       while (!self->pending_discoverable_.empty()) {
         auto cb = std::move(self->pending_discoverable_.front());
         self->pending_discoverable_.pop();

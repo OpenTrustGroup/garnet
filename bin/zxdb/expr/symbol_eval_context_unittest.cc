@@ -3,12 +3,12 @@
 // found in the LICENSE file.
 
 #include "garnet/bin/zxdb/expr/symbol_eval_context.h"
-#include "garnet/bin/zxdb/client/symbols/code_block.h"
-#include "garnet/bin/zxdb/client/symbols/mock_symbol_data_provider.h"
-#include "garnet/bin/zxdb/client/symbols/variable_test_support.h"
 #include "garnet/bin/zxdb/common/err.h"
 #include "garnet/bin/zxdb/expr/expr_node.h"
 #include "garnet/bin/zxdb/expr/expr_value.h"
+#include "garnet/bin/zxdb/symbols/code_block.h"
+#include "garnet/bin/zxdb/symbols/mock_symbol_data_provider.h"
+#include "garnet/bin/zxdb/symbols/variable_test_support.h"
 #include "garnet/lib/debug_ipc/helper/platform_message_loop.h"
 #include "gtest/gtest.h"
 #include "llvm/BinaryFormat/Dwarf.h"
@@ -61,7 +61,7 @@ TEST_F(SymbolEvalContextTest, NotFoundSynchronous) {
   bool called = false;
   Err out_err;
   ExprValue out_value;
-  eval_context->GetVariable(
+  eval_context->GetVariableValue(
       "not_present",
       [&called, &out_err, &out_value](const Err& err, ExprValue value) {
         called = true;
@@ -85,12 +85,13 @@ TEST_F(SymbolEvalContextTest, FoundSynchronous) {
   bool called = false;
   Err out_err;
   ExprValue out_value;
-  eval_context->GetVariable("present", [&called, &out_err, &out_value](
-                                           const Err& err, ExprValue value) {
-    called = true;
-    out_err = err;
-    out_value = value;
-  });
+  eval_context->GetVariableValue(
+      "present",
+      [&called, &out_err, &out_value](const Err& err, ExprValue value) {
+        called = true;
+        out_err = err;
+        out_value = value;
+      });
   EXPECT_TRUE(called);
   EXPECT_FALSE(out_err.has_error()) << out_err.msg();
   EXPECT_EQ(ExprValue(kValue), out_value);
@@ -108,13 +109,14 @@ TEST_F(SymbolEvalContextTest, FoundAsynchronous) {
   bool called = false;
   Err out_err;
   ExprValue out_value;
-  eval_context->GetVariable("present", [&called, &out_err, &out_value](
-                                           const Err& err, ExprValue value) {
-    called = true;
-    out_err = err;
-    out_value = value;
-    debug_ipc::MessageLoop::Current()->QuitNow();
-  });
+  eval_context->GetVariableValue(
+      "present",
+      [&called, &out_err, &out_value](const Err& err, ExprValue value) {
+        called = true;
+        out_err = err;
+        out_value = value;
+        debug_ipc::MessageLoop::Current()->QuitNow();
+      });
   // Should not have been called yet since retrieving the register is
   // asynchronous.
   EXPECT_FALSE(called);

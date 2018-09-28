@@ -34,6 +34,7 @@ using fuchsia::bluetooth::control::BondingData;
 using fuchsia::bluetooth::control::Key;
 using fuchsia::bluetooth::control::LEData;
 using fuchsia::bluetooth::control::LTK;
+using fuchsia::bluetooth::control::RemoteDevice;
 
 HostServer::HostServer(zx::channel channel,
                        fxl::WeakPtr<::btlib::gap::Adapter> adapter,
@@ -41,6 +42,8 @@ HostServer::HostServer(zx::channel channel,
     : AdapterServerBase(adapter, this, std::move(channel)),
       pairing_delegate_(nullptr),
       gatt_host_(gatt_host),
+      requesting_discovery_(false),
+      requesting_discoverable_(false),
       io_capability_(IOCapability::kNoInputNoOutput),
       weak_ptr_factory_(this) {
   ZX_DEBUG_ASSERT(gatt_host_);
@@ -66,15 +69,39 @@ HostServer::HostServer(zx::channel channel,
       });
 }
 
+HostServer::~HostServer() { Close(); }
+
 void HostServer::GetInfo(GetInfoCallback callback) {
   callback(fidl_helpers::NewAdapterInfo(*adapter()));
 }
 
+void HostServer::ListDevices(ListDevicesCallback callback) {
+  std::vector<RemoteDevice> fidl_devices;
+  adapter()->remote_device_cache()->ForEach(
+      [&fidl_devices](const btlib::gap::RemoteDevice& dev) {
+        if (dev.connectable()) {
+          fidl_devices.push_back(fidl_helpers::NewRemoteDevice(dev));
+        }
+      });
+  callback(fidl::VectorPtr<RemoteDevice>(std::move(fidl_devices)));
+}
+
 void HostServer::SetLocalName(::fidl::StringPtr local_name,
                               SetLocalNameCallback callback) {
+  ZX_DEBUG_ASSERT(!local_name.is_null());
+  // Make a copy of |local_name| to move separately into the lambda.
+  std::string name_copy(*local_name);
   adapter()->SetLocalName(
-      local_name, [self = weak_ptr_factory_.GetWeakPtr(),
-                   callback = std::move(callback)](auto status) {
+      std::move(local_name),
+      [self = weak_ptr_factory_.GetWeakPtr(), local_name = std::move(name_copy),
+       callback = std::move(callback)](auto status) {
+        // Send adapter state update on success and if the connection is still
+        // open.
+        if (status && self) {
+          AdapterState state;
+          state.local_name = std::move(local_name);
+          self->binding()->events().OnAdapterStateChanged(std::move(state));
+        }
         callback(fidl_helpers::StatusToFidl(status, "Can't Set Local Name"));
       });
 }
@@ -96,6 +123,12 @@ void HostServer::StartLEDiscovery(StartDiscoveryCallback callback) {
       return;
     }
 
+    if (!self->requesting_discovery_) {
+      callback(
+          fidl_helpers::NewFidlError(ErrorCode::CANCELED, "Request canceled"));
+      return;
+    }
+
     if (!session) {
       bt_log(TRACE, "bt-host", "failed to start LE discovery session");
       callback(fidl_helpers::NewFidlError(
@@ -106,6 +139,9 @@ void HostServer::StartLEDiscovery(StartDiscoveryCallback callback) {
     }
 
     // Set up a general-discovery filter for connectable devices.
+    // NOTE(armansito): This currently has no effect since OnDeviceUpdated
+    // events are generated based on RemoteDeviceCache events. |session|'s
+    // "result callback" is unused.
     session->filter()->set_connectable(true);
     session->filter()->SetGeneralDiscoveryFlags();
 
@@ -146,6 +182,12 @@ void HostServer::StartDiscovery(StartDiscoveryCallback callback) {
         if (!self) {
           callback(fidl_helpers::NewFidlError(ErrorCode::FAILED,
                                               "Adapter Shutdown"));
+          return;
+        }
+
+        if (!self->requesting_discovery_) {
+          callback(fidl_helpers::NewFidlError(ErrorCode::CANCELED,
+                                              "Request Canceled"));
           return;
         }
 
@@ -202,6 +244,7 @@ void HostServer::SetConnectable(bool connectable,
 void HostServer::AddBondedDevices(
     ::fidl::VectorPtr<fuchsia::bluetooth::control::BondingData> bonds,
     AddBondedDevicesCallback callback) {
+  bt_log(TRACE, "bt-host", "AddBondedDevices");
   if (!bonds) {
     callback(fidl_helpers::NewFidlError(ErrorCode::NOT_SUPPORTED,
                                         "No bonds were added"));
@@ -209,63 +252,48 @@ void HostServer::AddBondedDevices(
   }
 
   for (auto& bond : *bonds) {
-    // If LE Bond
+    btlib::sm::PairingData bond_data;
     if (bond.le) {
-      auto ltk = std::move(bond.le->ltk);
-      auto security =
-          fidl_helpers::NewSecurityLevel(ltk->key.security_properties);
+      bond_data = fidl_helpers::PairingDataFromFidl(*bond.le);
 
-      // Setup LTK to store
-      btlib::common::UInt128 key_data;
-      std::copy(ltk->key.value.begin(), ltk->key.value.begin() + 16,
-                key_data.begin());
-      auto link_key = btlib::hci::LinkKey(key_data, ltk->rand, ltk->ediv);
-      auto store_ltk = btlib::sm::LTK(security, link_key);
-
-      // Store the built ltk with the address
-      auto addr = btlib::common::DeviceAddress(
-          fidl_helpers::NewAddrType(bond.le->address_type), bond.le->address);
-      auto resp = adapter()->AddBondedDevice(bond.identifier, addr, store_ltk);
-      if (!resp) {
-        callback(fidl_helpers::NewFidlError(
-            ErrorCode::FAILED, "Devices were already present in cache"));
+      // Report error if bond data is missing a security key.
+      if (!bond_data.irk && !bond_data.csrk) {
+        bt_log(ERROR, "bt-host", "LE bond data is missing security key");
+        callback(fidl_helpers::NewFidlError(ErrorCode::INVALID_ARGUMENTS,
+                                            "LE IRK/CSRK missing"));
         return;
       }
     }
+
+    // TODO(armansito): Handle BR/EDR data here. For now we skip the entry if LE
+    // data isn't available.
+    if (!bond_data.identity_address) {
+      bt_log(ERROR, "bt-host", "LE bonding data is required");
+      continue;
+    }
+
+    // TODO(armansito): BondingData should contain the identity address for both
+    // transports instead of storing them separately. For now use the one we
+    // obtained from |bond.le|.
+    if (!adapter()->AddBondedDevice(bond.identifier,
+                                    *bond_data.identity_address, bond_data)) {
+      // TODO(armansito): Continue walking the list if this fails?
+      callback(fidl_helpers::NewFidlError(
+          ErrorCode::FAILED,
+          fxl::StringPrintf("Failed to initialize bonded device (id: %s)",
+                            bond.identifier->c_str())));
+      return;
+    }
   }
+
   callback(Status());
 }
 
 void HostServer::OnRemoteDeviceBonded(
     const ::btlib::gap::RemoteDevice& remote_device) {
   bt_log(TRACE, "bt-host", "OnRemoteDeviceBonded()");
-  BondingData data;
-  data.identifier = remote_device.identifier().c_str();
-
-  // If the bond is LE
-  if (remote_device.technology() == btlib::gap::TechnologyType::kLowEnergy) {
-    data.le = LEData::New();
-    data.le->address = remote_device.address().value().ToString();
-
-    if (remote_device.ltk()) {
-      data.le->ltk = fuchsia::bluetooth::control::LTK::New();
-      // Set security properties
-      auto key_data = remote_device.ltk()->key().value().data();
-      std::copy(key_data, key_data + 16, data.le->ltk->key.value.begin());
-      data.le->ltk->key.security_properties.authenticated =
-          remote_device.ltk()->security().authenticated();
-      data.le->ltk->key.security_properties.secure_connections =
-          remote_device.ltk()->security().secure_connections();
-      data.le->ltk->key.security_properties.encryption_key_size =
-          remote_device.ltk()->security().enc_key_size();
-
-      data.le->ltk->key_size = remote_device.ltk()->security().enc_key_size();
-      data.le->ltk->rand = remote_device.ltk()->key().rand();
-      data.le->ltk->ediv = remote_device.ltk()->key().ediv();
-    }
-  }
-
-  this->binding()->events().OnNewBondingData(std::move(data));
+  binding()->events().OnNewBondingData(
+      fidl_helpers::NewBondingData(remote_device));
 }
 
 void HostServer::SetDiscoverable(bool discoverable,
@@ -305,12 +333,21 @@ void HostServer::SetDiscoverable(bool discoverable,
                                               "Adapter Shutdown"));
           return;
         }
+
+        if (!self->requesting_discoverable_) {
+          callback(fidl_helpers::NewFidlError(ErrorCode::CANCELED,
+                                              "Request canceled"));
+          return;
+        }
+
         if (!status || !session) {
           bt_log(TRACE, "bt-host", "failed to set discoverable");
           callback(
               fidl_helpers::StatusToFidl(status, "Failed to set discoverable"));
           self->requesting_discoverable_ = false;
+          return;
         }
+
         self->bredr_discoverable_session_ = std::move(session);
         AdapterState state;
         state.discoverable = Bool::New();
@@ -341,17 +378,25 @@ void HostServer::SetPairingDelegate(
     ::fuchsia::bluetooth::control::OutputCapabilityType output,
     ::fidl::InterfaceHandle<::fuchsia::bluetooth::control::PairingDelegate>
         delegate) {
-  io_capability_ = fidl_helpers::NewIoCapability(input, output);
+  bool cleared = !delegate;
+  pairing_delegate_.Bind(std::move(delegate));
+
+  if (cleared) {
+    bt_log(TRACE, "bt-host", "PairingDelegate cleared");
+    ResetPairingDelegate();
+    return;
+  }
+
+  io_capability_ = fidl_helpers::IoCapabilityFromFidl(input, output);
+  bt_log(TRACE, "bt-host", "PairingDelegate assigned (I/O capability: %s)",
+         btlib::sm::util::IOCapabilityToString(io_capability_).c_str());
 
   auto self = weak_ptr_factory_.GetWeakPtr();
-  adapter()->SetPairingDelegate(delegate ? self : fxl::WeakPtr<HostServer>());
-
-  pairing_delegate_.Bind(std::move(delegate));
+  adapter()->SetPairingDelegate(self);
   pairing_delegate_.set_error_handler([self] {
+    bt_log(TRACE, "bt-host", "PairingDelegate disconnected");
     if (self) {
-      self->adapter()->le_connection_manager()->SetPairingDelegate(
-          fxl::WeakPtr<PairingDelegate>());
-      bt_log(TRACE, "bt-host", "PairingDelegate disconnected");
+      self->ResetPairingDelegate();
     }
   });
 }
@@ -364,13 +409,51 @@ void HostServer::RequestProfile(
 void HostServer::Close() {
   bt_log(TRACE, "bt-host", "closing FIDL handles");
 
-  // Destroy all bindings.
+  // Destroy all FIDL bindings.
   servers_.clear();
   gatt_host_->CloseServers();
+
+  // Cancel pending requests.
+  requesting_discovery_ = false;
+  requesting_discoverable_ = false;
+
+  // Diff for final adapter state update.
+  bool send_update = false;
+  AdapterState state;
+
+  // Stop all procedures initiated via host.
+  if (le_discovery_session_ || bredr_discovery_session_) {
+    send_update = true;
+    le_discovery_session_ = nullptr;
+    bredr_discovery_session_ = nullptr;
+
+    state.discovering = Bool::New();
+    state.discovering->value = false;
+  }
+
+  if (bredr_discoverable_session_) {
+    send_update = true;
+    bredr_discoverable_session_ = nullptr;
+
+    state.discoverable = Bool::New();
+    state.discoverable->value = false;
+  }
+
+  // TODO(NET-1092): Clean up connections here as well.
+  // TODO(armansito): Clear auto-connectable devices.
+
+  // Disallow future pairing.
+  pairing_delegate_ = nullptr;
+  ResetPairingDelegate();
+
+  // Send adapter state change.
+  if (send_update) {
+    binding()->events().OnAdapterStateChanged(std::move(state));
+  }
 }
 
 btlib::sm::IOCapability HostServer::io_capability() const {
-  bt_log(TRACE, "bt-host", "bthost: io capability: %s",
+  bt_log(TRACE, "bt-host", "I/O capability: %s",
          btlib::sm::util::IOCapabilityToString(io_capability_).c_str());
   return io_capability_;
 }
@@ -378,6 +461,7 @@ btlib::sm::IOCapability HostServer::io_capability() const {
 void HostServer::CompletePairing(std::string id, btlib::sm::Status status) {
   bt_log(INFO, "bt-host", "pairing complete for device: %s, status: %s",
          id.c_str(), status.ToString().c_str());
+  ZX_DEBUG_ASSERT(pairing_delegate_);
   pairing_delegate_->OnPairingComplete(std::move(id), fidl_helpers::StatusToFidl(status));
 }
 
@@ -385,9 +469,10 @@ void HostServer::ConfirmPairing(std::string id, ConfirmCallback confirm) {
   bt_log(INFO, "bt-host", "pairing request for device: %s", id.c_str());
   auto found_device = adapter()->remote_device_cache()->FindDeviceById(id);
   ZX_DEBUG_ASSERT(found_device);
-  auto device = fidl_helpers::NewRemoteDevice(*found_device);
+  auto device = fidl_helpers::NewRemoteDevicePtr(*found_device);
   ZX_DEBUG_ASSERT(device);
 
+  ZX_DEBUG_ASSERT(pairing_delegate_);
   pairing_delegate_->OnPairingRequest(
       std::move(*device), fuchsia::bluetooth::control::PairingMethod::CONSENT,
       nullptr,
@@ -400,10 +485,11 @@ void HostServer::DisplayPasskey(std::string id, uint32_t passkey,
   bt_log(INFO, "bt-host", "pairing request for device: %s", id.c_str());
   bt_log(INFO, "bt-host", "enter passkey: %06u", passkey);
 
-  auto device = fidl_helpers::NewRemoteDevice(
+  auto device = fidl_helpers::NewRemoteDevicePtr(
       *adapter()->remote_device_cache()->FindDeviceById(id));
   ZX_DEBUG_ASSERT(device);
 
+  ZX_DEBUG_ASSERT(pairing_delegate_);
   pairing_delegate_->OnPairingRequest(
       std::move(*device),
       fuchsia::bluetooth::control::PairingMethod::PASSKEY_DISPLAY,
@@ -414,10 +500,11 @@ void HostServer::DisplayPasskey(std::string id, uint32_t passkey,
 
 void HostServer::RequestPasskey(std::string id,
                                 PasskeyResponseCallback respond) {
-  auto device = fidl_helpers::NewRemoteDevice(
+  auto device = fidl_helpers::NewRemoteDevicePtr(
       *adapter()->remote_device_cache()->FindDeviceById(id));
   ZX_DEBUG_ASSERT(device);
 
+  ZX_DEBUG_ASSERT(pairing_delegate_);
   pairing_delegate_->OnPairingRequest(
       std::move(*device),
       fuchsia::bluetooth::control::PairingMethod::PASSKEY_ENTRY, nullptr,
@@ -444,7 +531,11 @@ void HostServer::OnConnectionError(Server* server) {
 
 void HostServer::OnRemoteDeviceUpdated(
     const ::btlib::gap::RemoteDevice& remote_device) {
-  auto fidl_device = fidl_helpers::NewRemoteDevice(remote_device);
+  if (!remote_device.connectable()) {
+    return;
+  }
+
+  auto fidl_device = fidl_helpers::NewRemoteDevicePtr(remote_device);
   if (!fidl_device) {
     bt_log(TRACE, "bt-host", "ignoring malformed device update");
     return;
@@ -454,7 +545,14 @@ void HostServer::OnRemoteDeviceUpdated(
 }
 
 void HostServer::OnRemoteDeviceRemoved(const std::string& identifier) {
+  // TODO(armansito): Notify only if the device is connectable for symmetry with
+  // OnDeviceUpdated?
   this->binding()->events().OnDeviceRemoved(identifier);
+}
+
+void HostServer::ResetPairingDelegate() {
+  io_capability_ = IOCapability::kNoInputNoOutput;
+  adapter()->SetPairingDelegate(fxl::WeakPtr<HostServer>());
 }
 
 }  // namespace bthost

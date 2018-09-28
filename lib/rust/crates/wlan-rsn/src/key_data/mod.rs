@@ -5,12 +5,12 @@
 pub mod kde;
 
 use bytes::BufMut;
-use failure::{self, bail, ensure};
-use nom::IResult::{Done, Incomplete};
-use nom::{IResult, Needed};
-use nom::{call, error_position, many0, named, take, try_parse};
 use crate::rsne;
 use crate::Error;
+use failure::{self, bail, ensure};
+use nom::IResult::{Done, Incomplete};
+use nom::{call, error_position, many0, named, take, try_parse};
+use nom::{IResult, Needed};
 
 #[derive(Debug)]
 pub enum Element {
@@ -19,6 +19,21 @@ pub enum Element {
     Padding,
     UnsupportedKde(kde::Header),
     UnsupportedIe(u8, u8),
+}
+impl Element {
+
+    pub fn as_bytes(&self, buf: &mut Vec<u8>) {
+        match self {
+            Element::Gtk(hdr, gtk) => {
+                hdr.as_bytes(buf);
+                gtk.as_bytes(buf);
+            },
+            Element::Rsne(rsne) => {
+                rsne.as_bytes(buf);
+            },
+            _ => {},
+        }
+    }
 }
 
 fn peek_u8_at<'a>(input: &'a [u8], index: usize) -> IResult<&'a [u8], u8> {
@@ -54,8 +69,10 @@ named!(parse_elements<&[u8], Vec<Element>>, many0!(parse_element));
 
 pub fn extract_elements(key_data: &[u8]) -> Result<Vec<Element>, failure::Error> {
     // Key Data field must be at least 16 bytes long and its length a multiple of 8.
-    ensure!(key_data.len() % 8 == 0 && key_data.len() >= 16,
-            Error::InvaidKeyDataLength(key_data.len()));
+    ensure!(
+        key_data.len() % 8 == 0 && key_data.len() >= 16,
+        Error::InvaidKeyDataLength(key_data.len())
+    );
 
     parse_elements(key_data)
         .to_full_result()
@@ -64,7 +81,6 @@ pub fn extract_elements(key_data: &[u8]) -> Result<Vec<Element>, failure::Error>
 
 // IEEE Std 802.11-2016, 12.7.2 j)
 // Adds padding to a given key data if necessary and truncates all remaining bytes of the buffer.
-#[allow(unused)]
 pub fn add_padding(buf: &mut Vec<u8>) {
     let padding_len = if buf.len() < 16 {
         16 - buf.len()

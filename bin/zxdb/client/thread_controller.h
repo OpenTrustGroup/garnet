@@ -7,6 +7,7 @@
 #include <functional>
 #include <vector>
 
+#include "garnet/bin/zxdb/common/address_range.h"
 #include "garnet/lib/debug_ipc/protocol.h"
 #include "lib/fxl/macros.h"
 #include "lib/fxl/memory/weak_ptr.h"
@@ -17,11 +18,26 @@ class Breakpoint;
 class Err;
 class Thread;
 
+// Uncomment to enable detailed thread controller logging.
+//
+// TODO(brettw) when we have a settings system, make this run-time enableable
+// for easier debugging when people encounter problems in the field.
+//
+// #define DEBUG_THREAD_CONTROLLERS
+
 // Abstract base class that provides the policy decisions for various types of
 // thread stepping.
 class ThreadController {
  public:
-  enum StopOp { kContinue, kStop };
+  enum StopOp {
+    // Resume the thread. A controller can indicate "continue" but if another
+    // indicates "stop", the "stop" will take precedence.
+    kContinue,
+
+    // Keeps the thread stopped and reports the stop to the user. This takes
+    // precedence over any "continue" votes.
+    kStop
+  };
 
   // How the thread should run when it is executing this controller.
   struct ContinueOp {
@@ -34,22 +50,19 @@ class ThreadController {
       result.how = debug_ipc::ResumeRequest::How::kStepInstruction;
       return result;
     }
-    static ContinueOp StepInRange(uint64_t r_begin, uint64_t r_end) {
+    static ContinueOp StepInRange(AddressRange range) {
       ContinueOp result;
       result.how = debug_ipc::ResumeRequest::How::kStepInRange;
-      result.range_begin = r_begin;
-      result.range_end = r_end;
+      result.range = range;
       return result;
     }
 
     debug_ipc::ResumeRequest::How how =
         debug_ipc::ResumeRequest::How::kContinue;
 
-    // When how == kStepInRange, these variables define the address range to
-    // step in. As long as the instruction pointer is inside [range_begin,
-    // range_end), execution will continue.
-    uint64_t range_begin = 0;
-    uint64_t range_end = 0;
+    // When how == kStepInRange, this defines the address range to step in. As
+    // long as the instruction pointer is inside, execution will continue.
+    AddressRange range;
   };
 
   ThreadController();
@@ -84,9 +97,27 @@ class ThreadController {
       debug_ipc::NotifyException::Type stop_type,
       const std::vector<fxl::WeakPtr<Breakpoint>>& hit_breakpoints) = 0;
 
+#if defined(DEBUG_THREAD_CONTROLLERS)
+  // Writes the log message prefixed with the thread controller type. Callers
+  // should pass constant strings through here so the Log function takes
+  // almost no time if it's disabled: in the future we may want to make this
+  // run-time enable-able
+  void Log(const char* format, ...) const;
+
+  // Logs the raw string (no controller name prefix).
+  static void LogRaw(const char* format, ...);
+#else
+  void Log(const char* format, ...) const {}
+  static void LogRaw(const char* format, ...) {}
+#endif
+
  protected:
   Thread* thread() { return thread_; }
   void set_thread(Thread* thread) { thread_ = thread; }
+
+  // Returns the name of this thread controller. This will be visible in logs.
+  // This should be something simple and short like "Step" or "Step Over".
+  virtual const char* GetName() const = 0;
 
   // Tells the owner of this class that this ThreadController has completed
   // its work. Normally returning kStop from OnThreadStop() will do this, but

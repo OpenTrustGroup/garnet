@@ -10,8 +10,8 @@
 #include <ddk/device.h>
 #include <ddk/driver.h>
 #include <fuchsia/mediacodec/cpp/fidl.h>
-#include <lib/fxl/logging.h>
 #include <lib/zx/bti.h>
+#include <zircon/assert.h>
 #include <zircon/errors.h>
 #include <zircon/syscalls.h>
 
@@ -19,6 +19,7 @@
 
 #include "codec_frame.h"
 #include "decoder_core.h"
+#include "pts_manager.h"
 #include "registers.h"
 #include "video_frame.h"
 
@@ -58,13 +59,13 @@ class VideoDecoder {
   using FrameReadyNotifier = std::function<void(std::shared_ptr<VideoFrame>)>;
   using InitializeFramesHandler =
       std::function<zx_status_t(::zx::bti,
-                                uint32_t,                    // frame_count
-                                uint32_t,                    // width
-                                uint32_t,                    // height
-                                uint32_t,                    // stride
-                                uint32_t,                    // display_width
-                                uint32_t,                    // display_height
-                                std::vector<CodecFrame>*)>;  // frames_out
+                                uint32_t,  // frame_count
+                                uint32_t,  // width
+                                uint32_t,  // height
+                                uint32_t,  // stride
+                                uint32_t,  // display_width
+                                uint32_t   // display_height
+                                )>;
   class Owner {
    public:
     virtual __WARN_UNUSED_RESULT DosRegisterIo* dosbus() = 0;
@@ -79,24 +80,30 @@ class VideoDecoder {
     virtual __WARN_UNUSED_RESULT zx_status_t
     AllocateIoBuffer(io_buffer_t* buffer, size_t size, uint32_t alignement_log2,
                      uint32_t flags) = 0;
-    virtual __WARN_UNUSED_RESULT PtsManager* pts_manager() = 0;
     virtual __WARN_UNUSED_RESULT bool IsDecoderCurrent(
         VideoDecoder* decoder) = 0;
   };
+
+  VideoDecoder() { pts_manager_ = std::make_unique<PtsManager>(); }
 
   virtual __WARN_UNUSED_RESULT zx_status_t Initialize() = 0;
   virtual void HandleInterrupt() = 0;
   virtual void SetFrameReadyNotifier(FrameReadyNotifier notifier) {}
   virtual void SetInitializeFramesHandler(InitializeFramesHandler handler) {
-    FXL_CHECK(false) << "not yet implemented";
+    ZX_ASSERT_MSG(false, "not yet implemented");
   }
   virtual void SetErrorHandler(fit::closure error_handler) {
-    FXL_CHECK(false) << "not yet implemented";
+    ZX_ASSERT_MSG(false, "not yet implemented");
   }
   virtual void ReturnFrame(std::shared_ptr<VideoFrame> frame) = 0;
+  virtual void InitializedFrames(std::vector<CodecFrame> frames, uint32_t width,
+                                 uint32_t height, uint32_t stride) = 0;
   virtual ~VideoDecoder() {}
 
+  __WARN_UNUSED_RESULT PtsManager* pts_manager() { return pts_manager_.get(); }
+
  protected:
+  std::unique_ptr<PtsManager> pts_manager_;
   uint64_t next_non_codec_buffer_lifetime_ordinal_ = 0;
 };
 

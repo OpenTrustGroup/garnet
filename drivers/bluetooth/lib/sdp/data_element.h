@@ -75,16 +75,18 @@ class DataElement {
   DataElement();
   ~DataElement() = default;
 
-  // Default move & copy constructor
+  // Default move constructor and move-assigment
   DataElement(DataElement&&) = default;
-  DataElement(const DataElement&) = default;
-  DataElement& operator=(const DataElement&) = default;
+  DataElement& operator=(DataElement&&) = default;
 
   // Convenience constructor to create a DataElement from a basic type.
   template <typename T>
-  DataElement(T value) {
-    Set<T>(value);
+  explicit DataElement(T value) {
+    Set<T>(std::move(value));
   };
+
+  // Make a deep copy of this element.
+  DataElement Clone() const { return DataElement(*this); }
 
   // Reads a DataElement from |buffer|, replacing any data that was in |elem|.
   // Returns the amount of space occupied on |buffer| by the data element, or
@@ -133,11 +135,14 @@ class DataElement {
   // Returns the number of bytes used for writing this element.
   size_t Write(common::MutableByteBuffer* buffer) const;
 
-  // Describes this element (including it's type and size) in a string,
-  // i.e. UnsignedInt:4(15) or Sequence { UUID(1567), UUID(2502) }
-  std::string Describe() const;
+  // Debug representation of this element (including it's type and size) in a
+  // string, i.e. UnsignedInt:4(15) or Sequence { UUID(1567), UUID(2502) }
+  std::string ToString() const;
 
  private:
+  // Copy constructor for Clone(), no assignment operator.
+  DataElement(const DataElement&);
+  DataElement& operator=(const DataElement&) = delete;
   // Sets the size type based on a variable size (Next one, two, or four)
   void SetVariableSize(size_t length);
 

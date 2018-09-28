@@ -25,7 +25,6 @@
 #include "decoder_instance.h"
 #include "device_ctx.h"
 #include "firmware_blob.h"
-#include "lib/fxl/synchronization/thread_annotations.h"
 #include "registers.h"
 #include "stream_buffer.h"
 #include "video_decoder.h"
@@ -61,11 +60,8 @@ class AmlogicVideo final : public VideoDecoder::Owner,
                                                     size_t size,
                                                     uint32_t alignment_log2,
                                                     uint32_t flags) override;
-  __WARN_UNUSED_RESULT PtsManager* pts_manager() override {
-    return pts_manager_.get();
-  }
   __WARN_UNUSED_RESULT bool IsDecoderCurrent(VideoDecoder* decoder) override
-      FXL_NO_THREAD_SAFETY_ANALYSIS {
+      __TA_NO_THREAD_SAFETY_ANALYSIS {
     assert(decoder);
     return decoder == video_decoder_;
   }
@@ -76,19 +72,17 @@ class AmlogicVideo final : public VideoDecoder::Owner,
   void UngateClocks() override;
   void GateClocks() override;
 
- private:
-  friend class TestH264;
-  friend class TestMpeg2;
-  friend class TestVP9;
-  friend class TestFrameProvider;
-  friend class CodecAdapterH264;
+  // The pts manager has its own locking, so don't worry about the video decoder
+  // lock.
+  __WARN_UNUSED_RESULT PtsManager* pts_manager()
+      __TA_NO_THREAD_SAFETY_ANALYSIS {
+    ZX_DEBUG_ASSERT(video_decoder_);
+    return video_decoder_->pts_manager();
+  }
 
-  __WARN_UNUSED_RESULT zx_status_t AllocateStreamBuffer(StreamBuffer* buffer,
-                                                        uint32_t size);
-
-  void InitializeStreamInput(bool use_parser);
-  void SetDefaultInstance(std::unique_ptr<VideoDecoder> decoder)
-      FXL_EXCLUSIVE_LOCKS_REQUIRED(video_decoder_lock_);
+  void InitializeCore(std::unique_ptr<DecoderCore> core);
+  void ResetCore();
+  void ClearDecoderInstance();
 
   __WARN_UNUSED_RESULT
   zx_status_t InitializeStreamBuffer(bool use_parser, uint32_t size);
@@ -97,10 +91,36 @@ class AmlogicVideo final : public VideoDecoder::Owner,
   __WARN_UNUSED_RESULT
   zx_status_t ParseVideo(void* data, uint32_t len);
   __WARN_UNUSED_RESULT
-  zx_status_t ProcessVideoNoParser(void* data, uint32_t len,
-                                   uint32_t* written_out = nullptr);
+  zx_status_t WaitForParsingCompleted(zx_duration_t deadline);
+  void CancelParsing();
   __WARN_UNUSED_RESULT
-  zx_status_t ProcessVideoNoParserAtOffset(void* data, uint32_t len,
+  zx_status_t ProcessVideoNoParser(const void* data, uint32_t len,
+                                   uint32_t* written_out = nullptr);
+
+  void SetDefaultInstance(std::unique_ptr<VideoDecoder> decoder)
+      __TA_REQUIRES(video_decoder_lock_);
+  __WARN_UNUSED_RESULT
+  std::mutex* video_decoder_lock() __TA_RETURN_CAPABILITY(video_decoder_lock_) {
+    return &video_decoder_lock_;
+  }
+  __WARN_UNUSED_RESULT
+  VideoDecoder* video_decoder() __TA_REQUIRES(video_decoder_lock_) {
+    return video_decoder_;
+  }
+
+ private:
+  friend class TestH264;
+  friend class TestMpeg2;
+  friend class TestVP9;
+  friend class TestFrameProvider;
+
+  __WARN_UNUSED_RESULT zx_status_t AllocateStreamBuffer(StreamBuffer* buffer,
+                                                        uint32_t size);
+
+  void InitializeStreamInput(bool use_parser);
+
+  __WARN_UNUSED_RESULT
+  zx_status_t ProcessVideoNoParserAtOffset(const void* data, uint32_t len,
                                            uint32_t current_offset,
                                            uint32_t* written_out = nullptr);
   void InitializeInterrupts();
@@ -127,6 +147,8 @@ class AmlogicVideo final : public VideoDecoder::Owner,
 
   std::unique_ptr<FirmwareBlob> firmware_;
 
+  std::unique_ptr<io_buffer_t> parser_input_;
+
   // This buffer holds an ES start code that's used to get an interrupt when the
   // parser is finished.
   io_buffer_t search_pattern_ = {};
@@ -134,6 +156,9 @@ class AmlogicVideo final : public VideoDecoder::Owner,
   zx::handle bti_;
 
   zx::event parser_finished_event_;
+
+  std::mutex parser_running_lock_;
+  bool parser_running_ = false;
 
   zx::handle parser_interrupt_handle_;
   zx::handle vdec0_interrupt_handle_;
@@ -145,10 +170,9 @@ class AmlogicVideo final : public VideoDecoder::Owner,
 
   std::unique_ptr<DecoderCore> core_;
 
-  std::unique_ptr<PtsManager> pts_manager_;
   std::mutex video_decoder_lock_;
   // This is the video decoder that's currently attached to the hardware.
-  FXL_GUARDED_BY(video_decoder_lock_)
+  __TA_GUARDED(video_decoder_lock_)
   VideoDecoder* video_decoder_ = nullptr;
 
   // This is the stream buffer that's currently attached to the hardware.

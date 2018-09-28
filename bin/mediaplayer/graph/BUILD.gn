@@ -15,8 +15,17 @@ source_set("graph") {
     "models/stage.h",
     "packet.cc",
     "packet.h",
-    "payload_allocator.cc",
-    "payload_allocator.h",
+    "payloads/local_memory_payload_allocator.cc",
+    "payloads/local_memory_payload_allocator.h",
+    "payloads/payload_allocator.cc",
+    "payloads/payload_allocator.h",
+    "payloads/payload_buffer.cc",
+    "payloads/payload_buffer.h",
+    "payloads/payload_config.h",
+    "payloads/payload_manager.cc",
+    "payloads/payload_manager.h",
+    "payloads/vmo_payload_allocator.cc",
+    "payloads/vmo_payload_allocator.h",
     "refs.cc",
     "refs.h",
     "result.h",
@@ -46,6 +55,7 @@ source_set("graph") {
     "//garnet/public/lib/fostr",
     "//garnet/public/lib/media/timeline",
     "//zircon/public/lib/async",
+    "//zircon/public/lib/fbl",
     "//zircon/public/lib/fit",
   ]
 
@@ -53,5 +63,6 @@ source_set("graph") {
     "//garnet/bin/mediaplayer/util",
     "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
+    "//garnet/public/lib/media/transport",
   ]
 }

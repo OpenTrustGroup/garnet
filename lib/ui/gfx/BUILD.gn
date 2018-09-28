@@ -2,6 +2,8 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//third_party/flatbuffers/flatbuffer.gni")
+
 declare_args() {
   # 0 - use normal swapchain
   # 1 - use vulkan swapchain, but wait for real display
@@ -45,8 +47,6 @@ source_set("gfx") {
     "engine/hit.h",
     "engine/hit_tester.cc",
     "engine/hit_tester.h",
-    "engine/object_linker.cc",
-    "engine/object_linker.h",
     "engine/resource_linker.cc",
     "engine/resource_linker.h",
     "engine/resource_map.cc",
@@ -75,6 +75,10 @@ source_set("gfx") {
     "resources/compositor/layer.h",
     "resources/compositor/layer_stack.cc",
     "resources/compositor/layer_stack.h",
+    "resources/snapshot/serializer.h",
+    "resources/snapshot/snapshotter.cc",
+    "resources/snapshot/snapshotter.h",
+    "resources/snapshot/version.h",
     "resources/dump_visitor.cc",
     "resources/dump_visitor.h",
     "resources/gpu_image.cc",
@@ -156,6 +160,7 @@ source_set("gfx") {
     "util/event_timestamper.h",
     "util/image_formats.cc",
     "util/image_formats.h",
+    "util/time.h",
     "util/unwrap.h",
     "util/vulkan_utils.cc",
     "util/vulkan_utils.h",
@@ -167,6 +172,7 @@ source_set("gfx") {
   configs += [ ":swapchain" ]
 
   public_deps = [
+    ":snapshot_fbs",
     "//garnet/lib/ui/scenic",
     "//garnet/public/fidl/fuchsia.math",
     "//garnet/public/fidl/fuchsia.ui.gfx",
@@ -181,11 +187,33 @@ source_set("gfx") {
   ]
 
   deps = [
+    ":object_linker",
     "//garnet/lib/ui/yuv",
     "//garnet/public/lib/escher/util:check_vulkan_support",
     "//garnet/public/lib/images/cpp",
     "//garnet/public/lib/ui/scenic/cpp",
     "//zircon/public/fidl/fuchsia-display",
+    "//zircon/public/fidl/fuchsia-sysmem",
     "//zircon/public/lib/trace",
+  ]
+}
+
+source_set("object_linker") {
+  sources = [
+    "engine/object_linker.h",
+    "engine/object_linker.cc"
+  ]
+
+  public_deps = [
+    "//garnet/lib/ui/scenic/util",
+    "//garnet/public/lib/fsl",
+    "//garnet/public/lib/fxl",
+    "//zircon/public/lib/fit",
+  ]
+}
+
+flatbuffer("snapshot_fbs") {
+  sources = [
+    "resources/snapshot/snapshot.fbs",
   ]
 }

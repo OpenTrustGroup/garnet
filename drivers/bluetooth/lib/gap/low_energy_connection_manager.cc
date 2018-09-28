@@ -138,31 +138,31 @@ class LowEnergyConnection final : public sm::PairingState::Delegate {
 
  private:
   // sm::PairingState::Delegate override:
-  void OnNewPairingData(const Optional<sm::LTK>& ltk,
-                        const Optional<sm::Key>& irk,
-                        const Optional<DeviceAddress>& identity,
-                        const Optional<sm::Key>& csrk) override {
-    // Consider the pairing temporary if no pairing data was received. This
-    // means we'll remain encrypted with the STK without creating a bond.
-    bool temporary = !ltk && !irk && !identity && !csrk;
-
-    if (temporary) {
+  void OnNewPairingData(const sm::PairingData& pairing_data) override {
+    // Consider the pairing temporary if no link key was received. This
+    // means we'll remain encrypted with the STK without creating a bond and
+    // reinitiate pairing when we reconnect in the future.
+    // TODO(armansito): Support bonding with just the CSRK for LE security mode
+    // 2.
+    if (!pairing_data.ltk) {
       bt_log(INFO, "gap-le", "temporarily paired with device (id: %s)",
              id().c_str());
       return;
     }
 
     bt_log(INFO, "gap-le", "new pairing data [%s%s%s%sid: %s]",
-           ltk ? "ltk " : "", irk ? "irk " : "",
-           identity ? fxl::StringPrintf("(identity: %s) ",
-                                        identity->ToString().c_str())
-                          .c_str()
-                    : "",
-           csrk ? "csrk " : "", id().c_str());
+           pairing_data.ltk ? "ltk " : "", pairing_data.irk ? "irk " : "",
+           pairing_data.identity_address
+               ? fxl::StringPrintf(
+                     "(identity: %s) ",
+                     pairing_data.identity_address->ToString().c_str())
+                     .c_str()
+               : "",
+           pairing_data.csrk ? "csrk " : "", id().c_str());
 
-    // TODO(armansito): Store all pairing data with the remote device cache.
-    if (ltk) {
-      conn_mgr_->device_cache()->StoreLTK(id_, *ltk);
+    if (!conn_mgr_->device_cache()->StoreLowEnergyBond(id_, pairing_data)) {
+      bt_log(ERROR, "gap-le", "failed to cache bonding data (id: %s)",
+             id().c_str());
     }
   }
 
@@ -429,7 +429,8 @@ bool LowEnergyConnectionManager::Connect(const std::string& device_identifier,
     return true;
   }
 
-  peer->SetLEConnectionState(RemoteDevice::ConnectionState::kInitializing);
+  peer->MutLe().SetConnectionState(
+      RemoteDevice::ConnectionState::kInitializing);
   pending_requests_[device_identifier] =
       PendingRequestData(peer->address(), std::move(callback));
 
@@ -469,17 +470,26 @@ LowEnergyConnectionManager::RegisterRemoteInitiatedLink(
   // TODO(armansito): Use own address when storing the connection (NET-321).
   // Currently this will refuse the connection and disconnect the link if |peer|
   // is already connected to us by a different local address.
-  return InitializeConnection(peer->identifier(), std::move(link));
+  auto conn_ref = InitializeConnection(peer->identifier(), std::move(link));
+  if (conn_ref) {
+    peer->MutLe().SetConnectionState(RemoteDevice::ConnectionState::kConnected);
+  }
+  return conn_ref;
 }
 
 void LowEnergyConnectionManager::SetPairingDelegate(
     fxl::WeakPtr<PairingDelegate> delegate) {
+  // TODO(armansito): Add a test case for this once NET-1179 is done.
+  pairing_delegate_ = delegate;
+
+  // Tell existing connections to abort ongoing pairing procedures. The new
+  // delegate will receive calls to PairingDelegate::CompletePairing, unless it
+  // is null.
   for (auto& iter : connections_) {
     iter.second->ResetPairingState(delegate
                                        ? delegate->io_capability()
                                        : sm::IOCapability::kNoInputNoOutput);
   }
-  pairing_delegate_ = delegate;
 }
 
 void LowEnergyConnectionManager::SetConnectionParametersCallbackForTesting(
@@ -649,7 +659,8 @@ void LowEnergyConnectionManager::CleanUpConnection(
   // Mark the peer device as no longer connected.
   RemoteDevice* peer = device_cache_->FindDeviceById(conn->id());
   ZX_DEBUG_ASSERT(peer);
-  peer->SetLEConnectionState(RemoteDevice::ConnectionState::kNotConnected);
+  peer->MutLe().SetConnectionState(
+      RemoteDevice::ConnectionState::kNotConnected);
 
   // Clean up GATT profile.
   gatt_->RemoveConnection(conn->id());
@@ -691,7 +702,7 @@ void LowEnergyConnectionManager::RegisterLocalInitiatedLink(
   ZX_DEBUG_ASSERT(conn_iter != connections_.end());
 
   // For now, jump to the initialized state.
-  peer->SetLEConnectionState(RemoteDevice::ConnectionState::kConnected);
+  peer->MutLe().SetConnectionState(RemoteDevice::ConnectionState::kConnected);
 
   auto iter = pending_requests_.find(peer->identifier());
   if (iter != pending_requests_.end()) {
@@ -718,10 +729,7 @@ RemoteDevice* LowEnergyConnectionManager::UpdateRemoteDeviceWithLink(
     peer =
         device_cache_->NewDevice(link.peer_address(), true /* connectable */);
   }
-
-  peer->TryMakeNonTemporary();
-  peer->set_le_connection_params(link.low_energy_parameters());
-
+  peer->MutLe().SetConnectionParameters(link.low_energy_parameters());
   return peer;
 }
 
@@ -741,7 +749,7 @@ void LowEnergyConnectionManager::OnConnectResult(
          device_identifier.c_str());
   RemoteDevice* dev = device_cache_->FindDeviceById(device_identifier);
   ZX_ASSERT(dev);
-  dev->SetLEConnectionState(RemoteDevice::ConnectionState::kNotConnected);
+  dev->MutLe().SetConnectionState(RemoteDevice::ConnectionState::kNotConnected);
 
   // Notify the matching pending callbacks about the failure.
   auto iter = pending_requests_.find(device_identifier);
@@ -842,7 +850,7 @@ void LowEnergyConnectionManager::OnLEConnectionUpdateComplete(
     return;
   }
 
-  peer->set_le_connection_params(params);
+  peer->MutLe().SetConnectionParameters(params);
 
   if (test_conn_params_cb_)
     test_conn_params_cb_(*peer);
@@ -859,13 +867,11 @@ void LowEnergyConnectionManager::OnNewLEConnectionParams(
     return;
   }
 
-  peer->set_le_preferred_connection_params(params);
+  peer->MutLe().SetPreferredConnectionParameters(params);
 
   // Use the new parameters if we're not performing service discovery or
   // bonding.
-  if (peer->le_connection_state() ==
-          RemoteDevice::ConnectionState::kConnected ||
-      peer->le_connection_state() == RemoteDevice::ConnectionState::kBonded) {
+  if (peer->le()->connected()) {
     UpdateConnectionParams(handle, params);
   }
 }

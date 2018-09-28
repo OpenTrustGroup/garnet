@@ -4,14 +4,13 @@
 
 #include "garnet/bin/media/audio_core/driver_output.h"
 
-#include <iomanip>
-
 #include <audio-proto-utils/format-utils.h>
 #include <dispatcher-pool/dispatcher-channel.h>
 #include <fbl/atomic.h>
-#include <fbl/auto_call.h>
 #include <fbl/limits.h>
+#include <lib/fit/defer.h>
 #include <zircon/process.h>
+#include <iomanip>
 
 #include "garnet/bin/media/audio_core/audio_device_manager.h"
 #include "garnet/lib/media/wav_writer/wav_writer.h"
@@ -112,10 +111,10 @@ bool DriverOutput::StartMixJob(MixJob* job, fxl::TimePoint process_start) {
   if (device_settings_ != nullptr) {
     AudioDeviceSettings::GainState cur_gain_state;
     device_settings_->SnapshotGainState(&cur_gain_state);
-    job->sw_output_db_gain = cur_gain_state.db_gain;
+    job->sw_output_gain_db = cur_gain_state.gain_db;
     job->sw_output_muted = cur_gain_state.muted;
   } else {
-    job->sw_output_db_gain = 0.0f;
+    job->sw_output_gain_db = 0.0f;
     job->sw_output_muted = true;
   }
 
@@ -272,8 +271,8 @@ void DriverOutput::ApplyGainLimits(::fuchsia::media::AudioGainInfo* in_out_info,
   FXL_DCHECK(in_out_info != nullptr);
 
   // We do not currently allow more than unity gain for audio outputs.
-  if (in_out_info->db_gain > 0.0) {
-    in_out_info->db_gain = 0;
+  if (in_out_info->gain_db > 0.0) {
+    in_out_info->gain_db = 0;
   }
 
   // Audio outputs should never support AGC
@@ -291,7 +290,7 @@ void DriverOutput::ScheduleNextLowWaterWakeup() {
 }
 
 void DriverOutput::OnDriverInfoFetched() {
-  auto cleanup = fbl::MakeAutoCall([this]() FXL_NO_THREAD_SAFETY_ANALYSIS {
+  auto cleanup = fit::defer([this]() FXL_NO_THREAD_SAFETY_ANALYSIS {
     state_ = State::Shutdown;
     ShutdownSelf();
   });
@@ -375,7 +374,7 @@ void DriverOutput::OnDriverInfoFetched() {
 }
 
 void DriverOutput::OnDriverConfigComplete() {
-  auto cleanup = fbl::MakeAutoCall([this]() FXL_NO_THREAD_SAFETY_ANALYSIS {
+  auto cleanup = fit::defer([this]() FXL_NO_THREAD_SAFETY_ANALYSIS {
     state_ = State::Shutdown;
     ShutdownSelf();
   });

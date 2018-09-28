@@ -5,24 +5,44 @@
 #ifndef GARNET_LIB_MACHINA_ARCH_X86_E820_H_
 #define GARNET_LIB_MACHINA_ARCH_X86_E820_H_
 
-#include "garnet/lib/machina/phys_mem.h"
+#include <vector>
+
+#include <zircon/boot/e820.h>
+#include "garnet/lib/machina/dev_mem.h"
+#include "garnet/lib/machina/device/phys_mem.h"
 
 namespace machina {
 
 /**
- * Return the number of entries in the e820 memory map.
+ * Used to construct an E820 memory map
  *
- * @param size Size of guest physical memory.
+ * It is not the responsibility of this class to detect or prevent region
+ * overlap of either same or differently typed regions.
  */
-size_t e820_entries(size_t size);
+class E820Map {
+ public:
+  /*
+   * Create a new E820 map
+   *
+   * @param pmem_size Size of physical memory. The E820 map will contain as much
+   *  RAM regions as can fit in the defined physical memory that do not
+   *  collide with the provided dev_mem regions.
+   */
+  E820Map(size_t pmem_size, const DevMem &dev_mem);
 
-/**
- * Create an e820 memory map.
- *
- * @param addr Address to place e820 memory map.
- * @param size Size of guest physical memory.
- */
-void create_e820(void* addr, size_t size);
+  void AddReservedRegion(zx_gpaddr_t addr, size_t size) {
+    entries.emplace_back(e820entry_t{addr, size, E820_RESERVED});
+  }
+
+  size_t size() const { return entries.size(); }
+
+  void copy(e820entry_t *dest) {
+    std::copy(entries.begin(), entries.end(), dest);
+  }
+
+ private:
+  std::vector<e820entry_t> entries;
+};
 
 }  // namespace machina
 

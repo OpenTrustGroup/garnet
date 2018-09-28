@@ -25,7 +25,9 @@ using SDP_ServiceRecordTest = ::testing::Test;
 // Test: SetServiceClassUUIDs
 //  - Sets the right attribute with the right format.
 TEST_F(SDP_ServiceRecordTest, BasicFunctionality) {
-  ServiceRecord record(kSDPHandle);
+  ServiceRecord record;
+
+  record.SetHandle(kSDPHandle);
 
   EXPECT_EQ(kSDPHandle, record.handle());
 
@@ -46,7 +48,7 @@ TEST_F(SDP_ServiceRecordTest, BasicFunctionality) {
 
   EXPECT_TRUE(record.HasAttribute(kServiceClassIdList));
 
-  DataElement elem = record.GetAttribute(kServiceClassIdList);
+  const DataElement& elem = record.GetAttribute(kServiceClassIdList);
 
   EXPECT_EQ(DataElement::Type::kSequence, elem.type());
 
@@ -66,7 +68,9 @@ TEST_F(SDP_ServiceRecordTest, BasicFunctionality) {
 // Test: GetAttributesInRange
 //  - Returns any attributes that are present.
 TEST_F(SDP_ServiceRecordTest, GetAttributesInRange) {
-  ServiceRecord record(5);
+  ServiceRecord record;
+
+  record.SetHandle(kSDPHandle);
 
   record.SetAttribute(0xf00d, DataElement());
   record.SetAttribute(0x0001, DataElement());
@@ -92,15 +96,15 @@ TEST_F(SDP_ServiceRecordTest, GetAttributesInRange) {
 // Test: FindUUID
 //  - Only returns true if all uuids are present
 TEST_F(SDP_ServiceRecordTest, FindUUID) {
-  ServiceRecord record(kSDPHandle);
+  ServiceRecord record;
 
   DataElement elem;
   elem.Set(common::UUID(uint16_t(0xfeaa)));
-  record.SetAttribute(0xb001, elem);
+  record.SetAttribute(0xb001, std::move(elem));
   elem.Set(common::UUID(uint16_t(0xfeed)));
-  record.SetAttribute(0xb002, elem);
+  record.SetAttribute(0xb002, std::move(elem));
   elem.Set(common::UUID(uint16_t(0xfeec)));
-  record.SetAttribute(0xb003, elem);
+  record.SetAttribute(0xb003, std::move(elem));
 
   std::unordered_set<common::UUID> search_pattern;
   search_pattern.insert(common::UUID(uint16_t(0xfeaa)));
@@ -118,15 +122,14 @@ TEST_F(SDP_ServiceRecordTest, FindUUID) {
 
 // Test: AddProtocolDescriptor
 TEST_F(SDP_ServiceRecordTest, AddProtocolDescriptor) {
-  ServiceRecord record(kSDPHandle);
+  ServiceRecord record;
 
   EXPECT_FALSE(record.HasAttribute(kProtocolDescriptorList));
 
-  DataElement psm;
-  psm.Set(uint16_t(0x0001));  // SDP PSM
+  DataElement psm(uint16_t(0x0001));  // SDP PSM
 
   record.AddProtocolDescriptor(ServiceRecord::kPrimaryProtocolList,
-                               protocol::kL2CAP, psm);
+                               protocol::kL2CAP, std::move(psm));
 
   // clang-format off
   auto expected = common::CreateStaticByteBuffer(
@@ -141,7 +144,7 @@ TEST_F(SDP_ServiceRecordTest, AddProtocolDescriptor) {
 
   EXPECT_TRUE(record.HasAttribute(kProtocolDescriptorList));
 
-  DataElement val = record.GetAttribute(kProtocolDescriptorList);
+  const DataElement& val = record.GetAttribute(kProtocolDescriptorList);
   common::DynamicByteBuffer block(val.WriteSize());
   val.Write(&block);
 
@@ -167,9 +170,9 @@ TEST_F(SDP_ServiceRecordTest, AddProtocolDescriptor) {
   );
   // clang-format on
 
-  val = record.GetAttribute(kProtocolDescriptorList);
-  common::DynamicByteBuffer block_sdp(val.WriteSize());
-  val.Write(&block_sdp);
+  const DataElement& pdl = record.GetAttribute(kProtocolDescriptorList);
+  common::DynamicByteBuffer block_sdp(pdl.WriteSize());
+  pdl.Write(&block_sdp);
 
   EXPECT_EQ(expected_sdp.size(), block_sdp.size());
   EXPECT_TRUE(ContainersEqual(expected_sdp, block_sdp));
@@ -188,9 +191,10 @@ TEST_F(SDP_ServiceRecordTest, AddProtocolDescriptor) {
   );
   // clang-format on
 
-  val = record.GetAttribute(kAdditionalProtocolDescriptorList);
-  common::DynamicByteBuffer block_addl(val.WriteSize());
-  val.Write(&block_addl);
+  const DataElement& apdl =
+      record.GetAttribute(kAdditionalProtocolDescriptorList);
+  common::DynamicByteBuffer block_addl(apdl.WriteSize());
+  apdl.Write(&block_addl);
 
   EXPECT_EQ(expected_addl.size(), block_addl.size());
   EXPECT_TRUE(ContainersEqual(expected_addl, block_addl));
@@ -200,7 +204,7 @@ TEST_F(SDP_ServiceRecordTest, AddProtocolDescriptor) {
 //  - Adds an attribute if it doesn't exist
 //  - Appends to the attribute if it does exist
 TEST_F(SDP_ServiceRecordTest, AddProfile) {
-  ServiceRecord record(kSDPHandle);
+  ServiceRecord record;
 
   EXPECT_FALSE(record.HasAttribute(kBluetoothProfileDescriptorList));
 
@@ -219,7 +223,7 @@ TEST_F(SDP_ServiceRecordTest, AddProfile) {
   );
   // clang-format on
 
-  DataElement val = record.GetAttribute(kBluetoothProfileDescriptorList);
+  const DataElement& val = record.GetAttribute(kBluetoothProfileDescriptorList);
   common::DynamicByteBuffer block(val.WriteSize());
   val.Write(&block);
 
@@ -244,7 +248,8 @@ TEST_F(SDP_ServiceRecordTest, AddProfile) {
   );
   // clang-format on
 
-  DataElement val_dun = record.GetAttribute(kBluetoothProfileDescriptorList);
+  const DataElement& val_dun =
+      record.GetAttribute(kBluetoothProfileDescriptorList);
   common::DynamicByteBuffer block_dun(val_dun.WriteSize());
   val_dun.Write(&block_dun);
 
@@ -256,7 +261,7 @@ TEST_F(SDP_ServiceRecordTest, AddProfile) {
 //  - Requires at least one is set.
 //  - Adds the right attributes to a set.
 TEST_F(SDP_ServiceRecordTest, AddInfo) {
-  ServiceRecord record(kSDPHandle);
+  ServiceRecord record;
 
   EXPECT_FALSE(record.HasAttribute(kLanguageBaseAttributeIdList));
 
@@ -267,7 +272,7 @@ TEST_F(SDP_ServiceRecordTest, AddInfo) {
   EXPECT_TRUE(record.AddInfo("en", "SDP", "💖", ""));
 
   EXPECT_TRUE(record.HasAttribute(kLanguageBaseAttributeIdList));
-  DataElement val = record.GetAttribute(kLanguageBaseAttributeIdList);
+  const DataElement& val = record.GetAttribute(kLanguageBaseAttributeIdList);
 
   auto triplets = val.Get<std::vector<DataElement>>();
   EXPECT_TRUE(triplets);
@@ -289,14 +294,14 @@ TEST_F(SDP_ServiceRecordTest, AddInfo) {
   EXPECT_EQ(0x0100, *base_attrid);  // The primary language must be at 0x0100.
 
   EXPECT_TRUE(record.HasAttribute(*base_attrid + kServiceNameOffset));
-  DataElement name_elem =
+  const DataElement& name_elem =
       record.GetAttribute(*base_attrid + kServiceNameOffset);
   auto name = name_elem.Get<std::string>();
   EXPECT_TRUE(name);
   EXPECT_EQ("SDP", *name);
 
   EXPECT_TRUE(record.HasAttribute(*base_attrid + kServiceDescriptionOffset));
-  DataElement desc_elem =
+  const DataElement& desc_elem =
       record.GetAttribute(*base_attrid + kServiceDescriptionOffset);
   auto desc = desc_elem.Get<std::string>();
   EXPECT_TRUE(desc);

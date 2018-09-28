@@ -53,7 +53,7 @@ impl Session {
 
     pub fn present(
         &mut self, presentation_time: u64,
-    ) -> fidl::client2::QueryResponseFut<(PresentationInfo)> {
+    ) -> fidl::client::QueryResponseFut<(PresentationInfo)> {
         self.flush();
         self.session.present(
             presentation_time,
@@ -383,6 +383,12 @@ impl EntityNode {
             session,
             ResourceArgs::EntityNode(args),
         )))
+    }
+
+    pub fn export_as_request(&self) -> EventPair {
+        let (mine, theirs) = EventPair::create().unwrap();
+        self.enqueue(cmd::export_resource(self.id(), mine));
+        theirs
     }
 }
 

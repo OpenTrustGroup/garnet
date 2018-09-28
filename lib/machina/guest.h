@@ -5,15 +5,16 @@
 #ifndef GARNET_LIB_MACHINA_GUEST_H_
 #define GARNET_LIB_MACHINA_GUEST_H_
 
-#include <fbl/intrusive_single_list.h>
-#include <fbl/unique_ptr.h>
+#include <forward_list>
+
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/fit/function.h>
 #include <zircon/types.h>
 #include <zx/guest.h>
 #include <zx/vmar.h>
 
-#include "garnet/lib/machina/phys_mem.h"
+#include "garnet/lib/machina/device/phys_mem.h"
+#include "garnet/lib/machina/io.h"
 #include "garnet/lib/machina/vcpu.h"
 
 namespace machina {
@@ -31,6 +32,7 @@ class Guest {
  public:
   using VcpuFactory = fit::function<zx_status_t(Guest* guest, uintptr_t entry,
                                                 uint64_t id, Vcpu* vcpu)>;
+  using IoMappingList = std::forward_list<IoMapping>;
 
   zx_status_t Init(size_t mem_size);
 
@@ -59,6 +61,14 @@ class Guest {
   // Waits for all VCPUs associated with the guest to finish executing.
   zx_status_t Join();
 
+  // Creates a vmar for a specific region of guest memory.
+  zx_status_t CreateSubVmar(uint64_t addr, size_t size, zx::vmar* vmar);
+
+  IoMappingList::const_iterator mappings_begin() const {
+    return mappings_.begin();
+  }
+  IoMappingList::const_iterator mappings_end() const { return mappings_.end(); }
+
  private:
   // TODO(alexlegg): Consolidate this constant with other definitions in Garnet.
   static constexpr size_t kMaxVcpus = 16u;
@@ -68,12 +78,11 @@ class Guest {
   zx::guest guest_;
   zx::vmar vmar_;
   PhysMem phys_mem_;
-
-  fbl::SinglyLinkedList<fbl::unique_ptr<IoMapping>> mappings_;
+  IoMappingList mappings_;
 
   VcpuFactory vcpu_factory_ = [](Guest* guest, uintptr_t entry, uint64_t id,
                                  Vcpu* vcpu) { return ZX_ERR_BAD_STATE; };
-  fbl::unique_ptr<Vcpu> vcpus_[kMaxVcpus] = {};
+  std::unique_ptr<Vcpu> vcpus_[kMaxVcpus] = {};
 
   async::Loop device_loop_{&kAsyncLoopConfigNoAttachToThread};
 };

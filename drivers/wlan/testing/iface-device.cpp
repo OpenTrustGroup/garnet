@@ -35,7 +35,7 @@ static wlanmac_protocol_ops_t wlanmac_test_protocol_ops = {
     .configure_bss = [](void* ctx, uint32_t options, wlan_bss_config_t* config) -> zx_status_t {
         return ZX_OK;
     },
-    .enable_beaconing = [](void* ctx, uint32_t options, bool enabled) -> zx_status_t {
+    .enable_beaconing = [](void* ctx, uint32_t options, wlan_bcn_config_t* bcn_cfg) -> zx_status_t {
         return ZX_OK;
     },
     .configure_beacon = [](void* ctx, uint32_t options, wlan_tx_packet_t* pkt) -> zx_status_t {
@@ -96,6 +96,7 @@ zx_status_t IfaceDevice::Query(uint32_t options, wlanmac_info_t* info) {
     // clang-format off
     ifc_info->bands[0] = {
         .desc = "2.4 GHz",
+        .ht_supported = false,
         .ht_caps = {},
         .vht_supported = false,
         .vht_caps = {},
@@ -108,6 +109,7 @@ zx_status_t IfaceDevice::Query(uint32_t options, wlanmac_info_t* info) {
     };
     ifc_info->bands[1] = {
         .desc = "5 GHz",
+        .ht_supported = false,
         .ht_caps = {},
         .vht_supported = false,
         .vht_caps = {},

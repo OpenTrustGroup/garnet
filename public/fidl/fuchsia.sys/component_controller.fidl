@@ -21,6 +21,8 @@ enum TerminationReason {
   RUNNER_FAILED = 6;
   // A Runner terminated while attempting to run a component.
   RUNNER_TERMINATED = 7;
+  // Attempted to use an unsupported feature.
+  UNSUPPORTED = 8;
 };
 
 // An interface for controlling components.
@@ -54,4 +56,10 @@ interface ComponentController {
   // reason is EXITED. If the termination reason is not EXITED, the
   // return code is guaranteed not to be 0.
   4: -> OnTerminated(int64 return_code, TerminationReason termination_reason);
+
+  // Event that is triggered when the component's output directory is mounted.
+  //
+  // This event will not be triggered for every component, only those that
+  // serve a directory over their PA_DIRECTORY_REQUEST handle.
+  5: -> OnDirectoryReady();
 };

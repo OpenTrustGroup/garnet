@@ -8,7 +8,7 @@
 
 #include <ddk/protocol/usb.h>
 #include <fbl/algorithm.h>
-#include <fbl/auto_call.h>
+#include <lib/fit/defer.h>
 #include <lib/sync/completion.h>
 #include <lib/zx/vmo.h>
 #include <wlan/common/channel.h>
@@ -55,6 +55,7 @@ constexpr size_t kReadReqCount = 128;
 constexpr size_t kReadBufSize = 4096;  // Reflecting max A-MSDU length for Ralink: 3839 bytes
 constexpr size_t kWriteReqCount = 128;
 constexpr size_t kWriteBufSize = 4096;
+constexpr size_t kMacHdrAddr1Offset = 4;
 
 constexpr char kFirmwareFile[] = "rt2870.bin";
 
@@ -152,8 +153,8 @@ static wlanmac_protocol_ops_t wlanmac_ops = {
     .configure_bss = [](void* ctx, uint32_t options, wlan_bss_config_t* config) -> zx_status_t {
         return DEV(ctx)->WlanmacConfigureBss(options, config);
     },
-    .enable_beaconing = [](void* ctx, uint32_t options, bool enabled) -> zx_status_t {
-        return DEV(ctx)->WlanmacEnableBeaconing(options, enabled);
+    .enable_beaconing = [](void* ctx, uint32_t options, wlan_bcn_config_t* bcn_cfg) -> zx_status_t {
+        return DEV(ctx)->WlanmacEnableBeaconing(options, bcn_cfg != nullptr);
     },
     .configure_beacon = [](void* ctx, uint32_t options, wlan_tx_packet_t* pkt) -> zx_status_t {
         return DEV(ctx)->WlanmacConfigureBeacon(options, pkt);
@@ -3187,7 +3188,6 @@ static uint16_t ralink_phy_to_ddk_phy(uint8_t ralink_phy) {
 
 static uint8_t ddk_phy_to_ralink_phy(uint16_t ddk_phy) {
     switch (ddk_phy) {
-
     case WLAN_PHY_CCK:
         return PhyMode::kLegacyCck;
     case WLAN_PHY_OFDM:
@@ -3266,7 +3266,7 @@ void Device::HandleRxComplete(usb_request_t* request) {
         usb_reset_endpoint(&usb_, rx_endpt_);
     }
     std::lock_guard<std::mutex> guard(lock_);
-    auto ac = fbl::MakeAutoCall([&]() { usb_request_queue(&usb_, request); });
+    auto ac = fit::defer([&]() { usb_request_queue(&usb_, request); });
 
     if (request->response.status == ZX_OK) {
         // Total bytes received is (request->response.actual) bytes
@@ -3434,6 +3434,7 @@ zx_status_t Device::Query(wlan_info_t* info) {
         .desc = "2.4 GHz",
         // These hard-coded values are experimentally proven to work,
         // but does not necessarily reflect the true capabilities of the chipset.
+        .ht_supported = true,
         .ht_caps =
             {
                 .ht_capability_info = 0x016e,
@@ -3491,6 +3492,7 @@ zx_status_t Device::Query(wlan_info_t* info) {
         info->bands[1] = {
             .desc = "5 GHz",
             // See above for descriptions of these capabilities
+            .ht_supported = true,
             .ht_caps =
                 {
                     .ht_capability_info = 0x016e,
@@ -3815,7 +3817,8 @@ zx_status_t Device::OnTxReportInterruptTimer() {
         std::lock_guard<std::mutex> guard(lock_);
         if (wlanmac_proxy_ != nullptr) {
             wlan_tx_status reported_tx_status = ReadTxStatsFifoEntry(packet_id);
-            reported_tx_status.retries = stat_fifo_ext.txq_rty_cnt();
+            // TODO(NET-1487) parse retry chain information to provide aggregated tx report.
+            reported_tx_status.tx_status_entry[0].attempts = 1 + stat_fifo_ext.txq_rty_cnt();
             reported_tx_status.success = (stat_fifo.txq_ok() != 0);
 
             wlanmac_proxy_->ReportTxStatus(&reported_tx_status);
@@ -3949,6 +3952,33 @@ void Device::WlanmacStop() {
     // TODO(tkilbourn) disable radios, stop queues, etc.
 }
 
+// TODO(NET-1570): Extract into a common library.
+uint16_t GetMacHdrLength(const uint8_t* buf, uint16_t len) {
+    if (len < sizeof(wlan::FrameControl)) { return 0; }
+
+    auto fc = reinterpret_cast<const wlan::FrameControl*>(buf);
+    switch (fc->type()) {
+    case wlan::FrameType::kManagement: {
+        if (len < sizeof(wlan::MgmtFrameHeader)) { return 0; }
+        auto hdr = reinterpret_cast<const wlan::MgmtFrameHeader*>(buf);
+        return hdr->len();
+    }
+    case wlan::FrameType::kData: {
+        if (len < sizeof(wlan::DataFrameHeader)) { return 0; }
+        auto hdr = reinterpret_cast<const wlan::DataFrameHeader*>(buf);
+        return hdr->len();
+    }
+    case wlan::FrameType::kControl: {
+        if (len < sizeof(wlan::CtrlFrameHdr)) { return 0; }
+        auto hdr = reinterpret_cast<const wlan::CtrlFrameHdr*>(buf);
+        return hdr->len();
+    }
+    default:
+        warnf("cannot compute MAC header length for unknown frame type: %u\n", fc->type());
+        return 0;
+    }
+}
+
 size_t Device::WriteBulkout(uint8_t* dest, const wlan_tx_packet_t& wlan_pkt) {
     // Write and return the length of
     // MPDU Header + L2Pad + MSDU + Bulkout Aggregation Pad + Bulkout Aggregation Tail Pad
@@ -3957,9 +3987,11 @@ size_t Device::WriteBulkout(uint8_t* dest, const wlan_tx_packet_t& wlan_pkt) {
 
     auto head_data = static_cast<uint8_t*>(wlan_pkt.packet_head.data);
     auto head_len = wlan_pkt.packet_head.len;
-
-    auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_pkt.packet_head.data);
-    auto frame_hdr_len = frame_hdr->len();
+    uint16_t frame_hdr_len = GetMacHdrLength(head_data, head_len);
+    // If the header length is invalid use the entire length as header length.
+    // This is just as problematic as before but we need to put proper error handling
+    // here first, before we can address this problem.
+    if (frame_hdr_len == 0) { frame_hdr_len = head_len; }
 
     size_t dest_offset = 0;
     auto l2pad_len = ROUNDUP(frame_hdr_len, 4) - frame_hdr_len;
@@ -4151,14 +4183,15 @@ wlan_tx_status Device::ReadTxStatsFifoEntry(int packet_id) {
     wlan_tx_status reported_tx_status = {};
     std::copy(std::begin(tx_stats_entry.peer_addr), std::end(tx_stats_entry.peer_addr),
               std::begin(reported_tx_status.peer_addr));
-    reported_tx_status.rate_idx = tx_stats_entry.rate_idx;
+    std::memset(reported_tx_status.tx_status_entry, 0, sizeof(reported_tx_status.tx_status_entry));
+    reported_tx_status.tx_status_entry[0].tx_vector_idx = tx_stats_entry.tx_vector_idx;
 
     tx_stats_entry.in_use = false;
     return reported_tx_status;
 }
 
 int Device::WriteTxStatsFifoEntry(const wlan_tx_packet_t& wlan_pkt) {
-    if ((wlan_pkt.info.tx_flags & WLAN_TX_INFO_VALID_RATE_IDX) == 0) {
+    if ((wlan_pkt.info.valid_fields & WLAN_TX_INFO_VALID_TX_VECTOR_IDX) == 0) {
         return kInvalidTxPacketId;
     }
 
@@ -4171,10 +4204,10 @@ int Device::WriteTxStatsFifoEntry(const wlan_tx_packet_t& wlan_pkt) {
     TxStatsFifoEntry& tx_stats = tx_stats_fifo_[packet_id];
     if (!tx_stats_fifo_[packet_id].in_use) {
         tx_stats_fifo_counter_ = (tx_stats_fifo_counter_ + 1) % (kTxStatsFifoSize - 1);
-        auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_pkt.packet_head.data);
-        std::copy(std::begin(frame_hdr->addr1.byte), std::end(frame_hdr->addr1.byte),
-                  tx_stats.peer_addr);
-        tx_stats.rate_idx = wlan_pkt.info.rate_idx;
+        auto bytes = static_cast<uint8_t*>(wlan_pkt.packet_head.data);
+        auto addr1_offset = bytes + kMacHdrAddr1Offset;
+        std::copy(addr1_offset, addr1_offset + wlan::common::kMacAddrLen, tx_stats.peer_addr);
+        tx_stats.tx_vector_idx = wlan_pkt.info.tx_vector_idx;
         tx_stats.in_use = true;
         return packet_id;
     } else {
@@ -4240,8 +4273,9 @@ zx_status_t Device::FillAggregation(BulkoutAggregation* aggr, wlan_tx_packet_t* 
     txwi0.set_stbc(0);  // TODO(porce): Define the value.
 
     // The frame header is always in the packet head.
-    auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_pkt->packet_head.data);
-    auto wcid = LookupTxWcid(frame_hdr->addr1.byte, protected_frame);
+    auto bytes = static_cast<uint8_t*>(wlan_pkt->packet_head.data);
+    auto addr1_offset = bytes + kMacHdrAddr1Offset;
+    auto wcid = LookupTxWcid(addr1_offset, protected_frame);
     Txwi1& txwi1 = aggr->txwi1;
     txwi1.set_ack(GetRxAckPolicy(*wlan_pkt));
     txwi1.set_nseq(0);
@@ -4274,11 +4308,9 @@ zx_status_t Device::FillAggregation(BulkoutAggregation* aggr, wlan_tx_packet_t* 
 // and uses hardware encryption.
 uint8_t Device::LookupTxWcid(const uint8_t* addr1, bool protected_frame) {
     if (protected_frame) {
-        // TODO(hahnr): Replace addresses and constants with MacAddr once it was moved to
-        // common/.
-        if (memcmp(addr1, kBcastAddr, 6) == 0) {
+        if (memcmp(addr1, wlan::common::kBcastMac.byte, wlan::common::kMacAddrLen) == 0) {
             return kWcidBcastAddr;
-        } else if (memcmp(addr1, bssid_, 6) == 0) {
+        } else if (memcmp(addr1, bssid_, wlan::common::kMacAddrLen) == 0) {
             return kWcidBssid;
         }
     }
@@ -4635,7 +4667,7 @@ zx_status_t Device::WlanmacSetKey(uint32_t options, wlan_key_config_t* key_confi
         uint8_t wcid = kWcidBssid;
 
         // Reset everything on failure.
-        auto reset = fbl::MakeAutoCall([&]() { ResetWcid(wcid, 0, WLAN_KEY_TYPE_PAIRWISE); });
+        auto reset = fit::defer([&]() { ResetWcid(wcid, 0, WLAN_KEY_TYPE_PAIRWISE); });
 
         auto status = WriteWcid(wcid, key_config->peer_addr);
         if (status != ZX_OK) { break; }
@@ -4660,7 +4692,7 @@ zx_status_t Device::WlanmacSetKey(uint32_t options, wlan_key_config_t* key_confi
         uint8_t wcid = kWcidBcastAddr;
 
         // Reset everything on failure.
-        auto reset = fbl::MakeAutoCall([&]() { ResetWcid(wcid, skey, WLAN_KEY_TYPE_GROUP); });
+        auto reset = fit::defer([&]() { ResetWcid(wcid, skey, WLAN_KEY_TYPE_GROUP); });
 
         auto status = WriteSharedKey(skey, key_config->key, key_config->key_len, keyMode);
         if (status != ZX_OK) { break; }
@@ -4753,8 +4785,7 @@ size_t Device::GetBulkoutAggrPayloadLen(const wlan_tx_packet_t& wlan_pkt) {
         tail_len_eff = tail->len - tail_offset;
     }
 
-    auto mpdu_hdr = reinterpret_cast<const wlan::FrameHeader*>(head_data);
-    auto mpdu_hdr_len = mpdu_hdr->len();
+    auto mpdu_hdr_len = GetMacHdrLength(head_data, head_len);
     auto msdu_len = head_len + tail_len_eff - mpdu_hdr_len;
 
     auto l2pad_len = GetL2PadLen(wlan_pkt);
@@ -4805,8 +4836,9 @@ void Device::DumpLengths(const wlan_tx_packet_t& wlan_pkt, BulkoutAggregation* u
 }
 
 size_t Device::GetL2PadLen(const wlan_tx_packet_t& wlan_pkt) {
-    auto frame_hdr = reinterpret_cast<const wlan::FrameHeader*>(wlan_pkt.packet_head.data);
-    auto frame_hdr_len = frame_hdr->len();
+    auto head_data = static_cast<uint8_t*>(wlan_pkt.packet_head.data);
+    auto head_len = wlan_pkt.packet_head.len;
+    auto frame_hdr_len = GetMacHdrLength(head_data, head_len);
     auto l2pad_len = ROUNDUP(frame_hdr_len, 4) - frame_hdr_len;
 
     finspect("[ralink] L2padding frame_hdr:%u l2pad:%u\n", frame_hdr_len, l2pad_len);

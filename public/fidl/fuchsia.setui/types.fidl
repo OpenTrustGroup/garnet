@@ -2,8 +2,106 @@ library fuchsia.setui;
 
 enum SettingType {
     UNKNOWN = 0;
+    TIME_ZONE = 1;
+    CONNECTIVITY = 2;
+    WIRELESS = 3;
 };
 
 union SettingData {
-    string stringValue;
+    string string_value;
+
+    /// The data returned by the time zone service for getting or setting
+    /// time zones.
+    TimeZoneInfo time_zone_value;
+
+    /// The current connected state. (read-only)
+    ConnectedState connectivity;
+
+    /// The wireless state (read-only).
+    WirelessState wireless;
+};
+
+struct TimeZoneInfo {
+    /// The current time zone. Will be absent if no time zone is currently set.
+    /// To update the time zone, set this value.
+    TimeZone? current;
+
+    /// An ordered list of the available time zones.
+    vector<TimeZone> available;
+};
+
+struct TimeZone {
+    /// The underlying ID value; shouldn't be displayed to the end user.
+    string id;
+
+    /// The user visible description of the time zone.
+    string name;
+
+    /// List of sample locations for which the time zone is valid.
+    vector<string> region;
+};
+
+enum ConnectionStatus {
+    UNKNOWN = 0;
+
+    /// The connection is at a resting disconnected state.
+    DISCONNECTED = 1;
+
+    /// The connection is being established.
+    CONNECTING = 2;
+
+    /// The connection is active.
+    CONNECTED = 3;
+
+    /// The connection is in the process of being disconnected.
+    DISCONNECTING = 4;
+};
+
+enum WirelessSecurity {
+    UNKNOWN = 0;
+
+    /// The network is open and requires no password.
+    UNSECURED = 1;
+
+    /// The network is protected by a password.
+    SECURED = 2;
+};
+
+struct WirelessAccessPoint {
+    /// The underlying ID value; shouldn't be displayed to the end user.
+    /// (internal / read-only)
+    int64 access_point_id;
+
+    /// The published identifier for the access point. (read-only)
+    string name;
+
+    /// The type of security protecting the access point. (read-only)
+    WirelessSecurity security;
+
+    /// The connection strength of the access point. (read-only)
+    int32 rssi;
+
+    /// The password set by the user to connect to the access point. This
+    /// should never be populated by the server. (write)
+    string password;
+
+    /// The current connection state of the access point.
+    ConnectionStatus status;
+};
+
+struct WirelessState {
+    /// The available access points to connect to.
+    vector<WirelessAccessPoint> access_points;
+};
+
+enum Reachability {
+    UNKNOWN = 0;
+
+    /// we have access to the wide area network.
+    WAN = 1;
+};
+
+struct ConnectedState {
+    /// The current level of connection access.
+    Reachability reachability;
 };

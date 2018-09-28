@@ -11,12 +11,11 @@
 #include "codec_buffer.h"
 #include "codec_packet.h"
 
+#include <fbl/macros.h>
 #include <fuchsia/mediacodec/cpp/fidl.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/fidl/cpp/binding.h>
 #include <lib/fit/function.h>
-#include <lib/fxl/macros.h>
-#include <lib/fxl/synchronization/thread_annotations.h>
 #include <zircon/compiler.h>
 
 #include <list>
@@ -624,7 +623,12 @@ class CodecImpl : public fuchsia::mediacodec::Codec,
   void vFailLocked(bool is_fatal, const char* format, va_list args);
 
   void PostSerial(async_dispatcher_t* async, fit::closure to_run);
-  void PostToSharedFidl(fit::closure to_run);
+  // If |promise_not_on_previously_posted_fidl_thread_lambda| is true, the
+  // caller is promising that it's not running in a lambda that was posted to
+  // the fidl thread (running in a FIDL dispatch is fine).
+  void PostToSharedFidl(
+      fit::closure to_run,
+      bool promise_not_on_previously_posted_fidl_thread_lambda = false);
   void PostToStreamControl(fit::closure to_run);
   __WARN_UNUSED_RESULT bool IsStoppingLocked();
   __WARN_UNUSED_RESULT bool IsStopping();
@@ -725,7 +729,8 @@ class CodecImpl : public fuchsia::mediacodec::Codec,
 
   void CoreCodecMidStreamOutputBufferReConfigFinish() override;
 
-  FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(CodecImpl);
+  CodecImpl() = delete;
+  DISALLOW_COPY_ASSIGN_AND_MOVE(CodecImpl);
 };
 
 #endif  // GARNET_DRIVERS_VIDEO_AMLOGIC_DECODER_CODEC_IMPL_H_

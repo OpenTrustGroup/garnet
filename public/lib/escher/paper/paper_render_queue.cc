@@ -54,6 +54,8 @@ PaperRenderQueue::PaperRenderQueue(EscherWeakPtr escher)
       white_texture_(CreateWhiteTexture(escher_.get())),
       view_projection_uniform_{} {}
 
+PaperRenderQueue::~PaperRenderQueue() = default;
+
 void PaperRenderQueue::InitFrame(const FramePtr& frame, const Stage& stage,
                                  const Camera& camera) {
   FXL_DCHECK(!frame_ && view_projection_uniform_.buffer == nullptr);
@@ -228,7 +230,7 @@ PaperRenderQueue::SortKey PaperRenderQueue::SortKey::NewOpaque(
     Hash pipeline_hash, Hash draw_hash, float depth) {
   // Depth must be non-negative, otherwise comparing the bit representations
   // won't work.
-  FXL_DCHECK(depth >= 0);
+  FXL_DCHECK(depth >= 0) << "is: " << depth;
 
   // Prioritize minimizing pipeline changes over depth-sorting; both are more
   // important than minimizing mesh/texture state changes (in practice, almost

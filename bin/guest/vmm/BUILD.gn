@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/package.gni")
+import("//build/test/test_package.gni")
 
 source_set("lib") {
   visibility = [ ":*" ]
@@ -10,12 +10,10 @@ source_set("lib") {
   sources = [
     "guest_config.cc",
     "guest_config.h",
-    "guest_controller_impl.cc",
-    "guest_controller_impl.h",
     "guest_view.cc",
     "guest_view.h",
-    "kernel.cc",
-    "kernel.h",
+    "instance_controller_impl.cc",
+    "instance_controller_impl.h",
     "linux.cc",
     "linux.h",
     "zircon.cc",
@@ -25,8 +23,9 @@ source_set("lib") {
   public_deps = [
     "//garnet/bin/guest/third_party/fdt",
     "//garnet/lib/machina",
-    "//garnet/public/lib/fsl",
+    "//garnet/lib/machina/device",
     "//garnet/public/fidl/fuchsia.guest",
+    "//garnet/public/lib/fsl",
     "//garnet/public/lib/ui/view_framework:view_provider",
     "//third_party/rapidjson",
     "//zircon/public/lib/async-loop-cpp",
@@ -53,11 +52,11 @@ executable("bin") {
 }
 
 package("vmm") {
+  binary = "vmm"
+
   deps = [
     ":bin",
   ]
-
-  binary = "vmm"
 
   meta = [
     {
@@ -102,14 +101,16 @@ executable("vmm_unittests") {
   ]
 }
 
-package("vmm_tests") {
-  testonly = true
-
+test_package("vmm_tests") {
   deps = [
     ":vmm_unittests",
+    "//garnet/bin/guest/vmm/device:device_unittests",
   ]
 
   tests = [
+    {
+      name = "device_unittests"
+    },
     {
       name = "vmm_unittests"
     },

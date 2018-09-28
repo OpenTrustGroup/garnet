@@ -8,14 +8,11 @@
 #include "macros.h"
 
 #include <ddk/driver.h>
-#include <lib/fxl/logging.h>
 
 #include <stdarg.h>
 #include <stdio.h>
 
-#if ENABLE_DECODER_TESTS
 #include "tests/test_support.h"
-#endif
 
 namespace {
 
@@ -32,10 +29,9 @@ extern zx_status_t amlogic_video_init(void** out_ctx) {
 
 // ctx is the driver ctx (not device ctx)
 zx_status_t amlogic_video_bind(void* ctx, zx_device_t* parent) {
-#if ENABLE_DECODER_TESTS
+  // These calls don't do anything on a production build.
   TestSupport::set_parent_device(parent);
   TestSupport::RunAllTests();
-#endif
 
   DriverCtx* driver = reinterpret_cast<DriverCtx*>(ctx);
   std::unique_ptr<DeviceCtx> device = std::make_unique<DeviceCtx>(driver);
@@ -110,7 +106,7 @@ void DriverCtx::FatalError(const char* format, ...) {
   assert(buffer_bytes == buffer_bytes_2);
   va_end(args);
 
-  FXL_LOG(ERROR) << "DriverCtx::FatalError(): " << buffer.get();
+  DECODE_ERROR("DriverCtx::FatalError(): %s\n", buffer.get());
 
   // TODO(dustingreen): Send string in buffer via channel epitaphs, when
   // possible. The channel activity/failing server-side generally will race with
@@ -118,7 +114,7 @@ void DriverCtx::FatalError(const char* format, ...) {
   // from here - probably a timeout here would be a good idea if so.
 
   // This should provide more stack dump than exit(-1) would give.
-  FXL_CHECK(false) << "DriverCtx::FatalError() is fatal.";
+  ZX_ASSERT_MSG(false, "DriverCtx::FatalError() is fatal.");
 }
 
 // Run to_run on given dispatcher, in order.

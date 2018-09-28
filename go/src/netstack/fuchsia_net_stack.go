@@ -5,12 +5,9 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"sort"
-	"syscall/zx"
 
-	"app/context"
 	"netstack/fidlconv"
 	"netstack/link/eth"
 
@@ -22,7 +19,9 @@ import (
 	"github.com/google/netstack/tcpip/network/ipv4"
 )
 
-type stackImpl struct{}
+type stackImpl struct {
+	ns *Netstack
+}
 
 func getInterfaceInfo(nicid tcpip.NICID, ifs *ifState) *stack.InterfaceInfo {
 	// Long-hand for: broadaddr = ifs.nic.Addr | ^ifs.nic.Netmask
@@ -37,7 +36,7 @@ func getInterfaceInfo(nicid tcpip.NICID, ifs *ifState) *stack.InterfaceInfo {
 	}
 
 	// TODO(tkilbourn): distinguish between enabled and link up
-	var status uint32 = 0
+	var status uint32
 	if ifs.state == eth.StateStarted {
 		status |= stack.InterfaceStatusEnabled
 	}
@@ -65,7 +64,7 @@ func getInterfaceInfo(nicid tcpip.NICID, ifs *ifState) *stack.InterfaceInfo {
 	var mac net.MacAddress
 	var path string
 	if eth := ifs.eth; eth != nil {
-		mac.Addr = eth.MAC
+		mac.Addr = eth.Info.Mac.Octets
 		path = eth.Path
 	}
 
@@ -81,10 +80,11 @@ func getInterfaceInfo(nicid tcpip.NICID, ifs *ifState) *stack.InterfaceInfo {
 
 }
 
-func getNetInterfaces() (out []stack.InterfaceInfo) {
+func (ns *Netstack) getNetInterfaces() []stack.InterfaceInfo {
 	ns.mu.Lock()
 	defer ns.mu.Unlock()
 
+	out := make([]stack.InterfaceInfo, 0, len(ns.ifStates))
 	for nicid, ifs := range ns.ifStates {
 		out = append(out, *getInterfaceInfo(nicid, ifs))
 	}
@@ -94,7 +94,7 @@ func getNetInterfaces() (out []stack.InterfaceInfo) {
 	return out
 }
 
-func getInterface(id uint64) (*stack.InterfaceInfo, *stack.Error) {
+func (ns *Netstack) getInterface(id uint64) (*stack.InterfaceInfo, *stack.Error) {
 	ns.mu.Lock()
 	defer ns.mu.Unlock()
 
@@ -106,11 +106,11 @@ func getInterface(id uint64) (*stack.InterfaceInfo, *stack.Error) {
 	return nil, &stack.Error{Type: stack.ErrorTypeNotFound}
 }
 
-func setInterfaceState(id uint64, enabled bool) *stack.Error {
+func (ns *Netstack) setInterfaceState(id uint64, enabled bool) *stack.Error {
 	ns.mu.Lock()
 	defer ns.mu.Unlock()
 
-	var ifs *ifState = nil
+	var ifs *ifState
 	for i, ifState := range ns.ifStates {
 		if uint64(i) == id {
 			ifs = ifState
@@ -122,18 +122,24 @@ func setInterfaceState(id uint64, enabled bool) *stack.Error {
 	}
 
 	if enabled {
-		ifs.eth.Up()
+		if err := ifs.eth.Up(); err != nil {
+			log.Printf("ifs.eth.Up() failed: %v", err)
+			return &stack.Error{Type: stack.ErrorTypeInternal}
+		}
 	} else {
-		ifs.eth.Down()
+		if err := ifs.eth.Down(); err != nil {
+			log.Printf("ifs.eth.Down() failed: %v", err)
+			return &stack.Error{Type: stack.ErrorTypeInternal}
+		}
 	}
 	return nil
 }
 
-func addInterfaceAddr(id uint64, ifAddr stack.InterfaceAddress) *stack.Error {
+func (ns *Netstack) addInterfaceAddr(id uint64, ifAddr stack.InterfaceAddress) *stack.Error {
 	// The ns mutex is held in the setInterfaceAddress call below so release it
 	// after we find the right ifState.
 	ns.mu.Lock()
-	var ifs *ifState = nil
+	var ifs *ifState
 	for i, ifState := range ns.ifStates {
 		if uint64(i) == id {
 			ifs = ifState
@@ -161,14 +167,15 @@ func addInterfaceAddr(id uint64, ifAddr stack.InterfaceAddress) *stack.Error {
 	nic := ifs.nic.ID
 	addr := fidlconv.ToTCPIPAddress(ifAddr.IpAddress)
 	if err := ns.setInterfaceAddress(nic, protocol, addr, ifAddr.PrefixLen); err != nil {
+		log.Printf("(*Netstack).setInterfaceAddress(...) failed: %v", err)
 		return &stack.Error{Type: stack.ErrorTypeBadState}
 	}
 	return nil
 }
 
-func getForwardingTable() []stack.ForwardingEntry {
+func (ns *Netstack) getForwardingTable() []stack.ForwardingEntry {
 	ns.mu.Lock()
-	table := ns.stack.GetRouteTable()
+	table := ns.mu.stack.GetRouteTable()
 	ns.mu.Unlock()
 
 	entries := make([]stack.ForwardingEntry, 0)
@@ -195,24 +202,24 @@ func getForwardingTable() []stack.ForwardingEntry {
 }
 
 func (ni *stackImpl) ListInterfaces() ([]stack.InterfaceInfo, error) {
-	return getNetInterfaces(), nil
+	return ni.ns.getNetInterfaces(), nil
 }
 
 func (ni *stackImpl) GetInterfaceInfo(id uint64) (*stack.InterfaceInfo, *stack.Error, error) {
-	info, err := getInterface(id)
+	info, err := ni.ns.getInterface(id)
 	return info, err, nil
 }
 
 func (ni *stackImpl) EnableInterface(id uint64) (*stack.Error, error) {
-	return setInterfaceState(id, true), nil
+	return ni.ns.setInterfaceState(id, true), nil
 }
 
 func (ni *stackImpl) DisableInterface(id uint64) (*stack.Error, error) {
-	return setInterfaceState(id, false), nil
+	return ni.ns.setInterfaceState(id, false), nil
 }
 
 func (ni *stackImpl) AddInterfaceAddress(id uint64, addr stack.InterfaceAddress) (*stack.Error, error) {
-	return addInterfaceAddr(id, addr), nil
+	return ni.ns.addInterfaceAddr(id, addr), nil
 }
 
 func (ni *stackImpl) DelInterfaceAddress(id uint64, addr net.IpAddress) (*stack.Error, error) {
@@ -220,7 +227,7 @@ func (ni *stackImpl) DelInterfaceAddress(id uint64, addr net.IpAddress) (*stack.
 }
 
 func (ni *stackImpl) GetForwardingTable() ([]stack.ForwardingEntry, error) {
-	return getForwardingTable(), nil
+	return ni.ns.getForwardingTable(), nil
 }
 
 func (ni *stackImpl) AddForwardingEntry(entry stack.ForwardingEntry) (*stack.Error, error) {
@@ -229,21 +236,4 @@ func (ni *stackImpl) AddForwardingEntry(entry stack.ForwardingEntry) (*stack.Err
 
 func (ni *stackImpl) DelForwardingEntry(subset net.Subnet) (*stack.Error, error) {
 	panic("not implemented")
-}
-
-var stackService *stack.StackService
-
-// AddStackService registers the StackService with the application context,
-// allowing it to respond to FIDL queries.
-func AddStackService(ctx *context.Context) error {
-	if stackService != nil {
-		return fmt.Errorf("AddNetworkService must be called only once")
-	}
-	stackService = &stack.StackService{}
-	ctx.OutgoingService.AddService(stack.StackName, func(c zx.Channel) error {
-		_, err := stackService.Add(&stackImpl{}, c, nil)
-		return err
-	})
-
-	return nil
 }

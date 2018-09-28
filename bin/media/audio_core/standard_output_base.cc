@@ -4,14 +4,13 @@
 
 #include "garnet/bin/media/audio_core/standard_output_base.h"
 
+#include <fbl/auto_lock.h>
+#include <lib/fit/defer.h>
 #include <limits>
 
-#include <fbl/auto_call.h>
-#include <fbl/auto_lock.h>
-
 #include "garnet/bin/media/audio_core/audio_link.h"
-#include "garnet/bin/media/audio_core/audio_out_format_info.h"
-#include "garnet/bin/media/audio_core/audio_out_impl.h"
+#include "garnet/bin/media/audio_core/audio_renderer_format_info.h"
+#include "garnet/bin/media/audio_core/audio_renderer_impl.h"
 #include "garnet/bin/media/audio_core/mixer/mixer.h"
 #include "garnet/bin/media/audio_core/mixer/no_op.h"
 #include "lib/fxl/logging.h"
@@ -146,14 +145,7 @@ void StandardOutputBase::Process() {
 }
 
 zx_status_t StandardOutputBase::InitializeSourceLink(const AudioLinkPtr& link) {
-  AudioLink::Bookkeeping* bk = AllocBookkeeping();
-  std::unique_ptr<AudioLink::Bookkeeping> ref(bk);
-
-  // We should never fail to allocate our bookkeeping.  The only way this can
-  // happen is if we have a badly behaved implementation.
-  if (!bk) {
-    return ZX_ERR_INTERNAL;
-  }
+  auto mix_bookkeeping = std::make_unique<Bookkeeping>();
 
   // For now, refuse to link to anything but a packet source.  This code does
   // not currently know how to properly handle a ring-buffer source.
@@ -165,27 +157,22 @@ zx_status_t StandardOutputBase::InitializeSourceLink(const AudioLinkPtr& link) {
   // Otherwise, we only need a NoOp mixer (for the time being).
   auto& packet_link = *(static_cast<AudioLinkPacketSource*>(link.get()));
   if (output_producer_) {
-    bk->mixer = Mixer::Select(packet_link.format_info().format(),
-                              *(output_producer_->format()));
+    mix_bookkeeping->mixer = Mixer::Select(packet_link.format_info().format(),
+                                           *(output_producer_->format()));
   } else {
-    bk->mixer = MixerPtr(new audio::mixer::NoOp());
+    mix_bookkeeping->mixer = MixerPtr(new audio::mixer::NoOp());
   }
 
-  if (bk->mixer == nullptr) {
+  if (mix_bookkeeping->mixer == nullptr) {
     FXL_LOG(ERROR) << "*** Audio system mixer cannot convert between formats "
                       "*** (could not select mixer while linking to output). "
                       "Usually, this indicates a 'num_channels' mismatch.";
     return ZX_ERR_NOT_SUPPORTED;
   }
 
-  // Looks like things went well.  Stash a reference to our bookkeeping and get
-  // out.
-  link->set_bookkeeping(std::move(ref));
+  // Things went well. Stash a reference to our bookkeeping and get out.
+  link->set_bookkeeping(std::move(mix_bookkeeping));
   return ZX_OK;
-}
-
-AudioLink::Bookkeeping* StandardOutputBase::AllocBookkeeping() {
-  return new AudioLink::Bookkeeping();
 }
 
 void StandardOutputBase::SetupMixBuffer(uint32_t max_mix_frames) {
@@ -217,7 +204,7 @@ void StandardOutputBase::ForeachLink(TaskType task_type) {
 
   // No matter what happens, make sure we release our temporary references as
   // soons a we exit this method.
-  auto cleanup = fbl::MakeAutoCall(
+  auto cleanup = fit::defer(
       [this]() FXL_NO_THREAD_SAFETY_ANALYSIS { source_link_refs_.clear(); });
 
   for (const auto& link : source_link_refs_) {
@@ -232,26 +219,26 @@ void StandardOutputBase::ForeachLink(TaskType task_type) {
     }
 
     FXL_DCHECK(link->source_type() == AudioLink::SourceType::Packet);
-    FXL_DCHECK(link->GetSource()->type() == AudioObject::Type::AudioOut);
+    FXL_DCHECK(link->GetSource()->type() == AudioObject::Type::AudioRenderer);
     auto packet_link = static_cast<AudioLinkPacketSource*>(link.get());
-    auto audio_out = fbl::RefPtr<AudioOutImpl>::Downcast(link->GetSource());
+    auto audio_renderer =
+        fbl::RefPtr<AudioRendererImpl>::Downcast(link->GetSource());
 
     // It would be nice to be able to use a dynamic cast for this, but currently
     // we are building with no-rtti
-    AudioLink::Bookkeeping* info =
-        static_cast<AudioLink::Bookkeeping*>(
-            packet_link->bookkeeping().get());
+    Bookkeeping* info =
+        static_cast<Bookkeeping*>(packet_link->bookkeeping().get());
     FXL_DCHECK(info);
 
     // Ensure the mapping from source-frame to local-time is up-to-date.
-    UpdateSourceTrans(audio_out, info);
+    UpdateSourceTrans(audio_renderer, info);
 
     bool setup_done = false;
     fbl::RefPtr<AudioPacketRef> pkt_ref;
 
-    bool release_audio_out_packet;
+    bool release_audio_renderer_packet;
     while (true) {
-      release_audio_out_packet = false;
+      release_audio_renderer_packet = false;
       // Try to grab the front of the packet queue.  If it has been flushed
       // since the last time we grabbed it, be sure to reset our mixer's
       // internal filter state.
@@ -269,26 +256,21 @@ void StandardOutputBase::ForeachLink(TaskType task_type) {
       // If we have not set up for this audio out yet, do so.  If the setup
       // fails for any reason, stop processing packets for this audio out.
       if (!setup_done) {
-        setup_done = (task_type == TaskType::Mix) ? SetupMix(audio_out, info)
-                                                  : SetupTrim(audio_out, info);
+        setup_done = (task_type == TaskType::Mix)
+                         ? SetupMix(audio_renderer, info)
+                         : SetupTrim(audio_renderer, info);
         if (!setup_done) {
           break;
         }
       }
 
-      // Capture the amplitude to apply for the next bit of audio, recomputing
-      // as needed.
-      if (task_type == TaskType::Mix) {
-        info->amplitude_scale =
-            packet_link->gain().GetGainScale(cur_mix_job_.sw_output_db_gain);
-      }
-
       // Now process the packet which is at the front of the audio out's queue.
       // If the packet has been entirely consumed, pop it off the front and
       // proceed to the next one.  Otherwise, we are finished.
-      release_audio_out_packet = (task_type == TaskType::Mix)
-                                     ? ProcessMix(audio_out, info, pkt_ref)
-                                     : ProcessTrim(audio_out, info, pkt_ref);
+      release_audio_renderer_packet =
+          (task_type == TaskType::Mix)
+              ? ProcessMix(audio_renderer, info, pkt_ref)
+              : ProcessTrim(audio_renderer, info, pkt_ref);
 
       // If we are mixing, and we have produced enough output frames, then we
       // are done with this mix, regardless of what we should now do with the
@@ -299,17 +281,17 @@ void StandardOutputBase::ForeachLink(TaskType task_type) {
       }
       // If we still need more output, but could not complete this audio out
       // packet (we're paused, or packet is in the future), then we are done.
-      if (!release_audio_out_packet) {
+      if (!release_audio_renderer_packet) {
         break;
       }
       // We did consume this entire audio out packet, and we should keep mixing.
       pkt_ref.reset();
-      packet_link->UnlockPendingQueueFront(release_audio_out_packet);
+      packet_link->UnlockPendingQueueFront(release_audio_renderer_packet);
     }
 
     // Unlock queue (completing packet if needed) and proceed to next audio out.
     pkt_ref.reset();
-    packet_link->UnlockPendingQueueFront(release_audio_out_packet);
+    packet_link->UnlockPendingQueueFront(release_audio_renderer_packet);
 
     // Note: there is no point in doing this for the trim task, but it doesn't
     // hurt anything, and its easier then introducing another function to the
@@ -319,8 +301,8 @@ void StandardOutputBase::ForeachLink(TaskType task_type) {
   }
 }
 
-bool StandardOutputBase::SetupMix(const fbl::RefPtr<AudioOutImpl>& audio_out,
-                                  AudioLink::Bookkeeping* info) {
+bool StandardOutputBase::SetupMix(
+    const fbl::RefPtr<AudioRendererImpl>& audio_renderer, Bookkeeping* info) {
   // If we need to recompose our transformation from output frame space to input
   // fractional frames, do so now.
   FXL_DCHECK(info);
@@ -330,9 +312,9 @@ bool StandardOutputBase::SetupMix(const fbl::RefPtr<AudioOutImpl>& audio_out,
   return true;
 }
 
-bool StandardOutputBase::ProcessMix(const fbl::RefPtr<AudioOutImpl>& audio_out,
-                                    AudioLink::Bookkeeping* info,
-                                    const fbl::RefPtr<AudioPacketRef>& packet) {
+bool StandardOutputBase::ProcessMix(
+    const fbl::RefPtr<AudioRendererImpl>& audio_renderer, Bookkeeping* info,
+    const fbl::RefPtr<AudioPacketRef>& packet) {
   // Sanity check our parameters.
   FXL_DCHECK(info);
   FXL_DCHECK(packet);
@@ -364,9 +346,10 @@ bool StandardOutputBase::ProcessMix(const fbl::RefPtr<AudioOutImpl>& audio_out,
                (cur_mix_job_.frames_produced * output_producer_->channels());
 
   // Figure out where the first and last sampling points of this job are,
-  // expressed in fractional audio out frames.
+  // expressed in fractional source frames.
   int64_t first_sample_ftf = info->dest_frames_to_frac_source_frames(
       cur_mix_job_.start_pts_of + cur_mix_job_.frames_produced);
+
   // Without the "-1", this would be the first output frame of the NEXT job.
   int64_t final_sample_ftf =
       first_sample_ftf +
@@ -408,12 +391,12 @@ bool StandardOutputBase::ProcessMix(const fbl::RefPtr<AudioOutImpl>& audio_out,
   // filter window, then we need to skip some number of output frames before
   // starting to produce data.
   if (packet->start_pts() > first_sample_pos_window_edge) {
-    const TimelineRate& dst_to_src =
+    const TimelineRate& dest_to_src =
         info->dest_frames_to_frac_source_frames.rate();
-    output_offset_64 = dst_to_src.Inverse().Scale(packet->start_pts() -
-                                                  first_sample_pos_window_edge +
-                                                  Mixer::FRAC_ONE - 1);
-    input_offset_64 += dst_to_src.Scale(output_offset_64);
+    output_offset_64 = dest_to_src.Inverse().Scale(
+        packet->start_pts() - first_sample_pos_window_edge + Mixer::FRAC_ONE -
+        1);
+    input_offset_64 += dest_to_src.Scale(output_offset_64);
   }
 
   FXL_DCHECK(output_offset_64 >= 0);
@@ -428,23 +411,27 @@ bool StandardOutputBase::ProcessMix(const fbl::RefPtr<AudioOutImpl>& audio_out,
   FXL_DCHECK(packet->frac_frame_len() <=
              static_cast<uint32_t>(std::numeric_limits<int32_t>::max()));
 
+  FXL_DCHECK(cur_mix_job_.sw_output_gain_db <= 0.0f);
+  Gain::AScale amplitude_scale =
+      info->gain.GetGainScale(cur_mix_job_.sw_output_gain_db);
+
   bool consumed_source = false;
   if (frac_input_offset < static_cast<int32_t>(packet->frac_frame_len())) {
     // When calling Mix(), we communicate the resampling rate with three
-    // parameters. We augment frac_step_size with modulo and denominator
+    // parameters. We augment frac_step_size with rate_modulo and denominator
     // arguments that capture the remaining rate component that cannot be
     // expressed by a 19.13 fixed-point step_size. Note: frac_step_size and
     // frac_input_offset use the same format -- they have the same limitations
     // in what they can and cannot communicate. This begs two questions:
     //
-    // Q1: For perfect position accuracy, don't we also need an in/out param
-    // to specify initial/final subframe modulo, for fractional source offset?
+    // Q1: For perfect position accuracy, just as we track incoming/outgoing
+    // fractional source offset, wouldn't we also need a src_pos_modulo?
     // A1: Yes, for optimum position accuracy (within quantization limits), we
-    // SHOULD incorporate running subframe position_modulo in this way.
+    // SHOULD incorporate the ongoing subframe_position_modulo in this way.
     //
     // For now, we are defering this work, tracking it with MTWN-128.
     //
-    // Q2: Why did we solve this issue for rate but not for initial position?
+    // Q2: Why did we solve this issue for Rate but not for initial Position?
     // A2: We solved this issue for *rate* because its effect accumulates over
     // time, causing clearly measurable distortion that becomes crippling with
     // larger jobs. For *position*, there is no accumulated magnification over
@@ -452,12 +439,14 @@ bool StandardOutputBase::ProcessMix(const fbl::RefPtr<AudioOutImpl>& audio_out,
     // size would affect the distortion frequency but not amplitude. We expect
     // the effects to be below audible thresholds. Until the effects are
     // measurable and attributable to this jitter, we will defer this work.
-
+    //
+    // Update: src_pos_modulo is added to Mix(), but for now we omit it here.
+    //
     // TODO(mpuryear): integrate bookkeeping into the Mixer itself (MTWN-129).
     consumed_source = info->mixer->Mix(
         buf, frames_left, &output_offset, packet->payload(),
         packet->frac_frame_len(), &frac_input_offset, info->step_size,
-        info->amplitude_scale, cur_mix_job_.accumulate, info->modulo,
+        amplitude_scale, cur_mix_job_.accumulate, info->rate_modulo,
         info->denominator());
     FXL_DCHECK(output_offset <= frames_left);
   }
@@ -473,8 +462,8 @@ bool StandardOutputBase::ProcessMix(const fbl::RefPtr<AudioOutImpl>& audio_out,
   return consumed_source;
 }
 
-bool StandardOutputBase::SetupTrim(const fbl::RefPtr<AudioOutImpl>& audio_out,
-                                   AudioLink::Bookkeeping* info) {
+bool StandardOutputBase::SetupTrim(
+    const fbl::RefPtr<AudioRendererImpl>& audio_renderer, Bookkeeping* info) {
   // Compute the cutoff time we will use to decide wether or not to trim
   // packets.  ForeachLink has already updated our transformation, no need
   // for us to do so here.
@@ -495,8 +484,7 @@ bool StandardOutputBase::SetupTrim(const fbl::RefPtr<AudioOutImpl>& audio_out,
 }
 
 bool StandardOutputBase::ProcessTrim(
-    const fbl::RefPtr<AudioOutImpl>& audio_out,
-    AudioLink::Bookkeeping* info,
+    const fbl::RefPtr<AudioRendererImpl>& audio_renderer, Bookkeeping* info,
     const fbl::RefPtr<AudioPacketRef>& pkt_ref) {
   FXL_DCHECK(pkt_ref);
 
@@ -509,12 +497,11 @@ bool StandardOutputBase::ProcessTrim(
 }
 
 void StandardOutputBase::UpdateSourceTrans(
-    const fbl::RefPtr<AudioOutImpl>& audio_out,
-    AudioLink::Bookkeeping* bk) {
-  FXL_DCHECK(audio_out != nullptr);
+    const fbl::RefPtr<AudioRendererImpl>& audio_renderer, Bookkeeping* bk) {
+  FXL_DCHECK(audio_renderer != nullptr);
   uint32_t gen = bk->source_trans_gen_id;
 
-  audio_out->SnapshotCurrentTimelineFunction(
+  audio_renderer->SnapshotCurrentTimelineFunction(
       Timeline::local_now(), &bk->clock_mono_to_frac_source_frames, &gen);
 
   // If local->media transformation hasn't changed since last time, we're done.
@@ -522,13 +509,12 @@ void StandardOutputBase::UpdateSourceTrans(
     return;
   }
 
-  // Transformation has changed. Update gen; invalidate dst-to-src generation.
+  // Transformation has changed. Update gen; invalidate dest-to-src generation.
   bk->source_trans_gen_id = gen;
   bk->dest_trans_gen_id = kInvalidGenerationId;
 }
 
-void StandardOutputBase::UpdateDestTrans(const MixJob& job,
-                                         AudioLink::Bookkeeping* bk) {
+void StandardOutputBase::UpdateDestTrans(const MixJob& job, Bookkeeping* bk) {
   // We should only be here if we have a valid mix job. This means a job which
   // supplies a valid transformation from local time to output frames.
   FXL_DCHECK(job.local_to_output);
@@ -545,30 +531,30 @@ void StandardOutputBase::UpdateDestTrans(const MixJob& job,
   // Compose the job supplied transformation from local to output with the
   // audio out supplied mapping from local to fraction input frames to produce a
   // transformation which maps from output frames to fractional input frames.
-  TimelineFunction& dst = bk->dest_frames_to_frac_source_frames;
+  TimelineFunction& dest = bk->dest_frames_to_frac_source_frames;
 
-  dst = bk->clock_mono_to_frac_source_frames * job.local_to_output->Inverse();
+  dest = bk->clock_mono_to_frac_source_frames * job.local_to_output->Inverse();
 
   // Finally, compute the step size in fractional frames.  IOW, every time
   // we move forward one output frame, how many fractional frames of input
   // do we consume.  Don't bother doing the multiplication if we already
   // know that the numerator is zero.
-  FXL_DCHECK(dst.rate().reference_delta());
-  if (!dst.rate().subject_delta()) {
+  FXL_DCHECK(dest.rate().reference_delta());
+  if (!dest.rate().subject_delta()) {
     bk->step_size = 0;
-    bk->modulo = 0;
+    bk->rate_modulo = 0;
   } else {
-    int64_t tmp_step_size = dst.rate().Scale(1);
+    int64_t tmp_step_size = dest.rate().Scale(1);
 
     FXL_DCHECK(tmp_step_size >= 0);
     FXL_DCHECK(tmp_step_size <= std::numeric_limits<uint32_t>::max());
 
     bk->step_size = static_cast<uint32_t>(tmp_step_size);
-    bk->modulo =
-        dst.rate().subject_delta() - (bk->denominator() * bk->step_size);
+    bk->rate_modulo =
+        dest.rate().subject_delta() - (bk->denominator() * bk->step_size);
   }
 
-  // Done, update our generation.
+  // Done, update our dest_trans generation.
   bk->dest_trans_gen_id = job.local_to_output_gen;
 }
 

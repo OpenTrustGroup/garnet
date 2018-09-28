@@ -5,18 +5,42 @@
 #ifndef GARNET_BIN_MEDIA_AUDIO_CORE_MIXER_MIXER_H_
 #define GARNET_BIN_MEDIA_AUDIO_CORE_MIXER_MIXER_H_
 
+#include <fuchsia/media/cpp/fidl.h>
 #include <memory>
 
-#include <fuchsia/media/cpp/fidl.h>
-
-#include "garnet/bin/media/audio_core/constants.h"
-#include "garnet/bin/media/audio_core/gain.h"
+#include "garnet/bin/media/audio_core/mixer/constants.h"
+#include "garnet/bin/media/audio_core/mixer/gain.h"
+#include "lib/media/timeline/timeline_function.h"
 
 namespace media {
 namespace audio {
 
 class Mixer;
 using MixerPtr = std::unique_ptr<Mixer>;
+
+// TODO(mpuryear): per MTWN-129, integrate this into the Mixer class itself.
+// TODO(mpuryear): Rationalize naming and usage of the bookkeeping structs.
+struct Bookkeeping {
+  Bookkeeping() = default;
+  ~Bookkeeping() = default;
+
+  MixerPtr mixer;
+  Gain gain;
+
+  uint32_t step_size;
+  uint32_t rate_modulo;
+  uint32_t denominator() const {
+    return dest_frames_to_frac_source_frames.rate().reference_delta();
+  }
+
+  // The output values of these functions are in fractional frames.
+  TimelineFunction dest_frames_to_frac_source_frames;
+  uint32_t dest_trans_gen_id = kInvalidGenerationId;
+
+  // TimelineFunction clock_mono_to_src_frames;
+  TimelineFunction clock_mono_to_frac_source_frames;
+  uint32_t source_trans_gen_id = kInvalidGenerationId;
+};
 
 class Mixer {
  public:
@@ -55,40 +79,38 @@ class Mixer {
   // take care when directly specifying a resampler type, if they do so at all.
   // The default should be allowed whenever possible.
   static MixerPtr Select(const fuchsia::media::AudioStreamType& src_format,
-                         const fuchsia::media::AudioStreamType& dst_format,
+                         const fuchsia::media::AudioStreamType& dest_format,
                          Resampler resampler_type = Resampler::Default);
 
   //
   // Mix
   //
-  // Perform a mixing operation from the source buffer into the destination
-  // buffer.
+  // Perform a mixing operation from source buffer into destination buffer.
   //
-  // @param dst
+  // @param dest
   // The pointer to the destination buffer into which frames will be mixed.
   //
-  // @param dst_frames
+  // @param dest_frames
   // The total number of frames of audio which comprise the destination buffer.
   //
-  // @param dst_offset
+  // @param dest_offset
   // The pointer to the offset (in destination frames) at which we should start
-  // to mix destination frames.  When Mix has finished, dst_offset will be
+  // to mix destination frames. When Mix has finished, dest_offset will be
   // updated to indicate the offset into the destination buffer of the next
   // frame to be mixed.
   //
   // @param src
-  // The pointer the the source buffer containing the frames to be mixed into
+  // The pointer to the source buffer containing the frames to be mixed into
   // the destination buffer.
   //
   // @param frac_src_frames
-  // The total number of fractional AudioOut frames contained by the source
-  // buffer.
+  // The total number of fractional renderer frames within the source buffer.
   //
   // @param frac_src_offset
-  // A pointer to the offset (expressed in fractional AudioOut frames) at which
-  // the first frame to be mixed with the destination buffer should be sampled.
-  // When Mix has finished, frac_src_offset will be updated to indicate the
-  // offset of the sampling position of the next frame to be mixed with the
+  // A pointer to the offset (expressed in fractional renderer frames) at
+  // which the first frame to be mixed with the destination buffer should be
+  // sampled. When Mix has finished, frac_src_offset will be updated to indicate
+  // the offset of the sampling position of the next frame to be mixed with the
   // output buffer.
   //
   // @param frac_step_size
@@ -96,48 +118,55 @@ class Mixer {
   // frame produced.
   //
   // @param amplitude_scale
-  // The amplitude scaling factor to be applied when mixing.  This is expressed
+  // The amplitude scaling factor to be applied when mixing. This is expressed
   // as a 32-bit single-precision floating-point value.
   //
   // @param accumulate
   // When true, the mixer will accumulate into the destination buffer (read,
-  // sum, clip, write-back).  When false, the mixer will simply replace the
+  // sum, clip, write-back). When false, the mixer will simply replace the
   // destination buffer with its output.
   //
-  // @param modulo
-  // If frac_step_size cannot perfectly express the mix's resampling ratio,
-  // this parameter (along with subsequent denominator) expresses any leftover
-  // precision.  When present, modulo and denominator express a fractional value
-  // of frac_step_size unit that should be advanced, for each destination frame.
+  // @param rate_modulo
+  // If frac_step_size cannot perfectly express the mix's resampling ratio, this
+  // parameter (along with subsequent denominator) expresses leftover precision.
+  // When present, rate_modulo and denominator express a fractional value of
+  // frac_step_size unit that should be advanced for each destination frame.
   //
   // @param denominator
   // If frac_step_size cannot perfectly express the mix's resampling ratio, this
-  // parameter (along with precedent modulo) expresses any leftover precision.
-  // When present, modulo and denominator express a fractional value of
+  // parameter (along with precedent rate_modulo) expresses leftover precision.
+  // When present, rate_modulo and denominator express a fractional value of
   // frac_step_size unit that should be advanced, for each destination frame.
   //
+  // @param src_pos_modulo
+  // If frac_src_offset cannot perfectly express the source's position, this
+  // parameter (along with denominator) expresses any leftover precision. When
+  // present, src_pos_modulo and denominator express a fractional value of
+  // frac_src_offset unit that should be used when advancing src position.
+  //
   // @return True if the mixer is finished with this source data and will not
-  // need it in the future.  False if the mixer has not consumed the entire
+  // need it in the future. False if the mixer has not consumed the entire
   // source buffer and will need more of it in the future.
   //
   // TODO(mpuryear): Change frac_src_frames parameter to be (integer)
   // src_frames, as number of src_frames was never intended to be fractional.
-  virtual bool Mix(float* dst, uint32_t dst_frames, uint32_t* dst_offset,
+  virtual bool Mix(float* dest, uint32_t dest_frames, uint32_t* dest_offset,
                    const void* src, uint32_t frac_src_frames,
                    int32_t* frac_src_offset, uint32_t frac_step_size,
                    Gain::AScale amplitude_scale, bool accumulate,
-                   uint32_t modulo = 0, uint32_t denominator = 1) = 0;
+                   uint32_t rate_modulo = 0, uint32_t denominator = 1,
+                   uint32_t* src_pos_modulo = nullptr) = 0;
   // When calling Mix(), we communicate the resampling rate with three
-  // parameters. We augment frac_step_size with modulo and denominator
+  // parameters. We augment frac_step_size with rate_modulo and denominator
   // arguments that capture the remaining rate component that cannot be
   // expressed by a 19.13 fixed-point step_size. Note: frac_step_size and
   // frac_input_offset use the same format -- they have the same limitations
   // in what they can and cannot communicate. This begs two questions:
   //
   // Q1: For perfect position accuracy, don't we also need an in/out param
-  // to specify initial/final subframe modulo, for fractional source offset?
-  // A1: Yes, for optimum position accuracy (within quantization limits), we
-  // SHOULD incorporate running subframe position_modulo in this way.
+  // to specify initial/final subframe rate_modulo, for fractional source
+  // offset? A1: Yes, for optimum position accuracy (within quantization
+  // limits), we SHOULD incorporate running subframe position_modulo.
   //
   // For now, we are defering this work, tracking it with MTWN-128.
   //
@@ -153,8 +182,8 @@ class Mixer {
   //
   // Reset
   //
-  // Reset the internal state of the mixer.  Will be called every time there is
-  // a discontinuity in the source stream.  Mixer implementations should reset
+  // Reset the internal state of the mixer. Will be called every time there is
+  // a discontinuity in the source stream. Mixer implementations should reset
   // anything related to their internal filter state.
   virtual void Reset() {}
 
@@ -162,12 +191,12 @@ class Mixer {
   // Filter widths
   //
   // The positive and negative widths of the filter for this mixer, expressed in
-  // fractional input AudioOut units.  These widths convey which input frames
-  // will be referenced by the filter, when producing output for a specific
-  // instant in time. Positive filter width refers to how far forward
+  // fractional input AudioRenderer units. These widths convey which input
+  // frames will be referenced by the filter, when producing output for a
+  // specific instant in time. Positive filter width refers to how far forward
   // (positively) the filter looks, from the PTS in question; negative filter
   // width refers to how far backward (negatively) the filter looks, from that
-  // same PTS.  Specifically...
+  // same PTS. Specifically...
   //
   // Let:
   // P = pos_filter_width()

@@ -56,15 +56,13 @@ size_t WriteLength(MutableByteBuffer* buf, size_t length) {
   if (length <= std::numeric_limits<uint8_t>::max()) {
     uint8_t val = static_cast<uint8_t>(length);
     buf->Write(&val, sizeof(val));
-    return sizeof(val);
+    return sizeof(uint8_t);
   } else if (length <= std::numeric_limits<uint16_t>::max()) {
-    uint16_t val = htobe16(static_cast<uint16_t>(length));
-    buf->Write(reinterpret_cast<uint8_t*>(&val), sizeof(val));
-    return sizeof(val);
+    buf->WriteObj(htobe16(static_cast<uint16_t>(length)));
+    return sizeof(uint16_t);
   } else if (length <= std::numeric_limits<uint32_t>::max()) {
-    uint32_t val = htobe32(static_cast<uint32_t>(length));
-    buf->Write(reinterpret_cast<uint8_t*>(&val), sizeof(val));
-    return sizeof(val);
+    buf->WriteObj(htobe32(static_cast<uint32_t>(length)));
+    return sizeof(uint32_t);
   }
   return 0;
 }
@@ -72,6 +70,34 @@ size_t WriteLength(MutableByteBuffer* buf, size_t length) {
 }  // namespace
 
 DataElement::DataElement() : type_(Type::kNull), size_(Size::kOneByte) {}
+
+DataElement::DataElement(const DataElement& other)
+    : type_(other.type_), size_(other.size_) {
+  switch (type_) {
+    case Type::kNull:
+      return;
+    case Type::kUnsignedInt:
+      uint_value_ = other.uint_value_;
+      return;
+    case Type::kBoolean:
+    case Type::kSignedInt:
+      int_value_ = other.int_value_;
+      return;
+    case Type::kUuid:
+      uuid_ = other.uuid_;
+      return;
+    case Type::kString:
+    case Type::kUrl:
+      string_ = other.string_;
+      return;
+    case Type::kSequence:
+    case Type::kAlternative:
+      for (const auto& it : other.aggregate_) {
+        aggregate_.emplace_back(DataElement(it));
+      }
+      return;
+  }
+}
 
 template <>
 void DataElement::Set<uint8_t>(uint8_t value) {
@@ -160,13 +186,13 @@ template <>
 void DataElement::Set<std::vector<DataElement>>(
     std::vector<DataElement> value) {
   type_ = Type::kSequence;
-  aggregate_ = value;
+  aggregate_ = std::move(value);
   SetVariableSize(AggregateSize(aggregate_));
 }
 
 void DataElement::SetAlternative(std::vector<DataElement> items) {
   type_ = Type::kAlternative;
-  aggregate_ = items;
+  aggregate_ = std::move(items);
   SetVariableSize(AggregateSize(aggregate_));
 }
 
@@ -286,7 +312,11 @@ Optional<std::vector<DataElement>> DataElement::Get<std::vector<DataElement>>()
     const {
   Optional<std::vector<DataElement>> ret;
   if (type_ == Type::kSequence) {
-    ret = aggregate_;
+    std::vector<DataElement> aggregate_copy;
+    for (const auto& it : aggregate_) {
+      aggregate_copy.emplace_back(it.Clone());
+    }
+    ret = std::move(aggregate_copy);
   }
   return ret;
 }
@@ -503,7 +533,7 @@ size_t DataElement::Write(MutableByteBuffer* buffer) const {
     }
     case Type::kBoolean: {
       uint8_t val = int_value_ != 0 ? 1 : 0;
-      cursor.Write(reinterpret_cast<uint8_t*>(&val), sizeof(val));
+      cursor.Write(&val, sizeof(val));
       pos += 1;
       return pos;
     }
@@ -513,15 +543,13 @@ size_t DataElement::Write(MutableByteBuffer* buffer) const {
         cursor.Write(reinterpret_cast<uint8_t*>(&val), sizeof(val));
         pos += sizeof(val);
       } else if (size_ == Size::kTwoBytes) {
-        uint16_t val = htobe16(uint16_t(uint_value_));
-        cursor.Write(reinterpret_cast<uint8_t*>(&val), sizeof(val));
-        pos += sizeof(val);
+        cursor.WriteObj(htobe16(static_cast<uint16_t>(uint_value_)));
+        pos += sizeof(uint16_t);
       } else if (size_ == Size::kFourBytes) {
-        uint32_t val = htobe32(uint32_t(uint_value_));
-        cursor.Write(reinterpret_cast<uint8_t*>(&val), sizeof(val));
-        pos += sizeof(val);
+        cursor.WriteObj(htobe32(static_cast<uint32_t>(uint_value_)));
+        pos += sizeof(uint32_t);
       } else if (size_ == Size::kFourBytes) {
-        uint64_t val = htobe64(uint64_t(uint_value_));
+        uint64_t val = htobe64(uint_value_);
         cursor.Write(reinterpret_cast<uint8_t*>(&val), sizeof(val));
         pos += sizeof(val);
       }
@@ -529,19 +557,17 @@ size_t DataElement::Write(MutableByteBuffer* buffer) const {
     }
     case Type::kSignedInt: {
       if (size_ == Size::kOneByte) {
-        int8_t val = int8_t(int_value_);
+        int8_t val = static_cast<int8_t>(int_value_);
         cursor.Write(reinterpret_cast<uint8_t*>(&val), sizeof(val));
         pos += sizeof(val);
       } else if (size_ == Size::kTwoBytes) {
-        int16_t val = htobe16(int16_t(int_value_));
-        cursor.Write(reinterpret_cast<uint8_t*>(&val), sizeof(val));
-        pos += sizeof(val);
+        cursor.WriteObj(htobe16(static_cast<int16_t>(int_value_)));
+        pos += sizeof(uint16_t);
       } else if (size_ == Size::kFourBytes) {
-        int32_t val = htobe32(int32_t(int_value_));
-        cursor.Write(reinterpret_cast<uint8_t*>(&val), sizeof(val));
-        pos += sizeof(val);
+        cursor.WriteObj(htobe32(static_cast<int32_t>(int_value_)));
+        pos += sizeof(uint32_t);
       } else if (size_ == Size::kFourBytes) {
-        int64_t val = htobe64(int64_t(int_value_));
+        int64_t val = htobe64(static_cast<int64_t>(int_value_));
         cursor.Write(reinterpret_cast<uint8_t*>(&val), sizeof(val));
         pos += sizeof(val);
       }
@@ -586,13 +612,14 @@ size_t DataElement::Write(MutableByteBuffer* buffer) const {
 }
 
 const DataElement* DataElement::At(size_t idx) const {
-  if ((type_ != Type::kSequence) || (idx >= aggregate_.size())) {
+  if ((type_ != Type::kSequence && type_ != Type::kAlternative) ||
+      (idx >= aggregate_.size())) {
     return nullptr;
   }
   return &aggregate_[idx];
 }
 
-std::string DataElement::Describe() const {
+std::string DataElement::ToString() const {
   switch (type_) {
     case Type::kNull:
       return std::string("Null");
@@ -611,19 +638,19 @@ std::string DataElement::Describe() const {
     case Type::kSequence: {
       std::string str;
       for (const auto &it : aggregate_) {
-        str += it.Describe() + " ";
+        str += it.ToString() + " ";
       }
       return fxl::StringPrintf("Sequence { %s}", str.c_str());
     }
     case Type::kAlternative: {
       std::string str;
       for (const auto &it : aggregate_) {
-        str += it.Describe() + " ";
+        str += it.ToString() + " ";
       }
       return fxl::StringPrintf("Alternatives { %s}", str.c_str());
     }
     default:
-      bt_log(SPEW, "sdp", "unhandled type (%d) in Describe()", type_);
+      bt_log(SPEW, "sdp", "unhandled type (%d) in ToString()", type_);
       // Fallthrough to unknown.
   }
 

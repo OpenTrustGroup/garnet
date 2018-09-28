@@ -18,6 +18,7 @@ static_library("client") {
     "disassembler.h",
     "finish_thread_controller.h",
     "frame.h",
+    "frame_fingerprint.h",
     "input_location.h",
     "memory_dump.h",
     "process.h",
@@ -25,8 +26,9 @@ static_library("client") {
     "register.h",
     "register_dwarf.h",
     "session.h",
-    "step_in_range_thread_controller.h",
-    "step_into_thread_controller.h",
+    "step_mode.h",
+    "step_over_thread_controller.h",
+    "step_thread_controller.h",
     "system.h",
     "system_observer.h",
     "target.h",
@@ -50,6 +52,7 @@ static_library("client") {
     "disassembler.cc",
     "finish_thread_controller.cc",
     "frame.cc",
+    "frame_fingerprint.cc",
     "frame_impl.cc",
     "frame_impl.h",
     "frame_symbol_data_provider.cc",
@@ -68,8 +71,8 @@ static_library("client") {
     "remote_api_impl.h",
     "session.cc",
     "session.h",
-    "step_in_range_thread_controller.cc",
-    "step_into_thread_controller.cc",
+    "step_over_thread_controller.cc",
+    "step_thread_controller.cc",
     "system.cc",
     "system_impl.cc",
     "system_impl.h",
@@ -84,19 +87,21 @@ static_library("client") {
   ]
 
   public_deps = [
-    "symbols",
     "//garnet/bin/zxdb/common",
     "//garnet/bin/zxdb/expr",
+    "//garnet/bin/zxdb/symbols",
     "//garnet/lib/debug_ipc:client",
     "//garnet/lib/debug_ipc/helper",
     "//garnet/public/lib/fxl",
-    "//third_party/llvm/lib/Target/AArch64/Disassembler",
-    "//third_party/llvm/lib/Target/X86/Disassembler",
+    "//garnet/third_party/llvm:LLVMAArch64Disassembler",
+    "//garnet/third_party/llvm:LLVMAArch64Desc",
+    "//garnet/third_party/llvm:LLVMX86Disassembler",
+    "//garnet/third_party/llvm:LLVMX86Desc",
   ]
 
   deps = [
-    "//third_party/llvm/lib/MC",
-    "//third_party/llvm/lib/Object",
+    "//garnet/third_party/llvm:LLVMMC",
+    "//garnet/third_party/llvm:LLVMObject",
   ]
 }
 
@@ -115,7 +120,7 @@ source_set("test_support") {
 
   public_deps = [
     ":client",
-    "symbols:test_support",
+    "//garnet/bin/zxdb/symbols:test_support",
     "//third_party/googletest:gtest",
   ]
 }
@@ -130,16 +135,20 @@ source_set("tests") {
     "process_impl_unittest.cc",
     "register_unittest.cc",
     "session_unittest.cc",
+    "step_over_thread_controller_unittest.cc",
+    "step_thread_controller_unittest.cc",
     "string_util_unittest.cc",
     "target_impl_unittest.cc",
+    "thread_controller_test.cc",
+    "thread_controller_test.h",
     "thread_impl_unittest.cc",
   ]
 
   deps = [
     ":client",
     ":test_support",
-    "symbols:test_support",
-    "symbols:tests",
+    "//garnet/bin/zxdb/symbols:test_support",
+    "//garnet/bin/zxdb/symbols:tests",
     "//third_party/googletest:gtest",
   ]
 }

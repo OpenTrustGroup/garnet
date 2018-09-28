@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use bt::error::Error as BTError;
 use failure::Error;
+use fuchsia_bluetooth::error::Error as BTError;
+use fuchsia_syslog::macros::*;
 use futures::channel::mpsc;
 use parking_lot::{Mutex, RwLock};
-use rouille;
-use rouille::{Request, Response};
+use rouille::{self, router, Request, Response};
 use serde;
 use serde_json;
 use serde_json::{to_value, Value};
@@ -17,11 +17,13 @@ use std::io::Read;
 use std::sync::Arc;
 
 // Standardized sl4f types and constants
-use server::constants::{COMMAND_DELIMITER, COMMAND_SIZE};
-use server::sl4f_types::{AsyncRequest, AsyncResponse, ClientData, CommandRequest, CommandResponse};
+use crate::server::constants::{COMMAND_DELIMITER, COMMAND_SIZE};
+use crate::server::sl4f_types::{AsyncRequest, AsyncResponse, ClientData, CommandRequest,
+                                CommandResponse};
 
 // Bluetooth related includes (do the same for each connectivity stack)
-use bluetooth::facade::BluetoothFacade;
+use crate::bluetooth::ble_advertise_facade::BleAdvertiseFacade;
+use crate::bluetooth::facade::BluetoothFacade;
 
 /// Sl4f object. This stores all information about state for each connectivity stack.
 /// Every session will have a new Sl4f object.
@@ -29,6 +31,9 @@ use bluetooth::facade::BluetoothFacade;
 /// the impl functions. Then, update method_to_fidl() to support the "wlan" method type.
 #[derive(Debug, Clone)]
 pub struct Sl4f {
+    // bt_facade: Thread safe object for state for ble functions.
+    ble_advertise_facade: Arc<RwLock<BleAdvertiseFacade>>,
+
     // bt_facade: Thread safe object for state for bluetooth connectivity tests
     bt_facade: Arc<RwLock<BluetoothFacade>>,
 
@@ -41,9 +46,14 @@ pub struct Sl4f {
 impl Sl4f {
     pub fn new() -> Arc<RwLock<Sl4f>> {
         Arc::new(RwLock::new(Sl4f {
-            bt_facade: BluetoothFacade::new(None, None),
+            ble_advertise_facade: BleAdvertiseFacade::new(None),
+            bt_facade: BluetoothFacade::new(None),
             clients: Arc::new(Mutex::new(HashMap::new())),
         }))
+    }
+
+    pub fn get_ble_advertise_facade(&self) -> Arc<RwLock<BleAdvertiseFacade>> {
+        self.ble_advertise_facade.clone()
     }
 
     pub fn get_bt_facade(&self) -> Arc<RwLock<BluetoothFacade>> {
@@ -60,6 +70,7 @@ impl Sl4f {
 
     pub fn cleanup(&mut self) {
         BluetoothFacade::cleanup(self.bt_facade.clone());
+        BleAdvertiseFacade::cleanup(self.ble_advertise_facade.clone());
         self.cleanup_clients();
     }
 
@@ -70,6 +81,7 @@ impl Sl4f {
     // Add *_facade.print() when new Facade objects are added (i.e WlanFacade)
     pub fn print(&self) {
         self.bt_facade.read().print();
+        self.ble_advertise_facade.read().print();
     }
 }
 

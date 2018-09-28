@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 use failure::{bail, format_err};
-use fidl::encoding2::OutOfLine;
-use fidl::endpoints2::RequestStream;
+use fidl::encoding::OutOfLine;
+use fidl::endpoints::RequestStream;
 use fidl_fuchsia_wlan_device_service::{self as fidl_svc, DeviceServiceRequest};
 use fidl_fuchsia_wlan_device as fidl_wlan_dev;
 use fuchsia_async as fasync;
@@ -12,7 +12,7 @@ use fuchsia_zircon as zx;
 use futures::channel::mpsc::UnboundedReceiver;
 use futures::select;
 use futures::prelude::*;
-use log::{error, info, log};
+use log::{error, info};
 use pin_utils::pin_mut;
 use std::marker::Unpin;
 use std::sync::Arc;
@@ -233,7 +233,7 @@ async fn get_iface_stats(ifaces: &IfaceMap, iface_id: u16)
 mod tests {
     use super::*;
 
-    use fidl::endpoints2::create_endpoints;
+    use fidl::endpoints::create_proxy;
     use fidl_fuchsia_wlan_device::{PhyRequest, PhyRequestStream};
     use fidl_fuchsia_wlan_device_service::{IfaceListItem, PhyListItem};
     use fidl_fuchsia_wlan_sme as fidl_sme;
@@ -393,7 +393,7 @@ mod tests {
         let mut iface = fake_client_iface("/dev/null");
         iface_map.insert(10, iface.iface);
 
-        let (proxy, server) = create_endpoints().expect("failed to create a pair of SME endpoints");
+        let (proxy, server) = create_proxy().expect("failed to create a pair of SME endpoints");
         assert_eq!(zx::Status::OK, super::get_client_sme(&iface_map, 10, server));
 
         // Expect to get a new FIDL client in the stream
@@ -403,7 +403,7 @@ mod tests {
         let mut sme_stream = endpoint.into_stream().expect("failed to create stream for endpoint");
 
         // Verify that `proxy` is indeed connected to `sme_stream`
-        let (_scan_proxy, scan_txn) = create_endpoints()
+        let (_scan_proxy, scan_txn) = create_proxy()
             .expect("failed to create a pair of scan txn endpoints");
         proxy.scan(&mut fake_scan_request(), scan_txn).expect("failed to send a scan request");
 
@@ -420,7 +420,7 @@ mod tests {
         let (iface_map, _iface_map_events) = IfaceMap::new();
         let iface_map = Arc::new(iface_map);
 
-        let (_proxy, server) = create_endpoints().expect("failed to create a pair of SME endpoints");
+        let (_proxy, server) = create_proxy().expect("failed to create a pair of SME endpoints");
         assert_eq!(zx::Status::NOT_FOUND, super::get_client_sme(&iface_map, 10, server));
     }
 
@@ -433,7 +433,7 @@ mod tests {
         let iface = fake_ap_iface("/dev/null");
         iface_map.insert(10, iface.iface);
 
-        let (_proxy, server) = create_endpoints().expect("failed to create a pair of SME endpoints");
+        let (_proxy, server) = create_proxy().expect("failed to create a pair of SME endpoints");
         assert_eq!(zx::Status::NOT_SUPPORTED, super::get_client_sme(&iface_map, 10, server));
     }
 
@@ -446,7 +446,7 @@ mod tests {
         let mut iface = fake_ap_iface("/dev/null");
         iface_map.insert(10, iface.iface);
 
-        let (proxy, server) = create_endpoints().expect("failed to create a pair of SME endpoints");
+        let (proxy, server) = create_proxy().expect("failed to create a pair of SME endpoints");
         assert_eq!(zx::Status::OK, super::get_ap_sme(&iface_map, 10, server));
 
         // Expect to get a new FIDL client in the stream
@@ -478,7 +478,7 @@ mod tests {
         let (iface_map, _iface_map_events) = IfaceMap::new();
         let iface_map = Arc::new(iface_map);
 
-        let (_proxy, server) = create_endpoints().expect("failed to create a pair of SME endpoints");
+        let (_proxy, server) = create_proxy().expect("failed to create a pair of SME endpoints");
         assert_eq!(zx::Status::NOT_FOUND, super::get_ap_sme(&iface_map, 10, server));
     }
 
@@ -491,13 +491,13 @@ mod tests {
         let iface = fake_client_iface("/dev/null");
         iface_map.insert(10, iface.iface);
 
-        let (_proxy, server) = create_endpoints().expect("failed to create a pair of SME endpoints");
+        let (_proxy, server) = create_proxy().expect("failed to create a pair of SME endpoints");
         assert_eq!(zx::Status::NOT_SUPPORTED, super::get_ap_sme(&iface_map, 10, server));
     }
 
     fn fake_phy(path: &str) -> (PhyDevice, PhyRequestStream) {
-        let (proxy, server) = create_endpoints::<fidl_wlan_dev::PhyMarker>()
-            .expect("fake_phy: create_endpoints() failed");
+        let (proxy, server) = create_proxy::<fidl_wlan_dev::PhyMarker>()
+            .expect("fake_phy: create_proxy() failed");
         let device = wlan_dev::Device::new(path).expect(&format!("fake_phy: failed to open {}", path));
         let stream = server.into_stream().expect("fake_phy: failed to create stream");
         (PhyDevice { proxy, device }, stream)
@@ -571,6 +571,7 @@ mod tests {
     fn fake_ap_config() -> fidl_sme::ApConfig {
         fidl_sme::ApConfig {
             ssid: b"qwerty".to_vec(),
+            password: vec![],
             channel: 6,
         }
     }

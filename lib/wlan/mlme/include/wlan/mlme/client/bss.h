@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <wlan/common/element.h>
 #include <wlan/common/energy.h>
 #include <wlan/common/logging.h>
 #include <wlan/common/macaddr.h>
@@ -29,6 +30,7 @@ class Bss : public fbl::RefCounted<Bss> {
    public:
     Bss(const common::MacAddr& bssid) : bssid_(bssid) {
         supported_rates_.reserve(SupportedRatesElement::kMaxLen);
+        bss_desc_.ssid.resize(0); // Make sure SSID is not marked as null
     }
 
     zx_status_t ProcessBeacon(const Beacon& beacon, size_t len, const wlan_rx_info_t* rx_info);
@@ -38,10 +40,9 @@ class Bss : public fbl::RefCounted<Bss> {
     // TODO(porce): Move these out of Bss class.
     std::string RatesToString(const std::vector<uint8_t>& rates) const;
 
-    ::fuchsia::wlan::mlme::BSSDescription ToFidl() const;
-
     const common::MacAddr& bssid() { return bssid_; }
     zx::time_utc ts_refreshed() { return ts_refreshed_; }
+    const ::fuchsia::wlan::mlme::BSSDescription& bss_desc() const { return bss_desc_; }
 
    private:
     bool IsBeaconValid(const Beacon& beacon) const;
@@ -87,22 +88,12 @@ class Bss : public fbl::RefCounted<Bss> {
 
 using BssMap = MacAddrMap<fbl::RefPtr<Bss>, macaddr_map_type::kBss>;
 
-::fuchsia::wlan::mlme::HtCapabilityInfo HtCapabilityInfoToFidl(const HtCapabilityInfo& hci);
-::fuchsia::wlan::mlme::AmpduParams AmpduParamsToFidl(const AmpduParams& ap);
-::fuchsia::wlan::mlme::SupportedMcsSet SupportedMcsSetToFidl(const SupportedMcsSet& sms);
-::fuchsia::wlan::mlme::HtExtCapabilities HtExtCapabilitiesToFidl(const HtExtCapabilities& hec);
-::fuchsia::wlan::mlme::TxBfCapability TxBfCapabilityToFidl(const TxBfCapability& tbc);
-::fuchsia::wlan::mlme::AselCapability AselCapabilityToFidl(const AselCapability& ac);
-std::unique_ptr<::fuchsia::wlan::mlme::HtCapabilities> HtCapabilitiesToFidl(
-    const HtCapabilities& ie);
-std::unique_ptr<::fuchsia::wlan::mlme::HtOperation> HtOperationToFidl(const HtOperation& ie);
 ::fuchsia::wlan::mlme::BSSTypes GetBssType(const CapabilityInfo& cap);
-::fuchsia::wlan::mlme::VhtMcsNss VhtMcsNssToFidl(const VhtMcsNss& vmn);
-::fuchsia::wlan::mlme::BasicVhtMcsNss BasicVhtMcsNssToFidl(const BasicVhtMcsNss& vmn);
-::fuchsia::wlan::mlme::VhtCapabilitiesInfo VhtCapabilitiesInfoToFidl(
-    const VhtCapabilitiesInfo& vci);
-std::unique_ptr<::fuchsia::wlan::mlme::VhtCapabilities> VhtCapabilitiesToFidl(
-    const VhtCapabilities& ie);
-std::unique_ptr<::fuchsia::wlan::mlme::VhtOperation> VhtOperationToFidl(const VhtOperation& ie);
+
+bool ValidateBssDesc(const ::fuchsia::wlan::mlme::BSSDescription& bss_desc,
+                     bool has_dsss_param_set_chan, uint8_t dsss_param_set_chan);
+wlan_channel_t DeriveChanFromBssDesc(const ::fuchsia::wlan::mlme::BSSDescription& bss_desc,
+                                     uint8_t bcn_rx_chan_primary, bool has_dsss_param_set_chan,
+                                     uint8_t dsss_param_set_chan = 0);
 
 }  // namespace wlan

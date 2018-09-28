@@ -11,31 +11,35 @@
 
 #[allow(unused)] // Remove pending fix to rust-lang/rust#53682
 use {
-    failure::{Error, ResultExt, Fail},
+    failure::{Error, ResultExt, Fail, format_err},
+    fdio::fdio_sys,
     fuchsia_async as fasync,
     futures::{
         Future, Poll,
         stream::{FuturesUnordered, StreamExt, StreamFuture},
         task,
     },
-    fidl::endpoints2::{RequestStream, ServiceMarker, Proxy},
+    fidl::endpoints::{RequestStream, ServiceMarker, Proxy},
     fidl_fuchsia_io::{
         DirectoryRequestStream,
         DirectoryRequest,
         DirectoryObject,
         NodeAttributes,
-        ObjectInfo,
+        NodeInfo,
     },
     fidl_fuchsia_sys::{
         ComponentControllerProxy,
+        FlatNamespace,
         LauncherMarker,
         LauncherProxy,
         LaunchInfo,
     },
-    fuchsia_zircon as zx,
+    fuchsia_zircon::{self as zx, Peered, Signals},
     std::{
+        os::unix::io::IntoRawFd,
+        fs::File,
         marker::Unpin,
-        mem::PinMut,
+        pin::PinMut,
     },
 };
 
@@ -43,19 +47,55 @@ use {
 pub mod client {
     use super::*;
 
+    /// Connect to a FIDL service using the provided namespace prefix.
     #[inline]
-    /// Connect to a FIDL service using the application root namespace.
-    pub fn connect_to_service<S: ServiceMarker>()
+    pub fn connect_to_service_at<S: ServiceMarker>(service_prefix: &str)
         -> Result<S::Proxy, Error>
     {
         let (proxy, server) = zx::Channel::create()?;
 
-        let service_path = format!("/svc/{}", S::NAME);
+        let service_path = format!("{}/{}", service_prefix, S::NAME);
         fdio::service_connect(&service_path, server)
             .with_context(|_| format!("Error connecting to service path: {}", service_path))?;
 
         let proxy = fasync::Channel::from_channel(proxy)?;
         Ok(S::Proxy::from_channel(proxy))
+    }
+
+    /// Connect to a FIDL service using the application root namespace.
+    pub fn connect_to_service<S: ServiceMarker>()
+        -> Result<S::Proxy, Error>
+    {
+        connect_to_service_at::<S>("/svc")
+    }
+
+    /// Options for the launcher when starting an applications.
+    pub struct LaunchOptions {
+        namespace: Option<Box<FlatNamespace>>
+    }
+
+    impl LaunchOptions {
+        /// Creates default launch options.
+        pub fn new() -> LaunchOptions {
+            LaunchOptions {
+                namespace: None
+            }
+        }
+
+        /// Adds a new directory to the namespace for the new process.
+        pub fn add_dir_to_namespace(&mut self, path: String, dir: File) -> Result<&mut Self, Error> {
+            let (mut channels, _) = fdio::transfer_fd(dir)?;
+            if channels.len() != 1 {
+                return Err(format_err!("fdio_transfer_fd() returned unexpected number of handles"));
+            }
+
+            let namespace = self.namespace.get_or_insert_with(||
+                  Box::new(FlatNamespace {paths: vec![], directories: vec![]}));
+            namespace.paths.push(path);
+            namespace.directories.push(channels.remove(0));
+
+            Ok(self)
+        }
     }
 
     /// Launcher launches Fuchsia applications.
@@ -76,9 +116,17 @@ pub mod client {
             &self,
             url: String,
             arguments: Option<Vec<String>>,
-        ) -> Result<App, Error>
-        {
+        ) -> Result<App, Error> {
+            self.launch_with_options(url, arguments, LaunchOptions::new())
+        }
 
+        /// Launch an application at the specified URL.
+        pub fn launch_with_options(
+            &self,
+            url: String,
+            arguments: Option<Vec<String>>,
+            options: LaunchOptions
+        ) -> Result<App, Error> {
             let (controller, controller_server_end) = zx::Channel::create()?;
             let (directory_request, directory_server_chan) = zx::Channel::create()?;
 
@@ -88,7 +136,7 @@ pub mod client {
                 out: None,
                 err: None,
                 directory_request: Some(directory_server_chan),
-                flat_namespace: None,
+                flat_namespace: options.namespace,
                 additional_services: None,
             };
 
@@ -221,6 +269,12 @@ pub mod server {
                     .ok_or(MissingStartupHandle)?;
 
             let fdio_channel = fasync::Channel::from_channel(fdio_handle.into())?;
+            fdio_channel
+                .as_ref()
+                .signal_peer(Signals::NONE, Signals::USER_0)
+                .unwrap_or_else(|e| {
+                    eprintln!("ServicesServer::start signal_peer failed with {}", e);
+                });
 
             let mut server = FdioServer {
                 connections: FuturesUnordered::new(),
@@ -288,7 +342,7 @@ pub mod server {
                     Ok(())
                 }
                 DirectoryRequest::Describe { responder } => {
-                    let mut info = ObjectInfo::Directory(DirectoryObject { reserved: 0 } );
+                    let mut info = NodeInfo::Directory(DirectoryObject { reserved: 0 } );
                     responder.send(&mut info).map_err(|e| e.into())
                 }
                 // Unsupported / Ignored methods.
@@ -315,13 +369,10 @@ pub mod server {
                 DirectoryRequest::Sync { responder, } => {
                     responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED).map_err(|e| e.into())
                 }
-                DirectoryRequest::Bind { interface_name: _, control_handle: _ } => {
-                    Ok(())
-                }
                 DirectoryRequest::Unlink { path: _, responder, } => {
                     responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED).map_err(|e| e.into())
                 }
-                DirectoryRequest::ReadDirents { max_out: _, responder, } => {
+                DirectoryRequest::ReadDirents { max_bytes: _, responder, } => {
                     responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED,
                                    &mut std::iter::empty()).map_err(|e| e.into())
                 }
@@ -335,6 +386,9 @@ pub mod server {
                     responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED).map_err(|e| e.into())
                 }
                 DirectoryRequest::Link { src: _, dst_parent_token: _, dst: _, responder, } => {
+                    responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED).map_err(|e| e.into())
+                }
+                DirectoryRequest::Watch { mask: _, options: _, watcher: _, responder, } => {
                     responder.send(zx::sys::ZX_ERR_NOT_SUPPORTED).map_err(|e| e.into())
                 }
             }

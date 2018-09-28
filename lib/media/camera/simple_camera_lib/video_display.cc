@@ -11,6 +11,8 @@
 #include <lib/fxl/logging.h>
 #include <lib/fxl/strings/string_printf.h>
 
+#define ROUNDUP(a, b) (((a) + ((b)-1)) & ~((b)-1))
+
 namespace simple_camera {
 
 const bool use_fake_camera = false;
@@ -61,8 +63,8 @@ zx_status_t Gralloc(fuchsia::camera::VideoFormat format, uint32_t num_buffers,
   // In the future, some special alignment might happen here, or special
   // memory allocated...
   // Simple GetBufferSize.  Only valid for simple formats:
-  size_t buffer_size =
-      format.format.height * format.format.planes[0].bytes_per_row;
+  size_t buffer_size = ROUNDUP(
+      format.format.height * format.format.planes[0].bytes_per_row, PAGE_SIZE);
   buffer_collection->buffer_count = num_buffers;
   buffer_collection->vmo_size = buffer_size;
   buffer_collection->format.set_image(std::move(format.format));
@@ -290,9 +292,19 @@ zx_status_t VideoDisplay::ConnectToCamera(
       return status;
     }
 
+    // Create stream token.  The stream token is not very meaningful when
+    // you have a direct connection to the driver, but this use case should
+    // be disappearing soon anyway.  For now, we just hold on to the token.
+    zx::eventpair driver_token;
+    status = zx::eventpair::create(0, &stream_token_, &driver_token);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Couldn't create driver token. status: " << status;
+      DisconnectFromCamera();
+      return status;
+    }
     status = camera_client_->control_->CreateStream(
         std::move(buffer_collection), chosen_format.rate,
-        camera_client_->stream_.NewRequest());
+        camera_client_->stream_.NewRequest(), std::move(driver_token));
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "Couldn't set camera format. status: " << status;
       DisconnectFromCamera();

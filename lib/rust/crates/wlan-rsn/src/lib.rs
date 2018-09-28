@@ -6,7 +6,7 @@
 #![feature(drain_filter)]
 #![deny(warnings)]
 
-use failure::Fail;
+use failure::{self, Fail};
 
 pub mod akm;
 pub mod auth;
@@ -19,17 +19,128 @@ mod keywrap;
 mod pmkid;
 pub mod rsna;
 pub mod rsne;
+mod state_machine;
 pub mod suite_selector;
 
-use crate::key::exchange::handshake::fourway::MessageNumber;
+use crate::auth::psk;
+use crate::key::exchange::{
+    self,
+    handshake::fourway::{self, MessageNumber},
+    handshake::group_key,
+};
+use crate::rsne::Rsne;
+use crate::rsna::esssa::EssSa;
+use crate::rsna::{NegotiatedRsne, UpdateSink, Role};
+
+#[derive(Debug, PartialEq)]
+pub struct Supplicant {
+    esssa: EssSa,
+}
+
+impl Supplicant {
+    /// WPA2-PSK CCMP-128 Supplicant which supports 4-Way- and Group-Key Handshakes.
+    pub fn new_wpa2psk_ccmp128(
+        ssid: &[u8],
+        passphrase: &[u8],
+        s_addr: [u8; 6],
+        s_rsne: Rsne,
+        a_addr: [u8; 6],
+        a_rsne: Rsne,
+    ) -> Result<Supplicant, failure::Error> {
+        let negotiated_rsne = NegotiatedRsne::from_rsne(&s_rsne)?;
+        let akm = negotiated_rsne.akm.clone();
+
+        let mut esssa = EssSa::new(
+            Role::Supplicant,
+            negotiated_rsne,
+            auth::Config::Psk(psk::Config::new(passphrase, ssid)?),
+            exchange::Config::FourWayHandshake(fourway::Config::new(
+                Role::Supplicant, s_addr, s_rsne, a_addr, a_rsne
+            )?),
+            exchange::Config::GroupKeyHandshake(group_key::Config {
+                role: Role::Supplicant, akm
+            }),
+        )?;
+
+        // The Supplicant always waits for Authenticator to initiate and does not yet support EAPOL
+        // request frames. Thus, all updates can be ignored.
+        let mut dead_update_sink = vec![];
+        esssa.initiate(&mut dead_update_sink)?;
+
+        Ok(Supplicant{ esssa })
+    }
+
+    /// Resets all established Security Associations and invalidates all derived keys.
+    /// The Supplicant must be reset or destroyed when the underlying 802.11 association terminates.
+    pub fn reset(&mut self) {
+        self.esssa.reset();
+    }
+
+    /// Entry point for all incoming EAPOL frames. Incoming frames can be corrupted, invalid or of
+    /// unsupported types; the Supplicant will filter and drop all unexpected frames.
+    /// Outbound EAPOL frames, status and key updates will be pushed into the `update_sink`.
+    /// The method will return an `Error` if the frame was invalid.
+    pub fn on_eapol_frame(&mut self, update_sink: &mut UpdateSink, frame: &eapol::Frame)
+        -> Result<(), failure::Error>
+    {
+        self.esssa.on_eapol_frame(update_sink, frame)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Authenticator {
+    esssa: EssSa,
+}
+
+impl Authenticator {
+    /// WPA2-PSK CCMP-128 Authenticator which supports 4-Way Handshake.
+    /// The Authenticator does not support GTK rotations.
+    pub fn new_wpa2psk_authenticator() -> Result<Authenticator, failure::Error> {
+        panic!("not yet implemented")
+    }
+
+    /// Resets all established Security Associations and invalidates all derived keys.
+    /// The Authenticator must be reset or destroyed when the underlying 802.11 association
+    /// terminates.
+    pub fn reset(&mut self) {
+        self.esssa.reset();
+    }
+
+    /// `initiate(...)` must be called when the Authenticator should start establishing a
+    /// security association with a client.
+    /// The Authenticator must always initiate the security association in the current system as
+    /// EAPOL request frames from clients are not yet supported.
+    /// This method can be called multiple times to re-initiate the security association, however,
+    /// calling this method will invalidate all established security associations and their derived
+    /// keys.
+    pub fn initiate(&mut self, update_sink: &mut UpdateSink) -> Result<(), failure::Error> {
+        self.esssa.initiate(update_sink)
+    }
+
+    /// Entry point for all incoming EAPOL frames. Incoming frames can be corrupted, invalid or of
+    /// unsupported types; the Authenticator will filter and drop all unexpected frames.
+    /// Outbound EAPOL frames, status and key updates will be pushed into the `update_sink`.
+    /// The method will return an `Error` if the frame was invalid.
+    pub fn on_eapol_frame(&mut self, update_sink: &mut UpdateSink, frame: &eapol::Frame)
+                          -> Result<(), failure::Error>
+    {
+        self.esssa.on_eapol_frame(update_sink, frame)
+    }
+}
 
 #[derive(Debug, Fail)]
 pub enum Error {
     #[fail(display = "unexpected IO error: {}", _0)]
     UnexpectedIoError(#[cause] std::io::Error),
-    #[fail(display = "invalid OUI length; expected 3 bytes but received {}", _0)]
+    #[fail(
+        display = "invalid OUI length; expected 3 bytes but received {}",
+        _0
+    )]
     InvalidOuiLength(usize),
-    #[fail(display = "invalid PMKID length; expected 16 bytes but received {}", _0)]
+    #[fail(
+        display = "invalid PMKID length; expected 16 bytes but received {}",
+        _0
+    )]
     InvalidPmkidLength(usize),
     #[fail(display = "invalid ssid length: {}", _0)]
     InvalidSsidLen(usize),
@@ -37,9 +148,16 @@ pub enum Error {
     InvalidPassphraseLen(usize),
     #[fail(display = "passphrase contains invalid character: {:x}", _0)]
     InvalidPassphraseChar(u8),
-    #[fail(display = "the config `{:?}` is incompatible with the auth method `{:?}`", _0, _1)]
+    #[fail(
+        display = "the config `{:?}` is incompatible with the auth method `{:?}`",
+        _0,
+        _1
+    )]
     IncompatibleConfig(auth::Config, String),
-    #[fail(display = "invalid bit size; must be a multiple of 8 but was {}", _0)]
+    #[fail(
+        display = "invalid bit size; must be a multiple of 8 but was {}",
+        _0
+    )]
     InvalidBitSize(usize),
     #[fail(display = "nonce could not be generated")]
     NonceError,
@@ -53,13 +171,17 @@ pub enum Error {
     GtkHierarchyUnsupportedCipherError,
     #[fail(display = "error invalid key size for AES keywrap: {}", _0)]
     InvalidAesKeywrapKeySize(usize),
-    #[fail(display = "error data must be a multiple of 64-bit blocks and at least 128 bits: {}",
-           _0)]
+    #[fail(
+        display = "error data must be a multiple of 64-bit blocks and at least 128 bits: {}",
+        _0
+    )]
     InvalidAesKeywrapDataLength(usize),
     #[fail(display = "error wrong key for AES Keywrap unwrapping")]
     WrongAesKeywrapKey,
-    #[fail(display = "invalid key data length; must be at least 16 bytes and a multiple of 8: {}",
-           _0)]
+    #[fail(
+        display = "invalid key data length; must be at least 16 bytes and a multiple of 8: {}",
+        _0
+    )]
     InvaidKeyDataLength(usize),
     #[fail(display = "invalid key data; error code: {:?}", _0)]
     InvalidKeyData(nom::IError),
@@ -73,7 +195,11 @@ pub enum Error {
     UnexpectedInitiationRequest,
     #[fail(display = "unsupported Key Descriptor Type: {:?}", _0)]
     UnsupportedKeyDescriptor(u8),
-    #[fail(display = "unexpected Key Descriptor Type {:?}; expected {:?}", _0, _1)]
+    #[fail(
+        display = "unexpected Key Descriptor Type {:?}; expected {:?}",
+        _0,
+        _1
+    )]
     InvalidKeyDescriptor(u8, eapol::KeyDescriptor),
     #[fail(display = "unsupported Key Descriptor Version: {:?}", _0)]
     UnsupportedKeyDescriptorVersion(u16),
@@ -131,19 +257,34 @@ pub enum Error {
     InvalidMic,
     #[fail(display = "cannot decrypt key data; PTK not yet derived")]
     UnexpectedEncryptedKeyData,
-    #[fail(display = "invalid key replay counter {:?}; expected counter to be > {:?}", _0, _1)]
+    #[fail(
+        display = "invalid key replay counter {:?}; expected counter to be > {:?}",
+        _0,
+        _1
+    )]
     InvalidKeyReplayCounter(u64, u64),
     #[fail(display = "invalid nonce; nonce must match nonce from 1st message")]
     ErrorNonceDoesntMatch,
-    #[fail(display = "invalid IV; EAPOL protocol version: {:?}; message: {:?}", _0, _1)]
+    #[fail(
+        display = "invalid IV; EAPOL protocol version: {:?}; message: {:?}",
+        _0,
+        _1
+    )]
     InvalidIv(u8, MessageNumber),
     #[fail(display = "PMKSA was not yet established")]
     PmksaNotEstablished,
-    #[fail(display = "invalid nonce size; expected 32 bytes, found: {:?}", _0)]
+    #[fail(
+        display = "invalid nonce size; expected 32 bytes, found: {:?}",
+        _0
+    )]
     InvalidNonceSize(usize),
     #[fail(display = "invalid key data; expected negotiated RSNE")]
     InvalidKeyDataRsne,
-    #[fail(display = "buffer too small; required: {}, available: {}", _0, _1)]
+    #[fail(
+        display = "buffer too small; required: {}, available: {}",
+        _0,
+        _1
+    )]
     BufferTooSmall(usize, usize),
     #[fail(display = "error, SMK-Handshake is not supported")]
     SmkHandshakeNotSupported,

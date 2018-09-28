@@ -5,7 +5,7 @@
 package main
 
 import (
-	"amber/ipcserver"
+	"amber/ipcclient"
 	"app/context"
 	"bytes"
 	"crypto/sha256"
@@ -22,14 +22,11 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"syscall/zx"
-	"syscall/zx/zxwait"
 )
 
 const usage = `usage: amber_ctl <command> [opts]
 Commands
-    get_up    - get an update for a package
+    get_up        - get an update for a package
       Options
         -n:      name of the package
         -v:      version of the package to retrieve, if none is supplied any
@@ -39,7 +36,7 @@ Commands
         -nowait: exit once package installation has started, but don't wait for
                  package activation
 
-    get_blob  - get the specified content blob
+    get_blob      - get the specified content blob
         -i: content ID of the blob
 
     add_src   - add a source to the list we can use
@@ -53,19 +50,18 @@ Commands
         -p: length of time (in milliseconds) over which the limit passed to
             '-l' applies, 0 for no limit
 
-    rm_src    - remove a source, if it exists
+    rm_src        - remove a source, if it exists
         -n: name of the update source
 
-    list_srcs - list the set of sources we can use
+    list_srcs     - list the set of sources we can use
 
     enable_src
-		-n: name of the update source
+        -n: name of the update source
 
     disable_src
-		-n: name of the update source
+        -n: name of the update source
 
-    check     - query the list of sources for updates to any of the regularly
-                monitored packages
+    system_update - check for, download, and apply any available system update
 `
 
 var (
@@ -83,16 +79,6 @@ var (
 	merkle     = fs.String("m", "", "Merkle root of the desired update.")
 	period     = fs.Uint("p", 0, "Duration in milliseconds over which the request limit applies.")
 )
-
-type ErrDaemon string
-
-func NewErrDaemon(str string) ErrDaemon {
-	return ErrDaemon(fmt.Sprintf("amber_ctl: daemon error: %s", str))
-}
-
-func (e ErrDaemon) Error() string {
-	return string(e)
-}
 
 type ErrGetFile string
 
@@ -279,7 +265,7 @@ func getUp(a *amber.ControlInterface) error {
 	} else {
 		var err error
 		for i := 0; i < 3; i++ {
-			err = getUpdateComplete(a, name, merkle)
+			err = ipcclient.GetUpdateComplete(a, *name, merkle)
 			if err == nil {
 				break
 			}
@@ -397,14 +383,14 @@ func main() {
 			fmt.Printf("Error enabling source: %s", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Source %q enabled", *name)
+		fmt.Printf("Source %q enabled\n", *name)
 	case "disable_src":
 		err := setSourceEnablement(proxy, *name, false)
 		if err != nil {
 			fmt.Printf("Error disabling source: %s", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Source %q disabled", *name)
+		fmt.Printf("Source %q disabled\n", *name)
 	default:
 		log.Printf("Error, %q is not a recognized command\n%s",
 			os.Args[1], usage)
@@ -412,55 +398,4 @@ func main() {
 	}
 
 	proxy.Close()
-}
-
-func getUpdateComplete(proxy *amber.ControlInterface, pkgName, merkle *string) error {
-	c, err := proxy.GetUpdateComplete(*pkgName, nil, merkle)
-	if err == nil {
-		defer c.Close()
-		b := make([]byte, 64*1024)
-		daemonErr := false
-		for {
-			var err error
-			var sigs zx.Signals
-			sigs, err = zxwait.Wait(*c.Handle(),
-				zx.SignalChannelPeerClosed|zx.SignalChannelReadable|ipcserver.ZXSIO_DAEMON_ERROR,
-				zx.Sys_deadline_after(zx.Duration((3 * time.Second).Nanoseconds())))
-
-			// If the daemon signaled an error, wait for the error message to
-			// become available. daemonErr could be true if the daemon signaled
-			// but the read timed out.
-			daemonErr = daemonErr ||
-				err == nil && sigs&ipcserver.ZXSIO_DAEMON_ERROR == ipcserver.ZXSIO_DAEMON_ERROR
-			if daemonErr {
-				sigs, err = zxwait.Wait(*c.Handle(),
-					zx.SignalChannelPeerClosed|zx.SignalChannelReadable,
-					zx.Sys_deadline_after(zx.Duration((3 * time.Second).Nanoseconds())))
-			}
-
-			if sigs&zx.SignalChannelReadable == zx.SignalChannelReadable {
-				bs, _, err := c.Read(b, []zx.Handle{}, 0)
-				if err != nil {
-					return NewErrDaemon(
-						fmt.Sprintf("error reading response from channel: %s", err))
-				} else if daemonErr {
-					return NewErrDaemon(string(b[0:bs]))
-				} else {
-					fmt.Printf("Wrote update to blob %s\n", string(b[0:bs]))
-					return nil
-				}
-			}
-
-			if sigs&zx.SignalChannelPeerClosed == zx.SignalChannelPeerClosed {
-				return NewErrDaemon("response channel closed unexpectedly.")
-			} else if err != nil && err.(zx.Error).Status != zx.ErrTimedOut {
-				return NewErrDaemon(
-					fmt.Sprintf("unknown error while waiting for response from channel: %s", err))
-			} else if err != nil && err.(zx.Error).Status == zx.ErrTimedOut {
-				fmt.Println("Awaiting response...")
-			}
-		}
-	} else {
-		return NewErrDaemon(fmt.Sprintf("error making FIDL request: %s", err))
-	}
 }

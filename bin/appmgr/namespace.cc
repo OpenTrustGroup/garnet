@@ -17,51 +17,64 @@
 namespace component {
 
 Namespace::Namespace(fxl::RefPtr<Namespace> parent, Realm* realm,
-                     fuchsia::sys::ServiceListPtr additional_services)
+                     fuchsia::sys::ServiceListPtr additional_services,
+                     const std::vector<std::string>* service_whitelist)
     : vfs_(async_get_default_dispatcher()),
-      services_(fbl::AdoptRef(new ServiceProviderDirImpl())),
+      services_(fbl::AdoptRef(new ServiceProviderDirImpl(service_whitelist))),
       job_provider_(fbl::AdoptRef(new JobProviderImpl(realm))),
-      parent_(parent),
       realm_(realm) {
-  if (parent_) {
-    services_->set_parent(parent_->services());
-  }
-
   services_->AddService(
+      fuchsia::sys::Environment::Name_,
       fbl::AdoptRef(new fs::Service([this](zx::channel channel) {
         environment_bindings_.AddBinding(
             this, fidl::InterfaceRequest<fuchsia::sys::Environment>(
                       std::move(channel)));
         return ZX_OK;
-      })),
-      fuchsia::sys::Environment::Name_);
+      })));
   services_->AddService(
+      Launcher::Name_,
       fbl::AdoptRef(new fs::Service([this](zx::channel channel) {
         launcher_bindings_.AddBinding(
             this, fidl::InterfaceRequest<Launcher>(std::move(channel)));
         return ZX_OK;
-      })),
-      Launcher::Name_);
+      })));
   services_->AddService(
+      fuchsia::process::Launcher::Name_,
       fbl::AdoptRef(new fs::Service([this](zx::channel channel) {
         realm_->environment_services()->ConnectToService(
             fidl::InterfaceRequest<fuchsia::process::Launcher>(
                 std::move(channel)));
         return ZX_OK;
-      })),
-      fuchsia::process::Launcher::Name_);
+      })));
 
   if (additional_services) {
     auto& names = additional_services->names;
-    additional_services_ = additional_services->provider.Bind();
+    service_provider_ = additional_services->provider.Bind();
+    service_host_directory_ = std::move(additional_services->host_directory);
     for (auto& name : *names) {
-      services_->AddService(
-          fbl::AdoptRef(new fs::Service([this, name](zx::channel channel) {
-            additional_services_->ConnectToService(name, std::move(channel));
-            return ZX_OK;
-          })),
-          name);
+      if (service_host_directory_) {
+        services_->AddService(
+            name,
+            fbl::AdoptRef(new fs::Service([this, name](zx::channel channel) {
+              fdio_service_connect_at(service_host_directory_.get(),
+                                      name->c_str(), channel.release());
+              return ZX_OK;
+            })));
+      } else {
+        services_->AddService(
+            name,
+            fbl::AdoptRef(new fs::Service([this, name](zx::channel channel) {
+              service_provider_->ConnectToService(name, std::move(channel));
+              return ZX_OK;
+            })));
+      }
     }
+  }
+
+  // If any services in |parent| share a name with |additional_services|,
+  // |additional_services| takes priority.
+  if (parent) {
+    services_->set_parent(parent->services());
   }
 }
 
@@ -73,12 +86,15 @@ void Namespace::AddBinding(
 }
 
 void Namespace::CreateNestedEnvironment(
-    zx::channel host_directory,
     fidl::InterfaceRequest<fuchsia::sys::Environment> environment,
     fidl::InterfaceRequest<fuchsia::sys::EnvironmentController> controller,
-    fidl::StringPtr label) {
-  realm_->CreateNestedJob(std::move(host_directory), std::move(environment),
-                          std::move(controller), label);
+    fidl::StringPtr label,
+    fuchsia::sys::ServiceListPtr additional_services,
+    fuchsia::sys::EnvironmentOptions options) {
+  realm_->CreateNestedEnvironment(std::move(environment), std::move(controller),
+                                  label, std::move(additional_services),
+                                  options.inherit_parent_services,
+                                  options.allow_parent_runners);
 }
 
 void Namespace::GetLauncher(fidl::InterfaceRequest<Launcher> launcher) {
@@ -102,10 +118,6 @@ void Namespace::CreateComponent(
 
 zx::channel Namespace::OpenServicesAsDirectory() {
   return Util::OpenAsDirectory(&vfs_, services_);
-}
-
-void Namespace::SetServicesWhitelist(const std::vector<std::string>& services) {
-  services_->SetServicesWhitelist(services);
 }
 
 }  // namespace component

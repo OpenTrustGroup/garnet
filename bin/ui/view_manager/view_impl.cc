@@ -14,11 +14,6 @@ ViewImpl::ViewImpl(ViewRegistry* registry, ViewState* state)
 
 ViewImpl::~ViewImpl() {}
 
-void ViewImpl::GetToken(
-    ::fuchsia::ui::viewsv1::View::GetTokenCallback callback) {
-  callback(state_->view_token());
-}
-
 void ViewImpl::GetServiceProvider(
     fidl::InterfaceRequest<fuchsia::sys::ServiceProvider>
         service_provider_request) {
@@ -71,6 +66,11 @@ void ViewImpl::SetChildProperties(
 
 void ViewImpl::RequestFocus(uint32_t child_key) {
   registry_->RequestFocus(state_, child_key);
+}
+
+void ViewImpl::RequestSnapshotHACK(uint32_t child_key,
+                                   RequestSnapshotHACKCallback callback) {
+  registry_->RequestSnapshotHACK(state_, child_key, std::move(callback));
 }
 
 void ViewImpl::ConnectToService(fidl::StringPtr service_name,

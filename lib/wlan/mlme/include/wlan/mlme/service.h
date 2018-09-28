@@ -24,15 +24,12 @@ namespace wlan_mlme = ::fuchsia::wlan::mlme;
 template <typename T>
 static zx_status_t SendServiceMsg(DeviceInterface* device, T* message, uint32_t ordinal) {
     // TODO(FIDL-2): replace this when we can get the size of the serialized response.
-    size_t buf_len = 16384;
-    fbl::unique_ptr<Buffer> buffer = GetBuffer(buf_len);
-    if (buffer == nullptr) { return ZX_ERR_NO_RESOURCES; }
+    auto packet = GetSvcPacket(kHugeBufferSize);
+    if (packet == nullptr) { return ZX_ERR_NO_RESOURCES; }
 
-    auto packet = fbl::unique_ptr<Packet>(new Packet(std::move(buffer), buf_len));
-    packet->set_peer(Packet::Peer::kService);
     zx_status_t status = SerializeServiceMsg(packet.get(), ordinal, message);
     if (status != ZX_OK) {
-        errorf("could not serialize FIDL message: %d\n", status);
+        errorf("could not serialize FIDL message %d: %d\n", ordinal, status);
         return status;
     }
     return device->SendService(std::move(packet));
@@ -108,8 +105,12 @@ class BaseMlmeMsg {
                                                       : nullptr;
     }
 
+    uint32_t ordinal() const { return ordinal_; }
+
    protected:
     virtual const void* get_type_id() const = 0;
+
+    uint32_t ordinal_ = 0;
 
    private:
     BaseMlmeMsg(BaseMlmeMsg const&) = delete;
@@ -135,17 +136,12 @@ template <typename M> class MlmeMsg : public BaseMlmeMsg {
         return ZX_OK;
     }
 
-    // TODO(hahnr): ordinal() is only exposed while we transition to Frame Handling 2.0.
-    // Once transition landed, MlmeMsg has no need even own the ordinal.
-    uint32_t ordinal() const { return ordinal_; }
-
     const M* body() const { return &msg_; }
 
     static const void* type_id() { return &MlmeMsg<M>::kTypeId; }
     const void* get_type_id() const override { return type_id(); }
 
    private:
-    uint32_t ordinal_;
     M msg_;
 };
 
@@ -156,11 +152,16 @@ namespace service {
 zx_status_t SendJoinConfirm(DeviceInterface* device, wlan_mlme::JoinResultCodes result_code);
 zx_status_t SendAuthConfirm(DeviceInterface* device, const common::MacAddr& peer_sta,
                             wlan_mlme::AuthenticateResultCodes code);
+zx_status_t SendAuthIndication(DeviceInterface* device, const common::MacAddr& peer_sta,
+                               wlan_mlme::AuthenticationTypes auth_type);
 zx_status_t SendDeauthConfirm(DeviceInterface* device, const common::MacAddr& peer_sta);
 zx_status_t SendDeauthIndication(DeviceInterface* device, const common::MacAddr& peer_sta,
                                  wlan_mlme::ReasonCode code);
 zx_status_t SendAssocConfirm(DeviceInterface* device, wlan_mlme::AssociateResultCodes code,
                              uint16_t aid = 0);
+zx_status_t SendAssocIndication(DeviceInterface* device, const common::MacAddr& peer_sta,
+                                uint16_t listen_interval, const SsidElement& ssid_element,
+                                const RsnElement* rsn_elem);
 zx_status_t SendDisassociateIndication(DeviceInterface* device, const common::MacAddr& peer_sta,
                                        uint16_t code);
 

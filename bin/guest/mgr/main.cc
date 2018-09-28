@@ -4,10 +4,10 @@
 
 #include <lib/async-loop/cpp/loop.h>
 
-#include "garnet/bin/guest/mgr/guest_manager_impl.h"
+#include "garnet/bin/guest/mgr/environment_manager_impl.h"
 
 int main(int argc, char** argv) {
   async::Loop loop(&kAsyncLoopConfigAttachToThread);
-  guestmgr::GuestManagerImpl guestmgr;
+  guestmgr::EnvironmentManagerImpl environment_manager;
   loop.Run();
 }

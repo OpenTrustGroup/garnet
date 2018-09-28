@@ -12,7 +12,10 @@ use fidl_fuchsia_wlan_mlme as fidl_mlme;
 use futures::channel::mpsc;
 use std::collections::HashSet;
 
+use crate::client::InfoEvent;
+
 pub type Ssid = Vec<u8>;
+pub type MacAddr = [u8; 6];
 
 pub struct DeviceInfo {
     pub supported_channels: HashSet<u8>,
@@ -24,7 +27,9 @@ pub enum MlmeRequest {
     Scan(fidl_mlme::ScanRequest),
     Join(fidl_mlme::JoinRequest),
     Authenticate(fidl_mlme::AuthenticateRequest),
+    AuthResponse(fidl_mlme::AuthenticateResponse),
     Associate(fidl_mlme::AssociateRequest),
+    AssocResponse(fidl_mlme::AssociateResponse),
     Deauthenticate(fidl_mlme::DeauthenticateRequest),
     Eapol(fidl_mlme::EapolRequest),
     SetKeys(fidl_mlme::SetKeysRequest),
@@ -37,3 +42,4 @@ pub trait Station {
 }
 
 pub type MlmeStream = mpsc::UnboundedReceiver<MlmeRequest>;
+pub type InfoStream = mpsc::UnboundedReceiver<InfoEvent>;

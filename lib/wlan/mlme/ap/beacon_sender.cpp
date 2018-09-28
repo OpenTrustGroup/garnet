@@ -8,6 +8,7 @@
 #include <wlan/common/logging.h>
 #include <wlan/mlme/ap/bss_interface.h>
 #include <wlan/mlme/ap/tim.h>
+#include <wlan/mlme/debug.h>
 #include <wlan/mlme/mac_frame.h>
 #include <wlan/mlme/packet.h>
 #include <wlan/mlme/service.h>
@@ -34,7 +35,21 @@ void BeaconSender::Start(BssInterface* bss, const PsCfg& ps_cfg,
     bss_ = bss;
     req.body()->Clone(&req_);
 
-    auto status = device_->EnableBeaconing(true);
+    // Build the template.
+    wlan_bcn_config_t bcn_cfg;
+    MgmtFrame<Beacon> frame;
+    auto status = BuildBeacon(ps_cfg, &frame, &bcn_cfg.tim_ele_offset);
+    if (status != ZX_OK) {
+        errorf("[bcn-sender] [%s] could not build beacon template: %d\n",
+               bss_->bssid().ToString().c_str(), status);
+        return;
+    }
+
+    // Copy template content.
+    auto packet = frame.Take();
+    bcn_cfg.tmpl.packet_head.len = packet->len();
+    bcn_cfg.tmpl.packet_head.data = packet->mut_data();
+    status = device_->EnableBeaconing(&bcn_cfg);
     if (status != ZX_OK) {
         errorf("[bcn-sender] [%s] could not start beacon sending: %d\n",
                bss_->bssid().ToString().c_str(), status);
@@ -47,7 +62,7 @@ void BeaconSender::Start(BssInterface* bss, const PsCfg& ps_cfg,
 void BeaconSender::Stop() {
     if (!IsStarted()) { return; }
 
-    auto status = device_->EnableBeaconing(false);
+    auto status = device_->EnableBeaconing(nullptr);
     if (status != ZX_OK) {
         errorf("[bcn-sender] [%s] could not stop beacon sending: %d\n",
                bss_->bssid().ToString().c_str(), status);
@@ -82,9 +97,9 @@ bool BeaconSender::ShouldSendProbeResponse(const MgmtFrameView<ProbeRequest>& pr
             }
 
             // Send ProbeResponse if request was targeted towards this BSS.
-            size_t ssid_len = strlen(req_.ssid->data());
+            size_t ssid_len = req_.ssid->size();
             bool to_bss =
-                hdr->len == ssid_len && strncmp(ie->ssid, req_.ssid->data(), ssid_len) == 0;
+                (hdr->len == ssid_len) && (memcmp(ie->ssid, req_.ssid->data(), ssid_len) == 0);
             return to_bss;
         }
         default:
@@ -97,26 +112,27 @@ bool BeaconSender::ShouldSendProbeResponse(const MgmtFrameView<ProbeRequest>& pr
     return true;
 }
 
-zx_status_t BeaconSender::UpdateBeacon(const PsCfg& ps_cfg) {
-    debugfn();
+zx_status_t BeaconSender::BuildBeacon(const PsCfg& ps_cfg, MgmtFrame<Beacon>* frame,
+                                    size_t* tim_ele_offset) {
     ZX_DEBUG_ASSERT(IsStarted());
-    if (!IsStarted()) { return ZX_ERR_BAD_STATE; }
+    ZX_DEBUG_ASSERT(frame);
+    ZX_DEBUG_ASSERT(tim_ele_offset);
 
     size_t reserved_ie_len = 256;
-    MgmtFrame<Beacon> frame;
-    auto status = CreateMgmtFrame(&frame, reserved_ie_len);
+    auto status = CreateMgmtFrame(frame, reserved_ie_len);
     if (status != ZX_OK) { return status; }
 
-    auto hdr = frame.hdr();
+    auto hdr = frame->hdr();
     const auto& bssid = bss_->bssid();
     hdr->addr1 = common::kBcastMac;
     hdr->addr2 = bssid;
     hdr->addr3 = bssid;
-    frame.FillTxInfo();
+    frame->FillTxInfo();
 
-    auto bcn = frame.body();
+    auto bcn = frame->body();
     bcn->beacon_interval = req_.beacon_period;
     bcn->timestamp = bss_->timestamp();
+    bcn->cap.set_privacy(!req_.rsne.is_null());
     bcn->cap.set_ess(1);
     bcn->cap.set_short_preamble(1);
 
@@ -131,6 +147,9 @@ zx_status_t BeaconSender::UpdateBeacon(const PsCfg& ps_cfg) {
     status = WriteDsssParamSet(&w);
     if (status != ZX_OK) { return status; }
 
+    // To get the TIM offset in frame, we have to count the header, fixed parameters and tagged
+    // parameters before TIM is written.
+    *tim_ele_offset = frame->View().body_offset() + bcn->len() + w.size();
     status = WriteTim(&w, ps_cfg);
     if (status != ZX_OK) { return status; }
 
@@ -139,6 +158,11 @@ zx_status_t BeaconSender::UpdateBeacon(const PsCfg& ps_cfg) {
 
     status = WriteExtendedSupportedRates(&w);
     if (status != ZX_OK) { return status; }
+
+    if (!req_.rsne.is_null()) {
+        status = WriteRsne(&w);
+        if (status != ZX_OK) { return status; }
+    }
 
     if (bss_->IsHTReady()) {
         status = WriteHtCapabilities(&w);
@@ -154,18 +178,30 @@ zx_status_t BeaconSender::UpdateBeacon(const PsCfg& ps_cfg) {
     ZX_DEBUG_ASSERT(bcn->Validate(w.size()));
 
     // Update the length with final values
-    size_t body_len = frame.body()->len() + w.size();
-    status = frame.set_body_len(body_len);
+    size_t body_len = frame->body()->len() + w.size();
+    status = frame->set_body_len(body_len);
     if (status != ZX_OK) {
         errorf("[bcn-sender] [%s] could not set body length to %zu: %d\n", bssid.ToString().c_str(),
                body_len, status);
         return status;
     }
 
-    status = device_->ConfigureBeacon(frame.Take());
+    return status;
+}
+
+zx_status_t BeaconSender::UpdateBeacon(const PsCfg& ps_cfg) {
+    debugfn();
+    ZX_DEBUG_ASSERT(IsStarted());
+    if (!IsStarted()) { return ZX_ERR_BAD_STATE; }
+
+    MgmtFrame<Beacon> frame;
+    size_t tim_ele_offset;
+    BuildBeacon(ps_cfg, &frame, &tim_ele_offset);
+
+    zx_status_t status = device_->ConfigureBeacon(frame.Take());
     if (status != ZX_OK) {
-        errorf("[bcn-sender] [%s] could not send beacon packet: %d\n", bssid.ToString().c_str(),
-               status);
+        errorf("[bcn-sender] [%s] could not send beacon packet: %d\n",
+               bss_->bssid().ToString().c_str(), status);
         return status;
     }
 
@@ -191,8 +227,9 @@ void BeaconSender::SendProbeResponse(const MgmtFrameView<ProbeRequest>& probe_re
     frame.FillTxInfo();
 
     auto resp = frame.body();
-    resp->beacon_interval = req_.beacon_period;
+    resp->beacon_interval = static_cast<uint16_t>(req_.beacon_period);
     resp->timestamp = bss_->timestamp();
+    resp->cap.set_privacy(!req_.rsne.is_null());
     resp->cap.set_ess(1);
     resp->cap.set_short_preamble(1);
 
@@ -203,6 +240,7 @@ void BeaconSender::SendProbeResponse(const MgmtFrameView<ProbeRequest>& probe_re
     if (WriteDsssParamSet(&w) != ZX_OK) { return; }
     if (WriteCountry(&w) != ZX_OK) { return; }
     if (WriteExtendedSupportedRates(&w) != ZX_OK) { return; }
+    if (!req_.rsne.is_null() && WriteRsne(&w) != ZX_OK) { return; }
 
     if (bss_->IsHTReady()) {
         if (WriteHtCapabilities(&w) != ZX_OK) { return; }
@@ -230,9 +268,9 @@ void BeaconSender::SendProbeResponse(const MgmtFrameView<ProbeRequest>& probe_re
 }
 
 zx_status_t BeaconSender::WriteSsid(ElementWriter* w) {
-    if (!w->write<SsidElement>(req_.ssid->data())) {
+    if (!w->write<SsidElement>(req_.ssid->data(), req_.ssid->size())) {
         errorf("[bcn-sender] [%s] could not write ssid \"%s\" to Beacon\n",
-               bss_->bssid().ToString().c_str(), req_.ssid->data());
+               bss_->bssid().ToString().c_str(), debug::ToAsciiOrHexStr(*req_.ssid).c_str());
         return ZX_ERR_IO;
     }
     return ZX_OK;
@@ -339,6 +377,14 @@ zx_status_t BeaconSender::WriteHtOperation(ElementWriter* w) {
     HtOperation hto = bss_->BuildHtOperation(bss_->Chan());
     if (!w->write<HtOperation>(hto.primary_chan, hto.head, hto.tail, hto.basic_mcs_set)) {
         errorf("[bcn-sender] [%s] could not write HtOperation\n", bss_->bssid().ToString().c_str());
+        return ZX_ERR_IO;
+    }
+    return ZX_OK;
+}
+
+zx_status_t BeaconSender::WriteRsne(ElementWriter* w) {
+    if (!w->write<RsnElement>(req_.rsne->data(), req_.rsne->size())) {
+        errorf("[bcn-sender] [%s] could not write RSNE\n", bss_->bssid().ToString().c_str());
         return ZX_ERR_IO;
     }
     return ZX_OK;

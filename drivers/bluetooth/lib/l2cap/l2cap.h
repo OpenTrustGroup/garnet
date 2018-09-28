@@ -5,6 +5,8 @@
 #ifndef GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_L2CAP_H_
 #define GARNET_DRIVERS_BLUETOOTH_LIB_L2CAP_L2CAP_H_
 
+#include <lib/zx/socket.h>
+
 #include <fbl/ref_counted.h>
 #include <fbl/ref_ptr.h>
 
@@ -112,11 +114,9 @@ class L2CAP : public fbl::RefCounted<L2CAP> {
   // Registers a handler for peer-initiated dynamic channel requests that have
   // the Protocol/Service Multiplexing (PSM) code |psm|.
   //
-  // |cb| will be called on |dispatcher| with the channel created by each
-  // inbound connection request received. Handlers must be unregistered before
-  // they are replaced.
-  //
-  // Returns false if |psm| is invalid or already has a handler registered.
+  // |channel_callback| will be called on |dispatcher| with the channel created
+  // by each inbound connection request received. Handlers must be unregistered
+  // before they are replaced.
   //
   // Inbound connection requests with a PSM that has no registered handler will
   // be rejected.
@@ -126,7 +126,18 @@ class L2CAP : public fbl::RefCounted<L2CAP> {
   // TODO(xow): NET-1084 Pass in required channel configurations. Call signature
   //            will likely change.
   // TODO(xow): Dynamic PSMs may need their routing space (ACL or LE) identified
-  virtual bool RegisterService(PSM psm, ChannelCallback cb,
+  virtual void RegisterService(PSM psm, ChannelCallback channel_callback,
+                               async_dispatcher_t* dispatcher) = 0;
+
+  // Similar to RegisterService, but instead of providing a l2cap::Channel,
+  // provides a zx::socket which can be used to communicate on the channel.
+  // The underlying l2cap::Channel is activated; the socket provided will
+  // receive any data sent to the channel and any data sent to the socket
+  // will be sent as if sent by l2cap::Channel::Send.
+  // |link_handle| disambiguates which remote device initiated the channel.
+  using SocketCallback =
+      fit::function<void(zx::socket, hci::ConnectionHandle link_handle)>;
+  virtual void RegisterService(PSM psm, SocketCallback socket_callback,
                                async_dispatcher_t* dispatcher) = 0;
 
   // Removes the handler for inbound channel requests for the previously-

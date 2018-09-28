@@ -26,9 +26,9 @@ class FidlAudioRenderer
       public std::enable_shared_from_this<FidlAudioRenderer> {
  public:
   static std::shared_ptr<FidlAudioRenderer> Create(
-      fuchsia::media::AudioOutPtr audio_renderer);
+      fuchsia::media::AudioRendererPtr audio_renderer);
 
-  FidlAudioRenderer(fuchsia::media::AudioOutPtr audio_renderer);
+  FidlAudioRenderer(fuchsia::media::AudioRendererPtr audio_renderer);
 
   ~FidlAudioRenderer() override;
 
@@ -63,10 +63,8 @@ class FidlAudioRenderer
   void BindGainControl(fidl::InterfaceRequest<fuchsia::media::GainControl>
                            gain_control_request) override;
 
-  // PayloadAllocator implementation:
-  void* AllocatePayloadBuffer(size_t size) override;
-
-  void ReleasePayloadBuffer(void* buffer) override;
+  // PayloadAllocator implementation.
+  fbl::RefPtr<PayloadBuffer> AllocatePayloadBuffer(uint64_t size) override;
 
  protected:
   // Renderer overrides.
@@ -91,7 +89,7 @@ class FidlAudioRenderer
   }
 
   std::vector<std::unique_ptr<StreamTypeSet>> supported_stream_types_;
-  fuchsia::media::AudioOutPtr audio_out_;
+  fuchsia::media::AudioRendererPtr audio_renderer_;
   media::TimelineRate pts_rate_;
   int64_t last_supplied_pts_ns_ = 0;
   int64_t last_departed_pts_ns_ = 0;

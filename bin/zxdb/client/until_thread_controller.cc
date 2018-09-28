@@ -16,11 +16,14 @@
 
 namespace zxdb {
 
+UntilThreadController::UntilThreadController(InputLocation location)
+    : ThreadController(), location_(std::move(location)), weak_factory_(this) {}
+
 UntilThreadController::UntilThreadController(InputLocation location,
-                                             uint64_t end_bp)
+                                             FrameFingerprint newest_frame)
     : ThreadController(),
       location_(std::move(location)),
-      end_bp_(end_bp),
+      newest_threadhold_frame_(newest_frame),
       weak_factory_(this) {}
 
 UntilThreadController::~UntilThreadController() {
@@ -41,7 +44,7 @@ void UntilThreadController::InitWithThread(Thread* thread,
   // Frame-tied triggers can't be one-shot because we need to check the stack
   // every time it triggers. In the non-frame case the one-shot breakpoint will
   // be slightly more efficient.
-  settings.one_shot = end_bp_ == 0;
+  settings.one_shot = !newest_threadhold_frame_.is_valid();
 
   breakpoint_ = GetSystem()->CreateNewInternalBreakpoint()->GetWeakPtr();
   // The breakpoint may post the callback asynchronously, so we can't be sure
@@ -63,6 +66,14 @@ ThreadController::ContinueOp UntilThreadController::GetContinueOp() {
 ThreadController::StopOp UntilThreadController::OnThreadStop(
     debug_ipc::NotifyException::Type stop_type,
     const std::vector<fxl::WeakPtr<Breakpoint>>& hit_breakpoints) {
+  // Other controllers such as the StepOverRangeThreadController can use this
+  // as a sub-controller. If the controllers don't care about breakpoint set
+  // failures, they may start using the thread right away without waiting for
+  // the callback in InitWithThread() to asynchronously complete (indicating
+  // the breakpoint was set successfull).
+  //
+  // This is generally fine, we just need to be careful not to do anything in
+  // OnBreakpointSet() that the code in this function depends on.
   if (!breakpoint_) {
     // Our internal breakpoint shouldn't be deleted out from under ourselves.
     FXL_NOTREACHED();
@@ -78,11 +89,15 @@ ThreadController::StopOp UntilThreadController::OnThreadStop(
       break;
     }
   }
-  if (!is_our_breakpoint)
-    return kContinue;  // Not our breakpoint.
+  if (!is_our_breakpoint) {
+    Log("Not our breakpoint.");
+    return kContinue;
+  }
 
-  if (!end_bp_)
-    return kStop;  // No stack check necessary, always stop.
+  if (!newest_threadhold_frame_.is_valid()) {
+    Log("No frame check required.");
+    return kStop;
+  }
 
   auto frames = thread()->GetFrames();
   if (frames.empty()) {
@@ -90,11 +105,12 @@ ThreadController::StopOp UntilThreadController::OnThreadStop(
     return kStop;
   }
 
-  // The stack grows downward. Want to stop the thread only when the frame is
-  // before (greater than) the input one, which means anything <= should
-  // continue.
-  if (frames[0]->GetBasePointer() <= end_bp_)
+  FrameFingerprint current_frame = thread()->GetFrameFingerprint(0);
+  if (FrameFingerprint::Newer(current_frame, newest_threadhold_frame_)) {
+    Log("In newer frame, ignoring.");
     return kContinue;
+  }
+  Log("Found target frame (or older).");
   return kStop;
 }
 
@@ -108,6 +124,8 @@ Target* UntilThreadController::GetTarget() {
 
 void UntilThreadController::OnBreakpointSet(
     const Err& err, std::function<void(const Err&)> cb) {
+  // This may get called after the thread stop in some cases so don't do
+  // anything important in this function. See OnThreadStop().
   if (err.has_error()) {
     // Breakpoint setting failed.
     cb(err);

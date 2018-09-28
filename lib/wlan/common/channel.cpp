@@ -10,6 +10,16 @@
 // TODO(porce): Look up constants from the operating class table.
 // No need to use constexpr in this prototype.
 namespace wlan {
+
+bool operator==(const wlan_channel_t& lhs, const wlan_channel_t& rhs) {
+    // TODO(porce): Support 802.11ac Wave2 by lhs.secondary80 == rhs.secondary80
+    return (lhs.primary == rhs.primary && lhs.cbw == rhs.cbw);
+}
+
+bool operator!=(const wlan_channel_t& lhs, const wlan_channel_t& rhs) {
+    return !(lhs == rhs);
+}
+
 namespace common {
 
 namespace wlan_mlme = ::fuchsia::wlan::mlme;
@@ -97,15 +107,6 @@ bool IsValidChan(const wlan_channel_t& chan) {
     return result;
 }
 
-bool operator==(const wlan_channel_t& lhs, const wlan_channel_t& rhs) {
-    // TODO(porce): Support 802.11ac Wave2 by lhs.secondary80 == rhs.secondary80
-    return (lhs.primary == rhs.primary && lhs.cbw == rhs.cbw);
-}
-
-bool operator!=(const wlan_channel_t& lhs, const wlan_channel_t& rhs) {
-    return !(lhs == rhs);
-}
-
 Mhz GetCenterFreq(const wlan_channel_t& chan) {
     ZX_DEBUG_ASSERT(IsValidChan(chan));
 
@@ -178,6 +179,15 @@ wlan_channel_t FromFidl(const wlan_mlme::WlanChan& fidl_chan) {
     return wlan_channel_t{
         .primary = fidl_chan.primary,
         .cbw = static_cast<uint8_t>(fidl_chan.cbw),
+        .secondary80 = fidl_chan.secondary80,
+    };
+}
+
+wlan_mlme::WlanChan ToFidl(const wlan_channel_t& chan) {
+    return wlan_mlme::WlanChan{
+        .primary = chan.primary,
+        .cbw = static_cast<wlan_mlme::CBW>(chan.cbw),
+        .secondary80 = chan.secondary80,
     };
 }
 

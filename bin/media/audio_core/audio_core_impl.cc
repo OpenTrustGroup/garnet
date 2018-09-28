@@ -8,14 +8,14 @@
 #include <lib/async/cpp/task.h>
 #include <lib/async/default.h>
 
+#include "garnet/bin/media/audio_core/audio_capturer_impl.h"
 #include "garnet/bin/media/audio_core/audio_device_manager.h"
-#include "garnet/bin/media/audio_core/audio_in_impl.h"
-#include "garnet/bin/media/audio_core/audio_out_impl.h"
+#include "garnet/bin/media/audio_core/audio_renderer_impl.h"
 
 namespace media {
 namespace audio {
 
-constexpr float AudioCoreImpl::kMaxSystemAudioGain;
+constexpr float AudioCoreImpl::kMaxSystemAudioGainDb;
 
 AudioCoreImpl::AudioCoreImpl() : device_manager_(this) {
   // Stash a pointer to our async object.
@@ -90,35 +90,30 @@ void AudioCoreImpl::Shutdown() {
   DoPacketCleanup();
 }
 
-void AudioCoreImpl::CreateAudioOut(
-    fidl::InterfaceRequest<fuchsia::media::AudioOut> audio_out_request) {
-  device_manager_.AddAudioOut(
-      AudioOutImpl::Create(std::move(audio_out_request), this));
+void AudioCoreImpl::CreateAudioRenderer(
+    fidl::InterfaceRequest<fuchsia::media::AudioRenderer>
+        audio_renderer_request) {
+  device_manager_.AddAudioRenderer(
+      AudioRendererImpl::Create(std::move(audio_renderer_request), this));
 }
 
-void AudioCoreImpl::CreateAudioIn(
-    fidl::InterfaceRequest<fuchsia::media::AudioIn> audio_in_request,
+void AudioCoreImpl::CreateAudioCapturer(
+    fidl::InterfaceRequest<fuchsia::media::AudioCapturer>
+        audio_capturer_request,
     bool loopback) {
-  device_manager_.AddAudioIn(
-      AudioInImpl::Create(std::move(audio_in_request), this, loopback));
+  device_manager_.AddAudioCapturer(AudioCapturerImpl::Create(
+      std::move(audio_capturer_request), this, loopback));
 }
 
-// TODO(dalesat): Remove.
-void AudioCoreImpl::CreateAudioRenderer2(
-    fidl::InterfaceRequest<fuchsia::media::AudioRenderer2> audio_renderer) {
-  FXL_LOG(ERROR) << "CreateAudioRenderer2 is no longer supported.";
-  Shutdown();
-}
+void AudioCoreImpl::SetSystemGain(float gain_db) {
+  gain_db = std::max(std::min(gain_db, kMaxSystemAudioGainDb),
+                     fuchsia::media::MUTED_GAIN_DB);
 
-void AudioCoreImpl::SetSystemGain(float db_gain) {
-  db_gain = std::max(std::min(db_gain, kMaxSystemAudioGain),
-                     fuchsia::media::MUTED_GAIN);
-
-  if (system_gain_db_ == db_gain) {
+  if (system_gain_db_ == gain_db) {
     return;
   }
 
-  system_gain_db_ = db_gain;
+  system_gain_db_ = gain_db;
 
   device_manager_.OnSystemGainChanged();
   NotifyGainMuteChanged();

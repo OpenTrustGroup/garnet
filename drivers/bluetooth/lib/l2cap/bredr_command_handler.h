@@ -242,9 +242,9 @@ class BrEdrCommandHandler final {
 
     void SendConnectionlessMtu(uint16_t mtu);
 
-    void SendExtendedFeaturesSupported(uint32_t mask);
+    void SendExtendedFeaturesSupported(ExtendedFeatures extended_features);
 
-    void SendFixedChannelsSupported(uint64_t mask);
+    void SendFixedChannelsSupported(FixedChannelsSupported channels_supported);
 
    private:
     void Send(InformationResult result, const common::ByteBuffer& data);
@@ -252,7 +252,7 @@ class BrEdrCommandHandler final {
   };
 
   using ConnectionRequestCallback = fit::function<void(
-      uint16_t psm, ChannelId remote_cid, ConnectionResponder* responder)>;
+      PSM psm, ChannelId remote_cid, ConnectionResponder* responder)>;
   using ConfigurationRequestCallback = fit::function<void(
       ChannelId local_cid, uint16_t flags, const common::ByteBuffer& options,
       ConfigurationResponder* responder)>;

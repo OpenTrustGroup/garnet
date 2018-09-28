@@ -10,8 +10,7 @@ use {
     fidl_fuchsia_wlan_service as legacy,
     fidl_fuchsia_wlan_sme as fidl_sme,
     fidl_fuchsia_wlan_stats as fidl_wlan_stats,
-    fidl::{self, endpoints2::create_endpoints},
-    fuchsia_async::unsafe_many_futures,
+    fidl::{self, endpoints::create_proxy},
     fuchsia_zircon as zx,
     futures::{prelude::*, channel::oneshot},
     std::sync::{Arc, Mutex},
@@ -62,86 +61,96 @@ impl ClientRef {
 
 const MAX_CONCURRENT_WLAN_REQUESTS: usize = 1000;
 
-pub fn serve_legacy(requests: legacy::WlanRequestStream, client: ClientRef)
-    -> impl Future<Output = Result<(), fidl::Error>>
+pub async fn serve_legacy(requests: legacy::WlanRequestStream, client: ClientRef)
+    -> Result<(), fidl::Error>
 {
-    unsafe_many_futures!(WlanFut, [Scan, Connect, Disconnect, Status, StartBss, StopBss, Stats]);
-    requests.try_for_each_concurrent(MAX_CONCURRENT_WLAN_REQUESTS, move |request| match request {
-        legacy::WlanRequest::Scan { req, responder } => WlanFut::Scan(
-            scan(&client, req)
-                .map(move |mut r| responder.send(&mut r))
-        ),
-        legacy::WlanRequest::Connect { req, responder } => WlanFut::Connect(
-            connect(&client, req)
-                .map(move |mut r| responder.send(&mut r))
-        ),
-        legacy::WlanRequest::Disconnect { responder } => WlanFut::Disconnect({
-            disconnect(client.clone())
-                .map(move |mut r| responder.send(&mut r))
-        }),
-        legacy::WlanRequest::Status { responder } => WlanFut::Status(
-            status(&client)
-                .map(move |mut r| responder.send(&mut r))
-        ),
-        legacy::WlanRequest::StartBss { responder, .. } => WlanFut::StartBss({
-            eprintln!("StartBss() is not implemented");
-            future::ready(responder.send(&mut not_supported()))
-        }),
-        legacy::WlanRequest::StopBss { responder } => WlanFut::StopBss({
-            eprintln!("StopBss() is not implemented");
-            future::ready(responder.send(&mut not_supported()))
-        }),
-        legacy::WlanRequest::Stats { responder } => WlanFut::Stats(
-            stats(&client)
-                .map(move |mut r| responder.send(&mut r))
-        ),
-    })
+    await!(requests.try_for_each_concurrent(MAX_CONCURRENT_WLAN_REQUESTS,
+                                     |req| handle_request(&client, req)))
 }
 
-fn scan(client: &ClientRef, legacy_req: legacy::ScanRequest)
-    -> impl Future<Output = legacy::ScanResult>
+async fn handle_request(client: &ClientRef, req: legacy::WlanRequest) -> Result<(), fidl::Error> {
+    match req {
+        legacy::WlanRequest::Scan { req, responder } => {
+            let mut r = await!(scan(client, req));
+            responder.send(&mut r)
+        },
+        legacy::WlanRequest::Connect { req, responder } => {
+            let mut r = await!(connect(&client, req));
+            responder.send(&mut r)
+        },
+        legacy::WlanRequest::Disconnect { responder } => {
+            let mut r = await!(disconnect(client.clone()));
+            responder.send(&mut r)
+        },
+        legacy::WlanRequest::Status { responder } => {
+            let mut r = await!(status(&client));
+            responder.send(&mut r)
+        },
+        legacy::WlanRequest::StartBss { responder, .. } => {
+            eprintln!("StartBss() is not implemented");
+            responder.send(&mut not_supported())
+        },
+        legacy::WlanRequest::StopBss { responder } => {
+            eprintln!("StopBss() is not implemented");
+            responder.send(&mut not_supported())
+        },
+        legacy::WlanRequest::Stats { responder } => {
+            let mut r = await!(stats(client));
+            responder.send(&mut r)
+        },
+    }
+}
+
+async fn scan<'a>(client: &ClientRef, legacy_req: legacy::ScanRequest)
+    -> legacy::ScanResult
 {
-    future::ready(client.get())
-        .and_then(move |client| {
-            future::ready(start_scan_txn(&client, legacy_req)
-                .map_err(|e| {
-                    eprintln!("Failed to start a scan transaction: {}", e);
-                    internal_error()
-                }))
-        })
-        .and_then(|scan_txn| scan_txn.take_event_stream()
+    let r = await!(async move {
+        let client = client.get()?;
+        let scan_txn = start_scan_txn(&client, legacy_req)
+            .map_err(|e| {
+                eprintln!("Failed to start a scan transaction: {}", e);
+                internal_error()
+            })?;
+
+        let mut evt_stream = scan_txn.take_event_stream();
+        let mut aps = vec![];
+        let mut done = false;
+
+        while let Some(event) = await!(evt_stream.try_next())
             .map_err(|e| {
                 eprintln!("Error reading from scan transaction stream: {}", e);
                 internal_error()
-            })
-            .try_fold((Vec::new(), false), |(mut old_aps, _done), event| {
-                future::ready(match event {
-                    fidl_sme::ScanTransactionEvent::OnResult { aps } => {
-                        old_aps.extend(aps);
-                        Ok((old_aps, false))
-                    },
-                    fidl_sme::ScanTransactionEvent::OnFinished { } => Ok((old_aps, true)),
-                    fidl_sme::ScanTransactionEvent::OnError { error } => Err(convert_scan_err(error))
-                })
-            }))
-        .and_then(|(aps, done)| {
-            future::ready(if !done {
-                eprintln!("Failed to fetch all results before the channel was closed");
-                Err(internal_error())
-            } else {
-                Ok(aps.into_iter().map(|ess| convert_bss_info(ess.best_bss)).collect())
-            })
-        })
-        .map(|r| match r {
-            Ok(aps) => legacy::ScanResult { error: success(), aps: Some(aps) },
-            Err(error) => legacy::ScanResult { error, aps: None },
-        })
+            })?
+        {
+            match event {
+                fidl_sme::ScanTransactionEvent::OnResult { aps: new_aps } => {
+                    aps.extend(new_aps);
+                    done = false;
+                },
+                fidl_sme::ScanTransactionEvent::OnFinished { } => done = true,
+                fidl_sme::ScanTransactionEvent::OnError { error } =>
+                    return Err(convert_scan_err(error)),
+            }
+        }
+
+        if !done {
+            eprintln!("Failed to fetch all results before the channel was closed");
+            return Err(internal_error());
+        }
+
+        Ok(aps.into_iter().map(|ess| convert_bss_info(ess.best_bss)).collect())
+    });
+
+    match r {
+        Ok(aps) => legacy::ScanResult { error: success(), aps: Some(aps) },
+        Err(error) => legacy::ScanResult { error, aps: None },
+    }
 }
 
 fn start_scan_txn(client: &Client, legacy_req: legacy::ScanRequest)
     -> Result<fidl_sme::ScanTransactionProxy, fidl::Error>
 {
-    let (scan_txn, remote) = create_endpoints()?;
+    let (scan_txn, remote) = create_proxy()?;
     let mut req = fidl_sme::ScanRequest {
         timeout: legacy_req.timeout
     };
@@ -340,6 +349,9 @@ fn empty_packet_counter() -> fidl_wlan_stats::PacketCounter {
         in_: empty_counter(),
         out: empty_counter(),
         drop: empty_counter(),
+        in_bytes: empty_counter(),
+        out_bytes: empty_counter(),
+        drop_bytes: empty_counter(),
     }
 }
 

@@ -28,6 +28,7 @@
 #include <string.h>
 #include <lib/sync/completion.h>
 #include <threads.h>
+#include <wlan/protocol/if-impl.h>
 #include <zircon/listnode.h>
 #include <zircon/types.h>
 
@@ -62,9 +63,6 @@
 
 #define BRCMF_ERR_FIRMWARE_UNSUPPORTED (-23)
 
-/* For use in oob_irq_flags */
-#define IRQ_FLAG_LEVEL_HIGH 0x1
-
 #define max(a, b) ((a)>(b)?(a):(b))
 
 extern async_dispatcher_t* default_dispatcher;
@@ -81,7 +79,7 @@ typedef struct brcmf_timer_info {
     mtx_t lock;
 } brcmf_timer_info_t;
 
-void brcmf_timer_init(brcmf_timer_info_t* timer, brcmf_timer_callback_t* callback);
+void brcmf_timer_init(brcmf_timer_info_t* timer, brcmf_timer_callback_t* callback, void* data);
 
 void brcmf_timer_set(brcmf_timer_info_t* timer, zx_duration_t delay);
 
@@ -120,7 +118,8 @@ struct brcmf_device {
     void* parent;
     struct brcmf_bus* bus;
     zx_device_t* zxdev;
-    zx_device_t* child_zxdev;
+    zx_device_t* phy_zxdev;
+    zx_device_t* if_zxdev;
 };
 
 static inline struct brcmf_bus* dev_to_bus(struct brcmf_device* dev) {
@@ -169,10 +168,14 @@ struct brcmf_firmware {
     void* data;
 };
 
+// Used in net_device.flags to indicate interface is up.
+#define IFF_UP 1
+
 struct net_device {
     struct wireless_dev* ieee80211_ptr;
-    const struct net_device_ops* netdev_ops;
-    const struct ethtool_ops* ethtool_ops;
+    bool initialized_for_ap;
+    wlanif_impl_ifc_t* if_callbacks;
+    void* if_callback_cookie;
     uint8_t dev_addr[ETH_ALEN];
     char name[123];
     void* priv;

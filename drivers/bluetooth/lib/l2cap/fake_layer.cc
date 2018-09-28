@@ -5,6 +5,7 @@
 #include "fake_layer.h"
 
 #include <lib/async/cpp/task.h>
+#include <lib/async/default.h>
 
 #include "fake_channel.h"
 
@@ -65,6 +66,14 @@ void FakeLayer::TriggerInboundChannel(hci::ConnectionHandle handle, PSM psm,
   });
 }
 
+void FakeLayer::TriggerLinkError(hci::ConnectionHandle handle) {
+  ZX_DEBUG_ASSERT(initialized_);
+
+  LinkData& link_data = FindLinkData(handle);
+  async::PostTask(link_data.dispatcher,
+                  [cb = link_data.link_error_cb.share()] { cb(); });
+}
+
 void FakeLayer::Initialize() { initialized_ = true; }
 
 void FakeLayer::ShutDown() { initialized_ = false; }
@@ -109,27 +118,41 @@ void FakeLayer::RemoveConnection(hci::ConnectionHandle handle) {
 void FakeLayer::OpenChannel(hci::ConnectionHandle handle, PSM psm,
                             ChannelCallback cb,
                             async_dispatcher_t* dispatcher) {
-  if (!initialized_)
-    return;
+  ZX_DEBUG_ASSERT(initialized_);
 
   LinkData& link_data = FindLinkData(handle);
   link_data.outbound_conn_cbs[psm].push_back(
       std::make_pair(std::move(cb), dispatcher));
 }
 
-bool FakeLayer::RegisterService(PSM psm, ChannelCallback cb,
+void FakeLayer::RegisterService(PSM psm, ChannelCallback channel_callback,
                                 async_dispatcher_t* dispatcher) {
-  if (!initialized_)
-    return false;
+  ZX_DEBUG_ASSERT(initialized_);
+  ZX_DEBUG_ASSERT(inbound_conn_cbs_.count(psm) == 0);
 
-  auto result =
-      inbound_conn_cbs_.emplace(psm, std::make_pair(std::move(cb), dispatcher));
-  return result.second;
+  inbound_conn_cbs_.emplace(
+      psm, std::make_pair(std::move(channel_callback), dispatcher));
+}
+
+void FakeLayer::RegisterService(PSM psm, SocketCallback socket_callback,
+                                async_dispatcher_t* cb_dispatcher) {
+  RegisterService(
+      psm,
+      [this, psm, cb = std::move(socket_callback),
+       cb_dispatcher](auto channel) mutable {
+        zx::socket s = socket_factory_.MakeSocketForChannel(channel);
+        // Called every time the service is connected, cb must be shared.
+        async::PostTask(cb_dispatcher,
+                        [s = std::move(s), cb = cb.share(),
+                         handle = channel->link_handle()]() mutable {
+                          cb(std::move(s), handle);
+                        });
+      },
+      async_get_default_dispatcher());
 }
 
 void FakeLayer::UnregisterService(PSM psm) {
-  if (!initialized_)
-    return;
+  ZX_DEBUG_ASSERT(initialized_);
 
   inbound_conn_cbs_.erase(psm);
 }

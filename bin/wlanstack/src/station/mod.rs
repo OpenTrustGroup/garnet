@@ -11,7 +11,7 @@ use fidl_fuchsia_wlan_stats::IfaceStats;
 use futures::channel::mpsc;
 use futures::prelude::*;
 use futures::select;
-use log::{log, warn};
+use log::warn;
 use pin_utils::pin_mut;
 use std::marker::Unpin;
 use std::sync::{Arc, Mutex};
@@ -62,7 +62,9 @@ fn forward_mlme_request(mut req: MlmeRequest, proxy: &MlmeProxy) -> Result<(), f
         MlmeRequest::Scan(mut req) => proxy.start_scan(&mut req),
         MlmeRequest::Join(mut req) => proxy.join_req(&mut req),
         MlmeRequest::Authenticate(mut req) => proxy.authenticate_req(&mut req),
+        MlmeRequest::AuthResponse(mut resp) => proxy.authenticate_resp(&mut resp),
         MlmeRequest::Associate(mut req) => proxy.associate_req(&mut req),
+        MlmeRequest::AssocResponse(mut resp) => proxy.associate_resp(&mut resp),
         MlmeRequest::Deauthenticate(mut req) => proxy.deauthenticate_req(&mut req),
         MlmeRequest::Eapol(mut req) => proxy.eapol_req(&mut req),
         MlmeRequest::SetKeys(mut req) => proxy.set_keys_req(&mut req),

@@ -29,7 +29,7 @@ void MediaApp::Run(component::StartupContext* app_context) {
 
   SetupPayloadCoefficients();
   DisplayConfigurationSettings();
-  AcquireAudioOut(app_context);
+  AcquireAudioRenderer(app_context);
   SetStreamType();
 
   if (CreateMemoryMapping() != ZX_OK) {
@@ -61,8 +61,8 @@ void MediaApp::Run(component::StartupContext* app_context) {
       SendPacket(payload_num);
     }
 
-    audio_out_->PlayNoReply(fuchsia::media::NO_TIMESTAMP,
-                            fuchsia::media::NO_TIMESTAMP);
+    audio_renderer_->PlayNoReply(fuchsia::media::NO_TIMESTAMP,
+                                 fuchsia::media::NO_TIMESTAMP);
   } else {
     Shutdown();
   }
@@ -121,11 +121,12 @@ bool MediaApp::ParameterRangeChecks() {
     ret_val = false;
   }
 
-  stream_gain_db_ = fbl::clamp<float>(
-      stream_gain_db_, fuchsia::media::MUTED_GAIN, fuchsia::media::MAX_GAIN);
+  stream_gain_db_ =
+      fbl::clamp<float>(stream_gain_db_, fuchsia::media::MUTED_GAIN_DB,
+                        fuchsia::media::MAX_GAIN_DB);
 
   system_gain_db_ =
-      fbl::clamp<float>(system_gain_db_, fuchsia::media::MUTED_GAIN, 0.0f);
+      fbl::clamp<float>(system_gain_db_, fuchsia::media::MUTED_GAIN_DB, 0.0f);
 
   return ret_val;
 }
@@ -134,7 +135,7 @@ bool MediaApp::ParameterRangeChecks() {
 // payload, calculate the other related coefficients needed for our mapped
 // memory section, and for our series of payloads that reference that section.
 //
-// We share a memory section with our AudioOut, dividing it into equally-sized
+// We share a memory section with our AudioRenderer, divided into equally-sized
 // payloads (size specified by the user). For now, we trim the end of the memory
 // section, rather than handle the occasional irregularly-sized packet.
 // TODO(mpuryear): handle end-of-buffer wraparound; make it a true ring buffer.
@@ -170,7 +171,7 @@ void MediaApp::SetupPayloadCoefficients() {
 }
 
 void MediaApp::DisplayConfigurationSettings() {
-  printf("\nAudioOut configured for %d-channel %s at %u Hz.\nContent is ",
+  printf("\nAudioRenderer configured for %d-channel %s at %u Hz.\nContent is ",
          num_channels_,
          (use_int24_ ? "int24" : (use_int16_ ? "int16" : "float32")),
          frame_rate_);
@@ -185,9 +186,12 @@ void MediaApp::DisplayConfigurationSettings() {
                                                               : "sine");
   }
 
-  printf(" (amplitude %f, stream gain %.2f dB).", amplitude_, stream_gain_db_);
+  printf(" (amplitude %f", amplitude_);
+  if (set_stream_gain_) {
+    printf(", setting stream gain %.2f dB", stream_gain_db_);
+  }
 
-  printf("\nSignal will play for %.2f seconds, using %u buffers of %u frames",
+  printf(").\nSignal will play for %.2f seconds, using %u buffers of %u frames",
          duration_secs_, payloads_per_total_mapping_, frames_per_payload_);
 
   if (set_system_gain_ || set_system_mute_ || set_system_unmute_) {
@@ -205,11 +209,11 @@ void MediaApp::DisplayConfigurationSettings() {
   printf(".\n\n");
 }
 
-// Use StartupContext to acquire AudioPtr, and use that to acquire AudioOutPtr
-// in turn. Set AudioOut error handler, in case of channel closure.
-void MediaApp::AcquireAudioOut(component::StartupContext* app_context) {
-  // The Audio interface is only needed to create AudioOut, set routing policy
-  // and set system gain/mute. Use the synchronous proxy, for simplicity.
+// Use StartupContext to acquire AudioPtr; use that to acquire AudioRendererPtr
+// in turn. Set AudioRenderer error handler, in case of channel closure.
+void MediaApp::AcquireAudioRenderer(component::StartupContext* app_context) {
+  // The Audio interface is only needed to create AudioRenderer, set routing
+  // policy and set system gain/mute. Use the synchronous proxy, for simplicity.
   fuchsia::media::AudioSyncPtr audio;
   app_context->ConnectToEnvironmentService(audio.NewRequest());
 
@@ -227,11 +231,12 @@ void MediaApp::AcquireAudioOut(component::StartupContext* app_context) {
     audio->SetRoutingPolicy(audio_policy_);
   }
 
-  audio->CreateAudioOut(audio_out_.NewRequest());
-  audio_out_->BindGainControl(gain_control_.NewRequest());
+  audio->CreateAudioRenderer(audio_renderer_.NewRequest());
+  audio_renderer_->BindGainControl(gain_control_.NewRequest());
 
-  audio_out_.set_error_handler([this]() {
-    FXL_LOG(ERROR) << "fuchsia::media::AudioOut connection lost. Quitting.";
+  audio_renderer_.set_error_handler([this]() {
+    FXL_LOG(ERROR)
+        << "fuchsia::media::AudioRenderer connection lost. Quitting.";
     Shutdown();
   });
 
@@ -241,9 +246,9 @@ void MediaApp::AcquireAudioOut(component::StartupContext* app_context) {
   });
 }
 
-// Set the AudioOut's audio format to stereo 48kHz 16-bit (LPCM).
+// Set the AudioRenderer's audio format to stereo 48kHz 16-bit (LPCM).
 void MediaApp::SetStreamType() {
-  FXL_DCHECK(audio_out_);
+  FXL_DCHECK(audio_renderer_);
 
   fuchsia::media::AudioStreamType format;
 
@@ -254,27 +259,29 @@ void MediaApp::SetStreamType() {
   format.channels = num_channels_;
   format.frames_per_second = frame_rate_;
 
-  audio_out_->SetPcmStreamType(std::move(format));
+  audio_renderer_->SetPcmStreamType(std::move(format));
 
-  // Set stream gain, and clear the mute status.
-  gain_control_->SetGain(stream_gain_db_);
-  gain_control_->SetMute(false);
+  if (set_stream_gain_) {
+    // Set stream gain, and clear the mute status.
+    gain_control_->SetGain(stream_gain_db_);
+    gain_control_->SetMute(false);
+  }
 }
 
 // Create one Virtual Memory Object and map enough memory for 1 second of audio.
-// Reduce rights and send a handle to the AudioOut: this is our shared buffer.
+// Reduce rights and send handle to AudioRenderer: this is our shared buffer.
 zx_status_t MediaApp::CreateMemoryMapping() {
   zx::vmo payload_vmo;
   zx_status_t status = payload_buffer_.CreateAndMap(
-      total_mapping_size_, ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE,
-      nullptr, &payload_vmo, ZX_RIGHT_READ | ZX_RIGHT_MAP | ZX_RIGHT_TRANSFER);
+      total_mapping_size_, ZX_VM_PERM_READ | ZX_VM_PERM_WRITE, nullptr,
+      &payload_vmo, ZX_RIGHT_READ | ZX_RIGHT_MAP | ZX_RIGHT_TRANSFER);
 
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "VmoMapper:::CreateAndMap failed - " << status;
     return status;
   }
 
-  audio_out_->AddPayloadBuffer(0, std::move(payload_vmo));
+  audio_renderer_->AddPayloadBuffer(0, std::move(payload_vmo));
 
   return ZX_OK;
 }
@@ -290,7 +297,8 @@ fuchsia::media::StreamPacket MediaApp::CreateAudioPacket(uint64_t payload_num) {
   // If last payload, send exactly what remains (otherwise send a full payload).
   packet.payload_size =
       (payload_num + 1 == num_packets_to_send_)
-          ? (total_frames_to_send_ % frames_per_payload_) * frame_size_
+          ? (total_frames_to_send_ - (payload_num * frames_per_payload_)) *
+                frame_size_
           : payload_size_;
 
   return packet;
@@ -301,11 +309,12 @@ void MediaApp::GenerateAudioForPacket(fuchsia::media::StreamPacket packet,
   auto audio_buff = reinterpret_cast<uint8_t*>(payload_buffer_.start()) +
                     packet.payload_offset;
 
-  // Recompute payload_frames each time, since the final packet may be 'short'.
+  // Recompute payload_frames each time, since the final packet may be
+  // 'short'.
   //
   // TODO(mpuryear): don't recompute this every time; use payload_frames_ (and
-  // pre-compute this) except for last packet, which we either check for here or
-  // pass in as a boolean parameter.
+  // pre-compute this) except for last packet, which we either check for here
+  // or pass in as a boolean parameter.
   uint32_t payload_frames = packet.payload_size / frame_size_;
 
   if (use_int24_) {
@@ -326,8 +335,9 @@ void MediaApp::GenerateAudioForPacket(fuchsia::media::StreamPacket packet,
   }
 }
 
-// Write signal into the next section of our buffer. Track how many total frames
-// since playback started, to handle arbitrary frequencies of type double.
+// Write signal into the next section of our buffer. Track how many total
+// frames since playback started, to handle arbitrary frequencies of type
+// double.
 template <typename SampleType>
 void MediaApp::WriteAudioIntoBuffer(
     SampleType* audio_buffer, uint32_t num_frames, uint64_t frames_since_start,
@@ -390,8 +400,8 @@ void MediaApp::SendPacket(uint64_t payload_num) {
   }
 
   ++num_packets_sent_;
-  audio_out_->SendPacket(std::move(packet),
-                         [this]() { OnSendPacketComplete(); });
+  audio_renderer_->SendPacket(std::move(packet),
+                              [this]() { OnSendPacketComplete(); });
 }
 
 void MediaApp::OnSendPacketComplete() {
@@ -405,7 +415,8 @@ void MediaApp::OnSendPacketComplete() {
   }
 }
 
-// Unmap memory, quit message loop (FIDL interfaces auto-delete upon ~MediaApp).
+// Unmap memory, quit message loop (FIDL interfaces auto-delete upon
+// ~MediaApp).
 void MediaApp::Shutdown() {
   if (wav_writer_is_initialized_) {
     if (!wav_writer_.Close()) {

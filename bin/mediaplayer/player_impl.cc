@@ -129,8 +129,8 @@ void PlayerImpl::MaybeCreateRenderer(StreamType::Medium medium) {
       if (!audio_renderer_) {
         auto audio = startup_context_
                          ->ConnectToEnvironmentService<fuchsia::media::Audio>();
-        fuchsia::media::AudioOutPtr audio_renderer;
-        audio->CreateAudioOut(audio_renderer.NewRequest());
+        fuchsia::media::AudioRendererPtr audio_renderer;
+        audio->CreateAudioRenderer(audio_renderer.NewRequest());
         audio_renderer_ = FidlAudioRenderer::Create(std::move(audio_renderer));
         core_.SetSinkSegment(RendererSinkSegment::Create(
                                  audio_renderer_, decoder_factory_.get()),
@@ -363,8 +363,11 @@ void PlayerImpl::SetTimelineFunction(float rate, int64_t reference_time,
   SendStatusUpdates();
 }
 
-void PlayerImpl::SetHttpSource(fidl::StringPtr http_url) {
-  BeginSetReader(HttpReader::Create(startup_context_, http_url));
+void PlayerImpl::SetHttpSource(
+    fidl::StringPtr http_url,
+    fidl::VectorPtr<fuchsia::net::oldhttp::HttpHeader> headers) {
+  BeginSetReader(
+      HttpReader::Create(startup_context_, http_url, std::move(headers)));
 }
 
 void PlayerImpl::SetFileSource(zx::channel file_channel) {
@@ -463,8 +466,8 @@ void PlayerImpl::BindGainControl(
   audio_renderer_->BindGainControl(std::move(gain_control_request));
 }
 
-void PlayerImpl::SetAudioOut(
-    fidl::InterfaceHandle<fuchsia::media::AudioOut> audio_renderer) {
+void PlayerImpl::SetAudioRenderer(
+    fidl::InterfaceHandle<fuchsia::media::AudioRenderer> audio_renderer) {
   if (audio_renderer_) {
     return;
   }

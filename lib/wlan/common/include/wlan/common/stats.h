@@ -46,14 +46,24 @@ struct PacketCounter {
     Counter in;
     Counter out;
     Counter drop;
+    Counter in_bytes;
+    Counter out_bytes;
+    Counter drop_bytes;
     ::fuchsia::wlan::stats::PacketCounter ToFidl() const {
-        return ::fuchsia::wlan::stats::PacketCounter{
-            .in = in.ToFidl(), .out = out.ToFidl(), .drop = drop.ToFidl()};
+        return ::fuchsia::wlan::stats::PacketCounter{.in = in.ToFidl(),
+                                                     .out = out.ToFidl(),
+                                                     .drop = drop.ToFidl(),
+                                                     .in_bytes = in_bytes.ToFidl(),
+                                                     .out_bytes = out_bytes.ToFidl(),
+                                                     .drop_bytes = drop_bytes.ToFidl()};
     };
     void Reset() {
         in.Reset();
         out.Reset();
         drop.Reset();
+        in_bytes.Reset();
+        out_bytes.Reset();
+        drop_bytes.Reset();
     }
 };
 
@@ -111,6 +121,7 @@ struct ClientMlmeStats {
     PacketCounter data_frame;
     PacketCounter mgmt_frame;
     PacketCounter tx_frame;
+    PacketCounter rx_frame;
     RssiStats assoc_data_rssi;
     RssiStats beacon_rssi;
     ::fuchsia::wlan::stats::ClientMlmeStats ToFidl() const {
@@ -118,6 +129,7 @@ struct ClientMlmeStats {
                                                        .data_frame = data_frame.ToFidl(),
                                                        .mgmt_frame = mgmt_frame.ToFidl(),
                                                        .tx_frame = tx_frame.ToFidl(),
+                                                       .rx_frame = rx_frame.ToFidl(),
                                                        .assoc_data_rssi = assoc_data_rssi.ToFidl(),
                                                        .beacon_rssi = beacon_rssi.ToFidl()};
     };
@@ -126,6 +138,7 @@ struct ClientMlmeStats {
         data_frame.Reset();
         mgmt_frame.Reset();
         tx_frame.Reset();
+        rx_frame.Reset();
         assoc_data_rssi.Reset();
         beacon_rssi.Reset();
     }

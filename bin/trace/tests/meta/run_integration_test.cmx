@@ -1,0 +1,9 @@
+{
+    "program": {
+        "binary": "bin/run_integration_test"
+    },
+    "sandbox": {
+        "features": [ "deprecated-all-services", "persistent-storage" ],
+        "system": [ "bin" ]
+    }
+}

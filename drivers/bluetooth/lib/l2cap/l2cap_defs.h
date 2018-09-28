@@ -37,6 +37,13 @@ constexpr ChannelId kATTChannelId = 0x0004;
 constexpr ChannelId kLESignalingChannelId = 0x0005;
 constexpr ChannelId kLESMPChannelId = 0x0006;
 
+// Range of dynamic channel identifiers; each logical link has its own set of
+// channel IDs (except for ACL-U and AMP-U, which share a namespace)
+// (see Tables 2.1 and 2.2 in v5.0, Vol 3, Part A, Section 2.1)
+constexpr ChannelId kFirstDynamicChannelId = 0x0040;
+constexpr ChannelId kLastACLDynamicChannelId = 0xFFFF;
+constexpr ChannelId kLastLEDynamicChannelId = 0x007F;
+
 // Basic L2CAP header. This corresponds to the header used in a B-frame (Basic Information Frame)
 // and is the basis of all other frame types.
 struct BasicHeader {
@@ -105,34 +112,32 @@ enum class InformationResult : uint16_t {
   kNotSupported = 0x0001,
 };
 
-// Bit masks for Extended Features Supported in the Information Response data
-// field (Vol 3, Part A, Section 4.12)
-enum class ExtendFeatures : uint32_t {
-  kFlowControl = 1 << 0,
-  kRetransmission = 1 << 1,
-  kBidirectionalQoS = 1 << 2,
-  kEnhancedRetransmission = 1 << 3,
-  kStreaming = 1 << 4,
-  kFCSOption = 1 << 5,
-  kExtendedFlowSpecification = 1 << 6,
-  kFixedChannels = 1 << 7,
-  kExtendedWindowSize = 1 << 8,
-  kUnicastConnectionlessDataRx = 1 << 9,
-};
+// Type and bit masks for Extended Features Supported in the Information
+// Response data field (Vol 3, Part A, Section 4.12)
+using ExtendedFeatures = uint32_t;
+constexpr ExtendedFeatures kExtendedFeaturesBitFlowControl = 1 << 0;
+constexpr ExtendedFeatures kExtendedFeaturesBitRetransmission = 1 << 1;
+constexpr ExtendedFeatures kExtendedFeaturesBitBidirectionalQoS = 1 << 2;
+constexpr ExtendedFeatures kExtendedFeaturesBitEnhancedRetransmission = 1 << 3;
+constexpr ExtendedFeatures kExtendedFeaturesBitStreaming = 1 << 4;
+constexpr ExtendedFeatures kExtendedFeaturesBitFCSOption = 1 << 5;
+constexpr ExtendedFeatures kExtendedFeaturesBitExtendedFlowSpecification = 1 << 6;
+constexpr ExtendedFeatures kExtendedFeaturesBitFixedChannels = 1 << 7;
+constexpr ExtendedFeatures kExtendedFeaturesBitExtendedWindowSize = 1 << 8;
+constexpr ExtendedFeatures kExtendedFeaturesBitUnicastConnectionlessDataRx = 1 << 9;
 
-// Bit masks for Fixed Channels Supported in the Information Response data
-// field (Vol 3, Part A, Section 4.12)
-enum class FixedChannelsSupported : uint64_t {
-  kNull = 1ULL << 0,
-  kSignaling = 1ULL << 1,
-  kConnectionless = 1ULL << 2,
-  kAMPManager = 1ULL << 3,
-  kATT = 1ULL << 4,
-  kLESignaling = 1ULL << 5,
-  kSMP = 1ULL << 6,
-  kSM = 1ULL << 7,
-  kAMPTestManager = 1ULL << 63,
-};
+// Type and bit masks for Fixed Channels Supported in the Information Response
+// data field (Vol 3, Part A, Section 4.12)
+using FixedChannelsSupported = uint64_t;
+constexpr FixedChannelsSupported kFixedChannelsSupportedBitNull = 1ULL << 0;
+constexpr FixedChannelsSupported kFixedChannelsSupportedBitSignaling = 1ULL << 1;
+constexpr FixedChannelsSupported kFixedChannelsSupportedBitConnectionless = 1ULL << 2;
+constexpr FixedChannelsSupported kFixedChannelsSupportedBitAMPManager = 1ULL << 3;
+constexpr FixedChannelsSupported kFixedChannelsSupportedBitATT = 1ULL << 4;
+constexpr FixedChannelsSupported kFixedChannelsSupportedBitLESignaling = 1ULL << 5;
+constexpr FixedChannelsSupported kFixedChannelsSupportedBitSMP = 1ULL << 6;
+constexpr FixedChannelsSupported kFixedChannelsSupportedBitSM = 1ULL << 7;
+constexpr FixedChannelsSupported kFixedChannelsSupportedBitAMPTestManager = 1ULL << 63;
 
 enum class ConnectionParameterUpdateResult : uint16_t {
   kAccepted = 0x0000,
@@ -155,6 +160,7 @@ enum class LECreditBasedConnectionResult : uint16_t {
 // Type used for all Protocol and Service Multiplexer (PSM) identifiers,
 // including those dynamically-assigned/-obtained
 using PSM = uint16_t;
+constexpr PSM kInvalidPSM = 0x0000;
 
 // Well-known Protocol and Service Multiplexer values defined by the Bluetooth
 // SIG in Logical Link Control Assigned Numbers
@@ -163,9 +169,9 @@ constexpr PSM kSDP = 0x0001;
 constexpr PSM kRFCOMM = 0x0003;
 constexpr PSM kTCSBIN = 0x0005; // Telephony Control Specification
 constexpr PSM kTCSBINCordless = 0x0007;
-constexpr PSM kBNEP = 0x0009; // Bluetooth Network Encapsulation Protocol
+constexpr PSM kBNEP = 0x000F; // Bluetooth Network Encapsulation Protocol
 constexpr PSM kHIDControl = 0x0011; // Human Interface Device
-constexpr PSM kHIDInteerup = 0x0013; // Human Interface Device
+constexpr PSM kHIDInterrupt = 0x0013; // Human Interface Device
 constexpr PSM kAVCTP = 0x0017; // Audio/Video Control Transport Protocol
 constexpr PSM kAVDTP = 0x0019; // Audio/Video Distribution Transport Protocol
 constexpr PSM kAVCTP_Browse = 0x001B; // Audio/Video Remote Control Profile (Browsing)

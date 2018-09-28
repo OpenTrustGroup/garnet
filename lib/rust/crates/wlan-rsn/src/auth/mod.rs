@@ -5,8 +5,8 @@
 pub mod psk;
 
 use self::psk::Psk;
+use crate::rsna::{UpdateSink, VerifiedKeyFrame};
 use failure;
-use crate::rsna::{SecAssocResult, VerifiedKeyFrame};
 
 #[derive(Debug, PartialEq)]
 pub enum Method {
@@ -16,27 +16,19 @@ pub enum Method {
 impl Method {
     pub fn from_config(cfg: Config) -> Result<Method, failure::Error> {
         match cfg {
-            Config::Psk(c) => Ok(Method::Psk(Psk{config: c})),
+            Config::Psk(c) => Ok(Method::Psk(Psk { config: c })),
         }
     }
 
-    pub fn on_eapol_key_frame(&self, _frame: VerifiedKeyFrame) -> SecAssocResult {
-        match self {
-            // None of the supported authentication methods requires EAPOL frame exchange.
-            _ => Ok(vec![]),
-        }
+    // Unused as only PSK is supported so far.
+    pub fn on_eapol_key_frame(&self, _update_sink: &mut UpdateSink, _frame: VerifiedKeyFrame)
+        -> Result<(), failure::Error>
+    {
+        Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Config {
     Psk(psk::Config),
-}
-
-impl Config {
-    pub fn for_psk(passphrase: &[u8], ssid: &[u8]) -> Result<Config, failure::Error> {
-        psk::Config::new(passphrase, ssid)
-            .map_err(|e| e.into())
-            .map(|c| Config::Psk(c))
-    }
 }

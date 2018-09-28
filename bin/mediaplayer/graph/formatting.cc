@@ -4,12 +4,11 @@
 
 #include "garnet/bin/mediaplayer/graph/formatting.h"
 
+#include <fuchsia/media/cpp/fidl.h>
 #include <iomanip>
 #include <iostream>
-
-#include <fuchsia/media/cpp/fidl.h>
-
 #include "garnet/bin/mediaplayer/graph/stages/stage_impl.h"
+#include "lib/fostr/zx_types.h"
 
 namespace media_player {
 
@@ -17,6 +16,10 @@ namespace media_player {
 std::ostream& operator<<(std::ostream& os, AsNs value) {
   if (value.value_ == fuchsia::media::NO_TIMESTAMP) {
     return os << "<no timestamp>";
+  }
+
+  if (value.value_ == std::numeric_limits<int64_t>::min()) {
+    return os << "<min>";
   }
 
   if (value.value_ == 0) {
@@ -308,6 +311,60 @@ std::ostream& operator<<(std::ostream& os, const Output& value) {
   FXL_DCHECK(value.stage());
 
   return os << *value.stage() << ".output#" << value.index();
+}
+
+std::ostream& operator<<(std::ostream& os, PayloadMode value) {
+  switch (value) {
+    case PayloadMode::kNotConfigured:
+      return os << "not configured";
+    case PayloadMode::kUsesLocalMemory:
+      return os << "uses local memory";
+    case PayloadMode::kProvidesLocalMemory:
+      return os << "provides local memory";
+    case PayloadMode::kUsesVmos:
+      return os << "uses vmos";
+    case PayloadMode::kProvidesVmos:
+      return os << "provides vmos";
+  }
+
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, VmoAllocation value) {
+  switch (value) {
+    case VmoAllocation::kNotApplicable:
+      return os << "not applicable";
+    case VmoAllocation::kSingleVmo:
+      return os << "single vmo";
+    case VmoAllocation::kVmoPerBuffer:
+      return os << "vmo per buffer";
+    case VmoAllocation::kUnrestricted:
+      return os << "unrestricted";
+  }
+
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const PayloadConfig& value) {
+  os << fostr::Indent;
+  os << fostr::NewLine << "mode:                       " << value.mode_;
+  os << fostr::NewLine
+     << "max aggregate payload_size: " << value.max_aggregate_payload_size_;
+  os << fostr::NewLine
+     << "max payload count:          " << value.max_payload_count_;
+  os << fostr::NewLine
+     << "max payload size:           " << value.max_payload_size_;
+  os << fostr::NewLine
+     << "vmo allocation:             " << value.vmo_allocation_;
+  os << fostr::NewLine
+     << "physically contiguous:      " << value.physically_contiguous_;
+
+  return os << fostr::Outdent;
+}
+
+std::ostream& operator<<(std::ostream& os, const PayloadVmo& value) {
+  return os << "size " << value.size() << ", start " << std::hex
+            << value.start() << std::dec << ", vmo " << value.vmo();
 }
 
 }  // namespace media_player

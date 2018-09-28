@@ -5,12 +5,11 @@
 #ifndef GARNET_BIN_MEDIA_AUDIO_CORE_AUDIO_CORE_IMPL_H_
 #define GARNET_BIN_MEDIA_AUDIO_CORE_AUDIO_CORE_IMPL_H_
 
-#include <mutex>
-
 #include <fbl/intrusive_double_list.h>
 #include <fbl/unique_ptr.h>
 #include <fuchsia/media/cpp/fidl.h>
 #include <lib/async/cpp/task.h>
+#include <mutex>
 
 #include "garnet/bin/media/audio_core/audio_device_manager.h"
 #include "garnet/bin/media/audio_core/audio_packet_ref.h"
@@ -30,25 +29,31 @@ class AudioCoreImpl : public fuchsia::media::Audio {
   ~AudioCoreImpl() override;
 
   // Audio implementation.
-  void CreateAudioOut(
-      fidl::InterfaceRequest<fuchsia::media::AudioOut> audio_out_request) final;
+  void CreateAudioRenderer(fidl::InterfaceRequest<fuchsia::media::AudioRenderer>
+                               audio_renderer_request) final;
 
+  void CreateAudioCapturer(fidl::InterfaceRequest<fuchsia::media::AudioCapturer>
+                               audio_capturer_request,
+                           bool loopback) final;
+
+  // DEPRECATED
+  void CreateAudioOut(fidl::InterfaceRequest<fuchsia::media::AudioOut>
+                          audio_renderer_request) final {
+    FXL_NOTIMPLEMENTED();
+  }
   void CreateAudioIn(
-      fidl::InterfaceRequest<fuchsia::media::AudioIn> audio_in_request,
-      bool loopback) final;
+      fidl::InterfaceRequest<fuchsia::media::AudioIn> audio_capturer_request,
+      bool loopback) final {
+    FXL_NOTIMPLEMENTED();
+  }
 
-  // TODO(dalesat): Remove.
-  void CreateAudioRenderer2(
-      fidl::InterfaceRequest<fuchsia::media::AudioRenderer2> audio_renderer)
-      final;
-
-  void SetSystemGain(float db_gain) final;
+  void SetSystemGain(float gain_db) final;
   void SetSystemMute(bool muted) final;
 
   void SetRoutingPolicy(fuchsia::media::AudioOutputRoutingPolicy policy) final;
 
   // Called (indirectly) by AudioOutputs to schedule the callback for a
-  // packet was queued to an AudioOut.
+  // packet was queued to an AudioRenderer.
   //
   // TODO(johngro): This bouncing through thread contexts is inefficient and
   // will increase the latency requirements for clients (its going to take them
@@ -78,7 +83,7 @@ class AudioCoreImpl : public fuchsia::media::Audio {
  private:
   static constexpr float kDefaultSystemGainDb = -12.0f;
   static constexpr bool kDefaultSystemMuted = false;
-  static constexpr float kMaxSystemAudioGain = 0.0f;
+  static constexpr float kMaxSystemAudioGainDb = 0.0f;
 
   void NotifyGainMuteChanged();
   void PublishServices();

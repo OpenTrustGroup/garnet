@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/package.gni")
+import("//build/test/test_package.gni")
 
 source_set("machina") {
   sources = [
@@ -12,8 +12,6 @@ source_set("machina") {
     "dev_mem.h",
     "framebuffer_scanout.cc",
     "framebuffer_scanout.h",
-    "gpu_bitmap.cc",
-    "gpu_bitmap.h",
     "gpu_resource.cc",
     "gpu_resource.h",
     "gpu_scanout.cc",
@@ -22,14 +20,13 @@ source_set("machina") {
     "guest.h",
     "hid_event_source.cc",
     "hid_event_source.h",
-    "input_dispatcher.cc",
-    "input_dispatcher.h",
+    "input_dispatcher_impl.cc",
+    "input_dispatcher_impl.h",
     "io.cc",
     "io.h",
     "pci.cc",
     "pci.h",
-    "phys_mem.cc",
-    "phys_mem.h",
+    "platform_device.h",
     "qcow.cc",
     "qcow.h",
     "qcow_refcount.cc",
@@ -51,12 +48,12 @@ source_set("machina") {
     "virtio_net.h",
     "virtio_pci.cc",
     "virtio_pci.h",
-    "virtio_queue.cc",
-    "virtio_queue.h",
     "virtio_queue_waiter.cc",
     "virtio_queue_waiter.h",
     "virtio_vsock.cc",
     "virtio_vsock.h",
+    "virtio_wl.cc",
+    "virtio_wl.h",
     "volatile_write_block_dispatcher.cc",
     "volatile_write_block_dispatcher.h",
   ]
@@ -92,33 +89,36 @@ source_set("machina") {
     include_dirs = [ "//zircon/third_party/lib/acpica/source/include" ]
   }
 
-  public_deps = [
-    "//garnet/public/lib/component/cpp",
-    "//garnet/public/fidl/fuchsia.guest",
-    "//zircon/public/lib/bitmap",
-    "//zircon/public/lib/ddk",
-    "//zircon/public/lib/fit",
-    "//zircon/public/lib/hid",
-    "//zircon/public/lib/trace",
-    "//zircon/public/lib/trace-engine",
-    "//zircon/public/lib/virtio",
-    "//zircon/public/lib/zx",
-  ]
-
   defines = [ "_ALL_SOURCE=1" ]
 
   deps = [
+    "//garnet/bin/guest/third_party/fdt",
+    "//garnet/lib/machina/device",
+    "//garnet/lib/machina/fidl:fuchsia.guest.device",
     "//garnet/public/lib/fsl",
-    "//garnet/public/lib/fxl",
-    "//zircon/public/lib/async-cpp",
     "//zircon/public/lib/async-loop-cpp",
     "//zircon/public/lib/async-testutils",
     "//zircon/public/lib/block-client",
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/fdio",
     "//zircon/public/lib/framebuffer",
+    "//zircon/public/lib/libzbi",
     "//zircon/public/lib/sync",
     "//zircon/public/lib/zxcpp",
+  ]
+
+  public_deps = [
+    "//garnet/public/fidl/fuchsia.guest",
+    "//garnet/public/lib/component/cpp",
+    "//garnet/public/lib/images/cpp",
+    "//garnet/public/lib/ui/input/cpp",
+    "//zircon/public/lib/bitmap",
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/hid",
+    "//zircon/public/lib/trace",
+    "//zircon/public/lib/trace-engine",
+    "//zircon/public/lib/virtio",
+    "//zircon/public/lib/zx",
   ]
 }
 
@@ -126,9 +126,11 @@ executable("machina_unittests") {
   testonly = true
 
   sources = [
+    "dev_mem-unittest.cc",
     "hid_event_source-unittest.cc",
-    "input_dispatcher-unittest.cc",
+    "input_dispatcher_impl-unittest.cc",
     "pci-unittest.cc",
+    "phys_mem_fake.h",
     "qcow-unittest.cc",
     "virtio_block-unittest.cc",
     "virtio_device_fake.h",
@@ -139,6 +141,7 @@ executable("machina_unittests") {
     "virtio_queue_fake.h",
     "virtio_queue_waiter-unittest.cc",
     "virtio_vsock-unittest.cc",
+    "virtio_wl-unittest.cc",
     "volatile_write_block_dispatcher-unittest.cc",
   ]
 
@@ -151,7 +154,7 @@ executable("machina_unittests") {
 
   deps = [
     ":machina",
-    "//garnet/public/lib/fsl",
+    "//garnet/lib/machina/device",
     "//garnet/public/lib/gtest",
     "//third_party/googletest:gtest_main",
     "//zircon/public/lib/ddk",
@@ -160,9 +163,7 @@ executable("machina_unittests") {
   ]
 }
 
-package("machina_tests") {
-  testonly = true
-
+test_package("machina_tests") {
   deps = [
     ":machina_unittests",
   ]

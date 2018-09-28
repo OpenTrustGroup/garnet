@@ -12,12 +12,12 @@
 namespace scenic {
 namespace {
 
-template<class T>
+template <class T>
 constexpr const T& clamp(const T& v, const T& lo, const T& hi) {
-    return (v < lo) ? lo : (hi < v) ? hi : v;
+  return (v < lo) ? lo : (hi < v) ? hi : v;
 }
 
-} // namespace
+}  // namespace
 
 Resource::Resource(Session* session)
     : session_(session), id_(session->AllocResourceId()) {}
@@ -270,6 +270,10 @@ void EntityNode::Attach(const ViewHolder& view_holder) {
   session()->Enqueue(NewAddChildCmd(id(), view_holder.id()));
 }
 
+void EntityNode::Snapshot(fuchsia::ui::gfx::SnapshotCallbackHACKPtr callback) {
+  session()->Enqueue(NewTakeSnapshotCmdHACK(id(), std::move(callback)));
+}
+
 EntityNode::~EntityNode() = default;
 
 void EntityNode::SetClip(uint32_t clip_id, bool clip_to_self) {
@@ -390,7 +394,7 @@ void CameraBase::SetTransform(const float eye_position[3],
 }
 
 void CameraBase::SetPoseBuffer(const Buffer& buffer, uint32_t num_entries,
-                               uint64_t base_time, uint64_t time_interval) {
+                               int64_t base_time, uint64_t time_interval) {
   session()->Enqueue(NewSetCameraPoseBufferCmd(id(), buffer.id(), num_entries,
                                                base_time, time_interval));
 }
@@ -500,6 +504,18 @@ DisplayCompositor::DisplayCompositor(DisplayCompositor&& moved)
 DisplayCompositor::~DisplayCompositor() = default;
 
 void DisplayCompositor::SetLayerStack(uint32_t layer_stack_id) {
+  session()->Enqueue(NewSetLayerStackCmd(id(), layer_stack_id));
+}
+
+Compositor::Compositor(Session* session) : Resource(session) {
+  session->Enqueue(NewCreateCompositorCmd(id()));
+}
+
+Compositor::Compositor(Compositor&& moved) : Resource(std::move(moved)) {}
+
+Compositor::~Compositor() = default;
+
+void Compositor::SetLayerStack(uint32_t layer_stack_id) {
   session()->Enqueue(NewSetLayerStackCmd(id(), layer_stack_id));
 }
 

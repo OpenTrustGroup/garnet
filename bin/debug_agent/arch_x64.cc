@@ -10,19 +10,22 @@ namespace arch {
 
 const BreakInstructionType kBreakInstruction = 0xCC;
 
-uint64_t BreakpointInstructionForExceptionAddress(uint64_t exception_addr) {
+uint64_t ArchProvider::BreakpointInstructionForExceptionAddress(
+    uint64_t exception_addr) {
   // An X86 exception is 1 byte and a breakpoint exception is triggered with
   // RIP pointing to the following instruction.
   return exception_addr - 1;
 }
 
-uint64_t NextInstructionForSoftwareExceptionAddress(uint64_t exception_addr) {
+uint64_t ArchProvider::NextInstructionForSoftwareExceptionAddress(
+    uint64_t exception_addr) {
   // Exception address is the one following the instruction that caused it,
   // so nothing needs to be done.
   return exception_addr;
 }
 
-bool IsBreakpointInstruction(zx::process& process, uint64_t address) {
+bool ArchProvider::IsBreakpointInstruction(zx::process& process,
+                                           uint64_t address) {
   uint8_t data;
   size_t actual_read = 0;
   if (process.read_memory(address, &data, 1, &actual_read) != ZX_OK ||
@@ -38,11 +41,17 @@ bool IsBreakpointInstruction(zx::process& process, uint64_t address) {
   return data == kBreakInstruction;
 }
 
-uint64_t* IPInRegs(zx_thread_state_general_regs* regs) { return &regs->rip; }
-uint64_t* SPInRegs(zx_thread_state_general_regs* regs) { return &regs->rsp; }
-uint64_t* BPInRegs(zx_thread_state_general_regs* regs) { return &regs->rbp; }
+uint64_t* ArchProvider::IPInRegs(zx_thread_state_general_regs* regs) {
+  return &regs->rip;
+}
+uint64_t* ArchProvider::SPInRegs(zx_thread_state_general_regs* regs) {
+  return &regs->rsp;
+}
+uint64_t* ArchProvider::BPInRegs(zx_thread_state_general_regs* regs) {
+  return &regs->rbp;
+}
 
-::debug_ipc::Arch GetArch() { return ::debug_ipc::Arch::kX64; }
+::debug_ipc::Arch ArchProvider::GetArch() { return ::debug_ipc::Arch::kX64; }
 
 namespace {
 
@@ -138,10 +147,36 @@ inline zx_status_t ReadVectorRegs(const zx::thread& thread,
   return ZX_OK;
 }
 
+// TODO: Enable this when the zircon patch for debug registers lands.
+#ifdef ZX_DEBUG_REGISTERS_ENABLED
+
+inline zx_status_t ReadDebugRegs(const zx::thread& thread,
+                                 std::vector<debug_ipc::Register>* out) {
+  zx_thread_state_debug_regs_t debug_regs;
+  zx_status_t status = thread.read_state(ZX_THREAD_STATE_DEBUG_REGS,
+                                         &debug_regs, sizeof(debug_regs));
+  if (status != ZX_OK)
+    return status;
+
+  out->push_back(CreateRegister(RegisterID::kX64_dr0, 8u, &debug_regs.dr[0]));
+  out->push_back(CreateRegister(RegisterID::kX64_dr1, 8u, &debug_regs.dr[1]));
+  out->push_back(CreateRegister(RegisterID::kX64_dr2, 8u, &debug_regs.dr[2]));
+  out->push_back(CreateRegister(RegisterID::kX64_dr3, 8u, &debug_regs.dr[3]));
+
+  out->push_back(
+      CreateRegister(RegisterID::kX64_dr6, 8u, &debug_regs.dr6_status));
+  out->push_back(
+      CreateRegister(RegisterID::kX64_dr7, 8u, &debug_regs.dr7_control));
+
+  return ZX_OK;
+}
+
+#endif
+
 }  // namespace
 
-bool GetRegisterStateFromCPU(const zx::thread& thread,
-                             std::vector<debug_ipc::RegisterCategory>* cats) {
+bool ArchProvider::GetRegisterStateFromCPU(
+    const zx::thread& thread, std::vector<debug_ipc::RegisterCategory>* cats) {
   cats->clear();
 
   cats->push_back({debug_ipc::RegisterCategory::Type::kGeneral, {}});
@@ -165,7 +200,30 @@ bool GetRegisterStateFromCPU(const zx::thread& thread,
     return false;
   }
 
+#ifdef ZX_DEBUG_REGISTERS_ENABLED
+
+  cats->push_back({debug_ipc::RegisterCategory::Type::kDebug, {}});
+  auto& debug_category = cats->back();
+  if (ReadDebugRegs(thread, &debug_category.registers) != ZX_OK) {
+    cats->clear();
+    return false;
+  }
+
+#endif
+
   return true;
+}
+
+// HW Breakpoints --------------------------------------------------------------
+
+zx_status_t ArchProvider::InstallHWBreakpoint(zx::thread* thread,
+                                              uint64_t address) {
+  return ZX_ERR_NOT_SUPPORTED;
+}
+
+zx_status_t ArchProvider::UninstallHWBreakpoint(zx::thread* thread,
+                                                uint64_t address) {
+  return ZX_ERR_NOT_SUPPORTED;
 }
 
 }  // namespace arch

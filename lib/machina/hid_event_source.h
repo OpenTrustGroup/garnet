@@ -5,26 +5,24 @@
 #ifndef GARNET_LIB_MACHINA_HID_EVENT_SOURCE_H_
 #define GARNET_LIB_MACHINA_HID_EVENT_SOURCE_H_
 
+#include <forward_list>
 #include <utility>
 
-#include <fbl/intrusive_single_list.h>
 #include <fbl/unique_fd.h>
-#include <fbl/unique_ptr.h>
 #include <hid/hid.h>
 #include <zircon/types.h>
 
-#include "garnet/lib/machina/input_dispatcher.h"
+#include "garnet/lib/machina/input_dispatcher_impl.h"
 
 namespace machina {
 
 // Manages input events from a single (host) HID device.
-class HidInputDevice
-    : public fbl::SinglyLinkedListable<fbl::unique_ptr<HidInputDevice>> {
+class HidInputDevice {
  public:
-  HidInputDevice(InputDispatcher* input_dispatcher, fbl::unique_fd fd)
+  HidInputDevice(InputDispatcherImpl* input_dispatcher, fbl::unique_fd fd)
       : fd_(std::move(fd)), input_dispatcher_(input_dispatcher) {}
 
-  explicit HidInputDevice(InputDispatcher* input_dispatcher)
+  explicit HidInputDevice(InputDispatcherImpl* input_dispatcher)
       : input_dispatcher_(input_dispatcher) {}
 
   // Spawn a thread to read key reports from the keyboard device.
@@ -42,12 +40,12 @@ class HidInputDevice
 
   fbl::unique_fd fd_;
   hid_keys_t prev_keys_ = {};
-  InputDispatcher* input_dispatcher_;
+  InputDispatcherImpl* input_dispatcher_;
 };
 
 class HidEventSource {
  public:
-  HidEventSource(InputDispatcher* input_dispatcher)
+  HidEventSource(InputDispatcherImpl* input_dispatcher)
       : input_dispatcher_(input_dispatcher) {}
 
   zx_status_t Start();
@@ -58,9 +56,9 @@ class HidEventSource {
   // Invoked whenever a new node appears under the /dev/class/input directory.
   zx_status_t AddInputDevice(int dirfd, int event, const char* fn);
 
-  InputDispatcher* input_dispatcher_;
+  InputDispatcherImpl* input_dispatcher_;
   std::mutex mutex_;
-  fbl::SinglyLinkedList<fbl::unique_ptr<HidInputDevice>> devices_
+  std::forward_list<HidInputDevice> devices_
       __TA_GUARDED(mutex_);
 };
 

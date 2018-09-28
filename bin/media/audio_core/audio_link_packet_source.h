@@ -5,11 +5,10 @@
 #ifndef GARNET_BIN_MEDIA_AUDIO_CORE_AUDIO_LINK_PACKET_SOURCE_H_
 #define GARNET_BIN_MEDIA_AUDIO_CORE_AUDIO_LINK_PACKET_SOURCE_H_
 
+#include <fbl/ref_ptr.h>
 #include <deque>
 #include <memory>
 #include <mutex>
-
-#include <fbl/ref_ptr.h>
 
 #include "garnet/bin/media/audio_core/audio_link.h"
 #include "garnet/bin/media/audio_core/audio_packet_ref.h"
@@ -37,7 +36,7 @@ class AudioLinkPacketSource : public AudioLink {
   // locks.  A lock-less single writer, single reader, triple-buffer object
   // would be perfect for this (I have one of these lying around from a previous
   // project, I just need to see if I am allowed to use it or not).
-  const AudioOutFormatInfo& format_info() const { return *format_info_; }
+  const AudioRendererFormatInfo& format_info() const { return *format_info_; }
 
   // Common pending queue ops.
   bool pending_queue_empty() const {
@@ -64,16 +63,16 @@ class AudioLinkPacketSource : public AudioLink {
   // queue are forced to wait if the front of the queue is involved in a mixing
   // operation.  This, in turn, guarantees that audio packets are always
   // returned to the user in the order which they were queued in without forcing
-  // AudioOuts to wait to queue new data if a mix operation is in progress.
+  // AudioRenderers to wait to queue new data if a mix operation is in progress.
   fbl::RefPtr<AudioPacketRef> LockPendingQueueFront(bool* was_flushed);
   void UnlockPendingQueueFront(bool release_packet);
 
  private:
   AudioLinkPacketSource(fbl::RefPtr<AudioObject> source,
                         fbl::RefPtr<AudioObject> dest,
-                        fbl::RefPtr<AudioOutFormatInfo> format_info);
+                        fbl::RefPtr<AudioRendererFormatInfo> format_info);
 
-  fbl::RefPtr<AudioOutFormatInfo> format_info_;
+  fbl::RefPtr<AudioRendererFormatInfo> format_info_;
 
   std::mutex flush_mutex_;
   mutable std::mutex pending_mutex_;

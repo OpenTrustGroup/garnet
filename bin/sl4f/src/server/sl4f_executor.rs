@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use async;
-use bt::error::Error as BTError;
 use failure::Error;
 use failure::ResultExt;
+use fuchsia_async::{self as fasync, unsafe_many_futures};
+use fuchsia_bluetooth::error::Error as BTError;
+use fuchsia_syslog::macros::*;
 use futures::channel::mpsc;
 use futures::future::ready as fready;
 use futures::prelude::*;
@@ -15,16 +16,17 @@ use serde_json::Value;
 use std::sync::Arc;
 
 // Sl4f related inclusions
-use server::sl4f::Sl4f;
-use server::sl4f_types::{AsyncRequest, AsyncResponse, FacadeType};
+use crate::server::sl4f::Sl4f;
+use crate::server::sl4f_types::{AsyncRequest, AsyncResponse, FacadeType};
 
 // Translation layers go here (i.e wlan_method_to_fidl)
-use bluetooth::commands::ble_method_to_fidl;
+use crate::bluetooth::commands::ble_advertise_method_to_fidl;
+use crate::bluetooth::commands::ble_method_to_fidl;
 
 pub fn run_fidl_loop(
     sl4f_session: Arc<RwLock<Sl4f>>, receiver: mpsc::UnboundedReceiver<AsyncRequest>,
 ) {
-    let mut executor = async::Executor::new()
+    let mut executor = fasync::Executor::new()
         .context("Error creating event loop")
         .expect("Failed to create an executor!");
 
@@ -65,8 +67,15 @@ pub fn run_fidl_loop(
 fn method_to_fidl(
     method_type: String, method_name: String, args: Value, sl4f_session: Arc<RwLock<Sl4f>>,
 ) -> impl Future<Output = Result<Value, Error>> {
-    unsafe_many_futures!(MethodType, [Bluetooth, Wlan, Error]);
+    unsafe_many_futures!(MethodType, [BleAdvertiseFacade, Bluetooth, Wlan, Error]);
     match FacadeType::from_str(method_type) {
+        FacadeType::BleAdvertiseFacade => {
+            MethodType::BleAdvertiseFacade(ble_advertise_method_to_fidl(
+                method_name,
+                args,
+                sl4f_session.write().get_ble_advertise_facade().clone(),
+            ))
+        }
         FacadeType::Bluetooth => MethodType::Bluetooth(ble_method_to_fidl(
             method_name,
             args,

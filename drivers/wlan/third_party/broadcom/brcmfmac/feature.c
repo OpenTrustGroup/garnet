@@ -61,7 +61,7 @@ static const char* const brcmf_quirk_names[] = {BRCMF_QUIRK_LIST};
  * @data: raw data pointer.
  */
 static zx_status_t brcmf_feat_debugfs_read(struct seq_file* seq, void* data) {
-    struct brcmf_bus* bus_if = dev_to_bus(seq->private);
+    struct brcmf_bus* bus_if = dev_to_bus(seq->private_data);
     uint32_t feats = bus_if->drvr->feat_flags;
     uint32_t quirks = bus_if->drvr->chip_quirks;
     int id;
@@ -207,6 +207,9 @@ void brcmf_feat_attach(struct brcmf_pub* drvr) {
         break;
     case BRCM_CC_4329_CHIP_ID:
         drvr->chip_quirks |= BIT(BRCMF_FEAT_QUIRK_NEED_MPC);
+        break;
+    case BRCM_CC_4359_CHIP_ID:
+        drvr->chip_quirks |= BIT(BRCMF_FEAT_QUIRK_IS_4359);
         break;
     default:
         /* no quirks */

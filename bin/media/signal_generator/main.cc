@@ -88,12 +88,13 @@ void usage(const char* prog_name) {
   printf("\n\t\t\t\t24-bit signals are saved left-justified in 32-bit ints.\n");
 
   printf(
-      "\n\t--%s=<GAIN>\t\tSet AudioOut (stream) Gain to [%.1f, %.1f] dB "
+      "\n\t--%s=<GAIN>\t\tSet AudioRenderer (stream) Gain to [%.1f, %.1f] dB "
       "(default %s)\n",
-      kStreamGainSwitch, fuchsia::media::MUTED_GAIN, fuchsia::media::MAX_GAIN,
-      kStreamGainDefaultDb);
+      kStreamGainSwitch, fuchsia::media::MUTED_GAIN_DB,
+      fuchsia::media::MAX_GAIN_DB, kStreamGainDefaultDb);
   printf("\t--%s=<GAIN>\t\tSet System Gain to [%.1f, 0.0] dB (default %s)\n",
-         kSystemGainSwitch, fuchsia::media::MUTED_GAIN, kSystemGainDefaultDb);
+         kSystemGainSwitch, fuchsia::media::MUTED_GAIN_DB,
+         kSystemGainDefaultDb);
   printf("\t--%s[=<0|1>]\t\tSet System Mute (1=mute, 0=unmute, default %s)\n",
          kSystemMuteSwitch, kSystemMuteDefault);
   printf("\t\t\t\tNote: changes to System Gain/Mute persist after playback.\n");
@@ -183,6 +184,7 @@ int main(int argc, const char** argv) {
       fxl::StringToNumber<uint32_t>(frames_per_payload_str));
 
   // Handle stream gain, system gain and system mute
+  media_app.set_will_set_stream_gain(command_line.HasOption(kStreamGainSwitch));
   std::string stream_gain_str = command_line.GetOptionValueWithDefault(
       kStreamGainSwitch, kStreamGainDefaultDb);
   media_app.set_stream_gain(std::stof(stream_gain_str));

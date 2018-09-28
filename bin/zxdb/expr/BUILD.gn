@@ -21,8 +21,8 @@ static_library("expr") {
     "resolve_array.h",
     "resolve_member.cc",
     "resolve_member.h",
-    "resolve_pointer.cc",
-    "resolve_pointer.h",
+    "resolve_ptr_ref.cc",
+    "resolve_ptr_ref.h",
     "symbol_eval_context.cc",
     "symbol_eval_context.h",
     "symbol_variable_resolver.cc",
@@ -30,8 +30,8 @@ static_library("expr") {
   ]
 
   public_deps = [
-    "//garnet/bin/zxdb/client/symbols",
     "//garnet/bin/zxdb/common",
+    "//garnet/bin/zxdb/symbols",
     "//garnet/public/lib/fxl",
   ]
 }
@@ -45,16 +45,16 @@ source_set("tests") {
     "expr_tokenizer_unittest.cc",
     "resolve_array_unittest.cc",
     "resolve_member_unittest.cc",
-    "resolve_pointer_unittest.cc",
+    "resolve_ptr_ref_unittest.cc",
     "symbol_eval_context_unittest.cc",
     "symbol_variable_resolver_unittest.cc",
   ]
 
   deps = [
     ":expr",
-    "//garnet/bin/zxdb/client/symbols:test_support",
     "//garnet/bin/zxdb/common:test_support",
-    "//third_party/llvm/lib/BinaryFormat",
+    "//garnet/bin/zxdb/symbols:test_support",
+    "//garnet/third_party/llvm:LLVMBinaryFormat",
     "//third_party/googletest:gtest",
   ]
 }

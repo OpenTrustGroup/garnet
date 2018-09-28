@@ -8,6 +8,7 @@
 #include <wlan/mlme/mac_frame.h>
 
 #include <cstring>
+#include <iomanip>
 #include <sstream>
 #include <string>
 
@@ -78,35 +79,31 @@ std::string Describe(const SequenceControl& sc) {
     return std::string(buf);
 }
 
-std::string Describe(const FrameHeader& hdr) {
+std::string Describe(const FrameControl& fc, const common::MacAddr& addr1,
+                     const common::MacAddr& addr2, const common::MacAddr& addr3) {
     // TODO(porce): Support A-MSDU case
     char buf[1024];
     size_t offset = 0;
-
-    BUFFER("[fc] %s dur:%u", Describe(hdr.fc).c_str(), hdr.duration);
-    if (hdr.fc.type() == FrameType::kManagement || hdr.fc.type() == FrameType::kData) {
-        BUFFER("[seq] %s", Describe(hdr.sc).c_str());
-    }
-    BUFFER("\n        ");
+    buf[0] = 0;
 
     // IEEE Std 802.11-2016, Table 9-26
-    uint8_t ds = (hdr.fc.to_ds() << 1) + hdr.fc.from_ds();
+    uint8_t ds = (fc.to_ds() << 1) + fc.from_ds();
     switch (ds) {
     case 0x0:
-        BUFFER("[ra(da)] %s  [ta(sa)] %s  [bssid] %s", hdr.addr1.ToString().c_str(),
-               hdr.addr2.ToString().c_str(), hdr.addr3.ToString().c_str());
+        BUFFER("[ra(da)] %s  [ta(sa)] %s  [bssid] %s", addr1.ToString().c_str(),
+               addr2.ToString().c_str(), addr3.ToString().c_str());
         break;
     case 0x1:
-        BUFFER("[ra(da)] %s  [ta(bssid)] %s  [sa] %s", hdr.addr1.ToString().c_str(),
-               hdr.addr2.ToString().c_str(), hdr.addr3.ToString().c_str());
+        BUFFER("[ra(da)] %s  [ta(bssid)] %s  [sa] %s", addr1.ToString().c_str(),
+               addr2.ToString().c_str(), addr3.ToString().c_str());
         break;
     case 0x2:
-        BUFFER("[ra(bssid)] %s  [ta(sa)] %s  [da] %s", hdr.addr1.ToString().c_str(),
-               hdr.addr2.ToString().c_str(), hdr.addr3.ToString().c_str());
+        BUFFER("[ra(bssid)] %s  [ta(sa)] %s  [da] %s", addr1.ToString().c_str(),
+               addr2.ToString().c_str(), addr3.ToString().c_str());
         break;
     case 0x3:
-        BUFFER("[ra] %s  [ta] %s  [da] %s", hdr.addr1.ToString().c_str(),
-               hdr.addr2.ToString().c_str(), hdr.addr3.ToString().c_str());
+        BUFFER("[ra] %s  [ta] %s  [da] %s", addr1.ToString().c_str(), addr2.ToString().c_str(),
+               addr3.ToString().c_str());
         break;
     default:
         break;
@@ -118,7 +115,11 @@ std::string Describe(const FrameHeader& hdr) {
 std::string Describe(const MgmtFrameHeader& hdr) {
     char buf[1024];
     size_t offset = 0;
-    BUFFER("%s", Describe(*reinterpret_cast<const FrameHeader*>(&hdr)).c_str());
+
+    BUFFER("[fc] %s dur:%u", Describe(hdr.fc).c_str(), hdr.duration);
+    BUFFER("[seq] %s", Describe(hdr.sc).c_str());
+    BUFFER("\n        ");
+    BUFFER("%s", Describe(hdr.fc, hdr.addr1, hdr.addr2, hdr.addr3).c_str());
 
     return std::string(buf);
 }
@@ -126,7 +127,11 @@ std::string Describe(const MgmtFrameHeader& hdr) {
 std::string Describe(const DataFrameHeader& hdr) {
     char buf[1024];
     size_t offset = 0;
-    BUFFER("%s", Describe(*reinterpret_cast<const FrameHeader*>(&hdr)).c_str());
+
+    BUFFER("[fc] %s dur:%u", Describe(hdr.fc).c_str(), hdr.duration);
+    BUFFER("[seq] %s", Describe(hdr.sc).c_str());
+    BUFFER("\n        ");
+    BUFFER("%s", Describe(hdr.fc, hdr.addr1, hdr.addr2, hdr.addr3).c_str());
 
     if (hdr.HasAddr4()) {
         ZX_DEBUG_ASSERT(hdr.addr4() != nullptr);
@@ -138,6 +143,86 @@ std::string Describe(const DataFrameHeader& hdr) {
     }
 
     return std::string(buf);
+}
+
+std::string Describe(const PHY& phy) {
+    char buf[16];
+    size_t offset = 0;
+    switch (phy) {
+    case WLAN_PHY_CCK:
+        BUFFER("CCK");
+        break;
+    case WLAN_PHY_DSSS:
+        BUFFER("DSSS");
+        break;
+    case WLAN_PHY_ERP:
+        BUFFER("ERP");
+        break;
+    case WLAN_PHY_HT:
+        BUFFER("HT");
+        break;
+    case WLAN_PHY_VHT:
+        BUFFER("VHT");
+        break;
+    default:
+        BUFFER("PHY---");
+        break;
+    }
+    return std::string(buf);
+}
+
+std::string Describe(const GI& gi) {
+    char buf[16];
+    size_t offset = 0;
+    switch (gi) {
+    case WLAN_GI_800NS:
+        BUFFER("GI800");
+        break;
+    case WLAN_GI_400NS:
+        BUFFER("GI400");
+        break;
+    case WLAN_GI_200NS:
+        BUFFER("GI200");
+        break;
+    case WLAN_GI_1600NS:
+        BUFFER("GI1600");
+        break;
+    case WLAN_GI_3200NS:
+        BUFFER("GI3200");
+        break;
+    default:
+        BUFFER("GI---");
+        break;
+    }
+    return std::string(buf);
+}
+
+std::string Describe(const TxVector& tx_vec, tx_vec_idx_t tx_vec_idx) {
+    char buf[128];
+    size_t offset = 0;
+    buf[0] = 0;
+
+    if (tx_vec_idx == kInvalidTxVectorIdx) {
+        zx_status_t status = tx_vec.ToIdx(&tx_vec_idx);
+        ZX_DEBUG_ASSERT(status == ZX_OK);
+    }
+
+    BUFFER("%u:", tx_vec_idx);
+    BUFFER("%s", Describe(tx_vec.phy).c_str());
+    BUFFER("%s", Describe(tx_vec.gi).c_str());
+    BUFFER("%s", ::wlan::common::kCbwStr[tx_vec.cbw]);
+    BUFFER("NSS %u", tx_vec.nss);
+    BUFFER("MCS %u", tx_vec.mcs_idx);
+    BUFFER("%s", tx_vec.IsValid() ? "" : "(x)");
+
+    return std::string(buf);
+}
+
+std::string Describe(tx_vec_idx_t tx_vec_idx) {
+    TxVector tx_vec;
+    TxVector::FromIdx(tx_vec_idx, &tx_vec);
+
+    return Describe(tx_vec, tx_vec_idx);
 }
 
 std::string DumpToAscii(const uint8_t bytes[], size_t bytes_len) {
@@ -296,9 +381,10 @@ std::string Describe(const Packet& p) {
 
     switch (p.peer()) {
     case Packet::Peer::kWlan: {
-        auto hdr = p.field<FrameHeader>(0);
-        if (hdr->fc.type() == FrameType::kManagement || hdr->fc.type() == FrameType::kData) {
-            BUFFER("\n  wlan hdr:%s ", Describe(*hdr).c_str());
+        if (auto mgmt_frame = MgmtFrameView<>::CheckType(&p).CheckLength()) {
+            BUFFER("\n  wlan hdr:%s ", Describe(*mgmt_frame.hdr()).c_str());
+        } else if (auto data_frame = DataFrameView<>::CheckType(&p).CheckLength()) {
+            BUFFER("\n  wlan hdr:%s ", Describe(*data_frame.hdr()).c_str());
         }
         break;
     }
@@ -319,13 +405,9 @@ std::string Describe(const AmsduSubframeHeader& hdr) {
 }
 
 std::string DescribeSuppressed(const Packet& p) {
-    auto hdr = p.field<FrameHeader>(0);
-
-    if (hdr->fc.type() == FrameType::kManagement &&
-        hdr->fc.subtype() == ManagementSubtype::kBeacon) {
+    if (auto bcn_frame = MgmtFrameView<Beacon>::CheckType(&p)) {
         return "Beacon. Decoding suppressed.";
     }
-
     return "";
 }
 
@@ -541,6 +623,32 @@ std::string Describe(const std::vector<SupportedRate> rates) {
         BUFFER("%s%u", rate.is_basic() ? "*" : "", rate.rate());
     }
     return std::string(buf);
+}
+
+bool IsPrint(const uint8_t bytes[], size_t len) {
+    for (size_t idx = 0; idx < len; idx++) {
+        if (!std::isprint(bytes[idx])) { return false; }
+    }
+    return true;
+}
+
+std::string ToAsciiOrHexStr(const uint8_t bytes[], size_t len) {
+    if (IsPrint(bytes, len)) { return std::string(bytes, bytes + len); }
+
+    constexpr size_t kMaxLenToPrint = 64;
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (size_t idx = 0; idx < std::min(len, kMaxLenToPrint); ++idx) {
+        oss << std::setw(2) << static_cast<unsigned>(bytes[idx]) << " ";
+    }
+
+    if (len > kMaxLenToPrint) { oss << "..(+" << (kMaxLenToPrint - len) << " bytes)"; }
+
+    return oss.str();
+}
+
+std::string ToAsciiOrHexStr(const std::vector<uint8_t>& vec) {
+    return ToAsciiOrHexStr(&vec[0], vec.size());
 }
 
 }  // namespace debug

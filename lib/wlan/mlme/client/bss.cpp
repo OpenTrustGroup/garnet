@@ -9,6 +9,7 @@
 
 #include <fuchsia/wlan/mlme/cpp/fidl.h>
 
+#include <memory>
 #include <string>
 
 namespace wlan {
@@ -50,12 +51,13 @@ zx_status_t Bss::ProcessBeacon(const Beacon& beacon, size_t frame_len,
 std::string Bss::ToString() const {
     // TODO(porce): Convert to finspect Describe()
     char buf[1024];
-    snprintf(buf, sizeof(buf), "BSSID %s Infra %s  RSSI %3d  Country %3s Channel %4s SSID [%s]",
-             bssid_.ToString().c_str(),
-             bss_desc_.bss_type == wlan_mlme::BSSTypes::INFRASTRUCTURE ? "Y" : "N",
-             bss_desc_.rssi_dbm,
-             (bss_desc_.country != nullptr) ? bss_desc_.country->c_str() : "---",
-             common::ChanStr(bcn_rx_chan_).c_str(), bss_desc_.ssid->c_str());
+    snprintf(
+        buf, sizeof(buf), "BSSID %s Infra %s  RSSI %3d  Country %3s Channel %4s SSID [%s]",
+        bssid_.ToString().c_str(),
+        bss_desc_.bss_type == wlan_mlme::BSSTypes::INFRASTRUCTURE ? "Y" : "N", bss_desc_.rssi_dbm,
+        bss_desc_.country.is_null() ? "---"
+                                    : reinterpret_cast<const char*>(bss_desc_.country->data()),
+        common::ChanStr(bcn_rx_chan_).c_str(), debug::ToAsciiOrHexStr(*bss_desc_.ssid).c_str());
     return std::string(buf);
 }
 
@@ -110,6 +112,8 @@ zx_status_t Bss::Update(const Beacon& beacon, size_t frame_len) {
     bcn_hash_ = GetBeaconSignature(beacon, frame_len);
 
     // Fields that are always present.
+    bssid_.CopyTo(bss_desc_.bssid.mutable_data());
+
     bss_desc_.beacon_period = beacon.beacon_interval;  // name mismatch is spec-compliant.
     ParseCapabilityInfo(beacon.cap);
     bss_desc_.bss_type = GetBssType(beacon.cap);
@@ -117,7 +121,24 @@ zx_status_t Bss::Update(const Beacon& beacon, size_t frame_len) {
     // IE's.
     auto ie_chains = beacon.elements;
     size_t ie_chains_len = frame_len - beacon.len();
-    return ParseIE(ie_chains, ie_chains_len);
+
+    auto status = ParseIE(ie_chains, ie_chains_len);
+    if (status != ZX_OK) { return status; }
+
+    // Post processing after IE parsing
+
+    // Interop: Do not discard the beacon unless it is confirmed to be safe to do.
+    // TODO(porce): Do something with the validation result.
+    ValidateBssDesc(bss_desc_, has_dsss_param_set_chan_, dsss_param_set_chan_);
+
+    auto chan = DeriveChanFromBssDesc(bss_desc_, bcn_rx_chan_.primary, has_dsss_param_set_chan_,
+                                      dsss_param_set_chan_);
+    bss_desc_.chan = common::ToFidl(chan);
+    debugbcn("beacon BSSID %s Chan %u CBW %u Sec80 %u\n",
+             common::MacAddr(bss_desc_.bssid).ToString().c_str(), bss_desc_.chan.primary,
+             bss_desc_.chan.cbw, bss_desc_.chan.secondary80);
+
+    return ZX_OK;
 }
 
 void Bss::ParseCapabilityInfo(const CapabilityInfo& cap) {
@@ -163,9 +184,9 @@ zx_status_t Bss::ParseIE(const uint8_t* ie_chains, size_t ie_chains_len) {
                 debugbcn("%s Failed to parse\n", dbgmsghdr);
                 return ZX_ERR_INTERNAL;
             }
-            bss_desc_.ssid = fidl::StringPtr(reinterpret_cast<const char*>(ie->ssid), ie->hdr.len);
-            // TODO(NET-698): Not all SSIDs are ASCII-printable. Write a designated printer module.
-            debugbcn("%s SSID: [%s]\n", dbgmsghdr, bss_desc_.ssid->c_str());
+            std::vector<uint8_t> ssid(ie->ssid, ie->ssid + ie->hdr.len);
+            bss_desc_.ssid.reset(std::move(ssid));
+            debugbcn("%s SSID: [%s]\n", dbgmsghdr, debug::ToAsciiOrHexStr(*bss_desc_.ssid).c_str());
             break;
         }
         case element_id::kSuppRates: {
@@ -219,9 +240,10 @@ zx_status_t Bss::ParseIE(const uint8_t* ie_chains, size_t ie_chains_len) {
                 return ZX_ERR_INTERNAL;
             }
 
-            bss_desc_.country = fidl::StringPtr(reinterpret_cast<const char*>(ie->country),
-                                                CountryElement::kCountryLen);
-            debugbcn("%s Country: %s\n", dbgmsghdr, bss_desc_.country->c_str());
+            bss_desc_.country.resize(0);
+            bss_desc_.country->assign(ie->country, ie->country + CountryElement::kCountryLen);
+
+            debugbcn("%s Country: %3s\n", dbgmsghdr, bss_desc_.country->data());
             break;
         }
         case element_id::kRsn: {
@@ -232,11 +254,19 @@ zx_status_t Bss::ParseIE(const uint8_t* ie_chains, size_t ie_chains_len) {
             }
 
             // TODO(porce): Consider pre-allocate max memory and recycle it.
+            // Don't use a unique_ptr
             // if (rsne_) delete[] rsne_;
             size_t ie_len = sizeof(ElementHeader) + ie->hdr.len;
             rsne_.reset(new uint8_t[ie_len]);
             memcpy(rsne_.get(), ie, ie_len);
             rsne_len_ = ie_len;
+
+            bss_desc_.rsn.reset();
+            if (rsne_len_ > 0) {
+                bss_desc_.rsn = fidl::VectorPtr<uint8_t>::New(rsne_len_);
+                memcpy(bss_desc_.rsn->data(), rsne_.get(), rsne_len_);
+            }
+
             debugbcn("%s RSN\n", dbgmsghdr);
             break;
         }
@@ -247,7 +277,7 @@ zx_status_t Bss::ParseIE(const uint8_t* ie_chains, size_t ie_chains_len) {
                 return ZX_ERR_INTERNAL;
             }
 
-            bss_desc_.ht_cap = HtCapabilitiesToFidl(*ie);
+            bss_desc_.ht_cap = std::make_unique<wlan_mlme::HtCapabilities>(ie->ToFidl());
 
             debugbcn("%s HtCapabilities parsed\n", dbgmsghdr);
             debugbcn("%s\n", debug::Describe(*ie).c_str());
@@ -260,7 +290,7 @@ zx_status_t Bss::ParseIE(const uint8_t* ie_chains, size_t ie_chains_len) {
                 return ZX_ERR_INTERNAL;
             }
 
-            bss_desc_.ht_op = HtOperationToFidl(*ie);
+            bss_desc_.ht_op = std::make_unique<wlan_mlme::HtOperation>(ie->ToFidl());
             debugbcn("%s HtOperation parsed\n", dbgmsghdr);
             break;
         }
@@ -271,7 +301,7 @@ zx_status_t Bss::ParseIE(const uint8_t* ie_chains, size_t ie_chains_len) {
                 return ZX_ERR_INTERNAL;
             }
 
-            bss_desc_.vht_cap = VhtCapabilitiesToFidl(*ie);
+            bss_desc_.vht_cap = std::make_unique<wlan_mlme::VhtCapabilities>(ie->ToFidl());
             debugbcn("%s VhtCapabilities parsed\n", dbgmsghdr);
             break;
         }
@@ -282,7 +312,7 @@ zx_status_t Bss::ParseIE(const uint8_t* ie_chains, size_t ie_chains_len) {
                 return ZX_ERR_INTERNAL;
             }
 
-            bss_desc_.vht_op = VhtOperationToFidl(*ie);
+            bss_desc_.vht_op = std::make_unique<wlan_mlme::VhtOperation>(ie->ToFidl());
             debugbcn("%s VhtOperation parsed\n", dbgmsghdr);
             break;
         }
@@ -299,219 +329,6 @@ zx_status_t Bss::ParseIE(const uint8_t* ie_chains, size_t ie_chains_len) {
     return ZX_OK;
 }
 
-wlan_mlme::HtCapabilityInfo HtCapabilityInfoToFidl(const HtCapabilityInfo& hci) {
-    wlan_mlme::HtCapabilityInfo fidl;
-
-    fidl.ldpc_coding_cap = (hci.ldpc_coding_cap() == 1);
-    fidl.chan_width_set = static_cast<wlan_mlme::ChanWidthSet>(hci.chan_width_set());
-    fidl.sm_power_save = static_cast<wlan_mlme::SmPowerSave>(hci.sm_power_save());
-    fidl.greenfield = (hci.greenfield() == 1);
-    fidl.short_gi_20 = (hci.short_gi_20() == 1);
-    fidl.short_gi_40 = (hci.short_gi_40() == 1);
-    fidl.tx_stbc = (hci.tx_stbc() == 1);
-    fidl.rx_stbc = hci.rx_stbc();
-    fidl.delayed_block_ack = (hci.delayed_block_ack() == 1);
-    fidl.max_amsdu_len = static_cast<wlan_mlme::MaxAmsduLen>(hci.max_amsdu_len());
-    fidl.dsss_in_40 = (hci.dsss_in_40() == 1);
-    fidl.intolerant_40 = (hci.intolerant_40() == 1);
-    fidl.lsig_txop_protect = (hci.lsig_txop_protect() == 1);
-
-    return fidl;
-}
-
-wlan_mlme::AmpduParams AmpduParamsToFidl(const AmpduParams& ap) {
-    wlan_mlme::AmpduParams fidl;
-
-    fidl.exponent = ap.exponent();
-    fidl.min_start_spacing = static_cast<wlan_mlme::MinMpduStartSpacing>(ap.min_start_spacing());
-
-    return fidl;
-}
-
-wlan_mlme::SupportedMcsSet SupportedMcsSetToFidl(const SupportedMcsSet& sms) {
-    wlan_mlme::SupportedMcsSet fidl;
-
-    fidl.rx_mcs_set = sms.rx_mcs_head.bitmask();
-    fidl.rx_highest_rate = sms.rx_mcs_tail.highest_rate();
-    fidl.tx_mcs_set_defined = (sms.tx_mcs.set_defined() == 1);
-    fidl.tx_rx_diff = (sms.tx_mcs.rx_diff() == 1);
-    fidl.tx_max_ss = sms.tx_mcs.max_ss_human();  // Converting to human readable
-    fidl.tx_ueqm = (sms.tx_mcs.ueqm() == 1);
-
-    return fidl;
-}
-
-wlan_mlme::HtExtCapabilities HtExtCapabilitiesToFidl(const HtExtCapabilities& hec) {
-    wlan_mlme::HtExtCapabilities fidl;
-
-    fidl.pco = (hec.pco() == 1);
-    fidl.pco_transition = static_cast<wlan_mlme::PcoTransitionTime>(hec.pco_transition());
-    fidl.mcs_feedback = static_cast<wlan_mlme::McsFeedback>(hec.mcs_feedback());
-    fidl.htc_ht_support = (hec.htc_ht_support() == 1);
-    fidl.rd_responder = (hec.rd_responder() == 1);
-
-    return fidl;
-}
-
-wlan_mlme::TxBfCapability TxBfCapabilityToFidl(const TxBfCapability& tbc) {
-    wlan_mlme::TxBfCapability fidl;
-
-    fidl.implicit_rx = (tbc.implicit_rx() == 1);
-    fidl.rx_stag_sounding = (tbc.rx_stag_sounding() == 1);
-    fidl.tx_stag_sounding = (tbc.tx_stag_sounding() == 1);
-    fidl.rx_ndp = (tbc.rx_ndp() == 1);
-    fidl.tx_ndp = (tbc.tx_ndp() == 1);
-    fidl.implicit = (tbc.implicit() == 1);
-    fidl.calibration = static_cast<wlan_mlme::Calibration>(tbc.calibration());
-    fidl.csi = (tbc.csi() == 1);
-    fidl.noncomp_steering = (tbc.noncomp_steering() == 1);
-    fidl.comp_steering = (tbc.comp_steering() == 1);
-    fidl.csi_feedback = static_cast<wlan_mlme::Feedback>(tbc.csi_feedback());
-    fidl.noncomp_feedback = static_cast<wlan_mlme::Feedback>(tbc.noncomp_feedback());
-    fidl.comp_feedback = static_cast<wlan_mlme::Feedback>(tbc.comp_feedback());
-    fidl.min_grouping = static_cast<wlan_mlme::MinGroup>(tbc.min_grouping());
-    fidl.csi_antennas = tbc.csi_antennas_human();                    // Converting to human readable
-    fidl.noncomp_steering_ants = tbc.noncomp_steering_ants_human();  // Converting to human readable
-    fidl.comp_steering_ants = tbc.comp_steering_ants_human();        // Converting to human readable
-    fidl.csi_rows = tbc.csi_rows_human();                            // Converting to human readable
-    fidl.chan_estimation = tbc.chan_estimation_human();              // Converting to human readable
-
-    return fidl;
-}
-
-wlan_mlme::AselCapability AselCapabilityToFidl(const AselCapability& ac) {
-    wlan_mlme::AselCapability fidl;
-
-    fidl.asel = (ac.asel() == 1);
-    fidl.csi_feedback_tx_asel = (ac.csi_feedback_tx_asel() == 1);
-    fidl.ant_idx_feedback_tx_asel = (ac.ant_idx_feedback_tx_asel() == 1);
-    fidl.explicit_csi_feedback = (ac.explicit_csi_feedback() == 1);
-    fidl.antenna_idx_feedback = (ac.antenna_idx_feedback() == 1);
-    fidl.rx_asel = (ac.rx_asel() == 1);
-    fidl.tx_sounding_ppdu = (ac.tx_sounding_ppdu() == 1);
-
-    return fidl;
-}
-
-std::unique_ptr<wlan_mlme::HtCapabilities> HtCapabilitiesToFidl(const HtCapabilities& ie) {
-    auto fidl = wlan_mlme::HtCapabilities::New();
-
-    fidl->ht_cap_info = HtCapabilityInfoToFidl(ie.ht_cap_info);
-    fidl->ampdu_params = AmpduParamsToFidl(ie.ampdu_params);
-    fidl->mcs_set = SupportedMcsSetToFidl(ie.mcs_set);
-    fidl->ht_ext_cap = HtExtCapabilitiesToFidl(ie.ht_ext_cap);
-    fidl->txbf_cap = TxBfCapabilityToFidl(ie.txbf_cap);
-    fidl->asel_cap = AselCapabilityToFidl(ie.asel_cap);
-
-    return fidl;
-}
-
-wlan_mlme::HTOperationInfo HtOpInfoToFidl(const HtOpInfoHead& head, const HtOpInfoTail tail) {
-    wlan_mlme::HTOperationInfo fidl;
-
-    fidl.secondary_chan_offset =
-        static_cast<wlan_mlme::SecChanOffset>(head.secondary_chan_offset());
-    fidl.sta_chan_width = static_cast<wlan_mlme::StaChanWidth>(head.sta_chan_width());
-    fidl.rifs_mode = (head.rifs_mode() == 1);
-    fidl.ht_protect = static_cast<wlan_mlme::HtProtect>(head.ht_protect());
-    fidl.nongreenfield_present = (head.nongreenfield_present() == 1);
-    fidl.obss_non_ht = (head.obss_non_ht() == 1);
-    fidl.center_freq_seg2 = head.center_freq_seg2();
-    fidl.dual_beacon = (head.dual_beacon() == 1);
-    fidl.dual_cts_protect = (head.dual_cts_protect() == 1);
-
-    fidl.stbc_beacon = (tail.stbc_beacon() == 1);
-    fidl.lsig_txop_protect = (tail.lsig_txop_protect() == 1);
-    fidl.pco_active = (tail.pco_active() == 1);
-    fidl.pco_phase = (tail.pco_phase() == 1);
-
-    return fidl;
-}
-
-std::unique_ptr<wlan_mlme::HtOperation> HtOperationToFidl(const HtOperation& ie) {
-    auto fidl = wlan_mlme::HtOperation::New();
-
-    fidl->primary_chan = ie.primary_chan;
-    fidl->ht_op_info = HtOpInfoToFidl(ie.head, ie.tail);
-    fidl->basic_mcs_set = SupportedMcsSetToFidl(ie.basic_mcs_set);
-
-    return fidl;
-}
-
-wlan_mlme::VhtMcsNss VhtMcsNssToFidl(const VhtMcsNss& vmn) {
-    wlan_mlme::VhtMcsNss fidl;
-
-    for (uint8_t ss_num = 1; ss_num <= 8; ss_num++) {
-        fidl.rx_max_mcs[ss_num - 1] = static_cast<wlan_mlme::VhtMcs>(vmn.get_rx_max_mcs_ss(ss_num));
-    }
-    fidl.rx_max_data_rate = vmn.rx_max_data_rate();
-    fidl.max_nsts = vmn.max_nsts();
-
-    for (uint8_t ss_num = 1; ss_num <= 8; ss_num++) {
-        fidl.tx_max_mcs[ss_num - 1] = static_cast<wlan_mlme::VhtMcs>(vmn.get_tx_max_mcs_ss(ss_num));
-    }
-    fidl.tx_max_data_rate = vmn.tx_max_data_rate();
-    fidl.ext_nss_bw = (vmn.ext_nss_bw() == 1);
-
-    return fidl;
-}
-
-wlan_mlme::BasicVhtMcsNss BasicVhtMcsNssToFidl(const BasicVhtMcsNss& vmn) {
-    wlan_mlme::BasicVhtMcsNss fidl;
-
-    for (uint8_t ss_num = 1; ss_num <= 8; ss_num++) {
-        fidl.max_mcs[ss_num - 1] = static_cast<wlan_mlme::VhtMcs>(vmn.get_max_mcs_ss(ss_num));
-    }
-    return fidl;
-}
-
-wlan_mlme::VhtCapabilitiesInfo VhtCapabilitiesInfoToFidl(const VhtCapabilitiesInfo& vci) {
-    wlan_mlme::VhtCapabilitiesInfo fidl;
-
-    fidl.max_mpdu_len = static_cast<wlan_mlme::MaxMpduLen>(vci.max_mpdu_len());
-    fidl.supported_cbw_set = vci.supported_cbw_set();
-    fidl.rx_ldpc = (vci.rx_ldpc() == 1);
-    fidl.sgi_cbw80 = (vci.sgi_cbw80() == 1);
-    fidl.sgi_cbw160 = (vci.sgi_cbw160() == 1);
-    fidl.tx_stbc = (vci.tx_stbc() == 1);
-    fidl.rx_stbc = (vci.rx_stbc() == 1);
-    fidl.su_bfer = (vci.su_bfer() == 1);
-    fidl.su_bfee = (vci.su_bfee() == 1);
-    fidl.bfee_sts = vci.bfee_sts();
-    fidl.num_sounding = vci.num_sounding();
-    fidl.mu_bfer = (vci.mu_bfer() == 1);
-    fidl.mu_bfee = (vci.mu_bfee() == 1);
-    fidl.txop_ps = (vci.txop_ps() == 1);
-    fidl.htc_vht = (vci.htc_vht() == 1);
-    fidl.max_ampdu_exp = vci.max_ampdu_exp();
-    fidl.link_adapt = static_cast<wlan_mlme::VhtLinkAdaptation>(vci.link_adapt());
-    fidl.rx_ant_pattern = (vci.rx_ant_pattern() == 1);
-    fidl.tx_ant_pattern = (vci.tx_ant_pattern() == 1);
-    fidl.ext_nss_bw = vci.ext_nss_bw();
-
-    return fidl;
-}
-
-std::unique_ptr<wlan_mlme::VhtCapabilities> VhtCapabilitiesToFidl(const VhtCapabilities& ie) {
-    auto fidl = wlan_mlme::VhtCapabilities::New();
-
-    fidl->vht_cap_info = VhtCapabilitiesInfoToFidl(ie.vht_cap_info);
-    fidl->vht_mcs_nss = VhtMcsNssToFidl(ie.vht_mcs_nss);
-
-    return fidl;
-}
-
-std::unique_ptr<wlan_mlme::VhtOperation> VhtOperationToFidl(const VhtOperation& ie) {
-    auto fidl = wlan_mlme::VhtOperation::New();
-
-    fidl->vht_cbw = static_cast<wlan_mlme::VhtCbw>(ie.vht_cbw);
-    fidl->center_freq_seg0 = ie.center_freq_seg0;
-    fidl->center_freq_seg1 = ie.center_freq_seg1;
-    fidl->basic_mcs = BasicVhtMcsNssToFidl(ie.basic_mcs);
-
-    return fidl;
-}
-
 BeaconHash Bss::GetBeaconSignature(const Beacon& beacon, size_t frame_len) const {
     auto arr = reinterpret_cast<const uint8_t*>(&beacon);
 
@@ -525,34 +342,6 @@ BeaconHash Bss::GetBeaconSignature(const Beacon& beacon, size_t frame_len) const
         hash += *(arr + idx);
     }
     return hash;
-}
-
-wlan_mlme::BSSDescription Bss::ToFidl() const {
-    // Translates the Bss object into FIDL message.
-
-    wlan_mlme::BSSDescription fidl;
-    // TODO(NET-1170): Decommission Bss::ToFidl()
-    bss_desc_.Clone(&fidl);
-
-    std::memcpy(fidl.bssid.mutable_data(), bssid_.byte, common::kMacAddrLen);
-
-    if (has_dsss_param_set_chan_) {
-        // Channel was explicitly announced by the AP
-        fidl.chan.primary = dsss_param_set_chan_;
-    } else {
-        // Fallback to the inference
-        fidl.chan.primary = bcn_rx_chan_.primary;
-    }
-    fidl.chan.cbw = static_cast<wlan_mlme::CBW>(bcn_rx_chan_.cbw);
-
-    // RSN
-    fidl.rsn.reset();
-    if (rsne_len_ > 0) {
-        fidl.rsn = fidl::VectorPtr<uint8_t>::New(rsne_len_);
-        memcpy(fidl.rsn->data(), rsne_.get(), rsne_len_);
-    }
-
-    return fidl;
 }
 
 std::string Bss::RatesToString(const std::vector<uint8_t>& rates) const {
@@ -582,6 +371,130 @@ wlan_mlme::BSSTypes GetBssType(const CapabilityInfo& cap) {
     } else {
         // Undefined
         return ::fuchsia::wlan::mlme::BSSTypes::ANY_BSS;
+    }
+}
+
+// Validate by testing the intra-consistency of the presence and the values of the information.
+bool ValidateBssDesc(const wlan_mlme::BSSDescription& bss_desc, bool has_dsss_param_set_chan,
+                     uint8_t dsss_param_set_chan) {
+    bool has_ht_cap = bss_desc.ht_cap != nullptr;
+    bool has_ht_op = bss_desc.ht_op != nullptr;
+    bool has_vht_cap = bss_desc.vht_cap != nullptr;
+    bool has_vht_op = bss_desc.vht_op != nullptr;
+
+#define DBGBCN(msg)                                                                       \
+    debugbcn("beacon from BSSID %s malformed: " msg                                       \
+             " : has_dsss_param %u dsss_chan %u ht_cap %u ht_op %u "                      \
+             "vht_cap %u vht_op %u ht_op_primary_chan %u",                                \
+             common::MacAddr(bss_desc.bssid).ToString().c_str(), has_dsss_param_set_chan, \
+             dsss_param_set_chan, has_ht_cap, has_ht_op, has_vht_cap, has_vht_op,         \
+             has_ht_op ? bss_desc.ht_op->primary_chan : 0);
+
+    // IEEE Std 802.11-2016 Table 9-27, the use of MIB dot11HighThroughputOptionImplemented
+    // Either both present or both absent
+    if (has_ht_cap != has_ht_op) {
+        DBGBCN("Inconsistent presence of ht_cap and ht_op");
+        return false;
+    }
+
+    // IEEE Std 802.11-2016, B.4.2's CFHT, B.4.17.1's HTM1.1, B.4.25.1's VHTM1.1
+    if (has_vht_cap && !has_ht_cap) {
+        DBGBCN("Inconsistent presence of ht_cap and vht_cap");
+        return false;
+    }
+
+    // See IEEE Std 802.11-2016 Table 9-27, the use of MIB dot11VHTOptionImplemented
+    // Either both present or both absent
+    if (has_vht_cap != has_vht_op) {
+        DBGBCN("Inconsistent presence of vht_cap and vht_op");
+        return false;
+    }
+
+    // No particular clause in the stadnard. See dot11CurrentChannel, and
+    // related MIBs
+    if (has_dsss_param_set_chan && bss_desc.ht_cap != nullptr) {
+        if (dsss_param_set_chan != bss_desc.ht_op->primary_chan) {
+            DBGBCN("dss param chan != ht_op chan");
+            return false;
+        }
+    }
+
+#undef DBCBCN
+    return true;
+}
+
+wlan_channel_t DeriveChanFromBssDesc(const wlan_mlme::BSSDescription& bss_desc,
+                                     uint8_t bcn_rx_chan_primary, bool has_dsss_param_set_chan,
+                                     uint8_t dsss_param_set_chan) {
+    wlan_channel_t chan = {
+        .primary = has_dsss_param_set_chan ? dsss_param_set_chan : bcn_rx_chan_primary,
+        .cbw = CBW20,  // default
+        .secondary80 = 0,
+    };
+
+    // See IEEE 802.11-2016, Table 9-250, Table 11-24.
+
+    auto has_ht = (bss_desc.ht_cap != nullptr && bss_desc.ht_op != nullptr);
+    if (!has_ht) {
+        // No HT or VHT support. Even if there was attached an incomplete set of
+        // HT/VHT IEs, those are not be properly decodable.
+        return chan;
+    }
+
+    chan.primary = bss_desc.ht_op->primary_chan;
+
+    switch (bss_desc.ht_op->ht_op_info.secondary_chan_offset) {
+    case to_enum_type(wlan_mlme::SecChanOffset::SECONDARY_ABOVE):
+        chan.cbw = CBW40ABOVE;
+        break;
+    case to_enum_type(wlan_mlme::SecChanOffset::SECONDARY_BELOW):
+        chan.cbw = CBW40BELOW;
+    default:  // SECONDARY_NONE or RESERVED
+        chan.cbw = CBW20;
+        break;
+    }
+
+    // This overrides Secondary Channel Offset.
+    // TODO(NET-677): Conditionally apply
+    if (bss_desc.ht_op->ht_op_info.sta_chan_width == to_enum_type(wlan_mlme::StaChanWidth::TWENTY)) {
+        chan.cbw = CBW20;
+        return chan;
+    }
+
+    auto has_vht = (bss_desc.vht_cap != nullptr && bss_desc.vht_op != nullptr);
+    if (!has_vht) {
+        // No VHT support. Even if there was attached an incomplete set of
+        // VHT IEs, those are not be properly decodable.
+        return chan;
+    }
+
+    // has_ht and has_vht
+    switch (bss_desc.vht_op->vht_cbw) {
+    case to_enum_type(wlan_mlme::VhtCbw::CBW_20_40):
+        return chan;
+    case to_enum_type(wlan_mlme::VhtCbw::CBW_80_160_80P80): {
+        // See IEEE Std 802.11-2016, Table 9-253
+        auto seg0 = bss_desc.vht_op->center_freq_seg0;
+        auto seg1 = bss_desc.vht_op->center_freq_seg1;
+        auto gap = (seg0 >= seg1) ? (seg0 - seg1) : (seg1 - seg0);
+
+        if (seg1 > 0 && gap < 8) {
+            // Reserved case. Fallback to HT CBW
+        } else if (seg1 > 0 && (gap > 8 && gap <= 16)) {
+            // Reserved case. Fallback to HT CBW
+        } else if (seg1 == 0) {
+            chan.cbw = CBW80;
+        } else if (gap == 8) {
+            chan.cbw = CBW160;
+        } else if (gap > 16) {
+            chan.cbw = CBW80P80;
+        }
+
+        return chan;
+    }
+    default:
+        // Deprecated
+        return chan;
     }
 }
 

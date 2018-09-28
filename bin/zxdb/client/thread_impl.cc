@@ -4,6 +4,8 @@
 
 #include "garnet/bin/zxdb/client/thread_impl.h"
 
+#include <inttypes.h>
+
 #include <iostream>
 #include <limits>
 
@@ -75,10 +77,11 @@ void ThreadImpl::Continue() {
     // back rather than several instructions after the breakpoint due to the
     // original "step into" command, so even when "wrong" this current behavior
     // isn't necessarily bad.
+    controllers_.back()->Log("Continuing with this controller as primary.");
     ThreadController::ContinueOp op = controllers_.back()->GetContinueOp();
     request.how = op.how;
-    request.range_begin = op.range_begin;
-    request.range_end = op.range_end;
+    request.range_begin = op.range.begin();
+    request.range_end = op.range.end();
   }
 
   session()->remote_api()->Resume(
@@ -96,15 +99,20 @@ void ThreadImpl::ContinueWith(std::unique_ptr<ThreadController> controller,
   controller_ptr->InitWithThread(
       this, [ this, controller_ptr,
               on_continue = std::move(on_continue) ](const Err& err) {
-        if (err.has_error())
+        if (err.has_error()) {
+          controller_ptr->Log("InitWithThread failed.");
           NotifyControllerDone(controller_ptr);  // Remove the controller.
-        else
+        } else {
+          controller_ptr->Log("Initialized, continuing...");
           Continue();
+        }
         on_continue(err);
       });
 }
 
 void ThreadImpl::NotifyControllerDone(ThreadController* controller) {
+  controller->Log("Controller done, removing.");
+
   // We expect to have few controllers so brute-force is sufficient.
   for (auto cur = controllers_.begin(); cur != controllers_.end(); ++cur) {
     if (cur->get() == controller) {
@@ -148,6 +156,31 @@ void ThreadImpl::SyncFrames(std::function<void()> callback) {
         if (callback)
           callback();
       });
+}
+
+FrameFingerprint ThreadImpl::GetFrameFingerprint(size_t frame_index) const {
+  // See function comment in thread.h for more. We need to look at the next
+  // frame, so either we need to know we got them all or the caller wants the
+  // 0th one. We should always have the top two stack entries if available,
+  // so having only one means we got them all.
+  FXL_DCHECK(frame_index == 0 || HasAllFrames());
+
+  // Should reference a valid index in the array.
+  if (frame_index >= frames_.size()) {
+    FXL_NOTREACHED();
+    return FrameFingerprint();
+  }
+
+  // The frame address requires looking at the previour frame. When this is the
+  // last entry, we can't do that. This returns the frame base pointer instead
+  // which will at least identify the frame in some ways, and can be used to
+  // see if future frames are younger.
+  size_t prev_frame_index = frame_index + 1;
+  if (prev_frame_index == frames_.size())
+    return FrameFingerprint(frames_[frame_index]->GetStackPointer());
+
+  // Use the previuos frame's stack pointer. See frame_fingerprint.h.
+  return FrameFingerprint(frames_[prev_frame_index]->GetStackPointer());
 }
 
 void ThreadImpl::GetRegisters(
@@ -198,6 +231,10 @@ void ThreadImpl::SetMetadataFromException(
 void ThreadImpl::OnException(
     debug_ipc::NotifyException::Type type,
     const std::vector<fxl::WeakPtr<Breakpoint>>& hit_breakpoints) {
+#if defined(DEBUG_THREAD_CONTROLLERS)
+  ThreadController::LogRaw("----------\r\nGot exception @ 0x%" PRIx64,
+  frames_[0]->GetAddress());
+#endif
   bool should_stop;
   if (controllers_.empty()) {
     // When there are no controllers, all stops are effective.
@@ -215,10 +252,13 @@ void ThreadImpl::OnException(
       switch (controllers_[i]->OnThreadStop(type, hit_breakpoints)) {
         case ThreadController::kContinue:
           // Try the next controller.
+          controllers_[i]->Log("Reported continue on exception.");
           continue;
         case ThreadController::kStop:
           // Once a controller tells us to stop, we assume the controller no
           // longer applies and delete it.
+          controllers_[i]->Log(
+              "Reported stop on exception, stopping and removing it.");
           controllers_.erase(controllers_.begin() + i);
           should_stop = true;
           i--;

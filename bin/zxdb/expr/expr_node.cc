@@ -8,16 +8,16 @@
 
 #include <ostream>
 
-#include "garnet/bin/zxdb/client/symbols/array_type.h"
-#include "garnet/bin/zxdb/client/symbols/base_type.h"
-#include "garnet/bin/zxdb/client/symbols/modified_type.h"
-#include "garnet/bin/zxdb/client/symbols/symbol_data_provider.h"
 #include "garnet/bin/zxdb/common/err.h"
 #include "garnet/bin/zxdb/expr/expr_eval_context.h"
 #include "garnet/bin/zxdb/expr/expr_value.h"
 #include "garnet/bin/zxdb/expr/resolve_member.h"
-#include "garnet/bin/zxdb/expr/resolve_pointer.h"
+#include "garnet/bin/zxdb/expr/resolve_ptr_ref.h"
 #include "garnet/bin/zxdb/expr/symbol_variable_resolver.h"
+#include "garnet/bin/zxdb/symbols/array_type.h"
+#include "garnet/bin/zxdb/symbols/base_type.h"
+#include "garnet/bin/zxdb/symbols/modified_type.h"
+#include "garnet/bin/zxdb/symbols/symbol_data_provider.h"
 #include "lib/fxl/strings/string_printf.h"
 
 namespace zxdb {
@@ -93,24 +93,38 @@ void EvalUnaryOperator(const ExprToken& op_token, const ExprValue& value,
 
 }  // namespace
 
+void ExprNode::EvalFollowReferences(fxl::RefPtr<ExprEvalContext> context,
+                                    EvalCallback cb) const {
+  Eval(context,
+       [ context, cb = std::move(cb) ](const Err& err, ExprValue value) {
+         if (err.has_error()) {
+           cb(err, ExprValue());
+         } else {
+           EnsureResolveReference(context->GetDataProvider(), std::move(value),
+                                  std::move(cb));
+         }
+       });
+}
+
 void AddressOfExprNode::Eval(fxl::RefPtr<ExprEvalContext> context,
                              EvalCallback cb) const {
-  expr_->Eval(context, [cb = std::move(cb)](const Err& err, ExprValue value) {
-    if (value.source().type() != ExprValueSource::Type::kMemory) {
-      cb(Err("Can't take the address of a temporary."), ExprValue());
-    } else {
-      // Construct a pointer type to the variable.
-      auto ptr_type = fxl::MakeRefCounted<ModifiedType>(
-          Symbol::kTagPointerType, LazySymbol(value.type_ref()));
+  expr_->EvalFollowReferences(
+      context, [cb = std::move(cb)](const Err& err, ExprValue value) {
+        if (value.source().type() != ExprValueSource::Type::kMemory) {
+          cb(Err("Can't take the address of a temporary."), ExprValue());
+        } else {
+          // Construct a pointer type to the variable.
+          auto ptr_type = fxl::MakeRefCounted<ModifiedType>(
+              Symbol::kTagPointerType, LazySymbol(value.type_ref()));
 
-      std::vector<uint8_t> contents;
-      contents.resize(sizeof(uint64_t));
-      uint64_t address = value.source().address();
-      memcpy(&contents[0], &address, sizeof(uint64_t));
+          std::vector<uint8_t> contents;
+          contents.resize(sizeof(uint64_t));
+          uint64_t address = value.source().address();
+          memcpy(&contents[0], &address, sizeof(uint64_t));
 
-      cb(Err(), ExprValue(std::move(ptr_type), std::move(contents)));
-    }
-  });
+          cb(Err(), ExprValue(std::move(ptr_type), std::move(contents)));
+        }
+      });
 }
 
 void AddressOfExprNode::Print(std::ostream& out, int indent) const {
@@ -120,31 +134,32 @@ void AddressOfExprNode::Print(std::ostream& out, int indent) const {
 
 void ArrayAccessExprNode::Eval(fxl::RefPtr<ExprEvalContext> context,
                                EvalCallback cb) const {
-  left_->Eval(context, [ inner = inner_, context, cb = std::move(cb) ](
-                           const Err& err, ExprValue left_value) {
-    if (err.has_error()) {
-      cb(err, ExprValue());
-    } else {
-      // "left" has been evaluated, now do "inner".
-      inner->Eval(context, [
-        context, left_value = std::move(left_value), cb = std::move(cb)
-      ](const Err& err, ExprValue inner_value) {
+  left_->EvalFollowReferences(
+      context, [ inner = inner_, context, cb = std::move(cb) ](
+                   const Err& err, ExprValue left_value) {
         if (err.has_error()) {
           cb(err, ExprValue());
         } else {
-          // Both "left" and "inner" has been evaluated.
-          int64_t offset = 0;
-          Err offset_err = InnerValueToOffset(inner_value, &offset);
-          if (offset_err.has_error()) {
-            cb(offset_err, ExprValue());
-          } else {
-            DoAccess(std::move(context), std::move(left_value), offset,
-                     std::move(cb));
-          }
+          // "left" has been evaluated, now do "inner".
+          inner->EvalFollowReferences(context, [
+            context, left_value = std::move(left_value), cb = std::move(cb)
+          ](const Err& err, ExprValue inner_value) {
+            if (err.has_error()) {
+              cb(err, ExprValue());
+            } else {
+              // Both "left" and "inner" has been evaluated.
+              int64_t offset = 0;
+              Err offset_err = InnerValueToOffset(inner_value, &offset);
+              if (offset_err.has_error()) {
+                cb(offset_err, ExprValue());
+              } else {
+                DoAccess(std::move(context), std::move(left_value), offset,
+                         std::move(cb));
+              }
+            }
+          });
         }
       });
-    }
-  });
 }
 
 // static
@@ -203,11 +218,9 @@ void ArrayAccessExprNode::DoAccess(fxl::RefPtr<ExprEvalContext> context,
   uint64_t array_base = left.GetAs<uint64_t>();
   uint32_t elt_size = inner_type->GetConcreteType()->byte_size();
 
-  ResolvePointer(
-      context->GetDataProvider(),
-      array_base + elt_size * offset,
-      fxl::RefPtr<Type>(const_cast<Type*>(inner_type)),
-      std::move(cb));
+  ResolvePointer(context->GetDataProvider(), array_base + elt_size * offset,
+                 fxl::RefPtr<Type>(const_cast<Type*>(inner_type)),
+                 std::move(cb));
 }
 
 void ArrayAccessExprNode::Print(std::ostream& out, int indent) const {
@@ -218,8 +231,8 @@ void ArrayAccessExprNode::Print(std::ostream& out, int indent) const {
 
 void DereferenceExprNode::Eval(fxl::RefPtr<ExprEvalContext> context,
                                EvalCallback cb) const {
-  expr_->Eval(context, [ context, cb = std::move(cb) ](const Err& err,
-                                                       ExprValue value) {
+  expr_->EvalFollowReferences(context, [ context, cb = std::move(cb) ](
+                                           const Err& err, ExprValue value) {
     ResolvePointer(context->GetDataProvider(), value, std::move(cb));
   });
 }
@@ -231,7 +244,7 @@ void DereferenceExprNode::Print(std::ostream& out, int indent) const {
 
 void IdentifierExprNode::Eval(fxl::RefPtr<ExprEvalContext> context,
                               EvalCallback cb) const {
-  context->GetVariable(name_.value(), std::move(cb));
+  context->GetVariableValue(name_.value(), std::move(cb));
 }
 
 void IdentifierExprNode::Print(std::ostream& out, int indent) const {
@@ -251,7 +264,7 @@ void IntegerExprNode::Print(std::ostream& out, int indent) const {
 void MemberAccessExprNode::Eval(fxl::RefPtr<ExprEvalContext> context,
                                 EvalCallback cb) const {
   bool is_arrow = accessor_.type() == ExprToken::kArrow;
-  left_->Eval(context, [
+  left_->EvalFollowReferences(context, [
     context, is_arrow, member_value = member_.value(), cb = std::move(cb)
   ](const Err& err, ExprValue base) {
     if (!is_arrow) {
@@ -279,8 +292,8 @@ void MemberAccessExprNode::Print(std::ostream& out, int indent) const {
 
 void UnaryOpExprNode::Eval(fxl::RefPtr<ExprEvalContext> context,
                            EvalCallback cb) const {
-  expr_->Eval(context, [ cb = std::move(cb), op = op_ ](const Err& err,
-                                                        ExprValue value) {
+  expr_->EvalFollowReferences(context, [ cb = std::move(cb), op = op_ ](
+                                           const Err& err, ExprValue value) {
     if (err.has_error())
       cb(err, std::move(value));
     else

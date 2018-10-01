@@ -9,6 +9,7 @@
 #include <zircon/processargs.h>
 
 #include <fs/managed-vfs.h>
+#include <fuchsia/sys/cpp/fidl.h>
 #include <lib/async/default.h>
 #include <lib/fdio/util.h>
 #include "lib/component/cpp/connect.h"
@@ -52,23 +53,27 @@ App::App(Config config)
       svc_root_(fbl::AdoptRef(new fs::PseudoDir())) {
   FXL_DCHECK(startup_context_);
 
-  // Set up environment for the programs we will run.
-  startup_context_->environment()->CreateNestedEnvironment(
-      OpenAsDirectory(), env_.NewRequest(), env_controller_.NewRequest(),
-      kDefaultLabel);
-  env_->GetLauncher(env_launcher_.NewRequest());
-
   ScanPublicServices();
 
   // Register services.
-  for (auto& pair : config.TakeServices())
+  for (auto& pair : config.TakeServices()) {
     RegisterSingleton(pair.first, std::move(pair.second));
+  }
 
   // Ordering note: The impl of CreateNestedEnvironment will resolve the
   // delegating app loader. However, since its call back to the host directory
   // won't happen until the next (first) message loop iteration, we'll be set up
   // by then.
   RegisterAppLoaders(config.TakeAppLoaders());
+
+  // Set up environment for the programs we will run.
+  fuchsia::sys::ServiceListPtr service_list(new fuchsia::sys::ServiceList);
+  service_list->names = std::move(svc_names_);
+  service_list->host_directory = OpenAsDirectory();
+  startup_context_->environment()->CreateNestedEnvironment(
+      env_.NewRequest(), env_controller_.NewRequest(), kDefaultLabel,
+      std::move(service_list), {});
+  env_->GetLauncher(env_launcher_.NewRequest());
 
   // Connect to startup services
   for (auto& startup_service : config.TakeStartupServices()) {
@@ -79,8 +84,9 @@ App::App(Config config)
   }
 
   // Launch startup applications.
-  for (auto& launch_info : config.TakeApps())
+  for (auto& launch_info : config.TakeApps()) {
     LaunchApplication(std::move(*launch_info));
+  }
 }
 
 App::~App() {}
@@ -140,6 +146,7 @@ void App::RegisterSingleton(std::string service_name,
         it->second.ConnectToService(std::move(client_handle), service_name);
         return ZX_OK;
       }));
+  svc_names_.push_back(service_name);
   svc_root_->AddEntry(service_name, std::move(child));
 }
 
@@ -154,7 +161,9 @@ void App::RegisterAppLoaders(Config::ServiceMap app_loaders) {
         fidl::InterfaceRequest<fuchsia::sys::Loader>(std::move(channel)));
     return ZX_OK;
   }));
-  svc_root_->AddEntry(fuchsia::sys::Loader::Name_, std::move(child));
+  static const char* kLoaderName = fuchsia::sys::Loader::Name_;
+  svc_names_.push_back(kLoaderName);
+  svc_root_->AddEntry(kLoaderName, std::move(child));
 }
 
 void App::LaunchApplication(fuchsia::sys::LaunchInfo launch_info) {

@@ -25,15 +25,9 @@ namespace sysmgr {
 
 DynamicServiceApp::DynamicServiceApp()
     : startup_context_(component::StartupContext::CreateFromStartupInfo()),
-      root_(fbl::AdoptRef(new fs::PseudoDir)),
+      svc_root_(fbl::AdoptRef(new fs::PseudoDir)),
       vfs_(async_get_default_dispatcher()) {
   FXL_DCHECK(startup_context_);
-
-  // Set up environment for the programs we will run.
-  startup_context_->environment()->CreateNestedEnvironment(
-      OpenAsDirectory(), env_.NewRequest(), env_controller_.NewRequest(),
-      kDefaultLabel);
-  env_->GetLauncher(env_launcher_.NewRequest());
 
   // Create default loader
   auto child = fbl::AdoptRef(new fs::Service([this](zx::channel channel) {
@@ -41,9 +35,26 @@ DynamicServiceApp::DynamicServiceApp()
                                                   std::move(channel));
     return ZX_OK;
   }));
-  root_->AddEntry(fuchsia::sys::Loader::Name_, std::move(child));
+  svc_root_->AddEntry(fuchsia::sys::Loader::Name_, std::move(child));
 
   ScanPublicServices();
+
+  // Set up environment for the programs we will run.
+  fidl::VectorPtr<fidl::StringPtr> svc_names_;
+  for (const auto& it : startup_services_) {
+    svc_names_.push_back(it.first);
+  }
+
+  static const char* kLoaderName = fuchsia::sys::Loader::Name_;
+  svc_names_.push_back(kLoaderName);
+
+  fuchsia::sys::ServiceListPtr service_list(new fuchsia::sys::ServiceList);
+  service_list->names = std::move(svc_names_);
+  service_list->host_directory = OpenAsDirectory();
+  startup_context_->environment()->CreateNestedEnvironment(
+      env_.NewRequest(), env_controller_.NewRequest(),
+      kDefaultLabel, std::move(service_list), {});
+  env_->GetLauncher(env_launcher_.NewRequest());
 }
 
 void DynamicServiceApp::ScanPublicServices() {
@@ -53,7 +64,7 @@ void DynamicServiceApp::ScanPublicServices() {
     ParsePublicServices(document, [this, &app_name,
                                    &manifest_path](const std::string& service) {
       fbl::RefPtr<fs::Vnode> dummy;
-      if (root_->Lookup(&dummy, service) == ZX_OK) {
+      if (svc_root_->Lookup(&dummy, service) == ZX_OK) {
         FXL_LOG(WARNING) << "Ignore duplicated service '" << service
                          << "' which comes from " << manifest_path;
         return;
@@ -70,7 +81,7 @@ zx::channel DynamicServiceApp::OpenAsDirectory() {
   zx::channel h1, h2;
   if (zx::channel::create(0, &h1, &h2) != ZX_OK)
     return zx::channel();
-  if (vfs_.ServeDirectory(root_, std::move(h1)) != ZX_OK)
+  if (vfs_.ServeDirectory(svc_root_, std::move(h1)) != ZX_OK)
     return zx::channel();
   return h2;
 }
@@ -124,7 +135,7 @@ void DynamicServiceApp::RegisterService(std::string service_name) {
     }
     return ZX_OK;
   }));
-  root_->AddEntry(service_name, std::move(child));
+  svc_root_->AddEntry(service_name, std::move(child));
 }
 
 void DynamicServiceApp::WaitOnService(
@@ -189,7 +200,7 @@ void DynamicServiceApp::AddService(std::string app_name,
                                                service_name);
         return ZX_OK;
       }));
-  root_->AddEntry(service_name, std::move(child));
+  svc_root_->AddEntry(service_name, std::move(child));
   callback();
 
   fbl::AutoLock lock(&mutex_);
@@ -216,7 +227,7 @@ void DynamicServiceApp::RemoveService(std::string service_name) {
   if (it != services_.end()) {
     services_.erase(it);
   }
-  root_->RemoveEntry(service_name);
+  svc_root_->RemoveEntry(service_name);
 }
 
 LaunchedApp::LaunchedApp(DynamicServiceApp* app, std::string app_name)

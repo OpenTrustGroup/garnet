@@ -13,7 +13,6 @@
 #include "lib/gzos/trusty_ipc/cpp/object_manager.h"
 #include "lib/gzos/trusty_ipc/cpp/port.h"
 
-#include "lib/component/cpp/environment_services.h"
 #include "lib/component/cpp/startup_context.h"
 #include "lib/fxl/logging.h"
 
@@ -148,9 +147,9 @@ long port_create(const char* path, uint32_t num_recv_bufs,
     fbl::AutoLock lock(&async_loop_lock);
     loop_ptr = &loop;
 
-    component::ConnectToEnvironmentService<gzos::sysmgr::ServiceRegistry>(
+    startup_context->ConnectToEnvironmentService<gzos::sysmgr::ServiceRegistry>(
         service_registry.NewRequest());
-    component::ConnectToEnvironmentService<gzos::sysmgr::ServiceRegistry>(
+    startup_context->ConnectToEnvironmentService<gzos::sysmgr::ServiceRegistry>(
         service_registry_async.NewRequest());
   }
 
@@ -205,7 +204,7 @@ static void wait_for_port(fbl::RefPtr<TipcChannelImpl> channel,
   auto port_connect = [path, channel] {
     PortConnectFacade facade(
         std::move(channel), [](gzos::trusty::ipc::TipcPortSyncPtr& port, std::string path) {
-          component::ConnectToEnvironmentService<gzos::trusty::ipc::TipcPort>(port.NewRequest(),
+          startup_context->ConnectToEnvironmentService<gzos::trusty::ipc::TipcPort>(port.NewRequest(),
                                                               path);
           return ZX_OK;
         });
@@ -256,7 +255,7 @@ long connect(const char* path, uint32_t flags) {
 
           return ZX_ERR_NOT_FOUND;
         }
-        component::ConnectToEnvironmentService<gzos::trusty::ipc::TipcPort>(port.NewRequest(),
+        startup_context->ConnectToEnvironmentService<gzos::trusty::ipc::TipcPort>(port.NewRequest(),
                                                             path);
         return ZX_OK;
       });

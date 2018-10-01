@@ -102,7 +102,7 @@ class DynamicServiceApp {
   fuchsia::sys::EnvironmentControllerPtr env_controller_;
   fuchsia::sys::LauncherPtr env_launcher_;
 
-  fbl::RefPtr<fs::PseudoDir> root_;
+  fbl::RefPtr<fs::PseudoDir> svc_root_;
   fs::SynchronousVfs vfs_;
 
   struct ServiceWaiter

@@ -11,7 +11,7 @@
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/smc_service.h>
 #include <zx/channel.h>
-#include <zx/vmo.h>
+#include <zx/resource.h>
 
 #include "garnet/lib/gzos/trusty_virtio/remote_system_fake.h"
 #include "garnet/lib/gzos/trusty_virtio/trusty_virtio_device.h"
@@ -25,34 +25,17 @@ const trusty_vdev_descr kVdevDescriptors[] = {
     DECLARE_TRUSTY_VIRTIO_DEVICE_DESCR(kTipcDeviceId, "dev2", 28, 32),
 };
 
-static zx_status_t alloc_shm_vmo(zx::vmo* out, zx_info_ns_shm_t* vmo_info) {
-  zx_handle_t smc;
-  zx_handle_t shm_vmo;
-  zx_info_smc_t smc_info;
-  zx_status_t status = zx_smc_create(0, &smc_info, &smc, &shm_vmo);
-  if (status != ZX_OK) {
-    return status;
-  }
-
-  out->reset(shm_vmo);
-  *vmo_info = smc_info.ns_shm;
-  zx_handle_close(smc);
-
-  return ZX_OK;
-}
-
 class ResourceTableTest : public ::testing::Test {
  public:
   ResourceTableTest() : loop_(&kAsyncLoopConfigAttachToThread) {}
 
  protected:
   virtual void SetUp() {
+    zx::resource shm_rsc;
+    ASSERT_EQ(get_shm_resource(&shm_rsc), ZX_OK);
+	
     // Create Shared Memory
-    zx::vmo shm_vmo;
-    zx_info_ns_shm_t vmo_info;
-    ASSERT_EQ(alloc_shm_vmo(&shm_vmo, &vmo_info), ZX_OK);
-    ASSERT_EQ(SharedMem::Create(fbl::move(shm_vmo), vmo_info, &shared_mem_),
-              ZX_OK);
+    ASSERT_EQ(SharedMem::Create(shm_rsc, &shared_mem_), ZX_OK);
 
     // Create VirtioBus
     fbl::AllocChecker ac;
@@ -68,8 +51,8 @@ class ResourceTableTest : public ::testing::Test {
       zx::channel h0, h1;
       ASSERT_EQ(zx::channel::create(0, &h0, &h1), ZX_OK);
       fbl::RefPtr<TrustyVirtioDevice> dev =
-          fbl::AdoptRef(new TrustyVirtioDevice(kVdevDescriptors[i],
-                                               loop_.dispatcher(), fbl::move(h1)));
+          fbl::AdoptRef(new TrustyVirtioDevice(
+              kVdevDescriptors[i], loop_.dispatcher(), fbl::move(h1)));
       ASSERT_TRUE(dev != nullptr);
 
       ASSERT_EQ(bus_->AddDevice(dev), ZX_OK);
@@ -86,6 +69,19 @@ class ResourceTableTest : public ::testing::Test {
   fbl::unique_ptr<VirtioBus> bus_;
   fbl::unique_ptr<RemoteSystemFake> remote_;
   async::Loop loop_;
+
+ private:
+  static constexpr char kSysInfoPath[] = "/dev/misc/sysinfo";
+
+  zx_status_t get_shm_resource(zx::resource* resource) {
+    fbl::unique_fd fd(open(kSysInfoPath, O_RDWR));
+    if (!fd) {
+      return ZX_ERR_IO;
+    }
+    ssize_t n = ioctl_sysinfo_get_ns_shm_resource(
+        fd.get(), resource->reset_and_get_address());
+    return n < 0 ? ZX_ERR_IO : ZX_OK;
+  }
 };
 
 TEST_F(ResourceTableTest, GetResourceTable) {
@@ -142,11 +138,7 @@ class VirtioBusStateTest : public ::testing::Test {
  protected:
   virtual void SetUp() {
     // Create Shared Memory
-    zx::vmo shm_vmo;
-    zx_info_ns_shm_t vmo_info;
-    ASSERT_EQ(alloc_shm_vmo(&shm_vmo, &vmo_info), ZX_OK);
-    ASSERT_EQ(SharedMem::Create(fbl::move(shm_vmo), vmo_info, &shared_mem_),
-              ZX_OK);
+    ASSERT_EQ(SharedMem::Create(&shared_mem_), ZX_OK);
 
     // Create VirtioBus
     bus_ = fbl::make_unique<VirtioBus>(shared_mem_);

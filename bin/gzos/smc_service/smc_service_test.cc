@@ -102,7 +102,7 @@ TEST_F(SmcServiceTest, SmcEntityTest) {
         .smc_nr = SMC_SC_VIRTIO_START,
         .params = {0x123U, 0x456U, 0x789U},
     };
-    zx_status_t st = zx_smc_call_test(smc_service_->GetHandle(),
+    zx_status_t st = zx_smc_call_test(smc_service_->smc_obj().get(),
                                       &expect_smc_args,
                                       &smc_ret);
     ASSERT_EQ(st, ZX_OK);
@@ -128,7 +128,7 @@ TEST_F(SmcServiceTest, NopTest) {
     };
 
     zx_status_t st =
-        zx_smc_nop_call_test(smc_service_->GetHandle(), &expect_smc_args);
+        zx_smc_nop_call_test(smc_service_->smc_obj().get(), &expect_smc_args);
     ASSERT_EQ(st, ZX_OK);
     EXPECT_EQ(smc_args.smc_nr, expect_smc_args.smc_nr);
     EXPECT_EQ(smc_args.params[0], expect_smc_args.params[0]);

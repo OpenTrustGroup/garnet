@@ -4,7 +4,6 @@
 
 #include <fbl/auto_call.h>
 #include <fbl/string_buffer.h>
-#include <zx/vmo.h>
 
 #include "garnet/bin/gzos/smc_service/smc_service.h"
 #include "garnet/bin/gzos/smc_service/trusty_smc.h"
@@ -67,35 +66,44 @@ zx_status_t SmcService::InitSmcEntities() {
   return ZX_OK;
 }
 
+static zx_status_t get_shm_resource(zx::resource* rsc) {
+  zx_handle_t handle = zx_take_startup_handle(PA_HND(PA_USER1, 0));
+  if (handle == ZX_HANDLE_INVALID) {
+    return ZX_ERR_NO_RESOURCES;
+  }
+
+  rsc->reset(handle);
+  return ZX_OK;
+}
+
 zx_status_t SmcService::CreateSmcKernelObject() {
   fbl::AutoLock al(&lock_);
 
-  zx_handle_t smc_handle = ZX_HANDLE_INVALID;
-  zx_handle_t vmo_handle = ZX_HANDLE_INVALID;
-  zx_info_smc_t smc_info = {};
-
-  zx_status_t status = zx_smc_create(0, &smc_info, &smc_handle, &vmo_handle);
+  zx::smc smc;
+  zx_status_t status = zx::smc::create(0, &smc);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to create smc kernel object, status:" << status;
     return status;
   }
 
-  auto close_handle = fbl::MakeAutoCall([&]() { zx_handle_close(smc_handle); });
+  zx::resource rsc;
+  status = get_shm_resource(&rsc);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to get shared memory resource, status:" << status;
+    return status;
+  }
 
   fbl::RefPtr<SharedMem> shared_mem;
-  zx::vmo shm_vmo(vmo_handle);
-  zx_info_ns_shm_t shm_info = smc_info.ns_shm;
-  status = SharedMem::Create(fbl::move(shm_vmo), shm_info, &shared_mem);
+  status = SharedMem::Create(rsc, &shared_mem);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to create shared memory object, status:"
                    << status;
     return status;
   }
 
-  smc_handle_ = smc_handle;
+  smc_ = fbl::move(smc);
   shared_mem_ = fbl::move(shared_mem);
 
-  close_handle.cancel();
   return ZX_OK;
 }
 
@@ -119,8 +127,7 @@ zx_status_t SmcService::CreateNopThreads() {
       uint32_t cpu = thrd_args->cpu_num;
 
       while (!smc_svc->nop_threads_should_stop()) {
-        zx_status_t status =
-            zx_smc_read_nop(smc_svc->GetHandle(), cpu, &smc_args);
+        zx_status_t status = smc_svc->smc_obj().read_nop(cpu, &smc_args);
         if (status != ZX_OK) {
           FXL_VLOG(1) << "Read nop request error, cpu:" << cpu
                       << " status:" << status;
@@ -191,7 +198,7 @@ void SmcService::Stop() {
     smc_entities_[i].reset();
   }
 
-  zx_handle_close(smc_handle_);
+  smc_.reset();
 }
 
 void SmcService::JoinNopThreads() {
@@ -201,7 +208,7 @@ void SmcService::JoinNopThreads() {
     return;
   }
 
-  zx_smc_cancel_read_nop(GetHandle());
+  smc_obj().cancel_read_nop();
 
   uint32_t i;
   for (i = 0; i < kMaxCpuNumbers; i++) {
@@ -212,7 +219,7 @@ void SmcService::JoinNopThreads() {
 }
 
 zx_status_t SmcService::WaitOnSmc(async_dispatcher_t* async) {
-  smc_wait_.set_object(GetHandle());
+  smc_wait_.set_object(smc_obj().get());
   smc_wait_.set_trigger(ZX_SMC_READABLE);
   return smc_wait_.Begin(async);
 }
@@ -226,9 +233,9 @@ void SmcService::OnSmcReady(async_dispatcher_t* async, async::WaitBase* wait,
   }
 
   smc32_args_t smc_args = {};
-  status = zx_smc_read(GetHandle(), &smc_args);
+  status = smc_obj().read(&smc_args);
   if (status != ZX_OK) {
-    OnSmcClosed(status, "zx_smc_read");
+    OnSmcClosed(status, "smc_obj().read");
     return;
   }
 
@@ -240,9 +247,9 @@ void SmcService::OnSmcReady(async_dispatcher_t* async, async::WaitBase* wait,
   if (entity != nullptr)
     result = entity->InvokeSmcFunction(&smc_args);
 
-  status = zx_smc_set_result(GetHandle(), result);
+  status = smc_obj().set_result(result);
   if (status != ZX_OK) {
-    OnSmcClosed(status, "zx_smc_set_result");
+    OnSmcClosed(status, "smc_obj().set_result");
     return;
   }
 

@@ -11,6 +11,8 @@
 #include <lib/async/cpp/wait.h>
 #include <lib/fdio/util.h>
 #include <lib/fidl/cpp/binding.h>
+#include <zircon/syscalls.h>
+#include <zircon/syscalls/smc_service.h>
 
 #include "garnet/bin/gzos/ree_agent/gz_ipc_client.h"
 #include "garnet/bin/gzos/ree_agent/gz_ipc_server.h"
@@ -273,6 +275,85 @@ TEST_F(GzIpcAgentTest, ReceiveChannel) {
   fidl::StringPtr response;
   EXPECT_EQ(echo->EchoString(test_string, &response), ZX_OK);
   EXPECT_EQ(test_string, response);
+}
+
+class ShmVmoTest : public ::testing::Test {
+ public:
+  ShmVmoTest() = default;
+
+ protected:
+  virtual void SetUp() override {
+    zx_info_ns_shm_t shm_info;
+    ASSERT_EQ(zx::resource::create_ns_mem(0, &shm_info, &shm_rsc_), ZX_OK);
+
+    ASSERT_EQ(zx::vmo::create_ns_mem(shm_rsc_, shm_info.base_phys,
+                                     shm_info.size, &vmo_, &event_),
+              ZX_OK);
+
+    wait_.set_trigger(ZX_EVENTPAIR_SIGNALED);
+    wait_.set_object(event_.get());
+  }
+
+  virtual void TearDown() override {
+    zx_handle_close(smc_handle_);
+    wait_.Cancel();
+  }
+
+  async::Wait wait_;
+  zx::vmo vmo_;
+  zx::eventpair event_;
+
+ private:
+  zx_handle_t smc_handle_;
+  zx::resource shm_rsc_;
+};
+
+TEST_F(ShmVmoTest, VmoClose) {
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
+
+  bool handler_triggered = false;
+  wait_.set_handler(
+      [this, &handler_triggered](
+          async_dispatcher_t* dispatcher, async::Wait* wait, zx_status_t status,
+          const zx_packet_signal_t* signal) { handler_triggered = true; });
+
+  ASSERT_EQ(wait_.Begin(loop.dispatcher()), ZX_OK);
+
+  // Release vmo, wait handler should be triggered
+  vmo_.reset();
+
+  loop.RunUntilIdle();
+  EXPECT_TRUE(handler_triggered);
+}
+
+TEST_F(ShmVmoTest, VmarUnmap) {
+  async::Loop loop(&kAsyncLoopConfigAttachToThread);
+
+  bool handler_triggered = false;
+  wait_.set_handler(
+      [this, &handler_triggered](
+          async_dispatcher_t* dispatcher, async::Wait* wait, zx_status_t status,
+          const zx_packet_signal_t* signal) { handler_triggered = true; });
+
+  ASSERT_EQ(wait_.Begin(loop.dispatcher()), ZX_OK);
+
+  uintptr_t vaddr;
+  ASSERT_EQ(zx::vmar::root_self()->map(0, vmo_, 0, PAGE_SIZE,
+                                       ZX_VM_FLAG_PERM_READ, &vaddr),
+            ZX_OK);
+
+  // Release vmo, wait handler should not be triggered (VmMapping still holds
+  // VmObject reference)
+  vmo_.reset();
+
+  loop.RunUntilIdle();
+  EXPECT_FALSE(handler_triggered);
+
+  // Unmap it, now wait handler should be triggered
+  zx::vmar::root_self()->unmap(vaddr, PAGE_SIZE);
+
+  loop.RunUntilIdle();
+  EXPECT_TRUE(handler_triggered);
 }
 
 }  // namespace ree_agent

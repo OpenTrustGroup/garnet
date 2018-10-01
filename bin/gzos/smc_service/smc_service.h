@@ -12,6 +12,7 @@
 #include <lib/async/default.h>
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/smc_service.h>
+#include <zx/smc.h>
 
 #include <threads.h>
 #include <unordered_map>
@@ -43,8 +44,7 @@ class SmcService {
   static SmcService* GetInstance();
 
   SmcService()
-      : smc_handle_(ZX_HANDLE_INVALID),
-        shared_mem_(nullptr),
+      : shared_mem_(nullptr),
         nop_threads_should_stop_(true) {}
 
   ~SmcService() { Stop(); }
@@ -56,9 +56,10 @@ class SmcService {
     fbl::AutoLock lock(&lock_);
     return shared_mem_;
   };
-  zx_handle_t GetHandle() {
+
+  zx::smc& smc_obj() {
     fbl::AutoLock lock(&lock_);
-    return smc_handle_;
+    return smc_;
   };
 
   bool nop_threads_should_stop() { return nop_threads_should_stop_.load(); }
@@ -77,7 +78,7 @@ class SmcService {
   void JoinNopThreads();
 
   mutable fbl::Mutex lock_;
-  zx_handle_t smc_handle_ __TA_GUARDED(lock_);
+  zx::smc smc_ __TA_GUARDED(lock_);
   async::WaitMethod<SmcService, &SmcService::OnSmcReady> smc_wait_{this};
   fbl::RefPtr<SharedMem> shared_mem_ __TA_GUARDED(lock_);
   fbl::unique_ptr<SmcEntity> smc_entities_[SMC_NUM_ENTITIES] __TA_GUARDED(

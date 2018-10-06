@@ -4,6 +4,7 @@
 
 #include <fbl/auto_call.h>
 #include <fbl/string_buffer.h>
+#include <zircon/processargs.h>
 
 #include "garnet/bin/gzos/smc_service/smc_service.h"
 #include "garnet/bin/gzos/smc_service/trusty_smc.h"
@@ -66,17 +67,7 @@ zx_status_t SmcService::InitSmcEntities() {
   return ZX_OK;
 }
 
-static zx_status_t get_shm_resource(zx::resource* rsc) {
-  zx_handle_t handle = zx_take_startup_handle(PA_HND(PA_USER1, 0));
-  if (handle == ZX_HANDLE_INVALID) {
-    return ZX_ERR_NO_RESOURCES;
-  }
-
-  rsc->reset(handle);
-  return ZX_OK;
-}
-
-zx_status_t SmcService::CreateSmcKernelObject() {
+zx_status_t SmcService::CreateSmcKernelObject(const zx::resource& shm_rsc) {
   fbl::AutoLock al(&lock_);
 
   zx::smc smc;
@@ -86,15 +77,8 @@ zx_status_t SmcService::CreateSmcKernelObject() {
     return status;
   }
 
-  zx::resource rsc;
-  status = get_shm_resource(&rsc);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to get shared memory resource, status:" << status;
-    return status;
-  }
-
   fbl::RefPtr<SharedMem> shared_mem;
-  status = SharedMem::Create(rsc, &shared_mem);
+  status = SharedMem::Create(shm_rsc, &shared_mem);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to create shared memory object, status:"
                    << status;
@@ -162,10 +146,11 @@ zx_status_t SmcService::CreateNopThreads() {
   return ZX_OK;
 }
 
-zx_status_t SmcService::Start(async_dispatcher_t* async) {
+zx_status_t SmcService::Start(async_dispatcher_t* async,
+                              const zx::resource& shm_rsc) {
   auto stop_service = fbl::MakeAutoCall([&]() { Stop(); });
 
-  zx_status_t status = CreateSmcKernelObject();
+  zx_status_t status = CreateSmcKernelObject(shm_rsc);
   if (status != ZX_OK) {
     return status;
   }

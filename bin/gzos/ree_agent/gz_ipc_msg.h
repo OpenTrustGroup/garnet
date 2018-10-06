@@ -28,6 +28,7 @@ enum class CtrlMessageType : uint32_t {
   CONNECT_REQUEST,
   CONNECT_RESPONSE,
   DISCONNECT_REQUEST,
+  FREE_VMO,
 };
 
 struct gz_ipc_ctrl_msg_hdr {
@@ -49,11 +50,16 @@ struct gz_ipc_disc_req_body {
   uint32_t target;
 } __PACKED;
 
+struct gz_ipc_free_vmo_body {
+  uint64_t id;
+} __PACKED;
+
 struct gz_ipc_channel_info {
   uint32_t remote;
 } __PACKED;
 
 struct gz_ipc_vmo_info {
+  uint64_t id;
   uint64_t paddr;
   uint64_t size;
 } __PACKED;
@@ -89,6 +95,11 @@ struct conn_rsp_msg {
 struct disc_req_msg {
   struct gz_ipc_ctrl_msg_hdr hdr;
   struct gz_ipc_disc_req_body body;
+};
+
+struct free_vmo_msg {
+  struct gz_ipc_ctrl_msg_hdr hdr;
+  struct gz_ipc_free_vmo_body body;
 };
 
 };  // namespace ree_agent

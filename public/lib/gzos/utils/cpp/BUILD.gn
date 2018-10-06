@@ -2,11 +2,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/fidl/fidl.gni")
-
-fidl("gzos.ipc.test") {
+source_set("cpp") {
   sources = [
-    "echo.fidl",
-    "vmo.fidl",
+    "id_alloc.h",
+  ]
+
+  public_deps = [
+    "//zircon/public/lib/bitmap",
   ]
 }

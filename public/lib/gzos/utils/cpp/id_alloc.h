@@ -9,7 +9,7 @@
 
 #include "lib/fxl/logging.h"
 
-namespace trusty_ipc {
+namespace gzos_utils {
 
 template <uint32_t ID_MAX>
 class IdAllocator {
@@ -48,4 +48,4 @@ class IdAllocator {
   bitmap::RawBitmapGeneric<bitmap::FixedStorage<ID_MAX>> id_bitmap_;
 };
 
-}  // namespace trusty_ipc
+}  // namespace gzos_utils

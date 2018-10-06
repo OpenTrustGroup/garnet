@@ -55,6 +55,19 @@ static zx_status_t get_startup_channels(zx::channel* ree_agent_cli,
   return ZX_OK;
 }
 
+zx::unowned_resource get_shm_resource() {
+  static fbl::Mutex handle_lock;
+  static zx_handle_t handle = ZX_HANDLE_INVALID;
+
+  fbl::AutoLock al(&handle_lock);
+  if (handle == ZX_HANDLE_INVALID) {
+    handle = zx_take_startup_handle(PA_HND(PA_USER1, 0));
+    FXL_CHECK(handle != ZX_HANDLE_INVALID)
+        << "Failed to get shared memory resource";
+  }
+
+  return zx::unowned_resource(handle);
+}
 
 int main(int argc, const char** argv) {
   zx::channel ree_agent_cli;
@@ -87,7 +100,8 @@ int main(int argc, const char** argv) {
     return 1;
   }
 
-  s->Start(loop.dispatcher());
+  auto shm_rsc = get_shm_resource();
+  s->Start(loop.dispatcher(), *shm_rsc);
 
   loop.Run();
   return 0;

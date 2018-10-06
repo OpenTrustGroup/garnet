@@ -26,7 +26,7 @@ static bool validate_range(uintptr_t addr, size_t size, uintptr_t mem_addr,
 
 class SharedMem : public fbl::RefCounted<SharedMem> {
  public:
-  static zx_status_t Create(zx::resource& shm_rsc, fbl::RefPtr<SharedMem>* out);
+  static zx_status_t Create(const zx::resource& shm_rsc, fbl::RefPtr<SharedMem>* out);
   ~SharedMem();
 
   uintptr_t VirtToPhys(void* addr, size_t size) {

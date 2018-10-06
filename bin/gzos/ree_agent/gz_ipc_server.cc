@@ -4,6 +4,8 @@
 
 #include "garnet/bin/gzos/ree_agent/gz_ipc_server.h"
 
+#include <fbl/auto_call.h>
+
 namespace ree_agent {
 
 zx_status_t GzIpcServer::HandleConnectRequest(uint32_t remote_addr,
@@ -11,24 +13,18 @@ zx_status_t GzIpcServer::HandleConnectRequest(uint32_t remote_addr,
   FXL_CHECK(ctrl_hdr);
 
   if (ctrl_hdr->body_len != sizeof(gz_ipc_conn_req_body)) {
-    FXL_LOG(ERROR) << "Invalid disc req msg";
+    FXL_LOG(ERROR) << "Invalid conn req msg";
     return ZX_ERR_INTERNAL;
   }
 
-  zx::channel ch0, ch1;
-  zx_status_t status = zx::channel::create(0, &ch0, &ch1);
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "failed to create channel pair, status=" << status;
-    return status;
-  }
-
-  status = AllocEndpoint(std::move(ch0), remote_addr);
-  if (status != ZX_OK) {
+  zx::channel ch;
+  zx_status_t status = CreateEndpointAndSendReply(ch, remote_addr);
+  if (status != ZX_OK)  {
     return status;
   }
 
   auto conn_req = reinterpret_cast<gz_ipc_conn_req_body*>(ctrl_hdr + 1);
-  ta_service_provider_.ConnectToService(std::move(ch1), conn_req->name);
+  ta_service_provider_.ConnectToService(std::move(ch), conn_req->name);
 
   return ZX_OK;
 }

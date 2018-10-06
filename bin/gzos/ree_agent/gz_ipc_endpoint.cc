@@ -3,9 +3,9 @@
 // found in the LICENSE file.
 
 #include "garnet/bin/gzos/ree_agent/gz_ipc_endpoint.h"
+
 #include "garnet/bin/gzos/ree_agent/gz_ipc_agent.h"
 #include "garnet/bin/gzos/ree_agent/gz_ipc_msg.h"
-
 #include "lib/fsl/handles/object_info.h"
 
 namespace ree_agent {
@@ -16,8 +16,12 @@ zx_status_t GzIpcEndpoint::Write(void* msg, size_t msg_len,
                           num_handles);
 }
 
+bool GzIpcEndpoint::IsWaitingForConnectResponse() {
+  return (remote_addr_ == kInvalidEndpointAddress);
+}
+
 zx_status_t GzIpcEndpoint::OnMessage(Message message) {
-  auto endpoint_hdr = message.Alloc<gz_ipc_endpoint_msg_hdr>();
+  auto endpoint_hdr = message.AllocHeader<gz_ipc_endpoint_msg_hdr>();
   endpoint_hdr->num_handles = 0;
 
   auto& handles = message.handles();
@@ -40,6 +44,25 @@ zx_status_t GzIpcEndpoint::OnMessage(Message message) {
         endpoint_hdr->handles[i].channel.remote = local_addr;
       } break;
 
+      case ZX_OBJ_TYPE_VMO: {
+        auto id = SharedMemoryRecord::GetShmId(handle);
+        if (id == INVALID_SHM_ID) {
+          return ZX_ERR_BAD_HANDLE;
+        }
+
+        SharedMemoryRecord* rec;
+        rec = agent_->LookupSharedMemoryRecord(id);
+        FXL_CHECK(rec);
+
+        zx::vmo vmo(handle);
+        rec->set_vmo(std::move(vmo));
+
+        endpoint_hdr->handles[i].type = HandleType::VMO;
+        endpoint_hdr->handles[i].vmo.id = id;
+        endpoint_hdr->handles[i].vmo.paddr = rec->base_phys();
+        endpoint_hdr->handles[i].vmo.size = rec->size();
+      } break;
+
       default:
         return ZX_ERR_BAD_HANDLE;
     }
@@ -47,7 +70,9 @@ zx_status_t GzIpcEndpoint::OnMessage(Message message) {
     endpoint_hdr->num_handles++;
   }
 
-  auto msg_hdr = message.Alloc<gz_ipc_msg_hdr>();
+  FXL_CHECK(remote_addr_ != kInvalidEndpointAddress);
+
+  auto msg_hdr = message.AllocHeader<gz_ipc_msg_hdr>();
   msg_hdr->src = local_addr_;
   msg_hdr->dst = remote_addr_;
   msg_hdr->reserved = 0;

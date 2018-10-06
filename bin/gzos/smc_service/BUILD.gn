@@ -22,31 +22,6 @@ source_set("lib") {
   defines = [ "_ALL_SOURCE=1" ]
 }
 
-executable("bin") {
-  output_name = "smc_service"
-
-  sources = [
-    "main.cc",
-  ]
-
-  deps = [
-    ":lib",
-  ]
-}
-
-package("smc_service") {
-  deprecated_system_image = true
-
-  deps = [
-    ":bin",
-  ]
-  binaries = [
-    {
-      name = "smc_service"
-    },
-  ]
-}
-
 source_set("test") {
   testonly = true
 
@@ -56,6 +31,7 @@ source_set("test") {
 
   deps = [
     ":lib",
+    "//zircon/public/lib/gzos-utils",
   ]
 
   public_deps = [

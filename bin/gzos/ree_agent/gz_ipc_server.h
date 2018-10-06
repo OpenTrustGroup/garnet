@@ -9,9 +9,10 @@ namespace ree_agent {
 
 class GzIpcServer : public GzIpcAgent {
  public:
-  GzIpcServer(zx::channel message_channel, size_t max_message_size,
-              TaServices& service_provider)
-      : GzIpcAgent(std::move(message_channel), max_message_size),
+  GzIpcServer(zx::unowned_resource shm_rsc, zx::channel message_channel,
+              size_t max_message_size, TaServices& service_provider)
+      : GzIpcAgent(std::move(shm_rsc), std::move(message_channel),
+                   max_message_size),
         ta_service_provider_(service_provider) {}
   GzIpcServer() = delete;
 

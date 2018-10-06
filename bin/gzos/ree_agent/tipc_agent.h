@@ -15,9 +15,9 @@
 #include "garnet/bin/gzos/ree_agent/tipc_msg.h"
 
 #include "lib/gzos/trusty_ipc/cpp/channel.h"
-#include "lib/gzos/trusty_ipc/cpp/id_alloc.h"
 #include "lib/gzos/trusty_ipc/cpp/object.h"
 #include "lib/gzos/trusty_ipc/cpp/port.h"
+#include "lib/gzos/utils/cpp/id_alloc.h"
 
 using namespace trusty_ipc;
 
@@ -47,7 +47,7 @@ class TipcEndpointTable {
  private:
   void FreeSlotInternal(uint32_t slot_id);
 
-  IdAllocator<kTipcAddrMaxNum> id_allocator_;
+  gzos_utils::IdAllocator<kTipcAddrMaxNum> id_allocator_;
   TipcEndpoint table_[kTipcAddrMaxNum];
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TipcEndpointTable);

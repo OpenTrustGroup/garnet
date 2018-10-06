@@ -1,0 +1,6 @@
+library gzos.ipc.test;
+
+[Discoverable]
+interface VmoReceiver {
+  1: SendVmo(handle<vmo> vmo);
+};

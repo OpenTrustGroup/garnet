@@ -47,6 +47,7 @@ source_set("unittests") {
     ":trusty_virtio",
     "//third_party/googletest:gtest",
     "//garnet/lib/magma/src/magma_util:system",
+    "//zircon/public/lib/gzos-utils",
   ]
 
   public_deps = [

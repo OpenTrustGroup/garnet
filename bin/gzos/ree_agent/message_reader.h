@@ -15,7 +15,7 @@
 
 namespace ree_agent {
 
-static constexpr uint32_t kDefaultReservedSize = 128;
+static constexpr uint32_t kDefaultReservedSize = 256;
 static constexpr uint32_t kDefaultHandleCapacity = 4;
 
 class Message {
@@ -57,7 +57,7 @@ class Message {
   }
 
   template <typename T>
-  T* Alloc() {
+  T* AllocHeader() {
     FXL_CHECK(sizeof(T) <= bytes_reserved_);
 
     bytes_reserved_ -= sizeof(T);

@@ -22,8 +22,8 @@ source_set("cpp") {
     "//garnet/public/fidl/gzos.trusty.ipc",
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/gzos/trusty_app/include",
+    "//garnet/public/lib/gzos/utils/cpp",
     "//zircon/public/lib/async-loop-cpp",
-    "//zircon/public/lib/bitmap",
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/fdio",
   ]

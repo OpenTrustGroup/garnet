@@ -28,6 +28,7 @@ source_set("lib") {
   ]
 
   public_deps = [
+    "//garnet/lib/magma/src/magma_util:system",
     "//garnet/public/lib/gzos/trusty_ipc/cpp",
     "//garnet/public/fidl/gzos.reeagent",
     "//garnet/public/lib/svc/cpp",
@@ -37,31 +38,6 @@ source_set("lib") {
   ]
 
   defines = [ "_ALL_SOURCE=1" ]
-}
-
-executable("bin") {
-  output_name = "ree_agent"
-
-  sources = [
-    "main.cc",
-  ]
-
-  deps = [
-    ":lib",
-  ]
-}
-
-package("ree_agent") {
-  deprecated_system_image = true
-
-  deps = [
-    ":bin",
-  ]
-  binaries = [
-    {
-      name = "ree_agent"
-    },
-  ]
 }
 
 source_set("test") {
@@ -75,6 +51,7 @@ source_set("test") {
 
   deps = [
     ":lib",
+    "//zircon/public/lib/gzos-utils",
   ]
 
   public_deps = [

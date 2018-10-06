@@ -5,6 +5,7 @@
 #include <fbl/alloc_checker.h>
 #include <fbl/auto_call.h>
 #include <fbl/unique_ptr.h>
+#include <gzos-utils/shm_resource.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <virtio/virtio.h>
 #include <virtio/virtio_ring.h>
@@ -32,8 +33,8 @@ class ResourceTableTest : public ::testing::Test {
  protected:
   virtual void SetUp() {
     zx::resource shm_rsc;
-    ASSERT_EQ(get_shm_resource(&shm_rsc), ZX_OK);
-	
+    ASSERT_EQ(gzos_utils::get_shm_resource(&shm_rsc), ZX_OK);
+
     // Create Shared Memory
     ASSERT_EQ(SharedMem::Create(shm_rsc, &shared_mem_), ZX_OK);
 
@@ -69,19 +70,6 @@ class ResourceTableTest : public ::testing::Test {
   fbl::unique_ptr<VirtioBus> bus_;
   fbl::unique_ptr<RemoteSystemFake> remote_;
   async::Loop loop_;
-
- private:
-  static constexpr char kSysInfoPath[] = "/dev/misc/sysinfo";
-
-  zx_status_t get_shm_resource(zx::resource* resource) {
-    fbl::unique_fd fd(open(kSysInfoPath, O_RDWR));
-    if (!fd) {
-      return ZX_ERR_IO;
-    }
-    ssize_t n = ioctl_sysinfo_get_ns_shm_resource(
-        fd.get(), resource->reset_and_get_address());
-    return n < 0 ? ZX_ERR_IO : ZX_OK;
-  }
 };
 
 TEST_F(ResourceTableTest, GetResourceTable) {
@@ -137,8 +125,11 @@ class VirtioBusStateTest : public ::testing::Test {
 
  protected:
   virtual void SetUp() {
+    zx::resource shm_rsc;
+    ASSERT_EQ(gzos_utils::get_shm_resource(&shm_rsc), ZX_OK);
+
     // Create Shared Memory
-    ASSERT_EQ(SharedMem::Create(&shared_mem_), ZX_OK);
+    ASSERT_EQ(SharedMem::Create(shm_rsc, &shared_mem_), ZX_OK);
 
     // Create VirtioBus
     bus_ = fbl::make_unique<VirtioBus>(shared_mem_);

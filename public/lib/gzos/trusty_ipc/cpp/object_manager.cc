@@ -4,12 +4,12 @@
 
 #include <fbl/auto_call.h>
 
-#include "lib/gzos/trusty_ipc/cpp/id_alloc.h"
 #include "lib/gzos/trusty_ipc/cpp/object_manager.h"
+#include "lib/gzos/utils/cpp/id_alloc.h"
 
 namespace trusty_ipc {
 
-static IdAllocator<kMaxHandle> id_allocator_;
+static gzos_utils::IdAllocator<kMaxHandle> id_allocator_;
 
 TipcObjectManager* TipcObjectManager::Instance() {
   static TipcObjectManager* instance;

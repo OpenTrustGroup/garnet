@@ -23,12 +23,16 @@ class GzIpcEndpoint : public MessageHandler {
       : message_reader_(this, fbl::move(channel), PAGE_SIZE),
         agent_(agent),
         local_addr_(local_addr),
-        remote_addr_(remote_addr) {
+        remote_addr_(remote_addr) {}
+
+  void Serve() {
     FXL_CHECK(message_reader_.Start() == ZX_OK);
   }
 
   zx_status_t Write(void* msg, size_t msg_len, zx_handle_t* handles = nullptr,
                     size_t num_handles = 0);
+
+  bool IsWaitingForConnectResponse();
 
   MessageReader& reader() { return message_reader_; }
   const MessageReader& reader() const { return message_reader_; }

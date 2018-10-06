@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <string.h>
+#include <gzos-utils/shm_resource.h>
+#include <gzos/reeagent/cpp/fidl.h>
 #include <lib/async-loop/cpp/loop.h>
 #include <lib/fidl/cpp/binding.h>
-#include <gzos/reeagent/cpp/fidl.h>
+#include <string.h>
 #include <zx/channel.h>
 
 #include "garnet/bin/gzos/smc_service/smc_service.h"
@@ -35,11 +36,10 @@ class ReeMessageFake : public gzos::reeagent::ReeMessage {
  public:
   ReeMessageFake() : binding_(this) {}
 
-  void Bind(zx::channel ch) {
-    binding_.Bind(std::move(ch));
-  }
-  void AddMessageChannel(::fidl::VectorPtr<gzos::reeagent::MessageChannelInfo> infos,
-                         AddMessageChannelCallback callback) {
+  void Bind(zx::channel ch) { binding_.Bind(std::move(ch)); }
+  void AddMessageChannel(
+      ::fidl::VectorPtr<gzos::reeagent::MessageChannelInfo> infos,
+      AddMessageChannelCallback callback) {
     callback(ZX_OK);
   }
   void Start(::fidl::VectorPtr<uint32_t> ids, StartCallback callback) {
@@ -83,7 +83,10 @@ class SmcServiceTest : public testing::Test {
     zx_status_t st = smc_service_->AddSmcEntity(SMC_ENTITY_TRUSTED_OS,
                                                 new SmcTestEntity(&smc_args));
     ASSERT_EQ(st, ZX_OK);
-    smc_service_->Start(loop_.dispatcher());
+
+    zx::resource shm_rsc;
+    ASSERT_EQ(gzos_utils::get_shm_resource(&shm_rsc), ZX_OK);
+    smc_service_->Start(loop_.dispatcher(), shm_rsc);
   }
 
   virtual void TearDown() { smc_service_->Stop(); }
@@ -94,7 +97,6 @@ class SmcServiceTest : public testing::Test {
 };
 
 TEST_F(SmcServiceTest, SmcEntityTest) {
-
   /* issue a test smc call */
   fxl::Thread smc_test_thread([this] {
     long smc_ret = -1;
@@ -103,8 +105,7 @@ TEST_F(SmcServiceTest, SmcEntityTest) {
         .params = {0x123U, 0x456U, 0x789U},
     };
     zx_status_t st = zx_smc_call_test(smc_service_->smc_obj().get(),
-                                      &expect_smc_args,
-                                      &smc_ret);
+                                      &expect_smc_args, &smc_ret);
     ASSERT_EQ(st, ZX_OK);
     EXPECT_EQ(smc_args.smc_nr, expect_smc_args.smc_nr);
     EXPECT_EQ(smc_args.params[0], expect_smc_args.params[0]);
@@ -154,7 +155,8 @@ class TrustySmcTest : public SmcServiceTest {
     ree_message_fake_.Bind(fbl::move(ch2));
     loop_.StartThread();
 
-    entity_ = fbl::make_unique<TrustySmcEntity>(loop_.dispatcher(), fbl::move(ch1));
+    entity_ =
+        fbl::make_unique<TrustySmcEntity>(loop_.dispatcher(), fbl::move(ch1));
     ASSERT_TRUE(entity_ != nullptr);
 
     ASSERT_EQ(entity_->Init(), ZX_OK);
@@ -167,9 +169,7 @@ class TrustySmcTest : public SmcServiceTest {
 
   virtual void TearDown() override { SmcServiceTest::TearDown(); }
 
-  uint64_t MemAttr(uint64_t mair,
-                   uint64_t shareable,
-                   bool ap_user = false,
+  uint64_t MemAttr(uint64_t mair, uint64_t shareable, bool ap_user = false,
                    bool ap_ro = false) {
     uint64_t ap = ap_user ? 1ULL : 0ULL;
 
@@ -205,15 +205,18 @@ TEST_F(TrustySmcTest, VirtioGetDescriptorTest) {
   EXPECT_EQ(table->ver, trusty_virtio::kVirtioResourceTableVersion);
   EXPECT_EQ(table->num, 1u);
 
-  auto descr = trusty_virtio::rsc_entry<trusty_virtio::trusty_vdev_descr>(table, 0);
+  auto descr =
+      trusty_virtio::rsc_entry<trusty_virtio::trusty_vdev_descr>(table, 0);
   EXPECT_EQ(descr->hdr.type, RSC_VDEV);
   EXPECT_EQ(descr->vdev.config_len, sizeof(trusty_virtio::trusty_vdev_config));
   EXPECT_EQ(descr->vdev.num_of_vrings, trusty_virtio::kNumQueues);
   EXPECT_EQ(descr->vdev.id, trusty_virtio::kTipcDeviceId);
   EXPECT_EQ(descr->vrings[trusty_virtio::kTxQueue].num, 32u);
-  EXPECT_EQ(descr->vrings[trusty_virtio::kTxQueue].notifyid, trusty_virtio::kTxQueue);
+  EXPECT_EQ(descr->vrings[trusty_virtio::kTxQueue].notifyid,
+            trusty_virtio::kTxQueue);
   EXPECT_EQ(descr->vrings[trusty_virtio::kRxQueue].num, 32u);
-  EXPECT_EQ(descr->vrings[trusty_virtio::kRxQueue].notifyid, trusty_virtio::kRxQueue);
+  EXPECT_EQ(descr->vrings[trusty_virtio::kRxQueue].notifyid,
+            trusty_virtio::kRxQueue);
   EXPECT_STREQ(descr->config.dev_name, "dev0");
 }
 
@@ -256,4 +259,4 @@ TEST_F(TrustySmcTest, InvalidNsBufTest) {
   ASSERT_EQ(InvokeSmc(mem_attr), SM_ERR_NOT_ALLOWED);
 }
 
-} // namespace smc_service
+}  // namespace smc_service

@@ -1,0 +1,3 @@
+target_cpu = "arm64"
+
+fuchsia_packages = []

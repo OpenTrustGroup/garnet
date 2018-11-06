@@ -1,6 +1,6 @@
 {
     "packages": [
         "//garnet/lib/gzos/test:gzos_lib_tests",
-        "//garnet/bin/gzos/rpc_agent:rpc_agent_tests"
+        "//garnet/bin/gzos/rpc_server:rpc_agent_tests"
     ]
 }

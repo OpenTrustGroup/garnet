@@ -1,7 +1,0 @@
-{
-    "imports": [
-        "garnet/packages/prod/gzos",
-        "garnet/packages/tests/gzos",
-        "garnet/packages/config/gzos"
-    ]
-}

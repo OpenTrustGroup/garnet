@@ -1,0 +1,7 @@
+{
+    "imports": [
+        "garnet/packages/prod/gzos_tee",
+        "garnet/packages/tests/gzos",
+        "garnet/packages/config/gzos_tee"
+    ]
+}

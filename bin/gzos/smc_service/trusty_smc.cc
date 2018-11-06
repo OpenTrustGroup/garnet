@@ -263,6 +263,7 @@ zx_status_t TrustySmcEntity::InvokeNopFunction(smc32_args_t* args) {
 
   switch (args->params[0]) {
     case SMC_NC_VDEV_KICK_VQ:
+      FXL_LOG(ERROR) << "KickVq";
       status = vbus_->KickVqueue(args->params[1], args->params[2]);
       break;
 

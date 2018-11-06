@@ -1,0 +1,5 @@
+{
+    "packages": [
+        "//garnet/bin/gzos/sysmgr:ree_services_config"
+    ]
+}

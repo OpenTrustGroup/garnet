@@ -5,7 +5,7 @@
 import("//build/package.gni")
 
 executable("bin") {
-  output_name = "rpc_agent"
+  output_name = "rpc_server"
 
   sources = [
     "main.cc",
@@ -13,11 +13,11 @@ executable("bin") {
 
   deps = [
     "//garnet/bin/gzos/smc_service:lib",
-    "//garnet/bin/gzos/ree_agent:lib",
+    "//garnet/bin/gzos/ree_agent:gz_ipc_server",
   ]
 }
 
-package("rpc_agent") {
+package("rpc_server") {
   deprecated_system_image = true
 
   deps = [
@@ -25,7 +25,7 @@ package("rpc_agent") {
   ]
   binaries = [
     {
-      name = "rpc_agent"
+      name = "rpc_server"
     },
   ]
 }

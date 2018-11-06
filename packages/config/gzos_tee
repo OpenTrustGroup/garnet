@@ -1,0 +1,5 @@
+{
+    "packages": [
+        "//garnet/bin/gzos/sysmgr:tee_services_config"
+    ]
+}

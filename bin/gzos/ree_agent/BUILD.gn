@@ -13,10 +13,6 @@ source_set("lib") {
     "gz_ipc_msg.h",
     "gz_ipc_endpoint.cc",
     "gz_ipc_endpoint.h",
-    "gz_ipc_server.cc",
-    "gz_ipc_server.h",
-    "gz_ipc_client.cc",
-    "gz_ipc_client.h",
     "ree_agent.cc",
     "ree_agent.h",
     "ree_message_impl.cc",
@@ -40,6 +36,28 @@ source_set("lib") {
   defines = [ "_ALL_SOURCE=1" ]
 }
 
+source_set("gz_ipc_client") {
+  sources = [
+    "gz_ipc_client.cc",
+    "gz_ipc_client.h",
+  ]
+
+  public_deps = [
+    ":lib",
+  ]
+}
+
+source_set("gz_ipc_server") {
+  sources = [
+    "gz_ipc_server.cc",
+    "gz_ipc_server.h",
+  ]
+
+  public_deps = [
+    ":lib",
+  ]
+}
+
 source_set("test") {
   testonly = true
 
@@ -50,7 +68,8 @@ source_set("test") {
   ]
 
   deps = [
-    ":lib",
+    ":gz_ipc_server",
+    ":gz_ipc_client",
     "//zircon/public/lib/gzos-utils",
   ]
 

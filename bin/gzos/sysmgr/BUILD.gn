@@ -6,7 +6,7 @@
 import("//build/package.gni")
 
 declare_args() {
-  enable_dynamic_service = true
+  enable_dynamic_service = false
 }
 
 source_set("lib") {
@@ -86,6 +86,10 @@ template("config_package") {
   }
 }
 
-config_package("services_config") {
-  name = "services.config"
+config_package("ree_services_config") {
+  name = "ree_services.config"
+}
+
+config_package("tee_services_config") {
+  name = "tee_services.config"
 }

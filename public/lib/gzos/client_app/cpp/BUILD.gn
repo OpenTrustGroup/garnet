@@ -1,0 +1,18 @@
+# Copyright 2018 Open Trust Group
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+source_set("cpp") {
+  sources = [
+    "agent.cc",
+    "agent.h"
+  ]
+
+  public_deps = [
+    "//garnet/public/fidl/gzos.ipc",
+    "//garnet/public/lib/fxl",
+    "//garnet/public/lib/component/cpp",
+    "//zircon/public/lib/fs"
+  ]
+}
+

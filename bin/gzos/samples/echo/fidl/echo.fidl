@@ -1,0 +1,6 @@
+library gzos.samples.echo;
+
+[Discoverable]
+interface EchoService {
+  1: EchoString(string? value) -> (string? response);
+};

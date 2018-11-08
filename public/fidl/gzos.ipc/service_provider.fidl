@@ -1,0 +1,6 @@
+library gzos.ipc;
+
+[Discoverable]
+interface ServiceProvider {
+  1: ConnectToService(string service_name, handle<channel> channel);
+};

@@ -1,0 +1,34 @@
+# Copyright 2018 Open Trust Group. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/gzos/app.gni")
+import("//build/fidl/fidl.gni")
+
+fidl("gzos.samples.echo") {
+  sources = [
+    "fidl/echo.fidl",
+  ]
+}
+
+gzos_client_app("echo_client") {
+  sources = [
+    "echo_client/main.cc"
+  ]
+
+  deps = [
+    ":gzos.samples.echo"
+  ]
+}
+
+gzos_server_app("echo_server") {
+  sources = [
+    "echo_server/main.cc"
+  ]
+
+  manifest = "echo_server/manifest.json"
+
+  deps = [
+    ":gzos.samples.echo"
+  ]
+}

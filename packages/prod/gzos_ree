@@ -5,6 +5,7 @@
     ],
     "packages": [
         "//garnet/bin/gzos/rpc_client",
-        "//garnet/bin/gzos/sysmgr"
+        "//garnet/bin/gzos/sysmgr",
+        "//garnet/bin/gzos/samples/echo:echo_client"
     ]
 }

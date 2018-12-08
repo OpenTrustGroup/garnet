@@ -5,6 +5,6 @@
     "sandbox": {
         "services": [
         ],
-        "dev": [ "misc/virtio-trusty" ]
+        "dev": [ "class/tee/000" ]
     }
 }

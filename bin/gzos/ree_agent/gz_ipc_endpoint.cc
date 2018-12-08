@@ -64,6 +64,8 @@ zx_status_t GzIpcEndpoint::OnMessage(Message message) {
       } break;
 
       default:
+        FXL_LOG(ERROR) << "Unsupported handle Supplied "
+                       << fsl::GetType(handle);
         return ZX_ERR_BAD_HANDLE;
     }
 

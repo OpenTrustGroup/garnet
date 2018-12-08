@@ -15,8 +15,6 @@ source_set("lib") {
     "gz_ipc_endpoint.h",
     "ree_agent.cc",
     "ree_agent.h",
-    "ree_message_impl.cc",
-    "ree_message_impl.h",
     "ta_service.h",
     "tipc_agent.cc",
     "tipc_agent.h",
@@ -49,6 +47,8 @@ source_set("gz_ipc_client") {
 
 source_set("gz_ipc_server") {
   sources = [
+    "ree_message_impl.cc",
+    "ree_message_impl.h",
     "gz_ipc_server.cc",
     "gz_ipc_server.h",
   ]

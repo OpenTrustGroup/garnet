@@ -12,6 +12,7 @@
 #include <fbl/mutex.h>
 #include <fbl/string.h>
 #include <fbl/unique_ptr.h>
+#include <zx/resource.h>
 
 #include "garnet/bin/gzos/ree_agent/ree_agent.h"
 #include "garnet/bin/gzos/ree_agent/ta_service.h"
@@ -28,8 +29,8 @@ enum Action { Start, Stop };
 
 class ReeMessageImpl : public gzos::reeagent::ReeMessage {
  public:
-  ReeMessageImpl(TaServices& service_provider)
-      : binding_(this), ta_service_provider_(service_provider) {}
+  ReeMessageImpl(TaServices& service_provider, zx_handle_t shm)
+      : binding_(this), ta_service_provider_(service_provider), shm_handle_(shm) {}
 
   ReeMessageImpl() = delete;
 
@@ -37,8 +38,9 @@ class ReeMessageImpl : public gzos::reeagent::ReeMessage {
     binding_.Bind(std::move(from_trusty_virtio));
   }
 
-  void AddMessageChannel(fidl::VectorPtr<gzos::reeagent::MessageChannelInfo> msg_chan_infos,
-                         AddMessageChannelCallback cb) override;
+  void AddMessageChannel(
+      fidl::VectorPtr<gzos::reeagent::MessageChannelInfo> msg_chan_infos,
+      AddMessageChannelCallback cb) override;
 
   void Start(fidl::VectorPtr<uint32_t> ids, StartCallback cb) override;
   void Stop(fidl::VectorPtr<uint32_t> ids, StopCallback cb) override;
@@ -51,10 +53,12 @@ class ReeMessageImpl : public gzos::reeagent::ReeMessage {
 
   fbl::Mutex lock_;
   fidl::Binding<gzos::reeagent::ReeMessage> binding_;
-  fbl::unique_ptr<ReeAgent> agents_[kMaxMsgChannels] FXL_GUARDED_BY(lock_);
+  fbl::unique_ptr<Agent> agents_[kMaxMsgChannels] FXL_GUARDED_BY(lock_);
   TaServices& ta_service_provider_;
+
+  zx_handle_t shm_handle_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(ReeMessageImpl);
 };
 
-}  // namespace ree_message
+}  // namespace ree_agent

@@ -14,6 +14,8 @@ executable("bin") {
   deps = [
     "//garnet/bin/gzos/smc_service:lib",
     "//garnet/bin/gzos/ree_agent:gz_ipc_client",
+    "//garnet/public/lib/component/cpp",
+    "//garnet/public/fidl/gzos.ipc",
   ]
 }
 

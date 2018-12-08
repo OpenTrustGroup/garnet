@@ -20,6 +20,7 @@ namespace ree_agent {
 class Agent {
  public:
   Agent() = delete;
+  virtual ~Agent() {}
 
   Agent(MessageHandler* handler, zx::channel message_channel,
         size_t max_message_size)
@@ -42,10 +43,10 @@ class Agent {
 
   size_t max_message_size() { return max_message_size_; }
 
- protected:
   virtual zx_status_t Start() = 0;
   virtual zx_status_t Stop() = 0;
 
+ protected:
   MessageReader message_reader_;
 
  private:

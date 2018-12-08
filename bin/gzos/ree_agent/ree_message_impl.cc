@@ -4,6 +4,7 @@
 
 #include <zircon/types.h>
 
+#include "garnet/bin/gzos/ree_agent/gz_ipc_server.h"
 #include "garnet/bin/gzos/ree_agent/ree_message_impl.h"
 #include "garnet/bin/gzos/ree_agent/tipc_agent.h"
 
@@ -25,7 +26,7 @@ void ReeMessageImpl::AddMessageChannel(
       return;
     }
 
-    ReeAgent* agent = nullptr;
+    Agent* agent = nullptr;
     switch (info.type) {
       case gzos::reeagent::MessageType::Tipc: {
         TipcEndpointTable* ep_table = new TipcEndpointTable();
@@ -39,6 +40,14 @@ void ReeMessageImpl::AddMessageChannel(
                               ep_table);
         break;
       }
+
+      case gzos::reeagent::MessageType::GzIpc: {
+        zx::unowned_resource shm_rsc(shm_handle_);
+        agent = new GzIpcServer(std::move(shm_rsc), std::move(info.channel),
+                                info.max_message_size, ta_service_provider_);
+        break;
+      }
+
       default:
         cb(ZX_ERR_NOT_SUPPORTED);
         return;
@@ -112,4 +121,4 @@ void ReeMessageImpl::Stop(fidl::VectorPtr<uint32_t> ids, StopCallback cb) {
   cb(status);
 }
 
-}  // namespace ree_message
+}  // namespace ree_agent

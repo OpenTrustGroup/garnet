@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <lib/async-loop/cpp/loop.h>
 #include <gzos/ipc/cpp/fidl.h>
 
 #include "lib/component/cpp/startup_context.h"
@@ -22,6 +23,8 @@ class Agent {
 
  private:
   std::unique_ptr<component::StartupContext> context_;
+  async::Loop loop_;
+
   ServiceProviderPtr service_provider_;
 };
 

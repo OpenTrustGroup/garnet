@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <lib/async-loop/cpp/loop.h>
 #include <gzos/reeagent/cpp/fidl.h>
+#include <lib/async-loop/cpp/loop.h>
 
 #include "gtest/gtest.h"
 
@@ -20,7 +20,8 @@ class ServiceFake : public TaServices {
 class ReeMessageTest : public ::testing::Test {
  public:
   ReeMessageTest()
-      : loop_(&kAsyncLoopConfigAttachToThread), ree_message_impl_(service_fake_) {}
+      : loop_(&kAsyncLoopConfigAttachToThread),
+        ree_message_impl_(service_fake_, ZX_HANDLE_INVALID) {}
 
  protected:
   void SetUp() override {
@@ -41,12 +42,14 @@ class ReeMessageTest : public ::testing::Test {
     loop_.JoinThreads();
   }
 
-  zx_status_t AddMessageChannel(gzos::reeagent::MessageType t, uint32_t id, zx::channel ch) {
+  zx_status_t AddMessageChannel(gzos::reeagent::MessageType t, uint32_t id,
+                                zx::channel ch) {
     zx_status_t status;
     fidl::VectorPtr<gzos::reeagent::MessageChannelInfo> infos;
     infos.push_back({t, id, PAGE_SIZE, std::move(ch)});
 
-    zx_status_t ret = ree_message_->AddMessageChannel(std::move(infos), &status);
+    zx_status_t ret =
+        ree_message_->AddMessageChannel(std::move(infos), &status);
     if (ret != ZX_OK) {
       return ret;
     }
@@ -62,33 +65,39 @@ class ReeMessageTest : public ::testing::Test {
 };
 
 TEST_F(ReeMessageTest, AddMessageChannelOK) {
-  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0, std::move(msg_remote_)),
+  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0,
+                              std::move(msg_remote_)),
             ZX_OK);
 }
 
 TEST_F(ReeMessageTest, AddMessageChannelWithInvalidType) {
-  gzos::reeagent::MessageType type = static_cast<gzos::reeagent::MessageType>(-1);
+  gzos::reeagent::MessageType type =
+      static_cast<gzos::reeagent::MessageType>(-1);
   ASSERT_EQ(AddMessageChannel(type, 0, std::move(msg_remote_)),
             ZX_ERR_NOT_SUPPORTED);
 }
 
 TEST_F(ReeMessageTest, AddMessageChannelWithInvalidId) {
   uint32_t id = kMaxMsgChannels + 1;
-  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, id, std::move(msg_remote_)),
+  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, id,
+                              std::move(msg_remote_)),
             ZX_ERR_INVALID_ARGS);
 }
 
 TEST_F(ReeMessageTest, AddMessageChannelWithSameIds) {
-  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0, std::move(msg_remote_)),
+  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0,
+                              std::move(msg_remote_)),
             ZX_OK);
 
   zx::channel::create(0, &msg_local_, &msg_remote_);
-  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0, std::move(msg_remote_)),
+  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0,
+                              std::move(msg_remote_)),
             ZX_ERR_ALREADY_EXISTS);
 }
 
 TEST_F(ReeMessageTest, StartTipcMessageChannelOK) {
-  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0, std::move(msg_remote_)),
+  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0,
+                              std::move(msg_remote_)),
             ZX_OK);
 
   zx_status_t status;
@@ -114,7 +123,8 @@ TEST_F(ReeMessageTest, StartTipcMessageChannelOK) {
 }
 
 TEST_F(ReeMessageTest, StartInvalidMessageChannel) {
-  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0, std::move(msg_remote_)),
+  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0,
+                              std::move(msg_remote_)),
             ZX_OK);
 
   fidl::VectorPtr<uint32_t> ids;
@@ -126,7 +136,8 @@ TEST_F(ReeMessageTest, StartInvalidMessageChannel) {
 }
 
 TEST_F(ReeMessageTest, StartMessageChannelTwice) {
-  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0, std::move(msg_remote_)),
+  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0,
+                              std::move(msg_remote_)),
             ZX_OK);
 
   zx_status_t status;
@@ -139,7 +150,8 @@ TEST_F(ReeMessageTest, StartMessageChannelTwice) {
 }
 
 TEST_F(ReeMessageTest, StopMessageChannelBeforeStart) {
-  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0, std::move(msg_remote_)),
+  ASSERT_EQ(AddMessageChannel(gzos::reeagent::MessageType::Tipc, 0,
+                              std::move(msg_remote_)),
             ZX_OK);
 
   // if channel is not started, ignore stop action

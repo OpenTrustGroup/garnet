@@ -79,10 +79,11 @@ int main(int argc, const char** argv) {
     return 1;
 
   async::Loop loop(&kAsyncLoopConfigAttachToThread);
+  auto shm_rsc = get_shm_resource();
 
   // Start ree agent
   ree_agent::TaServiceProvider ta_service_provider(std::move(appmgr_svc));
-  ree_agent::ReeMessageImpl ree_message_impl(ta_service_provider);
+  ree_agent::ReeMessageImpl ree_message_impl(ta_service_provider, shm_rsc->get());
   ree_message_impl.Bind(std::move(ree_agent_srv));
 
   loop.StartThread();
@@ -100,7 +101,6 @@ int main(int argc, const char** argv) {
     return 1;
   }
 
-  auto shm_rsc = get_shm_resource();
   s->Start(loop.dispatcher(), *shm_rsc);
 
   loop.Run();

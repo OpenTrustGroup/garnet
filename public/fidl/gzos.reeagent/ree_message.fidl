@@ -8,7 +8,7 @@ using zx;
 
 enum MessageType {
   Tipc = 0;
-  Gp = 1;
+  GzIpc = 1;
 };
 
 struct MessageChannelInfo {

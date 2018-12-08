@@ -131,7 +131,7 @@ zx_status_t TrustySmcEntity::Init() {
     }
 
     gzos::reeagent::MessageChannelInfo ch_info{
-        gzos::reeagent::MessageType::Tipc, vdev->notify_id(),
+        gzos::reeagent::MessageType::GzIpc, vdev->notify_id(),
         desc->config.msg_buf_max_size, fbl::move(h1)};
     ch_infos.push_back(fbl::move(ch_info));
 
@@ -263,7 +263,6 @@ zx_status_t TrustySmcEntity::InvokeNopFunction(smc32_args_t* args) {
 
   switch (args->params[0]) {
     case SMC_NC_VDEV_KICK_VQ:
-      FXL_LOG(ERROR) << "KickVq";
       status = vbus_->KickVqueue(args->params[1], args->params[2]);
       break;
 

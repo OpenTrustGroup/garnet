@@ -10,10 +10,10 @@
 #include <fbl/ref_ptr.h>
 #include <fbl/unique_ptr.h>
 #include <fbl/vector.h>
+#include <virtio/remoteproc.h>
 #include <zx/vmo.h>
 
 #include "garnet/lib/gzos/trusty_virtio/shared_mem.h"
-#include "garnet/lib/gzos/trusty_virtio/third_party/remoteproc/remoteproc.h"
 
 namespace trusty_virtio {
 

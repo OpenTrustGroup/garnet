@@ -11,6 +11,7 @@
 #include <fbl/unique_ptr.h>
 #include <fbl/vector.h>
 #include <lib/async/cpp/wait.h>
+#include <virtio/virtio_ids.h>
 #include <zircon/compiler.h>
 #include <zircon/types.h>
 #include <zx/channel.h>
@@ -19,8 +20,6 @@
 #include "garnet/lib/gzos/trusty_virtio/virtio_queue_waiter.h"
 
 namespace trusty_virtio {
-
-static constexpr uint32_t kTipcDeviceId = 13;
 
 static constexpr char kMaxNameLength = 32;
 

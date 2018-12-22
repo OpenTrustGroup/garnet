@@ -75,7 +75,7 @@ typedef struct ns_page_info {
 
 namespace trusty_virtio {
 constexpr trusty_vdev_descr kVdevDescriptors[] = {
-    DECLARE_TRUSTY_VIRTIO_DEVICE_DESCR(kTipcDeviceId, "dev0", 32, 32),
+    DECLARE_TRUSTY_VIRTIO_DEVICE_DESCR(VIRTIO_ID_TIPC, "dev0", 32, 32),
 };
 }
 
@@ -117,7 +117,7 @@ zx_status_t TrustySmcEntity::Init() {
       return status;
     }
 
-    if (desc->vdev.id != trusty_virtio::kTipcDeviceId) {
+    if (desc->vdev.id != VIRTIO_ID_TIPC) {
       FXL_LOG(ERROR) << "Unsupported virtio device id: " << desc->vdev.id;
       return ZX_ERR_NOT_SUPPORTED;
     }

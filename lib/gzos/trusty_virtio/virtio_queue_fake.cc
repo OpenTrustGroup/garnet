@@ -7,9 +7,9 @@
 #include <string.h>
 #include <virtio/virtio.h>
 #include <virtio/virtio_ring.h>
+#include <virtio/remoteproc.h>
 #include "lib/fxl/logging.h"
 
-#include "garnet/lib/gzos/trusty_virtio/third_party/remoteproc/remoteproc.h"
 #include "garnet/lib/gzos/trusty_virtio/virtio_device.h"
 
 namespace trusty_virtio {

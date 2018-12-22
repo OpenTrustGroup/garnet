@@ -21,9 +21,9 @@
 namespace trusty_virtio {
 
 const trusty_vdev_descr kVdevDescriptors[] = {
-    DECLARE_TRUSTY_VIRTIO_DEVICE_DESCR(kTipcDeviceId, "dev0", 12, 16),
-    DECLARE_TRUSTY_VIRTIO_DEVICE_DESCR(kTipcDeviceId, "dev1", 20, 24),
-    DECLARE_TRUSTY_VIRTIO_DEVICE_DESCR(kTipcDeviceId, "dev2", 28, 32),
+    DECLARE_TRUSTY_VIRTIO_DEVICE_DESCR(VIRTIO_ID_TIPC, "dev0", 12, 16),
+    DECLARE_TRUSTY_VIRTIO_DEVICE_DESCR(VIRTIO_ID_TIPC, "dev1", 20, 24),
+    DECLARE_TRUSTY_VIRTIO_DEVICE_DESCR(VIRTIO_ID_TIPC, "dev2", 28, 32),
 };
 
 class ResourceTableTest : public ::testing::Test {
@@ -91,7 +91,7 @@ TEST_F(ResourceTableTest, GetResourceTable) {
     EXPECT_EQ(descr->hdr.type, RSC_VDEV);
     EXPECT_EQ(descr->vdev.config_len, sizeof(trusty_vdev_config));
     EXPECT_EQ(descr->vdev.num_of_vrings, kNumQueues);
-    EXPECT_EQ(descr->vdev.id, kTipcDeviceId);
+    EXPECT_EQ(descr->vdev.id, (uint32_t)VIRTIO_ID_TIPC);
     EXPECT_EQ(descr->vdev.notifyid, bus_->devices()[i]->notify_id());
     EXPECT_EQ(descr->vrings[kTxQueue].align, (uint32_t)PAGE_SIZE);
     EXPECT_EQ(descr->vrings[kTxQueue].num, expected_tx_num);

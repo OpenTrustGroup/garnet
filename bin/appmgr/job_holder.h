@@ -24,6 +24,10 @@
 #include "lib/fxl/strings/string_view.h"
 #include "lib/svc/cpp/service_provider_bridge.h"
 
+#ifdef __Nebula__
+#include "garnet/bin/appmgr/nbl/nbl_application_controller_impl.h"
+#endif
+
 namespace component {
 
 class JobHolder {
@@ -62,7 +66,21 @@ class JobHolder {
   std::unique_ptr<ApplicationControllerImpl> ExtractApplication(
       ApplicationControllerImpl* controller);
 
+#ifdef __Nebula__
+  std::unique_ptr<NblApplicationControllerImpl> RemoveNblApplication(
+      NblApplicationControllerImpl* controller);
+  void GenNblAppToSendLaunchResponse(
+      fidl::InterfaceRequest<ApplicationController> controller,
+      int launch_res);
+#endif
+
   void AddBinding(fidl::InterfaceRequest<ApplicationEnvironment> environment);
+
+#ifdef __Nebula__
+  const zx::job& job() { return job_for_child_; }
+  zx::job* create_job_one_shot(bool flg_create_process, bool flg_call_trusty_api);
+  zx::job* create_job_service(bool flg_create_process, bool flg_call_trusty_api);
+#endif
 
  private:
   static uint32_t next_numbered_label_;
@@ -89,6 +107,18 @@ class JobHolder {
   zx::job job_;
   zx::job job_for_child_;
 
+#ifdef __Nebula__
+  zx::job job_for_child_normal_;	// Same with job with BASIC right.
+  zx::job job_one_shot_;
+  zx::job job_child_one_shot_;
+  zx::job job_service_;
+  zx::job job_child_service_;
+#endif
+
+  zx::job* set_job_policy(zx::job* job,
+                                bool flg_create_process,
+                                bool flg_call_trusty_api);
+
   fxl::RefPtr<ApplicationNamespace> default_namespace_;
 
   // A pseudo-directory which describes the components within the scope of
@@ -103,6 +133,12 @@ class JobHolder {
   std::unordered_map<ApplicationControllerImpl*,
                      std::unique_ptr<ApplicationControllerImpl>>
       applications_;
+
+#ifdef __Nebula__
+  std::unordered_map<NblApplicationControllerImpl*,
+                     std::unique_ptr<NblApplicationControllerImpl>>
+      nbl_applications_;
+#endif
 
   std::unordered_map<std::string, std::unique_ptr<ApplicationRunnerHolder>>
       runners_;

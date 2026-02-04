@@ -59,6 +59,15 @@ int ServiceProviderBridge::OpenAsFileDescriptor() {
 
 void ServiceProviderBridge::ConnectToService(fidl::StringPtr service_name,
                                              zx::channel channel) {
+
+	if (!directory_->CheckServiceName(service_name->c_str())) {
+		if (strcmp("component.ApplicationEnvironment", service_name->c_str()) != 0 &&
+        strcmp("component.ApplicationLauncher", service_name->c_str()) != 0 ) {
+			FXL_LOG(ERROR) << "Refuse connect to svc:" << service_name.get();
+		}
+		return;
+	}
+
   auto it = name_to_service_connector_.find(service_name.get());
   if (it != name_to_service_connector_.end())
     it->second(std::move(channel));
@@ -71,13 +80,43 @@ void ServiceProviderBridge::ConnectToService(fidl::StringPtr service_name,
 
 ServiceProviderBridge::ServiceProviderDir::ServiceProviderDir(
     fxl::WeakPtr<ServiceProviderBridge> bridge)
-    : bridge_(std::move(bridge)) {}
+    : bridge_(std::move(bridge)), has_whitelist_services_(false) {}
 
 ServiceProviderBridge::ServiceProviderDir::~ServiceProviderDir() = default;
+
+zx_status_t ServiceProviderBridge::ServiceProviderDir::SetWhitelistServices(
+    ::std::vector<::std::string> whitelist_services) {
+  this->whitelist_services_ = whitelist_services;
+  has_whitelist_services_ = true;
+  return ZX_OK;
+}
+
+bool ServiceProviderBridge::ServiceProviderDir::CheckServiceName(
+    const char *name) {
+  if (has_whitelist_services_) {
+    for (const auto& svc : whitelist_services_) {
+      if (strcmp(name, svc.c_str()) == 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+  return true;
+}
 
 zx_status_t ServiceProviderBridge::ServiceProviderDir::Lookup(
     fbl::RefPtr<fs::Vnode>* out,
     fbl::StringPiece name) {
+
+  if (!CheckServiceName(name.data())) {
+    // These two services will be requested always, but don't use if not create new process.
+    if (strcmp("component.ApplicationEnvironment", name.data()) != 0 &&
+      strcmp("component.ApplicationLauncher", name.data()) != 0 ) {
+      FXL_LOG(ERROR) << "Refuse lookup svc:" << name.data();
+    }
+    return ZX_ERR_NOT_FOUND;
+  }
+
   *out = fbl::AdoptRef(new fs::Service(
       [bridge = bridge_,
        name = std::string(name.data(), name.length())](zx::channel channel) {

@@ -8,6 +8,8 @@
 #include "garnet/lib/machina/phys_mem.h"
 
 static constexpr uintptr_t kRamdiskOffset = 0x4000000;
+static constexpr uintptr_t kDRamOffset = 0x0;
+static constexpr uintptr_t kDRamSize = (1u << 27);
 
 zx_status_t load_kernel(const std::string& kernel_path,
                         const machina::PhysMem& phys_mem,

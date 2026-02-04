@@ -21,7 +21,7 @@
 #include "lib/fxl/strings/string_printf.h"
 
 #if __aarch64__
-static constexpr uintptr_t kKernelOffset = 0x80000;
+static constexpr uintptr_t kKernelOffset = 0x10000;
 #elif __x86_64__
 static constexpr uintptr_t kKernelOffset = 0x200000;
 #include "garnet/lib/machina/arch/x86/acpi.h"
@@ -248,6 +248,8 @@ static zx_status_t load_device_tree(const int fd,
     FXL_LOG(ERROR) << "Failed to load device tree";
     return status;
   }
+
+  // NOTE(GR-0002): Following checking is not suitable for DRamBase != 0x0.
   if (kDtbOffset + dtb_size > kRamdiskOffset) {
     FXL_LOG(ERROR) << "DTB is too large";
     return ZX_ERR_OUT_OF_RANGE;
@@ -272,13 +274,13 @@ static zx_status_t load_device_tree(const int fd,
     return ZX_ERR_BAD_STATE;
   }
   // Add the memory range of the initial RAM disk.
-  ret = fdt_setprop_u64(dtb, off, "linux,initrd-start", kRamdiskOffset);
+  ret = fdt_setprop_u64(dtb, off, "linux,initrd-start", kRamdiskOffset + kDRamOffset);
   if (ret < 0) {
     device_tree_error_msg("linux,initrd-start");
     return ZX_ERR_BAD_STATE;
   }
   ret = fdt_setprop_u64(dtb, off, "linux,initrd-end",
-                        kRamdiskOffset + initrd_size);
+                        kRamdiskOffset + initrd_size + kDRamOffset);
   if (ret < 0) {
     device_tree_error_msg("linux,initrd-end");
     return ZX_ERR_BAD_STATE;
@@ -384,6 +386,13 @@ zx_status_t setup_linux(const GuestConfig cfg,
     }
     *boot_ptr = kDtbOffset;
   }
+
+  *guest_ip += kDRamOffset;
+  *boot_ptr += kDRamOffset;
+
+  // NOTE(GR-0002): Enable following for linux bootup debugging.
+  FXL_LOG(ERROR) << "guest_ip:" << std::hex << *guest_ip;
+  FXL_LOG(ERROR) << "boot_ptr:" << std::hex << *boot_ptr;
 
   return ZX_OK;
 }

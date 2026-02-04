@@ -1,0 +1,25 @@
+{
+    "languages": [
+        "cpp"
+    ],
+    "imports": [
+        "garnet/packages/config/network",
+        "garnet/packages/config/apps",
+        "garnet/packages/prod/runtime",
+        "garnet/packages/prod/guest_tool",
+        "garnet/packages/tools/make-fuchsia-vol",
+        "garnet/packages/benchmarks/zircon",
+        "garnet/packages/prod/boringssl_libcrypto",
+        "garnet/packages/tests/boringssl_libcrypto",
+        "garnet/packages/tests/openssl",
+        "garnet/packages/nebula/benchmarks/all",
+        "garnet/packages/nebula/config/all",
+        "garnet/packages/nebula/examples/all",
+        "garnet/packages/nebula/prod/all",
+        "garnet/packages/nebula/tests/all",
+        "garnet/packages/nebula/tools/all"
+    ],
+    "labels": [
+        "//garnet/public/nebula_sdk:sdk"
+    ]
+}

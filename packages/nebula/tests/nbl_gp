@@ -1,0 +1,6 @@
+{
+    "packages": {
+        "echo_ta": "//third_party/hee-trusty/gp/tests/echo_ta",
+        "ut_ta": "//third_party/hee-trusty/gp/tests/ut_ta"
+    }
+}

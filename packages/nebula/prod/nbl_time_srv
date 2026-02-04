@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "nbl_time_srv": "//third_party/hee-trusty/nbl_time/server:nbl_time_srv"
+    }
+}

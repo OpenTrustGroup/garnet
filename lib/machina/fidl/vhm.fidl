@@ -1,0 +1,37 @@
+// Copyright 2020 GoldenRiver Technology Co., Ltd.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library machina;
+
+using mem;
+
+enum VhmClientStatus {
+  OK = 0;
+  NOT_FOUND = 1;
+  ALREADY_BOUND = 2;
+};
+
+interface InterruptListener {
+  1: OnInterrupt(uint32 irq_nr);
+};
+
+interface MappingListener {
+  1: OnNewMapping(uint64 base, uint64 size, uint8 type);
+};
+
+interface MessageListener {
+  1: OnNewCall(mem.Buffer msg) -> (mem.Buffer msg);
+};
+
+[ServiceName="machina.VhmService"]
+interface VhmService {
+  1: GetIoRequestVmo(uint16 vmid) -> (VhmClientStatus @status, handle<vmo> vmo);
+  3: Kick();
+  4: WaitForIoRequestCompletion(uint16 vmid, uint8 vcpu_id) -> ();
+  5: RegisterInterruptListener(uint16 vmid, InterruptListener listener) -> (VhmClientStatus @status);
+  6: FetchVmConfig(uint16 vmid) -> (VhmClientStatus @status, mem.Buffer config);
+  7: GetMmioMappings(uint16 vmid, MappingListener listener) -> (VhmClientStatus @status);
+  8: RegisterMessageListener(uint16 vmid, MessageListener listener) -> (VhmClientStatus @status);
+  9: SetupChannel(uint16 vmid) -> (VhmClientStatus @status, handle<channel> cli, handle<channel> srv);
+};

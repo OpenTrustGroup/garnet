@@ -6,9 +6,13 @@ import("//build/package.gni")
 
 shared_library("machina") {
   sources = [
+    "ipc_message.h",
+    "ipc_message.cc",
     "bits.h",
     "block_dispatcher.cc",
     "block_dispatcher.h",
+    "cam_dmabuf.cc",
+    "cam_dmabuf.h",
     "framebuffer_scanout.cc",
     "framebuffer_scanout.h",
     "gpu_bitmap.cc",
@@ -19,14 +23,46 @@ shared_library("machina") {
     "gpu_scanout.h",
     "guest.cc",
     "guest.h",
+    "guest_config.h",
     "hid_event_source.cc",
     "hid_event_source.h",
     "input_dispatcher.cc",
     "input_dispatcher.h",
     "inspect_service_impl.cc",
     "inspect_service_impl.h",
+    "utrace.cc",
+    "utrace.h",
+    "us_comcat_trace.cc",
+    "us_comcat_trace.h",
+    "rwlock.h",
+    "vhm_device.cc",
+    "vhm_device.h",
+    "vhm_service_impl.cc",
+    "vhm_service_impl.h",
+    "audio_irq.cc",
+    "audio_irq.h",
+    "audio_irq_service_impl.cc",
+    "audio_irq_service_impl.h",
+    "audio_irq_client.cc",
+    "audio_irq_client.h",
+    "shared_irq.cc",
+    "shared_irq.h",
+    "shared_irq_service_impl.cc",
+    "shared_irq_service_impl.h",
+    "shared_irq_client.cc",
+    "shared_irq_client.h",
+    "remoteproc.cc",
+    "remoteproc.h",
+    "remoteproc_manager.cc",
+    "remoteproc_manager.h",
     "io.cc",
     "io.h",
+    "ipc_service_impl.cc",
+    "ipc_service_impl.h",
+    "ipc_client.cc",
+    "ipc_client.h",
+    "ipc_channel.cc",
+    "ipc_channel.h",
     "pci.cc",
     "pci.h",
     "phys_mem.cc",
@@ -67,6 +103,12 @@ shared_library("machina") {
       "arch/arm64/pl011.h",
       "arch/arm64/pl031.cc",
       "arch/arm64/pl031.h",
+      "arch/arm64/gic_its.cc",
+      "arch/arm64/gic_its.h",
+      "arch/arm64/smmu_v3.cc",
+      "arch/arm64/smmu_v3.h",
+      "arch/arm64/smmu_v3_internal.h",
+      "arch/arm64/bitops.h",
     ]
   } else if (current_cpu == "x64") {
     sources += [
@@ -92,6 +134,7 @@ shared_library("machina") {
   }
 
   public_deps = [
+    "//garnet/bin/guest/proto:vm_config",
     "//garnet/lib/machina/fidl",
     "//garnet/public/lib/app/cpp",
     "//zircon/public/lib/bitmap",
@@ -101,7 +144,12 @@ shared_library("machina") {
     "//zircon/public/lib/zx",
   ]
 
-  defines = [ "_ALL_SOURCE=1" ]
+  defines = [
+    "_ALL_SOURCE=1",
+    "_VHM_USE_CHANNEL_",
+    "RPROC_NOTIFY_WITH_PHYS_IRQ",
+#    "VHE_MMIO_TRAP_DEBUG"
+  ]
 
   deps = [
     "//garnet/public/lib/fsl",
@@ -113,6 +161,10 @@ shared_library("machina") {
     "//zircon/public/lib/fdio",
     "//zircon/public/lib/sync",
     "//zircon/public/lib/zxcpp",
+    "//third_party/ree-trusty/libnbl_vhm:acrn_headers",
+    "//third_party/fdt",
+    "//zircon/trusty/lib/lib/libc-trusty",
+    "//third_party/hee-trusty/nbl_license_srv/lib:libnbl_nmt_tee",
   ]
 
   # TODO(ZX-1411): Add visibility annotations to code and remove this.
@@ -155,6 +207,24 @@ executable("machina_unittests") {
   ]
 }
 
+executable("vhm_unittests") {
+  testonly = true
+
+  sources = [
+    "vhm_device-unittest.cc",
+    "run_all_unittests.cc"
+  ]
+
+  deps = [
+    ":machina",
+    "//garnet/public/lib/fsl",
+    "//third_party/googletest:gtest",
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/fbl",
+    "//garnet/bin/guest/proto:vm_config",
+  ]
+}
+
 package("machina_tests") {
   testonly = true
   system_image = true
@@ -169,3 +239,51 @@ package("machina_tests") {
     },
   ]
 }
+
+package("vhm_tests") {
+  testonly = true
+  system_image = true
+
+  deps = [
+    ":vhm_unittests",
+  ]
+
+  tests = [
+    {
+      name = "vhm_unittests"
+    },
+  ]
+}
+
+executable("rproc_unittests") {
+  testonly = true
+
+  sources = [
+    "remoteproc-unittest.cc",
+    "run_all_unittests.cc"
+  ]
+
+  deps = [
+    ":machina",
+    "//garnet/public/lib/fsl",
+    "//third_party/googletest:gtest",
+    "//zircon/public/lib/fbl",
+    "//garnet/bin/guest/proto:vm_config",
+  ]
+}
+
+package("rproc_tests") {
+  testonly = true
+  system_image = true
+
+  deps = [
+    ":rproc_unittests",
+  ]
+
+  tests = [
+    {
+      name = "rproc_unittests"
+    },
+  ]
+}
+

@@ -2,7 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("cpp") {
+import("//build/nebula/nbl_sdk_library.gni")
+
+static_library("cpp") {
   sources = [
     "service_namespace.cc",
     "service_namespace.h",
@@ -20,5 +22,25 @@ source_set("cpp") {
     "//zircon/public/lib/fdio",
     "//zircon/public/lib/fs",
     "//zircon/public/lib/zx",
+  ]
+}
+
+nbl_sdk_library("svc_cpp_sdk") {
+  name = "svc"
+  category = "hee"
+
+  hdr_dirs = [
+    {
+      source = "."
+      dest = "lib/svc/cpp"
+    },
+  ]
+
+  libs = [
+    "libcpp.a",
+  ]
+
+  deps = [
+    ":cpp",
   ]
 }

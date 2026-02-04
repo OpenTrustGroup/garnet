@@ -26,7 +26,7 @@ TEST(GuestConfigParserTest, DefaultValues) {
   GuestConfigParser parser(&config);
   parser.ParseConfig("{}");
 
-  ASSERT_EQ(Kernel::ZIRCON, config.kernel());
+  ASSERT_EQ(machina::Kernel::ZIRCON, config.kernel());
   ASSERT_TRUE(config.kernel_path().empty());
   ASSERT_TRUE(config.ramdisk_path().empty());
   ASSERT_EQ(zx_system_get_num_cpus(), config.num_cpus());
@@ -54,7 +54,7 @@ TEST(GuestConfigParserTest, ParseConfig) {
           "balloon-demand-page": "true",
           "block-wait": "true"
         })JSON"));
-  ASSERT_EQ(Kernel::ZIRCON, config.kernel());
+  ASSERT_EQ(machina::Kernel::ZIRCON, config.kernel());
   ASSERT_EQ("zircon_path", config.kernel_path());
   ASSERT_EQ("ramdisk_path", config.ramdisk_path());
   ASSERT_EQ(4, config.num_cpus());
@@ -83,7 +83,7 @@ TEST(GuestConfigParserTest, ParseArgs) {
                         "--block-wait"};
   ASSERT_EQ(ZX_OK,
             parser.ParseArgcArgv(countof(argv), const_cast<char**>(argv)));
-  ASSERT_EQ(Kernel::LINUX, config.kernel());
+  ASSERT_EQ(machina::Kernel::LINUX, config.kernel());
   ASSERT_EQ("linux_path", config.kernel_path());
   ASSERT_EQ("ramdisk_path", config.ramdisk_path());
   ASSERT_EQ(4, config.num_cpus());
@@ -143,19 +143,19 @@ TEST(GuestConfigParserTest, BlockSpecArg) {
             parser.ParseArgcArgv(countof(argv), const_cast<char**>(argv)));
   ASSERT_EQ(4, config.block_devices().size());
 
-  const BlockSpec& spec0 = config.block_devices()[0];
+  const machina::BlockSpec& spec0 = config.block_devices()[0];
   ASSERT_EQ(machina::BlockDispatcher::Mode::RO, spec0.mode);
   ASSERT_EQ(machina::BlockDispatcher::DataPlane::FDIO, spec0.data_plane);
   ASSERT_EQ("/pkg/data/foo", spec0.path);
   ASSERT_TRUE(spec0.guid.empty());
 
-  const BlockSpec& spec1 = config.block_devices()[1];
+  const machina::BlockSpec& spec1 = config.block_devices()[1];
   ASSERT_EQ(machina::BlockDispatcher::Mode::RW, spec1.mode);
   ASSERT_EQ(machina::BlockDispatcher::DataPlane::FDIO, spec1.data_plane);
   ASSERT_EQ("/dev/class/block/001", spec1.path);
   ASSERT_TRUE(spec1.guid.empty());
 
-  const BlockSpec& spec2 = config.block_devices()[2];
+  const machina::BlockSpec& spec2 = config.block_devices()[2];
   ASSERT_EQ(machina::BlockDispatcher::Mode::RW, spec2.mode);
   ASSERT_EQ(machina::BlockDispatcher::DataPlane::FDIO, spec2.data_plane);
   ASSERT_TRUE(spec2.path.empty());
@@ -163,7 +163,7 @@ TEST(GuestConfigParserTest, BlockSpecArg) {
             spec2.guid.type);
   ASSERT_EQ(0, memcmp(spec2.guid.bytes, TEST_GUID_VALUE, GUID_LEN));
 
-  const BlockSpec& spec3 = config.block_devices()[3];
+  const machina::BlockSpec& spec3 = config.block_devices()[3];
   ASSERT_EQ(machina::BlockDispatcher::Mode::RO, spec3.mode);
   ASSERT_EQ(machina::BlockDispatcher::DataPlane::FDIO, spec3.data_plane);
   ASSERT_TRUE(spec3.path.empty());
@@ -187,17 +187,17 @@ TEST(GuestConfigParserTest, BlockSpecJson) {
         })JSON"));
   ASSERT_EQ(4, config.block_devices().size());
 
-  const BlockSpec& spec0 = config.block_devices()[0];
+  const machina::BlockSpec& spec0 = config.block_devices()[0];
   ASSERT_EQ(machina::BlockDispatcher::Mode::RO, spec0.mode);
   ASSERT_EQ(machina::BlockDispatcher::DataPlane::FDIO, spec0.data_plane);
   ASSERT_EQ("/pkg/data/foo", spec0.path);
 
-  const BlockSpec& spec1 = config.block_devices()[1];
+  const machina::BlockSpec& spec1 = config.block_devices()[1];
   ASSERT_EQ(machina::BlockDispatcher::Mode::RW, spec1.mode);
   ASSERT_EQ(machina::BlockDispatcher::DataPlane::FDIO, spec1.data_plane);
   ASSERT_EQ("/dev/class/block/001", spec1.path);
 
-  const BlockSpec& spec2 = config.block_devices()[2];
+  const machina::BlockSpec& spec2 = config.block_devices()[2];
   ASSERT_EQ(machina::BlockDispatcher::Mode::RW, spec2.mode);
   ASSERT_EQ(machina::BlockDispatcher::DataPlane::FDIO, spec2.data_plane);
   ASSERT_TRUE(spec2.path.empty());
@@ -205,7 +205,7 @@ TEST(GuestConfigParserTest, BlockSpecJson) {
             spec2.guid.type);
   ASSERT_EQ(0, memcmp(spec2.guid.bytes, TEST_GUID_VALUE, GUID_LEN));
 
-  const BlockSpec& spec3 = config.block_devices()[3];
+  const machina::BlockSpec& spec3 = config.block_devices()[3];
   ASSERT_EQ(machina::BlockDispatcher::Mode::RO, spec3.mode);
   ASSERT_EQ(machina::BlockDispatcher::DataPlane::FDIO, spec3.data_plane);
   ASSERT_TRUE(spec3.path.empty());
@@ -284,18 +284,145 @@ TEST(GuestConfigParserTest, DisplayType) {
   const char* display_none_argv[] = {"exe_name", "--display=none"};
   ASSERT_EQ(ZX_OK, parser.ParseArgcArgv(countof(display_none_argv),
                                         const_cast<char**>(display_none_argv)));
-  ASSERT_EQ(GuestDisplay::NONE, config.display());
+  ASSERT_EQ(machina::GuestDisplay::NONE, config.display());
 
   const char* display_fb_argv[] = {"exe_name", "--display=framebuffer"};
   ASSERT_EQ(ZX_OK, parser.ParseArgcArgv(countof(display_fb_argv),
                                         const_cast<char**>(display_fb_argv)));
-  ASSERT_EQ(GuestDisplay::FRAMEBUFFER, config.display());
+  ASSERT_EQ(machina::GuestDisplay::FRAMEBUFFER, config.display());
 
   const char* display_scenic_argv[] = {"exe_name", "--display=scenic"};
   ASSERT_EQ(ZX_OK,
             parser.ParseArgcArgv(countof(display_scenic_argv),
                                  const_cast<char**>(display_scenic_argv)));
-  ASSERT_EQ(GuestDisplay::SCENIC, config.display());
+  ASSERT_EQ(machina::GuestDisplay::SCENIC, config.display());
+}
+
+TEST(GuestConfigParserTest, VcpuSpec) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(ZX_OK, parser.ParseConfig(
+                       R"JSON({
+          "vcpu": {
+            "entry": "0x40080000",
+            "x": [
+              "3,1271398403",
+              "1,0x4BC80001",
+              "2,0x4BC80002",
+              "0,0x4BC80000"
+            ]
+          }
+        })JSON"));
+  const machina::VcpuSpec& vcpu = config.vcpu();
+  ASSERT_EQ(vcpu.entry, 0x40080000);
+  ASSERT_EQ(vcpu.x[0], 0x4BC80000);
+  ASSERT_EQ(vcpu.x[1], 0x4BC80001);
+  ASSERT_EQ(vcpu.x[2], 0x4BC80002);
+  ASSERT_EQ(vcpu.x[3], 0x4BC80003);
+}
+
+TEST(GuestConfigParserTest, InvalidVcpuSpec) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(ZX_ERR_INVALID_ARGS,
+            parser.ParseConfig(R"JSON({"vcpu":{"x":["1271398403"]}})JSON"));
+  ASSERT_EQ(ZX_ERR_INVALID_ARGS,
+            parser.ParseConfig(R"JSON({"vcpu":{"x":["-1,1271398403"]}})JSON"));
+  ASSERT_EQ(ZX_ERR_INVALID_ARGS,
+            parser.ParseConfig(R"JSON({"vcpu":{"x":["32,1271398403"]}})JSON"));
+}
+
+TEST(GuestConfigParserTest, VgicSpec) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(ZX_OK, parser.ParseConfig(
+                       R"JSON({
+          "vgic": {
+            "gicd_paddr": "0xC000001",
+            "gicr_paddr": "0xC040001",
+            "interrupt": [
+              "0-9",
+              "31-40",
+              "100-255"
+            ]
+          }
+        })JSON"));
+  const machina::VgicSpec& vgic = config.vgic();
+  ASSERT_EQ(vgic.gicd_paddr, 0x0C000001);
+  ASSERT_EQ(vgic.gicr_paddr, 0x0C040001);
+
+  struct {
+    uint16_t irq_first;
+    uint16_t irq_last;
+  } ranges[] = {{0, 9}, {31, 40}, {100, 255}};
+
+  uint16_t index = 0;
+  for (auto r : ranges) {
+    for (uint16_t irq = r.irq_first; irq <= r.irq_last; ++irq) {
+      ASSERT_EQ(vgic.irqs[index++], irq) << irq;
+    }
+  }
+  EXPECT_EQ(index, vgic.irqs.size());
+
+  ASSERT_EQ(ZX_ERR_INVALID_ARGS,
+            parser.ParseConfig(R"JSON({"vgic":{"interrupt":[""]}})JSON"));
+  ASSERT_EQ(ZX_ERR_INVALID_ARGS,
+            parser.ParseConfig(R"JSON({"vgic":{"interrupt":["1-"]}})JSON"));
+  ASSERT_EQ(ZX_ERR_INVALID_ARGS,
+            parser.ParseConfig(R"JSON({"vgic":{"interrupt":["1-0"]}})JSON"));
+}
+
+TEST(GuestConfigParserTest, VmemSpec) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(ZX_OK, parser.ParseConfig(
+                       R"JSON({
+            "vmem": [
+              "0x40000000,0x00000000,0x40000000,0,0",
+              "0x20000000,0x40000000,0x40000000,1,0",
+              "0x30000000,0x80000000,0x40000000,2,1"
+            ]
+        })JSON"));
+
+  const std::vector<machina::VmemSpec> expected = {
+      {"vmem1", 0x40000000, 0x00000000, 0x40000000, machina::MemoryPolicy::kDemand, 0,0},
+      {"vmem2", 0x20000000, 0x40000000, 0x40000000, machina::MemoryPolicy::kCached, 0,0},
+      {"vmem3", 0x30000000, 0x80000000, 0x40000000, machina::MemoryPolicy::kDevice, 1,0},
+  };
+  auto actual = config.vmem();
+
+  ASSERT_EQ(expected.size(), actual.size());
+  for (int i = 0; i < expected.size(); ++i) {
+    EXPECT_EQ(expected[i].gpa_base, actual[i].gpa_base);
+    EXPECT_EQ(expected[i].hpa_base, actual[i].hpa_base);
+    EXPECT_EQ(expected[i].policy, actual[i].policy);
+    EXPECT_EQ(expected[i].is_physmem, actual[i].is_physmem);
+  }
+
+  ASSERT_EQ(ZX_ERR_INVALID_ARGS,
+            parser.ParseConfig(R"JSON({"vmem":[""]})JSON"));
+  ASSERT_EQ(ZX_ERR_INVALID_ARGS,
+            parser.ParseConfig(R"JSON({"vmem":["0x40000000"]})JSON"));
+  // Guest paddr base not 4KB aligned.
+  ASSERT_EQ(
+      ZX_ERR_INVALID_ARGS,
+      parser.ParseConfig(R"JSON({"vmem":["0x1001,0x1000,0x1000,1,0"]})JSON"));
+  // Host paddr not 4KB aligned.
+  ASSERT_EQ(
+      ZX_ERR_INVALID_ARGS,
+      parser.ParseConfig(R"JSON({"vmem":["0x1000,0x1001,0x1000,1,0"]})JSON"));
+  // Size not 4KB aligned.
+  ASSERT_EQ(
+      ZX_ERR_INVALID_ARGS,
+      parser.ParseConfig(R"JSON({"vmem":["0x1000,0x1000,0x1001,1,0"]})JSON"));
+  // Unsupported MemoryPolicy
+  ASSERT_EQ(
+      ZX_ERR_INVALID_ARGS,
+      parser.ParseConfig(R"JSON({"vmem":["0x1000,0x1000,0x1000,3,0"]})JSON"));
 }
 
 }  // namespace

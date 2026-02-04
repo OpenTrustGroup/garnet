@@ -37,6 +37,10 @@ class NamespaceBuilder {
   // we should be able to remove this function.
   void AddDeprecatedDefaultDirectories();
 
+#ifdef __Nebula__
+  void AddBootDirectory();
+#endif
+
   // Returns an fdio_flat_namespace_t representing the built namespace.
   //
   // The returned fdio_flat_namespace_t has ownership of the zx::channel objects

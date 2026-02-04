@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+//option optimize_for = LITE_RUNTIME;
+package nbl_vmm;
+
+enum MemoryPolicy {
+  /// Map a VMO as cached memory into the guest physical address space.
+  DEMEND = 0;
+  /// Map a VMO with 1:1 correspondence with host memory as cached memory into
+  /// the guest physical address space.
+  CACHED = 1;
+  /// Map a VMO with 1:1 correspondence with host memory as device memory into
+  /// the guest physical address space.
+  DEVICE = 2;
+};
+
+message VmemSpec {
+  uint64 gpa_base = 1;
+  uint64 hpa_base = 2;
+  uint64 size = 3;
+  MemoryPolicy policy = 4;
+  bool is_physmem = 5;
+  string name = 6;
+  bool is_reservedmem = 7;
+};
+
+message VgicSpec {
+  uint64 gicd_paddr = 1;
+  uint64 gicr_paddr = 2;
+  repeated uint32 interrupts = 3;
+  repeated uint32 percpu_interrupts = 4;
+  bool has_its = 5;
+  uint64 its_paddr = 6;
+};
+
+message VsmmuSpec {
+  uint64 paddr = 1;
+  uint32 irq = 2;
+  repeated uint32 sids = 3;
+};
+
+message VmConfig {
+  uint32 vmid = 1;
+  uint32 num_cpus = 2;
+  uint64 cpu_affinity = 3;
+  uint64 entry = 4;
+  uint32 sched_irq = 5;
+  VgicSpec vgic = 6;
+  repeated VmemSpec mem = 7;
+  repeated uint64 extra_params = 8;
+  repeated uint32 bind_pcpus = 9;
+  string cmdline = 10;
+  repeated uint32 wakeup_irqs = 11;
+  repeated uint32 gpu_irqs = 12;
+  repeated uint32 vsock_irqs = 13;
+  repeated uint32 apu_irqs = 14;
+  repeated uint64 budgets = 15;
+  uint32 vtee_notifier_irq = 16;
+  uint32 sched_id = 17;
+  repeated VsmmuSpec vsmmu = 18;
+  uint32 dump_irq = 19;
+  repeated uint32 cmdq_irqs = 20;
+};

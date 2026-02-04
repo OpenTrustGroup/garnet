@@ -26,5 +26,6 @@ package("run") {
 
   binaries = [ {
         name = "run"
+        in_image = "!release"
       } ]
 }

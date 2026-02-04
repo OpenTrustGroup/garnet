@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "plid_test": "//third_party/hee-trusty/samples/plid_test"
+    }
+}

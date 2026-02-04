@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "syzkaller_nbl_stress": "//third_party/syzkaller_nbl:syzkaller_nbl_stress"
+    }
+}

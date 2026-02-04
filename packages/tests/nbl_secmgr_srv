@@ -1,0 +1,7 @@
+{
+    "packages": {
+        "nbl_secmgr_srv": "//third_party/hee-trusty/nbl_secmgr_srv",
+        "nbl_secmgr_test": "//third_party/hee-trusty/nbl_secmgr_srv:nbl_secmgr_test",
+        "load_ha":"//third_party/hee-trusty/load_ha"
+    }
+}

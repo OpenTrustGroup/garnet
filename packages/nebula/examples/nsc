@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "nss_ha": "//third_party/hee-trusty/nbl_nsc/example:nss_ha"
+    }
+}

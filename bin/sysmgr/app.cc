@@ -9,6 +9,11 @@
 
 #include <zircon/process.h>
 #include <zircon/processargs.h>
+#include <zircon/syscalls/hypervisor.h>
+
+// _trusty_ioctl deps
+#include <trusty_std.h>
+#include <trusty_syscalls.h>
 
 #include "lib/app/cpp/connect.h"
 #include "lib/fidl/cpp/clone.h"
@@ -16,28 +21,6 @@
 #include "lib/fxl/logging.h"
 
 namespace sysmgr {
-namespace {
-
-// We explicitly launch netstack because netstack registers itself as
-// |/dev/socket|, which needs to happen eagerly, instead of being discovered
-// via |/svc/net.Netstack|, which can happen asynchronously.
-void LaunchNetstack(component::ServiceProvider* provider) {
-  zx::channel h1, h2;
-  zx::channel::create(0, &h1, &h2);
-  provider->ConnectToService("net.Netstack", std::move(h1));
-}
-
-// We explicitly launch wlanstack because we want it to start scanning if
-// SSID is configured.
-// TODO: Remove this hard-coded logic once we have a more sophisticated
-// system service manager that can do this sort of thing using config files.
-void LaunchWlanstack(component::ServiceProvider* provider) {
-  zx::channel h1, h2;
-  zx::channel::create(0, &h1, &h2);
-  provider->ConnectToService("wlan::WlanService", std::move(h1));
-}
-
-}  // namespace
 
 constexpr char kDefaultLabel[] = "sys";
 constexpr char kConfigDir[] = "/system/data/sysmgr/";
@@ -95,8 +78,41 @@ App::App()
 
   // TODO(abarth): Remove this hard-coded mention of netstack once netstack is
   // fully converted to using service namespaces.
-  LaunchNetstack(&service_provider_bridge_);
-  LaunchWlanstack(&service_provider_bridge_);
+  LaunchService("provider.TaProvider");
+  LaunchService("nbl_services.rpc");
+
+  uint64_t bootmode = 0;
+  zx_status_t status = zx_system_get_bootmode(&bootmode);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "zx_system_get_bootmode fail";
+  }
+
+  if (bootmode == ZX_BOOTMODE_AHYP) {
+    uint32_t uart_rx_input = 0;
+    // Is magic key pressed?
+    if (_trusty_ioctl(NEBULA_GENERIC_FD,
+                      SYS_PLATFORM_UART_ACTION_GET_HOLD_NEBULA_SHELL_CMD,
+                      (void*)&uart_rx_input) < 0) {
+      FXL_LOG(ERROR) << "_trusty_ioctl failed";
+    }
+
+    if (uart_rx_input == 0) {
+      // No key pressed, notify uart driver to disable RX to avoid
+      // uart conflict with sos uart driver, then launch sos.
+      if (_trusty_ioctl(NEBULA_GENERIC_FD,
+                        SYS_PLATFORM_UART_ACTION_SET_BYPASS_NEBULA_SHELL_CMD,
+                        NULL) < 0) {
+        FXL_LOG(ERROR) << "_trusty_ioctl failed";
+      }
+      LaunchService("machina.VhmService");
+    } else {
+      DisableSosKickNebula();
+      FXL_LOG(ERROR) << "Nebula shell start, won't launch sos here";
+    }
+  } else if (bootmode == ZX_BOOTMODE_TEE) {
+    LaunchService("nebula.GpManager");
+  }
+
 }
 
 App::~App() {}
@@ -126,6 +142,12 @@ void App::RegisterSingleton(std::string service_name,
                 FXL_LOG(ERROR) << "Singleton " << url << " died";
                 controller.Unbind();  // kills the singleton application
                 services_.erase(url);
+#ifdef __Nebula__
+                if (url == "/system/bin/nbl_loader_srv") {
+                  zx_nanosleep(zx_deadline_after(ZX_SEC(2)));
+                  LaunchService("provider.TaProvider");
+                }
+#endif
               });
 
           std::tie(it, std::ignore) =
@@ -152,6 +174,32 @@ void App::RegisterAppLoaders(Config::ServiceMap app_loaders) {
 void App::LaunchApplication(component::ApplicationLaunchInfo launch_info) {
   FXL_VLOG(1) << "Launching application " << launch_info.url;
   env_launcher_->CreateApplication(std::move(launch_info), nullptr);
+}
+
+void App::LaunchService(const std::string& service_name) {
+  FXL_LOG(INFO) << "Launching service " << service_name;
+  auto provider = static_cast<component::ServiceProvider*>(&service_provider_bridge_);
+  zx::channel h1, h2;
+  zx::channel::create(0, &h1, &h2);
+  provider->ConnectToService(service_name, std::move(h1));
+}
+
+void App::DisableSosKickNebula() {
+  int fd = 0;
+
+  if (access(GRT_WDT_CONTROL_DEVICE, F_OK) != 0) {
+    printf("wdt driver is not ready:%s\n",GRT_WDT_CONTROL_DEVICE);
+    return;
+  }
+  fd = open(GRT_WDT_CONTROL_DEVICE, O_RDWR);
+  if (fd < 0) {
+    printf("driver-tests: no %s device found\n", GRT_WDT_CONTROL_DEVICE);
+    return;
+  }
+
+  ioctl_grt_wdt_stop(fd);
+  close(fd);
+  return;
 }
 
 }  // namespace sysmgr

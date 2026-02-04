@@ -1,0 +1,16 @@
+{
+    "resources": [
+        {
+            "bootfs_path": "data/sos.json",
+            "file": "garnet/bin/guest/sos/sos_qemu.json"
+        },
+        {
+            "bootfs_path": "data/product.json",
+            "file": "garnet/bin/guest/sos/product_qemu.json"
+        },
+        {
+            "bootfs_path": "data/rproc.pb.txt",
+            "file": "garnet/bin/guest/sos/rproc_qemu.pb.txt"
+        }
+    ]
+}

@@ -18,6 +18,11 @@
 #include "garnet/bin/sysmgr/delegating_application_loader.h"
 #include "lib/fxl/macros.h"
 
+#include <zircon/syscalls.h>
+#include <zircon/device/device.h>
+#include <zircon/device/grt-wdt.h>
+#include <fcntl.h>
+
 namespace sysmgr {
 
 // The sysmgr creates a nested environment within which it starts apps
@@ -37,6 +42,8 @@ class App {
   void RegisterDefaultServiceConnector();
   void RegisterAppLoaders(Config::ServiceMap app_loaders);
   void LaunchApplication(component::ApplicationLaunchInfo launch_info);
+  void LaunchService(const std::string& service_name);
+  void DisableSosKickNebula();
 
   std::unique_ptr<component::ApplicationContext> application_context_;
 

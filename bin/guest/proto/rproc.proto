@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+//option optimize_for = LITE_RUNTIME;
+package nbl_vmm;
+
+message IrqRange {
+  uint32 start = 1;
+  uint32 length = 2;
+};
+
+message RemoteProcDevice {
+  int32 remote_vmid = 1;
+  int32 host_vmid = 2;
+  uint32 ctrl_irq = 3;
+  repeated IrqRange local_irqs = 4;
+  repeated IrqRange remote_irqs = 5;
+  string resv_mem = 6;
+  bool remote_ipi_affinity = 7;
+  bool host_ipi_affinity = 8;
+};
+
+message RemoteProcConfig {
+  repeated RemoteProcDevice devices = 1;
+};

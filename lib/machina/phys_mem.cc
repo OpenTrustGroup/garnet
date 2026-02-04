@@ -4,7 +4,12 @@
 
 #include "garnet/lib/machina/phys_mem.h"
 
+#include <unistd.h>
+#include <fcntl.h>
+
 #include <lib/zx/vmar.h>
+#include <lib/zx/resource.h>
+#include <zircon/device/sysinfo.h>
 #include <zircon/process.h>
 
 static constexpr uint32_t kMapFlags =
@@ -25,6 +30,17 @@ zx_status_t PhysMem::Init(size_t size) {
 
   vmo_size_ = size;
   return ZX_OK;
+}
+
+zx_status_t PhysMem::Init(zx::vmo vmo, uint64_t phys_base) {
+  phys_base_ = phys_base;
+  vmo_ = std::move(vmo);
+  zx_status_t status = vmo_.get_size(&vmo_size_);
+  if (status != ZX_OK) {
+    return status;
+  }
+
+  return zx::vmar::root_self().map(0, vmo_, 0, vmo_size_, kMapFlags, &addr_);
 }
 
 PhysMem::~PhysMem() {

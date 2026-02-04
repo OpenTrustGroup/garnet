@@ -142,6 +142,9 @@ void ChromiumExporter::ExportRecord(const trace::Record& record) {
     case trace::RecordType::kEvent:
       ExportEvent(record.GetEvent());
       break;
+    case trace::RecordType::kEventTiny:
+      ExportEventTiny(record.GetEventTiny());
+      break;
     case trace::RecordType::kKernelObject:
       ExportKernelObject(record.GetKernelObject());
       break;
@@ -302,6 +305,33 @@ void ChromiumExporter::ExportEvent(const trace::Record::Event& event) {
       }
     }
     writer_.EndObject();
+  }
+
+  writer_.EndObject();
+}
+
+void ChromiumExporter::ExportEventTiny(const trace::Record::EventTiny& event) {
+  if (!IsEventTypeSupported(event.type()))
+    return;
+
+  writer_.StartObject();
+
+  writer_.Key("ts");
+  writer_.Uint64(event.timestamp);
+  writer_.Key("dt");
+  writer_.Uint64(event.data);
+
+  switch (event.type()) {
+    case trace::EventType::kDurationBegin:
+      writer_.Key("ph");
+      writer_.String("B");
+      break;
+    case trace::EventType::kDurationEnd:
+      writer_.Key("ph");
+      writer_.String("E");
+      break;
+    default:
+      break;
   }
 
   writer_.EndObject();

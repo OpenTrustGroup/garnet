@@ -9,12 +9,13 @@
 
 #include <lib/zx/vmo.h>
 
+#include "lib/fxl/fxl_export.h"
 namespace fsl {
 
 // A VMO along with an associated size. The associated size may be smaller than
 // the actual size of the VMO, which allows to represent data that is not
 // page-aligned.
-class SizedVmo {
+class FXL_EXPORT SizedVmo {
  public:
   SizedVmo(nullptr_t = nullptr);
   SizedVmo(zx::vmo vmo, uint64_t size);

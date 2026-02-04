@@ -29,6 +29,9 @@ constexpr char kDev[] = "dev";
 constexpr char kSystem[] = "system";
 constexpr char kPkgfs[] = "pkgfs";
 constexpr char kFeatures[] = "features";
+#ifdef __Nebula__
+constexpr char kOtrp[] = "otrp";
+#endif
 
 SandboxMetadata::SandboxMetadata() = default;
 
@@ -66,6 +69,14 @@ bool SandboxMetadata::Parse(const std::string& data) {
     if (!CopyArrayToVector(features->value, &features_))
       return false;
   }
+
+#ifdef __Nebula__
+  auto otrp = document.FindMember(kOtrp);
+  if (otrp != document.MemberEnd()) {
+    if (!CopyArrayToVector(otrp->value, &otrp_))
+      return false;
+  }
+#endif
 
   return true;
 }

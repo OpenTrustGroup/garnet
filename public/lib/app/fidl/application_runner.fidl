@@ -21,6 +21,15 @@ struct ApplicationStartupInfo {
   // environment identity.
 };
 
+
+// uuid
+struct ApplicationUUID {
+  uint32 time_low;
+  uint16 time_mid;
+  uint16 time_hi_and_version;
+  array<uint8>:8 clock_seq_and_node;
+};
+
 // A binary representation of an application.
 //
 // Typically provided to |ApplicationRunner.StartApplication| when starting an
@@ -39,6 +48,20 @@ struct ApplicationPackage {
   // Resolved URL of the application. This is the url specified in startup_info
   // after following redirects and resolving relative paths.
   string resolved_url;
+  // uuid
+  ApplicationUUID? uuid;
+  // MMIO info
+  vector<uint32>? mmio_infos;
+  // heap size
+  uint32 heap_size;
+  // irq number
+  int32 irq;
+  // version
+  uint32 version;
+  // trusty flags
+  uint32 trusty_flags;
+  // loading error
+  int32 err;
 };
 
 // An interface for running applications.

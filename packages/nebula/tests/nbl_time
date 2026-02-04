@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "time_test": "//third_party/hee-trusty/nbl_time/test:time_test"
+    }
+}

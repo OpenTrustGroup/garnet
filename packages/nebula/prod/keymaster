@@ -1,0 +1,8 @@
+{
+    "packages": {
+        "keymaster": "//third_party/hee-trusty/trusty/trusty/user/app/keymaster",
+        "kmsetkey": "//third_party/hee-trusty/kmsetkey",
+        "system_state_server": "//third_party/hee-trusty/trusty/trusty/user/base/app/system_state_server_static:system_state_server",
+        "hwbcc_server": "//third_party/hee-trusty/trusty/trusty/user/app/sample/hwbcc_server:hwbcc_server"
+    }
+}

@@ -39,3 +39,36 @@ install_host_tools("host") {
     "far",
   ]
 }
+
+#######################################
+## copy host far to venus sdk
+## NOTICE: because currently (2018/06/26) the mechanism of making sdk from fuchsia is NOT completed,
+## so the far as a host tool can NOT be push into SDK, so I disguise the host tool as a application in zircon.
+## If the mechanism is completed, the under setting should be fixed.
+
+sdk_atom("venus_sdk") {
+  domain = "cpp"
+  name = "far"
+
+  output_category = "host"
+
+  if (is_fuchsia) {
+    tags = [ "arch:target", "type:sysroot" ]
+  } else {
+    tags = [ "arch:host", "type:sysroot" ]
+  }
+
+  out_dir = get_label_info(":bin", "root_out_dir")
+  files = [
+    {
+      source = "$out_dir/far"
+      dest = "x64/far"
+    },
+    {
+      source = "create_archive_manifest"
+      dest = "x64/create_archive_manifest"
+    }
+  ]
+
+  non_sdk_deps = [ ":bin" ]
+}

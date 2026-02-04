@@ -4,6 +4,8 @@
 
 # A collection of utilities useful to debuggers and similar programs.
 
+import("//build/package.gni")
+
 static_library("debugger_utils") {
   sources = [
     "build_ids.cc",
@@ -77,4 +79,81 @@ executable("util-unittests") {
   ]
 
   libs = [ "zircon" ]
+}
+
+executable("ktrace_reader_bin") {
+  output_name = "ktrace_reader"
+
+  sources = [
+    "ktrace_reader.cc",
+    "ktrace_reader.h",
+  ]
+
+  defines = [
+    "TEST",
+  ]
+
+  deps = [
+    "//garnet/public/lib/fxl",
+  ]
+
+  libs = [ "zircon" ]
+}
+
+package("ktrace_reader") {
+  system_image = true
+
+  deps = [
+    ":ktrace_reader_bin",
+  ]
+
+  binaries = [ {
+    name = "ktrace_reader"
+  } ]
+}
+
+source_set("minigzip") {
+  sources = [
+    "minigzip.c",
+    "minigzip.h",
+  ]
+
+  deps = [
+    "//third_party/zlib",
+  ]
+}
+
+source_set("base64") {
+  sources = [
+    "base64.c",
+    "base64.h",
+  ]
+}
+
+executable("ktrace_vcpu_bin") {
+  output_name = "ktrace_vcpu_reader"
+
+  sources = [
+    "ktrace_vcpu_reader.cc",
+  ]
+
+  deps = [
+    "//garnet/public/lib/fxl",
+    ":minigzip",
+    ":base64",
+  ]
+
+  libs = [ "zircon" ]
+}
+
+package("ktrace_vcpu_reader") {
+  system_image = true
+
+  deps = [
+    ":ktrace_vcpu_bin",
+  ]
+
+  binaries = [ {
+    name = "ktrace_vcpu_reader"
+  } ]
 }

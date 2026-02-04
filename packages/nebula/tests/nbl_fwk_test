@@ -1,0 +1,6 @@
+{
+    "packages": {
+        "nbl_fwk_test": "//third_party/hee-trusty/nbl_fwk/tests:nbl_fwk_test",
+        "nbl_fwk_other_test": "//third_party/hee-trusty/nbl_fwk/tests/other_service:nbl_fwk_other_test"
+    }
+}

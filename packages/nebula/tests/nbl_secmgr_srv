@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "nbl_secmgr_test": "//third_party/hee-trusty/nbl_secmgr_srv:nbl_secmgr_test"
+    }
+}

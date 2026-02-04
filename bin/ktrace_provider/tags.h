@@ -13,7 +13,7 @@
 
 namespace ktrace_provider {
 
-enum class TagType { kBasic, kQuad, kName };
+enum class TagType { kBasic, kQuad, kName, kComm };
 
 struct TagInfo {
   uint32_t num;

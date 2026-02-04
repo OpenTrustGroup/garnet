@@ -38,7 +38,12 @@ constexpr KTraceCategory kGroupCategories[] = {
     {"kernel:ipc", KTRACE_GRP_IPC},
     {"kernel:irq", KTRACE_GRP_IRQ},
     {"kernel:probe", KTRACE_GRP_PROBE},
+#ifdef __x86_64__
     {"kernel:arch", KTRACE_GRP_ARCH},
+#else
+    {"kernel:power", KTRACE_GRP_POWER},
+#endif
+    {"kernel:vcpu", KTRACE_GRP_VCPU},
 };
 
 constexpr char kLogCategory[] = "log";

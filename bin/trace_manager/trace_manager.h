@@ -37,10 +37,11 @@ class TraceManager : public trace_link::Registry, public TraceController {
 
   // |TraceRegistry| implementation.
   void RegisterTraceProvider(
-      fidl::InterfaceHandle<trace_link::Provider> provider) override;
+      fidl::InterfaceHandle<trace_link::Provider> provider, uint64_t pid) override;
 
   void FinalizeTracing();
   void LaunchConfiguredProviders();
+  void KillConfiguredProviders();
 
   component::ApplicationContext* const context_;
   const Config& config_;
@@ -49,6 +50,7 @@ class TraceManager : public trace_link::Registry, public TraceController {
   fxl::RefPtr<TraceSession> session_;
   fxl::OneShotTimer session_finalize_timeout_;
   std::list<TraceProviderBundle> providers_;
+  std::list<component::ApplicationControllerPtr> provider_controllers_;
 
   FXL_DISALLOW_COPY_AND_ASSIGN(TraceManager);
 };

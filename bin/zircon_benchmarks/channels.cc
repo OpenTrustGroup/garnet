@@ -227,7 +227,7 @@ BENCHMARK_REGISTER_F(ChannelMultiProcess, Write)
     ->Arg(64)
     ->Arg(1 * 1024)
     ->Arg(32 * 1024)
-    ->Arg(64 * 1024);
+    ->Arg(64 * 1024)->Iterations(1000);
 
 BENCHMARK_DEFINE_F(ChannelMultiProcess, Read)(benchmark::State& state) {
   if (!Launch("--channel_write", state.range(0), &channel_for_process,
@@ -268,4 +268,4 @@ BENCHMARK_REGISTER_F(ChannelMultiProcess, Read)
     ->Arg(64)
     ->Arg(1 * 1024)
     ->Arg(32 * 1024)
-    ->Arg(64 * 1024);
+    ->Arg(64 * 1024)->Iterations(1000);

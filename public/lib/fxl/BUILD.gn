@@ -5,6 +5,7 @@
 if (is_fuchsia) {
   import("//build/cpp/prebuilt_shared_library.gni")
   import("//build/package.gni")
+  import("//build/nebula/nbl_sdk_library.gni")
 }
 
 if (is_android) {
@@ -54,6 +55,13 @@ source_set("stateful_sources") {
 
 source_set("fxl_lib") {
   visibility = [ ":*" ]
+
+  # NOTE(GRT): Workaround to remove ASAN build for fxl/fsl
+  foreach(config, configs) {
+    if (config == "//build/config/sanitizers:asan") {
+      configs -= [ "//build/config/sanitizers:asan" ]
+    }
+  }
 
   sources = [
     "command_line.cc",
@@ -202,6 +210,29 @@ if (is_fuchsia) {
 
     runtime_deps = [ ":fxl_logging_sdk" ]
   }
+
+  nbl_sdk_library("nbl_fxl_sdk") {
+    name = "fxl"
+    category = "hee"
+
+    hdr_dirs = [
+      {
+        source = "."
+        dest = "lib/fxl"
+      },
+    ]
+
+    libs = [
+      "libfxl.so",
+      "libfxl_logging.so",
+    ]
+
+    deps = [
+      ":fxl",
+      ":fxl_logging",
+    ]
+  }
+
 } else {
   group("fxl") {
     public_deps = [

@@ -23,11 +23,6 @@ static constexpr uint32_t kMaxBufferSizeMegabytes = 64;
 TraceManager::TraceManager(component::ApplicationContext* context,
                            const Config& config)
     : context_(context), config_(config) {
-  // TODO(jeffbrown): We should do this in StartTracing() and take care
-  // to restart any crashed providers.  We should also wait briefly to ensure
-  // that these providers have registered themselves before replying that
-  // tracing has started.
-  LaunchConfiguredProviders();
 }
 
 TraceManager::~TraceManager() = default;
@@ -40,6 +35,8 @@ void TraceManager::StartTracing(TraceOptions options,
     return;
   }
 
+  LaunchConfiguredProviders();
+
   uint32_t buffer_size_megabytes = std::min(
       std::max(options.buffer_size_megabytes_hint, kMinBufferSizeMegabytes),
       kMaxBufferSizeMegabytes);
@@ -51,7 +48,11 @@ void TraceManager::StartTracing(TraceOptions options,
       buffer_size_megabytes * 1024 * 1024, [this]() { session_ = nullptr; });
 
   for (auto& bundle : providers_) {
-    session_->AddProvider(&bundle);
+    auto& tracees = options.tracees;
+    auto result = find(tracees->begin(), tracees->end(), bundle.pid);
+    if (result != tracees->end()) {
+      session_->AddProvider(&bundle);
+    }
   }
 
   session_->WaitForProvidersToStart(
@@ -68,6 +69,8 @@ void TraceManager::StopTracing() {
       [this]() {
         FXL_LOG(INFO) << "Stopped trace";
         session_ = nullptr;
+
+        KillConfiguredProviders();
       },
       kStopTimeout);
 }
@@ -81,14 +84,16 @@ void TraceManager::GetKnownCategories(GetKnownCategoriesCallback callback) {
 }
 
 void TraceManager::RegisterTraceProvider(
-    fidl::InterfaceHandle<trace_link::Provider> handle) {
+    fidl::InterfaceHandle<trace_link::Provider> handle, uint64_t pid) {
   auto it = providers_.emplace(
       providers_.end(),
-      TraceProviderBundle{handle.Bind(), next_provider_id_++});
+      TraceProviderBundle{handle.Bind(), next_provider_id_++, pid});
 
+  FXL_LOG(INFO) << "Registered TraceProvider, pid = " << pid;
   it->provider.set_error_handler([this, it]() {
     if (session_)
       session_->RemoveDeadProvider(&(*it));
+    FXL_LOG(INFO) << "Remove TraceProvider, pid = " << it->pid;
     providers_.erase(it);
   });
 
@@ -123,8 +128,17 @@ void TraceManager::LaunchConfiguredProviders() {
     component::ApplicationLaunchInfo launch_info;
     launch_info.url = pair.second->url;
     fidl::Clone(pair.second->arguments, &launch_info.arguments);
-    context_->launcher()->CreateApplication(std::move(launch_info), nullptr);
+
+    component::ApplicationControllerPtr app_controller;
+    context_->launcher()->CreateApplication(std::move(launch_info),
+                                            app_controller.NewRequest());
+
+    provider_controllers_.push_back(std::move(app_controller));
   }
+}
+
+void TraceManager::KillConfiguredProviders() {
+  provider_controllers_.clear();
 }
 
 }  // namespace tracing

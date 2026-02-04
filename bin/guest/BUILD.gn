@@ -12,8 +12,6 @@ source_set("lib") {
     "kernel.h",
     "guest_config.cc",
     "guest_config.h",
-    "guest_view.cc",
-    "guest_view.h",
     "linux.cc",
     "linux.h",
     "zircon.cc",
@@ -21,13 +19,13 @@ source_set("lib") {
   ]
 
   public_deps = [
-    "//garnet/bin/guest/third_party/fdt",
     "//garnet/lib/machina",
     "//garnet/public/lib/fsl",
-    "//garnet/public/lib/ui/view_framework:view_provider",
+    "//third_party/fdt",
     "//third_party/rapidjson",
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/mdi",
+    "//zircon/trusty/lib/lib/libc-trusty",
   ]
 
   defines = [ "_ALL_SOURCE=1" ]
@@ -37,14 +35,55 @@ executable("bin") {
   output_name = "guest"
 
   sources = [
-    "main.cc",
+    "main_uos.cc",
+    "message_handler.cc",
+    "message_handler.h",
+    "tracer.cc",
+    "tracer.h",
   ]
 
   deps = [
     ":lib",
+    "//garnet/bin/guest/proto:vm_config",
+    "//third_party/hee-trusty/nbl_tracer:tracer",
+    "//garnet/lib/measure",
+    "//garnet/lib/trace_converters:chromium",
+    "//garnet/public/lib/tracing/fidl",
+    "//zircon/public/lib/trace-reader",
+    "//zircon/public/lib/trace-provider",
+    "//third_party/boringssl",
+    "//third_party/hee-trusty/nbl_license_srv/lib:libnbl_nmt_tee",
   ]
 
-  defines = [ "_ALL_SOURCE=1" ]
+  defines = [
+    "_ALL_SOURCE=1",
+    "_VHM_USE_CHANNEL_",
+    "RPROC_NOTIFY_WITH_PHYS_IRQ",
+  ]
+}
+
+executable("bin_sos") {
+  output_name = "guest_sos"
+
+  sources = [
+    "main_sos.cc",
+    "tee-smc.h",
+    "top.cc",
+    "top.h",
+    "rev.cc",
+    "rev.h"
+  ]
+
+  deps = [
+    ":lib",
+    "//zircon/system/ulib/task-utils:compiler",
+    "//third_party/hee-trusty/nbl_license_srv/lib:libnbl_nmt_tee",
+  ]
+
+  defines = [
+    "_ALL_SOURCE=1",
+    "_VHM_USE_CHANNEL_"
+  ]
 }
 
 executable("guest_unittests") {

@@ -1,0 +1,6 @@
+{
+    "packages": {
+        "sos": "//garnet/bin/guest/sos",
+        "uos": "//garnet/bin/guest/uos"
+    }
+}

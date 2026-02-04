@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "libcrypto": "//third_party/boringssl:libcrypto"
+    }
+}

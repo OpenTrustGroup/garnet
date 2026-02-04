@@ -1,0 +1,7 @@
+{
+    "imports": [
+        "garnet/packages/prod/boringssl_libcrypto"
+    ],
+    "packages": {
+    }
+}

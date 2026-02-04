@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "secmgr_test_far": "//third_party/hee-trusty/samples/secmgr_test/secmgr_test_far"
+    }
+}

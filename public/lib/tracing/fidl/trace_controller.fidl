@@ -52,4 +52,6 @@ struct TraceOptions {
 
   // Acknowledge start request after at most |start_timeout_milliseconds|.
   uint64 start_timeout_milliseconds = 5000;
+
+  vector<uint64>:100 tracees;
 };

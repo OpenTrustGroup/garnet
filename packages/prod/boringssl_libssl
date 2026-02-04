@@ -1,8 +1,10 @@
 {
+    "comment": ["Only include ssl, but ssl depends crypto."],
     "imports": [
         "garnet/packages/prod/netstack"
     ],
     "packages": {
-        "libssl": "//third_party/boringssl:libssl"
+        "libssl": "//third_party/boringssl:libssl",
+        "boringssl_tool": "//third_party/boringssl:boringssl_tool"
     }
 }

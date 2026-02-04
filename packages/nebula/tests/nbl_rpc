@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "nbl_rpc_srv_test": "//third_party/hee-trusty/nbl_rpc:nbl_rpc_srv_test"
+    }
+}

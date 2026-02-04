@@ -22,32 +22,14 @@ static inline constexpr uint64_t pci_ecam_size(uint64_t start_bus,
 
 // clang-format off
 
-// GIC v2 distributor memory range.
-static constexpr uint64_t kGicv2DistributorPhysBase         = 0xe82b1000;
-static constexpr uint64_t kGicv2DistributorSize             = PAGE_SIZE;
-
-// GIC v3 distributor memory range.
-static constexpr uint64_t kGicv3DistributorPhysBase         = 0xe82b0000;
-static constexpr uint64_t kGicv3DistributorSize             = 0x10000;
-
-// For GICv3, currently assuming we are running only 1 CPU, in future when we have multiple
-// core support we need to add the other Redistributor regions as well
-// GIC v3 Redistributor memory range.
-static constexpr uint64_t kGicv3ReDistributorPhysBase       = 0xe8350000; // GICR_RD_BASE
-static constexpr uint64_t kGicv3ReDistributorSize           = 0x10000;
-
-// GIC v3 Redistributor memory range.
-static constexpr uint64_t kGicv3ReDistributor_SGIPhysBase   = 0xe8360000; // GICR_SGI_BASE
-static constexpr uint64_t kGicv3ReDistributor_SGISize       = 0x10000;
-
 // IO APIC memory range.
 static constexpr uint64_t kIoApicPhysBase                   = 0xfec00000;
 static constexpr uint64_t kIoApicSize                       = PAGE_SIZE;
 
 // PCI memory ranges.
 #if __aarch64__
-static constexpr uint64_t kPciMmioBarPhysBase               = 0x10000000;
-static constexpr uint64_t kPciEcamPhysBase                  = 0x3f000000;
+static constexpr uint64_t kPciMmioBarPhysBase               = 0xb0000000;
+static constexpr uint64_t kPciEcamPhysBase                  = 0xdf000000;
 #elif __x86_64__
 static constexpr uint64_t kPciMmioBarPhysBase               = 0xf0000000;
 static constexpr uint64_t kPciEcamPhysBase                  = 0xd0000000;
@@ -59,11 +41,11 @@ static constexpr uint64_t kTpmPhysBase                      = 0xfed40000;
 static constexpr uint64_t kTpmSize                          = 0x5000;
 
 // PL011 memory range.
-static constexpr uint64_t kPl011PhysBase                    = 0xfff32000;
+static constexpr uint64_t kPl011PhysBase                    = 0xffff32000;
 static constexpr uint64_t kPl011Size                        = PAGE_SIZE;
 
 // PL031 memory range.
-static constexpr uint64_t kPl031PhysBase                    = 0x09010000;
+static constexpr uint64_t kPl031PhysBase                    = 0xfff33000;
 static constexpr uint64_t kPl031Size                        = PAGE_SIZE;
 
 // I8250 ports.

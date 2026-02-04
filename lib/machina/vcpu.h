@@ -5,6 +5,8 @@
 #ifndef GARNET_LIB_MACHINA_VCPU_H_
 #define GARNET_LIB_MACHINA_VCPU_H_
 
+#include <string>
+
 #include <threads.h>
 
 #include <fbl/mutex.h>
@@ -12,6 +14,7 @@
 #include <zircon/compiler.h>
 #include <zircon/syscalls/port.h>
 #include <zircon/types.h>
+#include <zx/interrupt.h>
 
 typedef struct zx_vcpu_state zx_vcpu_state_t;
 
@@ -21,6 +24,8 @@ class Guest;
 
 class Vcpu {
  public:
+  using StartCallback = std::function<void()>;
+
   Vcpu() { cnd_init(&state_cnd_); }
   ~Vcpu() { cnd_destroy(&state_cnd_); }
 
@@ -28,7 +33,16 @@ class Vcpu {
   //
   // Upon successful completion the VCPU will be in the state
   // |WAITING_TO_START|.
-  zx_status_t Create(Guest* guest, zx_vaddr_t entry, uint64_t id);
+  zx_status_t Create(Guest *guest, zx_vaddr_t entry, uint64_t id,
+			int32_t prio, uint64_t time_slice);
+
+  zx_status_t Create(Guest* guest, zx_vaddr_t entry, uint64_t id, int32_t prio) {
+	  return Create(guest, entry, id, prio, 0);
+  }
+
+  zx_status_t Create(Guest* guest, zx_vaddr_t entry, uint64_t id) {
+    return Create(guest, entry, id, 0);
+  }
 
   // TODO(alexlegg): Remove this once the above is used in Garnet.
   zx_status_t Create(Guest* guest, zx_vaddr_t entry) {
@@ -53,7 +67,19 @@ class Vcpu {
   zx_status_t ReadState(uint32_t kind, void* buffer, uint32_t len) const;
   zx_status_t WriteState(uint32_t kind, const void* buffer, uint32_t len);
 
+  void RegisterStartCallback(StartCallback callback) {
+    start_callback_ = std::move(callback);
+  }
+
+  void Dump(std::string& state);
+
   uint64_t id() const { return id_; }
+  zx_handle_t object() const { return vcpu_; }
+  zx_status_t SetTimeSlice(uint64_t time_slice);
+  uint64_t GetTimeSlice();
+  zx_status_t SetGroup(int group);
+  zx_status_t SetBudget(uint64_t budget);
+  static void DumpGroups();
 
  private:
   enum class State {
@@ -122,6 +148,8 @@ class Vcpu {
   cnd_t state_cnd_;
   fbl::Mutex mutex_;
   zx_vcpu_state_t* initial_vcpu_state_ __TA_GUARDED(mutex_);
+
+  StartCallback start_callback_;
 };
 
 }  // namespace machina

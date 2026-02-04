@@ -7,6 +7,10 @@ import("//build/package.gni")
 executable("bin") {
   output_name = "sysmgr"
 
+  public_deps = [
+    "//zircon/trusty/lib/lib/libc-trusty"
+  ]
+
   sources = [
     "app.cc",
     "app.h",

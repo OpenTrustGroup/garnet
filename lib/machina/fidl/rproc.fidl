@@ -1,0 +1,31 @@
+// Copyright 2023 GoldenRiver Technology Co., Ltd.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library machina;
+
+struct RprocDeviceInfo {
+  handle<vmo> shm_vmo;
+  uint16 ctrl_irq;
+  vector<uint16> local_irqs;
+  vector<uint16>? remote_irqs;
+  bool has_ipi_affinity;
+  int16 peer_vmid;
+};
+
+interface RprocDeviceSvc {
+  1: GetInfo() -> (RprocDeviceInfo info);
+  2: GetChannel() -> (handle<channel>? chan);
+};
+
+interface VmStateListener {
+  1: VmOnline(int16 vmid);
+  2: VmOffline(int16 vmid);
+};
+
+[ServiceName="machina.RprocService"]
+interface RprocService {
+  1: GetRemoteDevices(int16 vmid) -> (vector<RprocDeviceSvc>? devs);
+  2: GetHostDevices(int16 vmid) -> (vector<RprocDeviceSvc>? devs);
+  3: RegisterVmStateListener(int16 vmid, VmStateListener listener) -> ();
+};

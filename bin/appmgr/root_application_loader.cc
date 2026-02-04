@@ -28,8 +28,7 @@ void RootApplicationLoader::LoadApplication(fidl::StringPtr url,
   if (path.empty()) {
     // TODO(abarth): Support URL schemes other than file:// by querying the host
     // for an application runner.
-    FXL_LOG(ERROR) << "Cannot load " << url
-                   << " because the scheme is not supported.";
+    //FXL_LOG(ERROR) << "Cannot load " << url << " because the scheme is not supported.";
   } else {
     fxl::UniqueFD fd(open(path.c_str(), O_RDONLY));
     if (!fd.is_valid() && path[0] != '/') {
@@ -66,7 +65,7 @@ void RootApplicationLoader::LoadApplication(fidl::StringPtr url,
       callback(fidl::MakeOptional(std::move(package)));
       return;
     }
-    FXL_LOG(ERROR) << "Could not load url: " << url;
+    //FXL_LOG(ERROR) << "Could not load url: " << url;
   }
 
   callback(nullptr);

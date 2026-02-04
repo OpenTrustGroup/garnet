@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "libnebula-cpp_tests": "//third_party/ree-trusty/libnebula-cpp:libnebula-cpp_tests"
+    }
+}

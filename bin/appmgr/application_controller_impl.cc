@@ -19,6 +19,10 @@
 #include "lib/fsl/tasks/message_loop.h"
 #include "lib/fxl/functional/closure.h"
 
+#ifdef __Nebula__
+#include "nbl/grt_trusty_helper.h"
+#endif
+
 namespace component {
 
 ApplicationControllerImpl::ApplicationControllerImpl(
@@ -37,6 +41,9 @@ ApplicationControllerImpl::ApplicationControllerImpl(
       fs_(std::move(fs)),
       process_(std::move(process)),
       label_(std::move(label)),
+#ifdef __Nebula__
+      url_(std::move(url)),
+#endif
       info_dir_(fbl::AdoptRef(new fs::PseudoDir())),
       exported_dir_(std::move(exported_dir)),
       application_namespace_(std::move(application_namespace)),
@@ -103,6 +110,25 @@ void ApplicationControllerImpl::Kill() {
   process_.kill();
 }
 
+void ApplicationControllerImpl::KillAndWait(KillAndWaitCallback callback) {
+  FXL_LOG(INFO) << "KillAndWait";
+  if(!process_.is_valid()) {
+    FXL_LOG(INFO) << "Process handle is invalid";
+    callback();
+    return;
+  }
+
+  process_.kill();
+  zx_status_t status = zx_object_wait_one(process_.get(), ZX_PROCESS_TERMINATED, zx_deadline_after(ZX_SEC(5)) , NULL);
+  if (status == ZX_OK) {
+    FXL_LOG(INFO) << "KillAndWait， get ZX_PROCESS_TERMINATED within 5s";
+  } else {
+    FXL_LOG(ERROR) << "KillAndWait， fail to get ZX_PROCESS_TERMINATED ";
+  }
+
+  callback();
+}
+
 void ApplicationControllerImpl::Detach() {
   binding_.set_error_handler(fxl::Closure());
 }
@@ -130,6 +156,13 @@ void ApplicationControllerImpl::Wait(WaitCallback callback) {
   SendReturnCodeIfTerminated();
 }
 
+void ApplicationControllerImpl::WaitLaunchResponse(
+    WaitLaunchResponseCallback callback) {
+#ifdef __Nebula__
+  callback(ZX_OK);
+#endif
+}
+
 // Called when process terminates, regardless of if Kill() was invoked.
 async_wait_result_t ApplicationControllerImpl::Handler(
     async_t* async,
@@ -141,6 +174,9 @@ async_wait_result_t ApplicationControllerImpl::Handler(
     bool terminated = SendReturnCodeIfTerminated();
     FXL_DCHECK(terminated);
   }
+#ifdef __Nebula__
+  trusty_app_exit(url_);
+#endif
 
   process_.reset();
 

@@ -1,0 +1,6 @@
+{
+    "imports": [
+        "garnet/packages/nebula/tools/syzkaller_nbl_fuzz",
+        "garnet/packages/nebula/tools/syzkaller_nbl_stress"
+    ]
+}

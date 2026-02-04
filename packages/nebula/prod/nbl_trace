@@ -1,0 +1,10 @@
+{
+    "packages": {
+        "libnbl_trace_provider": "//third_party/hee-trusty/nbl_trace_provider:libnbl_trace_provider",
+        "nbl_tracer": "//third_party/hee-trusty/nbl_tracer:nbl_tracer",
+        "trace_manager": "//garnet/bin/trace_manager",
+        "ktrace_provider": "//garnet/bin/ktrace_provider",
+        "ktrace_reader": "//garnet/lib/debugger_utils:ktrace_reader",
+        "ktrace_vcpu_reader": "//garnet/lib/debugger_utils:ktrace_vcpu_reader"
+    }
+}

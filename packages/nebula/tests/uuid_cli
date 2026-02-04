@@ -1,0 +1,7 @@
+{
+    "packages": {
+        "uuid_cli": "//third_party/hee-trusty/samples/uuid_cli",
+        "uuid_cli_far": "//third_party/hee-trusty/samples/uuid_cli:uuid_cli_far",
+        "uuid_cli.nu": "//third_party/hee-trusty/samples/uuid_cli:uuid_cli.nu"
+    }
+}

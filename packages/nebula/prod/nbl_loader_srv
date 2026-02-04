@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "nbl_loader_srv": "//third_party/hee-trusty/nbl_loader_srv"
+    }
+}

@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "mlvm_app": "//third_party/hee-trusty/camproxy:mlvm_app"
+    }
+}

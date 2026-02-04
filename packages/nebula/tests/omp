@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "omp-tests": "//third_party/iomp5:omp-tests"
+    }
+}

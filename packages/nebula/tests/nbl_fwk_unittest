@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "nbl_fwk_unittest": "//third_party/hee-trusty/nbl_fwk_unittest"
+    }
+}

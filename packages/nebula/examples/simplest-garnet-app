@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "simplest-garnet-app": "//garnet/examples/simplest-garnet-app"
+    }
+}

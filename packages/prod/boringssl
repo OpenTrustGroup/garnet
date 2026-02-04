@@ -1,8 +1,7 @@
 {
+    "comment": ["include crypto and ssl of boringssl."],
     "imports": [
-        "garnet/packages/prod/boringssl_libssl"
-    ],
-    "packages": {
-        "boringssl_tool": "//third_party/boringssl:boringssl_tool"
-    }
+        "garnet/packages/prod/boringssl_libssl",
+        "garnet/packages/prod/boringssl_libcrypto"
+    ]
 }

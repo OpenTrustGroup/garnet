@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/nebula.gni")
 import("//build/package.gni")
 
 source_set("lib") {
@@ -30,6 +31,10 @@ source_set("lib") {
     "sandbox_metadata.h",
     "url_resolver.cc",
     "url_resolver.h",
+    "nbl/grt_trusty_helper.cc",
+    "nbl/trusty_syscall.S",
+    "nbl/otrp_vfs_proxy.cc",
+    "nbl/nbl_application_controller_impl.cc"
   ]
 
   public_deps = [
@@ -43,9 +48,18 @@ source_set("lib") {
     "//zircon/public/lib/launchpad",
     "//zircon/public/lib/loader-service",
     "//zircon/public/lib/zx",
+    "//zircon/trusty/lib/lib/libc-trusty"
   ]
 
-  defines = [ "_ALL_SOURCE=1" ]
+  defines = [
+    "_ALL_SOURCE=1"
+  ]
+
+  if (enable_tracer) {
+    defines += [
+      "ENABLE_TRACER=1"
+    ]
+  }
 }
 
 executable("bin") {

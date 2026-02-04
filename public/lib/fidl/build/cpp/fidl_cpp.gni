@@ -4,6 +4,7 @@
 
 import("//build/compiled_action.gni")
 import("//build/fidl/toolchain.gni")
+import("//build/nebula/nbl_sdk_library.gni")
 
 # Generates some C++ bindings for a FIDL library.
 #
@@ -56,7 +57,7 @@ template("fidl_cpp") {
     compiled_action(generation_target_name) {
       forward_variables_from(invoker, [ "testonly" ])
 
-      visibility = [ ":$main_target_name" ]
+      visibility = [ ":$main_target_name", ":${main_target_name}_sdk" ]
 
       tool = "//garnet/go/src/fidl:fidlgen"
 
@@ -88,7 +89,7 @@ template("fidl_cpp") {
     not_needed(invoker, "*")
   }
 
-  source_set(main_target_name) {
+  static_library(main_target_name) {
     forward_variables_from(invoker,
                            [
                              "testonly",
@@ -119,6 +120,28 @@ template("fidl_cpp") {
 
     if (defined(invoker.public_deps)) {
       public_deps += invoker.public_deps
+    }
+  }
+
+  if (defined(invoker.sdk_candidate) && invoker.sdk_candidate) {
+    nbl_sdk_library("${main_target_name}_sdk") {
+      name = library_name
+      category = "hee"
+
+      libs = [
+        "lib${main_target_name}.a"
+      ]
+
+      files = []
+      files += [{
+        source = "$file_stem.h"
+        dest = "include/fuchsia/cpp/${library_name}.h"
+      }]
+
+      deps = [
+        ":$generation_target_name(${toolchain_variant.base})",
+        ":${main_target_name}"
+      ]
     }
   }
 }

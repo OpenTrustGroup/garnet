@@ -2,7 +2,9 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("cpp") {
+import("//build/nebula/nbl_sdk_library.gni")
+
+static_library("cpp") {
   sources = [
     "application_context.cc",
     "application_context.h",
@@ -18,5 +20,25 @@ source_set("cpp") {
     "//garnet/public/lib/fidl/cpp",
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/svc/cpp",
+  ]
+}
+
+nbl_sdk_library("app_cpp_sdk") {
+  name = "app"
+  category = "hee"
+
+  hdr_dirs = [
+    {
+      source = "."
+      dest = "lib/app/cpp"
+    }
+  ]
+
+  libs = [
+    "libcpp.a",
+  ]
+
+  deps = [
+    ":cpp",
   ]
 }

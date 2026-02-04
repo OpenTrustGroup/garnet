@@ -1,0 +1,33 @@
+{
+  "cpus": "4",
+  "vcpu": {
+    "entry": "0x80010000"
+  },
+  "vmem": [
+      "0x00000000,0x00000000,0x40000000,1,0",
+      "0x80000000,0x80000000,0x80000000,1,1",
+      "0x400000000,0x400000000,0x40000000,1,0"
+  ],
+  "vgic": {
+    "gicd_paddr": "0x8000000",
+    "gicr_paddr": "0x80a0000",
+    "percpu_interrupt": [
+      "15"
+    ],
+    "interrupt": [
+      "34-512"
+    ]
+  },
+  "shared-irqs": [
+    "232,0x09002000,0x0,0x0,0xffff0000"
+  ],
+  "vsock-irqs": [
+    "380",
+    "382"
+  ],
+  "tipc-vq-notifier-irq": "245",
+  "ipc-mbox": "150,151",
+  "vhm-irq": "254",
+  "guest-reserved-memory": "256",
+  "vtee-notifier-irq": "513"
+}

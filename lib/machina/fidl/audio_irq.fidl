@@ -1,0 +1,22 @@
+// Copyright 2023 GoldenRiver Technology Co., Ltd.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library machina;
+
+interface AudioIrqListener {
+  1: OnNewNoBitmaskAudioIrq(uint32 irq_nr);
+
+  2: OnPendingIrqEvent(uint32 irq_nr, uint64 pending_bitmap);
+};
+
+[ServiceName="machina.AudioIrqService"]
+interface AudioIrqService {
+  1: RegisterAudioIrqListener(uint32 vmid, AudioIrqListener listener, handle<channel> chan) -> ();
+
+  2: PopulateAudioIrq(uint32 vmid) -> ();
+
+  3: UpdateAfeIrq(uint32 irq_nr, uint32 irq_status_offset, uint32 irq_clear_offset, uint64 interested_bitmap, uint32 vmid, uint32 index) -> ();
+
+  4: UpdateAfeIrqRegs(uint32 irq_nr) -> ();
+};

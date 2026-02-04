@@ -1,0 +1,24 @@
+
+TSM相关秘钥和证书的生成：
+
+1.生成TSM相关证书及秘钥执行genarate_tsm.sh脚本。
+2.之后提示"Enter pass phrase for tsm/root_ca/tsm_root_ca.key:" 设置tsm root 私钥的密码输入两遍。
+3.之后提示"Enter pass phrase for tsm/root_ca/tsm_root_ca.key:" 输入上一步设置的密码。
+4.输入生成root ca所需的信息。如“Country Name”，“State or Province Name”等。这样CA相关证书秘钥生成完成在tsm/root_ca下。
+5.之后生成签名证书和秘钥显示Enter keystore password这里要设置TSM签名的keystore的密码输入两遍。
+6.之后输入签名keypair的相关信息。例如“first and last name”,"name of your organizational unit"等,之后显示correct? [no]:要输入yes。
+7.提示“Enter key password for <tsm_sign>”输入要设置的TSM签名秘钥的密码。输入两遍。
+6.提示“Enter keystore password:”输入第5步设置的密码。
+7.提示“Enter key password for <tsm_sign>:”输入第7步设置的密码。
+8.提示“Enter pass phrase for tsm_root_ca.key"输入第2步设置的密码。
+9.提示“Sign the certificate? [y/n]:” 输入y 。提示“1 out of 1 certificate requests certified, commit? ” 输入y
+10.提示“Enter pass phrase for tsm/root_ca/tsm_root_ca.key"输入第2步设置的密码。
+10.之后提示“Please enter keystore-password”输入第5步设置的密码。
+11.之后提示“Please enter key-password”输入第7步设置的密码。
+12.数据生成成功，输出数据在脚本同级TSM文件夹内。
+
+生成的数据介绍：
+1.TSM签名OTrP数据使用的私钥：key_store_tool/tsm/sign_cert/private_key.pem
+2.TSM的验证OTrP数据签名证书：key_store_tool/tsm/sign_cert/tsm_sign.pem
+3.TSM的OCSP数据：tsm/sign_cert/ocsp/tsm_sign_resp.pem
+4.TSM的root ca证书：key_store_tool/tsm/root_ca/tsm_root_ca.crt

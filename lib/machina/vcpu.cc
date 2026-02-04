@@ -7,13 +7,19 @@
 #include <limits.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include <fbl/auto_lock.h>
 #include <fbl/string_buffer.h>
+#include <zircon/device/sysinfo.h>
 #include <zircon/process.h>
 #include <zircon/syscalls.h>
 #include <zircon/syscalls/hypervisor.h>
 #include <zircon/syscalls/port.h>
+
+#include <trusty_std.h>
+#include <uapi/err.h>
 
 #include "garnet/lib/machina/guest.h"
 #include "garnet/lib/machina/io.h"
@@ -22,6 +28,33 @@
 #ifdef __x86_64__
 #include "garnet/lib/machina/arch/x86/decode.h"
 #endif
+
+struct vcpu_set_time_slice_req {
+  zx_handle_t vcpu_handle;
+  uint64_t time_slice;
+};
+
+struct vcpu_get_time_slice_rsp {
+  uint64_t time_slice;
+};
+struct vcpu_get_time_slice_req {
+  zx_handle_t vcpu_handle;
+};
+struct vcpu_get_time_slice_cmd {
+  struct vcpu_get_time_slice_req req;
+  struct vcpu_get_time_slice_rsp rsp;
+};
+
+enum {
+  VCPU_GROUP_CMD_ADD = 0,
+  VCPU_GROUP_CMD_REMOVE = 1,
+  VCPU_GROUP_CMD_DUMP = 2,
+};
+struct config_vcpu_group_req {
+  zx_handle_t vcpu_handle;
+  uint32_t cmd;
+  uint32_t group;
+};
 
 namespace machina {
 
@@ -111,18 +144,29 @@ struct Vcpu::ThreadEntryArgs {
   Guest* guest;
   Vcpu* vcpu;
   zx_vaddr_t entry;
+  int32_t prio;
+  uint64_t time_slice;
 };
 
-zx_status_t Vcpu::Create(Guest* guest, zx_vaddr_t entry, uint64_t id) {
+zx_status_t Vcpu::Create(Guest *guest, zx_vaddr_t entry, uint64_t id,
+    int32_t prio, uint64_t time_slice) {
   guest_ = guest;
   id_ = id;
   ThreadEntryArgs args = {
       .guest = guest,
       .vcpu = this,
       .entry = entry,
+      .prio = prio,
+      .time_slice = time_slice,
   };
   fbl::StringBuffer<ZX_MAX_NAME_LEN> name_buffer;
-  name_buffer.AppendPrintf("vcpu-%lu", id);
+  auto vmid = guest->vmid();
+  // vmid should be a reasonable number
+  if (vmid >= 16)
+    name_buffer.AppendPrintf("vcpu-%lu", id);
+  else
+    // distinguish multiple VMs by name
+    name_buffer.AppendPrintf("%u.vcpu-%lu", guest->vmid(), id);
   auto thread_entry = [](void* arg) {
     ThreadEntryArgs* thread_args = reinterpret_cast<ThreadEntryArgs*>(arg);
     return thread_args->vcpu->ThreadEntry(thread_args);
@@ -142,23 +186,28 @@ zx_status_t Vcpu::Create(Guest* guest, zx_vaddr_t entry, uint64_t id) {
 }
 
 Vcpu* Vcpu::GetCurrent() {
-  FXL_DCHECK(thread_vcpu != nullptr) << "Thread does not have a VCPU";
   return thread_vcpu;
 }
 
 zx_status_t Vcpu::ThreadEntry(const ThreadEntryArgs* args) {
   {
+    if (args->prio)
+      zx_thread_set_priority(args->prio);
+
     fbl::AutoLock lock(&mutex_);
     if (state_ != State::UNINITIALIZED) {
       return ZX_ERR_BAD_STATE;
     }
 
     zx_status_t status =
-        zx_vcpu_create(args->guest->handle(), 0, args->entry, &vcpu_);
+        zx_vcpu_create(args->guest->handle(), /*unused_hcr=*/0, args->entry, &vcpu_);
     if (status != ZX_OK) {
       SetStateLocked(State::ERROR_FAILED_TO_CREATE);
       return status;
     }
+
+    if (args->time_slice)
+      SetTimeSlice(args->time_slice);
 
     SetStateLocked(State::WAITING_TO_START);
     WaitForStateChangeLocked(State::WAITING_TO_START);
@@ -175,9 +224,36 @@ zx_status_t Vcpu::ThreadEntry(const ThreadEntryArgs* args) {
       }
     }
 
+    if (start_callback_)
+      start_callback_();
+
     SetStateLocked(State::STARTED);
   }
 
+  zx_handle_t current_thread = zx_thread_self();
+  zx_handle_t current_process = zx_process_self();
+
+  char process_name[ZX_MAX_NAME_LEN];
+  zx_info_handle_basic_t thread_info;
+
+  zx_object_get_property(current_process, ZX_PROP_NAME, process_name, sizeof(process_name));
+  zx_object_get_info(current_thread, ZX_INFO_HANDLE_BASIC, &thread_info, sizeof(thread_info), nullptr, nullptr);
+#if 0
+  uintptr_t pa = args->guest->GetNblTraceBuffer();
+
+  if(pa != 0){
+    struct nbl_trace_buf * pbuffer = reinterpret_cast<struct nbl_trace_buf*>(pa);
+    if(!strncmp(process_name, "sos", 3)){
+      pbuffer->vcpu_thread.delay[0][id_].thread_id = thread_info.koid;
+    }else{
+      pbuffer->vcpu_thread.delay[1][id_].thread_id = thread_info.koid;
+      pbuffer->vcpu_thread.delay[1][0].thread_id = machina::Guest::thread_id;
+    }
+  }else{
+    machina::Guest::thread_id = thread_info.koid;
+  }
+#endif
+    
   return Loop();
 }
 
@@ -203,24 +279,32 @@ zx_status_t Vcpu::Loop() {
   zx_port_packet_t packet;
   while (true) {
     zx_status_t status = zx_vcpu_resume(vcpu_, &packet);
-    if (status == ZX_ERR_STOP) {
-      SetState(State::TERMINATED);
-      return ZX_OK;
-    }
-    if (status != ZX_OK) {
+    if (unlikely(status != ZX_OK)) {
+      if (status == ZX_ERR_STOP) {
+        SetState(State::TERMINATED);
+        return ZX_OK;
+      }
       FXL_LOG(ERROR) << "Failed to resume VCPU-" << id_ << ": " << status;
       exit(status);
     }
 
     status = HandlePacket(packet);
-    if (status == ZX_ERR_STOP) {
-      SetState(State::TERMINATED);
-      return ZX_OK;
-    }
-    if (status != ZX_OK) {
+    if (unlikely(status != ZX_OK)) {
+      if (status == ZX_ERR_STOP) {
+        SetState(State::TERMINATED);
+        return ZX_OK;
+      }
       FXL_LOG(ERROR) << "Failed to handle packet " << packet.type << ": "
                      << status;
-      exit(status);
+      // NOTE(GR-0002): Don't exit the Vcpu thread if failed to handle packet.
+      // exit(status);
+
+      // for unhandled guest mmio trap, inject data abort to vcpu
+      if (packet.type == ZX_PKT_TYPE_GUEST_MEM) {
+        FXL_LOG(INFO) << "inject data abort to guest, fault addr=0x" << std::hex
+                      << packet.guest_mem.addr;
+        zx_vcpu_inject_exception(vcpu_, packet.guest_mem.addr);
+      }
     }
   }
 }
@@ -262,14 +346,14 @@ zx_status_t Vcpu::WriteState(uint32_t kind, const void* buffer, uint32_t len) {
 
 zx_status_t Vcpu::HandlePacket(const zx_port_packet_t& packet) {
   switch (packet.type) {
+    case ZX_PKT_TYPE_GUEST_VCPU:
+      return HandleVcpu(packet.guest_vcpu, packet.key);
     case ZX_PKT_TYPE_GUEST_MEM:
       return HandleMem(packet.guest_mem, packet.key);
 #if __x86_64__
     case ZX_PKT_TYPE_GUEST_IO:
       return HandleIo(packet.guest_io, packet.key);
 #endif  // __x86_64__
-    case ZX_PKT_TYPE_GUEST_VCPU:
-      return HandleVcpu(packet.guest_vcpu, packet.key);
     default:
       FXL_LOG(ERROR) << "Unhandled guest packet " << packet.type;
       return ZX_ERR_NOT_SUPPORTED;
@@ -294,6 +378,10 @@ zx_status_t Vcpu::HandleMem(const zx_packet_guest_mem_t& mem,
 #if __aarch64__
   do_write = mem.read;
   status = HandleMmioArm(mem, trap_key, &vcpu_state.x[mem.xt]);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Unhandled Mmio addr=" << std::hex << mem.addr
+                   << " reg=" << std::hex << mem.data;
+  }
 #elif __x86_64__
   Instruction inst;
   status = inst_decode(mem.inst_buf, mem.inst_len, &vcpu_state, &inst);
@@ -362,6 +450,22 @@ zx_status_t Vcpu::HandleIo(const zx_packet_guest_io_t& io, uint64_t trap_key) {
 zx_status_t Vcpu::HandleVcpu(const zx_packet_guest_vcpu_t& packet,
                              uint64_t trap_key) {
   switch (packet.type) {
+    case ZX_PKT_GUEST_VCPU_VHM_REQ: {
+      zx_vcpu_state_t vcpu_state;
+      zx_status_t status = ReadState(ZX_VCPU_STATE, &vcpu_state,
+                                     sizeof(vcpu_state));
+      if (unlikely(status != ZX_OK)) {
+        return status;
+      }
+
+      status = guest_->HandleNebulaHyperCall(&vcpu_state);
+      if (unlikely(status != ZX_OK)) {
+        return status;
+      }
+
+      return WriteState(ZX_VCPU_STATE, &vcpu_state, sizeof(vcpu_state));
+    }
+
     case ZX_PKT_GUEST_VCPU_INTERRUPT:
       return guest_->SignalInterrupt(packet.interrupt.mask,
                                      packet.interrupt.vector);
@@ -372,9 +476,100 @@ zx_status_t Vcpu::HandleVcpu(const zx_packet_guest_vcpu_t& packet,
         return ZX_ERR_BAD_STATE;
       }
       return guest_->StartVcpu(packet.startup.entry, packet.startup.id);
+
     default:
       return ZX_ERR_NOT_SUPPORTED;
   }
+}
+
+void Vcpu::Dump(std::string& state) {
+  zx_vcpu_dump_state(vcpu_, const_cast<char*>(state.data()), state.size());
+}
+
+zx_status_t Vcpu::SetTimeSlice(uint64_t time_slice) {
+  int rc = NO_ERROR;
+  zx_status_t result = ZX_OK;
+  struct vcpu_set_time_slice_req req;
+  req.vcpu_handle = vcpu_;
+  req.time_slice = time_slice;
+
+  rc = _trusty_ioctl(SYS_PLATFORM_FD, SYS_PLATFORM_SET_VCPU_TIMESLICE,
+      (void*) &req);
+  if (rc) {
+    result = ZX_ERR_BAD_HANDLE;
+  }
+
+  return result;
+}
+
+uint64_t Vcpu::GetTimeSlice() {
+  int rc = NO_ERROR;
+  uint64_t result = 0;
+  struct vcpu_get_time_slice_cmd cmd;
+  cmd.req.vcpu_handle = vcpu_;
+
+  rc = _trusty_ioctl(SYS_PLATFORM_FD, SYS_PLATFORM_GET_VCPU_TIMESLICE,
+      (void*) &cmd);
+  if (rc) {
+    result = 0;
+  } else {
+    result = cmd.rsp.time_slice;
+  }
+
+  return result;
+}
+
+zx_status_t Vcpu::SetGroup(int group) {
+  int rc = NO_ERROR;
+  zx_status_t result = ZX_OK;
+  struct config_vcpu_group_req req;
+
+  if (group >= 0) {
+    req.vcpu_handle = vcpu_;
+    req.cmd = VCPU_GROUP_CMD_ADD;
+    req.group = group;
+  } else {
+    req.vcpu_handle = vcpu_;
+    req.cmd = VCPU_GROUP_CMD_REMOVE;
+    req.group = group;
+  }
+
+  rc = _trusty_ioctl(SYS_PLATFORM_FD, SYS_PLATFORM_CONFIG_VCPU_GROUP,
+      (void*) &req);
+  if (rc) {
+    result = ZX_ERR_BAD_HANDLE;
+  }
+
+  return result;
+}
+
+zx_status_t Vcpu::SetBudget(uint64_t budget) {
+  int rc = NO_ERROR;
+  zx_status_t result = ZX_OK;
+  struct sched_param_req req;
+
+  req.type = SCHED_PARAM_TYPE_BUDGET;
+  req.budget_info.vmid = 0;
+  req.budget_info.vcpuid = 0;
+  req.budget_info.vcpu_handle = vcpu_;
+  req.budget_info.budget = budget;
+
+  rc = _trusty_ioctl(SYS_PLATFORM_FD, SYS_PLATFORM_SET_SCHED_PARAM,
+      (void*) &req);
+  if (rc) {
+    result = ZX_ERR_BAD_HANDLE;
+  }
+
+  return result;
+}
+
+void Vcpu::DumpGroups() {
+  struct config_vcpu_group_req req;
+  req.vcpu_handle = ZX_HANDLE_INVALID;
+  req.cmd = VCPU_GROUP_CMD_DUMP;
+  req.group = 0;
+
+  _trusty_ioctl(SYS_PLATFORM_FD, SYS_PLATFORM_CONFIG_VCPU_GROUP, (void*) &req);
 }
 
 }  // namespace machina

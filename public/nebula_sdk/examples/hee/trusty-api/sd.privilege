@@ -1,0 +1,5 @@
+{
+    "NBL_APP_AUTO_START":"1",
+    "NBL_APP_NEW_PROCESS":"1",
+    "NBL_APP_CALL_TRUSTY_API":"1"
+}

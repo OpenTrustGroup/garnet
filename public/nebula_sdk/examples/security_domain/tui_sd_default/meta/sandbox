@@ -1,0 +1,5 @@
+{
+    "pkgfs": [ "packages" ],
+    "system": [ "data/nbl_gui" ],
+    "dev": [ "class/framebuffer", "class/input" ]
+}

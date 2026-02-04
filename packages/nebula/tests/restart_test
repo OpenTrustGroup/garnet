@@ -1,0 +1,6 @@
+{
+    "packages": {
+        "restart_test": "//third_party/hee-trusty/samples/restart_test",
+        "restart_test_far": "//third_party/hee-trusty/samples/restart_test:restart_test_far"
+    }
+}

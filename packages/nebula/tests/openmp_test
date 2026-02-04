@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "openmp_test": "//third_party/hee-trusty/samples/openmp_test"
+    }
+}

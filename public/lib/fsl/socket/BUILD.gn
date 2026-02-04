@@ -5,6 +5,13 @@
 source_set("socket") {
   visibility = [ "//garnet/public/lib/fsl/*" ]
 
+  # NOTE(GRT): Workaround to remove ASAN build for fxl/fsl
+  foreach(config, configs) {
+    if (config == "//build/config/sanitizers:asan") {
+      configs -= [ "//build/config/sanitizers:asan" ]
+    }
+  }
+
   sources = [
     "blocking_drain.cc",
     "blocking_drain.h",

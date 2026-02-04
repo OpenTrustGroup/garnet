@@ -22,12 +22,18 @@ class SandboxMetadata {
   const std::vector<std::string>& system() const { return system_; }
   const std::vector<std::string>& pkgfs() const { return pkgfs_; }
   const std::vector<std::string>& features() const { return features_; }
+#ifdef __Nebula__
+  const std::vector<std::string>& otrp() const { return otrp_; }
+#endif
 
  private:
   std::vector<std::string> dev_;
   std::vector<std::string> system_;
   std::vector<std::string> pkgfs_;
   std::vector<std::string> features_;
+#ifdef __Nebula__
+  std::vector<std::string> otrp_;
+#endif
 };
 
 }  // namespace component

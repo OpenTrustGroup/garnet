@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "trusty_syscall_test": "//third_party/hee-trusty/samples/trusty_syscall_test"
+    }
+}

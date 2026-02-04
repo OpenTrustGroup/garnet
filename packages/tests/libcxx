@@ -1,0 +1,13 @@
+{
+    "packages": {
+        "libcxx-tests0" : "//third_party/libcxx-tests:libcxx-tests0",
+        "libcxx-tests1" : "//third_party/libcxx-tests:libcxx-tests1",
+        "libcxx-tests2" : "//third_party/libcxx-tests:libcxx-tests2",
+        "libcxx-tests3" : "//third_party/libcxx-tests:libcxx-tests3",
+        "libcxx-tests4" : "//third_party/libcxx-tests:libcxx-tests4",
+        "libcxx-tests5" : "//third_party/libcxx-tests:libcxx-tests5",
+        "libcxx-tests6" : "//third_party/libcxx-tests:libcxx-tests6",
+        "libcxx-tests7" : "//third_party/libcxx-tests:libcxx-tests7",
+        "libcxx-tests8" : "//third_party/libcxx-tests:libcxx-tests8"
+    }
+}

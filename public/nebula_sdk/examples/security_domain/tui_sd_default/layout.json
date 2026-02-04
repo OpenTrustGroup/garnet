@@ -1,0 +1,20 @@
+{
+    "stylesheet": [
+        "/pkg/assets/layout.css"
+    ],
+
+    "children": [{
+        "type": "Container",
+        "class": "root",
+        "children": [{
+                "type": "Container",
+                "class": "title-box",
+                "children": [{
+                        "type": "TextView",
+                        "text": "Hello World."
+                    }
+                ]
+            }
+        ]
+    }]
+}

@@ -3,52 +3,143 @@
 // found in the LICENSE file.
 
 #include "garnet/lib/machina/arch/arm64/gic_distributor.h"
-#include <fbl/auto_lock.h>
 
-#include "garnet/lib/machina/address.h"
+#include <endian.h>
+#include <fcntl.h>
+#include <strings.h>
+
+#include <fbl/unique_fd.h>
+#include <zircon/boot/driver-config.h>
+#include <zircon/device/sysinfo.h>
+#include <zircon/process.h>
+
 #include "garnet/lib/machina/bits.h"
 #include "garnet/lib/machina/guest.h"
 #include "garnet/lib/machina/vcpu.h"
 #include "lib/fxl/logging.h"
 
+#define DEBUG_CFG_MISMATCH 0
+#define GICD_LPI_ENABLE   (1 << 17)
+#define GICD_SPI_MAX_NUM  (0x1f << 0)  //SPI max 1023=32*(N+1)-1
+
+#define BIND_INTERRUPT_TO_LITTLE_CORE 0
+
 namespace machina {
 
 static constexpr uint32_t kGicv2Revision = 2;
 static constexpr uint32_t kGicv3Revision = 3;
-static constexpr uint32_t kGicdCtlr      = 0x7;
+static constexpr uint32_t kGicdCtlr = 0x7;
+static constexpr uint32_t kGicdCtlrARENSMask = 1u << 4;
+static constexpr uint32_t kGicdIrouteIRMMask = 1u << 31;
 
 // clang-format off
 
-enum GicdRegister : uint64_t {
+// For arm64, memory addresses must be in a 36-bit range. This is due to limits
+// placed within the MMU code based on the limits of a Cortex-A53.
+//
+//See ARM DDI 0487B.b, Table D4-25 for the maximum IPA range that can be used.
+
+// GIC v2 distributor memory range.
+static constexpr uint64_t kGicv2DistributorPhysBase      = 0x800001000;
+static constexpr uint64_t kGicv2DistributorSize          = 0x1000;
+
+// GIC v3 distributor memory range.
+static constexpr uint64_t kGicv3DistributorPhysBase      = 0xfe8000000;
+static constexpr uint64_t kGicv3DistributorSize          = 0x10000;
+
+// GIC v3 Redistributor memory range.
+//
+// See GIC v3.0/v4.0 Architecture Spec 8.10.
+static constexpr uint64_t kGicv3RedistributorPhysBase    = 0xfe80a0000; // GICR_RD_BASE
+static constexpr uint64_t kGicv3RedistributorSize        = 0x10000;
+static constexpr uint64_t kGicv3RedistributorSgiPhysBase = 0xfe80b0000; // GICR_SGI_BASE
+static constexpr uint64_t kGicv3RedistributorSgiSize     = 0x10000;
+static constexpr uint64_t kGicv3RedistributorStride      = 0x20000;
+static_assert(kGicv3RedistributorPhysBase + kGicv3RedistributorSize == kGicv3RedistributorSgiPhysBase,
+              "GICv3 Redistributor base and SGI base must be continguous");
+static_assert(kGicv3RedistributorStride >= kGicv3RedistributorSize + kGicv3RedistributorSgiSize,
+              "GICv3 Redistributor stride must be >= the size of a single mapping");
+
+// GIC Distributor registers.
+enum class GicdRegister : uint64_t {
     CTL           = 0x000,
     TYPE          = 0x004,
-    IGROUPR0      = 0x080,
-    IGROUPR31     = 0x0FC,
+    IIDR          = 0x008,
+    TYPE2         = 0x00c,
+    IGROUP0       = 0x080,
+    IGROUP31      = 0x0FC,
     ISENABLE0     = 0x100,
-    ISENABLE31    = 0x11c,
+    ISENABLE31    = 0x17c,
     ICENABLE0     = 0x180,
-    ICENABLE31    = 0x19c,
+    ICENABLE31    = 0x1fc,
+    ISPEND0       = 0x200,
+    ISPEND31      = 0x27c,
     ICPEND0       = 0x280,
-    ICPEND31      = 0x2bc,
+    ICPEND31      = 0x2fc,
     ICFG0         = 0xc00,
     ICFG1         = 0xc04,
-    ICFG31        = 0xc7c,
+    ICFG2         = 0xc08,
+    ICFG63        = 0xcfc,
+    ISACTIVE0     = 0x300,
+    ISAACTIVE31   = 0x37c,
     ICACTIVE0     = 0x380,
-    ICACTIVE15    = 0x3bc,
+    ICACTIVE15    = 0x3fc,
     IPRIORITY0    = 0x400,
-    IPRIORITY255  = 0x4fc,
+    IPRIORITY255  = 0x7f8,
     ITARGETS0     = 0x800,
     ITARGETS7     = 0x81c,
     ITARGETS8     = 0x820,
     ITARGETS63    = 0x8fc,
-    IGRPMODR0     = 0xd00,
-    IGRPMODR31    = 0xd7c,
+    IGRPMOD0      = 0xd00,
+    IGRPMOD31     = 0xd7c,
     SGI           = 0xf00,
-    PID2_v2       = 0xfe8,
+    PID2_V2       = 0xfe8,
+    IGROUPE0      = 0x1000,
+    IGROUPE31     = 0x107c,
+    ISENABLEE0    = 0x1200,
+    ISENABLEE31   = 0x127c,
+    ICENABLEE0    = 0x1400,
+    ICENABLEE31   = 0x147c,
+    ICACTIVEE0    = 0x1c00,
+    ICACTIVEE31   = 0x1c7c,
     // This is the offset of PID2 register when are running GICv3,
     // since the offset mappings of GICD & GICR are 0x1000 apart
-    PID2_v2_v3    = 0x1fe8,
-    PID2_v3       = 0xffe8,
+    PID2_V2_V3    = 0x1fe8,
+    PID2_V3       = 0xffe8,
+    IPRIORITYE0   = 0x2000,
+    IPRIORITYE255 = 0x23fc,
+    ICFGE0        = 0x3000,
+    ICFGE63       = 0x30fc,
+    IGRPMODE0     = 0x3400,
+    IGRPMODE31    = 0x347c,
+    IROUTE32      = 0x6100,
+    IROUTE1019    = 0x7fd8,
+    IROUTEE0      = 0x8000,
+    IROUTEE1023   = 0x9ffc,
+    CFGID         = 0xf000
+};
+
+// GIC Redistributor registers.
+enum class GicrRegister : uint64_t {
+    // Offset from RD_BASE
+    CTL           = 0x000,
+    TYPE          = 0x008,
+    WAKE          = 0x014,
+    PROPBASER     = 0x070,
+    PENDBASER     = 0x078,
+    INVLPIR       = 0x0a0,
+    SYNCR         = 0x0c0,
+    PID2_V3       = 0xffe8,
+    // Offset from SGI_BASE
+    IGROUP0       = 0x10080,
+    ISENABLE0     = 0x10100,
+    ICENABLE0     = 0x10180,
+    ICPEND0       = 0x10280,
+    ICACTIVE0     = 0x10380,
+    IPRIORITY0    = 0x10400,
+    IPRIORITY255  = 0x104fc,
+    ICFG0         = 0x10c00,
+    ICFG1         = 0x10c04,
 };
 
 // Target CPU for the software-generated interrupt.
@@ -73,68 +164,473 @@ struct SoftwareGeneratedInterrupt {
   }
 };
 
-static inline uint32_t typer_it_lines(uint32_t num_interrupts, Gic version) {
-  if (version == Gic::V2) {
-    return set_bits((num_interrupts >> 5) - 1, 4, 0);
+static size_t gicd_register_size(uint64_t addr) {
+  if (addr >= static_cast<uint64_t>(GicdRegister::IROUTE32) &&
+      addr <= static_cast<uint64_t>(GicdRegister::IROUTE1019)) {
+    return 8;
+  } else if (addr >= static_cast<uint64_t>(GicdRegister::IROUTEE0) &&
+             addr <= static_cast<uint64_t>(GicdRegister::IROUTEE1023)) {
+    return 8;
   } else {
-    return set_bits((num_interrupts >> 5) - 1, 23, 19);
+    return 4;
   }
 }
 
-static inline uint32_t typer_cpu_number(uint8_t num_cpus) {
-  return set_bits(num_cpus - 1, 7, 5);
-}
-
-static inline uint32_t pidr2_arch_rev(uint32_t revision) {
+static uint32_t pidr2_arch_rev(uint32_t revision) {
   return set_bits(revision, 7, 4);
 }
 
-zx_status_t GicDistributor::Init(Guest* guest, Gic version) {
-  zx_status_t status;
-  gic_version_ = version;
+static constexpr char kResourcePath[] = "/dev/misc/sysinfo";
 
-  if (version == Gic::V2) {
-    status = guest->CreateMapping(TrapType::MMIO_SYNC, kGicv2DistributorPhysBase,
-                             kGicv2DistributorSize, 0, this);
-  } else {
-    // Map the distributor
-    status = guest->CreateMapping(TrapType::MMIO_SYNC, kGicv3DistributorPhysBase,
-                             kGicv3DistributorSize, 0, this);
+static zx_status_t get_root_resource(zx::resource* resource) {
+  int fd = open(kResourcePath, O_RDWR);
+  if (fd < 0)
+    return ZX_ERR_IO;
+  zx_handle_t rsc_handle;
+  ssize_t n = ioctl_sysinfo_get_root_resource(fd, &rsc_handle);
+  resource->reset(rsc_handle);
+  close(fd);
+  return n < 0 ? ZX_ERR_IO : ZX_OK;
+}
+
+static bool inline is_page_aligned(uint64_t addr) {
+  return (addr & (PAGE_SIZE - 1)) == 0;
+}
+
+class GicIoHandler : public IoHandler {
+ public:
+  zx_status_t Init(uint64_t base, size_t size) __TA_NO_THREAD_SAFETY_ANALYSIS {
+    if (!is_page_aligned(base))
+      return ZX_ERR_INVALID_ARGS;
+    if (!is_page_aligned(size))
+      return ZX_ERR_INVALID_ARGS;
+
+    zx::resource resource;
+    zx_status_t status = get_root_resource(&resource);
     if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to get root resource " << status;
       return status;
     }
 
-    // Map the redistributor RD Base
-    status = guest->CreateMapping(TrapType::MMIO_SYNC, kGicv3ReDistributorPhysBase,
-                             kGicv3ReDistributorSize, 0, this);
+    zx::vmo vmo;
+    status = zx_vmo_create_physical(resource.get(), base, size,
+                                    vmo.reset_and_get_address());
     if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to create physical VMO " << status;
+      return status;
+    }
+    status = vmo.set_cache_policy(ZX_CACHE_POLICY_UNCACHED_DEVICE);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to set cache policy on VMO " << status;
       return status;
     }
 
-    // Also map the redistributor SGI Base
-    status = guest->CreateMapping(TrapType::MMIO_SYNC,
-                                  kGicv3ReDistributor_SGIPhysBase,
-                                  kGicv3ReDistributor_SGISize, 0, this);
+    uintptr_t addr;
+    status = zx_vmar_map(zx_vmar_root_self(),
+                         ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE, 0,
+                         vmo.get(), 0, size, &addr);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to map IO memory " << status;
+      return status;
+    }
+    base_ = addr;
+    size_ = size;
+    return ZX_OK;
   }
+
+  zx_status_t Read(uint64_t addr, IoValue* value) const override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    switch (value->access_size) {
+      case 8:
+        value->u64 = mmio_read<uint64_t>(addr);
+        break;
+      case 4:
+        value->u32 = mmio_read<uint32_t>(addr);
+        break;
+      default:
+        FXL_LOG(ERROR) << "Unhandled read access size " << value->access_size;
+    }
+    FXL_LOG(ERROR) << "Read addr " << std::hex << addr << " value "
+                   << value->u32;
+    return ZX_OK;
+  }
+  zx_status_t Write(uint64_t addr, const IoValue& value) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    switch (value.access_size) {
+      case 8:
+        mmio_write<uint64_t>(addr, value.u64);
+        break;
+      case 4:
+        mmio_write<uint32_t>(addr, value.u32);
+        break;
+      default:
+        FXL_LOG(ERROR) << "Unhandled write access size " << value.access_size;
+    }
+    FXL_LOG(ERROR) << "Write addr " << std::hex << addr << " value "
+                   << value.u32;
+    return ZX_OK;
+  }
+
+ private:
+  template <typename T>
+  inline T mmio_read(uint64_t addr) const __TA_REQUIRES(mutex_) {
+    return *(volatile T*)(base_ + addr);
+  }
+
+  template <typename T>
+  inline void mmio_write(uint64_t addr, T value) __TA_REQUIRES(mutex_) {
+    *(volatile T*)(base_ + addr) = value;
+  }
+
+  // TODO(TC): remove lock for Redistributor
+  mutable std::mutex mutex_;
+  volatile uintptr_t base_ __TA_GUARDED(mutex_);
+  size_t size_;
+};
+
+GicDistributor::GicDistributor(Guest* guest) : guest_(guest) {
+  vcpu_mask_ = ~(0ul);
+}
+
+static bool is_shared_irq(uint16_t hwirq, const VgicSpec& vgic) {
+  for (auto spec : vgic.shared_irqs) {
+    if (hwirq == spec.vector) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool is_audio_irq(uint16_t hwirq, const VgicSpec& vgic) {
+  for (auto spec : vgic.audio_irqs) {
+    if (hwirq == spec.vector) {
+      return true;
+    }
+  }
+  return false;
+}
+
+zx_status_t GicDistributor::Init(uint8_t num_cpus,
+                                 Gic gic_version,
+                                 const VgicSpec& vgic) {
+  if (gic_version == Gic::V2)
+    return ZX_ERR_NOT_SUPPORTED;
+
+  std::vector<uint16_t> interrupts;
+  for (auto hwirq : vgic.irqs) {
+    if (!is_shared_irq(hwirq, vgic) && !is_audio_irq(hwirq, vgic))
+      interrupts.push_back(hwirq);
+  }
+  zx_status_t status = Init(num_cpus, gic_version, interrupts, vgic.percpu_irqs,
+                            vgic.gicd_paddr, vgic.gicr_paddr);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to initialize " << status;
+    return status;
+  }
+  return ZX_OK;
+}
+
+bool GicDistributor::IsValidSpiInterrupt(uint32_t vector) {
+  return ((vector >= 32) && (vector <= kNumInterrupts)) ||
+         ((vector >= kExtendedSpiBase) && (vector <= kExtendedSpiMax));
+}
+bool GicDistributor::IsValidInterrupt(uint32_t vector) {
+  return (vector <= kNumInterrupts) ||
+         ((vector >= kExtendedSpiBase) && (vector <= kExtendedSpiMax));
+}
+
+bool GicDistributor::IsExtendedSpi(uint32_t vector) {
+  return (vector >= kExtendedSpiBase) && (vector <= kExtendedSpiMax);
+}
+
+zx_status_t GicDistributor::PassThroughInterrupts(const std::vector<uint16_t>& interrupts) {
+  // Create physical interrupts, so that we can bind them to VCPUs.
+  if (!interrupts.empty()) {
+    zx::resource resource;
+    zx_status_t status = get_root_resource(&resource);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to get root resource " << status;
+      return status;
+    }
+
+    for (const uint32_t& vector : interrupts) {
+      if (!IsValidInterrupt(vector)) {
+        FXL_LOG(ERROR) << "Invalid interrupt " << vector;
+        return ZX_ERR_OUT_OF_RANGE;
+      }
+
+      if (vector < kSpiBase) {
+        FXL_LOG(INFO) << "NOTICE: SGI or PPI passthrough to guest: " << vector;
+      }
+
+      zx::interrupt interrupt;
+      status = zx::interrupt::create(resource, 0, &interrupt);
+      if (status != ZX_OK) {
+        FXL_LOG(ERROR) << "Failed to create interrupt " << vector << " " << status;
+        return status;
+      }
+
+      status = interrupt.bind(0, resource, vector, ZX_INTERRUPT_PASSTHROUGH);
+      if (status != ZX_OK) {
+        FXL_LOG(ERROR) << "Failed to bind interrupt " << vector << " " << status;
+        return status;
+      }
+
+      interrupts_.emplace(vector, std::move(interrupt));
+
+      if (spi_vcpus_.size() && vector < kExtendedSpiBase) {
+        int vcpu_id = spi_vcpus_[0];
+        BindVcpuExclusively(vector, vcpu_id);
+      }
+    }
+  }
+
+  return ZX_OK;
+}
+
+zx_status_t GicDistributor::Init(uint8_t num_cpus, Gic gic_version,
+                                 const std::vector<uint16_t>& interrupts,
+                                 const std::vector<uint16_t>& percpu_interrupts,
+                                 uint64_t gicd_paddr, uint64_t gicr_paddr) {
+  zx_status_t status;
+  gic_version_ = gic_version;
+
+  status = PassThroughInterrupts(interrupts);
+  if (status != ZX_OK)
+    return status;
+
+  if (gicd_paddr == 0)
+    gicd_paddr = (gic_version_ == Gic::V2) ? kGicv2DistributorPhysBase : kGicv3DistributorPhysBase;
+
+  if (gicr_paddr == 0)
+    gicr_paddr = kGicv3RedistributorPhysBase;
+
+  distributor_iowrapper_ = std::make_unique<GicIoWrapper>(this);
+
+  if (gic_version_ == Gic::V2) {
+    return guest_->CreateMapping(TrapType::MMIO_SYNC, gicd_paddr,
+                                 kGicv2DistributorSize, 0,
+                                 distributor_iowrapper_.get());
+  }
+
+  // Map the distributor
+  status = guest_->CreateMapping(TrapType::MMIO_SYNC, gicd_paddr,
+                                 kGicv3DistributorSize, 0,
+                                 distributor_iowrapper_.get());
+  if (status != ZX_OK) {
+    return status;
+  }
+
+  // Map the redistributors, map both RD_BASE and SGI_BASE as one since they
+  // are contiguous. See GIC v3.0/v4.0 Architecture Spec 8.10.
+  for (uint16_t id = 0; id != num_cpus; ++id) {
+    uint64_t hwid;
+    status = zx_system_get_cpu_hwid(&hwid, id);
+    if (status != ZX_OK) {
+      return status;
+    }
+    auto redistributor = std::make_unique<GicRedistributor>(
+        /*processor_number=*/id, /*affinity_value=*/hwid, id == num_cpus - 1);
+
+    // status = redistributor->Init(percpu_interrupts);
+    // FXL_CHECK(status == ZX_OK);
+
+    redistributor_iowrappers_.push_back(
+        std::make_unique<GicIoWrapper>(redistributor.get()));
+    status = guest_->CreateMapping(
+        TrapType::MMIO_SYNC, gicr_paddr + (id * kGicv3RedistributorStride),
+        kGicv3RedistributorSize + kGicv3RedistributorSgiSize, 0,
+        redistributor_iowrappers_.back().get());
+    if (status != ZX_OK) {
+      return status;
+    }
+    redistributors_.push_back(std::move(redistributor));
+  }
+
   return status;
 }
 
+zx_status_t GicDistributor::BindVcpuExclusively(uint32_t vector, uint8_t cpu_id) {
+  auto it = interrupts_.find(vector);
+  if (it == interrupts_.end()) {
+    return ZX_OK;
+  }
+
+#if BIND_INTERRUPT_TO_LITTLE_CORE
+  cpu_id = cpu_id % 4;
+#endif
+
+  const Guest::VcpuArray& vcpus = guest_->vcpus();
+  for (size_t i = 0; i < vcpus.size(); i++) {
+    if (vcpus[i] != nullptr && cpu_id == i && (vcpu_mask_ & (1 << cpu_id))
+        && InSPIWhileList(cpu_id, vector)) {
+      zx_status_t status = it->second.bind_vcpu(vcpus[i]->object(), /*exclusive=*/
+          true);
+      return status;
+    }
+  }
+  return ZX_OK;
+}
+
+zx_status_t GicDistributor::BindVcpus(uint32_t vector, uint8_t cpu_mask) {
+  auto it = interrupts_.find(vector);
+  if (it == interrupts_.end()) {
+    return ZX_OK;
+  }
+
+  const Guest::VcpuArray& vcpus = guest_->vcpus();
+  for (size_t i = 0; i < vcpus.size(); i++, cpu_mask >>= 1) {
+    if (!(cpu_mask & 1) || vcpus[i] == nullptr) {
+      continue;
+    }
+    zx_status_t status = it->second.bind_vcpu(vcpus[i]->object(), /*exclusive=*/false);
+    if (status != ZX_OK) {
+      return status;
+    }
+  }
+  return ZX_OK;
+}
+
+zx_status_t GicDistributor::MaskInterrupt(uint32_t vector) {
+  auto it = interrupts_.find(vector);
+  if (it == interrupts_.end()) {
+    return ZX_OK;
+  }
+  return it->second.mask_interrupt(vector);
+}
+
+zx_status_t GicDistributor::UnmaskInterrupt(uint32_t vector) {
+  auto it = interrupts_.find(vector);
+  if (it == interrupts_.end()) {
+    return ZX_OK;
+  }
+  return interrupts_[vector].unmask_interrupt(vector);
+}
+
+zx_status_t GicDistributor::ICfgRead(uint32_t reg, uint32_t* out_val) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  *out_val = gicd_icfg_[reg];
+  return ZX_OK;
+}
+
+zx_status_t GicDistributor::ICfgWrite(uint32_t reg, uint32_t val) {
+  uint32_t icfg0_base = (uint32_t)GicdRegister::ICFG0;
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (interrupts_.empty()) {
+    gicd_icfg_[reg] = val;
+    return ZX_OK;
+  }
+
+  uint64_t cfg;
+  auto it = interrupts_.begin();
+  it->second.configure_read(icfg0_base + 4 * reg, &cfg);
+
+  auto base_vector = reg * 16;
+  for (uint8_t i = 0; i < 16; i++) {
+    auto vector = base_vector + i;
+    uint mask = 0x3 << (i * 2);
+
+    auto it = interrupts_.find(vector);
+    if (it != interrupts_.end()) {
+      cfg &= ~mask;
+      cfg |= (val & mask);
+    }
+  }
+
+  it = interrupts_.begin();
+  it->second.configure_write(icfg0_base + 4 * reg, cfg);
+  gicd_icfg_[reg] = val;
+
+  return ZX_OK;
+}
+
+zx_status_t GicDistributor::ConfigureRead(uint32_t reg, uint64_t* val) {
+  if (interrupts_.empty()) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    *val = configs_[reg];
+    return ZX_OK;
+  } else {
+    auto it = interrupts_.begin();
+    return it->second.configure_read(reg, val);
+  }
+}
+
+zx_status_t GicDistributor::ConfigureWrite(uint32_t reg, uint64_t val) {
+  if (interrupts_.empty()) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    configs_[reg] = val;
+    return ZX_OK;
+  } else {
+    auto it = interrupts_.begin();
+    return it->second.configure_write(reg, val);
+  }
+}
+
 zx_status_t GicDistributor::Read(uint64_t addr, IoValue* value) const {
-  if (addr % 4 != 0 || value->access_size != 4) {
+  uint64_t param;
+
+  if (addr % 4 != 0 || value->access_size != gicd_register_size(addr)) {
+    FXL_LOG(ERROR) << "addr:" << std::hex << addr
+                   << ", size:" << (uint32_t)value->access_size;
     return ZX_ERR_IO_DATA_INTEGRITY;
   }
 
-  switch (addr) {
-    case GicdRegister::TYPE:
-      value->u32 = typer_it_lines(kNumInterrupts, gic_version_) | typer_cpu_number(num_vcpus_);
-      return ZX_OK;
-    case GicdRegister::ICFG0:
+  switch (static_cast<GicdRegister>(addr)) {
+    case GicdRegister::TYPE: {
+      zx_status_t status =
+          const_cast<GicDistributor*>(this)->ConfigureRead(addr, &param);
+      param |= GICD_SPI_MAX_NUM;
+      if (its_enabled_) {
+        param |= GICD_LPI_ENABLE;
+      } else {
+        if (param & GICD_LPI_ENABLE) {
+          param &= ~GICD_LPI_ENABLE;
+        }
+      }
+      value->u32 = (uint32_t)param;
+      return status;
+    }
+    case GicdRegister::IIDR:
+    case GicdRegister::TYPE2: {
+      zx_status_t status =
+          const_cast<GicDistributor*>(this)->ConfigureRead(addr, &param);
+      value->u32 = (uint32_t)param;
+      return status;
+    }
+    case GicdRegister::ICFG0... GicdRegister::ICFG1:
       // SGIs are RAO/WI.
       value->u32 = UINT32_MAX;
       return ZX_OK;
-    case GicdRegister::ICFG1... GicdRegister::ICFG31:
-      value->u32 = 0;
+    case GicdRegister::ICFG2... GicdRegister::ICFG63: {
+      uint32_t slot = (addr - static_cast<uint64_t>(GicdRegister::ICFG0)) /
+                      value->access_size;
+      const_cast<GicDistributor*>(this)->ICfgRead(slot, &value->u32);
       return ZX_OK;
+      // FXL_LOG(ERROR) << "read addr: " << std::hex << addr << " value=" << std::hex << value->u32;
+    }
+    case GicdRegister::ICFGE0... GicdRegister::ICFGE63: {
+      zx_status_t status =
+          const_cast<GicDistributor*>(this)->ConfigureRead(addr, &param);
+      value->u32 = (uint32_t)param;
+      // FXL_LOG(ERROR) << "read addr: " << std::hex << addr << " value=" << std::hex << value->u32;
+      return status;
+    }
+    case GicdRegister::ISENABLE0... GicdRegister::ISENABLE31: {
+      std::lock_guard<std::mutex> lock(mutex_);
+      const uint8_t* enable =
+          &enabled_[addr - static_cast<uint64_t>(GicdRegister::ISENABLE0)];
+      value->u32 = *reinterpret_cast<const uint32_t*>(enable);
+      return ZX_OK;
+    }
+    case GicdRegister::ISENABLEE0... GicdRegister::ISENABLEE31: {
+      std::lock_guard<std::mutex> lock(mutex_);
+      const uint8_t* enable =
+          &enabled_espi_[addr -
+                         static_cast<uint64_t>(GicdRegister::ISENABLEE0)];
+      value->u32 = *reinterpret_cast<const uint32_t*>(enable);
+      return ZX_OK;
+    }
     case GicdRegister::ITARGETS0... GicdRegister::ITARGETS7: {
       // GIC Architecture Spec 4.3.12: Each field of ITARGETS0 to ITARGETS7
       // returns a mask that corresponds only to the current processor.
@@ -143,24 +639,87 @@ zx_status_t GicDistributor::Read(uint64_t addr, IoValue* value) const {
       return ZX_OK;
     }
     case GicdRegister::ITARGETS8... GicdRegister::ITARGETS63: {
-      fbl::AutoLock lock(&mutex_);
-      const uint8_t* cpu_mask = &cpu_masks_[addr - GicdRegister::ITARGETS0];
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (affinity_routing_) {
+        value->u32 = 0;
+        return ZX_OK;
+      }
+      const uint8_t* cpu_mask =
+          &cpu_masks_[addr - static_cast<uint64_t>(GicdRegister::ITARGETS0)];
       // Target registers are read from 4 at a time.
       value->u32 = *reinterpret_cast<const uint32_t*>(cpu_mask);
       return ZX_OK;
     }
-    case GicdRegister::PID2_v2_v3:
+    case GicdRegister::IROUTE32... GicdRegister::IROUTE1019: {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!affinity_routing_) {
+        value->u32 = 0;
+        return ZX_OK;
+      }
+      uint16_t spi = (addr - static_cast<uint64_t>(GicdRegister::IROUTE32)) /
+                     value->access_size;
+      if (broadcast_[spi]) {
+        value->u64 = kGicdIrouteIRMMask;
+      } else {
+        uint64_t hwid;
+        uint8_t cpu_id = cpu_routes_[spi];
+        auto status = zx_system_get_cpu_hwid(&hwid, cpu_id);
+        FXL_CHECK(status == ZX_OK);
+        value->u64 = hwid;
+      }
+      return ZX_OK;
+    }
+    case GicdRegister::IROUTEE0... GicdRegister::IROUTEE1023: {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!affinity_routing_) {
+        value->u32 = 0;
+        return ZX_OK;
+      }
+      uint16_t spi = (addr - static_cast<uint64_t>(GicdRegister::IROUTEE0)) /
+                     value->access_size;
+      if (broadcast_espi_[spi]) {
+        value->u64 = kGicdIrouteIRMMask;
+      } else {
+        uint64_t hwid;
+        uint8_t cpu_id = cpu_routes_espi_[spi];
+        auto status = zx_system_get_cpu_hwid(&hwid, cpu_id);
+        FXL_CHECK(status == ZX_OK);
+        value->u64 = hwid;
+      }
+      return ZX_OK;
+    }
+    case GicdRegister::PID2_V2_V3:
       value->u32 = pidr2_arch_rev(kGicv3Revision);
       return ZX_OK;
-    case GicdRegister::PID2_v2:
+    case GicdRegister::PID2_V2:
       value->u32 = pidr2_arch_rev(kGicv2Revision);
       return ZX_OK;
-    case GicdRegister::PID2_v3:
+    case GicdRegister::PID2_V3:
       value->u32 = pidr2_arch_rev(kGicv3Revision);
       return ZX_OK;
-    case GicdRegister::CTL:
+    case GicdRegister::CTL: {
+      std::lock_guard<std::mutex> lock(mutex_);
       value->u32 = kGicdCtlr;
+      if (gic_version_ == Gic::V3 && affinity_routing_) {
+        value->u32 |= kGicdCtlrARENSMask;
+      }
       return ZX_OK;
+    }
+    case GicdRegister::ISACTIVE0... GicdRegister::ISAACTIVE31: {
+      value->u32 = 0;
+      return ZX_OK;
+    }
+    case GicdRegister::ISPEND0... GicdRegister::ISPEND31: {
+      zx_status_t status =
+          const_cast<GicDistributor*>(this)->ConfigureRead(addr, &param);
+      value->u32 = (uint32_t)param;
+      return status;
+    }
+    case GicdRegister::CFGID: {
+      zx_status_t status =
+          const_cast<GicDistributor*>(this)->ConfigureRead(addr, &value->u64);
+      return status;
+    }
     default:
       FXL_LOG(ERROR) << "Unhandled GIC distributor address read 0x" << std::hex
                      << addr;
@@ -169,11 +728,13 @@ zx_status_t GicDistributor::Read(uint64_t addr, IoValue* value) const {
 }
 
 zx_status_t GicDistributor::Write(uint64_t addr, const IoValue& value) {
-  if (addr % 4 != 0 || value.access_size != 4) {
+  if (addr % 4 != 0 || value.access_size != gicd_register_size(addr)) {
+    FXL_LOG(ERROR) << "addr:" << std::hex << addr
+                   << ", size:" << value.access_size;
     return ZX_ERR_IO_DATA_INTEGRITY;
   }
 
-  switch (addr) {
+  switch (static_cast<GicdRegister>(addr)) {
     case GicdRegister::ITARGETS0... GicdRegister::ITARGETS7: {
       // GIC Architecture Spec 4.3.12: ITARGETS0 to ITARGETS7 are read only.
       FXL_LOG(ERROR) << "Write to read-only GIC distributor address 0x"
@@ -181,9 +742,23 @@ zx_status_t GicDistributor::Write(uint64_t addr, const IoValue& value) {
       return ZX_ERR_INVALID_ARGS;
     }
     case GicdRegister::ITARGETS8... GicdRegister::ITARGETS63: {
-      fbl::AutoLock lock(&mutex_);
-      uint8_t* cpu_mask = &cpu_masks_[addr - GicdRegister::ITARGETS0];
-      *reinterpret_cast<uint32_t*>(cpu_mask) = value.u32;
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (affinity_routing_) {
+        return ZX_OK;
+      }
+      uint32_t spi = addr - static_cast<uint64_t>(GicdRegister::ITARGETS8);
+      uint8_t* masks = &cpu_masks_[spi];
+      *reinterpret_cast<uint32_t*>(masks) = value.u32;
+      for (uint32_t i = 0; i < 4; i++) {
+        uint8_t cpu_mask = masks[i];
+        if (cpu_mask == 0) {
+          continue;
+        }
+        zx_status_t status = BindVcpus(kSpiBase + spi + i, cpu_mask);
+        if (status != ZX_OK) {
+          return status;
+        }
+      }
       return ZX_OK;
     }
     case GicdRegister::SGI: {
@@ -205,25 +780,167 @@ zx_status_t GicDistributor::Write(uint64_t addr, const IoValue& value) {
       return TargetInterrupt(sgi.vector, cpu_mask);
     }
     case GicdRegister::ISENABLE0... GicdRegister::ISENABLE31: {
-      fbl::AutoLock lock(&mutex_);
-      uint8_t* enable = &enabled_[addr - GicdRegister::ISENABLE0];
+      std::lock_guard<std::mutex> lock(mutex_);
+      uint8_t* enable =
+          &enabled_[addr - static_cast<uint64_t>(GicdRegister::ISENABLE0)];
       *reinterpret_cast<uint32_t*>(enable) |= value.u32;
+      uint32_t vector =
+          (addr - static_cast<uint64_t>(GicdRegister::ISENABLE0)) / 4 * 32;
+      uint32_t irq_mask = value.u32;
+      while (irq_mask != 0) {
+        uint32_t index = __builtin_ctz(irq_mask);
+        irq_mask &= ~(1u << index);
+        UnmaskInterrupt(vector + index);
+      }
       return ZX_OK;
     }
     case GicdRegister::ICENABLE0... GicdRegister::ICENABLE31: {
-      fbl::AutoLock lock(&mutex_);
-      uint8_t* enable = &enabled_[addr - GicdRegister::ICENABLE0];
+      std::lock_guard<std::mutex> lock(mutex_);
+      uint8_t* enable =
+          &enabled_[addr - static_cast<uint64_t>(GicdRegister::ICENABLE0)];
       *reinterpret_cast<uint32_t*>(enable) &= ~value.u32;
+      uint32_t vector =
+          (addr - static_cast<uint64_t>(GicdRegister::ICENABLE0)) / 4 * 32;
+      uint32_t irq_mask = value.u32;
+      while (irq_mask != 0) {
+        uint32_t index = __builtin_ctz(irq_mask);
+        irq_mask &= ~(1u << index);
+        MaskInterrupt(vector + index);
+      }
       return ZX_OK;
     }
-    case GicdRegister::CTL:
+    case GicdRegister::ISENABLEE0... GicdRegister::ISENABLEE31: {
+      std::lock_guard<std::mutex> lock(mutex_);
+      uint8_t* enable = &enabled_espi_[addr - static_cast<uint64_t>(
+                                                  GicdRegister::ISENABLEE0)];
+      *reinterpret_cast<uint32_t*>(enable) |= value.u32;
+      uint32_t vector =
+          (addr - static_cast<uint64_t>(GicdRegister::ISENABLEE0)) / 4 * 32 +
+          kExtendedSpiBase;
+      uint32_t irq_mask = value.u32;
+      while (irq_mask != 0) {
+        uint32_t index = __builtin_ctz(irq_mask);
+        irq_mask &= ~(1u << index);
+        UnmaskInterrupt(vector + index);
+      }
+      return ZX_OK;
+    }
+    case GicdRegister::ICENABLEE0... GicdRegister::ICENABLEE31: {
+      std::lock_guard<std::mutex> lock(mutex_);
+      uint8_t* enable = &enabled_espi_[addr - static_cast<uint64_t>(
+                                                  GicdRegister::ICENABLEE0)];
+      *reinterpret_cast<uint32_t*>(enable) &= ~value.u32;
+      uint32_t vector =
+          (addr - static_cast<uint64_t>(GicdRegister::ICENABLEE0)) / 4 * 32 +
+          kExtendedSpiBase;
+      uint32_t irq_mask = value.u32;
+      while (irq_mask != 0) {
+        uint32_t index = __builtin_ctz(irq_mask);
+        irq_mask &= ~(1u << index);
+        MaskInterrupt(vector + index);
+      }
+      return ZX_OK;
+    }
+    case GicdRegister::CTL: {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (gic_version_ == Gic::V3 &&
+          (value.u32 & kGicdCtlrARENSMask) > 0) {
+        // Affinity routing is being enabled.
+        affinity_routing_ = true;
+        memset(broadcast_, true, sizeof(broadcast_));
+        return ZX_OK;
+      }
+      // Affinity routing is being disabled.
+      affinity_routing_ = false;
+      uint8_t default_mask = 0;
+      for (size_t i = 0; i != kMaxVcpus; i++) {
+        if (vcpus_[i] != nullptr) {
+          default_mask |= 1 << i;
+        }
+      }
+      memset(cpu_masks_, default_mask, sizeof(cpu_masks_));
+      return ZX_OK;
+    }
+    case GicdRegister::IROUTE32... GicdRegister::IROUTE1019: {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!affinity_routing_) {
+        return ZX_OK;
+      }
+      uint16_t spi = (addr - static_cast<uint64_t>(GicdRegister::IROUTE32)) /
+                      value.access_size;
+      if (value.u64 == kGicdIrouteIRMMask) {
+        broadcast_[spi] = true;
+        return BindVcpus(kSpiBase + spi, UINT8_MAX);
+      } else {
+        broadcast_[spi] = false;
+
+        uint8_t cpu_id;
+        uint64_t hwid = value.u64;
+        auto status = zx_system_get_cpu_id(&cpu_id, hwid);
+        FXL_CHECK(status == ZX_OK);
+        cpu_routes_[spi] = cpu_id;
+
+        return BindVcpuExclusively(kSpiBase + spi, cpu_id);
+      }
+    }
+    case GicdRegister::IROUTEE0... GicdRegister::IROUTEE1023: {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!affinity_routing_) {
+        return ZX_OK;
+      }
+      uint16_t spi = (addr - static_cast<uint64_t>(GicdRegister::IROUTEE0)) /
+                     value.access_size;
+      if (value.u64 == kGicdIrouteIRMMask) {
+        broadcast_espi_[spi] = true;
+        return BindVcpus(kExtendedSpiBase + spi, UINT8_MAX);
+      } else {
+        broadcast_espi_[spi] = false;
+
+        uint8_t cpu_id;
+        uint64_t hwid = value.u64;
+        auto status = zx_system_get_cpu_id(&cpu_id, hwid);
+        FXL_CHECK(status == ZX_OK);
+        cpu_routes_espi_[spi] = cpu_id;
+
+        return BindVcpuExclusively(kExtendedSpiBase + spi, cpu_id);
+      }
+    }
     case GicdRegister::ICACTIVE0... GicdRegister::ICACTIVE15:
-    case GicdRegister::ICFG0... GicdRegister::ICFG31:
+      return ZX_OK;
+    case GicdRegister::ICFG0... GicdRegister::ICFG1:
+      return ZX_OK;
+    case GicdRegister::ICFG2... GicdRegister::ICFG63: {
+      // FXL_LOG(ERROR) << "write addr: " << std::hex << addr << " value=" <<
+      // std::hex << value.u32;
+
+      uint32_t slot = (addr - static_cast<uint64_t>(GicdRegister::ICFG0)) /
+                      value.access_size;
+      return ICfgWrite(slot, value.u32);
+
+    }
+    case GicdRegister::ICFGE0... GicdRegister::ICFGE63: {
+      // FXL_LOG(ERROR) << "write addr: " << std::hex << addr << " value=" <<
+      // std::hex << value.u32;
+      return ConfigureWrite(addr, value.u32);
+    }
     case GicdRegister::ICPEND0... GicdRegister::ICPEND31:
     case GicdRegister::IPRIORITY0... GicdRegister::IPRIORITY255:
-    case GicdRegister::IGROUPR0... GicdRegister::IGROUPR31:
-    case GicdRegister::IGRPMODR0... GicdRegister::IGRPMODR31:
+    case GicdRegister::IGROUP0... GicdRegister::IGROUP31:
+    case GicdRegister::IGRPMOD0... GicdRegister::IGRPMOD31:
+    case GicdRegister::IGROUPE0... GicdRegister::IGROUPE31:
+    case GicdRegister::IGRPMODE0... GicdRegister::IGRPMODE31:
+    case GicdRegister::ICACTIVEE0... GicdRegister::ICACTIVEE31:
+    case GicdRegister::IPRIORITYE0... GicdRegister::IPRIORITYE255:
       return ZX_OK;
+    case GicdRegister::ISPEND0... GicdRegister::ISPEND31: {
+      // For SPIs and PPIs, adds the pending state to interrupt number 32n + x.
+      uint32_t vector = (addr - static_cast<uint64_t>(GicdRegister::ISPEND0)) * 8 +
+                     ffs(value.u32) - 1;
+      FXL_LOG(INFO) << "Set pending reg: 0x" << std::hex << addr
+                    << " value: 0x" << value.u32 << " vector: "
+                    << std::dec << vector;
+      return Interrupt(vector);
+    }
     default:
       FXL_LOG(ERROR) << "Unhandled GIC distributor address write 0x" << std::hex
                      << addr;
@@ -238,6 +955,25 @@ zx_status_t GicDistributor::RegisterVcpu(uint8_t vcpu_num, Vcpu* vcpu) {
   if (vcpus_[vcpu_num] != nullptr) {
     return ZX_ERR_ALREADY_EXISTS;
   }
+
+  for (auto it = interrupts_.begin(); it != interrupts_.end(); it++) {
+    auto spi = it->first;
+    if (!IsExtendedSpi(spi)) {
+      if (broadcast_[spi] || cpu_routes_[spi] == vcpu_num) {
+        bool exclusively = !broadcast_[spi];
+        auto status = it->second.bind_vcpu(vcpu->object(), exclusively);
+        FXL_CHECK(status == ZX_OK);
+      }
+    } else {
+      spi = spi - kExtendedSpiBase;
+      if (broadcast_espi_[spi] || cpu_routes_espi_[spi] == vcpu_num) {
+        bool exclusively = !broadcast_[spi];
+        auto status = it->second.bind_vcpu(vcpu->object(), exclusively);
+        FXL_CHECK(status == ZX_OK);
+      }
+    }
+  }
+
   vcpus_[vcpu_num] = vcpu;
   num_vcpus_ += 1;
   // We set the default state of all CPU masks to target every registered VCPU.
@@ -249,19 +985,30 @@ zx_status_t GicDistributor::RegisterVcpu(uint8_t vcpu_num, Vcpu* vcpu) {
 zx_status_t GicDistributor::Interrupt(uint32_t global_irq) {
   uint8_t cpu_mask;
   {
-    fbl::AutoLock lock(&mutex_);
-    cpu_mask = cpu_masks_[global_irq];
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (gic_version_ == Gic::V3 && affinity_routing_) {
+      if (global_irq < kNumSgisAndPpis || !IsValidSpiInterrupt(global_irq)) {
+        return ZX_ERR_INVALID_ARGS;
+      }
+      if (!broadcast_[global_irq - kNumSgisAndPpis]) {
+        cpu_mask = 1 << cpu_routes_[global_irq - kNumSgisAndPpis];
+      } else {
+        cpu_mask = UINT8_MAX;
+      }
+    } else {
+      cpu_mask = cpu_masks_[global_irq];
+    }
   }
   return TargetInterrupt(global_irq, cpu_mask);
 }
 
 zx_status_t GicDistributor::TargetInterrupt(uint32_t global_irq,
                                             uint8_t cpu_mask) {
-  if (global_irq >= kNumInterrupts) {
+  if (!IsValidInterrupt(global_irq)) {
     return ZX_ERR_INVALID_ARGS;
   }
   {
-    fbl::AutoLock lock(&mutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     bool is_enabled =
         enabled_[global_irq / CHAR_BIT] & (1u << global_irq % CHAR_BIT);
     if (!is_enabled) {
@@ -276,8 +1023,230 @@ zx_status_t GicDistributor::TargetInterrupt(uint32_t global_irq,
     if (status != ZX_OK) {
       return status;
     }
+    if (IsValidSpiInterrupt(global_irq)) {
+      break;
+    }
   }
   return ZX_OK;
 }
 
+void GicDistributor::EnableIts(GicIts *its) {
+  std::lock_guard<std::mutex> lock(mutex_);
+
+  its_enabled_ = true;
+  for (auto iter = redistributors_.begin(); iter != redistributors_.end();
+       iter++) {
+    (*iter)->EnableIts(its);
+  }
+}
+
+void GicRedistributor::BindVcpu(Vcpu* vcpu) {
+  zx::resource resource;
+  zx_status_t status = get_root_resource(&resource);
+
+  for (auto it = percpu_interrupts_.begin(); it != percpu_interrupts_.end();
+       it++) {
+    auto irq = it->first;
+    FXL_CHECK(irq < kNumSgisAndPpis);
+
+    // bind irq object with percpu irq
+    status = it->second.bind(0, resource, irq, ZX_INTERRUPT_PASSTHROUGH);
+    FXL_CHECK(status == ZX_OK);
+
+    // bind irq object with vcpu, then percpu irq will be routed to given vcpu.
+    status = it->second.bind_vcpu(vcpu->object(), /*exclusively=*/true);
+    FXL_CHECK(status == ZX_OK);
+  }
+}
+
+static size_t gicr_register_size(uint64_t addr) {
+  if (addr == static_cast<uint64_t>(GicrRegister::TYPE) ||
+      addr == static_cast<uint64_t>(GicrRegister::PENDBASER) ||
+      addr == static_cast<uint64_t>(GicrRegister::PROPBASER) ||
+      addr == static_cast<uint64_t>(GicrRegister::INVLPIR)) {
+    return 8;
+  } else {
+    return 4;
+  }
+}
+
+zx_status_t GicRedistributor::Read(uint64_t addr, IoValue* value) const {
+  if (addr % 4 != 0 || value->access_size != gicr_register_size(addr)) {
+    FXL_LOG(ERROR) << "addr:" << std::hex << addr
+                   << ", size:" << (uint32_t)value->access_size;
+    return ZX_ERR_IO_DATA_INTEGRITY;
+  }
+
+  switch (static_cast<GicrRegister>(addr)) {
+    case GicrRegister::CTL:
+      if (its_enabled_) {
+        value->u32 = ctrl_;
+      } else {
+        value->u32 = 0;
+      }
+      return ZX_OK;
+    case GicrRegister::PROPBASER: {
+      value->u64 = propbaser_;
+      return ZX_OK;
+    }
+    case GicrRegister::PENDBASER: {
+      value->u64 = pendbaser_;
+      return ZX_OK;
+    }
+    case GicrRegister::WAKE:
+    case GicrRegister::ICFG0:
+    case GicrRegister::ICFG1:
+      if (value->access_size != 4) {
+        return ZX_ERR_IO_DATA_INTEGRITY;
+      }
+      value->u32 = 0;
+      return ZX_OK;
+    case GicrRegister::TYPE:
+      if (value->access_size != 8) {
+        return ZX_ERR_IO_DATA_INTEGRITY;
+      }
+      value->u64 = set_bits(static_cast<uint64_t>(processor_number_), 23, 8) |
+                   set_bits(affinity_value_, 63, 32);
+      if (last_) {
+        value->u64 |= 1u << 4;
+      }
+      if (its_enabled_) {
+        value->u64 |= (GICR_TYPER_PLPIS | GICR_TYPER_DirectLPIS);
+      }
+      return ZX_OK;
+    case GicrRegister::PID2_V3:
+      if (value->access_size != 4) {
+        return ZX_ERR_IO_DATA_INTEGRITY;
+      }
+      value->u32 = pidr2_arch_rev(kGicv3Revision);
+      return ZX_OK;
+    case GicrRegister::SYNCR:
+      value->u32 = 0;
+      return ZX_OK;
+    default:
+      FXL_LOG(ERROR) << "Unhandled GIC redistributor address read 0x"
+                     << std::hex << addr;
+      return ZX_ERR_NOT_SUPPORTED;
+  }
+  return ZX_OK;
+}
+
+zx_status_t GicRedistributor::Init(const std::vector<uint16_t>& interrupts) {
+  if (!interrupts.empty()) {
+    zx::resource resource;
+    zx_status_t status = get_root_resource(&resource);
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to get root resource " << status;
+      return status;
+    }
+    for (const uint32_t& vector : interrupts) {
+      FXL_CHECK(vector < kNumSgisAndPpis);
+
+      zx::interrupt interrupt;
+      status = zx::interrupt::create(resource, 0, &interrupt);
+      if (status != ZX_OK) {
+        FXL_LOG(ERROR) << "Failed to create interrupt " << vector << " "
+                       << status;
+        return status;
+      }
+
+      percpu_interrupts_.emplace(vector, std::move(interrupt));
+    }
+  }
+
+  return ZX_OK;
+}
+
+zx_status_t GicRedistributor::MaskInterrupt(uint32_t vector) {
+  auto it = percpu_interrupts_.find(vector);
+  if (it == percpu_interrupts_.end()) {
+    return ZX_OK;
+  }
+  return it->second.mask_interrupt(vector);
+}
+
+zx_status_t GicRedistributor::UnmaskInterrupt(uint32_t vector) {
+  auto it = percpu_interrupts_.find(vector);
+  if (it == percpu_interrupts_.end()) {
+    return ZX_OK;
+  }
+  return it->second.unmask_interrupt(vector);
+}
+
+zx_status_t GicRedistributor::Write(uint64_t addr, const IoValue& value) {
+  if (addr % 4 != 0 || value.access_size != gicr_register_size(addr)) {
+    FXL_LOG(ERROR) << "addr:" << std::hex << addr
+                   << ",size:" << (uint32_t)value.access_size;
+    return ZX_ERR_IO_DATA_INTEGRITY;
+  }
+
+  switch (static_cast<GicrRegister>(addr)) {
+    case GicrRegister::CTL:
+      if (!its_enabled_) {
+        return ZX_OK;
+      }
+      lpis_enabled_ = value.u32 & GICR_CTLR_ENABLE_LPIS;
+      ctrl_ |= GICR_CTLR_ENABLE_LPIS;
+      return ZX_OK;
+    case GicrRegister::PROPBASER: {
+      /*
+      if (!lpis_enabled_) {
+        return ZX_OK;
+      }
+      */
+      propbaser_ = value.u64;
+      return ZX_OK;
+    }
+    case GicrRegister::PENDBASER: {
+      /*
+      if (!lpis_enabled_) {
+        return ZX_OK;
+      }
+      */
+      pendbaser_ = value.u64;
+      return ZX_OK;
+    }
+    case GicrRegister::ICENABLE0: {
+      enabled_ &= ~value.u32;
+      uint32_t irq_mask = value.u32;
+      while (irq_mask != 0) {
+        uint32_t index = __builtin_ctz(irq_mask);
+        irq_mask &= ~(1u << index);
+        MaskInterrupt(index);
+      }
+      return ZX_OK;
+    }
+    case GicrRegister::ISENABLE0: {
+      enabled_ |= value.u32;
+      uint32_t irq_mask = value.u32;
+      while (irq_mask != 0) {
+        uint32_t index = __builtin_ctz(irq_mask);
+        irq_mask &= ~(1u << index);
+        UnmaskInterrupt(index);
+      }
+      return ZX_OK;
+    }
+    case GicrRegister::INVLPIR: {
+      if (its_ != nullptr) {
+        its_->InvalidLpiConfig(value.u32);
+      }
+      return ZX_OK;
+    }
+    case GicrRegister::WAKE:
+    case GicrRegister::IGROUP0:
+    case GicrRegister::ICPEND0:
+    case GicrRegister::ICACTIVE0:
+    case GicrRegister::IPRIORITY0... GicrRegister::IPRIORITY255:
+    case GicrRegister::ICFG0:
+    case GicrRegister::ICFG1:
+    case GicrRegister::SYNCR:
+      return ZX_OK;
+    default:
+      FXL_LOG(ERROR) << "Unhandled GIC redistributor address write 0x"
+                     << std::hex << addr;
+      return ZX_ERR_NOT_SUPPORTED;
+  }
+}
+
 }  // namespace machina
+

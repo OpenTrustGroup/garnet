@@ -1,0 +1,8 @@
+{
+    "languages": [
+        "cpp"
+    ],
+    "packages": {
+        "linux-guest": "//garnet/bin/guest/venus-linux-guest:linux-guest"
+    }
+}

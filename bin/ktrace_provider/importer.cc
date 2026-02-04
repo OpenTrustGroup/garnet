@@ -114,6 +114,8 @@ bool Importer::ImportRecord(const ktrace_header_t* record, size_t record_size) {
           return false;
         return ImportNameRecord(
             reinterpret_cast<const ktrace_rec_name_t*>(record), tag_info);
+      case TagType::kComm:
+        return false;
     }
   }
 
@@ -140,6 +142,10 @@ bool Importer::ImportBasicRecord(const ktrace_header_t* record,
     case KTRACE_EVENT(TAG_SYSCALL_EXIT):
       return HandleSyscallExit(record->ts, record->tid & 0xff,
                                record->tid >> 8);
+    case KTRACE_EVENT(TAG_VCPU_RUNTIME_ENTER):
+      return HandleVcpuRuntimeEnter(record->ts, record->tid);
+    case KTRACE_EVENT(TAG_VCPU_RUNTIME_EXIT):
+      return HandleVcpuRuntimeExit(record->ts, record->tid);
     default:
       return false;
   }
@@ -662,6 +668,28 @@ bool Importer::HandleVcpuUnblock(trace_ticks_t event_time,
   trace_context_write_duration_end_event_record(
       context_, event_time, &thread_ref, &vcpu_category_ref_, &name_ref,
       nullptr, 0u);
+  return true;
+}
+
+bool Importer::HandleVcpuRuntimeEnter(trace_ticks_t event_time, uint32_t id) {
+  auto& duration = vcpu_rt_durations_[id];
+  if (duration.valid) {
+    FXL_LOG(WARNING) << "VCPU" << id << " runtime duration already exists";
+    return false;
+  }
+  duration = VcpuDuration{.begin = event_time, .valid = true};
+  return true;
+}
+
+bool Importer::HandleVcpuRuntimeExit(trace_ticks_t event_time, uint32_t id) {
+  auto& duration = vcpu_rt_durations_[id];
+  if (!duration.valid) {
+    FXL_LOG(WARNING) << "VCPU" << id << " runtime duration does not have a beginning";
+    return false;
+  }
+  trace_context_write_duration_event_record_tiny(
+      context_, duration.begin, event_time, id);
+  duration.valid = false;
   return true;
 }
 

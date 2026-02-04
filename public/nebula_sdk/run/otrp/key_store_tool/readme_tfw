@@ -1,0 +1,22 @@
+
+TFW相关秘钥和证书的生成：
+
+1.生成TFW相关证书及秘钥执行genarate_tfw.sh脚本。
+2.之后提示"Enter pass phrase for tfw/root_ca/tfw_root_ca.key:" 设置tfw root 私钥的密码输入两遍。
+3.之后提示"Enter pass phrase for tfw/root_ca/tfw_root_ca.key:" 输入上一步设置的密码。
+4.输入生成root ca所需的信息。如“Country Name”，“State or Province Name”等。这样CA相关证书秘钥生成完成在tfw/root_ca下。
+5.之后生成签名证书和秘钥显示Enter keystore password这里要设置TFW签名的keystore的密码输入两遍。
+6.之后输入签名keypair的相关信息。例如“first and last name”,"name of your organizational unit"等,之后显示correct? [no]:要输入yes。
+7.提示“Enter key password for <tfw_sign>”输入要设置的TFW签名秘钥的密码。输入两遍。
+6.提示“Enter keystore password:”输入第5步设置的密码。
+7.提示“Enter key password for <tfw_sign>:”输入第7步设置的密码。
+8.提示“Enter pass phrase for tfw_root_ca.key"输入第2步设置的密码。
+9.提示“Sign the certificate? [y/n]:” 输入y 。提示“1 out of 1 certificate requests certified, commit? ” 输入y
+10.提示“Enter pass phrase for tfw/root_ca/tfw_root_ca.key"输入第2步设置的密码。
+10.之后提示“Please enter keystore-password”输入第5步设置的密码。
+11.之后提示“Please enter key-password”输入第7步设置的密码。
+12.数据生成成功，输出数据在脚本同级TFW文件夹内。
+
+生成的数据介绍：
+1.TFW签名数据使用的私钥：key_store_tool/tfw/sign_cert/private_key.pem需要预置到HEE中
+2.TFW的签名证书：key_store_tool/tfw/sign_cert/tfw_sign.pem需要预置到HEE中

@@ -1,0 +1,88 @@
+#!/bin/bash
+
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+### create the simple "archive_manifest" file.
+### file is put in "${PRJECT_DIR}/out/".
+
+set -e; [[ "${TRACE}" ]] && set -x
+
+CMD_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PROJECT_DIR=
+EXE_PATH=
+OUTPUT_PATH=
+EXTERNAL_FILES=
+
+usage() {
+  printf '%s: <-p dir> <-e path> <-o path>\n' "$0"
+  printf '  -p dir      set the path of project with meta and resources.\n'
+  printf '  -e path     set the path of executable file.\n'
+  printf '  -o path     set the output path.\n'
+  printf '  -a string   add the files into far.\n'
+  printf '              format is "to1=from1, to2=from2.\n'
+  printf '  -h          show help\n'
+}
+
+while getopts "p:e:o:a:h" opt; do
+  case "${opt}" in
+    p)
+      PROJECT_DIR=${OPTARG}
+      ;;
+    e)
+      EXE_PATH=${OPTARG}
+      ;;
+    o)
+      OUTPUT_PATH=${OPTARG}
+      ;;
+    a)
+      EXTERNAL_FILES=${OPTARG}
+      ;;
+    h) usage 1>&2 ; exit 0 ;;
+    *) usage 1>&2 ; exit 1 ;;
+  esac
+done
+
+if [ -z "${PROJECT_DIR}" ]; then
+    echo "Please set project directory."
+    usage
+    exit 1
+fi
+
+if [ -z "${OUTPUT_PATH}" ]; then
+    echo "Please set output path".
+    usage
+    exit 1
+fi
+
+if [ -z "${EXE_PATH}" ]; then
+    echo "Please set path of executable file".
+    usage
+    exit 1
+fi
+
+SANDBOX=${PROJECT_DIR}/meta/sandbox
+ARCHIVE_FILE=${PROJECT_DIR}/out/
+
+if [ ! -d "${PROJECT_DIR}" ]; then
+    echo "\"${PROJECT_DIR}\" doesn't exist."
+    usage
+    exit 1
+fi
+
+if [ ! -f "${SANDBOX}" ]; then
+    echo "Project should include the \"${SANDBOX}\"."
+    exit 2
+fi
+
+if [ ! -f "${EXE_PATH}" ]; then
+    echo "\"${EXE_PATH}\" doesn't exist."
+    exit 2
+fi
+
+mkdir -p `dirname ${OUTPUT_PATH}`
+
+echo "meta/sandbox=${SANDBOX}" > ${OUTPUT_PATH}
+echo "bin/app=${EXE_PATH}" >> ${OUTPUT_PATH}
+echo "${EXTERNAL_FILES}" | sed "s/,/\n/g" | sed -r 's/[[:space:]]//g' >> ${OUTPUT_PATH}

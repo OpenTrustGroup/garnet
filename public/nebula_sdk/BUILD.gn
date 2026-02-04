@@ -1,0 +1,184 @@
+import("//build/sdk/sdk.gni")
+import("//build/sdk/sdk_atom.gni")
+import("//build/fidl/toolchain.gni")
+
+# Base of the SDK.
+sdk_atom("sdk_base") {
+  domain = "cpp"
+  name = "sdk_base"
+
+  tags = [
+    "type:compiled_static",
+    "arch:target",
+  ]
+
+  files = [
+    { # ld scripts "dso_handle.ld" is NEEDED by SDK, and added into lib folder.
+      source = "//zircon/scripts/dso_handle.ld"
+      dest = "lib/dso_handle.ld"
+    },
+  ]
+}
+
+# This SDK is for NEBULA project.
+# - sdk(xxx) will create sdk in "//out/arm64/sdks/xxx".
+# - "deps" will import the sdk tools, headers and libraries.
+# - old_school: if true, set all packages into xxx/sysroot, if false, into xxx/pkg.
+# - customized_folder: if old_school is set, this flag is valid.
+#   If set true, no "sysroot" folder in sdk.
+# - domains : currently only support "cpp".
+sdk("nebula") {
+  export = true
+  old_school = true
+  customized_folder = true
+  domains = [ "cpp" ]
+
+  # NOTICE: In //zircon/public, the BUILD.gn is created automatically, can not be changed manually.
+  deps = [
+    ###################################
+    # HEE
+    ###################################
+    # libc and zircon syscalls.
+    ":sdk_base",
+    "//zircon/public/sysroot:sysroot_sdk",
+    "//zircon/public/lib/fdio:fdio_sdk", # enable printf
+
+    # Driver API
+    "//zircon/public/lib/driver:driver_sdk",
+
+    # Trusty API and libraries.
+    "//third_party/hee-trusty/trusty:trusty_sdk",
+
+    # Zircon user libraries
+    "//third_party/hee-trusty/zircon:zircon_sdk",
+
+    # DDK
+    "//zircon/public/lib/ddk:ddk_sdk",
+    "//zircon/public/lib/ddktl:ddktl_sdk",
+
+    # Async
+    "//zircon/public/lib/async:async_sdk",
+    "//zircon/public/lib/async-cpp:async-cpp_sdk",
+    "//zircon/public/lib/async-loop:async-loop_sdk",
+    "//zircon/public/lib/async-loop-cpp:async-loop-cpp_sdk",
+
+    # Standard libraries
+    "//zircon/public/lib/fidl:fidl_sdk",
+    "//zircon/public/lib/pretty:pretty_sdk",
+    "//zircon/public/lib/region-alloc:region-alloc_sdk",
+    "//zircon/public/lib/fs:fs_sdk",
+    "//garnet/public/lib/app/cpp:app_cpp_sdk",
+    "//garnet/public/lib/app/fidl:fidl_sdk",
+    "//garnet/public/lib/fidl/cpp:fidl_cpp_sdk",
+    "//garnet/public/lib/fsl:nbl_fsl_sdk",
+    "//garnet/public/lib/fxl:nbl_fxl_sdk",
+    "//garnet/public/lib/mem/fidl:fidl_sdk",
+    "//garnet/public/lib/svc/cpp:svc_cpp_sdk",
+
+    # Openssl is for users, boringssl is for inner developers.
+    "//third_party/boringssl:boringssl_sdk",
+    "//third_party/openssl:openssl_sdk",
+
+    # openmp
+    "//third_party/iomp5:omp_sdk",
+
+    # libnbl_fwk_hee_sdk.
+    "//third_party/hee-trusty/nbl_fwk:libnbl_fwk_hee_sdk",
+    "//third_party/hee-trusty/nbl_ta_controller:libnbl_ta_controller_sdk",
+
+    # googletest_sdk.
+    "//third_party/hee-trusty/nbl_gtest:googletest_sdk",
+
+    # benchmark_sdk.
+    "//third_party/hee-trusty/nbl_benchmark_sdk:benchmark_sdk",
+
+    # libnbl_nmt_tee_sdk.
+    "//third_party/hee-trusty/nbl_license_srv/lib:libnbl_nmt_tee_sdk",
+
+    # GUI
+    "//third_party/hee-trusty/nbl_gui:libnbl_gui_sdk",
+
+    # QRCode
+    "//third_party/QRCode:libnbl_qrcode_sdk",
+
+    # Attestation
+    "//third_party/hee-trusty/nbl_attest_srv/api_lib:attest_sdk",
+
+    # Camproxy
+    "//third_party/hee-trusty/camproxy:camproxy_sdk",
+
+    # zlib
+    "//third_party/zlib:zlib_sdk",
+
+    # nsc
+    "//third_party/hee-trusty/nbl_nsc/lib:libnbl_nsc_sdk",
+
+    # sm-lite : not public, just for some users later.
+    "//zircon/third_party/ulib/sm-lite:sm_lite_sdk",
+
+    # sm-miracl : not public, just for some users later.
+    "//zircon/third_party/ulib/sm-miracl:sm_miracl_sdk",
+
+    "//third_party/ree-trusty/libnebula-cpp:libnebula_cpp_sdk",
+    "//third_party/hee-trusty/nbl_rpc/fidl:fidl_sdk",
+    "//third_party/hee-trusty/nbl_rpc:rpc_proxy_sdk",
+    "//third_party/hee-trusty/nbl_loader_srv/lifecycle/fidl:fidl_sdk",
+
+    # libnbl_tar
+    "//third_party/hee-trusty/nbl_tar:libnbl_tar_sdk",
+
+    # libnbl_cov
+    "//third_party/hee-trusty/nbl_cov:libnbl_cov_sdk",
+
+    ###################################
+    # Host
+    ###################################
+    # far
+    "//garnet/bin/far:venus_sdk($host_toolchain)",
+    "//zircon/system/host/mkbootfs:nebula_sdk",
+
+    # fidl compiler & code generator
+    "//garnet/go/src/fidl:venus_sdk($host_toolchain)",
+
+    ###################################
+    # NBL Trace Provider
+    ###################################
+    "//third_party/hee-trusty/nbl_trace_provider:libnbl_trace_provider_sdk",
+
+    ###################################
+    # Examples
+    ###################################
+    # If add new API, the examples or test can be exported by its own BUILD.gn to sdk/exmaples or sdk/tests.
+    "//garnet/public/nebula_sdk/examples:examples",
+
+    ###################################
+    # Makefile
+    ###################################
+    "//garnet/public/nebula_sdk/make:make",
+
+    ###################################
+    # CMake config file
+    ###################################
+    "//garnet/public/nebula_sdk/cmake:cmake",
+
+    ###################################
+    # Documents
+    ###################################
+    # use make-doc to create documents of HTML format with doxygen, so delete this.
+    #"//garnet/public/nebula_sdk/docs:docs",
+    #"//third_party/hee-trusty/nbl_gui:docs",
+
+    ###################################
+    # Run
+    ###################################
+    "//garnet/public/nebula_sdk/run:run",
+  ]
+}
+
+# Even if define the sdk, the target is NOT executed by GN,
+# so need a real target to make dependency to this sdk target (xxx_export) created in itself,
+group("sdk") {
+  deps = [
+    ":nebula_export",
+  ]
+}

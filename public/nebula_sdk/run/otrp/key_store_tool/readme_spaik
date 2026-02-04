@@ -1,0 +1,9 @@
+SPAIK生成工具适用于预置HA功能中需要提前预置SPAIK内容到HEE中。
+
+SPAIK的生成
+1.执行genarate_spaik.sh
+
+生成的数据介绍：
+1.生成的私钥：key_store_tool/spaik/spaik_private_key.pem
+2.生产成的公钥：key_store_tool/spaik/spaik_public_key.pem
+3.需要预置到HEE中的数据：spaik.json 里面包含公私钥。

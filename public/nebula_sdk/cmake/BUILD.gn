@@ -1,0 +1,29 @@
+# CMake config file for SDK.
+# - DON'T COPY THIS BUILD.gn TO SDK.
+
+import("//build/cpp/sdk_executable.gni")
+import("//build/package.gni")
+
+#######################################
+## copy all files in this folder to SDK,
+## and keep the sub directories.
+
+sdk_atom("cmake") {
+  domain = "cpp"
+  name = "cmake"
+
+  output_category = "cmake"
+
+  tags = [ "arch:target", "type:sysroot" ]
+
+  # find the all files in this folder except some files.
+  all_files = exec_script(
+      "//build/sdk/list_files.sh", [rebase_path("./", root_build_dir)], "list lines")
+
+  # create a files list by "all_files".
+  files = []
+  foreach(f, all_files) {
+    files += [ { source = "$f" } ]
+  }
+
+}

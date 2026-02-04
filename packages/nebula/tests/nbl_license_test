@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "test_nmt": "//third_party/hee-trusty/nbl_license_srv/test:test_nmt"
+    }
+}

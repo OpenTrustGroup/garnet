@@ -86,6 +86,11 @@ static void Dump_NAME(const ktrace_rec_name_t* rec) {
   printf(" name %s", rec->name);
 }
 
+static void Dump_COMM(const ktrace_rec_comm_t* rec) {
+  printf(" tid 0x%x, ts 0x%" PRIx64, rec->tid, rec->ts);
+  printf(" a 0x%lx, b 0x%lx, c 0x%lx, d 0x%lx", rec->a, rec->b, rec->c, rec->d);
+}
+
 static void DumpRecord(const KtraceRecord* rec) {
   printf("%s(%x):", debugserver::ktrace::RecName(rec->hdr.tag), rec->hdr.tag);
 

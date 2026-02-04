@@ -5,6 +5,13 @@
 source_set("vmo") {
   visibility = [ "//garnet/public/lib/fsl/*" ]
 
+  # NOTE(GRT): Workaround to remove ASAN build for fxl/fsl
+  foreach(config, configs) {
+    if (config == "//build/config/sanitizers:asan") {
+      configs -= [ "//build/config/sanitizers:asan" ]
+    }
+  }
+
   sources = [
     "file.cc",
     "file.h",

@@ -5,7 +5,8 @@
     "class/ethernet",
     "class/framebuffer",
     "class/input",
-    "misc"
+    "misc",
+    "sys/platform/wdt"
   ],
   "system": [ "data" ]
 }

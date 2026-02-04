@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "sqlite_test": "//third_party/hee-trusty/samples/sqlite_test"
+    }
+}

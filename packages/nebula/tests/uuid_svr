@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "uuid_svr": "//third_party/hee-trusty/samples/uuid_svr"
+    }
+}

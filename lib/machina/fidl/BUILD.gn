@@ -9,5 +9,14 @@ fidl("fidl") {
 
   sources = [
     "inspect.fidl",
+    "vhm.fidl",
+    "audio_irq.fidl",
+    "shared_irq.fidl",
+    "ipc.fidl",
+    "rproc.fidl",
+    "ipcmessage.fidl",
+  ]
+  public_deps = [
+    "//garnet/public/lib/mem/fidl",
   ]
 }

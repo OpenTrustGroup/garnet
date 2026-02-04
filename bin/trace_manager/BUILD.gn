@@ -42,6 +42,7 @@ fidl("trace_link_fidl") {
 }
 
 package("trace_manager") {
+  testonly = true
   deps = [
     ":bin",
     ":trace_link_fidl",

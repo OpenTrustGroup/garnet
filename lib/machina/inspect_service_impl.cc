@@ -32,6 +32,10 @@ InspectServiceImpl::InspectServiceImpl(
       });
 }
 
+void InspectServiceImpl::Bind(fidl::InterfaceRequest<InspectService> request) {
+  bindings_.AddBinding(this, std::move(request));
+}
+
 void InspectServiceImpl::FetchGuestMemory(FetchGuestMemoryCallback callback) {
   callback(duplicate(vmo_, ZX_RIGHT_SAME_RIGHTS));
 }

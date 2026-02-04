@@ -1,0 +1,2 @@
+java -jar '/home/jiangtao/workspace/workspace-ec
+lipse-j2ee/SecmgrPrebuildTool/key_store_unit_test/tools/CertTool.jar' keystore_to_key --in-file-path '/home/jiangtao/workspace/workspace-eclipse-j2ee/SecmgrPrebuildTool/key_store_unit_test/tsm/sign_cert/tsm_sign.keystore' --alias tsm_sign --keystore-password goldenriver_tsm_sign_test --key-password goldenriver_tsm_sign_test --out-path /home/jiangtao/workspace/workspace-eclipse-j2ee/SecmgrPrebuildTool/key_store_unit_test/tsm/sign_cert/key

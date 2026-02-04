@@ -49,3 +49,26 @@ install_host_tools("traceutil") {
     "traceutil",
   ]
 }
+
+sdk_atom("sdk") {
+  domain = "cpp"
+  name = "traceutil"
+
+  output_category = "host"
+
+  if (is_fuchsia) {
+    tags = [ "arch:target", "type:sysroot" ]
+  } else {
+    tags = [ "arch:host", "type:sysroot" ]
+  }
+
+  out_dir = get_label_info(":bin", "root_out_dir")
+  files = [
+    {
+      source = "$out_dir/traceutil"
+      dest = "x64/traceutil"
+    }
+  ]
+
+  non_sdk_deps = [ ":bin" ]
+}

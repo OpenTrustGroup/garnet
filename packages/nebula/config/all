@@ -1,0 +1,6 @@
+{
+    "imports": [
+        "garnet/packages/nebula/config/hyp_apps",
+        "garnet/packages/nebula/config/sos_qemu"
+    ]
+}

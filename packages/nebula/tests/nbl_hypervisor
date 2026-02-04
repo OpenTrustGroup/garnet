@@ -1,0 +1,6 @@
+{
+    "packages": {
+        "vhm_tests": "//garnet/lib/machina:vhm_tests",
+        "rproc_tests": "//garnet/lib/machina:rproc_tests"
+    }
+}

@@ -1,0 +1,26 @@
+// Copyright 2023 GoldenRiver Technology Co., Ltd.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library machina;
+
+interface IpcEnumerator {
+  1: OnNewIpcChannel(uint8 chan_id, handle<vmo> tx_vmo, handle<vmo> rx_vmo);
+};
+
+interface IpcEventListener {
+  1: OnRxReady(uint8 chan_id) -> ();
+  2: OnTxDone(uint8 chan_id) -> ();
+};
+
+[ServiceName="machina.IpcService"]
+interface IpcService {
+  1: RegisterIpcEnumerator(uint16 vmid, IpcEnumerator listener) -> ();
+  2: RegisterIpcEventListener(uint16 vmid, IpcEventListener listener) -> ();
+  3: GetIpcEventListener(uint16 vmid) -> (IpcEventListener listener);
+  4: EnumerateIpcChannels(uint16 vmid) -> ();
+  5: GetIrqInfo(uint16 vmid) -> (uint16 rx_ready_irq, uint16 tx_done_irq);
+  6: SetupFastCallChannel(uint16 vmid) -> (handle<channel> chan_rx, handle<channel> chan_tx);
+  7: SetupVMCallChannel(uint16 vmid) -> (handle<channel> chan_rx, handle<channel> chan_tx);
+  8: GetSchedBuf(uint16 vmid) -> (uint64 paddr, uint64 size);
+};

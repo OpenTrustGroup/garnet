@@ -53,8 +53,10 @@ class ApplicationControllerImpl : public ApplicationController {
 
   // |ApplicationController| implementation:
   void Kill() override;
+  void KillAndWait(KillAndWaitCallback callback) override;
   void Detach() override;
   void Wait(WaitCallback callback) override;
+  void WaitLaunchResponse(WaitLaunchResponseCallback callback) override;
 
  private:
   async_wait_result_t Handler(async_t* async,
@@ -62,12 +64,18 @@ class ApplicationControllerImpl : public ApplicationController {
                               const zx_packet_signal* signal);
 
   bool SendReturnCodeIfTerminated();
+#ifdef __Nebula__
+  void SendReturnCodeIfTerminatedToTaLoader();
+#endif
 
   fidl::Binding<ApplicationController> binding_;
   JobHolder* job_holder_;
   std::unique_ptr<archive::FileSystem> fs_;
   zx::process process_;
   std::string label_;
+#ifdef __Nebula__
+  std::string url_;
+#endif
   std::vector<WaitCallback> wait_callbacks_;
   fbl::RefPtr<fs::PseudoDir> info_dir_;
 

@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "libnbl_gui": "//third_party/hee-trusty/nbl_gui:libnbl_gui"
+    }
+}

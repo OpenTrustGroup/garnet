@@ -1,0 +1,6 @@
+{
+    "packages": {
+        "nbl_appstate_srv": "//third_party/hee-trusty/nbl_appstate_srv",
+        "nbl_appstate_test": "//third_party/hee-trusty/nbl_appstate_srv:nbl_appstate_test"
+    }
+}

@@ -1,0 +1,159 @@
+.root {
+  align-items: center;
+  width: 100%;
+  height: 100%;
+}
+
+.title-box {
+  justify-content: space-around;
+  flex-direction: row;
+  width: 100%;
+  background-color: #DBDBDB;
+  padding: 3%;
+}
+
+.title-box TextView {
+  color: #E14C62;
+}
+
+.gr-logo {
+  background-image: url("/pkg/data/gr1.png");
+  background-position: center;
+  background-repeat: no-repeat;
+  height: 10%;
+  width: 100%;
+  margin-right: 1.8%;
+}
+
+#buttonback {
+  position: absolute;
+  background-image: url("/pkg/data/back.png");
+  background-position: center;
+  height: 3.6%;
+  width: 3.8%;
+  left: 1%;
+  top: 1%;
+}
+
+#buttonback:active {
+  background-image: url("/pkg/data/back2.png");
+  background-position: center;
+}
+
+.title {
+  margin-top: 3%;
+}
+
+#note {
+  font-size: 36px;
+  margin-top: 6%;
+  width: 82%;
+}
+
+#inputnote {
+  align-self: flex-start;
+  margin-top: 20%;
+  margin-bottom: 2%;
+  margin-left: 5%;
+}
+
+.btn-container {
+  flex-direction: row;
+  align-items: center;
+  width: 88%;
+  height: 5.7%;
+}
+
+.btn-margin {
+  margin-left: 7.4%;
+}
+
+.footer {
+  align-self: flex-end;
+  margin-right: 1%;
+  color: #B6B6B6;
+  font-size: 38px;
+}
+
+TextView {
+  font-size: 42px;
+  color: #4A4A4A;
+}
+
+Button {
+  border-radius: 60px;
+  border-color: #fff;
+  border-width: 2px;
+  width: 44%;
+  height: 100%;
+  background-color: #E6E6E6;
+  color: #6F95D8;
+  opacity: 0.4;
+  font-size: 40px;
+}
+
+Button:active {
+  background-color: #A0A0A0;
+}
+
+
+InputField {
+  margin: 2%;
+  background-color: #E9E9E9;
+  border-radius: 50px;
+  font-size: 80px;
+  padding: 1% 2%;
+  width: 88%;
+}
+
+Keyboard {
+  font-size: 56px;
+  background-color: #FFF;
+  border-width: 2px;
+  border-color: #4A4A4A;
+  color: #4A4A4A;
+  margin-top: 5%;
+  opacity: 0.4;
+}
+
+Keyboard:active {
+  background-color: #B6B6B6;
+}
+
+#dialog {
+  position: absolute;
+  background-color: #B6B6B6;
+  border-radius: 60px;
+  align-items: center;
+  justify-content: space-evenly;
+  height: 30%;
+  width: 75%;
+  top:35%;
+}
+
+#dialog-buttons-container {
+  width: 100%;
+  height: 28%;
+  flex-direction: row;
+  justify-content: space-evenly;
+}
+
+Container#dialog-buttons-container Button {
+  border-radius: 60px;
+  border-color: #fff;
+  border-width: 2px;
+  background-color: #E6E6E6;
+  color: #6F95D8;
+  opacity: 0.4;
+  font-size: 40px;
+  padding: 5% 15%;
+  height:80%
+}
+
+Container#dialog-buttons-container Button:active {
+  background-color: #A0A0A0;
+}
+
+#dialog-textview {
+  font-size: 60px;
+}

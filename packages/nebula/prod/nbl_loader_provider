@@ -1,0 +1,11 @@
+{
+    "packages": {
+        "nbl_loader_provider": "//third_party/hee-trusty/nbl_loader_provider"
+    },
+    "resources": [
+        {
+            "bootfs_path": "data/sysmgr/taloader.config",
+            "file": "garnet/bin/sysmgr/config/taloader.config"
+        }
+    ]
+}

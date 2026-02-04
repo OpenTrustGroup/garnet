@@ -1,0 +1,82 @@
+# SDK examples
+# - DON'T COPY THIS BUILD.gn TO SDK.
+
+import("//build/cpp/sdk_executable.gni")
+import("//build/package.gni")
+
+import("//third_party/boringssl/BUILD.generated_tests.gni")
+
+#######################################
+## copy all files in this folder to SDK,
+## and keep the sub directories.
+
+sdk_atom("examples") {
+  domain = "cpp"
+  name = "examples"
+
+  output_category = "examples"
+
+  tags = [ "arch:target", "type:sysroot" ]
+
+  files = []
+
+  # find the all files in this folder except some files.
+  all_files = exec_script(
+      "//build/sdk/list_files.sh", [rebase_path("./", root_build_dir)], "list lines")
+
+  # add evevry file in "all_files" to list.
+  foreach(f, all_files) {
+    files += [ { source = "$f" } ]
+  }
+
+  # add the other files.
+  files += [
+    { source = "//zircon/trusty/app/gr-ipc-unittest/include/app/ipc_unittest/common.h"
+      dest = "hee/trusty-api/include/app/ipc_unittest/common.h"
+    },
+    { source = "//zircon/trusty/app/gr-ipc-unittest/include/app/ipc_unittest/uuids.h"
+      dest = "hee/trusty-api/include/app/ipc_unittest/uuids.h"
+    },
+  ]
+
+  # Add omp's test files.
+  files += [ {
+      source = "//third_party/hee-trusty/samples/openmp_test/main.c"
+      dest = "hee/omp/main.c" }
+  ]
+
+  # Add test files of hwkey and rng.
+  # - Because the test cases of the two module are in one file.
+  files += [
+    {
+      source = "//zircon/trusty/app/hwcrypto-unittest/main.c"
+      dest = "hee/hwkey_rng/main.c"
+    },
+    {
+      source = "//zircon/trusty/app/hwcrypto-unittest/manifest.c"
+      dest = "hee/hwkey_rng/manifest.c"
+    }
+  ]
+
+  # Add pthread.
+  files += [
+    {
+      source = "//zircon/system/utest/core/pthread/pthread.cpp"
+      dest = "hee/pthread/pthread.cpp"
+    },
+    {
+      source = "//zircon/system/ulib/unittest/include/unittest/unittest.h"
+      dest = "hee/pthread/unittest/unittest.h"
+    },
+    {
+      source = "//out/build-zircon/build-arm64/system/ulib/unittest/libunittest.a"
+      dest = "hee/pthread/libunittest.a"
+    },
+    {
+      source = "//out/build-zircon/build-arm64/system/ulib/pretty/libpretty.a"
+      dest = "hee/pthread/libpretty.a"
+    }
+
+  ]
+
+}

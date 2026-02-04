@@ -1,0 +1,10 @@
+import("//third_party/protobuf/proto_library.gni")
+
+proto_library("vm_config") {
+  sources = [
+    "vm_config.proto",
+    "vm_message.proto",
+    "rproc.proto",
+  ]
+  use_protobuf_full = true
+}

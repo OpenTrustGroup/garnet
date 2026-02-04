@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <imports>
+    <localimport file="minimal-sy"/>
+    <localimport file="third_party-sy"/>
+    <import remote="ssh://gerrit-sy:29418/zircon"
+            manifest="manifest/zircon-sy"
+            name="zircon"
+            remotebranch="nebula"/>
+    </imports>
+</manifest>

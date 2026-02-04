@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "nbl_benchmarks": "//third_party/hee-trusty/nbl_benchmarks"
+    }
+}

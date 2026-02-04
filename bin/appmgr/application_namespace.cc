@@ -13,6 +13,7 @@ namespace component {
 ApplicationNamespace::ApplicationNamespace(
     fxl::RefPtr<ApplicationNamespace> parent,
     JobHolder* job_holder,
+    bool has_whitelist_service, ::std::vector<::std::string> whitelist_services,
     ServiceListPtr service_list)
     : parent_(parent), job_holder_(job_holder) {
   component::ServiceProviderPtr services_backend;
@@ -20,6 +21,10 @@ ApplicationNamespace::ApplicationNamespace(
     parent_->services().AddBinding(services_backend.NewRequest());
   }
   services_.set_backend(std::move(services_backend));
+
+  if (has_whitelist_service) {
+		services_.SetWhitelistServices(whitelist_services);
+  }
 
   services_.AddService<ApplicationEnvironment>(
       [this](fidl::InterfaceRequest<ApplicationEnvironment> request) {

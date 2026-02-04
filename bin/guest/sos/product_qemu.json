@@ -1,0 +1,23 @@
+{
+  "device-tree": "0x80000000,0x10000",
+  "vmem": [
+      "device0,0x00000000,0x00000000,0x40000000,1,0",
+      "device1,0x80000000,0x80000000,0x80000000,1,1",
+      "ram,0x400000000,0x400000000,0x40000000,1,0"
+  ],
+  "product": [
+    {
+      "name": "product1",
+      "file": "sos1.json"
+    },
+    {
+      "name": "product2",
+      "file": "sos2.json"
+    },
+    {
+      "name": "product3",
+      "file": "sos3.json"
+    }
+  ]
+}
+

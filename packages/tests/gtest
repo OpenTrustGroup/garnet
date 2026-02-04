@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "nbl_gtest": "//third_party/hee-trusty/nbl_gtest:nbl_gtest_test"
+    }
+}

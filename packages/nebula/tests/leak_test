@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "leak_test": "//third_party/hee-trusty/samples/leak_test"
+    }
+}

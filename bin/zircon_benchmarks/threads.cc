@@ -17,6 +17,9 @@ BENCHMARK_F(Thread, Create)(benchmark::State& state) {
       return;
     }
     state.PauseTiming();
+    // GRT: the thread is not closed by "zx_handle_close", so add "zx_task_kill" to close.
+    //      Unless, a lot of memory will leak, and speed will be lower.
+    zx_task_kill(out);
     zx_handle_close(out);
     state.ResumeTiming();
   }
@@ -40,7 +43,7 @@ BENCHMARK_F(Thread, CreateAndJoin)(benchmark::State& state) {
 
     zx_vaddr_t stack_base;
     uint32_t perm = ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE;
-    if (zx_vmar_map(zx_vmar_root_self(), 0, stack_vmo, 0, stack_size, perm, &stack_base) != ZX_OK) {
+    if (zx_vmar_map(zx_vmar_root_self(), perm, 0, stack_vmo, 0, stack_size, &stack_base) != ZX_OK) {
       state.SkipWithError("Failed to map vmo");
       return;
     }
@@ -59,6 +62,8 @@ BENCHMARK_F(Thread, CreateAndJoin)(benchmark::State& state) {
     }
 
     state.PauseTiming();
+    // GRT: the vmar should unmap the vmo.
+    zx_vmar_unmap(zx_vmar_root_self(), stack_base, stack_size);
     zx_handle_close(thread);
     zx_handle_close(stack_vmo);
     state.ResumeTiming();

@@ -54,6 +54,7 @@ class ApplicationNamespace
   FRIEND_MAKE_REF_COUNTED(ApplicationNamespace);
   ApplicationNamespace(fxl::RefPtr<ApplicationNamespace> parent,
                        JobHolder* job_holder,
+                       bool has_whitelist_services, ::std::vector<::std::string> whitelist_services,
                        ServiceListPtr service_list);
 
   FRIEND_REF_COUNTED_THREAD_SAFE(ApplicationNamespace);

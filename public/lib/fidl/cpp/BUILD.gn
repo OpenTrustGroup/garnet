@@ -4,8 +4,9 @@
 
 import("//build/package.gni")
 import("//garnet/public/lib/fidl/build/fidl/fidl.gni")
+import("//build/nebula/nbl_sdk_library.gni")
 
-source_set("cpp") {
+static_library("cpp") {
   sources = [
     "array.h",
     "binding_set.h",
@@ -58,6 +59,26 @@ source_set("cpp") {
   ]
 
   public_configs = [ "//garnet/public:config" ]
+}
+
+nbl_sdk_library("fidl_cpp_sdk") {
+  name = "fidl_cpp"
+  category = "hee"
+
+  hdr_dirs = [
+    {
+      source = "."
+      dest = "lib/fidl/cpp"
+    }
+  ]
+
+  libs = [
+    "libcpp.a",
+  ]
+
+  deps = [
+    ":cpp",
+  ]
 }
 
 source_set("test_support") {

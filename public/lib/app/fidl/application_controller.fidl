@@ -31,4 +31,11 @@ interface ApplicationController {
   // interface is closed. If the interface closes without this call returning
   // the caller may assume that the application terminated unexpectedly.
   3: Wait() -> (int32 return_code);
+
+  // Waits for application launch result.
+  //
+  // This call will not wait for the termination of the application.
+  4: WaitLaunchResponse() -> (int32 launch_res);
+
+  5: KillAndWait() -> ();
 };

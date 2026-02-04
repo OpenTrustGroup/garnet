@@ -1,0 +1,6 @@
+{
+    "imports": [
+        "garnet/packages/nebula/examples/nsc",
+        "garnet/packages/nebula/examples/simplest-garnet-app"
+    ]
+}

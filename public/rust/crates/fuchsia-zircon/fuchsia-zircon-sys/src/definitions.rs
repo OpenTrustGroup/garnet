@@ -447,9 +447,9 @@ extern {
 
     pub fn zx_vmar_allocate(
         parent_vmar_handle: zx_handle_t,
+        map_flags: u32,
         offset: usize,
         size: usize,
-        map_flags: u32,
         child_vmar: *mut zx_handle_t,
         child_addr: *mut usize
         ) -> zx_status_t;
@@ -460,11 +460,11 @@ extern {
 
     pub fn zx_vmar_map(
         vmar_handle: zx_handle_t,
+        map_flags: u32,
         vmar_offset: usize,
         vmo_handle: zx_handle_t,
         vmo_offset: u64,
         len: usize,
-        map_flags: u32,
         mapped_addr: *mut usize
         ) -> zx_status_t;
 
@@ -476,9 +476,9 @@ extern {
 
     pub fn zx_vmar_protect(
         vmar_handle: zx_handle_t,
+        prot_flags: u32
         addr: usize,
         len: usize,
-        prot_flags: u32
         ) -> zx_status_t;
 
     pub fn zx_vmar_root_self() -> zx_handle_t;

@@ -34,8 +34,8 @@ zx_status_t FramebufferScanout::Create(const char* path,
   uintptr_t fbo;
   size_t size = fb.info.stride * fb.info.pixelsize * fb.info.height;
   zx_status_t status =
-      zx_vmar_map(zx_vmar_root_self(), 0, fb.vmo, 0, size,
-                  ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE, &fbo);
+      zx_vmar_map(zx_vmar_root_self(), ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE,
+                  0, fb.vmo, 0, size, &fbo);
   if (status != ZX_OK) {
     return status;
   }

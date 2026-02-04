@@ -3,8 +3,9 @@
   <projects>
     <project name="garnet"
              path="garnet"
-             remote="https://fuchsia.googlesource.com/garnet"
-             gerrithost="https://fuchsia-review.googlesource.com"/>
+             remote="ssh://gerrit:29418/garnet"
+             remotebranch="nebula"
+             gerrithost="http://gerrit"/>
   </projects>
   <hooks>
     <hook name="build-update"

@@ -1,0 +1,105 @@
+{
+    "stylesheet": [
+        "/pkg/assets/layout.css"
+    ],
+
+    "children": [{
+        "type": "Container",
+        "class": "root",
+        "children": [{
+                "type": "Container",
+                "class": "title-box",
+                "children": [{
+                        "type": "TextView",
+                        "text": "序列号：2019 0601"
+                    },
+                    {
+                        "type": "TextView",
+                        "text": "防伪码：1234 5678"
+                    }
+                ]
+            },
+            {
+                "type": "ImageButton",
+                "id": "buttonback"
+            },
+            {
+                "type": "Container",
+                "id": "logo",
+                "class": "gr-logo"
+            },
+            {
+                "type": "TextView",
+                "class": "title",
+                "text": "谦川科技安全密码键盘"
+            },
+            {
+                "type": "TextView",
+                "id": "note",
+                "lineBreak": true,
+                "text": "说明：\n防伪码可确保密码键盘安全可信，您可以通过拨打\n谦川科技客服电话: XXXXXXXX，查验该密码键盘\n防伪码的真实性，也可以定制化密码键盘的防伪码。"
+            },
+            {
+                "type": "TextView",
+                "id": "inputnote",
+                "text": "请输入支付密码："
+            },
+            {
+                "type": "InputField",
+                "passwordMode": true,
+                "id": "password"
+            },
+            {
+                "type": "Container",
+                "class": "btn-container",
+                "children": [{
+                        "type": "Button",
+                        "id": "btn1",
+                        "text": "取消"
+                    },
+                    {
+                        "type": "Button",
+                        "id": "btn2",
+                        "class": "btn-margin",
+                        "text": "确定"
+                    }
+                ]
+            },
+            {
+                "type": "Keyboard",
+                "id": "keypad",
+                "innerPadding": 0
+            },
+            {
+                "type": "TextView",
+                "class": "footer",
+                "text": "谦川科技安全环境"
+            },
+            {
+                "type": "Dialog",
+                "id": "dialog",
+                "children": [{
+                        "type": "TextView",
+                        "id": "dialog-textview",
+                        "text": "确认退出？"
+                    },
+                    {
+                        "type": "Container",
+                        "id": "dialog-buttons-container",
+                        "children": [{
+                                "type": "Button",
+                                "id": "dialog-btn-cancel",
+                                "text": "取消"
+                            },
+                            {
+                                "type": "Button",
+                                "id": "dialog-btn-confirm",
+                                "text": "确定"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }]
+}

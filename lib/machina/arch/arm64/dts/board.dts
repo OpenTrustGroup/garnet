@@ -1,3 +1,4 @@
+// Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -23,12 +24,7 @@
 
   memory@0 {
     device_type = "memory";
-    reg = <0x00000000 0x09010000>,
-          // 4kb hole for RTC
-          <0x09020000 0x06fe0000>,
-          // 16mb hole for MMIO
-          <0x11000000 0x2e000000>;
-          // 16mb hole for ECAM
+    reg = <0x00000000 0x10000000>;
   };
 
   psci {
@@ -53,10 +49,10 @@
     #clock-cells = <0>;
   };
 
-  rtc@09010000 {
+  rtc@fff33000 {
     compatible = "arm,pl031", "arm,primecell";
     arm,primecell-periphid = <0x00041031>;
-    reg = <0x09010000 0x1000>;
+    reg = <0xfff33000 0x1000>;
   };
 
   serial@fff32000 {
@@ -68,21 +64,22 @@
     interrupts = <0 79 4>; // SPI 111 HIGH/CPU-0
   };
 
-  gic: interrupt-controller@e82b0000 {
-    interrupt-controller;
-    compatible = "arm,gic-400";
-    reg = <0xe82b1000 0x1000>, // GICD
-          <0xe82b2000 0x2000>; // GICC
+  gic: interrupt-controller@e8000000 {
+    compatible = "arm,gic-v3";
     #address-cells = <0>;
+    #size-cells = <2>;
     #interrupt-cells = <3>;
+    interrupt-controller;
+    reg = <0xe8000000 0x10000>, // GICD
+          <0xe80a0000 0x80000>; // GICR
   };
 
   pci@10000000 {
     device_type = "pci";
     compatible = "pci-host-ecam-generic";
-    reg = <0x3f000000 0x1000000>;
+    reg = <0xdf000000 0x1000000>;
     bus-range = <0 0>;
-    ranges = <0x2000000 0 0x10001000 0x10001000 0 0xfff000>;
+    ranges = <0x2000000 0 0xb0001000 0xb0001000 0 0xfff000>;
     interrupt-map-mask = <0xf800 0 0 1>;
     interrupt-map = <0x0000 0 0 1 &gic 0 0 4>,  // HIGH MID LOW WIRE GIC SPI 32 HIGH/CPU-0
                     <0x0800 0 0 1 &gic 0 1 4>,  // HIGH MID LOW WIRE GIC SPI 33 HIGH/CPU-0
@@ -100,4 +97,10 @@
     #size-cells = <2>;
     #interrupt-cells = <1>;
   };
+
+  /*IPI: interrupt-controller {
+    compatible = "android,CustomIPI";
+    #interrupt-cells = <1>;
+    interrupt-controller;
+  };*/
 };

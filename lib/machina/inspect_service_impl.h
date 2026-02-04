@@ -23,6 +23,8 @@ class InspectServiceImpl : public InspectService {
 
   zx::socket TakeSocket() { return fbl::move(server_socket_); }
 
+  void Bind(fidl::InterfaceRequest<InspectService> request);
+
  private:
   fidl::BindingSet<InspectService> bindings_;
   const zx::vmo vmo_;

@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "nbl_gp_manager": "//third_party/hee-trusty/gp/nbl_gp_manager"
+    }
+}

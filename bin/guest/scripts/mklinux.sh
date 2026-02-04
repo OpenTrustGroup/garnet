@@ -8,6 +8,13 @@
 
 set -eo pipefail
 
+GUEST_SCRIPTS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+PROXY_FILE=${GUEST_SCRIPTS_DIR}/../../../../proxy
+if [ -e "${PROXY_FILE}" ]; then
+    source ${PROXY_FILE}
+fi
+
 usage() {
   echo "usage: ${0} [options] {arm64, x64}"
   echo
@@ -47,7 +54,8 @@ declare -r LINUX_DIR=${LINUX_DIR:-/tmp/linux}
 
 # Shallow clone the repository.
 if [ ! -d "${LINUX_DIR}/.git" ]; then
-  git clone --depth 1 https://zircon-guest.googlesource.com/third_party/linux "${LINUX_DIR}"
+#  git clone --depth 1 https://zircon-guest.googlesource.com/third_party/linux "${LINUX_DIR}"
+  git clone --depth 1 ssh://gerrit:29418/zircon-guest/third_party/linux "${LINUX_DIR}"
 fi
 
 # Update the repository.
@@ -55,7 +63,7 @@ cd "${LINUX_DIR}"
 git pull
 # Build Linux.
 make machina_defconfig
-make -j $(getconf _NPROCESSORS_ONLN)
+make -j $(getconf _NPROCESSORS_ONLN) TEXT_OFFSET=0x10000
 
 if [ -n "${LINUX_OUT}" ]; then
   mv "${LINUX_IMAGE}" "${LINUX_OUT}"

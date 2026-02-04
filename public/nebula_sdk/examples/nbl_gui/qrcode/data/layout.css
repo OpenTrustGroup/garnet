@@ -1,0 +1,126 @@
+.root {
+  justify-content: center;
+}
+
+.body {
+  align-items: center;
+  background-color: #2182CD;
+  width: 100%;
+  height: 100%;
+}
+
+#buttonback {
+  position: absolute;
+  background-image: url("/pkg/data/back.png");
+  background-position: center;
+  height: 3.6%;
+  width: 3.8%;
+  left: 1%;
+  top: 1%;
+}
+
+#buttonback:active {
+  background-image: url("/pkg/data/back2.png");
+  background-position: center;
+}
+
+.background-image {
+  background-image: url("/pkg/data/box.png");
+  width: 83%;
+  height: 70%;
+  margin-top: 8%;
+}
+
+.qrcode-container {
+  flex-direction: column;
+  align-items: center;
+  position: absolute;
+}
+
+.separator {
+  background-color: #2182CD;
+  width: 100%;
+  height: 0.2%;
+}
+
+#payqrcode {
+  background-position: center;
+  background-repeat: no-repeat;
+  width: 80%;
+  height: 40%;
+}
+
+TextView {
+  font-size: 65px;
+  color: #4A4A4A;
+}
+
+.font-size-55 {
+  font-size: 55px;
+}
+
+.margin-top-10p {
+  margin-top: 10%;
+}
+
+.margin-top-15p {
+  margin-top: 15%;
+}
+
+.margin-top-20p {
+  margin-top: 20%;
+}
+
+.gr-logo {
+  margin-top: 10%;
+  background-color: #FFFFFF;
+  background-image: url("/pkg/data/gr1.png");
+  background-position: center;
+  background-repeat: no-repeat;
+  height: 10%;
+  width: 100%;
+}
+
+.footer {
+  font-size: 40px;
+  color: #FFFFFF;
+  margin-top: 1%;
+}
+
+#timer {
+  position: absolute;
+  top: 0.5%;
+  right: 1%;
+}
+
+#dialog {
+  position: absolute;
+  background-color: #B6B6B6;
+  border-radius: 60px;
+  align-items: center;
+  justify-content: space-evenly;
+  height: 30%;
+  width: 75%;
+  top:35%
+}
+
+#dialog-buttons-container {
+  width: 100%;
+  flex-direction: row;
+  justify-content: space-evenly;
+}
+
+Container#dialog-buttons-container Button {
+  border-radius: 60px;
+  border-color: #fff;
+  border-width: 2px;
+  background-color: #E6E6E6;
+  color: #6F95D8;
+  opacity: 0.4;
+  font-size: 40px;
+  padding: 5% 15%;
+}
+
+Container#dialog-buttons-container Button:active {
+  background-color: #A0A0A0;
+}

@@ -12,6 +12,7 @@ namespace {
 #define TAG_TYPE_16B TagType::kBasic
 #define TAG_TYPE_32B TagType::kQuad
 #define TAG_TYPE_NAME TagType::kName
+#define TAG_TYPE_COMM TagType::kComm
 #define KTRACE_DEF(num, type, name, group) \
   {num, KTRACE_GRP_##group, TAG_TYPE_##type, #name},
 

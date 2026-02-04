@@ -20,6 +20,7 @@ union KtraceRecord {
     ktrace_rec_32b_t r_16B;
     ktrace_rec_32b_t r_32B;
     ktrace_rec_name_t r_NAME;
+    ktrace_rec_comm_t r_COMM;
     uint8_t raw[256];
 };
 

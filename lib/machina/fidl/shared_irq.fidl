@@ -1,0 +1,20 @@
+// Copyright 2023 GoldenRiver Technology Co., Ltd.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library machina;
+
+interface SharedIrqListener {
+  1: OnNewSharedIrq(uint32 irq_nr, uint32 interested_bitmask);
+
+  2: OnPendingIrqEvent(uint32 irq_nr, uint32 pending_bitmap);
+};
+
+[ServiceName="machina.SharedIrqService"]
+interface SharedIrqService {
+  1: RegisterSharedIrqListener(SharedIrqListener listener) -> ();
+
+  2: PopulateSharedIrq() -> ();
+
+  3: UpdatePreference(uint32 irq_nr, uint32 interested_bitmap) -> ();
+};

@@ -1,0 +1,155 @@
+{
+    "packages": {
+        "openssl_test" : "//third_party/openssl:openssl_test"
+    },
+    "resources": [
+        {
+             "bootfs_path": "test/openssl_test/testfile/server.pem",
+             "file": "third_party/openssl/apps/server.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/session.pem",
+             "file": "third_party/openssl/test/openssl/session.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/servercert.pem",
+             "file": "third_party/openssl/test/openssl/certs/servercert.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/serverkey.pem",
+             "file": "third_party/openssl/test/openssl/certs/serverkey.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/wrongkey.pem",
+             "file": "third_party/openssl/test/openssl/certs/wrongkey.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/x509-check.csr",
+             "file": "third_party/openssl/test/openssl/certs/x509-check.csr"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/x509-check-key.pem",
+             "file": "third_party/openssl/test/openssl/certs/x509-check-key.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/leaf.pem",
+             "file": "third_party/openssl/test/openssl/certs/leaf.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/roots.pem",
+             "file": "third_party/openssl/test/openssl/certs/roots.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/untrusted.pem",
+             "file": "third_party/openssl/test/openssl/certs/untrusted.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/bad.pem",
+             "file": "third_party/openssl/test/openssl/certs/bad.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/root+anyEKU.pem",
+             "file": "third_party/openssl/test/openssl/certs/root+anyEKU.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/root-anyEKU.pem",
+             "file": "third_party/openssl/test/openssl/certs/root-anyEKU.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/root-cert.pem",
+             "file": "third_party/openssl/test/openssl/certs/root-cert.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/passwd.txt",
+             "file": "third_party/openssl/test/openssl/recipes/90-test_sslapi_data/passwd.txt"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/cert.pem",
+             "file": "third_party/openssl/test/openssl/recipes/80-test_ocsp_data/cert.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/pathlen.pem",
+             "file": "third_party/openssl/test/openssl/certs/pathlen.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/key.pem",
+             "file": "third_party/openssl/test/openssl/recipes/80-test_ocsp_data/key.pem"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/evpciph.txt",
+             "file": "third_party/openssl/test/openssl/recipes/30-test_evp_data/evpciph.txt"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/evpdigest.txt",
+             "file": "third_party/openssl/test/openssl/recipes/30-test_evp_data/evpdigest.txt"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/evpencod.txt",
+             "file": "third_party/openssl/test/openssl/recipes/30-test_evp_data/evpencod.txt"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/evpkdf.txt",
+             "file": "third_party/openssl/test/openssl/recipes/30-test_evp_data/evpkdf.txt"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/evpmac.txt",
+             "file": "third_party/openssl/test/openssl/recipes/30-test_evp_data/evpmac.txt"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/evppbe.txt",
+             "file": "third_party/openssl/test/openssl/recipes/30-test_evp_data/evppbe.txt"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/evppkey.txt",
+             "file": "third_party/openssl/test/openssl/recipes/30-test_evp_data/evppkey.txt"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/evppkey_ecc.txt",
+             "file": "third_party/openssl/test/openssl/recipes/30-test_evp_data/evppkey_ecc.txt"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/evpcase.txt",
+             "file": "third_party/openssl/test/openssl/recipes/30-test_evp_data/evpcase.txt"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/evpccmcavs.txt",
+             "file": "third_party/openssl/test/openssl/recipes/30-test_evp_data/evpccmcavs.txt"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/bad_cert.der",
+             "file": "third_party/openssl/test/openssl/d2i-tests/bad_cert.der"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/bad_generalname.der",
+             "file": "third_party/openssl/test/openssl/d2i-tests/bad_generalname.der"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/bad_bio.der",
+             "file": "third_party/openssl/test/openssl/d2i-tests/bad_bio.der"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/high_tag.der",
+             "file": "third_party/openssl/test/openssl/d2i-tests/high_tag.der"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/int0.der",
+             "file": "third_party/openssl/test/openssl/d2i-tests/int0.der"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/int1.der",
+             "file": "third_party/openssl/test/openssl/d2i-tests/int1.der"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/intminus1.der",
+             "file": "third_party/openssl/test/openssl/d2i-tests/intminus1.der"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/bad-int-pad0.der",
+             "file": "third_party/openssl/test/openssl/d2i-tests/bad-int-pad0.der"
+        },
+        {
+             "bootfs_path": "test/openssl_test/testfile/bad-int-padminus1.der",
+             "file": "third_party/openssl/test/openssl/d2i-tests/bad-int-padminus1.der"
+        }
+    ] 
+}

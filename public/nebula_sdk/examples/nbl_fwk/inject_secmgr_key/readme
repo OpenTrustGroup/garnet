@@ -1,0 +1,27 @@
+Secmgr OTrP 秘钥注入示例说明
+
+1.秘钥注入首先需要激活TEE
+SDK中examples/nbl_fwk/license是QEMU激活示例，可以直接运行在QENU上。DEMO中已经默认包含了qemu可以使用的激活码
+运行命令：
+make
+make run
+
+更多设备激活码的生成和激活请参考产线文档“vTrust产品集成说明书”和vTrust产线工具使用手册“”。
+
+
+2.参考“vTrust产品集成说明书”1.2.1和1.2.2说明文档生成新的OTrP的秘钥。
+这里"new_test_key"文件夹是新生成的秘钥用于示例。其中的"export_key"文件夹中的秘钥是需要注入到设备中的。
+
+inject_secmgr_key文件夹的REE应用是基于在QEMU的REE上运行的秘钥注入应用示例。
+其作用是将"new_test_key/export_key" 中的秘钥注入到设备中。
+执行脚本“push_key_to_qemu.sh”将"new_test_key/export_key" 中的秘钥推送到QEMU的指定位置
+在“inject_secmgr_key”程序目录下执行
+make
+make run
+会注入推送到QEMU中的秘钥
+
+3.测试使用新秘钥打包加密安装TA
+测试的TA为目录下“hello_ta”
+执行provision_ha_by_new_key.sh脚本会自动编译“hello_ta”并使用new_test_key中秘钥生成加密数据推送到QEMU中安装到TEE里并启动TA
+TEE中可以显示TA打印的“hello ta”日志。证明新的秘钥已经好用。
+

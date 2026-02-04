@@ -43,8 +43,8 @@ bool TimezoneImpl::Init() {
   // Maps the ICU VMO into this process.
   fsl::SizedVmo::FromTransport(std::move(icu_data_out->vmo), &icu_vmo);
   uintptr_t icu_data_ptr = 0;
-  if (zx_vmar_map(zx_vmar_root_self(), 0, icu_vmo.vmo().get(), 0,
-                  icu_vmo.size(), ZX_VM_FLAG_PERM_READ,
+  if (zx_vmar_map(zx_vmar_root_self(), ZX_VM_FLAG_PERM_READ,
+                  0, icu_vmo.vmo().get(), 0, icu_vmo.size(),
                   &icu_data_ptr) != ZX_OK) {
     FXL_LOG(ERROR) << "Unable to map ICU data into process.";
     return false;

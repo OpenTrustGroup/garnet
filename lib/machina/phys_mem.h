@@ -15,12 +15,24 @@ namespace machina {
 class PhysMem {
  public:
   zx_status_t Init(size_t mem_size);
+  zx_status_t Init(zx::vmo vmo, uint64_t phys_base);
 
   ~PhysMem();
 
   const zx::vmo& vmo() const { return vmo_; }
   uintptr_t addr() const { return addr_; }
+  uint64_t phys_base() const { return phys_base_; }
   size_t size() const { return vmo_size_; }
+
+  bool contains(uintptr_t paddr, size_t len) {
+    auto off = paddr - addr_;
+    return off + len <= vmo_size_;
+  }
+
+  bool contains_gpa(uintptr_t paddr, size_t len) {
+    auto off = paddr - phys_base_;
+    return off + len <= vmo_size_;
+  }
 
   template <typename T>
   T* as(uintptr_t off, size_t len = sizeof(T)) const {
@@ -41,6 +53,7 @@ class PhysMem {
   zx::vmo vmo_;
   size_t vmo_size_ = 0;
   uintptr_t addr_ = 0;
+  uint64_t phys_base_;
 };
 
 }  // namespace machina

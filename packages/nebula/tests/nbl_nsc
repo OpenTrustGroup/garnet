@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "nsc_test": "//third_party/hee-trusty/nbl_nsc/test:nsc_test"
+    }
+}

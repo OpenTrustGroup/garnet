@@ -5,6 +5,7 @@
 import("//build/cpp/prebuilt_shared_library.gni")
 import("//build/package.gni")
 import("//build/sdk/sdk_group.gni")
+import("//build/nebula/nbl_sdk_library.gni")
 
 sdk_group("fsl") {
   public_deps = [
@@ -33,6 +34,26 @@ prebuilt_shared_library("fsl_lib") {
     "//zircon/public/lib/async-default:async-default_sdk",
     "//zircon/public/lib/fdio:fdio_sdk",
     "//zircon/public/lib/syslog:syslog_sdk",
+  ]
+}
+
+nbl_sdk_library("nbl_fsl_sdk") {
+  name = "fsl"
+  category = "hee"
+
+  hdr_dirs = [
+    {
+      source = "."
+      dest = "lib/fsl"
+    },
+  ]
+
+  libs = [
+    "libfsl.so",
+  ]
+
+  deps = [
+    ":fsl_lib"
   ]
 }
 

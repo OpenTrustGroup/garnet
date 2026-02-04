@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "zlib": "//third_party/zlib:package"
+    }
+}

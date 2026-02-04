@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <projects>
+    <project name="garnet"
+             path="garnet"
+             remote="ssh://gerrit-sy:29418/garnet"
+             remotebranch="nebula"
+             gerrithost="http://gerrit"/>
+  </projects>
+  <hooks>
+    <hook name="build-update"
+          project="garnet"
+          action="tools/update.sh"/>
+    <hook name="download-rt2870-bin"
+          project="garnet"
+          action="drivers/wlan/mediatek/ralink/download-firmware.sh"/>
+    <hook name="download-btintel-bin"
+          project="garnet"
+          action="drivers/bluetooth/hci/intel/download-firmware.sh"/>
+    <hook name="download-vulkan-sdk"
+          project="garnet"
+          action="public/lib/escher/scripts/download-vulkan-sdk"/>
+    <hook name="fonts-update"
+          project="garnet"
+          action="bin/fonts/update.sh"/>
+  </hooks>
+</manifest>

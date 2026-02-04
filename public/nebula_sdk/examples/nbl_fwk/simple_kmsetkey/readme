@@ -1,0 +1,19 @@
+注入谷歌秘钥ATTESTATION_KEY流程（QEMU）
+
+1.安装kmsetkey的TA到QEMU
+  执行provision_kmsetkey_qemu.sh会将目录下kmsetkey的TA使用OTrP 默认DEBUG秘钥安装到QEMU中并启动
+  （如果是安卓，推送数据改用ADB就可以。kmsetkey的TA是nebula编译出的在nebula/out/arm64下）
+ 启动成功TEE会显示“KM_SETKEY: 582: Initializing” 
+ (如果注入过正式OTrP秘钥需要替换正式秘钥路径加密安装。替换$key_folder_name和$key_store_path
+ 如果是安卓设备修改#push data to qemu的步骤用ADB推送)
+ 
+2.推送谷歌秘钥数据文件夹google_data到QEMU
+  使用“push_google_data_to_qemu.sh”脚本推送到指定测试目录
+
+3.安装运行simple_kmsetkey REE端示例注入谷歌秘钥
+  在nebula_sdk/examples/nbl_fwk/simple_kmsetkey/simple_kmsetkey目录下执行
+ make
+ make run
+ 会直接在QEMU上运行simple_kmsetkey。将第二部推送的秘钥进行注入，运行成功会显示日志
+ TEE端"KM_SETKEY: 391: set_key: Attestation key injection is success!"
+ REE端"run simple_kmsetkey success"

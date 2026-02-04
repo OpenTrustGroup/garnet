@@ -35,6 +35,12 @@ struct ApplicationLaunchInfo {
   // The arguments to be provided to the application.
   vector<string>? arguments;
 
+  //The arguments to provide Ion heap info
+  vector<string>? ion_heap_args;
+
+  // This channel to be provided to the GP TA
+  handle<channel>? ta_session_request;
+
   // The file descriptor to use for stdout.
   //
   // If null, the application will use the default stdout for the environment.

@@ -1,0 +1,73 @@
+Certificate:
+    Data:
+        Version: 3 (0x2)
+        Serial Number: 1 (0x1)
+    Signature Algorithm: sha256WithRSAEncryption
+        Issuer: C=cn, ST=liaoning, L=shenyang, O=goldenrivertek, OU=goldenrivertek, CN=gr.tsm.root.ca
+        Validity
+            Not Before: Jul  3 14:00:50 2018 GMT
+            Not After : Jun 25 14:00:50 2048 GMT
+        Subject: C=cn, ST=liaoning, O=goldenrivertek, OU=goldenrivertek, CN=gr.tsm.sign
+        Subject Public Key Info:
+            Public Key Algorithm: rsaEncryption
+                Public-Key: (2048 bit)
+                Modulus:
+                    00:f6:25:a0:4d:88:e2:27:1a:e2:2d:b9:60:e7:6f:
+                    9b:64:18:ac:9e:9f:09:c2:8c:ea:d0:f7:4b:02:37:
+                    aa:68:1f:a9:ab:0b:d6:86:31:ab:cb:d4:33:9e:68:
+                    45:22:7a:0c:e2:61:2e:59:f7:31:24:c9:7c:42:8c:
+                    3b:f3:9b:c5:23:b4:24:8e:59:55:97:cc:9b:73:d6:
+                    b4:56:87:3c:3c:7a:4d:d5:c8:b4:4c:0f:27:24:55:
+                    d7:36:0f:d7:ab:bb:8e:06:e2:4f:ce:e4:79:ba:05:
+                    b7:a6:50:a9:74:2c:d4:90:0a:22:62:54:85:0c:26:
+                    a5:fc:20:58:f8:70:3a:48:99:67:b5:79:a6:69:1e:
+                    29:e4:f0:c8:42:91:dc:54:7d:d3:68:e1:d7:c9:06:
+                    59:26:21:58:3c:19:26:c3:83:b7:dc:9a:6d:d7:a8:
+                    1f:96:85:a5:cd:0f:56:7f:40:de:6f:c0:ba:65:da:
+                    bf:16:48:dc:f2:33:23:26:31:82:25:96:1f:ed:19:
+                    8d:04:c2:2d:ec:ef:78:3a:62:d0:a0:3b:c2:cf:31:
+                    da:76:d5:6b:51:7a:bb:46:de:c8:e3:60:53:04:e5:
+                    40:bf:8d:88:a0:78:88:ff:78:87:61:85:d0:6c:80:
+                    20:52:a9:97:4e:7c:6b:bb:8e:fe:03:58:9d:f6:e0:
+                    09:69
+                Exponent: 65537 (0x10001)
+        X509v3 extensions:
+            X509v3 Subject Alternative Name:
+                DNS:test.tsm.goldenrivertek.com
+    Signature Algorithm: sha256WithRSAEncryption
+         92:3c:1d:77:28:7a:f3:85:dd:d2:46:5c:70:0d:b0:be:5d:b4:
+         0c:0b:f8:2d:e0:ba:36:15:da:dc:07:78:0a:1a:9b:26:f1:41:
+         aa:77:92:93:0e:51:cd:64:0a:78:02:91:bd:e6:47:be:9a:30:
+         58:e5:d2:4d:2c:d7:08:56:2a:9e:81:ff:e3:a5:e7:1d:7f:eb:
+         c3:20:44:68:32:df:24:00:6e:5e:ba:a3:81:de:ca:fb:eb:4a:
+         a1:61:10:d1:bb:95:55:11:e0:9c:8d:f0:76:05:b6:52:f9:af:
+         72:a3:8c:7e:12:37:6b:b3:fe:3a:2b:18:1e:aa:cd:0c:e1:c2:
+         54:a9:6b:88:14:ce:ff:7c:0c:42:cc:94:80:b0:f6:15:77:9c:
+         81:02:d7:0b:17:e4:4f:2a:d2:a7:e2:ce:04:80:aa:8a:79:08:
+         03:aa:af:45:34:17:23:27:7c:3d:71:f6:af:c5:f8:b4:b2:42:
+         c5:dc:4d:a2:ae:d0:60:d7:5a:23:37:7d:5b:f1:e0:a6:58:a0:
+         7b:67:65:be:00:26:ae:2a:47:32:d0:3d:f9:ab:0a:74:bf:37:
+         0c:4c:c8:06:38:0e:96:86:e9:d3:f6:8a:6e:86:5b:67:92:ba:
+         e0:cc:ec:ed:b8:4d:7c:8d:c8:57:7d:ec:bb:59:ac:9c:ff:11:
+         86:c2:ae:a0
+-----BEGIN CERTIFICATE-----
+MIIDizCCAnOgAwIBAgIBATANBgkqhkiG9w0BAQsFADB+MQswCQYDVQQGEwJjbjER
+MA8GA1UECAwIbGlhb25pbmcxETAPBgNVBAcMCHNoZW55YW5nMRcwFQYDVQQKDA5n
+b2xkZW5yaXZlcnRlazEXMBUGA1UECwwOZ29sZGVucml2ZXJ0ZWsxFzAVBgNVBAMM
+DmdyLnRzbS5yb290LmNhMB4XDTE4MDcwMzE0MDA1MFoXDTQ4MDYyNTE0MDA1MFow
+aDELMAkGA1UEBhMCY24xETAPBgNVBAgTCGxpYW9uaW5nMRcwFQYDVQQKEw5nb2xk
+ZW5yaXZlcnRlazEXMBUGA1UECxMOZ29sZGVucml2ZXJ0ZWsxFDASBgNVBAMTC2dy
+LnRzbS5zaWduMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA9iWgTYji
+JxriLblg52+bZBisnp8Jwozq0PdLAjeqaB+pqwvWhjGry9QznmhFInoM4mEuWfcx
+JMl8Qow785vFI7QkjllVl8ybc9a0Voc8PHpN1ci0TA8nJFXXNg/Xq7uOBuJPzuR5
+ugW3plCpdCzUkAoiYlSFDCal/CBY+HA6SJlntXmmaR4p5PDIQpHcVH3TaOHXyQZZ
+JiFYPBkmw4O33Jpt16gfloWlzQ9Wf0Deb8C6Zdq/Fkjc8jMjJjGCJZYf7RmNBMIt
+7O94OmLQoDvCzzHadtVrUXq7Rt7I42BTBOVAv42IoHiI/3iHYYXQbIAgUqmXTnxr
+u47+A1id9uAJaQIDAQABoyowKDAmBgNVHREEHzAdght0ZXN0LnRzbS5nb2xkZW5y
+aXZlcnRlay5jb20wDQYJKoZIhvcNAQELBQADggEBAJI8HXcoevOF3dJGXHANsL5d
+tAwL+C3gujYV2twHeAoamybxQap3kpMOUc1kCngCkb3mR76aMFjl0k0s1whWKp6B
+/+Ol5x1/68MgRGgy3yQAbl66o4HeyvvrSqFhENG7lVUR4JyN8HYFtlL5r3KjjH4S
+N2uz/jorGB6qzQzhwlSpa4gUzv98DELMlICw9hV3nIEC1wsX5E8q0qfizgSAqop5
+CAOqr0U0FyMnfD1x9q/F+LSyQsXcTaKu0GDXWiM3fVvx4KZYoHtnZb4AJq4qRzLQ
+PfmrCnS/NwxMyAY4DpaG6dP2im6GW2eSuuDM7O24TXyNyFd97LtZrJz/EYbCrqA=
+-----END CERTIFICATE-----

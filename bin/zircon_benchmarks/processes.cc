@@ -129,7 +129,7 @@ bool Process::InitChildProcess(benchmark::State& state) {
     state.SkipWithError("Failed to write vmo");
     return false;
   }
-  if (zx_vmar_map(vmar_handle, 0, stack_vmo, 0, stack_size, stack_perm, &stack_base) != ZX_OK) {
+  if (zx_vmar_map(vmar_handle, stack_perm, 0, stack_vmo, 0, stack_size, &stack_base) != ZX_OK) {
     state.SkipWithError("Failed to map vmo");
     return false;
   }

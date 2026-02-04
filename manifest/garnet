@@ -3,9 +3,9 @@
   <imports>
     <localimport file="minimal"/>
     <localimport file="third_party"/>
-    <import remote="https://fuchsia.googlesource.com/zircon"
+    <import remote="ssh://gerrit:29418/zircon"
             manifest="manifest/zircon"
             name="zircon"
-            revision="d3b50545174a11eb9a4807473d380f19e5bacb25"/>
+            remotebranch="nebula"/>
     </imports>
 </manifest>

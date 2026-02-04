@@ -29,6 +29,7 @@ class ChromiumExporter {
   void Start();
   void Stop();
   void ExportEvent(const trace::Record::Event& event);
+  void ExportEventTiny(const trace::Record::EventTiny& event);
   void ExportKernelObject(const trace::Record::KernelObject& kernel_object);
   void ExportLog(const trace::Record::Log& log);
   void ExportMetadata(const trace::Record::Metadata& metadata);

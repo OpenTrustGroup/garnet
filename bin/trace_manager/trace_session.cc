@@ -51,7 +51,7 @@ void TraceSession::AddProvider(TraceProviderBundle* bundle) {
   fidl::Clone(categories_, &categories_clone);
   if (!tracees_.back()->Start(
           trace_buffer_size_, std::move(categories_clone),
-          [ weak = weak_ptr_factory_.GetWeakPtr(), bundle ]() {
+          [ weak = weak_ptr_factory_.GetWeakPtr() ]() {
             if (weak)
               weak->CheckAllProvidersStarted();
           },

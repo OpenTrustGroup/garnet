@@ -1,0 +1,88 @@
+{
+    "stylesheet": [
+        "/pkg/data/layout.css"
+    ],
+
+    "class": "root",
+    "children": [{
+        "class": "body",
+        "type": "Container",
+        "children": [{
+                "type": "ImageButton",
+                "id": "buttonback"
+            },
+            {
+                "type": "Container",
+                "class": "background-image"
+            },
+            {
+                "type": "Container",
+                "class": "qrcode-container margin-top-10p",
+                "children": [{
+                        "type": "TextView",
+                        "class": "margin-top-15p",
+                        "text": "扫一扫,向我付款"
+                    },
+                    {
+                        "type": "Container",
+                        "class": "separator margin-top-15p"
+                    },
+                    {
+                        "type": "TextView",
+                        "class": "font-size-55 margin-top-20p",
+                        "text": "谦川科技"
+                    },
+                    {
+                        "type": "Container",
+                        "class": "margin-top-20p",
+                        "id": "payqrcode"
+                    },
+                    {
+                        "type": "TextView",
+                        "class": "font-size-55 margin-top-20p",
+                        "text": "收单机构：谦川科技"
+                    }
+                ]
+            },
+            {
+                "type": "TextView",
+                "id": "timer",
+                "text": "10"
+            },
+            {
+                "type": "Dialog",
+                "id": "dialog",
+                "children": [{
+                        "type": "TextView",
+                        "id": "dialog-label",
+                        "text": "确认退出？"
+                    },
+                    {
+                        "type": "Container",
+                        "id": "dialog-buttons-container",
+                        "children": [{
+                                "type": "Button",
+                                "id": "dialog-btn-cancel",
+                                "text": "取消"
+                            },
+                            {
+                                "type": "Button",
+                                "id": "dialog-btn-confirm",
+                                "text": "确定"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "type": "Container",
+                "class": "gr-logo"
+            },
+            {
+                "type": "TextView",
+                "class": "footer",
+                "text": "Powered By GoldenRiver Technology"
+            }
+        ]
+    }]
+}

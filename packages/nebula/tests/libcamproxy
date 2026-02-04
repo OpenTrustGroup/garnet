@@ -1,0 +1,6 @@
+{
+    "packages": {
+        "libcamproxy_test": "//third_party/hee-trusty/camproxy:libcamproxy_test",
+        "libcamproxy_benchmark": "//third_party/hee-trusty/camproxy:libcamproxy_benchmark"
+    }
+}

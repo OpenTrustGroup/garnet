@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "ta_big": "//third_party/hee-trusty/samples/ta_big"
+    }
+}

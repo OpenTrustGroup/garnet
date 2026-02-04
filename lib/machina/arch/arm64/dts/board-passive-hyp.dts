@@ -1,0 +1,135 @@
+// Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+// Copyright 2017 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+// See: https://elinux.org/Device_Tree_Usage
+/dts-v1/;
+
+/ {
+  model = "Machina";
+  interrupt-parent = <&gic>;
+  #address-cells = <1>;
+  #size-cells = <1>;
+
+  chosen {
+    // Will be populated at run-time.
+    bootargs = "earlycon=pl011,0x09001000 console=ttyAMA0";
+    linux,initrd-start = <0x84000000>;
+    linux,initrd-end = <0x84D0945E>;
+  };
+
+  cpus {
+    #address-cells = <1>;
+    #size-cells = <0>;
+
+    cpu@0 {
+      device_type = "cpu";
+      compatible = "arm,cortex-a53", "arm,armv8";
+      reg = <0>;
+      enable-method = "psci";
+    };
+
+    cpu@1 {
+      device_type = "cpu";
+      compatible = "arm,cortex-a53", "arm,armv8";
+      reg = <1>;
+      enable-method = "psci";
+    };
+
+    cpu@2 {
+      device_type = "cpu";
+      compatible = "arm,cortex-a53", "arm,armv8";
+      reg = <2>;
+      enable-method = "psci";
+    };
+
+    cpu@3 {
+      device_type = "cpu";
+      compatible = "arm,cortex-a53", "arm,armv8";
+      reg = <3>;
+      enable-method = "psci";
+    };
+  };
+
+  memory@80000000 {
+    device_type = "memory";
+    reg = <0x80000000 0x10000000>;
+  };
+
+  psci {
+    compatible = "arm,psci";
+    method = "smc";
+    cpu_on = <0xc4000003>;
+  };
+
+  timer {
+    compatible = "arm,armv8-timer";
+    always-on;
+    interrupts = <1 13 4>, // PHYS-SECURE-PPI     29 HIGH/CPU-0
+                 <1 14 4>, // PHYS-NON-SECURE-PPI 30 HIGH/CPU-0
+                 <1 11 4>, // VIRT-PPI            27 HIGH/CPU-0
+                 <1 10 4>; // HYP-PPI             26 HIGH/CPU-0
+  };
+
+  pclk: clock {
+    compatible = "fixed-clock";
+    clock-frequency = <0x16e3600>;
+    clock-output-names = "clk24mhz";
+    #clock-cells = <0>;
+  };
+
+  rtc@09010000 {
+    compatible = "arm,pl031", "arm,primecell";
+    arm,primecell-periphid = <0x00041031>;
+    reg = <0x09010000 0x1000>;
+    clock-names = "apb_pclk";
+    clocks = <&pclk>;
+    interrupts = <0 2 4>; // SPI 34 HIGH/CPU-0
+  };
+
+  serial@09001000 {
+    compatible = "arm,pl011", "arm,primecell";
+    arm,primecell-periphid = <0x00341011>;
+    reg = <0x09001000 0x1000>;
+    clock-names = "apb_pclk";
+    clocks = <&pclk>;
+    interrupts = <0 9 4>; // SPI 41 HIGH/CPU-0
+  };
+
+  gic: interrupt-controller@08000000 {
+    interrupt-controller;
+    compatible = "arm,gic-v3";
+    reg = <0x08000000 0x10000>,  // GICD
+          <0x080a0000 0xf60000>; // GICR
+    #address-cells = <0>;
+    #interrupt-cells = <3>;
+  };
+
+  IPI: interrupt-controller {
+    compatible = "android,CustomIPI";
+    #interrupt-cells = <1>;
+    interrupt-controller;
+  };
+
+  trusty {
+    compatible = "android,trusty-smc-v1";
+    //ranges;
+    #address-cells = <2>;
+    #size-cells = <2>;
+
+    virtio {
+      compatible = "android,trusty-virtio-v1";
+    };
+
+    irq {
+      compatible = "android,trusty-irq-v1";
+      interrupt-templates = <&IPI 0>,
+                            <&gic 1 1 0>, // <&gic 1 GIC_PPI 0>
+                            <&gic 1 0 0>; // <&gic 1 GIC_SPI 0>
+      interrupt-ranges = < 0  15 0>,
+                         <16  31 1>,
+                         <32 223 2>;
+    };
+  };
+};

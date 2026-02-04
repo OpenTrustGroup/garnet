@@ -76,6 +76,7 @@ package("trace") {
   binaries = [
     {
       name = "trace"
+      in_image = "debug"
     },
   ]
 

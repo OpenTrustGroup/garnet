@@ -1,0 +1,39 @@
+# Copyright 2018 GoldenRiver Technologies Co., Ltd. All rights reserved.
+#
+# The present software is the confidential and proprietary information of
+# GoldenRiver Technologies Co., Ltd. You shall not disclose the present
+# software and shall use it only in accordance with the terms of the license
+# agreement you entered into with GoldenRiver Technologies Co., Ltd.
+# This software may be subject to export or import laws in certain countries.
+
+import("//build/package.gni")
+
+# This is the simplest application in garent.
+# For size and memory testing.
+executable("bin") {
+  output_name = "simplest-garnet-app"
+
+  sources = [
+    "main.c",
+  ]
+
+  libs = [
+    "zircon",
+  ]
+
+  ldflags = [ "-z", "max-page-size=4096" ]
+}
+
+package("simplest-garnet-app") {
+  system_image = true
+
+  deps = [
+    ":bin",
+    "//garnet/examples/simplest-garnet-shared-lib",
+    "//garnet/examples/simplest-garnet-static-lib",
+  ]
+
+  binaries = [ {
+        name = "simplest-garnet-app" in_image="!release"
+      } ]
+}

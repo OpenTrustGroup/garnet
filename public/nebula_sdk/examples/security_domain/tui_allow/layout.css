@@ -1,0 +1,22 @@
+.root {
+  align-items: center;
+  width: 100%;
+  height: 100%;
+}
+
+.title-box {
+  justify-content: space-around;
+  flex-direction: row;
+  width: 100%;
+  background-color: #DBDBDB;
+  padding: 3%;
+}
+
+.title-box TextView {
+  color: #E14C62;
+}
+
+TextView {
+  font-size: 42px;
+  color: #4A4A4A;
+}

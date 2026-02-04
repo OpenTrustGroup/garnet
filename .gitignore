@@ -23,3 +23,5 @@ target
 go/pkg
 *.orig
 last-update
+
+public/nebula_sdk/run/otrp/provision_tool/secmgr_test_ha/*.json

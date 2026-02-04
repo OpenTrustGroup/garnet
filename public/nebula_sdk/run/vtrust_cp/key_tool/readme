@@ -1,0 +1,13 @@
+
+跨平台产品相关秘钥和证书的生成：
+生成根证书
+1.生成相关证书及秘钥执行genarate_root_key.sh脚本。
+2.之后提示"Enter pass phrase for key/root_ca/key_root_ca.key:" 设置key root 私钥的密码输入两遍。
+3.之后提示"Enter pass phrase for key/root_ca/key_root_ca.key:" 输入上一步设置的密码。
+4.输入生成root ca所需的信息。如“Country Name”，“State or Province Name”等。这样CA相关证书秘钥生成完成在key/root_ca下。
+
+生成签名证书：
+1.生成二级证书执行genarate_sign_key.sh脚本。
+2.之后提示"Enter pass phrase for key/sign/key_sign.key:" 设置key 私钥的密码输入两遍。
+3.之后提示"Enter pass phrase for key/sign/key_sign.key:" 输入上一步设置的密码。
+4.输入生成秘钥所需的信息。如“Country Name”，“State or Province Name”等。这样秘钥生成完成在key/sign下。

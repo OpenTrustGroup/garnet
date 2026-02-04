@@ -16,6 +16,7 @@ namespace tracing {
 struct TraceProviderBundle {
   trace_link::ProviderPtr provider;
   uint32_t id;
+  uint64_t pid;
 };
 
 std::ostream& operator<<(std::ostream& out, const TraceProviderBundle& bundle);

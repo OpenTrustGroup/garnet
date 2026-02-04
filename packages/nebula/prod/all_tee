@@ -1,0 +1,23 @@
+{
+    "imports": [
+        "garnet/packages/nebula/prod/gatekeeper",
+        "garnet/packages/nebula/prod/keymaster",
+        "garnet/packages/nebula/prod/libcamproxy",
+        "garnet/packages/nebula/prod/mtkv8_bins",
+        "garnet/packages/nebula/prod/nbl_appstate_srv",
+        "garnet/packages/nebula/prod/nbl_attest_srv",
+        "garnet/packages/nebula/prod/nbl_gp",
+        "garnet/packages/nebula/prod/nbl_gui",
+        "garnet/packages/nebula/prod/nbl_license_srv",
+        "garnet/packages/nebula/prod/nbl_loader_provider",
+        "garnet/packages/nebula/prod/nbl_loader_srv",
+        "garnet/packages/nebula/prod/nbl_nsc_srv",
+        "garnet/packages/nebula/prod/nbl_rpc",
+        "garnet/packages/nebula/prod/nbl_secmgr_srv",
+        "garnet/packages/nebula/prod/nbl_sysinfo_srv",
+        "garnet/packages/nebula/prod/nbl_time_srv",
+        "garnet/packages/nebula/prod/nbl_trace",
+        "garnet/packages/nebula/prod/sqlite",
+        "garnet/packages/nebula/prod/zlib"
+    ]
+}

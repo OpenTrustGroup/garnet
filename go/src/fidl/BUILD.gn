@@ -23,3 +23,26 @@ install_host_tools("fidl") {
     "fidlgen",
   ]
 }
+
+sdk_atom("venus_sdk") {
+  domain = "cpp"
+  name = "fidlgen"
+
+  output_category = "host"
+
+  tags = [ "arch:host", "type:sysroot" ]
+
+  out_dir = get_label_info(":fidlgen", "root_out_dir")
+  files = [
+    {
+      source = "$out_dir/fidlgen"
+      dest = "x64/fidlgen"
+    },
+    {
+      source = "//out/build-zircon/tools/fidlc"
+      dest = "x64/fidlc"
+    },
+  ]
+
+  non_sdk_deps = [ ":fidlgen", "//zircon/public/tool/fidlc" ]
+}

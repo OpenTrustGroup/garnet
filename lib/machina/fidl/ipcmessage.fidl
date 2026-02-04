@@ -1,0 +1,11 @@
+// Copyright 2023 GoldenRiver Technology Co., Ltd.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library machina;
+
+[ServiceName="machina.IpcMessageService"]
+interface IpcMessageService {
+  1: GetTraceBuf() -> (uint64 paddr, uint64 size);
+  2: GetCamDmaBuf() -> (uint64 paddr, uint64 size);
+};

@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "mtkv8_bins": "//zircon/trusty/app/mtkv8_bins"
+    }
+}

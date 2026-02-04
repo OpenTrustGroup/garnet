@@ -1,0 +1,8 @@
+{
+	"uuid" : {
+		"time_low" : "0x2c2b4cd4",
+		"time_mid": "0x17dc",
+		"time_hi_and_version": "0x4a68",
+		"clock_seq_and_node": ["0x4a", "0x4f", "0x63", "0x1c", "0xac", "0x55", "0x3a", "0x4c"]
+	}
+}

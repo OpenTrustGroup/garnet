@@ -95,6 +95,17 @@ void NamespaceBuilder::AddSandbox(
       PushDirectoryFromPath("/system/lib");
     }
   }
+
+#ifdef __Nebula__
+  for (const auto& path : sandbox.otrp()) {
+    if (path == "services" || path == "drivers" || path == "lib" ||
+        path == "resources") {
+      FXL_LOG(WARNING) << "Ignoring request for otrp subdir:" << path;
+      continue;
+    }
+    PushDirectoryFromPath("/otrp/" + path);
+  }
+#endif
 }
 
 void NamespaceBuilder::AddDeprecatedDefaultDirectories() {
@@ -103,6 +114,12 @@ void NamespaceBuilder::AddDeprecatedDefaultDirectories() {
   PushDirectoryFromPathIfNotPresent("/system");
   PushDirectoryFromPathIfNotPresent("/tmp");
 }
+
+#ifdef __Nebula__
+void NamespaceBuilder::AddBootDirectory() {
+  PushDirectoryFromPathIfNotPresent("/boot");
+}
+#endif
 
 void NamespaceBuilder::PushDirectoryFromPath(std::string path) {
   PushDirectoryFromPathAs(path, path);

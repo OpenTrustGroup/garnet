@@ -1,0 +1,49 @@
+# Copyright 2018 GoldenRiver Technology Co., Ltd. All rights reserved.
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//garnet/bin/guest/guest.gni")
+
+linux_image = "$root_out_dir/linux/Image"
+initrd_image = "$root_out_dir/linux/initrd.img"
+
+action("sysroot") {
+  visibility = [ ":*" ]
+  deps = [
+    ":kernel($host_toolchain)",
+  ]
+
+  script = "//scripts/devshell/build-linux-rootfs"
+
+  outputs = [
+    initrd_image,
+  ]
+}
+
+action("kernel") {
+  visibility = [ ":*" ]
+
+  script = "//scripts/devshell/build-linux"
+
+  outputs = [
+    linux_image,
+  ]
+}
+
+guest_app("linux-guest") {
+  deps = [
+    ":kernel($host_toolchain)",
+    ":sysroot($host_toolchain)",
+  ]
+
+  if (target_cpu == "arm64") {
+    cmdline = "earlycon=pl011,0x09001000 console=ttyAMA0"
+  } else if (target_cpu == "x64") {
+    cmdline = "earlycon=uart,io,0x3f8 console=hvc0 console=tty0 io_delay=none clocksource=tsc"
+  }
+
+  host_out_dir = get_label_info(":bogus($host_toolchain)", "root_out_dir")
+  linux = "$host_out_dir/linux/Image"
+  ramdisk = "$host_out_dir/linux/initrd.img"
+}

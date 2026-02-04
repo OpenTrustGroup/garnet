@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "gatekeeper": "//third_party/hee-trusty/trusty/trusty/user/app/gatekeeper"
+    }
+}

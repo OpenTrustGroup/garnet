@@ -11,7 +11,7 @@
 
 namespace machina {
 
-static constexpr IoValue kBellValue = {};
+static constexpr IoValue kBellValue = {.access_size = 4};
 
 IoMapping::IoMapping(uint32_t kind,
                      uint64_t base,
@@ -30,7 +30,7 @@ zx_status_t IoMapping::SetTrap(Guest* guest) {
     async_trap_.set_guest(guest->handle());
     async_trap_.set_addr(base_);
     async_trap_.set_length(size_);
-    return async_trap_.Begin(guest->device_async());
+    return async_trap_.Begin(guest->trapbell_async());
   } else {
     uintptr_t key = reinterpret_cast<uintptr_t>(this);
     return zx_guest_set_trap(guest->handle(), kind_, base_, size_,

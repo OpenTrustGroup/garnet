@@ -65,6 +65,10 @@ class ServiceProviderBridge : public component::ServiceProvider {
   zx::channel OpenAsDirectory();
   int OpenAsFileDescriptor();
 
+  zx_status_t SetWhitelistServices(::std::vector<::std::string> whitelist_services) {
+    return directory_->SetWhitelistServices(whitelist_services);
+  }
+
  private:
   // A directory-like object which dynamically creates Service vnodes
   // for any file lookup.  Does not support enumeration since the actual
@@ -79,8 +83,13 @@ class ServiceProviderBridge : public component::ServiceProvider {
                        fbl::StringPiece name) final;
     zx_status_t Getattr(vnattr_t* a) final;
 
+    zx_status_t SetWhitelistServices(::std::vector<::std::string> whitelist_services);
+    bool CheckServiceName(const char *name);
+
    private:
     fxl::WeakPtr<ServiceProviderBridge> const bridge_;
+    ::std::vector<std::string> whitelist_services_;
+    bool has_whitelist_services_;
   };
 
   // Overridden from |component::ServiceProvider|:

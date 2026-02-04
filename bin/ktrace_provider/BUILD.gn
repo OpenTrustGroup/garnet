@@ -30,6 +30,7 @@ executable("bin") {
 }
 
 package("ktrace_provider") {
+  testonly = true
   deps = [
     ":bin",
   ]

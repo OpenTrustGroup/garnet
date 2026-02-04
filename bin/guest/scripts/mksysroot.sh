@@ -10,6 +10,11 @@ set -eo pipefail
 
 GUEST_SCRIPTS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
+PROXY_FILE=${GUEST_SCRIPTS_DIR}/../../../../proxy
+if [ -e ${PROXY_FILE} ]; then
+    source ${PROXY_FILE}
+fi
+
 # Where the dash sources are expected to be.
 DASH_SRC_DIR="/tmp/dash"
 
@@ -34,7 +39,8 @@ get_toybox_source() {
   local toybox_src=$1
 
   if [ ! -d "$toybox_src" ]; then
-    git clone --depth 1 https://zircon-guest.googlesource.com/third_party/toybox "$toybox_src"
+#    git clone --depth 1 https://zircon-guest.googlesource.com/third_party/toybox "$toybox_src"
+    git clone --depth 1 ssh://gerrit:29418/zircon-guest/third_party/toybox "$toybox_src"
   fi
 }
 
@@ -47,7 +53,7 @@ build_toybox() {
   local sysroot_dir="$2"
 
   make -C "$toybox_src" defconfig
-  CROSS_COMPILE="${AC_HOST}-" CC="gcc" LDFLAGS="--static" make -C "$toybox_src" -j100
+  CROSS_COMPILE="${AC_HOST}-" CC="gcc" LDFLAGS="--static -lcrypt" make -C "$toybox_src" -j100
 
   mkdir -p "$sysroot_dir"/{bin,sbin,etc,proc,sys,usr/{bin,sbin},dev,tmp}
   PREFIX=$sysroot_dir make -C "$toybox_src" install
@@ -60,7 +66,8 @@ get_dash_source() {
   local dash_src=$1
 
   if [ ! -d "$dash_src" ]; then
-    git clone --depth 1 https://zircon-guest.googlesource.com/third_party/dash "$dash_src"
+#    git clone --depth 1 https://zircon-guest.googlesource.com/third_party/dash "$dash_src"
+    git clone --depth 1 ssh://gerrit:29418/zircon-guest/third_party/dash "$dash_src"
   fi
 }
 

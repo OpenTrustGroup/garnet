@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "nbl_loader_tests": "//third_party/hee-trusty/nbl_loader_srv/lifecycle:nbl_loader_tests"
+    }
+}

@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "keymaster_ut": "//third_party/hee-trusty/trusty/trusty/user/app/keymaster/device_unittest:keymaster_ut"
+    }
+}

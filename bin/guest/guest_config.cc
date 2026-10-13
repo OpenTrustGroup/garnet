@@ -27,8 +27,8 @@
 #include "lib/fxl/strings/string_number_conversions.h"
 extern "C"
 {
-#include <src/lauxlib.h>
-#include <src/lualib.h>
+#include "garnet/public/lib/lua/src/lauxlib.h"
+#include "garnet/public/lib/lua/src/lualib.h"
 }
 #ifdef tostring
 #undef tostring
@@ -1015,6 +1015,7 @@ zx_status_t GuestConfigParser::ParseProductConfigFromLua(const std::string& cfg_
   luabridge::getGlobalNamespace(L)
     .beginClass<GuestConfig>("product_config")
     .addFunction("setVmem", &GuestConfig::setProductVmem)
+    .addFunction("setVmemAuto", &GuestConfig::setVmemAuto)
     .addFunction("setDeviceTree", &GuestConfig::setDeviceTree)
     .addFunction("setProductSpec", &GuestConfig::setProductSpec)
     .addFunction("addRegAccess", &GuestConfig::addRegAccess)

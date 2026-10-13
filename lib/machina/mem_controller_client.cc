@@ -10,8 +10,6 @@
 
 namespace machina {
 
-static constexpr uint64_t kBlockSize = 2 * 1024 * 1024;
-
 MemControllerClient::MemControllerClient(Guest* guest) : guest_(guest){
   auto status = loop_.StartThread();
   FXL_CHECK(status == ZX_OK);
@@ -37,9 +35,24 @@ zx_status_t MemControllerClient::UnplugMemory(uint64_t gpa_base,
 void MemControllerClient::OnSetGpaRegion(
     uint64_t gpa_base,
     uint64_t size,
+    uint64_t block_size,
     OnSetGpaRegionCallback callback) {
+  if (block_size == 0 || (block_size & (block_size - 1)) != 0) {
+    FXL_LOG(ERROR) << "Invalid block size: 0x" << std::hex << block_size;
+    callback(ZX_ERR_INVALID_ARGS);
+    return;
+  }
+  if (gpa_base % block_size != 0 || size == 0 || size % block_size != 0) {
+    FXL_LOG(ERROR) << "GPA region is not aligned to block size: base=0x"
+                   << std::hex << gpa_base << ", size=0x" << size
+                   << ", block_size=0x" << block_size;
+    callback(ZX_ERR_INVALID_ARGS);
+    return;
+  }
+
   if (gpa_range_ != nullptr) {
-    if (gpa_range_base_ == gpa_base && gpa_range_size_ == size) {
+    if (gpa_range_base_ == gpa_base && gpa_range_size_ == size &&
+        block_size_ == block_size) {
       callback(ZX_OK);
       return;
     }
@@ -60,27 +73,38 @@ void MemControllerClient::OnSetGpaRegion(
     gpa_range_ = range;
     gpa_range_base_ = gpa_base;
     gpa_range_size_ = size;
+    block_size_ = block_size;
   }
+  FXL_LOG(INFO) << "Reserve GPA region : base=0x" << std::hex
+                << gpa_range_base_ << ", size=0x" << gpa_range_size_
+                << ", block_size=0x" << block_size_;
   callback(status);
 }
 
 void MemControllerClient::OnPlug(uint64_t gpa_base,
                                  fidl::VectorPtr<uint64_t> phys_addrs,
                                  OnPlugCallback callback) {
-  if (!phys_addrs || phys_addrs->empty() || gpa_base % kBlockSize != 0) {
-    FXL_LOG(ERROR) << "Invalid plug request, gpa_base=0x" << std::hex
-                   << gpa_base;
-    callback(ZX_ERR_INVALID_ARGS);
-    return;
-  }
   if (gpa_range_ == nullptr) {
     FXL_LOG(ERROR) << "GPA range is not reserved";
     callback(ZX_ERR_BAD_STATE);
     return;
   }
 
+  if (block_size_ == 0) {
+    FXL_LOG(ERROR) << "block_size is not set";
+    callback(ZX_ERR_BAD_STATE);
+    return;
+  }
+
+  if (!phys_addrs || phys_addrs->empty() || gpa_base % block_size_ != 0) {
+    FXL_LOG(ERROR) << "Invalid plug request, gpa_base=0x" << std::hex
+                   << gpa_base;
+    callback(ZX_ERR_INVALID_ARGS);
+    return;
+  }
+
   for (uint64_t block_pa : *phys_addrs) {
-    if (block_pa % kBlockSize != 0) {
+    if (block_pa % block_size_ != 0) {
       FXL_LOG(ERROR) << "Physical block is not aligned: 0x" << std::hex
                      << block_pa;
       callback(ZX_ERR_INVALID_ARGS);
@@ -92,7 +116,7 @@ void MemControllerClient::OnPlug(uint64_t gpa_base,
 
   for (uint64_t block_pa : *phys_addrs) {
     zx_status_t res = guest_->MapPhysicalMemory(
-        gpa_range_, gpa_base + offset, block_pa, kBlockSize,
+        gpa_range_, gpa_base + offset, block_pa, block_size_,
         /*writeable=*/true);
     if (res != ZX_OK) {
       FXL_LOG(ERROR) << "Failed to map physical block at GPA 0x" << std::hex
@@ -106,7 +130,7 @@ void MemControllerClient::OnPlug(uint64_t gpa_base,
               << "Failed to rollback plugged memory; mapped prefix may remain: "
                  "gpa_base=0x"
               << std::hex << gpa_base << ", size=0x" << offset
-              << ", blocks=" << (offset / kBlockSize)
+              << ", blocks=" << (offset / block_size_)
               << ", status=" << rollback_status;
         }
       }
@@ -114,7 +138,7 @@ void MemControllerClient::OnPlug(uint64_t gpa_base,
       return;
     }
 
-    offset += kBlockSize;
+    offset += block_size_;
   }
 
   callback(ZX_OK);

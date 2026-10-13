@@ -15,8 +15,11 @@
 #include <string>
 #include <thread>
 
+#include <fbl/mutex.h>
+
 #include "garnet/lib/machina/guest.h"
 #include "garnet/lib/machina/guest_config.h"
+#include "lib/async/cpp/wait.h"
 
 namespace machina {
 
@@ -42,6 +45,7 @@ class MemControllerImpl : public MemController, public IoHandler {
                     GuestConfig& cfg,
                     Guest* guest,
                     GicIts* gic_its);
+  ~MemControllerImpl();
 
   zx_status_t PatchDeviceTree(const DeviceTreeSpec& dtb, uint64_t phys_base);
 
@@ -49,28 +53,38 @@ class MemControllerImpl : public MemController, public IoHandler {
   Guest* guest_;
   GicIts* gic_its_;
   uint64_t mmio_base_;
-  uint64_t region_start_;
   std::string cma_compatible_;
-  uint64_t uos_gpa_region_start_;
-  uint64_t uos_gpa_region_size_;
-  bool uos_gpa_region_ready_;
-  plug_cmd_t* cmd_buf_;
-  size_t cmd_buf_size_;
+  // Serializes region/cmd_buf/listener state across VCPU MMIO, trapbell,
+  // FIDL register, and listener-closed. Held across sync listener RPCs.
+  fbl::Mutex mutex_;
+  uint64_t uos_gpa_region_start_ __TA_GUARDED(mutex_);
+  uint64_t uos_gpa_region_size_ __TA_GUARDED(mutex_);
+  bool uos_gpa_region_ready_ __TA_GUARDED(mutex_);
+  // Plug/unplug granularity, configured by the SOS backend via Regs::BLOCK_SIZE.
+  uint64_t block_size_ __TA_GUARDED(mutex_);
+  plug_cmd_t* cmd_buf_ __TA_GUARDED(mutex_);
+  size_t cmd_buf_size_ __TA_GUARDED(mutex_);
 
   enum Regs {
-    REGION_START = 0x0,
+    /* 0x0 was REGION_START; unused, keep later offsets stable. */
     CMD_BUF = 0x8,
     CMD_BUF_SIZE = 0x10,
     UOS_GPA_REGION_START = 0x18,
     UOS_GPA_REGION_SIZE = 0x20,
     UOS_GPA_REGION_READY = 0x28,
+    BLOCK_SIZE = 0x30,
     PLUG = 0x1000,
     UNPLUG = 0x1008,
   };
 
-  void NotifyUosGpaRegion();
-  void SendPlugMemoryRequest();
-  void SendUnPlugMemoryRequest();
+  void NotifyUosGpaRegion() __TA_REQUIRES(mutex_);
+  void SendPlugMemoryRequest() __TA_REQUIRES(mutex_);
+  void SendUnPlugMemoryRequest() __TA_REQUIRES(mutex_);
+  void ResetListenerLocked() __TA_REQUIRES(mutex_);
+  void DropListener();
+  async_wait_result_t OnListenerClosed(async_t* async,
+                                       zx_status_t status,
+                                       const zx_packet_signal_t* signal);
 
   void RegisterMemControllerListener(
       fidl::InterfaceHandle<MemControllerListener> listener,
@@ -80,7 +94,9 @@ class MemControllerImpl : public MemController, public IoHandler {
   zx_status_t Write(uint64_t addr, const IoValue& value) override;
 
   fidl::BindingSet<MemController> bindings_;
-  MemControllerListenerSyncPtr listener_;
+  MemControllerListenerSyncPtr listener_ __TA_GUARDED(mutex_);
+  async::WaitMethod<MemControllerImpl, &MemControllerImpl::OnListenerClosed>
+      listener_waiter_{this};
 };
 
 }  // namespace machina

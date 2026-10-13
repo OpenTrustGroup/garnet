@@ -7,7 +7,7 @@ library machina;
 interface MemControllerListener {
   1: OnPlug(uint64 gpa_base, vector<uint64> phys_addrs) -> (int32 @status);
   2: OnUnPlug(uint64 gpa_base, uint64 size) -> (int32 @status);
-  3: OnSetGpaRegion(uint64 gpa_base, uint64 size) -> (int32 @status);
+  3: OnSetGpaRegion(uint64 gpa_base, uint64 size, uint64 block_size) -> (int32 @status);
 };
 
 [ServiceName="machina.MemController"]

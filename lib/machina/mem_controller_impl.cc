@@ -6,6 +6,7 @@
 
 #include "mem_controller_impl.h"
 
+#include <fbl/auto_lock.h>
 #include <lib/fxl/logging.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -24,8 +25,6 @@ static constexpr uint32_t kNumaRemoteDistance = 20;
 
 
 
-// The CMA range is selected by the Lua configuration.
-static constexpr uint64_t kBlockSize = 2 * 1024 * 1024;
 [[maybe_unused]] static constexpr uint64_t kDefaultMemoryBlockSize =
     128 * 1024 * 1024;
 
@@ -567,11 +566,11 @@ MemControllerImpl::MemControllerImpl(
     : guest_(guest),
       gic_its_(gic_its),
       mmio_base_(kMemControllerMmioBase),
-      region_start_(0),
       cma_compatible_(cfg.mem_controller_cma_compatible()),
       uos_gpa_region_start_(0),
       uos_gpa_region_size_(0),
       uos_gpa_region_ready_(false),
+      block_size_(0),
       cmd_buf_(nullptr),
       cmd_buf_size_(0) {
   auto status = guest_->CreateMapping(TrapType::MMIO_SYNC, mmio_base_, PAGE_SIZE,
@@ -588,16 +587,17 @@ MemControllerImpl::MemControllerImpl(
       });
 }
 
+MemControllerImpl::~MemControllerImpl() {
+  DropListener();
+}
+
 zx_status_t MemControllerImpl::Read(uint64_t addr, IoValue* value) const {
   return ZX_ERR_NOT_SUPPORTED;
 }
 
 zx_status_t MemControllerImpl::Write(uint64_t addr, const IoValue& value) {
+  fbl::AutoLock lock(&mutex_);
   switch (addr) {
-    case Regs::REGION_START:
-      region_start_ = value.u64;
-      break;
-
     case Regs::CMD_BUF_SIZE:
       if (value.u64 < sizeof(plug_cmd_t) || value.u64 > kMaxCmdBufSize) {
         cmd_buf_size_ = 0;
@@ -639,11 +639,17 @@ zx_status_t MemControllerImpl::Write(uint64_t addr, const IoValue& value) {
 
     case Regs::UOS_GPA_REGION_READY:
       uos_gpa_region_ready_ = value.u64 != 0;
-      if (uos_gpa_region_ready_) {
+      if (uos_gpa_region_ready_)
         NotifyUosGpaRegion();
-      } else if (listener_.is_bound()) {
-        listener_.Bind(zx::channel());
+      break;
+
+    case Regs::BLOCK_SIZE:
+      if (value.u64 == 0 || (value.u64 & (value.u64 - 1)) != 0 ||
+          value.u64 < PAGE_SIZE) {
+        FXL_LOG(ERROR) << "Invalid block size: 0x" << std::hex << value.u64;
+        break;
       }
+      block_size_ = value.u64;
       break;
 
     case Regs::PLUG:
@@ -668,19 +674,23 @@ void MemControllerImpl::NotifyUosGpaRegion() {
     return;
   }
 
-  if (uos_gpa_region_start_ % kBlockSize != 0 ||
-      uos_gpa_region_size_ == 0 || uos_gpa_region_size_ % kBlockSize != 0) {
+  if (uos_gpa_region_size_ == 0 || block_size_ == 0) {
     FXL_LOG(ERROR) << "Invalid UOS GPA region: start=0x" << std::hex
                    << uos_gpa_region_start_ << ", size=0x"
-                   << uos_gpa_region_size_;
+                   << uos_gpa_region_size_ << ", block_size=0x" << block_size_;
     return;
   }
 
+  FXL_LOG(INFO) << "Notify UOS GPA region start=0x" << std::hex
+                << uos_gpa_region_start_ << ", size=0x" << uos_gpa_region_size_
+                << ", block_size=0x" << block_size_;
+
   zx_status_t res = ZX_ERR_INTERNAL;
   bool success = listener_->OnSetGpaRegion(
-      uos_gpa_region_start_, uos_gpa_region_size_, &res);
+      uos_gpa_region_start_, uos_gpa_region_size_, block_size_, &res);
   if (!success || res != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to reserve UOS GPA region: " << res;
+    FXL_LOG(ERROR) << "Failed to reserve UOS GPA region: " << res
+                   << " status: " << success;
   }
 }
 
@@ -691,6 +701,19 @@ void MemControllerImpl::SendPlugMemoryRequest() {
   }
 
   auto cmd = cmd_buf_;
+
+  if (!uos_gpa_region_ready_) {
+    FXL_LOG(ERROR) << "UOS GPA region is not ready";
+    cmd->status = PLUG_STATUS_ERROR;
+    return;
+  }
+
+  if (block_size_ == 0) {
+    FXL_LOG(ERROR) << "block_size not set";
+    cmd->status = PLUG_STATUS_ERROR;
+    return;
+  }
+
   const size_t max_block_count =
       (cmd_buf_size_ - sizeof(*cmd)) / sizeof(cmd->phys_addrs[0]);
   if (cmd->count == 0 || cmd->count > max_block_count) {
@@ -730,6 +753,19 @@ void MemControllerImpl::SendUnPlugMemoryRequest() {
   }
 
   auto cmd = cmd_buf_;
+
+  if (!uos_gpa_region_ready_) {
+    FXL_LOG(ERROR) << "UOS GPA region is not ready";
+    cmd->status = PLUG_STATUS_ERROR;
+    return;
+  }
+
+  if (block_size_ == 0) {
+    FXL_LOG(ERROR) << "block_size not set";
+    cmd->status = PLUG_STATUS_ERROR;
+    return;
+  }
+
   // UNPLUG is a contiguous GPA range described by gpa_base and count. It does
   // not consume phys_addrs, so it is not limited by the command buffer's
   // address capacity.
@@ -746,7 +782,7 @@ void MemControllerImpl::SendUnPlugMemoryRequest() {
     return;
   }
   bool success =
-      listener_->OnUnPlug(cmd->gpa_base, cmd->count * kBlockSize, &res);
+      listener_->OnUnPlug(cmd->gpa_base, cmd->count * block_size_, &res);
   if (!success || res != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to unplug memory blocks: " << res;
     cmd->status = PLUG_STATUS_ERROR_OPERATION;
@@ -837,14 +873,56 @@ zx_status_t MemControllerImpl::PatchDeviceTree(const DeviceTreeSpec& dtb_spec,
   return ZX_OK;
 }
 
+void MemControllerImpl::ResetListenerLocked() {
+  if (listener_.is_bound())
+    listener_.Bind(zx::channel());
+  uos_gpa_region_start_ = 0;
+  uos_gpa_region_size_ = 0;
+  block_size_ = 0;
+}
+
+void MemControllerImpl::DropListener() {
+  listener_waiter_.Cancel(guest_->device_async());
+  fbl::AutoLock lock(&mutex_);
+  ResetListenerLocked();
+}
+
+async_wait_result_t MemControllerImpl::OnListenerClosed(
+    async_t* async,
+    zx_status_t status,
+    const zx_packet_signal_t* signal) {
+  if (status == ZX_OK && signal &&
+      (signal->observed & ZX_CHANNEL_PEER_CLOSED)) {
+    FXL_LOG(INFO) << "MemControllerListener peer closed";
+    fbl::AutoLock lock(&mutex_);
+    ResetListenerLocked();
+  }
+  return ASYNC_WAIT_FINISHED;
+}
+
 void MemControllerImpl::RegisterMemControllerListener(
     fidl::InterfaceHandle<MemControllerListener> listener,
     RegisterMemControllerListenerCallback callback) {
+  FXL_LOG(INFO) << __func__;
 
-  listener_.Bind(std::move(listener));
+  // Cancel before taking mutex_ so an in-flight OnListenerClosed can finish.
+  listener_waiter_.Cancel(guest_->device_async());
 
-  NotifyUosGpaRegion();
+  {
+    fbl::AutoLock lock(&mutex_);
+    if (listener.is_valid()) {
+      listener_waiter_.set_object(listener.channel().get());
+      listener_waiter_.set_trigger(ZX_CHANNEL_PEER_CLOSED);
+      zx_status_t wait_status = listener_waiter_.Begin(guest_->device_async());
+      if (wait_status != ZX_OK) {
+        FXL_LOG(WARNING) << "Failed to wait on MemControllerListener: status="
+                         << wait_status;
+      }
+      listener_.Bind(std::move(listener));
+    }
 
+    NotifyUosGpaRegion();
+  }
   callback();
 }
 

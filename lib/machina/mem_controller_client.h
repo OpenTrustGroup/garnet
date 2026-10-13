@@ -33,12 +33,14 @@ class MemControllerClient : public MemControllerListener {
                 OnUnPlugCallback callback) override;
   void OnSetGpaRegion(uint64_t gpa_base,
                       uint64_t size,
+                      uint64_t block_size,
                       OnSetGpaRegionCallback callback) override;
 
   Guest* guest_;
   Guest::GpaRange* gpa_range_ = nullptr;
   uint64_t gpa_range_base_ = 0;
   uint64_t gpa_range_size_ = 0;
+  uint64_t block_size_ = 0;
   MemControllerSyncPtr svc_;
   async::Loop loop_;
   fidl::Binding<MemControllerListener> event_listener_binding_{this};

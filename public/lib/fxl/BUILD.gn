@@ -168,6 +168,8 @@ source_set("fxl_logging_lib") {
     "log_settings.cc",
     "logging.cc",
     "logging.h",
+    "logging_rate_limiter.cc",
+    "logging_rate_limiter.h",
   ]
 
   if (is_android) {

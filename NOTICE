@@ -1,0 +1,144 @@
+THIRD-PARTY NOTICES
+===================
+
+This distribution includes third-party software and interface definitions.
+The top-level LICENSE applies only where a file does not state different
+terms. A file's own copyright and license notice takes precedence.
+
+
+1. Fuchsia and Zircon
+---------------------
+
+Copyright 2016-2026 The Fuchsia Authors.
+
+Code derived from Fuchsia and Zircon appears throughout bin/, drivers/, lib/
+and public/. It is licensed under the BSD 3-Clause license reproduced in the
+top-level LICENSE file unless the individual file states different terms.
+
+
+2. Lua 5.3.3
+------------
+
+Location: public/lib/lua/src
+License: MIT
+
+Copyright (C) 1994-2016 Lua.org, PUC-Rio.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The Lua source files use the SPDX identifier MIT and retain the complete Lua
+copyright and permission notice in lua.h.
+
+
+3. LuaBridge
+------------
+
+Location: public/lib/lua/LuaBridge
+License: MIT
+
+LuaBridge files retain their individual copyright and permission notices,
+including notices for Nathan Reed, Nigel Atkinson, Vinnie Falco, Dmitry
+Tarakanov, Stefan Frings and Raw Material Software Ltd. They are distributed
+under the MIT license. The MIT permission and warranty terms reproduced in
+section 2 apply; the applicable copyright notice in each file remains
+required.
+
+
+4. ICU UTF conversion code
+--------------------------
+
+Location: public/lib/fxl/third_party/icu
+License: ICU License
+
+Copyright (c) 1995-2009 International Business Machines Corporation and
+others.
+
+The complete ICU license is provided in
+public/lib/fxl/third_party/icu/LICENSE. The source files retain their original
+copyright notices. This code was adapted from ICU UTF conversion routines;
+the symbol prefixes and namespace were changed for local integration.
+
+
+5. Virtio MMIO definitions
+--------------------------
+
+Location: lib/machina/virtio_mmio.h
+Source: Linux include/uapi/linux/virtio_mmio.h
+License: BSD 3-Clause
+
+The register offsets, interrupt flags and related comments retain this
+upstream notice:
+
+  Virtio platform device driver
+
+  Copyright 2011, ARM Ltd.
+
+  Based on Virtio PCI driver by Anthony Liguori, copyright IBM Corp. 2007
+
+  This header is BSD licensed so anyone can use the definitions to implement
+  compatible drivers/servers.
+
+  Redistribution and use in source and binary forms, with or without
+  modification, are permitted provided that the following conditions are
+  met:
+  1. Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+  2. Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution.
+  3. Neither the name of IBM nor the names of its contributors may be used to
+     endorse or promote products derived from this software without specific
+     prior written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+  AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+  IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+  ARE DISCLAIMED. IN NO EVENT SHALL IBM OR CONTRIBUTORS BE LIABLE FOR ANY
+  DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+  THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+6. Linux UAPI definitions
+-------------------------
+
+The following files contain Linux userspace ABI definitions. The applicable
+license is GPL-2.0 WITH Linux-syscall-note for the copied UAPI definitions;
+the surrounding project code remains under its own file-level license.
+
+* lib/machina/arch/arm64/smmu_v3.h
+  Source: Linux include/uapi/linux/iommufd.h
+  Definitions: struct iommu_hwpt_arm_smmuv3 and
+  struct iommu_hwpt_arm_smmuv3_invalidate
+
+* lib/machina/virtio_rtc.h
+  Source: Linux include/uapi/linux/rtc.h
+  Definitions: struct rtc_time and struct rtc_wkalrm
+
+
+7. External ABI and architecture references
+--------------------------------------------
+
+lib/machina/arch/arm64/smmu_v3_internal.h models the ARM SMMUv3 programming
+interface described by ARM IHI 0070. Register names, offsets, field positions,
+command opcodes and event codes are architectural interface definitions. The
+file's own BSD 3-Clause notice governs its implementation.

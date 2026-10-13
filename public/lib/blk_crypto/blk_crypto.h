@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef __PUBLIC_LIB_BLK_CRYPTO_H__
 #define __PUBLIC_LIB_BLK_CRYPTO_H__
@@ -22,9 +23,9 @@ struct blk_crypto_profile {
   DECLARE_WAKEUP_ENTRY(idle_slots_wait_entry);
 
   /*
-   * Serializes all calls to functions in @ll_ops as well as all changes
-   * to @slot_hashtable.  This can also be taken in read mode to look up
-   * keyslots while ensuring that they can't be changed concurrently.
+   * Held across every call into @ll_ops and across every change to
+   * @slot_hashtable, so that a keyslot cannot move while it is being
+   * looked up.
    */
   mtx_t lock;
   /*
@@ -32,7 +33,7 @@ struct blk_crypto_profile {
    * can find a key's keyslot in O(1) time rather than O(num_slots).
    * Protected by 'lock'.
    */
-  struct hlist_head *slot_hashtable;
+  list_node_t *slot_hashtable;
   unsigned int log_slot_ht_size;
 
   /* Per-keyslot data */
@@ -49,23 +50,12 @@ struct blk_crypto_profile {
     _dev_profile;                                                              \
   })
 
-/**
- * blk_crypto_keyslot_index() - Get the index of a keyslot
- * @slot: a keyslot that blk_crypto_get_keyslot() returned
- *
- * Return: the 0-based index of the keyslot within the device's keyslots.
+/*
+ * blk_crypto_profile_init(), blk_crypto_reprogram_all_keys() and
+ * blk_crypto_keyslot_index() are declared in <zircon/device/blk_crypto.h>:
+ * they are the surface a storage driver uses, and a driver must be able to
+ * build against the published DDK without this header.  What stays here is
+ * the profile layout and the helpers that need it.
  */
-static inline unsigned int
-blk_crypto_keyslot_index(struct blk_crypto_keyslot *slot) {
-  return slot - slot->profile->slots;
-}
-
-void blk_crypto_profile_init(struct blk_crypto_profile_dev *dev_profile,
-                             struct blk_crypto_profile **_profile,
-                             uint16_t num_slots);
-
-void blk_crypto_reprogram_all_keys(struct blk_crypto_profile *profile);
-
-__EXPORT void dump_crypto_profile(struct blk_crypto_profile const *profile);
 
 #endif

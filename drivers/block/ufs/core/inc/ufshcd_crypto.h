@@ -26,7 +26,6 @@
 #include "ufs_hcd.h"
 #include "ufs_hci.h"
 #include "ufs_utils.h"
-#include <garnet/public/lib/blk_crypto/blk_crypto.h>
 
 /*
  * Currently the maximum standard key size is 64 bytes, as that is the key size

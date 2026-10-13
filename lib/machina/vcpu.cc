@@ -200,8 +200,8 @@ zx_status_t Vcpu::Create(Guest* guest,
   };
   fbl::StringBuffer<ZX_MAX_NAME_LEN> name_buffer;
   auto vmid = guest->vmid();
-  // vmid should be a reasonable number
-  if (vmid >= 16)
+  // Only valid, small VMIDs should prefix the vCPU thread name.
+  if (vmid < 0 || vmid >= 16)
     name_buffer.AppendPrintf("vcpu-%lu", id);
   else
     // distinguish multiple VMs by name

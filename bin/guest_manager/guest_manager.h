@@ -15,8 +15,8 @@
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/string_printf.h"
 #include <zircon/vmid.h>
-#include "lib/nebula/base/macros.h"
-#include "lib/nebula/base/thread_annotations.h"
+#include "lib/fxl/macros.h"
+#include "lib/fxl/synchronization/thread_annotations.h"
 
 constexpr char kVmmPackagePath[] = "file://sos";
 

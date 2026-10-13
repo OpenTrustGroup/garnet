@@ -11,7 +11,6 @@ static_library("blk_ufsinfo") {
 
 
 deps = [
-    "//third_party/ree-trusty/libnbl_vhm:acrn_headers",
     "//third_party/fdt",
     "//zircon/trusty/lib/lib/libc-trusty",
     "//third_party/hee-trusty/nbl_license_srv/lib:libnbl_nmt_tee",

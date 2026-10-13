@@ -20,7 +20,6 @@ executable("bin") {
     "//garnet/public/lib/virtualization/fidl",
     "//zircon/public/lib/async-loop",
     "//zircon/public/lib/async-loop-cpp",
-    "//third_party/ree-trusty/libnebula-cpp:nebula-base",
   ]
 
   defines = [

@@ -105,7 +105,7 @@ executable("bin_sos") {
     ":lib",
     ":vmm_controller_teardown",
     "//garnet/lib/block_locator",
-    "//third_party/ree-trusty/libnebula-cpp:nebula-base",
+    "//zircon/system/public:public",
     "//zircon/public/lib/block-client",
     "//zircon/public/lib/fdio",
     "//zircon/system/ulib/task-utils:compiler",

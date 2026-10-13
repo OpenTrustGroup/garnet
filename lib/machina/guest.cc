@@ -551,12 +551,22 @@ zx_status_t Guest::UnmapPhysicalMemory(uintptr_t gpaddr, size_t length) {
                      << " gpa: " << std::hex << gpaddr << ", size: " << std::hex
                      << length;
       return status;
+    } else {
+      FXL_LOG(INFO) << "Success to unmap memory region of the guest process "
+                  "VMAR by guest PA: "
+                << " gpa: " << std::hex << gpaddr << ", size: " << std::hex
+                << length;
     }
   }
 
   status = zx_vmar_unmap(vmar_, gpaddr, length);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to unmap memory region of the guest stage 2 VMAR "
+                      "by guest PA: "
+                   << " gpa: " << std::hex << gpaddr << ", size: " << std::hex
+                   << length;
+  } else {
+    FXL_LOG(INFO) << "Success to unmap memory region of the guest stage 2 VMAR "
                       "by guest PA: "
                    << " gpa: " << std::hex << gpaddr << ", size: " << std::hex
                    << length;
@@ -594,6 +604,9 @@ zx_status_t Guest::ReserveGpaRange(uintptr_t gpaddr,
   if (mapped_addr != gpaddr) {
     zx_vmar_destroy(range_vmar);
     zx_handle_close(range_vmar);
+    FXL_LOG(ERROR) << "Failed to reserve GPA memory range: base=0x"
+                   << std::hex << gpaddr << ", mapped_addr=0x"
+                   << std::hex << mapped_addr;
     return ZX_ERR_INTERNAL;
   }
 
@@ -651,7 +664,8 @@ zx_status_t Guest::MapPhysicalMemory(GpaRange* range,
   }
 
   uint32_t map_flags = ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_EXECUTE |
-                       ZX_VM_FLAG_SPECIFIC | ZX_VM_FLAG_MAP_RANGE;
+                       ZX_VM_FLAG_SPECIFIC | ZX_VM_FLAG_MAP_CONTIGUOUS;
+
   if (writeable) {
     map_flags |= ZX_VM_FLAG_PERM_WRITE;
   }

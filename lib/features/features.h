@@ -75,7 +75,7 @@ class FeatureSet {
 
  private:
   struct FeatureSpec {
-    const char* path[2];
+    const char* path[3];
     size_t path_len;
     bool Values::*enabled;
   };

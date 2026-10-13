@@ -40,7 +40,7 @@ The parser recognizes these feature paths:
 /features/pci_bus/virtio-rtc
 /features/pci_bus/virtio-console
 /features/pci_bus/virtio-vsock
-/features/virtio-vsock/gzfs
+/features/pci_bus/virtio-vsock/gzfs
 /features/ufs
 /features/smc
 /features/pvblk

@@ -76,6 +76,7 @@ void HostVsockEndpointImpl::DisConnect(
     DisConnectCallback callback) {
   FXL_LOG(INFO) << "HostVsockEndpointImpl::DisConnect"
                 << fxl::StringPrintf(" src_cid=%u src_port=%u dst_cid=%u dst_port=%u", src_cid, src_port, cid, port);
+  callback(ZX_OK);
 }
 
 void HostVsockEndpointImpl::Listen(

@@ -124,15 +124,15 @@ class VirtioVsock : public VirtioDeviceBase<VIRTIO_ID_VSOCK,
       __TA_REQUIRES(mutex_);
   void WaitOnQueueLocked(ConnectionKey key) __TA_REQUIRES(mutex_);
 
-  void Mux(zx_status_t status, uint16_t index);
-  void Demux(zx_status_t status, uint16_t index);
+  void HandleRxQueue(zx_status_t status, uint16_t index);
+  void HandleTxQueue(zx_status_t status, uint16_t index);
 
   async_t* const async_;
-  Stream<&VirtioVsock::Mux> rx_stream_;
-  Stream<&VirtioVsock::Demux> tx_stream_;
+  Stream<&VirtioVsock::HandleRxQueue> rx_stream_;
+  Stream<&VirtioVsock::HandleTxQueue> tx_stream_;
 
   mutable std::mutex mutex_;
-  ConnectionMap connections_ __TA_GUARDED(mutex_);
+  ConnectionMap connected_table_ __TA_GUARDED(mutex_);
   ConnectionSet readable_ __TA_GUARDED(mutex_);
 
   virtualization::HostVsockConnectorPtr connector_;
@@ -146,7 +146,10 @@ class VirtioVsock::Connection {
   virtual ~Connection();
   virtual zx_status_t Init() = 0;
 
-  uint32_t flags() const { return flags_; }
+  uint32_t flags() const {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    return flags_;
+  }
   uint16_t op() const {
     std::lock_guard<std::mutex> lock(op_update_mutex_);
     return op_;
@@ -156,9 +159,8 @@ class VirtioVsock::Connection {
   void UpdateOp(uint16_t op);
 
   uint32_t PeerFree() const;
-  void ReadCredit(virtio_vsock_hdr_t* header);
-  void SetCredit(uint32_t buf_alloc, uint32_t fwd_cnt);
-  virtual zx_status_t WriteCredit(virtio_vsock_hdr_t* header) = 0;
+  void UpdatePeerCredit(uint32_t peer_buf_alloc, uint32_t peer_fwd_cnt);
+  virtual zx_status_t WriteLocalCredit(virtio_vsock_hdr_t* header) = 0;
 
   virtual zx_status_t Shutdown(uint32_t flags) = 0;
   virtual zx_status_t Read(VirtioQueue* queue,
@@ -173,11 +175,12 @@ class VirtioVsock::Connection {
   zx_status_t WaitOnReceive(zx_status_t status);
 
  protected:
-  uint32_t flags_ = 0;
-  uint32_t rx_cnt_ = 0;
-  uint32_t tx_cnt_ = 0;
-  uint32_t peer_buf_alloc_ = 0;
-  uint32_t peer_fwd_cnt_ = 0;
+  mutable std::mutex state_mutex_;
+  uint32_t flags_ __TA_GUARDED(state_mutex_) = 0;
+  uint32_t rx_cnt_ __TA_GUARDED(state_mutex_) = 0;
+  uint32_t tx_cnt_ __TA_GUARDED(state_mutex_) = 0;
+  uint32_t peer_buf_alloc_ __TA_GUARDED(state_mutex_) = 0;
+  uint32_t peer_fwd_cnt_ __TA_GUARDED(state_mutex_) = 0;
   uint16_t op_ __TA_GUARDED(op_update_mutex_) = VIRTIO_VSOCK_OP_REQUEST;
   mutable std::mutex op_update_mutex_;
 
@@ -197,7 +200,7 @@ class VirtioVsock::NullConnection final : public VirtioVsock::Connection {
     UpdateOp(VIRTIO_VSOCK_OP_RST);
     return ZX_OK;
   }
-  zx_status_t WriteCredit(virtio_vsock_hdr_t* header) override {
+  zx_status_t WriteLocalCredit(virtio_vsock_hdr_t* header) override {
     header->buf_alloc = 0;
     header->fwd_cnt = 0;
     return ZX_OK;
@@ -228,7 +231,7 @@ class VirtioVsock::SocketConnection final : public VirtioVsock::Connection {
   ~SocketConnection() override;
 
   zx_status_t Init() override;
-  zx_status_t WriteCredit(virtio_vsock_hdr_t* header) override;
+  zx_status_t WriteLocalCredit(virtio_vsock_hdr_t* header) override;
 
   zx_status_t Shutdown(uint32_t flags) override;
   zx_status_t Read(VirtioQueue* queue,
@@ -241,7 +244,7 @@ class VirtioVsock::SocketConnection final : public VirtioVsock::Connection {
 
  private:
   void OnReady(zx_status_t status, const zx_packet_signal_t* signal);
-  size_t reported_buf_avail_ = 0;
+  size_t reported_buf_avail_ __TA_GUARDED(state_mutex_) = 0;
   zx::socket socket_;
 };
 
@@ -255,7 +258,7 @@ class VirtioVsock::ChannelConnection final : public VirtioVsock::Connection {
   ~ChannelConnection() override;
 
   zx_status_t Init() override;
-  zx_status_t WriteCredit(virtio_vsock_hdr_t* header) override;
+  zx_status_t WriteLocalCredit(virtio_vsock_hdr_t* header) override;
 
   zx_status_t Shutdown(uint32_t flags) override;
   zx_status_t Read(VirtioQueue* queue,

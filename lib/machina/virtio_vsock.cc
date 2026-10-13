@@ -83,12 +83,12 @@ void VirtioVsock::Connection::UpdateOp(uint16_t new_op) {
       return;
     case VIRTIO_VSOCK_OP_CREDIT_REQUEST:
     case VIRTIO_VSOCK_OP_CREDIT_UPDATE:
-      if (op_ == VIRTIO_VSOCK_OP_RW || op_ == VIRTIO_VSOCK_OP_RESPONSE) {
+      if (op_ == VIRTIO_VSOCK_OP_RW) {
         op_ = new_op;
         return;
       }
       if (op_ == VIRTIO_VSOCK_OP_RESPONSE) {
-        FXL_LOG(ERROR) << "Dropping credit update in RESPONSE state";
+        FXL_LOG(ERROR) << "Dropping credit operation in RESPONSE state";
         return;
       }
       FXL_LOG(ERROR) << "Invalid credit operation, current state: " << op_;
@@ -96,10 +96,12 @@ void VirtioVsock::Connection::UpdateOp(uint16_t new_op) {
     case VIRTIO_VSOCK_OP_RW:
       switch (op_) {
         case VIRTIO_VSOCK_OP_SHUTDOWN:
-          if ((flags_ & VIRTIO_VSOCK_FLAG_SHUTDOWN_BOTH) != VIRTIO_VSOCK_FLAG_SHUTDOWN_BOTH) {
+          if ((flags() & VIRTIO_VSOCK_FLAG_SHUTDOWN_BOTH) !=
+              VIRTIO_VSOCK_FLAG_SHUTDOWN_BOTH) {
             op_ = new_op;
             return;
           }
+          break;
         case VIRTIO_VSOCK_OP_RESPONSE:
         case VIRTIO_VSOCK_OP_CREDIT_REQUEST:
         case VIRTIO_VSOCK_OP_CREDIT_UPDATE:
@@ -126,17 +128,16 @@ void VirtioVsock::Connection::UpdateOp(uint16_t new_op) {
 }
 
 uint32_t VirtioVsock::Connection::PeerFree() const {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   const uint32_t inflight = (tx_cnt_ >= peer_fwd_cnt_) ? (tx_cnt_ - peer_fwd_cnt_) : 0;
   return (peer_buf_alloc_ >= inflight) ? (peer_buf_alloc_ - inflight) : 0;
 }
 
-void VirtioVsock::Connection::ReadCredit(virtio_vsock_hdr_t* header) {
-  SetCredit(header->buf_alloc, header->fwd_cnt);
-}
-
-void VirtioVsock::Connection::SetCredit(uint32_t buf_alloc, uint32_t fwd_cnt) {
-  peer_buf_alloc_ = buf_alloc;
-  peer_fwd_cnt_ = fwd_cnt;
+void VirtioVsock::Connection::UpdatePeerCredit(uint32_t peer_buf_alloc,
+                                                uint32_t peer_fwd_cnt) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  peer_buf_alloc_ = peer_buf_alloc;
+  peer_fwd_cnt_ = peer_fwd_cnt;
 }
 
 static zx_status_t wait(async_t* async, async::Wait* wait, zx_status_t status) {
@@ -228,19 +229,28 @@ void VirtioVsock::SocketConnection::OnReady(
     zx_signals_t signals = rx_wait_.trigger();
     if (signal->observed & ZX_SOCKET_PEER_CLOSED) {
       UpdateOp(VIRTIO_VSOCK_OP_SHUTDOWN);
-      flags_ |= VIRTIO_VSOCK_FLAG_SHUTDOWN_BOTH;
+      {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        flags_ |= VIRTIO_VSOCK_FLAG_SHUTDOWN_BOTH;
+      }
       rx_wait_.set_trigger(signals & ~ZX_SOCKET_PEER_CLOSED);
     } else {
       if (signal->observed & ZX_SOCKET_READ_DISABLED &&
-          !(flags_ & VIRTIO_VSOCK_FLAG_SHUTDOWN_RECV)) {
+          !(flags() & VIRTIO_VSOCK_FLAG_SHUTDOWN_RECV)) {
         UpdateOp(VIRTIO_VSOCK_OP_SHUTDOWN);
-        flags_ |= VIRTIO_VSOCK_FLAG_SHUTDOWN_RECV;
+        {
+          std::lock_guard<std::mutex> lock(state_mutex_);
+          flags_ |= VIRTIO_VSOCK_FLAG_SHUTDOWN_RECV;
+        }
         rx_wait_.set_trigger(signals & ~ZX_SOCKET_READ_DISABLED);
       }
       if (signal->observed & ZX_SOCKET_WRITE_DISABLED &&
-          !(flags_ & VIRTIO_VSOCK_FLAG_SHUTDOWN_SEND)) {
+          !(flags() & VIRTIO_VSOCK_FLAG_SHUTDOWN_SEND)) {
         UpdateOp(VIRTIO_VSOCK_OP_SHUTDOWN);
-        flags_ |= VIRTIO_VSOCK_FLAG_SHUTDOWN_SEND;
+        {
+          std::lock_guard<std::mutex> lock(state_mutex_);
+          flags_ |= VIRTIO_VSOCK_FLAG_SHUTDOWN_SEND;
+        }
         rx_wait_.set_trigger(signals & ~ZX_SOCKET_WRITE_DISABLED);
       }
     }
@@ -248,13 +258,18 @@ void VirtioVsock::SocketConnection::OnReady(
     return;
   }
 
-  if (reported_buf_avail_ == 0 && signal->observed & ZX_SOCKET_WRITABLE) {
+  bool credit_was_exhausted;
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    credit_was_exhausted = reported_buf_avail_ == 0;
+  }
+  if (credit_was_exhausted && signal->observed & ZX_SOCKET_WRITABLE) {
     UpdateOp(VIRTIO_VSOCK_OP_CREDIT_UPDATE);
     queue_callback_();
   }
 }
 
-zx_status_t VirtioVsock::SocketConnection::WriteCredit(
+zx_status_t VirtioVsock::SocketConnection::WriteLocalCredit(
     virtio_vsock_hdr_t* header) {
   size_t max = 0;
   zx_status_t status =
@@ -268,6 +283,7 @@ zx_status_t VirtioVsock::SocketConnection::WriteCredit(
   if (status != ZX_OK) {
     return status;
   }
+  std::lock_guard<std::mutex> lock(state_mutex_);
   header->buf_alloc = max;
   header->fwd_cnt = rx_cnt_ - used;
   reported_buf_avail_ = max - used;
@@ -306,7 +322,10 @@ zx_status_t VirtioVsock::SocketConnection::Read(VirtioQueue* queue,
     }
 
     *used += actual;
-    tx_cnt_ += actual;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      tx_cnt_ += actual;
+    }
     if (PeerFree() == 0 || !desc->has_next || actual < desc->len) {
       break;
     }
@@ -323,17 +342,25 @@ zx_status_t VirtioVsock::SocketConnection::Write(VirtioQueue* queue,
   zx_status_t status = setup_desc_chain(queue, header, desc);
   while (status == ZX_OK) {
     uint32_t len = std::min(desc->len, header->len);
-    size_t actual;
+    size_t actual = 0;
     status = socket_.write(0, desc->addr, len, &actual);
-    rx_cnt_ += actual;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      rx_cnt_ += actual;
+    }
     header->len -= actual;
     if (status != ZX_OK || actual < len) {
       UpdateOp(VIRTIO_VSOCK_OP_RST);
       return ZX_OK;
     }
 
-    reported_buf_avail_ -= actual;
-    if (reported_buf_avail_ == 0 || !desc->has_next || header->len == 0) {
+    bool credit_exhausted;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      reported_buf_avail_ -= actual;
+      credit_exhausted = reported_buf_avail_ == 0;
+    }
+    if (credit_exhausted || !desc->has_next || header->len == 0) {
       return ZX_OK;
     }
 
@@ -400,18 +427,22 @@ void VirtioVsock::ChannelConnection::OnReady(zx_status_t status,
 
   if (signal->observed & ZX_CHANNEL_PEER_CLOSED) {
     UpdateOp(VIRTIO_VSOCK_OP_SHUTDOWN);
-    flags_ |= VIRTIO_VSOCK_FLAG_SHUTDOWN_BOTH;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      flags_ |= VIRTIO_VSOCK_FLAG_SHUTDOWN_BOTH;
+    }
     zx_signals_t signals = rx_wait_.trigger();
     rx_wait_.set_trigger(signals & ~ZX_CHANNEL_PEER_CLOSED);
     queue_callback_();
   }
 }
 
-zx_status_t VirtioVsock::ChannelConnection::WriteCredit(
+zx_status_t VirtioVsock::ChannelConnection::WriteLocalCredit(
     virtio_vsock_hdr_t* header) {
   constexpr size_t max = ZX_CHANNEL_MAX_MSG_BYTES;
   constexpr size_t used = 0;
 
+  std::lock_guard<std::mutex> lock(state_mutex_);
   header->buf_alloc = max;
   header->fwd_cnt = rx_cnt_ - used;
   return ZX_OK;
@@ -441,7 +472,10 @@ zx_status_t VirtioVsock::ChannelConnection::Read(VirtioQueue* queue,
     }
 
     *used += actual;
-    tx_cnt_ += actual;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      tx_cnt_ += actual;
+    }
     if (PeerFree() == 0 || !desc->has_next) {
       break;
     }
@@ -458,7 +492,10 @@ zx_status_t VirtioVsock::ChannelConnection::Write(VirtioQueue* queue,
   zx_status_t status = setup_desc_chain(queue, header, desc);
   while (status == ZX_OK) {
     status = channel_.write(0, desc->addr, desc->len, nullptr, 0);
-    rx_cnt_ += desc->len;
+    {
+      std::lock_guard<std::mutex> lock(state_mutex_);
+      rx_cnt_ += desc->len;
+    }
     header->len -= desc->len;
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "Failed to write from channel " << status;
@@ -501,7 +538,7 @@ bool VirtioVsock::HasConnection(uint32_t src_cid,
   ConnectionKey key{.local_cid = dst_cid, .local_port = dst_port,
                     .remote_cid = src_cid, .remote_port = src_port};
   std::lock_guard<std::mutex> lock(mutex_);
-  return connections_.find(key) != connections_.end();
+  return connected_table_.find(key) != connected_table_.end();
 }
 
 void VirtioVsock::Start(
@@ -521,7 +558,7 @@ void VirtioVsock::Stop(void) {
   FXL_LOG(INFO) << "ConnectClientNums= "<< ConnectClientNums.load();
   std::lock_guard<std::mutex> lock(mutex_);
 
-  for (auto iter = connections_.begin(); iter != connections_.end(); ) {
+  for (auto iter = connected_table_.begin(); iter != connected_table_.end(); ) {
     auto curr = iter;
     iter++;
 
@@ -535,14 +572,14 @@ void VirtioVsock::Stop(void) {
 
     conn_ptr->Shutdown(VIRTIO_VSOCK_FLAG_SHUTDOWN_BOTH);
 
-    connections_.erase(curr);
+    connected_table_.erase(curr);
     ConnectClientNums.fetch_sub(1);
   }
 
   if (connector_.is_bound()) {
     connector_.Unbind();
   }
-  FXL_LOG(INFO) << "isEmpty= "<< connections_.empty();
+  FXL_LOG(INFO) << "isEmpty= "<< connected_table_.empty();
 }
 
 static std::unique_ptr<VirtioVsock::Connection> create_connection(
@@ -599,13 +636,14 @@ void VirtioVsock::ConnectCallback(ConnectionKey key,
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to setup connection " << status;
   }
-  conn->SetCredit(buf_alloc, fwd_cnt);
+  conn->UpdatePeerCredit(buf_alloc, fwd_cnt);
 }
 
 zx_status_t VirtioVsock::AddConnectionLocked(ConnectionKey key,
                                              std::unique_ptr<Connection> conn) {
   bool inserted;
-  std::tie(std::ignore, inserted) = connections_.emplace(key, std::move(conn));
+  std::tie(std::ignore, inserted) =
+      connected_table_.emplace(key, std::move(conn));
   if (!inserted) {
     FXL_LOG(ERROR) << "Connection already exists";
     return ZX_ERR_ALREADY_EXISTS;
@@ -616,13 +654,13 @@ zx_status_t VirtioVsock::AddConnectionLocked(ConnectionKey key,
 }
 
 VirtioVsock::Connection* VirtioVsock::GetConnectionLocked(ConnectionKey key) {
-  auto it = connections_.find(key);
-  return it == connections_.end() ? nullptr : it->second.get();
+  auto it = connected_table_.find(key);
+  return it == connected_table_.end() ? nullptr : it->second.get();
 }
 
 bool VirtioVsock::EraseOnErrorLocked(ConnectionKey key, zx_status_t status) {
   if (status != ZX_OK) {
-    connections_.erase(key);
+    connected_table_.erase(key);
   }
   return status != ZX_OK;
 }
@@ -688,7 +726,7 @@ static zx_status_t transmit(VirtioVsock::Connection* conn,
   }
 }
 
-void VirtioVsock::Mux(zx_status_t status, uint16_t index) {
+void VirtioVsock::HandleRxQueue(zx_status_t status, uint16_t index) {
   if (status != ZX_OK) {
     return;
   }
@@ -736,8 +774,8 @@ void VirtioVsock::Mux(zx_status_t status, uint16_t index) {
         .op = conn->op(),
     };
 
-    zx_status_t write_status = conn->WriteCredit(header);
-    switch (write_status) {
+    zx_status_t credit_status = conn->WriteLocalCredit(header);
+    switch (credit_status) {
       case ZX_OK:
         break;
       case ZX_ERR_UNAVAILABLE:
@@ -745,7 +783,7 @@ void VirtioVsock::Mux(zx_status_t status, uint16_t index) {
         break;
       default:
         conn->UpdateOp(VIRTIO_VSOCK_OP_RST);
-        FXL_LOG(ERROR) << "Failed to write credit " << write_status;
+        FXL_LOG(ERROR) << "Failed to write local credit " << credit_status;
         break;
     }
 
@@ -761,7 +799,7 @@ void VirtioVsock::Mux(zx_status_t status, uint16_t index) {
   }
 
   if (index_valid) {
-    FXL_LOG(ERROR) << "Mux called with no readable connections. Descriptor "
+    FXL_LOG(ERROR) << "HandleRxQueue called with no readable connections. Descriptor "
                    << "will be returned with 0 length";
     rx_queue()->Return(index, 0);
   }
@@ -820,7 +858,7 @@ static zx_status_t receive(VirtioVsock::Connection* conn,
   }
 }
 
-void VirtioVsock::Demux(zx_status_t status, uint16_t index) {
+void VirtioVsock::HandleTxQueue(zx_status_t status, uint16_t index) {
   if (status != ZX_OK) {
     return;
   }
@@ -882,7 +920,7 @@ void VirtioVsock::Demux(zx_status_t status, uint16_t index) {
       FXL_LOG(ERROR) << "Send was shutdown";
     }
 
-    conn->ReadCredit(header);
+    conn->UpdatePeerCredit(header->buf_alloc, header->fwd_cnt);
     status = receive(conn, tx_queue(), header, &desc, this, key);
     switch (conn->op()) {
       case VIRTIO_VSOCK_OP_RST:

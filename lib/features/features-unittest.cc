@@ -108,11 +108,8 @@ std::vector<uint8_t> MakeDtb(const FeatureStatus& status) {
   AddFeatureNode(dtb.data(), pci_bus, "virtio-rtc", status.virtio_rtc);
   AddFeatureNode(dtb.data(), pci_bus, "virtio-console",
                  status.virtio_console);
-  AddFeatureNode(dtb.data(), pci_bus, "virtio-vsock", status.virtio_vsock);
-
   int virtio_vsock =
-      AddFeatureNode(dtb.data(), features, "virtio-vsock",
-                     status.virtio_vsock);
+      AddFeatureNode(dtb.data(), pci_bus, "virtio-vsock", status.virtio_vsock);
   AddFeatureNode(dtb.data(), virtio_vsock, "gzfs", status.gzfs);
   AddFeatureNode(dtb.data(), features, "ufs", status.ufs);
   AddFeatureNode(dtb.data(), features, "smc", status.smc);
@@ -305,9 +302,23 @@ TEST(FeatureSetTest, DisabledPciBusDisablesChildFeatures) {
   EXPECT_FALSE(features.virtio_rtc_enabled());
   EXPECT_FALSE(features.virtio_console_enabled());
   EXPECT_FALSE(features.virtio_vsock_enabled());
+  EXPECT_FALSE(features.gzfs_enabled());
   EXPECT_FALSE(features.pci_virtio_block_enabled());
   EXPECT_TRUE(features.mmio_virtio_block_enabled());
   EXPECT_TRUE(features.vmlog_enabled());
+}
+
+TEST(FeatureSetTest, DisabledVirtioVsockDisablesGzfs) {
+  FeatureStatus status = AllOkayStatus();
+  status.virtio_vsock = "disabled";
+  std::vector<uint8_t> dtb = MakeDtb(status);
+
+  FeatureSet features;
+  ASSERT_EQ(ZX_OK, FeatureSet::ParseDtb(dtb.data(), dtb.size(), &features));
+  EXPECT_TRUE(features.pci_bus_enabled());
+  EXPECT_TRUE(features.virtio_console_enabled());
+  EXPECT_FALSE(features.virtio_vsock_enabled());
+  EXPECT_FALSE(features.gzfs_enabled());
 }
 
 TEST(FeatureSetTest, DisabledPciChildFeature) {

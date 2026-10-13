@@ -114,13 +114,15 @@ The parser recognizes the product feature schema:
 /features/pci_bus/virtio-i2c
 /features/pci_bus/virtio-eint
 /features/pci_bus/virtio-console
-/features/gzfs
+/features/pci_bus/virtio-vsock
+/features/pci_bus/virtio-vsock/gzfs
 /features/ufs
 ```
 
 `/features/mmio_bus/mmio-virtio-block` and
 `/features/pci_bus/pci-virtio-block` control virtio-block setup, and
-`/features/pci_bus/virtio-console` controls virtio-console setup. If a feature
-node or any parent feature node has `status = "disabled"`, that feature is
-disabled. Missing DTB data, a missing `/features` tree, or a missing individual
-feature keeps the historical default of enabling devices.
+`/features/pci_bus/virtio-console` controls virtio-console setup.
+`/features/pci_bus/virtio-vsock/gzfs` controls the host gzfs vsock listener.
+If a feature node or any parent feature node has `status = "disabled"`, that
+feature is disabled. Missing DTB data, a missing `/features` tree, or a missing
+individual feature node keeps that feature disabled.

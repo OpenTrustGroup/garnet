@@ -2143,6 +2143,8 @@ zx_status_t Vmm::Initialize(virtualization::Config vmm_cfg,
     resv.gpa_base = resp.addr;
     resv.hpa_base = resp.addr;
     resv.size = resp.size;
+    if (machina::IsTboxVmid((int32_t)vmm_cfg.vmid))
+      resv.is_reservedmem = 1;
     cfg_.append_vmem(resv);
   }
 
@@ -2403,24 +2405,26 @@ zx_status_t Vmm::Initialize(virtualization::Config vmm_cfg,
     }
   }
 
-  // Setup virtio-vsock
-  FXL_LOG(INFO) << "virtio-vsock BE";
-  vsock_ = std::make_unique<machina::VirtioVsock>(guest_.phys_mem(),
-                                                  guest_.device_async());
-  if (!vsock_) {
-    FXL_LOG(ERROR) << "Failed to create virtio-vsock instance: " << status;
-    return ZX_ERR_NO_MEMORY;
-  }
+  if (features_.virtio_vsock_enabled()) {
+    // Setup virtio-vsock
+    FXL_LOG(INFO) << "virtio-vsock BE";
+    vsock_ = std::make_unique<machina::VirtioVsock>(guest_.phys_mem(),
+                                                    guest_.device_async());
+    if (!vsock_) {
+      FXL_LOG(ERROR) << "Failed to create virtio-vsock instance: " << status;
+      return ZX_ERR_NO_MEMORY;
+    }
 
-  status = bus_.Connect(vsock_->pci_device());
-  if (status != ZX_OK) {
-    FXL_LOG(ERROR) << "Failed to connect virtio-vsock devices to pci bus: "
-                    << status;
-    return status;
-  }
+    status = bus_.Connect(vsock_->pci_device());
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "Failed to connect virtio-vsock devices to pci bus: "
+                      << status;
+      return status;
+    }
 
-  auto new_connector = host_vsock_endpoint_.ConnectorNewBinding();
-  vsock_->Start(std::move(new_connector));
+    auto new_connector = host_vsock_endpoint_.ConnectorNewBinding();
+    vsock_->Start(std::move(new_connector));
+  }
 
   if (features_.gzfs_enabled()) {
     gzfs_vsock_srv_ = std::make_unique<GzFsVsockService>(guest_.vmid());
@@ -2774,6 +2778,17 @@ zx_status_t Vmm::Initialize(virtualization::Config vmm_cfg,
     auto status = PatchMdDtb(vmo_handle);
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "Failed to PatchMdDtb " << status;
+    }
+    if (machina::IsTboxVmid(guest_.vmid())) {
+      machina::DeviceTreeSpec dtb{base, size};
+      if (cfg_.is_dtb_valid())
+        dtb = cfg_.dtb();
+      status = guest_.AddVmemDeviceTreeNodes(dtb, cfg_.phys_base());
+      if (status != ZX_OK) {
+        FXL_LOG(ERROR) << "Failed to add vmem device tree nodes on md dtb: "
+                       << status;
+      }
+      flush_dtb(guest_, cfg_);
     }
   };
   guest_.RegisterDeviceTreeMdPatcher(patch_md_dtb);

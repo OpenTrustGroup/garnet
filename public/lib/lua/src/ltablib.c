@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: ltablib.c,v 1.93 2016/02/25 19:41:54 roberto Exp $

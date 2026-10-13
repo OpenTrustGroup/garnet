@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: luac.c,v 1.75 2015/03/12 01:58:27 lhf Exp $

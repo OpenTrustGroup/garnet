@@ -1,6 +1,6 @@
 Name: ICU
 URL: http://site.icu-project.org/
-License: MIT
+License: ICU
 License File: LICENSE
 
 This file has the relevant components from ICU copied to handle basic

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lstate.h,v 2.130 2015/12/16 16:39:38 roberto Exp $

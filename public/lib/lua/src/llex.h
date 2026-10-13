@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: llex.h,v 1.79 2016/05/02 14:02:12 roberto Exp $

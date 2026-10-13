@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lvm.c,v 2.268 2016/02/05 19:59:14 roberto Exp $

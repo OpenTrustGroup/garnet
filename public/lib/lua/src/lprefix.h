@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lprefix.h,v 1.2 2014/12/29 16:54:13 roberto Exp $

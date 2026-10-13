@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lua.c,v 1.226 2015/08/14 19:11:20 roberto Exp $

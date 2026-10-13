@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: loslib.c,v 1.64 2016/04/18 13:06:55 roberto Exp $

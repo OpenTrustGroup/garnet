@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lauxlib.h,v 1.129 2015/11/23 11:29:43 roberto Exp $

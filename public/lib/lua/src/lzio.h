@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lzio.h,v 1.31 2015/09/08 15:41:05 roberto Exp $

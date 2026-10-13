@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lapi.c,v 2.259 2016/02/29 14:27:14 roberto Exp $

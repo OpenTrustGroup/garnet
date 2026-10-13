@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: ldo.h,v 2.29 2015/12/21 13:02:14 roberto Exp $

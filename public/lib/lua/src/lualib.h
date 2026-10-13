@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lualib.h,v 1.44 2014/02/06 17:32:33 roberto Exp $

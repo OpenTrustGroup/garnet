@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lmem.h,v 1.43 2014/12/19 17:26:14 roberto Exp $

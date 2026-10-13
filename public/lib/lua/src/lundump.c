@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lundump.c,v 2.44 2015/11/02 16:09:30 roberto Exp $

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: BSD-3-Clause
+# SPDX-License-Identifier: MIT
 
 # Makefile for installing Lua
 # See doc/readme.html for installation and customization instructions.

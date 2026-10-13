@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: ldump.c,v 2.37 2015/10/08 15:53:49 roberto Exp $

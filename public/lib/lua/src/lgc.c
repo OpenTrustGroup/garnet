@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lgc.c,v 2.212 2016/03/31 19:02:03 roberto Exp $

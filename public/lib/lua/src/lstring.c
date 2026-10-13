@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lstring.c,v 2.56 2015/11/23 11:32:51 roberto Exp $

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lparser.c,v 2.153 2016/05/13 19:10:16 roberto Exp $

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: luaconf.h,v 1.255 2016/05/01 20:06:09 roberto Exp $

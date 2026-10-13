@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lstrlib.c,v 1.251 2016/05/20 14:13:21 roberto Exp $

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lmathlib.c,v 1.117 2015/10/02 15:39:23 roberto Exp $

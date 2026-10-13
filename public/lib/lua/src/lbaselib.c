@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lbaselib.c,v 1.313 2016/04/11 19:18:40 roberto Exp $

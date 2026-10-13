@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: ldebug.c,v 2.120 2016/03/31 19:01:21 roberto Exp $

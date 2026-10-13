@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: liolib.c,v 2.149 2016/05/02 14:03:19 roberto Exp $

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: NebulaProprietary
+// SPDX-License-Identifier: BSD-3-Clause
 /*
 * Copyright (c) 2025 MediaTek Inc.
 * Copyright 2025 GoldenRiver Technologies Co., Ltd. All rights reserved.
@@ -25,7 +25,7 @@
 #include "garnet/lib/machina/virtio_device.h"
 #include "garnet/lib/machina/virtio_queue.h"
 #include "garnet/lib/machina/ipc_vqueue_fe.h"
-#include "../../drivers/block/ufs/vrpmb/virtio_rpmb_protocol.h"
+#include "garnet/drivers/block/ufs/vrpmb/virtio_rpmb_protocol.h"
 
 namespace machina {
 

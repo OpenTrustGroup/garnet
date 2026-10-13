@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lopcodes.h,v 1.148 2014/10/25 11:50:46 roberto Exp $

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lfunc.h,v 2.15 2015/01/13 15:49:11 roberto Exp $

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lobject.c,v 2.111 2016/05/20 14:07:48 roberto Exp $

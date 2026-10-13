@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lutf8lib.c,v 1.15 2015/03/28 19:16:55 roberto Exp $

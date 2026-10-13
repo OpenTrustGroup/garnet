@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: ltable.c,v 2.117 2015/11/19 19:16:22 roberto Exp $

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: llimits.h,v 1.141 2015/11/19 19:16:22 roberto Exp $

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lbitlib.c,v 1.30 2015/11/11 19:08:09 roberto Exp $

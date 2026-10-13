@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lctype.c,v 1.12 2014/11/02 19:19:04 roberto Exp $

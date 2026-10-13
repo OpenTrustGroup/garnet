@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: loadlib.c,v 1.127 2015/11/23 11:30:45 roberto Exp $

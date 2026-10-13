@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lcode.c,v 2.109 2016/05/13 19:09:21 roberto Exp $

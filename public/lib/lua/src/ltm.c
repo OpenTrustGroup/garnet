@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: ltm.c,v 2.37 2016/02/26 19:20:15 roberto Exp $

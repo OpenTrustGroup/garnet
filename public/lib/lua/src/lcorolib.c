@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-License-Identifier: MIT
 
 /*
 ** $Id: lcorolib.c,v 1.10 2016/04/11 19:19:55 roberto Exp $

@@ -31,7 +31,7 @@ void blk_crypto_key_set_priv(struct blk_crypto_key *key, uint8_t priv) {
   key->priv = priv;
 }
 
-static inline struct hlist_head *
+static inline list_node_t *
 blk_crypto_hash_bucket_for_key(struct blk_crypto_profile *profile,
                                const struct blk_crypto_key *key) {
   uint64_t const pkey = (uint64_t)key;
@@ -43,10 +43,10 @@ blk_crypto_hash_bucket_for_key(struct blk_crypto_profile *profile,
 static struct blk_crypto_keyslot *
 blk_crypto_find_keyslot(struct blk_crypto_profile *profile,
                         const struct blk_crypto_key *key) {
-  const struct hlist_head *head = blk_crypto_hash_bucket_for_key(profile, key);
+  list_node_t *head = blk_crypto_hash_bucket_for_key(profile, key);
   struct blk_crypto_keyslot *slotp;
 
-  hlist_for_each_entry(struct blk_crypto_keyslot, slotp, head, hash_node) {
+  list_for_every_entry (head, slotp, struct blk_crypto_keyslot, hash_node) {
     if (slotp->key == key)
       return slotp;
   }
@@ -56,7 +56,10 @@ blk_crypto_find_keyslot(struct blk_crypto_profile *profile,
 static inline void
 blk_crypto_profile_keyslot_remove(struct blk_crypto_profile *profile,
                                   struct blk_crypto_keyslot *keyslot) {
-  hlist_del(&keyslot->hash_node);
+  if (list_in_list(&keyslot->hash_node)) {
+    list_delete(&keyslot->hash_node);
+    list_clear_node(&keyslot->hash_node);
+  }
   keyslot->key = NULL;
 }
 
@@ -154,12 +157,14 @@ int blk_crypto_get_keyslot(struct blk_crypto_profile *profile,
   }
 
   /* Move this slot to the hash list for the new key. */
-  if (slot->key)
-    hlist_del(&slot->hash_node);
+  if (slot->key && list_in_list(&slot->hash_node)) {
+    list_delete(&slot->hash_node);
+    list_clear_node(&slot->hash_node);
+  }
 
   slot->key = key;
-  hlist_add_head(&slot->hash_node,
-                 blk_crypto_hash_bucket_for_key(profile, key));
+  list_add_head(blk_crypto_hash_bucket_for_key(profile, key),
+                &slot->hash_node);
 
   atomic_init(&slot->slot_refs, 1);
 

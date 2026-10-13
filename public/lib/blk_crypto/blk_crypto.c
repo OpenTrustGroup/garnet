@@ -5,23 +5,6 @@
 
 #include "blk_crypto.h"
 
-__EXPORT void dump_crypto_profile(struct blk_crypto_profile const *profile) {
-  printf("dump blk_crypto_profile:\n");
-  printf("dev_profile: 0x%lx\n", (unsigned long)profile->dev_profile);
-  printf("num_slots: %u\n", profile->num_slots);
-  printf("slot_hashtable: 0x%lx\n", (unsigned long)profile->slot_hashtable);
-  printf("log_slot_ht_size: %u\n", profile->log_slot_ht_size);
-  printf("slots: 0x%lx\n", (unsigned long)profile->slots);
-  //	printf("");
-}
-
-#define _63f (ULONG_MAX >> 8)
-
-#define ilog2(val)                                                             \
-  (((val) == 0)                                                                \
-       ? 0                                                                     \
-       : (((sizeof(unsigned long long) * 8) - 1) - __builtin_clzll(val)))
-
 // this function is only for keyslot assignment
 // ll_ops and caps shall be set by hand.
 // a practical blk device driver shall negotiate will hardware to first confirm
@@ -63,6 +46,10 @@ blk_crypto_profile_init(struct blk_crypto_profile_dev *dev_profile,
 
   for (slot = 0; slot < num_slots; slot++) {
     profile->slots[slot].profile = profile;
+    profile->slots[slot].key = NULL;
+    /* slots came from malloc: a node has to be cleared before it can be
+     * asked whether it is in a list. */
+    list_clear_node(&profile->slots[slot].hash_node);
     list_add_tail(&profile->idle_slots, &profile->slots[slot].idle_slot_node);
   }
 
@@ -87,12 +74,10 @@ blk_crypto_profile_init(struct blk_crypto_profile_dev *dev_profile,
     return;
   }
   for (i = 0; i < slot_hashtable_size; i++)
-    INIT_HLIST_HEAD(&profile->slot_hashtable[i]);
+    list_initialize(&profile->slot_hashtable[i]);
 
   profile->dev_profile = dev_profile;
   *_profile = profile;
-
-  dump_crypto_profile(profile);
 }
 
 /**
@@ -125,4 +110,12 @@ blk_crypto_reprogram_all_keys(struct blk_crypto_profile *profile) {
       printf("nebula, blk crypto, reprogram all key, err happened: %d\n", err);
   }
   mtx_unlock(&profile->lock);
+}
+
+/*
+ * Was a static inline in blk_crypto.h.  It needs the profile layout, so it
+ * lives with the implementation and the driver calls it through the DDK.
+ */
+unsigned int blk_crypto_keyslot_index(struct blk_crypto_keyslot *slot) {
+  return slot - slot->profile->slots;
 }

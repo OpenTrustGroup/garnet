@@ -13,7 +13,6 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <inttypes.h>
-#include <lib/cksum.h>
 #include <limits.h>
 #include <stdatomic.h>
 #include <stdlib.h>

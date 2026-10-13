@@ -21,7 +21,6 @@ driver_module("gpt_driver") {
     "//zircon/public/lib/fbl",
   ]
 
-   include_dirs += [ "//zircon/third_party/ulib/cksum/include" ]
 }
 
 package("gpt") {

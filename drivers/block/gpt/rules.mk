@@ -13,7 +13,7 @@ MODULE_SRCS := 	\
 	$(LOCAL_DIR)/gpt.c	\
 	$(LOCAL_DIR)/gpt_dump.c	\
 
-MODULE_STATIC_LIBS := system/ulib/ddk system/ulib/sync third_party/ulib/cksum
+MODULE_STATIC_LIBS := system/ulib/ddk system/ulib/sync
 
 MODULE_LIBS := system/ulib/driver system/ulib/zircon system/ulib/c
 

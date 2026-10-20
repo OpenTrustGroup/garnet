@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2016 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -7,6 +9,7 @@
 
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "lib/app/cpp/application_context.h"
@@ -16,12 +19,10 @@
 #include <fuchsia/cpp/component.h>
 #include <fuchsia/cpp/component.h>
 #include "garnet/bin/sysmgr/delegating_application_loader.h"
+#include "garnet/lib/features/features.h"
 #include "lib/fxl/macros.h"
 
 #include <zircon/syscalls.h>
-#include <zircon/device/device.h>
-#include <zircon/device/grt-wdt.h>
-#include <fcntl.h>
 
 namespace sysmgr {
 
@@ -42,10 +43,14 @@ class App {
   void RegisterDefaultServiceConnector();
   void RegisterAppLoaders(Config::ServiceMap app_loaders);
   void LaunchApplication(component::ApplicationLaunchInfo launch_info);
-  void LaunchService(const std::string& service_name);
-  void DisableSosKickNebula();
+  void LaunchService(const std::string& service_name, bool auto_restart = false);
+  void HandleSingletonFailure(const std::string& url);
+  void LoadFeatures();
 
   std::unique_ptr<component::ApplicationContext> application_context_;
+  features::FeatureSet features_;
+  std::string guest_manager_url_;
+  bool guest_manager_reset_requested_ = false;
 
   // Keep track of all services, indexed by url.
   std::map<std::string, component::Services> services_;

@@ -1,0 +1,44 @@
+import("//build/package.gni")
+
+executable("bin") {
+  output_name = "guest_manager"
+
+  sources = [
+    "main.cc",
+    "guest_manager.cc",
+    "guest_manager_reporter.cc",
+  ]
+
+  deps = [
+    "//garnet/bin/guest_manager/proto:config",
+    "//garnet/bin/smc_communication:lib",
+    "//garnet/lib/features",
+    "//garnet/lib/machina",
+    "//garnet/lib/machina:watchdog_policy",
+    "//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/fxl",
+    "//garnet/public/lib/virtualization/fidl",
+    "//zircon/public/lib/async-loop",
+    "//zircon/public/lib/async-loop-cpp",
+    "//third_party/ree-trusty/libnebula-cpp:nebula-base",
+  ]
+
+  defines = [
+    "RPROC_NOTIFY_WITH_PHYS_IRQ",
+  ]
+}
+
+package("guest_manager") {
+  deps = [
+    ":bin",
+  ]
+
+  meta = [
+    {
+      path = rebase_path("//garnet/bin/guest_manager/meta/sandbox")
+      dest = "sandbox"
+    },
+  ]
+
+  binary = "guest_manager"
+}

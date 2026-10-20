@@ -1,0 +1,64 @@
+# Copyright 2026 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/package.gni")
+
+source_set("lib") {
+  visibility = [ ":*" ]
+
+  sources = [
+    "feature_provider_impl.cc",
+    "feature_provider_impl.h",
+  ]
+
+  public_deps = [
+    "//garnet/lib/features",
+    "//garnet/public/lib/features/fidl",
+  ]
+
+  deps = [
+    "//garnet/public/lib/fxl",
+  ]
+}
+
+executable("features_bin") {
+  output_name = "features"
+
+  sources = [
+    "main.cc",
+  ]
+
+  deps = [
+    ":lib",
+    "//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/fsl",
+    "//garnet/public/lib/fxl",
+  ]
+}
+
+source_set("unittests") {
+  testonly = true
+  sources = [ "feature_provider_impl_unittest.cc" ]
+  deps = [ ":lib", "//third_party/googletest:gtest" ]
+}
+
+executable("features_unittests") {
+  testonly = true
+  deps = [ ":unittests", "//third_party/googletest:gtest_main" ]
+}
+
+package("features") {
+  deps = [
+    ":features_bin",
+  ]
+
+  binary = "features"
+
+  meta = [
+    {
+      path = rebase_path("meta/sandbox")
+      dest = "sandbox"
+    },
+  ]
+}

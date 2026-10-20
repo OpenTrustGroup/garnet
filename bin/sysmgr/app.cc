@@ -1,13 +1,19 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2016 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "garnet/bin/sysmgr/app.h"
+#include "garnet/lib/machina/watchdog_policy.h"
 
 #include <zircon/process.h>
+#include <zircon/device/grt-wdt.h>
 #include <zircon/processargs.h>
 #include <zircon/syscalls/hypervisor.h>
 
@@ -24,11 +30,25 @@ namespace sysmgr {
 
 constexpr char kDefaultLabel[] = "sys";
 constexpr char kConfigDir[] = "/system/data/sysmgr/";
+constexpr char kGuestManagerService[] = "fuchsia.virtualization.GuestManager";
+
+namespace {
+  std::vector<std::string> auto_restart_services;
+  bool AutoRestartService(const std::string& service_name) {
+    for (const auto& name : auto_restart_services) {
+      if (name == service_name) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
 
 App::App()
     : application_context_(
           component::ApplicationContext::CreateFromStartupInfo()) {
   FXL_DCHECK(application_context_);
+  LoadFeatures();
 
   Config config;
   char buf[PATH_MAX];
@@ -78,8 +98,11 @@ App::App()
 
   // TODO(abarth): Remove this hard-coded mention of netstack once netstack is
   // fully converted to using service namespaces.
-  LaunchService("provider.TaProvider");
+  LaunchService("provider.TaProvider", true);
   LaunchService("nbl_services.rpc");
+
+  // LVGL demo
+  LaunchService("SpiService.Transport");
 
   uint64_t bootmode = 0;
   zx_status_t status = zx_system_get_bootmode(&bootmode);
@@ -88,27 +111,13 @@ App::App()
   }
 
   if (bootmode == ZX_BOOTMODE_AHYP) {
-    uint32_t uart_rx_input = 0;
-    // Is magic key pressed?
-    if (_trusty_ioctl(NEBULA_GENERIC_FD,
-                      SYS_PLATFORM_UART_ACTION_GET_HOLD_NEBULA_SHELL_CMD,
-                      (void*)&uart_rx_input) < 0) {
-      FXL_LOG(ERROR) << "_trusty_ioctl failed";
+    if (features_.nebulalog_enabled()) {
+      LaunchService("nebula.LogService", true);
     }
-
-    if (uart_rx_input == 0) {
-      // No key pressed, notify uart driver to disable RX to avoid
-      // uart conflict with sos uart driver, then launch sos.
-      if (_trusty_ioctl(NEBULA_GENERIC_FD,
-                        SYS_PLATFORM_UART_ACTION_SET_BYPASS_NEBULA_SHELL_CMD,
-                        NULL) < 0) {
-        FXL_LOG(ERROR) << "_trusty_ioctl failed";
-      }
-      LaunchService("machina.VhmService");
-    } else {
-      DisableSosKickNebula();
-      FXL_LOG(ERROR) << "Nebula shell start, won't launch sos here";
-    }
+    const machina::WatchdogPolicy watchdog_policy(features_.wdt_sink_enabled());
+    FXL_LOG(INFO) << "guest_manager watchdog policy=" << watchdog_policy.name()
+                  << " auto_restart=" << watchdog_policy.IsSink();
+    LaunchService(kGuestManagerService, watchdog_policy.IsSink());
   } else if (bootmode == ZX_BOOTMODE_TEE) {
     LaunchService("nebula.GpManager");
   }
@@ -117,8 +126,21 @@ App::App()
 
 App::~App() {}
 
+void App::LoadFeatures() {
+  features::FeatureSet loaded_features;
+  zx_status_t status = features::FeatureSet::LoadFromSysinfo(&loaded_features);
+  if (status != ZX_OK) {
+    FXL_LOG(ERROR) << "Failed to load platform features: " << status;
+    return;
+  }
+  features_ = loaded_features;
+}
+
 void App::RegisterSingleton(std::string service_name,
                             component::ApplicationLaunchInfoPtr launch_info) {
+  if (service_name == kGuestManagerService) {
+    guest_manager_url_ = launch_info->url;
+  }
   service_provider_bridge_.AddServiceForName(
       fxl::MakeCopyable([this, service_name,
                          launch_info = std::move(launch_info),
@@ -126,6 +148,14 @@ void App::RegisterSingleton(std::string service_name,
                             zx::channel client_handle) mutable {
         FXL_VLOG(2) << "Servicing singleton service request for "
                     << service_name;
+        // Compare the component URL so RprocService/CrossVMLock aliases cannot
+        // launch a fresh GuestManager while the platform is awaiting reset.
+        if (guest_manager_reset_requested_ &&
+            launch_info->url == guest_manager_url_) {
+          FXL_LOG(ERROR) << "GuestManager connection blocked pending platform "
+                           "reset: " << service_name;
+          return;
+        }
         auto it = services_.find(launch_info->url);
         if (it == services_.end()) {
           FXL_VLOG(1) << "Starting singleton " << launch_info->url
@@ -138,17 +168,36 @@ void App::RegisterSingleton(std::string service_name,
           env_launcher_->CreateApplication(std::move(dup_launch_info),
                                            controller.NewRequest());
           controller.set_error_handler(
-              [ this, url = launch_info->url, &controller ] {
+              [ this, name = service_name, url = launch_info->url, &controller ] {
                 FXL_LOG(ERROR) << "Singleton " << url << " died";
+                HandleSingletonFailure(url);
                 controller.Unbind();  // kills the singleton application
                 services_.erase(url);
 #ifdef __Nebula__
-                if (url == "/system/bin/nbl_loader_srv") {
+                if (AutoRestartService(name)) {
                   zx_nanosleep(zx_deadline_after(ZX_SEC(2)));
-                  LaunchService("provider.TaProvider");
+                  LaunchService(name);
                 }
 #endif
               });
+#ifdef __Nebula__
+          controller->WaitLaunchResponse(
+              [this, name = service_name, url = launch_info->url,
+               &controller](int32_t launch_res) {
+                if (launch_res == ZX_OK) {
+                  return;
+                }
+                FXL_LOG(ERROR) << "Singleton " << url
+                               << " failed to launch: " << launch_res;
+                HandleSingletonFailure(url);
+                controller.Unbind();
+                services_.erase(url);
+                if (AutoRestartService(name)) {
+                  zx_nanosleep(zx_deadline_after(ZX_SEC(2)));
+                  LaunchService(name);
+                }
+              });
+#endif
 
           std::tie(it, std::ignore) =
               services_.emplace(launch_info->url, std::move(services));
@@ -176,30 +225,44 @@ void App::LaunchApplication(component::ApplicationLaunchInfo launch_info) {
   env_launcher_->CreateApplication(std::move(launch_info), nullptr);
 }
 
-void App::LaunchService(const std::string& service_name) {
-  FXL_LOG(INFO) << "Launching service " << service_name;
+void App::LaunchService(const std::string& service_name, bool auto_restart) {
+  if (guest_manager_reset_requested_ && service_name == kGuestManagerService) {
+    FXL_LOG(ERROR) << "GuestManager launch blocked pending platform reset";
+    return;
+  }
+  FXL_LOG(INFO) << "Launching service " << service_name << ", auto_restart: "
+                << (auto_restart ? "true" : "false");
   auto provider = static_cast<component::ServiceProvider*>(&service_provider_bridge_);
   zx::channel h1, h2;
   zx::channel::create(0, &h1, &h2);
   provider->ConnectToService(service_name, std::move(h1));
+  if (auto_restart) {
+    auto_restart_services.push_back(service_name);
+  }
 }
 
-void App::DisableSosKickNebula() {
-  int fd = 0;
-
-  if (access(GRT_WDT_CONTROL_DEVICE, F_OK) != 0) {
-    printf("wdt driver is not ready:%s\n",GRT_WDT_CONTROL_DEVICE);
+void App::HandleSingletonFailure(const std::string& url) {
+  const machina::WatchdogPolicy watchdog_policy(features_.wdt_sink_enabled());
+  if (watchdog_policy.IsSink() || guest_manager_url_.empty() ||
+      url != guest_manager_url_ || guest_manager_reset_requested_) {
     return;
   }
-  fd = open(GRT_WDT_CONTROL_DEVICE, O_RDWR);
+
+  // Latch before controller cleanup or service-map erasure makes another lazy
+  // launch possible. A failed reset ioctl must not reopen that launch path.
+  guest_manager_reset_requested_ = true;
+  FXL_LOG(ERROR) << "GuestManager failed, policy=" << watchdog_policy.name()
+                 << "; requesting platform reset";
+  const int fd = open(GRT_WDT_CONTROL_DEVICE, O_RDWR);
   if (fd < 0) {
-    printf("driver-tests: no %s device found\n", GRT_WDT_CONTROL_DEVICE);
+    FXL_LOG(ERROR) << "Failed to open watchdog control for platform reset";
     return;
   }
-
-  ioctl_grt_wdt_stop(fd);
+  const ssize_t result = ioctl_grt_wdt_trigger_reset(fd);
   close(fd);
-  return;
+  if (result < 0) {
+    FXL_LOG(ERROR) << "Failed to request platform reset: " << result;
+  }
 }
 
 }  // namespace sysmgr

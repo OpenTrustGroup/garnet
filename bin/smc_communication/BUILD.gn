@@ -1,0 +1,38 @@
+import("//build/package.gni")
+
+source_set("lib") {
+  visibility = [ "*" ]
+
+  sources = [
+    "smc_communication.cc",
+    "smc_communication.h",
+  ]
+
+  deps = [
+    "//garnet/public/lib/fxl",
+    "//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/virtualization/fidl",
+  ]
+}
+
+executable("bin") {
+  output_name = "smc_communication"
+
+  sources = [
+    "main.cc",
+  ]
+
+  deps = [
+    ":lib",
+    "//garnet/public/lib/fxl",
+    "//garnet/public/lib/virtualization/fidl",
+  ]
+}
+
+package("smc_communication") {
+  deps = [
+    ":bin",
+  ]
+
+  binary = "smc_communication"
+}

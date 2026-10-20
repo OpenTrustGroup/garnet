@@ -1,7 +1,14 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+// Copyright 2025 Goldenriver Inc. All rights reserved.
+// Copyright 2018 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #include "message_handler.h"
 
 #include "garnet/bin/guest/proto/vm_message.pb.h"
-#include "garnet/bin/guest/tracer.h"
+#include "garnet/lib/machina/vhm_device.h"
 #include "google/protobuf/text_format.h"
 #include "lib/fsl/vmo/strings.h"
 
@@ -20,12 +27,18 @@ void VmMessageHandler::OnNewCall(mem::Buffer reqbuf,
                                  OnNewCallCallback callback) {
   auto msg = get_message(reqbuf);
   std::string resp_buf;
-  static nbl_vmm::Tracer tracer(ctx_);
 
   switch (msg.type()) {
     case nbl_vmm::RequestType::DUMP_VM: {
       std::vector<std::string> vcpu_states;
       guest_->Dump(vcpu_states);
+
+      if (guest_->IsUosException()) {
+        FXL_LOG(ERROR) << "VmMessageHandler  DUMP_VM,  uos exception, signal "
+                          "kSignalVmDump";
+        zx::event* dump_evnet = guest_->vm_dmp_event();
+        dump_evnet->signal(0, machina::VhmDevice::kSignalVmDump);
+      }
 
       nbl_vmm::Response resp;
       auto guest_state = resp.mutable_guest_state();
@@ -37,21 +50,7 @@ void VmMessageHandler::OnNewCall(mem::Buffer reqbuf,
       }
 
       resp.SerializeToString(&resp_buf);
-      break;
-    }
 
-    case nbl_vmm::RequestType::SHARED_IRQ_CTRL: {
-      auto ctl = msg.shared_irq_ctrl();
-      uint32_t vector = 0;
-      uint32_t vmid = ctl.vmid();
-      for (int index = 0; index < ctl.sharedirq_spec_size(); index ++) {
-        auto spec = ctl.sharedirq_spec(index);
-        if (vmid == spec.vmid()) {
-          guest_->UpdateAfeIrq(spec.irq(), spec.status(), spec.clear(), spec.bitmask(), spec.vmid(), index);
-          vector = spec.irq();
-        }
-      }
-      guest_->UpdateAfeIrqRegs(vector);
       break;
     }
 
@@ -70,11 +69,6 @@ void VmMessageHandler::OnNewCall(mem::Buffer reqbuf,
     case nbl_vmm::RequestType::UNMAP_PHYSICAL_MEMORY: {
       auto cmd = msg.unmap_phys_mem();
       guest_->UnmapPhysicalMemory(cmd.gpaddr(), cmd.length());
-      break;
-    }
-
-    case nbl_vmm::RequestType::TRACE: {
-      tracer.Start();
       break;
     }
 

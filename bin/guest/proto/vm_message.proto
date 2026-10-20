@@ -5,34 +5,12 @@ package nbl_vmm;
 
 enum RequestType {
   DUMP_VM = 0;
-  SHARED_IRQ_CTRL = 1;
   MAP_PHYSICAL_MEMORY = 2;
   UNMAP_PHYSICAL_MEMORY = 3;
   TRACE = 4;
 };
 
 message None {};
-
-message SharedIrqCtrl {
-  uint32 irqline = 1;
-  uint32 irq_status_offset = 2;
-  uint32 irq_clear_offset = 3;
-  uint64 interested_bitmap = 4;
-};
-
-message SharedIrqSpec {
-  uint32 irq = 1;
-  uint32 base = 2;
-  uint32 status = 3;
-  uint32 clear = 4;
-  uint64 bitmask = 5;
-  uint32 vmid = 6;
-};
-
-message AudioIrqRecord {
-  repeated SharedIrqSpec sharedirq_spec = 1;
-  uint32 vmid = 2;
-};
 
 message MapPhysicalMemory {
   uint64 gpaddr = 1;
@@ -49,7 +27,6 @@ message Request {
   RequestType type = 1;
   oneof payload {
     None none = 2;
-    AudioIrqRecord shared_irq_ctrl = 3;
     MapPhysicalMemory map_phys_mem = 4;
     UnmapPhysicalMemory unmap_phys_mem = 5;
   }

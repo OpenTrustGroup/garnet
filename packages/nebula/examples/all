@@ -1,6 +1,9 @@
 {
     "imports": [
         "garnet/packages/nebula/examples/nsc",
-        "garnet/packages/nebula/examples/simplest-garnet-app"
+        "garnet/packages/nebula/examples/simplest-garnet-app",
+        "garnet/packages/nebula/examples/dd",
+        "garnet/packages/nebula/examples/lsblk",
+        "garnet/packages/nebula/examples/ufsinfo"
     ]
 }

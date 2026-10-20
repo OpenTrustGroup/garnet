@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -13,6 +15,7 @@
 #include "garnet/lib/machina/virtio_device.h"
 #include "garnet/lib/machina/virtio_queue.h"
 #include "lib/fxl/logging.h"
+#define VIRTIO_ID_I2C_ADAPTER 34 
 
 namespace machina {
 
@@ -78,6 +81,12 @@ static constexpr size_t kVirtioPciNotifyCfgBase = 0;
 // Virtio 1.0 Section 4.1.4.4.1: offset MUST be 2-byte aligned.
 static_assert(is_aligned(kVirtioPciNotifyCfgBase, 2),
               "Virtio PCI notify config has illegal alignment");
+
+// Msix configuration.
+static constexpr uint32_t kMsixConfigTableAlign = 0x1000;
+static constexpr size_t kMsixConfigTableSize = 0x1000;
+static constexpr size_t kMsixConfigPbaSize = 0x1000;
+static constexpr size_t kBarSizeAlign = 0x4000;
 
 // Interrupt status configuration.
 static constexpr size_t kVirtioPciIsrCfgBase = 0x38;
@@ -200,9 +209,17 @@ zx_status_t VirtioPci::CommonCfgRead(uint64_t addr, IoValue* value) const {
 
     // Currently not implmeneted.
     case VIRTIO_PCI_COMMON_CFG_CONFIG_GEN:
-    case VIRTIO_PCI_COMMON_CFG_QUEUE_MSIX_VECTOR:
-    case VIRTIO_PCI_COMMON_CFG_MSIX_CONFIG:
       value->u32 = 0;
+      return ZX_OK;
+    case VIRTIO_PCI_COMMON_CFG_QUEUE_MSIX_VECTOR:
+      // Return VIRTIO_MSI_NO_VECTOR (0xFFFF) when MSI-X is not enabled
+      value->u16 = is_msix_enabled_ ? 0 : 0xFFFF;
+      value->access_size = 2;
+      return ZX_OK;
+    case VIRTIO_PCI_COMMON_CFG_MSIX_CONFIG:
+      // Return VIRTIO_MSI_NO_VECTOR (0xFFFF) when MSI-X is not enabled
+      value->u16 = is_msix_enabled_ ? 0 : 0xFFFF;
+      value->access_size = 2;
       return ZX_OK;
   }
   FXL_LOG(ERROR) << "Unhandled common config read 0x" << std::hex << addr;
@@ -232,6 +249,20 @@ zx_status_t VirtioPci::ConfigBarRead(uint64_t addr, IoValue* value) const {
     uint64_t device_offset = addr - kVirtioPciDeviceCfgBase;
     return device_->ReadConfig(device_offset, value);
   }
+
+  size_t msix_table_base = get_msix_table_base();
+  size_t msix_table_top = msix_table_base + kMsixConfigTableSize;
+  if (addr >= msix_table_base && addr < msix_table_top) {
+    config_->ReadMsixTable(addr - msix_table_base, value);
+    return ZX_OK;
+  }
+
+  size_t msix_pba_top = msix_table_top + kMsixConfigPbaSize;
+  if (addr >= msix_table_top && addr < msix_pba_top) {
+    config_->ReadPbaEntries(addr - msix_table_top, value);
+    return ZX_ERR_INTERNAL;
+  }
+
   FXL_LOG(ERROR) << "Unhandled config BAR read 0x" << std::hex << addr;
   return ZX_ERR_NOT_SUPPORTED;
 }
@@ -240,6 +271,7 @@ static void virtio_queue_update_addr(VirtioQueue* queue) {
   queue->set_desc_addr(queue->desc_addr());
   queue->set_avail_addr(queue->avail_addr());
   queue->set_used_addr(queue->used_addr());
+  queue->set_ring_idx();
 }
 
 // Handle writes to the common configuration structure as defined in
@@ -350,8 +382,42 @@ zx_status_t VirtioPci::ConfigBarWrite(uint64_t addr, const IoValue& value) {
     uint64_t device_offset = addr - kVirtioPciDeviceCfgBase;
     return device_->WriteConfig(device_offset, value);
   }
+
+  size_t msix_table_base = get_msix_table_base();
+  size_t msix_table_top = msix_table_base + kMsixConfigTableSize;
+  if (addr >= msix_table_base && addr < msix_table_top) {
+    config_->WriteMsixTable(addr - msix_table_base, value);
+    return ZX_OK;
+  }
+
+  size_t msix_pba_top = msix_table_top + kMsixConfigPbaSize;
+  if (addr >= msix_table_top && addr < msix_pba_top) {
+    FXL_LOG(FATAL) << "pending bit array is readonly.";
+    return ZX_ERR_INTERNAL;
+  }
+
   FXL_LOG(ERROR) << "Unhandled config BAR write 0x" << std::hex << addr;
   return ZX_ERR_NOT_SUPPORTED;
+}
+
+void VirtioPci::EnableMsixCapability() {
+  is_msix_enabled_ = true;
+  uint32_t table_off = get_msix_table_base();
+  uint32_t pba_off = table_off + kMsixConfigTableSize;
+
+  memset(&msix_cap_.msg_ctrl, 0, sizeof(msix_cap_.msg_ctrl));
+  msix_cap_.msg_ctrl.enable = 1;
+  // Table Size is N - 1 encoded.
+  msix_cap_.msg_ctrl.table_size = config_->num_vectors() - 1;
+  msix_cap_.table = (table_off & 0xfffffff8) | kVirtioPciBar;
+  msix_cap_.pba = (pba_off & 0xfffffff8) | kVirtioPciBar;
+
+  pci_cap_t& cap = capabilities_[4];
+  cap.id = kPciCapTypeMsix;
+  cap.data = reinterpret_cast<uint8_t*>(&msix_cap_);
+  cap.len = sizeof(msix_cap_);
+
+  bar_[kVirtioPciBar].size = (pba_off + kMsixConfigPbaSize + kBarSizeAlign - 1) & kBarSizeAlign;
 }
 
 void VirtioPci::SetupCap(pci_cap_t* cap,
@@ -400,7 +466,7 @@ void VirtioPci::SetupCaps() {
   // This one is more complex since it is writable and doesn't seem to be
   // used by Linux or Zircon.
 
-  static_assert(kVirtioPciNumCapabilities == 4,
+  static_assert(kVirtioPciNumCapabilities == 5,
                 "Incorrect number of capabilities");
   set_capabilities(capabilities_, kVirtioPciNumCapabilities);
 
@@ -416,18 +482,29 @@ static constexpr uint16_t virtio_pci_id(uint16_t virtio_id) {
   return static_cast<uint16_t>(virtio_id + 0x1040u);
 }
 
+#ifndef VIRTIO_ID_UFS_RPMB
+#define VIRTIO_ID_UFS_RPMB 56
+#endif
+
 static constexpr uint32_t virtio_pci_class_code(uint16_t virtio_id) {
   // See PCI LOCAL BUS SPECIFICATION, REV. 3.0 Section D.
   switch (virtio_id) {
     case VIRTIO_ID_BALLOON:
       return 0x05000000;
     case VIRTIO_ID_BLOCK:
+    case VIRTIO_ID_UFS_RPMB:
       return 0x01800000;
     case VIRTIO_ID_GPU:
       return 0x03808000;
     case VIRTIO_ID_INPUT:
       return 0x09800000;
     case VIRTIO_ID_NET:
+    case VIRTIO_ID_VSOCK:
+    case VIRTIO_ID_CLUSTER:
+    case VIRTIO_ID_EINT:
+    case VIRTIO_ID_SPI:
+    case VIRTIO_ID_RTC:
+    case VIRTIO_ID_I2C_ADAPTER:
       return 0x02000000;
     case VIRTIO_ID_CONSOLE:
       return 0x07020000;
@@ -459,8 +536,16 @@ VirtioPci::VirtioPci(VirtioDevice* device)
           .subsystem_vendor_id = 0,
           .device_class = virtio_pci_device_class(device->device_id_),
       }),
-      device_(device) {
+      device_(device),
+      is_msix_enabled_(false) {
+  config_ = std::make_unique<MsixConfig>(device);
   SetupCaps();
+  if (device->use_msix()) {
+    EnableMsixCapability();
+    FXL_LOG(INFO) << "VirtioPci: MSI-X enabled for device " << static_cast<int32_t>(device->device_id_);
+  } else {
+    FXL_LOG(INFO) << "VirtioPci: device " << static_cast<int32_t>(device->device_id_) << " used legacy INTx";
+  }
 }
 
 zx_status_t VirtioPci::ReadBar(uint8_t bar,
@@ -487,12 +572,29 @@ zx_status_t VirtioPci::WriteBar(uint8_t bar,
   return ZX_ERR_NOT_SUPPORTED;
 }
 
+uint32_t VirtioPci::ReadMsixCapability(uint32_t offset, uint32_t data) const {
+  if (offset != 0) {
+    return data;
+  }
+  return config_->ReadMsixCapability(data);
+}
+
+zx_status_t VirtioPci::WriteMsixCapability(uint32_t offset, uint16_t data) {
+  config_->WriteMsixCapability(offset, data);
+  return ZX_OK;
+}
+
 zx_status_t VirtioPci::NotifyBarWrite(uint64_t offset, const IoValue& value) {
   if (!is_aligned(offset, kVirtioPciNotifyCfgMultiplier))
     return ZX_ERR_INVALID_ARGS;
 
   uint64_t notify_queue = offset / kVirtioPciNotifyCfgMultiplier;
   return device_->Kick(static_cast<uint16_t>(notify_queue));
+}
+
+size_t VirtioPci::get_msix_table_base() const {
+  uint32_t table_off = kVirtioPciDeviceCfgBase + device_->device_config_size_;
+  return (table_off + kMsixConfigTableAlign - 1) & kMsixConfigTableAlign;
 }
 
 }  // namespace machina

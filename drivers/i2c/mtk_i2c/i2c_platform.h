@@ -1,0 +1,144 @@
+/*
+ * Copyright (c) 2020, Mediatek Inc. All rights reserved.
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+#ifndef __PLATFORM_I2C_H_
+#define __PLATFORM_I2C_H_
+
+#include "i2c_func.h"
+#include <soc/mt8668/mt8668-hw.h>
+
+/*I2C clk cg need always on when the channel share with other mcu*/
+#define DONT_CTRL_CLK 1
+/*Some SW env no need to config gpio*/
+#define ENABLE_CONFIG_GPIO 0
+
+#define MTK_I2C_MAX_PORT_NUMBER 21
+
+#define IO_BASE 0x10000000
+
+/*I2C base address*/
+#define I2C0_BASE_ADDR	I2C0_MMIO_BASE
+#define I2C1_BASE_ADDR	I2C1_MMIO_BASE
+#define I2C2_BASE_ADDR	I2C2_MMIO_BASE
+#define I2C3_BASE_ADDR	I2C3_MMIO_BASE
+#define I2C4_BASE_ADDR	I2C4_MMIO_BASE
+#define I2C5_BASE_ADDR	I2C5_MMIO_BASE
+#define I2C6_BASE_ADDR	I2C6_MMIO_BASE
+#define I2C7_BASE_ADDR	I2C7_MMIO_BASE
+#define I2C8_BASE_ADDR	I2C8_MMIO_BASE
+#define I2C9_BASE_ADDR	I2C9_MMIO_BASE
+#define I2C10_BASE_ADDR	I2C10_MMIO_BASE
+#define I2C11_BASE_ADDR	I2C11_MMIO_BASE
+#define I2C12_BASE_ADDR	I2C12_MMIO_BASE
+
+/*APDMA base address*/
+#define DMA0_BASE_ADDR	I2C0_MMIO_DMA_BASE
+#define DMA1_BASE_ADDR	I2C1_MMIO_DMA_BASE
+#define DMA2_BASE_ADDR	I2C2_MMIO_DMA_BASE
+#define DMA3_BASE_ADDR	I2C3_MMIO_DMA_BASE
+#define DMA4_BASE_ADDR	I2C4_MMIO_DMA_BASE
+#define DMA5_BASE_ADDR	I2C5_MMIO_DMA_BASE
+#define DMA6_BASE_ADDR	I2C6_MMIO_DMA_BASE
+#define DMA7_BASE_ADDR	I2C7_MMIO_DMA_BASE
+#define DMA8_BASE_ADDR	I2C8_MMIO_DMA_BASE
+#define DMA9_BASE_ADDR	I2C9_MMIO_DMA_BASE
+#define DMA10_BASE_ADDR	I2C10_MMIO_DMA_BASE
+#define DMA11_BASE_ADDR	I2C11_MMIO_DMA_BASE
+#define DMA12_BASE_ADDR	I2C12_MMIO_DMA_BASE
+
+#define MTK_I2C0_GIC_IRQ 560
+#define MTK_I2C1_GIC_IRQ 561
+#define MTK_I2C2_GIC_IRQ 562
+#define MTK_I2C3_GIC_IRQ 563
+#define MTK_I2C4_GIC_IRQ 564
+#define MTK_I2C5_GIC_IRQ 565
+#define MTK_I2C6_GIC_IRQ 566
+#define MTK_I2C7_GIC_IRQ 567
+#define MTK_I2C8_GIC_IRQ 568
+#define MTK_I2C9_GIC_IRQ 569
+#define MTK_I2C10_GIC_IRQ 570
+#define MTK_I2C11_GIC_IRQ 571
+#define MTK_I2C12_GIC_IRQ 572
+
+/*GPIO Pinmux number*/
+#define MTK_GPIO_SDA0 80
+#define MTK_GPIO_SCL0 81
+#define MTK_GPIO_SDA1 82
+#define MTK_GPIO_SCL1 83
+#define MTK_GPIO_SDA2 84
+#define MTK_GPIO_SCL2 85
+#define MTK_GPIO_SDA3 86
+#define MTK_GPIO_SCL3 87
+#define MTK_GPIO_SDA4 88
+#define MTK_GPIO_SCL4 89
+#define MTK_GPIO_SDA5 90
+#define MTK_GPIO_SCL5 91
+#define MTK_GPIO_SDA6 80
+#define MTK_GPIO_SCL6 81
+#define MTK_GPIO_SDA7 82
+#define MTK_GPIO_SCL7 83
+#define MTK_GPIO_SDA8 84
+#define MTK_GPIO_SCL8 85
+#define MTK_GPIO_SDA9 86
+#define MTK_GPIO_SCL9 87
+#define MTK_GPIO_SDA10 88
+#define MTK_GPIO_SCL10 89
+#define MTK_GPIO_SDA11 90
+#define MTK_GPIO_SCL11 91
+#define MTK_GPIO_SDA12 90
+#define MTK_GPIO_SCL12 91
+
+/*I2C source clock address*/
+#define MTK_I2C_AO_SOURCE_CLK_STA  (IO_BASE + 0x000000A0)
+#define MTK_I2C_AO_SOURCE_CLK_SET  (IO_BASE + 0x000000A4)
+#define MTK_I2C_AO_SOURCE_CLK_CLR  (IO_BASE + 0x000000A8)
+#define MTK_I2C_AO_CLK_EN  (0x1 << 15)
+#define MTK_I2C_AO_26MHZ	  (0x7 << 8)
+
+#define MTK_I2C_PWR_SOURCE_CLK_STA  (IO_BASE + 0x000000D0)
+#define MTK_I2C_PWR_SOURCE_CLK_SET  (IO_BASE + 0x000000D4)
+#define MTK_I2C_PWR_SOURCE_CLK_CLR  (IO_BASE + 0x000000D8)
+#define MTK_I2C_PWR_CLK_EN  (0x1 << 7)
+#define MTK_I2C_PWR_26MHZ	  (0x7 << 0)
+
+/*I2C clock update*/
+#define MTK_I2C_AO_SOURCE_CLK_UPDATE (IO_BASE + 0x00000004)
+#define MTK_I2C_AO_CLK_UPDATE_BIT (0x1 << 25)
+
+#define MTK_I2C_PWR_SOURCE_CLK_UPDATE (IO_BASE + 0x00000008)
+#define MTK_I2C_PWR_CLK_UPDATE_BIT (0x1 << 5)
+
+/*DMA source clock address*/
+#define MTK_APDMA_CLK_SET (IO_BASE + 0x00001088)
+#define MTK_APDMA_CLK_CLR (IO_BASE + 0x0000108C)
+#define MTK_APDMA_CLK_STA (IO_BASE + 0x00001094)
+#define MTK_APDMA_CLK_EN  (0x1 << 18)
+#define MTK_APDMA_CLK_DISABLE  (0x1 << 18)
+
+/*I2C Bclk CK CG*/
+#define MTK_AO_BCLK_CG_SET (IO_BASE + 0x000010C0)
+#define MTK_AO_BCLK_CG_CLR (IO_BASE + 0x000010C4)
+#define MTK_AO_BCLK_CG_STA (IO_BASE + 0x000010C8)
+#define EN_AO_BCLK (0x1 << 24)
+
+#define MTK_PWR_BCLK_CG_SET (IO_BASE + 0x000010A4)
+#define MTK_PWR_BCLK_CG_CLR (IO_BASE + 0x000010A8)
+#define MTK_PWR_BCLK_CG_STA (IO_BASE + 0x000010AC)
+#define EN_PWR_BCLK (0x1 << 5)
+
+/*I2C CLK CG address*/
+#define MTK_I2C_AO_CLK_CG_STA  (0x1000DE00)
+#define MTK_I2C_AO_CLK_CG_SET  (0x1000DE08)
+#define MTK_I2C_AO_CLK_CG_CLR  (0x1000DE04)
+#define MTK_I2C_PWR_CLK_CG_STA  (0x11009E00)
+#define MTK_I2C_PWR_CLK_CG_SET  (0x11009E08)
+#define MTK_I2C_PWR_CLK_CG_CLR  (0x11009E04)
+
+extern struct i2c_driver_quirks mtk_i2c_driver_quirks[MTK_I2C_MAX_PORT_NUMBER];
+int _plat_i2c_gpio_set(unsigned char bus_id);
+int _plat_i2c_clock_enable(unsigned char bus_id);
+void _plat_i2c_clock_disable(unsigned char bus_id);
+
+#endif

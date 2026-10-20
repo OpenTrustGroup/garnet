@@ -1,0 +1,45 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+config("disable_warnings") {
+  cflags = [
+    "-Wno-int-conversion",
+    "-Wno-pointer-sign",
+    "-Wno-format",
+    "-Wno-unused-variable",
+    "-Wno-unused-function",
+    "-Wno-incompatible-pointer-types",
+  ]
+}
+
+driver_module("drv") {
+  output_name = "mt8676_spi"
+
+  sources = [
+    "spi.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  configs += [ ":disable_warnings" ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+  ]
+}
+
+package("mt8676_spi") {
+  system_image = true
+
+  deps = [
+    ":drv",
+  ]
+
+  drivers = [
+    {
+      name = "mt8676_spi.so"
+    },
+  ]
+}

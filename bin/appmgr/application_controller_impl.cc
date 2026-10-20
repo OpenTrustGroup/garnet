@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2016 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -112,6 +114,13 @@ void ApplicationControllerImpl::Kill() {
 
 void ApplicationControllerImpl::KillAndWait(KillAndWaitCallback callback) {
   FXL_LOG(INFO) << "KillAndWait";
+
+  for (uint32_t cpu = 0; cpu < 8; ++cpu) {
+    zx_status_t status = zx_power_on_cpu(cpu);
+    if (status != ZX_OK) {
+      FXL_LOG(WARNING) << "Failed to power on CPU " << cpu << ": " << status;
+    }
+  }
   if(!process_.is_valid()) {
     FXL_LOG(INFO) << "Process handle is invalid";
     callback();
@@ -121,9 +130,9 @@ void ApplicationControllerImpl::KillAndWait(KillAndWaitCallback callback) {
   process_.kill();
   zx_status_t status = zx_object_wait_one(process_.get(), ZX_PROCESS_TERMINATED, zx_deadline_after(ZX_SEC(5)) , NULL);
   if (status == ZX_OK) {
-    FXL_LOG(INFO) << "KillAndWait， get ZX_PROCESS_TERMINATED within 5s";
+    FXL_LOG(INFO) << "KillAndWait,get ZX_PROCESS_TERMINATED within 5s";
   } else {
-    FXL_LOG(ERROR) << "KillAndWait， fail to get ZX_PROCESS_TERMINATED ";
+    FXL_LOG(ERROR) << "KillAndWait,fail to get ZX_PROCESS_TERMINATED ";
   }
 
   callback();

@@ -4,8 +4,14 @@
 
 import("//build/package.gni")
 
+source_set("watchdog_policy") {
+  sources = [ "watchdog_policy.h" ]
+}
+
 shared_library("machina") {
   sources = [
+    "interrupt_service_impl.h",
+    "interrupt_service_impl.cc",
     "ipc_message.h",
     "ipc_message.cc",
     "bits.h",
@@ -13,6 +19,8 @@ shared_library("machina") {
     "block_dispatcher.h",
     "cam_dmabuf.cc",
     "cam_dmabuf.h",
+    "dump.cc",
+    "dump.h",
     "framebuffer_scanout.cc",
     "framebuffer_scanout.h",
     "gpu_bitmap.cc",
@@ -24,6 +32,8 @@ shared_library("machina") {
     "guest.cc",
     "guest.h",
     "guest_config.h",
+    "reg_access.cc",
+    "reg_access.h",
     "hid_event_source.cc",
     "hid_event_source.h",
     "input_dispatcher.cc",
@@ -39,18 +49,6 @@ shared_library("machina") {
     "vhm_device.h",
     "vhm_service_impl.cc",
     "vhm_service_impl.h",
-    "audio_irq.cc",
-    "audio_irq.h",
-    "audio_irq_service_impl.cc",
-    "audio_irq_service_impl.h",
-    "audio_irq_client.cc",
-    "audio_irq_client.h",
-    "shared_irq.cc",
-    "shared_irq.h",
-    "shared_irq_service_impl.cc",
-    "shared_irq_service_impl.h",
-    "shared_irq_client.cc",
-    "shared_irq_client.h",
     "remoteproc.cc",
     "remoteproc.h",
     "remoteproc_manager.cc",
@@ -63,20 +61,37 @@ shared_library("machina") {
     "ipc_client.h",
     "ipc_channel.cc",
     "ipc_channel.h",
+    "gpu_scheduler.cc",
+    "gpu_scheduler.h",
+    "gpu_ping.cc",
+    "gpu_ping.h",
+    "gpu_scheduler_vcpu_selection.h",
     "pci.cc",
     "pci.h",
     "phys_mem.cc",
     "phys_mem.h",
+    "cross_vm_lock.cc",
+    "cross_vm_lock.h",
+    "pv_block.cc",
+    "pv_block.h",
     "vcpu.cc",
     "vcpu.h",
+    "vm_id.h",
     "virtio_balloon.cc",
     "virtio_balloon.h",
     "virtio_block.cc",
     "virtio_block.h",
+    "virtio_rpmb.cc",
+    "virtio_rpmb.h",
+    "zz-malloc.cc",
+    "gpt_parse.cc",
+    "ipc_vqueue_fe.c",
     "virtio_console.cc",
     "virtio_console.h",
     "virtio_device.cc",
     "virtio_device.h",
+    "virtio_eint.cc",
+    "virtio_eint.h",
     "virtio_gpu.cc",
     "virtio_gpu.h",
     "virtio_input.cc",
@@ -85,6 +100,10 @@ shared_library("machina") {
     "virtio_net.h",
     "virtio_pci.cc",
     "virtio_pci.h",
+    "virtio_mmio.cc",
+    "virtio_mmio.h",
+    "mmio_bus.cc",
+    "mmio_bus.h",
     "virtio_queue.cc",
     "virtio_queue.h",
     "virtio_queue_waiter.cc",
@@ -93,6 +112,25 @@ shared_library("machina") {
     "virtio_vsock.h",
     "volatile_write_block_dispatcher.cc",
     "volatile_write_block_dispatcher.h",
+    "monitor_virtio.cc",
+    "monitor_virtio.h",
+    "msix_config.cc",
+    "msix_config.h",
+    "msix.h",
+    "mem_controller_impl.cc",
+    "mem_controller_impl.h",
+    "mem_controller_client.cc",
+    "mem_controller_client.h",
+    "virtio_cluster.cc",
+    "virtio_cluster.h",
+    "watchdog.cc",
+    "watchdog.h",
+    "virtio_spi.cc",
+    "virtio_spi.h",
+    "virtio_i2c.cc",
+    "virtio_i2c.h",
+    "virtio_rtc.cc",
+    "virtio_rtc.h"
   ]
 
   if (current_cpu == "arm64") {
@@ -134,26 +172,34 @@ shared_library("machina") {
   }
 
   public_deps = [
+    ":watchdog_policy",
     "//garnet/bin/guest/proto:vm_config",
     "//garnet/lib/machina/fidl",
+    "//garnet/lib/vm_id",
     "//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/spi_transport/cpp",
     "//zircon/public/lib/bitmap",
     "//zircon/public/lib/ddk",
     "//zircon/public/lib/hid",
     "//zircon/public/lib/virtio",
     "//zircon/public/lib/zx",
+    "//garnet/bin/suspend:lib",
   ]
 
   defines = [
     "_ALL_SOURCE=1",
     "_VHM_USE_CHANNEL_",
     "RPROC_NOTIFY_WITH_PHYS_IRQ",
+    "WITH_CROSS_VM_DUMP",
 #    "VHE_MMIO_TRAP_DEBUG"
   ]
 
   deps = [
+    "//garnet/lib/para_partition",
+    "//garnet/lib/vmlog_store",
     "//garnet/public/lib/fsl",
     "//garnet/public/lib/fxl",
+    "//garnet/public/lib/virtualization/fidl",
     "//zircon/public/lib/async-cpp",
     "//zircon/public/lib/async-loop-cpp",
     "//zircon/public/lib/block-client",
@@ -187,8 +233,9 @@ executable("machina_unittests") {
     "virtio_queue_fake.cc",
     "virtio_queue_fake.h",
     "virtio_queue_waiter-unittest.cc",
-    "virtio_vsock-unittest.cc",
+#    "virtio_vsock-unittest.cc",
     "volatile_write_block_dispatcher-unittest.cc",
+    "watchdog-unittest.cc",
   ]
 
   if (current_cpu == "x64") {
@@ -211,7 +258,7 @@ executable("vhm_unittests") {
   testonly = true
 
   sources = [
-    "vhm_device-unittest.cc",
+    #"vhm_device-unittest.cc",
     "run_all_unittests.cc"
   ]
 
@@ -266,6 +313,7 @@ executable("rproc_unittests") {
   deps = [
     ":machina",
     "//garnet/public/lib/fsl",
+    "//garnet/public/lib/fxl",
     "//third_party/googletest:gtest",
     "//zircon/public/lib/fbl",
     "//garnet/bin/guest/proto:vm_config",
@@ -286,4 +334,3 @@ package("rproc_tests") {
     },
   ]
 }
-

@@ -1,0 +1,48 @@
+# Copyright 2026 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+source_set("features") {
+  deps = [ "//zircon/trusty/lib/lib/libc-trusty" ]
+  sources = [
+    "features.cc",
+    "features.h",
+  ]
+
+  public_deps = [
+    "//third_party/fdt",
+    "//garnet/public/lib/fxl",
+    "//zircon/public/lib/fbl",
+    "//zircon/public/lib/zx",
+  ]
+}
+
+source_set("client") {
+  sources = [
+    "feature_provider_client.cc",
+    "feature_provider_client.h",
+  ]
+
+  public_deps = [
+    ":features",
+    "//garnet/lib/callback",
+    "//garnet/public/lib/app/cpp",
+  ]
+
+  deps = [
+    "//garnet/public/lib/features/fidl",
+  ]
+}
+
+source_set("unittests") {
+  testonly = true
+
+  sources = [
+    "features-unittest.cc",
+  ]
+
+  deps = [
+    ":features",
+    "//third_party/googletest:gtest",
+  ]
+}

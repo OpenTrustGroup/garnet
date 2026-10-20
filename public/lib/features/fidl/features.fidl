@@ -1,0 +1,33 @@
+// Copyright 2026 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library features;
+
+struct FeatureState {
+  bool hyp_disable_uart_log;
+  bool nebulalog_enabled;
+  bool vmlog_enabled;
+  bool virtio_console_enabled;
+  bool mmio_bus_enabled;
+  bool pci_bus_enabled;
+  bool virtio_cluster_enabled;
+  bool virtio_spi_enabled;
+  bool virtio_i2c_enabled;
+  bool virtio_eint_enabled;
+  bool virtio_rtc_enabled;
+  bool mmio_virtio_block_enabled;
+  bool pci_virtio_block_enabled;
+  bool virtio_vsock_enabled;
+  bool gzfs_enabled;
+  bool ufs_enabled;
+  bool smc_enabled;
+  bool pvblk_enabled;
+  bool cvm_lock_enabled;
+  bool wdt_sink_enabled;
+};
+
+[ServiceName="features::FeatureProvider"]
+interface FeatureProvider {
+  1: GetFeatures() -> (int32 result, FeatureState features);
+};

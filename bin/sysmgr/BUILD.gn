@@ -22,6 +22,8 @@ executable("bin") {
   ]
 
   deps = [
+    "//garnet/lib/features",
+    "//garnet/lib/machina:watchdog_policy",
     "//garnet/public/lib/app/cpp",
     "//garnet/public/lib/fidl/cpp",
     "//garnet/public/lib/fxl",

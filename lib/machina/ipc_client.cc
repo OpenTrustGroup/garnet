@@ -1,13 +1,16 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2023 GoldenRiver Inc. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "ipc_client.h"
 
+#include "garnet/lib/machina/guest.h"
 namespace machina {
 
 static int fast_call_loop(void* ctx) {
-  machina::IpcClient *client = (machina::IpcClient *)ctx;
+  machina::IpcClient* client = (machina::IpcClient*)ctx;
   client->FastCallLoop();
   return 0;
 }
@@ -16,10 +19,15 @@ IpcClient::IpcClient(Guest* guest)
     : IpcRequestHandler(guest), enumerator_(this) {}
 
 void IpcClient::Init(uint16_t vmid) {
-  svc_->RegisterIpcEventListener(vmid,
-      event_listener_binding_.NewBinding(loop_.async()));
+  svc_->RegisterIpcEventListener(
+      vmid, event_listener_binding_.NewBinding(loop_.async()));
 
   svc_->GetIrqInfo(vmid, &rx_ready_irq_, &tx_done_irq_);
+  FXL_CHECK(!guest_->GetInterruptController()->IsPassthrough(rx_ready_irq_))
+            << "rx_ready_irq: " << rx_ready_irq_;
+  FXL_CHECK(!guest_->GetInterruptController()->IsPassthrough(tx_done_irq_))
+            << "tx_done_irq: " << tx_done_irq_;
+
   svc_->GetSchedBuf(vmid, &sched_mem_pa_, &sched_mem_sz_);
   SetSchedMem();
 
@@ -40,7 +48,7 @@ void IpcClient::Init(uint16_t vmid) {
   int ret;
   thrd_t fast_call_thread;
   ret = thrd_create_with_name(&fast_call_thread, fast_call_loop, this,
-                                    "fastcall-client");
+                              "fastcall-client");
   FXL_CHECK(ret == thrd_success);
   ret = thrd_detach(fast_call_thread);
   FXL_CHECK(ret == thrd_success);

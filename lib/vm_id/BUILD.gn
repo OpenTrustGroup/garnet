@@ -1,0 +1,5 @@
+source_set("vm_id") {
+  sources = [
+    "vm_id.h",
+  ]
+}

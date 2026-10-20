@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 GoldenRiver Inc. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -10,14 +12,17 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "lib/fxl/strings/string_printf.h"
+
 using google::protobuf::RepeatedPtrField;
 namespace machina {
 
 // Default rproc config for mt8678
-constexpr char kDefaultRprocConfig[] = R"pbtxt(
+static std::string BuildDefaultRprocConfig() {
+  return fxl::StringPrintf(R"pbtxt(
   devices {
-      remote_vmid: -1
-      host_vmid: 0
+      remote_vmid: %d
+      host_vmid: %d
       ctrl_irq: 200
       local_irqs: {
           start: 201
@@ -31,22 +36,22 @@ constexpr char kDefaultRprocConfig[] = R"pbtxt(
       host_ipi_affinity: true
       remote_ipi_affinity: true
   }
-)pbtxt";
+)pbtxt",
+                           kSosVmid, kAlpsVmid);
+}
 
 std::unique_ptr<RprocManager> RprocManager::BuildFromString(
     component::ApplicationContext* application_context,
-    Guest* guest,
     std::string pbtxt) {
   nbl_vmm::RemoteProcConfig cfg;
   auto success = google::protobuf::TextFormat::ParseFromString(pbtxt, &cfg);
   FXL_CHECK(success);
 
-  return Build(application_context, guest, cfg);
+  return Build(application_context, cfg);
 }
 
 std::unique_ptr<RprocManager> RprocManager::BuildFromFile(
     component::ApplicationContext* application_context,
-    Guest* guest,
     std::string path) {
   auto fd = open(path.c_str(), O_RDONLY);
   FXL_CHECK(fd > 0);
@@ -57,13 +62,12 @@ std::unique_ptr<RprocManager> RprocManager::BuildFromFile(
   auto success = google::protobuf::TextFormat::Parse(&fin, &cfg);
   FXL_CHECK(success);
 
-  return Build(application_context, guest, cfg);
+  return Build(application_context, cfg);
 }
 
 std::unique_ptr<RprocManager> RprocManager::BuildWithDefaultConfig(
-    component::ApplicationContext* application_context,
-    Guest* guest) {
-  return BuildFromString(application_context, guest, kDefaultRprocConfig);
+    component::ApplicationContext* application_context) {
+  return BuildFromString(application_context, BuildDefaultRprocConfig());
 }
 
 static void ParseIrqRange(
@@ -84,9 +88,8 @@ static void ParseIrqRange(
 
 std::unique_ptr<RprocManager> RprocManager::Build(
     component::ApplicationContext* application_context,
-    Guest* guest,
     nbl_vmm::RemoteProcConfig& cfg) {
-  auto mgr = std::make_unique<RprocManager>(application_context, guest);
+  auto mgr = std::make_unique<RprocManager>(application_context);
   FXL_CHECK(mgr != nullptr);
 
   for (int i = 0; i < cfg.devices_size(); i++) {
@@ -125,8 +128,7 @@ std::unique_ptr<RprocManager> RprocManager::Build(
   return mgr;
 }
 
-RprocManager::RprocManager(component::ApplicationContext* application_context,
-                           Guest* guest) {
+RprocManager::RprocManager(component::ApplicationContext* application_context) {
   FXL_CHECK(loop_.StartThread() == ZX_OK);
 
   if (application_context)

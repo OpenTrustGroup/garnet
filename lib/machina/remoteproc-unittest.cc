@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 GoldenRiver Technology Co., Ltd.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -13,7 +15,9 @@
 #include "garnet/lib/machina/remoteproc.h"
 #include "garnet/lib/machina/remoteproc_manager.h"
 #include "garnet/lib/machina/remoteproc_vm_monitor.h"
+#include "garnet/lib/machina/vm_id.h"
 #include "lib/fxl/logging.h"
+#include "lib/fxl/strings/string_printf.h"
 
 namespace machina {
 namespace {
@@ -35,10 +39,10 @@ class RprocManagerTest : public ::testing::Test {
 };
 
 TEST_F(RprocManagerTest, Parser) {
-  std::string pbtxt = R"pbtxt(
+  std::string pbtxt = fxl::StringPrintf(R"pbtxt(
     devices {
-        remote_vmid: -1
-        host_vmid: 0
+        remote_vmid: %d
+        host_vmid: %d
         ctrl_irq: 100
         local_irqs: {
             start: 101
@@ -51,8 +55,8 @@ TEST_F(RprocManagerTest, Parser) {
     }
 
     devices {
-        remote_vmid: -1
-        host_vmid: 0
+        remote_vmid: %d
+        host_vmid: %d
         ctrl_irq: 130
         local_irqs: { start: 131 }
         local_irqs: { start: 132 }
@@ -63,16 +67,16 @@ TEST_F(RprocManagerTest, Parser) {
     }
 
     devices {
-        remote_vmid: -1
-        host_vmid: 1
+        remote_vmid: %d
+        host_vmid: %d
         ctrl_irq: 170
         local_irqs: { start: 171 }
         remote_irqs: { start: 141 }
     }
 
     devices {
-        remote_vmid: 0
-        host_vmid: 1
+        remote_vmid: %d
+        host_vmid: %d
         ctrl_irq: 200
         local_irqs: {
             start: 201
@@ -85,7 +89,7 @@ TEST_F(RprocManagerTest, Parser) {
     }
 
     devices {
-        remote_vmid: 1
+        remote_vmid: %d
         host_vmid: 2
         ctrl_irq: 300
         local_irqs: {
@@ -97,16 +101,21 @@ TEST_F(RprocManagerTest, Parser) {
             length: 5
         }
     }
-  )pbtxt";
+  )pbtxt",
+                                         kSosVmid, kAlpsVmid,
+                                         kSosVmid, kAlpsVmid,
+                                         kSosVmid, kTboxVmid,
+                                         kAlpsVmid, kTboxVmid,
+                                         kTboxVmid);
 
-  auto mgr = RprocManager::BuildFromString(nullptr, nullptr, pbtxt);
+  auto mgr = RprocManager::BuildFromString(nullptr, pbtxt);
   ASSERT_TRUE(mgr != nullptr);
 
   EXPECT_EQ(3U, mgr->sos_remote_devs().size());
-  EXPECT_EQ(1U, mgr->remote_devs(/*vmid=*/0).size());
-  EXPECT_EQ(1U, mgr->remote_devs(/*vmid=*/1).size());
-  EXPECT_EQ(2U, mgr->host_devs(/*vmid=*/0).size());
-  EXPECT_EQ(2U, mgr->host_devs(/*vmid=*/1).size());
+  EXPECT_EQ(1U, mgr->remote_devs(kAlpsVmid).size());
+  EXPECT_EQ(1U, mgr->remote_devs(kTboxVmid).size());
+  EXPECT_EQ(2U, mgr->host_devs(kAlpsVmid).size());
+  EXPECT_EQ(2U, mgr->host_devs(kTboxVmid).size());
   EXPECT_EQ(1U, mgr->host_devs(/*vmid=*/2).size());
 
   std::vector<uint16_t> expected;
@@ -132,10 +141,10 @@ TEST_F(RprocManagerTest, Parser) {
 }
 
 TEST_F(RprocManagerTest, RprocService) {
-  std::string pbtxt = R"pbtxt(
+  std::string pbtxt = fxl::StringPrintf(R"pbtxt(
     devices {
-        remote_vmid: 0
-        host_vmid: 1
+        remote_vmid: %d
+        host_vmid: %d
         ctrl_irq: 100
         local_irqs: {
             start: 101
@@ -148,15 +157,17 @@ TEST_F(RprocManagerTest, RprocService) {
     }
 
     devices {
-        remote_vmid: 0
+        remote_vmid: %d
         host_vmid: 2
         ctrl_irq: 130
         local_irqs: { start: 131 }
         remote_irqs: { start: 140 }
     }
-  )pbtxt";
+  )pbtxt",
+                                         kAlpsVmid, kTboxVmid,
+                                         kAlpsVmid);
 
-  auto mgr = RprocManager::BuildFromString(nullptr, nullptr, pbtxt);
+  auto mgr = RprocManager::BuildFromString(nullptr, pbtxt);
   ASSERT_TRUE(mgr != nullptr);
 
   mgr->AllocateSharedMemory([](std::string& resv_mem) {
@@ -170,7 +181,7 @@ TEST_F(RprocManagerTest, RprocService) {
   rproc_svc.Bind(binding.NewBinding(loop_.async()));
 
   fidl::VectorPtr<fidl::InterfaceHandle<RprocDeviceSvc>> remote_chans;
-  rproc_svc->GetRemoteDevices(/*vmid=*/0, &remote_chans);
+  rproc_svc->GetRemoteDevices(kAlpsVmid, &remote_chans);
 
   std::vector<uint16_t> expected;
 
@@ -198,7 +209,7 @@ TEST_F(RprocManagerTest, RprocService) {
   EXPECT_TRUE(info.shm_vmo.is_valid());
 
   fidl::VectorPtr<fidl::InterfaceHandle<RprocDeviceSvc>> host_chans;
-  rproc_svc->GetHostDevices(/*vmid=*/1, &host_chans);
+  rproc_svc->GetHostDevices(kTboxVmid, &host_chans);
   EXPECT_EQ(1U, (*host_chans).size());
 
   RprocDeviceSvcSyncPtr host0;
@@ -351,22 +362,25 @@ class AutoConnectTest : public ::testing::Test {
   }
 
   void SetUp() override {
-    std::string pbtxt = R"pbtxt(
+    std::string pbtxt = fxl::StringPrintf(R"pbtxt(
       devices {
-          remote_vmid: -1
-          host_vmid: 0
+          remote_vmid: %d
+          host_vmid: %d
       }
       devices {
-          remote_vmid: -1
-          host_vmid: 1
+          remote_vmid: %d
+          host_vmid: %d
       }
       devices {
-          remote_vmid: 0
-          host_vmid: 1
+          remote_vmid: %d
+          host_vmid: %d
       }
-    )pbtxt";
+    )pbtxt",
+                                           kSosVmid, kAlpsVmid,
+                                           kSosVmid, kTboxVmid,
+                                           kAlpsVmid, kTboxVmid);
 
-    mgr_ = RprocManager::BuildFromString(nullptr, nullptr, pbtxt);
+    mgr_ = RprocManager::BuildFromString(nullptr, pbtxt);
     ASSERT_TRUE(mgr_ != nullptr);
 
     mgr_->AllocateSharedMemory([](std::string& resv_mem) {

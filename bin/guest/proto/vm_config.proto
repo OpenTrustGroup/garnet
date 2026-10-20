@@ -12,6 +12,8 @@ enum MemoryPolicy {
   /// Map a VMO with 1:1 correspondence with host memory as device memory into
   /// the guest physical address space.
   DEVICE = 2;
+  /// Secure memory that is protected by MPU
+  MPU = 3;
 };
 
 message VmemSpec {
@@ -22,6 +24,7 @@ message VmemSpec {
   bool is_physmem = 5;
   string name = 6;
   bool is_reservedmem = 7;
+  string permission = 8;
 };
 
 message VgicSpec {
@@ -37,6 +40,18 @@ message VsmmuSpec {
   uint64 paddr = 1;
   uint32 irq = 2;
   repeated uint32 sids = 3;
+};
+
+message RegAccessSpec {
+  uint64 start_addr = 1;
+  uint64 end_addr = 2;
+};
+
+message DefaultRegSpec {
+  uint64 regbase = 1;
+  uint64 vmstatus = 2;
+  uint64 value_num = 3;
+  uint64 value_reg = 4;
 };
 
 message VmConfig {
@@ -60,4 +75,18 @@ message VmConfig {
   repeated VsmmuSpec vsmmu = 18;
   uint32 dump_irq = 19;
   repeated uint32 cmdq_irqs = 20;
+  uint32 monitor_irq = 21;
+  uint32 smc_irq = 22;
+  repeated uint32 pci_irqs = 23;
+  uint32 uos_exp_irq = 24;
+  uint32 cvm_lock_irq = 25;
+  bool virtio_mem_enable = 26;
+  repeated RegAccessSpec reg_access = 27;
+  repeated uint32 vcpus_priority = 28;
+  int32 bindlk_pcpu = 29;
+  uint32 sos_wdt_timeout = 30;
+  uint32 schema_version = 31;
+  repeated DefaultRegSpec reg_info = 32;
+  repeated uint32 gpu_sched_vcpus = 33;
+  bool pvblk_enabled = 34;
 };

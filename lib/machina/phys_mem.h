@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -8,7 +10,7 @@
 #include <lib/zx/vmo.h>
 #include <type_traits>
 
-#include "garnet/public/lib/fxl/logging.h"
+#include "lib/fxl/logging.h"
 
 namespace machina {
 
@@ -16,6 +18,7 @@ class PhysMem {
  public:
   zx_status_t Init(size_t mem_size);
   zx_status_t Init(zx::vmo vmo, uint64_t phys_base);
+  zx_status_t UnmapPhysicalMemory(uintptr_t gpaddr, size_t length);
 
   ~PhysMem();
 
@@ -29,9 +32,9 @@ class PhysMem {
     return off + len <= vmo_size_;
   }
 
-  bool contains_gpa(uintptr_t paddr, size_t len) {
-    auto off = paddr - phys_base_;
-    return off + len <= vmo_size_;
+  bool contains_gpa(uintptr_t paddr, size_t len) const {
+    return paddr >= phys_base_ && len <= vmo_size_ &&
+           paddr - phys_base_ <= vmo_size_ - len;
   }
 
   template <typename T>

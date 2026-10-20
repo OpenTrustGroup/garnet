@@ -1,0 +1,16 @@
+// Copyright 2025 GoldenRiver Technology Co., Ltd.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library machina;
+
+interface MemControllerListener {
+  1: OnPlug(uint64 gpa_base, vector<uint64> phys_addrs) -> (int32 @status);
+  2: OnUnPlug(uint64 gpa_base, uint64 size) -> (int32 @status);
+  3: OnSetGpaRegion(uint64 gpa_base, uint64 size) -> (int32 @status);
+};
+
+[ServiceName="machina.MemController"]
+interface MemController {
+  1: RegisterMemControllerListener(MemControllerListener listener) -> ();
+};

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2016 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -8,6 +10,8 @@
 #include <lib/async/default.h>
 #include <zircon/process.h>
 #include <zircon/processargs.h>
+
+#include <utility>
 
 #include "lib/app/cpp/connect.h"
 #include "lib/app/cpp/environment_services.h"

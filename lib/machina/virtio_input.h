@@ -1,9 +1,14 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef GARNET_LIB_MACHINA_VIRTIO_INPUT_H_
 #define GARNET_LIB_MACHINA_VIRTIO_INPUT_H_
+
+#include <atomic>
+#include <threads.h>
 
 #include <fbl/intrusive_single_list.h>
 #include <fbl/unique_ptr.h>
@@ -24,12 +29,15 @@
 namespace machina {
 
 // Virtio input device.
-class VirtioInput
-    : public VirtioDeviceBase<VIRTIO_ID_INPUT, VIRTIO_INPUT_Q_COUNT,
-                              virtio_input_config_t> {
+class VirtioInput : public VirtioDeviceBase<VIRTIO_ID_INPUT,
+                                            VIRTIO_INPUT_Q_COUNT,
+                                            virtio_input_config_t> {
  public:
-  VirtioInput(InputEventQueue* event_queue, const PhysMem& phys_mem,
-              const char* device_name, const char* device_serial);
+  VirtioInput(InputEventQueue* event_queue,
+              const PhysMem& phys_mem,
+              const char* device_name,
+              const char* device_serial);
+  ~VirtioInput() override;
 
   zx_status_t WriteConfig(uint64_t addr, const IoValue& value) override;
 
@@ -38,6 +46,7 @@ class VirtioInput
   // Spawns a thread to monitor for new input devices. When one is detected
   // the corresponding event source will be created to poll for events.
   zx_status_t Start();
+  void Stop();
 
  private:
   zx_status_t PollEventQueue();
@@ -53,12 +62,17 @@ class VirtioInput
   const char* device_name_;
   const char* device_serial_;
   InputEventQueue* event_queue_;
+  std::atomic<bool> stopping_{false};
+  thrd_t thread_ = {};
+  bool thread_started_ = false;
 };
 
 class VirtioKeyboard : public VirtioInput {
  public:
-  VirtioKeyboard(InputEventQueue* event_queue, const PhysMem& phys_mem,
-                 const char* device_name, const char* device_serial)
+  VirtioKeyboard(InputEventQueue* event_queue,
+                 const PhysMem& phys_mem,
+                 const char* device_name,
+                 const char* device_serial)
       : VirtioInput(event_queue, phys_mem, device_name, device_serial) {}
 
   zx_status_t WriteConfig(uint64_t addr, const IoValue& value) override;
@@ -66,8 +80,10 @@ class VirtioKeyboard : public VirtioInput {
 
 class VirtioRelativePointer : public VirtioInput {
  public:
-  VirtioRelativePointer(InputEventQueue* event_queue, const PhysMem& phys_mem,
-                        const char* device_name, const char* device_serial)
+  VirtioRelativePointer(InputEventQueue* event_queue,
+                        const PhysMem& phys_mem,
+                        const char* device_name,
+                        const char* device_serial)
       : VirtioInput(event_queue, phys_mem, device_name, device_serial) {}
 
   zx_status_t WriteConfig(uint64_t addr, const IoValue& value) override;
@@ -75,9 +91,12 @@ class VirtioRelativePointer : public VirtioInput {
 
 class VirtioAbsolutePointer : public VirtioInput {
  public:
-  VirtioAbsolutePointer(InputEventQueue* event_queue, const PhysMem& phys_mem,
-                        const char* device_name, const char* device_serial,
-                        uint32_t max_width, uint32_t max_height)
+  VirtioAbsolutePointer(InputEventQueue* event_queue,
+                        const PhysMem& phys_mem,
+                        const char* device_name,
+                        const char* device_serial,
+                        uint32_t max_width,
+                        uint32_t max_height)
       : VirtioInput(event_queue, phys_mem, device_name, device_serial),
         max_width_(max_width),
         max_height_(max_height) {}

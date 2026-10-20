@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -14,7 +16,7 @@
 #include <zircon/compiler.h>
 #include <zircon/syscalls/port.h>
 #include <zircon/types.h>
-#include <zx/interrupt.h>
+#include <lib/zx/interrupt.h>
 
 typedef struct zx_vcpu_state zx_vcpu_state_t;
 
@@ -27,17 +29,23 @@ class Vcpu {
   using StartCallback = std::function<void()>;
 
   Vcpu() { cnd_init(&state_cnd_); }
-  ~Vcpu() { cnd_destroy(&state_cnd_); }
+  ~Vcpu();
 
   // Create a new VCPU for a given guest.
   //
   // Upon successful completion the VCPU will be in the state
   // |WAITING_TO_START|.
-  zx_status_t Create(Guest *guest, zx_vaddr_t entry, uint64_t id,
-			int32_t prio, uint64_t time_slice);
+  zx_status_t Create(Guest* guest,
+                     zx_vaddr_t entry,
+                     uint64_t id,
+                     int32_t prio,
+                     uint64_t time_slice);
 
-  zx_status_t Create(Guest* guest, zx_vaddr_t entry, uint64_t id, int32_t prio) {
-	  return Create(guest, entry, id, prio, 0);
+  zx_status_t Create(Guest* guest,
+                     zx_vaddr_t entry,
+                     uint64_t id,
+                     int32_t prio) {
+    return Create(guest, entry, id, prio, 0);
   }
 
   zx_status_t Create(Guest* guest, zx_vaddr_t entry, uint64_t id) {
@@ -57,6 +65,7 @@ class Vcpu {
   // the VCPU before execution begins.
   zx_status_t Start(zx_vcpu_state_t* initial_vcpu_state);
 
+  zx_status_t Stop();
   // Waits for the VCPU to transition to a terminal state.
   zx_status_t Join();
 
@@ -80,6 +89,9 @@ class Vcpu {
   zx_status_t SetGroup(int group);
   zx_status_t SetBudget(uint64_t budget);
   static void DumpGroups();
+  zx_status_t SetPriority(uint32_t priority);
+  zx_status_t SetCvmDump();
+  zx_status_t SetCvmDumpEnable(uint64_t value);
 
  private:
   enum class State {

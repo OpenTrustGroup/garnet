@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 GoldenRiver Technology Co., Ltd.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -68,7 +70,6 @@ struct iommu_hwpt_arm_smmuv3_invalidate {
 #define SOC_SMMU_IO_BASE (0x14900000)
 #define GPU_SMMU_IO_BASE (0x48600000)
 
-
 enum mtk_smmu_type {
   MM_SMMU = 0,
   APU_SMMU = 1,
@@ -81,7 +82,7 @@ namespace machina {
 
 class Smmuv3 : public IoHandler {
  public:
-  Smmuv3(Guest* guest,uint8_t type);
+  Smmuv3(Guest* guest, uint8_t type);
 
   ~Smmuv3();
 
@@ -129,7 +130,7 @@ class Smmuv3 : public IoHandler {
   SMMUv3State state_;
   zx_handle_t iommu_;
 
-  private:
+ private:
   mutable bool initialized_ = false;
   std::vector<uint16_t> sids_;
   mutable uint8_t smmu_type;

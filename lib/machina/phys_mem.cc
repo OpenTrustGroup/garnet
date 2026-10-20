@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -41,6 +43,11 @@ zx_status_t PhysMem::Init(zx::vmo vmo, uint64_t phys_base) {
   }
 
   return zx::vmar::root_self().map(0, vmo_, 0, vmo_size_, kMapFlags, &addr_);
+}
+
+zx_status_t PhysMem::UnmapPhysicalMemory(uintptr_t paddr, size_t length) {
+  auto off = paddr - phys_base_;
+  return zx::vmar::root_self().unmap(addr_ + off, length);
 }
 
 PhysMem::~PhysMem() {

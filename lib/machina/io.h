@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -23,6 +25,11 @@ struct IoValue {
     uint64_t u64;
     uint8_t data[8];
   };
+  uint32_t type;
+  uint32_t size;
+  uint64_t old;
+  uint64_t _new;
+  void *handler;
 };
 
 // Callback interface to be implemented by devices.

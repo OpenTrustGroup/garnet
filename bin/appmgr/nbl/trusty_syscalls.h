@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 /*
  * Copyright (c) 2013-2017 Google Inc. All rights reserved
  *

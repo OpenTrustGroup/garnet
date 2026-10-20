@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -211,7 +213,7 @@ int nbl_loading_show_task(void* ctx) {
   int ret = 0;
   int num_loops = -1;
   bool first_run = true;
-  //1000ms
+  // 1000ms
   zx_time_t period = ZX_SEC(1);
   fbl::unique_ptr<top_task_args_t> args(static_cast<top_task_args_t*>(ctx));
   machina::Utrace* trace = args->trace;
@@ -247,7 +249,7 @@ int nbl_loading_show_task(void* ctx) {
     }
 
     period = ZX_MSEC((uint32_t)pbuffer->period.load());
-    if (period < ZX_MSEC(100)|| period > ZX_SEC(30)) {
+    if (period < ZX_MSEC(100) || period > ZX_SEC(30)) {
       period = ZX_SEC(1);
       pbuffer->period.store(1000);
     }

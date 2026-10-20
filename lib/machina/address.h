@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -28,11 +30,14 @@ static constexpr uint64_t kIoApicSize                       = PAGE_SIZE;
 
 // PCI memory ranges.
 #if __aarch64__
-static constexpr uint64_t kPciMmioBarPhysBase               = 0xb0000000;
-static constexpr uint64_t kPciEcamPhysBase                  = 0xdf000000;
+static constexpr uint64_t kPciMmioBarPhysBase               = 0xfb0000000;
+static constexpr uint64_t kPciMmioBarPhysMax                = 0xfbfffffff;
+static constexpr uint64_t kPciEcamPhysBase                  = 0xfde000000;
+static constexpr uint64_t kPciCpuMappingOffset              = 0xf00000000;
 #elif __x86_64__
 static constexpr uint64_t kPciMmioBarPhysBase               = 0xf0000000;
 static constexpr uint64_t kPciEcamPhysBase                  = 0xd0000000;
+static constexpr uint64_t kPciCpuMappingOffset              = 0x0;
 #endif
 static constexpr uint64_t kPciEcamPhysTop                   = kPciEcamPhysBase + pci_ecam_size(0, 1) - 1;
 
@@ -87,6 +92,10 @@ static constexpr uint64_t kPciConfigPortBase                = 0xcf8;
 static constexpr uint64_t kPciConfigPortSize                = 0x8;
 
 // clang-format on
+
+static inline uint64_t pci_bus_addr_to_cpu_addr(uint64_t pci_addr) {
+  return pci_addr | kPciCpuMappingOffset;
+}
 
 }  // namespace machina
 

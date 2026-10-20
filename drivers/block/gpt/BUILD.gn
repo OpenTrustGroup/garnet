@@ -1,0 +1,39 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("gpt_driver") {
+  output_name = "gpt"
+
+  sources = [
+    "gpt.c",
+    "gpt_dump.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+  include_dirs = [ "include/" ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/sync",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+    "//zircon/public/lib/zxcpp",
+    "//zircon/public/lib/fbl",
+  ]
+
+   include_dirs += [ "//zircon/third_party/ulib/cksum/include" ]
+}
+
+package("gpt") {
+  system_image = true
+
+  deps = [
+    ":gpt_driver",
+  ]
+
+   drivers = [
+     {
+       name = "gpt.so"
+     },
+   ]
+}

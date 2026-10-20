@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -321,15 +323,15 @@ static uint64_t its_cmd_mask_field(uint64_t* its_cmd,
   return (its_cmd[word] >> shift) & (BIT_ULL(size) - 1);
 }
 
-#define its_cmd_get_command(cmd)	its_cmd_mask_field(cmd, 0,  0,  8)
-#define its_cmd_get_deviceid(cmd)	its_cmd_mask_field(cmd, 0, 32, 32)
-#define its_cmd_get_size(cmd)		(its_cmd_mask_field(cmd, 1,  0,  5) + 1)
-#define its_cmd_get_id(cmd)		its_cmd_mask_field(cmd, 1,  0, 32)
-#define its_cmd_get_physical_id(cmd)	its_cmd_mask_field(cmd, 1, 32, 32)
-#define its_cmd_get_collection(cmd)	its_cmd_mask_field(cmd, 2,  0, 16)
-#define its_cmd_get_ittaddr(cmd)	(its_cmd_mask_field(cmd, 2,  8, 44) << 8)
-#define its_cmd_get_target_addr(cmd)	its_cmd_mask_field(cmd, 2, 16, 32)
-#define its_cmd_get_validbit(cmd)	its_cmd_mask_field(cmd, 2, 63,  1)
+#define its_cmd_get_command(cmd) its_cmd_mask_field(cmd, 0, 0, 8)
+#define its_cmd_get_deviceid(cmd) its_cmd_mask_field(cmd, 0, 32, 32)
+#define its_cmd_get_size(cmd) (its_cmd_mask_field(cmd, 1, 0, 5) + 1)
+#define its_cmd_get_id(cmd) its_cmd_mask_field(cmd, 1, 0, 32)
+#define its_cmd_get_physical_id(cmd) its_cmd_mask_field(cmd, 1, 32, 32)
+#define its_cmd_get_collection(cmd) its_cmd_mask_field(cmd, 2, 0, 16)
+#define its_cmd_get_ittaddr(cmd) (its_cmd_mask_field(cmd, 2, 8, 44) << 8)
+#define its_cmd_get_target_addr(cmd) its_cmd_mask_field(cmd, 2, 16, 32)
+#define its_cmd_get_validbit(cmd) its_cmd_mask_field(cmd, 2, 63, 1)
 
 bool GicIts::ItsCheckId(uint64_t baser, uint32_t id, uint64_t* eaddr) {
   int l1_tbl_size = GITS_BASER_NR_PAGES(baser) * SZ_64K;
@@ -618,14 +620,14 @@ void GicIts::ProcessMoviCmd(uint64_t* its_cmd) {
 
 void GicIts::ProcessDiscardCmd(uint64_t* its_cmd) {
   uint32_t device_id = its_cmd_get_deviceid(its_cmd);
-	uint32_t event_id = its_cmd_get_id(its_cmd);
-	GicItsItte *ite;
+  uint32_t event_id = its_cmd_get_id(its_cmd);
+  GicItsItte* ite;
 
-	ite = FindIte(device_id, event_id);
-	if (ite && ite->collection) {
-		ite->event_id = (uint32_t)-1;
+  ite = FindIte(device_id, event_id);
+  if (ite && ite->collection) {
+    ite->event_id = (uint32_t)-1;
     ite->collection = nullptr;
-	}
+  }
 }
 
 void GicIts::ProcessClearCmd(uint64_t* its_cmd) {
@@ -661,7 +663,7 @@ void GicIts::ProcessIntCmd(uint64_t* its_cmd) {
   InjectMsiLocked(msi_devid, msi_data);
 }
 
-#define LPI_PROP_ENABLE_BIT(p)	((p) & LPI_PROP_ENABLED)
+#define LPI_PROP_ENABLE_BIT(p) ((p)&LPI_PROP_ENABLED)
 
 void GicIts::UpdateLpiConfig(GicLpiIrq* lpi, int filter_vcpu) {
   uint64_t propbase;
@@ -786,7 +788,7 @@ zx_status_t GicIts::ResolveLpiLocked(uint64_t devid,
 
   GicItsItte* ite = FindIte(devid, evt_inx);
   if (ite == nullptr) {
-    FXL_LOG(ERROR) << "Invalid id, devid:" << devid << ", evt_inx:" << evt_inx;
+    FXL_LOG(ERROR) << "Invalid id, devid:" << std::hex << devid << ", evt_inx:" << evt_inx;
     return ZX_ERR_INVALID_ARGS;
   }
 
@@ -823,7 +825,8 @@ zx_status_t GicIts::InjectMsiLocked(uint64_t devid, uint16_t evt_inx) {
   }
 
   if (!lpi->enabled) {
-    FXL_LOG(ERROR) << "lpi is not enabled, devid:" << devid << ", lpi:" << lpi->irq;
+    FXL_LOG(WARNING) << "lpi is not enabled, devid:" << devid
+                     << ", lpi:" << lpi->irq;
     return ZX_ERR_BAD_STATE;
   }
 
@@ -842,7 +845,8 @@ zx_status_t GicIts::InjectMsi(uint64_t devid, uint16_t evt_inx) {
     }
 
     if (!lpi->enabled) {
-      FXL_LOG(ERROR) << "lpi is not enabled, devid:" << devid << ", lpi:" << lpi->irq;
+      FXL_LOG(WARNING) << "lpi is not enabled, devid:" << devid
+                       << ", lpi:" << lpi->irq;
       return ZX_ERR_BAD_STATE;
     }
   }

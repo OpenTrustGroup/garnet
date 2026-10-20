@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package i2c;
+
+message I2CMsg {
+  uint32 addr = 1;
+  uint32 flags = 2;
+  uint32 len = 3;
+  bytes buf = 4;
+}
+
+message I2CMsgArray {
+  repeated I2CMsg msgs = 1;
+}

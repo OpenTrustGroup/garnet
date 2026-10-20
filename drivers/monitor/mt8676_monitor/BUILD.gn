@@ -1,0 +1,33 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("drv") {
+  output_name = "mt8676_monitor"
+
+  sources = [
+    "monitor.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+    "//third_party/fdt",
+  ]
+}
+
+package("mt8676_monitor") {
+  system_image = true
+
+  deps = [
+    ":drv",
+  ]
+
+  drivers = [
+    {
+      name = "mt8676_monitor.so"
+    },
+  ]
+}

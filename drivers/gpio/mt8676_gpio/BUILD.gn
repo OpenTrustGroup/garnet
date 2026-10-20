@@ -1,0 +1,54 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("drv") {
+  output_name = "mt8676_gpio"
+
+  sources = [
+    "gpio.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+    "//third_party/fdt",
+  ]
+}
+
+executable("gpio_demo") {
+  output_name = "gpio_demo"
+
+  sources = [
+    "gpio_demo.cc",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  deps = [
+    "//zircon/public/lib/zx",
+  ]
+}
+
+package("mt8676_gpio") {
+  system_image = true
+
+  deps = [
+    ":drv",
+    ":gpio_demo",
+  ]
+
+  binaries = [
+    {
+      name = "gpio_demo"
+    },
+  ]
+
+  drivers = [
+    {
+      name = "mt8676_gpio.so"
+    },
+  ]
+}

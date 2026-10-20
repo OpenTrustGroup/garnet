@@ -1,0 +1,43 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+config("disable_warnings") {
+  cflags = [
+    "-Wno-unused-variable",
+    "-Wno-unused-function",
+    "-Wno-unused-label",
+  ]
+}
+
+driver_module("drv") {
+  output_name = "mt8676_ramfb"
+
+  sources = [
+    "ramfb.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  configs += [ ":disable_warnings" ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+    "//third_party/fdt",
+  ]
+}
+
+package("mt8676_ramfb") {
+  system_image = true
+
+  deps = [
+    ":drv",
+  ]
+
+  drivers = [
+    {
+      name = "mt8676_ramfb.so"
+    },
+  ]
+}

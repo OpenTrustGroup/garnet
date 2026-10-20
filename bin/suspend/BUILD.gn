@@ -1,0 +1,35 @@
+import("//build/package.gni")
+
+source_set("lib") {
+  visibility = [ "*" ]
+
+  sources = [
+    "device_suspend.cc",
+    "device_suspend.h",
+  ]
+
+  deps = [
+    "//garnet/public/lib/fxl",
+  ]
+}
+
+executable("bin") {
+  output_name = "suspend"
+
+  sources = [
+    "main.cc",
+  ]
+
+  deps = [
+    ":lib",
+    "//garnet/public/lib/fxl",
+  ]
+}
+
+package("suspend") {
+  deps = [
+    ":bin",
+  ]
+
+  binary = "suspend"
+}

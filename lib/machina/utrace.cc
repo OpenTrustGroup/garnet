@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 The GoldenRiverTek Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -12,6 +14,7 @@
 #include <acrn/atomic.h>
 
 #include <libfdt.h>
+#include <zircon/device/cpufreq.h>
 #include <zircon/device/ktrace.h>
 #include <zircon/device/sysinfo.h>
 #include <zircon/nbl_trace/nbl_trace.h>
@@ -21,8 +24,6 @@
 #include "garnet/lib/machina/fdt_utils.h"
 #include "garnet/lib/machina/utrace.h"
 #include "lib/fsl/handles/object_info.h"
-
-#define KTRACE_META_LEN             65536
 
 static constexpr char kResourcePath[] = "/dev/misc/sysinfo";
 static zx_status_t get_root_resource(zx::resource* resource) {
@@ -97,7 +98,7 @@ static void* utrace_alloc_space(std::shared_ptr<machina::Utrace> trace,
     off = (uint64_t)(rb->write_pos.fetch_add(len));
 
   if (unlikely(is_fifo_mode(rb) &&
-      ((off - rb->read_pos) > ktrace_buf_len(rb)))) {
+               ((off - rb->read_pos) > ktrace_buf_len(rb)))) {
     // buf is overflow, just stop recording
     rb->enable.store(0);
     return nullptr;
@@ -141,6 +142,7 @@ void utrace(uint32_t tag,
 namespace machina {
 
 static constexpr char kKtraceDevPath[] = "/dev/misc/ktrace";
+static constexpr char kCpuFreqDevPath[] = "/dev/misc/cpufreq";
 
 // Static methods should be defined outside the class.
 std::shared_ptr<Utrace> Utrace::pinstance_{nullptr};
@@ -156,7 +158,7 @@ std::shared_ptr<Utrace> Utrace::GetInstance(void) {
   return pinstance_;
 }
 
-zx_status_t Utrace::NotifyKernel(void) {
+zx_status_t Utrace::SetTraceBufToKernel(void) {
   int fd = open(kKtraceDevPath, O_WRONLY);
   if (fd < 0) {
     FXL_LOG(ERROR) << "failed to open ktrace!";
@@ -164,12 +166,32 @@ zx_status_t Utrace::NotifyKernel(void) {
   }
 
   uint64_t args[2] = {trace_mem_pa_, trace_mem_sz_};
-  zx_status_t status = ioctl_nbl_trace_enable(fd, args);
+
+  FXL_LOG(INFO) << "Utrace::SetTraceBufToKernel, pa: " << args[0]
+                << ", size: " << args[1];
+
+  zx_status_t status = ioctl_nbl_trace_set_buf(fd, args);
   if (status != ZX_OK)
-    FXL_LOG(ERROR) << "ioctl_nbl_trace_enable failed: status=" << status;
+    FXL_LOG(ERROR) << "ioctl_nbl_trace_set_buf failed: status=" << status;
 
   close(fd);
   return status;
+}
+
+zx_status_t Utrace::SetTraceBufToCpuFreq(void) {
+  int fd = open(kCpuFreqDevPath, O_WRONLY);
+  if (fd < 0) {
+    FXL_LOG(ERROR) << "failed to open cpufreq!";
+    return ZX_ERR_BAD_PATH;
+  }
+
+  uint64_t args[2] = {trace_mem_pa_, trace_mem_sz_};
+  ssize_t ret = ioctl_cpufreq_trace_set_buf(fd, &args[0]);
+  if (ret < 0)
+    FXL_LOG(ERROR) << "ioctl_cpufreq_trace_set_buf failed: ret=" << ret;
+
+  close(fd);
+  return ret;
 }
 
 zx_status_t Utrace::MapTraceBuf(Guest& guest, bool is_sos) {
@@ -267,10 +289,12 @@ zx_status_t Utrace::PatchTraceDts(Guest& guest, uintptr_t guest_phys_base) {
   return ZX_OK;
 }
 
-zx_status_t Utrace::TraceMemFromDtb(Guest& guest, uintptr_t guest_phys_base) {
+zx_status_t Utrace::TraceMemFromDtb(Guest& guest, uintptr_t guest_phys_base, uint8_t enable) {
+  uint64_t gpaddr, gsize;
   auto dtb_spec = guest.dtb_spec();
   uintptr_t dtb_offset = dtb_spec.base - guest_phys_base;
   size_t dtb_size = dtb_spec.size;
+  size_t trace_enable = enable;
 
   // Validate device tree.
   void* dtb = guest.phys_mem().as<void>(dtb_offset, dtb_size);
@@ -282,24 +306,42 @@ zx_status_t Utrace::TraceMemFromDtb(Guest& guest, uintptr_t guest_phys_base) {
   }
 
   int offs = fdt_path_offset(dtb, "/reserved-memory");
-  if (offs < 0)
+  if (offs < 0) {
+    FXL_LOG(ERROR) << "/reserved-memory not found";
     return ZX_ERR_NO_RESOURCES;
+  }
 
   offs = fdt_node_offset_by_compatible(dtb, offs, "mediatek,nbl_trace");
-  if (offs < 0)
+  if (offs < 0) {
+    FXL_LOG(ERROR) << "mediatek,nbl_trace is not found";
     return ZX_ERR_NO_RESOURCES;
+  }
 
-  uint64_t gpaddr, gsize;
   ret = fdt_getprop_cells_u64(dtb, offs, "reg", 2, &gpaddr, &gsize);
-  if (offs < 0)
+  if (ret < 0) {
+    FXL_LOG(ERROR) << "mediatek,nbl_trace reg failed";
     return ZX_ERR_NO_RESOURCES;
+  }
+
+  FXL_LOG(INFO) << "nbl_trace: mem-enable " << trace_enable;
+
+  if (!trace_enable) {
+    ret = fdt_setprop_cells_u64(dtb, offs, "reg", 2, gpaddr,
+                                NBL_TRACE_MIN_RESERVE_MEM);
+    check_status(ret, "reg");
+  }
 
   fdt_pack(dtb);
 
   trace_mem_pa_ = gpaddr;
   trace_mem_sz_ = gsize;
 
-  FXL_LOG(INFO) << "nbl_trace: paddr & size "<< trace_mem_pa_ << " " << trace_mem_sz_ << " #" << __func__;
+  if (!trace_enable) {
+    trace_mem_sz_ = NBL_TRACE_MIN_RESERVE_MEM;
+  }
+
+  FXL_LOG(INFO) << "nbl_trace: paddr & size " << trace_mem_pa_ << " "
+                << trace_mem_sz_ << " #" << __func__;
   return ZX_OK;
 };
 

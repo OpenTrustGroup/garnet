@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 The GoldenRiverTek Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -10,6 +12,8 @@
 #include <zircon/nbl_trace/ktrace.h>
 
 #include "garnet/lib/machina/guest.h"
+
+#define NBL_TRACE_MIN_RESERVE_MEM    0x10000
 
 typedef struct {
   uint64_t magic;
@@ -57,10 +61,11 @@ class Utrace {
   //   GetInstanceNoLock can only be called in utrace()
   static std::shared_ptr<Utrace> GetInstanceNoLock() { return pinstance_; }
 
-  zx_status_t TraceMemFromDtb(Guest& guest, uintptr_t guest_phys_base);
+  zx_status_t TraceMemFromDtb(Guest& guest, uintptr_t guest_phys_base, uint8_t enable);
   zx_status_t MapTraceBuf(Guest& guest, bool is_sos);
   zx_status_t PatchTraceDts(Guest& guest, uintptr_t guest_phys_base);
-  zx_status_t NotifyKernel();
+  zx_status_t SetTraceBufToKernel();
+  zx_status_t SetTraceBufToCpuFreq();
   zx_vaddr_t GetTraceBuf(uint32_t group);
 
   void SetTraceMem(uintptr_t paddr, size_t size) {

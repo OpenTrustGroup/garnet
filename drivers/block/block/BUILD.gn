@@ -1,0 +1,50 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("block_driver") {
+  output_name = "block"
+
+  sources = [
+    "block.c",
+    "server.cpp",
+    "vblock-drv/vblock-drv.c",
+    "vblock-drv/vblock-drv-crypto.c",
+    "blk_crypto.c",
+    "pvblk/pvblk.c",
+    "vblock-drv/vpart_isolate.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/virtio",
+    "//zircon/public/lib/sync",
+    "//zircon/public/lib/zx",
+    "//zircon/public/lib/zxcpp",
+    "//zircon/public/lib/fbl",
+    "//zircon/public/lib/driver",
+    "//zircon/trusty/lib/lib/libc-trusty",
+    "//garnet/lib/vm_id",
+    "//garnet/public/lib/fxl",
+    "//garnet/public/lib/blk_crypto",
+    "//garnet/public/lib/blk_retry",
+  ]
+
+  include_dirs = [ "//garnet/public/lib",
+  ]
+}
+
+package("block") {
+  system_image = true
+
+  deps = [
+    ":block_driver",
+  ]
+
+  drivers = [
+    {
+      name = "block.so"
+    },
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "dev": [
+    "sys/platform/64:16:1",
+    "class/block"
+  ],
+  "system": [ "data" ],
+  "features": [ "persistent-storage" ]
+}

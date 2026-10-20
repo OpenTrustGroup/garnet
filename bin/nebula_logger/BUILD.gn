@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: BSD-3-Clause
+
+import("//build/package.gni")
+
+executable("bin") {
+  output_name = "nebula_logger"
+
+  sources = [
+    "main.cc",
+  ]
+
+  deps = [
+    "//garnet/public/lib/fxl",
+    "//zircon/trusty/lib/lib/libc-trusty",
+    "//zircon/public/lib/fdio",
+  ]
+}
+
+package("nebula_logger") {
+  deps = [
+    ":bin",
+  ]
+
+  binary = "nebula_logger"
+
+  meta = [{
+    path = rebase_path("meta/sandbox")
+    dest = "sandbox"
+  }]
+}

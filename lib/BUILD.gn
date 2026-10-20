@@ -12,6 +12,7 @@ executable("unittests") {
     "//garnet/public/lib/test_runner/cpp:gtest_main",
     "//garnet/lib/backoff:unittests",
     "//garnet/lib/callback:unittests",
+    "//garnet/lib/features:unittests",
     "//garnet/lib/gtest:unittests",
     "//garnet/lib/network_wrapper:unittests",
   ]

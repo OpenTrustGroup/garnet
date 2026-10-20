@@ -1,0 +1,7 @@
+{
+    "packages": {
+        "qemu": "//garnet/drivers/board/qemu",
+        "i2c-imx": "//garnet/drivers/i2c/i2c-imx",
+        "i2c-echo": "//garnet/drivers/i2c/i2c-echo"
+    }
+}

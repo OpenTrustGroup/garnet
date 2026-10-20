@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 GoldenRiver Inc. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -24,6 +26,7 @@ enum RprocCmd {
   CLEAR_READY,
   GET_SHM_BASE,
   KICK,
+  CONNECT_STATE,
 };
 
 struct RprocMsg {
@@ -40,6 +43,11 @@ struct GetDaBaseReplyMsg {
 enum RprocState {
   NOT_READY,
   READY,
+};
+
+enum RprocConnectState {
+  NOT_CONNECT,
+  CONNECTED,
 };
 
 class RprocManager;
@@ -82,6 +90,7 @@ class RemoteProcBase : public IoHandler, public PeerStateNotifier {
   uint64_t shm_base_;
   size_t shm_size_;
   RprocState state_ = RprocState::NOT_READY;
+  RprocConnectState peer_connect_state_ = RprocConnectState::NOT_CONNECT;
 
   uint16_t ctrl_irq_;
   std::vector<uint16_t> local_irqs_;
@@ -117,6 +126,8 @@ class RprocHost : public RemoteProcBase {
     KICK = 0xc,
     PEER_VMID = 0x10,
     PEER_ONLINE = 0x14,
+    CONNECT_STATE = 0x18,
+    PEER_CONNECT_STATE = 0x1c,
   };
 
   zx_status_t Read(uint64_t addr, IoValue* value) const override;
@@ -137,6 +148,8 @@ class RprocRemote : public RemoteProcBase {
     KICK = 0x14,
     PEER_VMID = 0x18,
     PEER_ONLINE = 0x1C,
+    CONNECT_STATE = 0x20,
+    PEER_CONNECT_STATE = 0x24,
   };
 
   zx_status_t Read(uint64_t addr, IoValue* value) const override;
@@ -148,25 +161,14 @@ class RprocClient {
  public:
   using RprocRemoteList = std::vector<std::unique_ptr<machina::RprocRemote>>;
   using RprocHostList = std::vector<std::unique_ptr<machina::RprocHost>>;
-  RprocClient(uint16_t vmid,
-              machina::RprocService* mgr,
-              machina::Guest& guest,
-              machina::InterruptController& interrupt_controller)
-      : binding_(mgr), monitor_(vmid, loop_.async()) {
-    rproc_svc_.Bind(binding_.NewBinding(loop_.async()));
-
-    auto status = loop_.StartThread();
-    FXL_CHECK(status == ZX_OK);
-
-    GetDevices(vmid, guest, interrupt_controller);
-    RegisterVmStateListener(vmid);
-  }
 
   RprocClient(uint16_t vmid,
               machina::RprocServiceSyncPtr rproc_svc,
               machina::Guest& guest,
               machina::InterruptController& interrupt_controller)
-      : binding_(nullptr), rproc_svc_(std::move(rproc_svc)), monitor_(vmid, loop_.async()) {
+      : binding_(nullptr),
+        rproc_svc_(std::move(rproc_svc)),
+        monitor_(vmid, loop_.async()) {
     auto status = loop_.StartThread();
     FXL_CHECK(status == ZX_OK);
 

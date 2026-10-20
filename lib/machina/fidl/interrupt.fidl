@@ -1,0 +1,13 @@
+// Copyright 2023 GoldenRiver Technology Co., Ltd.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library machina;
+
+[ServiceName="machina.InterruptService"]
+interface InterruptService {
+  1: MovePassthroughToUos(vector<uint16> irqs) -> ();
+
+  // Android/UOS requests the Yocto/SOS-owned physical GPU IRQ.
+  2: RaiseTimeSlicedIrq(uint32 irq) -> (int32 @status);
+};

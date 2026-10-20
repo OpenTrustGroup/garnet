@@ -1,0 +1,81 @@
+library virtualization;
+
+enum GuestStatus {
+  /// Initial state when the guest manager is created but before the guest has
+  /// ever been run.
+  NOT_STARTED = 1;
+
+  /// A client has instructed the guest manager to begin launching the guest.
+  STARTING = 2;
+
+  /// The guest's dispatch loops are running. This is the expected steady
+  /// state.
+  RUNNING = 3;
+
+  /// A client has instructed the guest manager to begin stopping the guest.
+  /// If a non-zero
+  /// has been provided, the guest manager may attempt to gracefully shutdown
+  /// the guest.
+  STOPPING = 4;
+
+  /// The guest is no longer running. A stop reason may be present if the
+  /// guest stopped due to
+  /// an error.
+  STOPPED = 5;
+
+  /// The VMM component terminated unexpectedly. Attempting to launch the
+  /// guest again will
+  /// restart the component.
+  VMM_UNEXPECTED_TERMINATION = 6;
+};
+
+interface GuestController {
+  1: GetConsole() -> (handle<socket> socket);
+
+  // Returns an interface that can be used to access the host vsock endpoint.
+  2: GetHostVsockEndpoint(request<HostVsockEndpoint> endpoint);
+
+  3: SetLogLevel(int32 log_level);
+};
+
+struct Config {
+  string default_cfg;
+  string bootloader;
+  string? memory;
+  int64 vmid;
+  int32 log_level;
+  string? memory_path;
+};
+
+struct GuestInfo {
+  Config config;
+  GuestStatus @status;
+};
+
+enum GuestError {
+  OK = 1;
+  NOT_FOUND = 2;
+  ALREADY_RUNNING = 3;
+  REBOOT_REQUIRED = 4;
+  INITIALIZATION_FAILED = 5;
+  START_VCPU_FAILED = 6;
+  OUT_OF_MEMORY = 7;
+  FORCE_STOPPED = 8;
+  SHUTDOWN = 9;
+  INTERNAL_ERROR = 10;
+};
+
+interface GuestLifecycle {
+  1: Create(Config cfg) -> (GuestError @status);
+  2: Bind(request<GuestController> req) -> (GuestError @status);
+  3: Run() -> (GuestError @status);
+  4: Stop() -> ();
+};
+
+[ServiceName="fuchsia.virtualization.GuestManager"]
+interface GuestManager {
+  1: Launch(int8 vmid) -> (GuestError @status);
+  2: Connect(int8 vmid, request<GuestController> req) -> (GuestError @status);
+  3: ForceShutdown(int8 vmid) -> ();
+  4: Show() -> (vector<GuestInfo> info);
+};

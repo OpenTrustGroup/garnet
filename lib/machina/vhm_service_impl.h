@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2020 GoldenRiver Technology Co., Ltd.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 #pragma once
 
+#include <threads.h>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -10,6 +14,7 @@
 
 #include <fuchsia/cpp/machina.h>
 #include <lib/async-loop/cpp/loop.h>
+#include <lib/zx/time.h>
 #include <sys/types.h>
 #include <zircon/syscalls/hypervisor.h>
 
@@ -20,14 +25,10 @@
 #include "garnet/lib/machina/rwlock.h"
 #include "lib/app/cpp/application_context.h"
 #include "lib/fidl/cpp/binding_set.h"
+#include "lib/svc/cpp/service_provider_bridge.h"
 
 struct acrn_io_request;
 struct acrn_mmio_mapping;
-
-struct mmio_mapping {
-  std::unique_ptr<acrn_mmio_mapping> acrn_mmio_mapping;
-  uint64_t trap_cnt;
-};
 
 namespace machina {
 
@@ -42,15 +43,17 @@ class VmContext {
   static constexpr zx_signals_t kSignalIoreqCompletion = ZX_USER_SIGNAL_0;
   static constexpr zx_signals_t kSignalIoreqTermination = ZX_USER_SIGNAL_1;
   static constexpr zx_signals_t kSignalVmReady = ZX_USER_SIGNAL_2;
+  static constexpr zx_signals_t kSignalVmShutdown = ZX_USER_SIGNAL_3;
 
   VmContext(uint16_t vmid,
             uint8_t num_vcpus,
             uint64_t cpu_affinity,
-            component::ApplicationContext* context,
+            component::ApplicationLauncherPtr& launcher,
             InterruptController* controller,
             uint32_t kick_irq);
   ~VmContext();
 
+  void Shutdown();
   void SetInterruptListener(fidl::InterfaceHandle<InterruptListener> handle);
   void SetMessageListener(fidl::InterfaceHandle<MessageListener> handle);
   void Wait(uint8_t vcpu_id);
@@ -64,21 +67,24 @@ class VmContext {
   void signal_ioreq_completion(uint8_t vcpu_id);
   void signal_ioreq_termination(uint8_t vcpu_id);
   void send_interrupt(uint64_t msi_addr, uint64_t msi_data);
-  zx_status_t vm_call(std::string& req, void *resp, size_t *resp_size);
-  void start_vm();
+  zx_status_t vm_call(std::string& req, void* resp, size_t* resp_size);
+  zx_status_t start_vm();
+  zx_status_t WaitForVmReady(zx::time deadline);
   void add_mmio_mapping(std::unique_ptr<acrn_mmio_mapping>& mapping);
   bool is_message_listener_ready();
 
+#ifdef VHE_MMIO_TRAP_DEBUG
   void increase_trap_cnt(uintptr_t addr);
-  void dump_trap_cnt();
+#endif
 
   zx_status_t set_vm_config(const char* config_data, uint64_t config_size);
   void get_vm_config(fsl::SizedVmo* vmo);
   zx::event* get_vm_ready_event() { return &vm_ready_event_; };
+  void set_uos_exp_irq(uint32_t uos_exp_irq){ uos_exp_irq_ = uos_exp_irq; }
 
 #ifdef _VHM_USE_CHANNEL_
   void HandleVhmChannelMsgLoop();
-  zx_status_t SetupVhmChannel(zx::channel &&srv, zx::channel &&cli);
+  zx_status_t SetupVhmChannel(zx::channel&& srv, zx::channel&& cli);
 #endif
 
  private:
@@ -93,21 +99,25 @@ class VmContext {
   zx::event vm_ready_event_;
   std::string vm_config_;
 
-  std::vector<struct mmio_mapping> mmio_mappings_;
+  std::vector<std::unique_ptr<acrn_mmio_mapping>> mmio_mappings_;
 
   async::Loop loop_;
-  component::ApplicationContext* application_context_;
+  component::ApplicationLauncherPtr& launcher_;
   component::ApplicationControllerSyncPtr application_controller_;
 
   InterruptListenerSyncPtr interrupt_listener_;
   MessageListenerSyncPtr message_listener_;
 
 #ifdef _VHM_USE_CHANNEL_
+  thrd_t vhm_thread_ = {};
+  bool vhm_thread_started_ = false;
   zx::channel vhm_srv_chan_;
   zx::channel vhm_cli_chan_;
 #endif
+  std::atomic_bool shutdown_started_{false};
   InterruptController* interrupt_controller_;
   uint32_t kick_irq_;
+  uint32_t uos_exp_irq_;
 
   FXL_DISALLOW_IMPLICIT_CONSTRUCTORS(VmContext);
 };
@@ -115,13 +125,15 @@ class VmContext {
 class VhmServiceImpl : public VhmRequestHandler, public VhmService {
  public:
   VhmServiceImpl() = delete;
-  VhmServiceImpl(component::ApplicationContext* application_context,
-                 async_t* async,
+  VhmServiceImpl(component::ServiceProviderBridge* bridge,
+                 component::ApplicationLauncherPtr& launcher,
                  InterruptController* interrupt_controller,
                  uint32_t kick_irq,
                  const PhysMem& phys_mem,
                  uintptr_t phys_mem_base,
                  Guest* guest);
+
+  void set_uos_exp_irq(uint32_t uos_exp_irq) { uos_exp_irq_ = uos_exp_irq; }
 
  private:
   // |VhmService|
@@ -175,17 +187,26 @@ class VhmServiceImpl : public VhmRequestHandler, public VhmService {
                    uint64_t rx_buf_addr,
                    uint64_t rx_buf_size);
 
-  component::ApplicationContext* application_context_;
+  struct VmEntry {
+    std::shared_ptr<VmContext> context;
+    bool shutting_down = false;
+  };
+
+  std::shared_ptr<VmContext> FindActiveVmContextLocked(uint64_t vmid);
+
+  component::ApplicationLauncherPtr& launcher_;
+
   fidl::BindingSet<VhmService> bindings_;
 
   std::mutex vm_map_lock_;
-  std::unordered_map<uint64_t, std::shared_ptr<VmContext>> vm_map_;
+  std::unordered_map<uint64_t, VmEntry> vm_map_;
 
   const PhysMem& phys_mem_;
   uintptr_t phys_mem_base_;
   InterruptController* interrupt_controller_;
   uint32_t kick_irq_;
-  Guest *guest_;
+  uint32_t uos_exp_irq_;
+  Guest* guest_;
 };
 
 }  // namespace machina

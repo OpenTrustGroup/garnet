@@ -1,16 +1,32 @@
 {
     "resources": [
         {
-            "bootfs_path": "data/sos.json",
-            "file": "garnet/bin/guest/sos/sos_qemu.json"
+            "bootfs_path": "data/sos.lua",
+            "file": "garnet/bin/guest/sos/qemu/sos.lua"
         },
         {
-            "bootfs_path": "data/product.json",
-            "file": "garnet/bin/guest/sos/product_qemu.json"
+            "bootfs_path": "data/product.lua",
+            "file": "garnet/bin/guest/sos/qemu/product.lua"
         },
         {
             "bootfs_path": "data/rproc.pb.txt",
-            "file": "garnet/bin/guest/sos/rproc_qemu.pb.txt"
+            "file": "garnet/bin/guest/sos/qemu/rproc.pb.txt"
+        },
+        {
+            "bootfs_path": "data/sos_bootloader.pb.txt",
+            "file": "garnet/bin/guest/sos/qemu/sos_bootloader.pb.txt"
+        },
+        {
+            "bootfs_path": "data/tbox_bootloader.pb.txt",
+            "file": "garnet/bin/guest/sos/qemu/tbox_bootloader.pb.txt"
+        },
+        {
+            "bootfs_path": "data/tbox.lua",
+            "file": "garnet/bin/guest/sos/qemu/tbox.lua"
+        },
+        {
+            "bootfs_path": "data/guest_manager.pb.txt",
+            "file": "garnet/bin/guest_manager/data/guest_manager_qemu.pb.txt"
         }
     ]
 }

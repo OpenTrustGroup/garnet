@@ -1,0 +1,58 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+// Copyright 2018 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library virtualization;
+
+// |HOST_CID| is the reserved context ID (CID) of the host.
+//
+// CIDs for guests are assigned by the EnvironmentManager and can be found in the
+// corresponding |InstanceInfo| structure.
+const uint32 HOST_CID = 2;
+
+/// VM to VM communication is not supported, so all guests will be assigned this default guest CID.
+const uint32 DEFAULT_GUEST_CID = 10;
+
+// Exposed by guests capable of listening via vsocks. On a request to establish
+// a connection, the |Accept| method will be called. If the port is open and
+// accepting connections, the implementation should return |ZX_OK|.
+//
+// Also see |GuestVsockEndpoint|.
+interface GuestVsockAcceptor {
+    1: Accept(uint32 src_cid, uint32 src_port, uint32 port, handle? @handle)
+           -> (status s);
+};
+
+// Exposed by a host capable of listening via vsocks. A variant of a
+// |GuestVsockAcceptor| that is responsible for creating the |handle| with which
+// to communicate. The |handle| will be either a socket or a channel, depending
+// on the current configuration.
+interface HostVsockAcceptor {
+    1: Accept(uint32 src_cid, uint32 src_port, uint32 port)
+           -> (status s, handle? @handle);
+};
+
+// Exposed by a host capable of connecting via vsocks. This allows a guest to
+// identify itself via {src_cid, src_port}, and request to connect to
+// {cid, port}. The host should return |ZX_OK|, and create a handle with which
+// to communicate. The |handle| will be either a socket or a channel, depending
+// on the current configuration.
+interface HostVsockConnector {
+    1: Connect(uint32 src_cid, uint32 src_port, uint32 cid, uint32 port)
+           -> (status s, handle? @handle);
+    2: DisConnect(uint32 src_cid, uint32 src_port, uint32 cid, uint32 port)
+           -> (status s);
+};
+
+// Exposed by a host to provide the ability for listeners to be multiplexed by
+// port and to manage dynamic port allocation for outbound connections.
+interface HostVsockEndpoint {
+    // Register |acceptor| to be invoked for any connection requests to |port|.
+    1: Listen(uint32 port, HostVsockAcceptor acceptor)
+           -> (status s);
+    // Stops listening on the specified port and unregisters the associated acceptor.
+    2: Close(uint32 port)
+           -> (status s);
+};

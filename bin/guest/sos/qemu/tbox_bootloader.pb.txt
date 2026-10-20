@@ -1,0 +1,19 @@
+protocol: "linux"
+
+payload {
+    name: "kernel",
+    filepath: "/dev/misc/ramctl/ramdisk-1/block";
+    offset: 0x0,
+}
+
+payload {
+    name: "rootfs",
+    filepath: "/dev/misc/ramctl/ramdisk-0/block";
+    offset: 0x4000000,
+}
+
+payload {
+    name: "dtb",
+    filepath: "/pkg/data/tbox_dtb";
+    offset: 0x0,
+}

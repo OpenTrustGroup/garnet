@@ -94,6 +94,7 @@ sdk("nebula") {
 
     # libnbl_nmt_tee_sdk.
     "//third_party/hee-trusty/nbl_license_srv/lib:libnbl_nmt_tee_sdk",
+    "//third_party/hee-trusty/nbl_license_srv/lib:nbl_nmt_tee_sdk",
 
     # GUI
     "//third_party/hee-trusty/nbl_gui:libnbl_gui_sdk",
@@ -150,6 +151,10 @@ sdk("nebula") {
     ###################################
     # If add new API, the examples or test can be exported by its own BUILD.gn to sdk/exmaples or sdk/tests.
     "//garnet/public/nebula_sdk/examples:examples",
+
+    # hyp-license_test
+    ###################################
+    "//garnet/public/nebula_sdk/hyp-license_test:hyp-license_test",
 
     ###################################
     # Makefile

@@ -6,6 +6,10 @@ import("//build/package.gni")
 import("//garnet/public/lib/fidl/build/fidl/fidl.gni")
 import("//build/nebula/nbl_sdk_library.gni")
 
+config("pic") {
+  cflags = [ "-fPIC" ]
+}
+
 static_library("cpp") {
   sources = [
     "array.h",
@@ -51,6 +55,9 @@ static_library("cpp") {
     "traits.h",
     "vector.h",
   ]
+
+  configs += [ ":pic" ]
+  configs -= [ "//build/config:symbol_visibility_hidden" ]
 
   public_deps = [
     "//zircon/public/lib/async-default",

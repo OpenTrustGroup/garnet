@@ -1,0 +1,18 @@
+load("@io_bazel_rules_nbl//nbl:fidl.bzl", "fidl")
+load("@io_bazel_rules_nbl//nbl:lib_deps.bzl", "NEBULA_LIB_DEPS")
+
+fidl(
+    name = "machina",
+    sources = [
+        "audio_irq.fidl",
+        "ipc.fidl",
+        "inspect.fidl",
+        "ipcmessage.fidl",
+        "rproc.fidl",
+        "shared_irq.fidl",
+        "vhm.fidl",
+    ],
+    deps = [
+        "//system/public/lib/mem/fidl:mem",
+    ],
+)

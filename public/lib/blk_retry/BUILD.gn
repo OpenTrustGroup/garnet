@@ -1,0 +1,14 @@
+
+static_library("blk_retry") {
+  sources = [
+    "retry.c",
+    "retry.h",
+  ]
+
+  public_deps = [
+    "//garnet/public/lib/fxl",
+    "//zircon/public/lib/sync",
+    "//zircon/public/lib/zx",
+    "//zircon/public/lib/ddk",
+  ]
+}

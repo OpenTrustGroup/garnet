@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2018 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -88,6 +90,11 @@ typedef zx_status_t (*virtio_queue_poll_fn_t)(VirtioQueue* queue,
                                               uint32_t* used,
                                               void* ctx);
 
+struct phys_range {
+  uint64_t paddr;
+  uint32_t len;
+} __PACKED;
+
 // A higher-level API for vring_desc.
 typedef struct virtio_desc {
   // Pointer to the buffer in our address space.
@@ -101,12 +108,14 @@ typedef struct virtio_desc {
   // If true, this buffer must only be written to (no reads). Otherwise this
   // buffer must only be read from (no writes).
   bool writable;
+  bool indirect;
 } virtio_desc_t;
 
 class VirtioQueue {
  public:
   // The signal asserted when there are available descriptors in the queue.
   static constexpr zx_signals_t SIGNAL_QUEUE_AVAIL = ZX_USER_SIGNAL_0;
+  static constexpr zx_signals_t SIGNAL_QUEUE_STOP = ZX_USER_SIGNAL_1;
 
   VirtioQueue();
 
@@ -149,6 +158,7 @@ class VirtioQueue {
   // The address should be in guest physical address space.
   void set_desc_addr(uint64_t desc_addr);
   uint64_t desc_addr() const;
+  void set_ring_idx();
 
   // Gets or sets the address of the available ring for this queue.
   // The address should be in guest physical address space.
@@ -176,11 +186,16 @@ class VirtioQueue {
   // Blocking variant of virtio_queue_next_avail.
   //
   // TODO(PD-107): Allow this method to fail.
-  void Wait(uint16_t* index);
+  zx_status_t Wait(uint16_t* index);
 
+  zx_status_t TryDequeueBatch(uint16_t* indices, uint16_t max_count,
+                              uint16_t* count);
   // Notify waiting threads blocked on |virtio_queue_wait| that the avail ring
   // has descriptors available.
   zx_status_t Signal();
+
+  void Terminate();
+  zx_status_t Join();
 
   // Return a descriptor to the used ring.
   //
@@ -202,7 +217,7 @@ class VirtioQueue {
   // This method should only be called using descriptor indicies acquired with
   // virtio_queue_next_avail (including any chained decriptors) and before
   // they've been released with virtio_queue_return.
-  zx_status_t ReadDesc(uint16_t index, virtio_desc_t* desc);
+  zx_status_t ReadDesc(uint16_t index, virtio_desc_t* desc, struct phys_range *phys_range = NULL);
 
   // Spawn a thread to wait for descriptors to be available and invoke the
   // provided handler on each available buffer asyncronously.
@@ -229,6 +244,11 @@ class VirtioQueue {
   // descriptors to process.
   zx_status_t HandleDescriptor(virtio_queue_fn_t handler, void* ctx);
 
+  void set_index(int index) { index_ = index; }
+  uint16_t index() const { return index_; }
+  bool valid();
+  void set_ready(bool ready) { ready_ = ready; }
+  bool is_ready() { return ready_; }
  private:
   zx_status_t NextAvailLocked(uint16_t* index) __TA_REQUIRES(mutex_);
   bool HasAvailLocked() const __TA_REQUIRES(mutex_);
@@ -244,6 +264,10 @@ class VirtioQueue {
   virtio_queue_t ring_ __TA_GUARDED(mutex_) = {};
   zx::event event_;
   uint16_t avail_event_num_ __TA_GUARDED(mutex_) = 1;
+
+  uint16_t index_;
+  bool ready_ = false;
+  thrd_t poll_thread_ = 0;
 };
 
 }  // namespace machina

@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "dd": "//garnet/bin/dd"
+    }
+}

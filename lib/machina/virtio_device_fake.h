@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -22,6 +24,7 @@ class VirtioDeviceFake
 
   zx_status_t Init() { return queue_fake_.Init(QUEUE_SIZE); }
 
+  using VirtioDeviceBase::queue;
   VirtioQueue* queue() { return VirtioDeviceBase::queue(0); }
   VirtioQueueFake& queue_fake() { return queue_fake_; }
 

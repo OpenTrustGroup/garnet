@@ -1,0 +1,41 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("mt8676_board_drv") {
+  output_name = "mt8676"
+
+  sources = [
+    "mt8676-board.c",
+    "mt8676-wdt.c",
+    "mt8676-framebuffer.c",
+    "mt8676-monitor.c",
+    "mt8676-ramfb.c",
+    "mt8676-spi.c",
+    "mt8676-ufs.c",
+    "mt8676-gpio.c",
+    "mt8676-alloc.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+    "//garnet/drivers/soc/mt8676",
+  ]
+}
+
+package("mt8676") {
+  system_image = true
+
+  deps = [
+    ":mt8676_board_drv",
+  ]
+
+   drivers = [
+     {
+       name = "mt8676.so"
+     },
+   ]
+}

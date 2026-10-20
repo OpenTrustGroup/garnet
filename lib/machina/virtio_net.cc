@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2018 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -5,7 +7,7 @@
 #include "garnet/lib/machina/virtio_net.h"
 
 #include <zircon/device/ethernet.h>
-#include <zx/fifo.h>
+#include <lib/zx/fifo.h>
 
 #include <fcntl.h>
 #include <string.h>
@@ -15,7 +17,12 @@
 namespace machina {
 
 VirtioNet::Stream::Stream(VirtioNet* device, async_t* async, VirtioQueue* queue)
-    : device_(device), async_(async), queue_(queue), queue_wait_(async, queue) {
+    : device_(device),
+      async_(async),
+      queue_(queue),
+      queue_wait_(async,
+                  queue,
+                  fbl::BindMember(this, &VirtioNet::Stream::OnQueueReady)) {
   fifo_writable_wait_.set_handler(
       fbl::BindMember(this, &VirtioNet::Stream::OnFifoWritable));
   fifo_readable_wait_.set_handler(
@@ -47,8 +54,7 @@ zx_status_t VirtioNet::Stream::Start(zx_handle_t fifo,
 }
 
 zx_status_t VirtioNet::Stream::WaitOnQueue() {
-  return queue_wait_.Wait(
-      fbl::BindMember(this, &VirtioNet::Stream::OnQueueReady));
+  return queue_wait_.Begin();
 }
 
 void VirtioNet::Stream::OnQueueReady(zx_status_t status, uint16_t index) {
@@ -166,7 +172,7 @@ async_wait_result_t VirtioNet::Stream::OnFifoReadable(
   uint32_t num_entries_read;
   eth_fifo_entry_t entries[fifo_entries_.size()];
   status = zx_fifo_read_old(fifo_, static_cast<void*>(entries), sizeof(entries),
-                        &num_entries_read);
+                            &num_entries_read);
   if (status == ZX_ERR_SHOULD_WAIT) {
     return ASYNC_WAIT_AGAIN;
   }

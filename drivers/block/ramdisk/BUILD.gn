@@ -1,0 +1,32 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("drv") {
+  output_name = "ramdisk"
+
+  sources = [
+    "ramdisk.c",
+  ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/fbl",
+    "//zircon/public/lib/zx",
+    "//garnet/public/lib/fxl",
+  ]
+}
+
+package("ramdisk") {
+  system_image = true
+
+  deps = [
+    ":drv",
+  ]
+
+   drivers = [
+     {
+       name = "ramdisk.so"
+     },
+   ]
+}

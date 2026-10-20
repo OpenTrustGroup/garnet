@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2020 GoldenRiver Technology Co., Ltd.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -21,11 +23,14 @@
 #include <lib/fsl/vmo/strings.h>
 #include <lib/zx/resource.h>
 #include <lib/zx/vmo.h>
-#include <zircon/device/sysinfo.h>
+#include <nbl_fwk/nmt_tee.h>
 #include <trusty_std.h>
 #include <uapi/err.h>
-#include <nbl_fwk/nmt_tee.h>
+#include <zircon/device/sysinfo.h>
+#include <zircon/syscalls.h>
 
+#include "dump.h"
+#include "garnet/lib/machina/monitor_virtio.h"
 #include "utrace.h"
 
 #define HC_CREATE_VM 0x80000010
@@ -42,6 +47,9 @@
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
 static constexpr char kResourcePath[] = "/dev/misc/sysinfo";
+static constexpr zx_signals_t kSignalVhmShutdown = ZX_USER_SIGNAL_0;
+static constexpr uint64_t kVmReadyTimeoutSeconds = 5;
+static constexpr zx::duration kVmReadyTimeout = zx::sec(kVmReadyTimeoutSeconds);
 
 static zx_status_t get_root_resource(zx::resource* resource) {
   FXL_CHECK(resource != nullptr) << "resource is null";
@@ -57,21 +65,20 @@ static zx_status_t get_root_resource(zx::resource* resource) {
 
 namespace machina {
 
-VhmServiceImpl::VhmServiceImpl(
-    component::ApplicationContext* application_context,
-    async_t* async,
-    InterruptController* interrupt_controller,
-    uint32_t kick_irq,
-    const PhysMem& phys_mem,
-    uintptr_t phys_mem_base,
-    Guest* guest)
-    : application_context_(application_context),
+VhmServiceImpl::VhmServiceImpl(component::ServiceProviderBridge* bridge,
+                               component::ApplicationLauncherPtr& launcher,
+                               InterruptController* interrupt_controller,
+                               uint32_t kick_irq,
+                               const PhysMem& phys_mem,
+                               uintptr_t phys_mem_base,
+                               Guest* guest)
+    : launcher_(launcher),
       phys_mem_(phys_mem),
       phys_mem_base_(phys_mem_base),
       interrupt_controller_(interrupt_controller),
       kick_irq_(kick_irq),
       guest_(guest) {
-  application_context->outgoing_services()->AddService<VhmService>(
+  bridge->AddService<VhmService>(
       [this](fidl::InterfaceRequest<VhmService> request) {
         bindings_.AddBinding(this, std::move(request));
       });
@@ -90,10 +97,18 @@ zx_status_t VhmServiceImpl::HandleVhmRequest(zx_vcpu_state_t* state) {
   switch (id) {
     // Place the most frequently called case at the beginning of the
     // switch statement to improve branch hit rate
-    case HC_INJECT_MSI:
+    case HC_INJECT_MSI: {
+      auto msi = phys_mem_.as<acrn_msi_entry>(to_offset(p1));
+#ifdef WITH_CROSS_VM_DUMP
+      cvmd_tp_add_ticks(CROSS_VM_DUMP_VDEV_NOTIFY_H2G, 2, msi->msi_addr);
+#endif
       result = inject_msi(p0, p1);
       break;
+    }
     case HC_NOTIFY_REQUEST_FINISH:
+#ifdef WITH_CROSS_VM_DUMP
+      cvmd_mp_set_ticks(CROSS_VM_DUMP_VDEV_NOTIFY_G2H, 11);
+#endif
       result = signal_ioreq_completion(p0, p1);
       break;
     case HC_CREATE_VM:
@@ -132,17 +147,48 @@ zx_status_t VhmServiceImpl::HandleVhmRequest(zx_vcpu_state_t* state) {
   return ZX_OK;
 }
 
+std::shared_ptr<VmContext> VhmServiceImpl::FindActiveVmContextLocked(
+    uint64_t vmid) {
+  auto it = vm_map_.find(vmid);
+  if (it == vm_map_.end() || it->second.shutting_down) {
+    return nullptr;
+  }
+  return it->second.context;
+}
+
 uint64_t VhmServiceImpl::create_vm(uint64_t create_vm_paddr) {
   std::lock_guard<std::mutex> lock(vm_map_lock_);
   auto create_vm = phys_mem_.as<acrn_vm_creation>(to_offset(create_vm_paddr));
 
   auto it = vm_map_.find(create_vm->vmid);
   if (it != vm_map_.end()) {
-    FXL_LOG(ERROR) << "Guest vmid " << create_vm->vmid << " is alraedy existed";
+    FXL_LOG(ERROR) << "Guest vmid " << create_vm->vmid
+                   << " is already existed or shutting down";
     return -1;
   }
 
   int rc = nbl_act_feature(NMT_ACT_FEAT_MAX_VM);
+
+  if (rc < 0) {
+    int max_retries = 2;
+    int rc_retry = rc;
+
+    for (int i = 0; i < max_retries; i++) {
+        zx_nanosleep(zx_deadline_after(ZX_MSEC(100)));
+        rc_retry = nbl_act_feature(NMT_ACT_FEAT_MAX_VM);
+
+        FXL_LOG(ERROR) << "license max_vm failed, retry " << (i+1)
+                       << ", orig rc=" << rc
+                       << ", retry rc=" << rc_retry;
+
+        if (rc_retry >= 0) {
+            break;
+        }
+    }
+
+    rc = rc_retry;
+  }
+
   if (rc < 0) {
     FXL_LOG(ERROR) << "Failed to query license [max_vm], rc=" << rc;
     return -1;
@@ -165,63 +211,97 @@ uint64_t VhmServiceImpl::create_vm(uint64_t create_vm_paddr) {
     cpu_affinity &= ~(1 << pcpu_id);
   }
 
-  auto vm = std::make_shared<VmContext>(
-      create_vm->vmid, create_vm->vcpu_num, create_vm->cpu_affinity,
-      application_context_, interrupt_controller_, kick_irq_);
+  auto vm = std::make_shared<VmContext>(create_vm->vmid, create_vm->vcpu_num,
+                                        create_vm->cpu_affinity, launcher_,
+                                        interrupt_controller_, kick_irq_);
   if (!vm) {
     FXL_LOG(ERROR) << "Failed to create VmContext";
     return -1;
   }
 
+  vm->set_uos_exp_irq(uos_exp_irq_);
   FXL_LOG(INFO) << "VM - " << vm->vmid() << " Created";
-  vm_map_.emplace(vm->vmid(), std::move(vm));
+  uint16_t vmid = vm->vmid();
+  vm_map_.emplace(vmid, VmEntry{std::move(vm), false});
   return 0;
 }
 
 uint64_t VhmServiceImpl::inject_msi(uint64_t vmid, uint64_t inject_msi_paddr) {
   std::lock_guard<std::mutex> lock(vm_map_lock_);
   auto msi = phys_mem_.as<acrn_msi_entry>(to_offset(inject_msi_paddr));
-  auto it = vm_map_.find(vmid);
-  if (likely(it != vm_map_.end())) {
-    it->second->send_interrupt(msi->msi_addr, msi->msi_data);
+  auto context = FindActiveVmContextLocked(vmid);
+#ifdef WITH_CROSS_VM_DUMP
+  cvmd_tp_add_ticks(CROSS_VM_DUMP_VDEV_NOTIFY_H2G, 3, inject_msi_paddr);
+#endif
+  if (likely(context)) {
+#ifdef WITH_CROSS_VM_DUMP
+    cvmd_tp_add(CROSS_VM_DUMP_VDEV_NOTIFY_H2G, 4, inject_msi_paddr,
+                msi->msi_addr);
+#endif
+    context->send_interrupt(msi->msi_addr, msi->msi_data);
     return 0;
   } else {
+#ifdef WITH_CROSS_VM_DUMP
+    cvmd_tp_add_ticks(CROSS_VM_DUMP_VDEV_NOTIFY_H2G, 5, inject_msi_paddr);
+#endif
     FXL_LOG(ERROR) << "vmid " << vmid << " not found";
     return -1;
   }
 }
 
 uint64_t VhmServiceImpl::destroy_vm(uint64_t vmid) {
-  std::lock_guard<std::mutex> lock(vm_map_lock_);
+  std::shared_ptr<VmContext> context;
 
-  auto it = vm_map_.find(vmid);
-  if (it == vm_map_.end()) {
-    FXL_LOG(ERROR) << "vmid " << vmid << " not found";
-    return -1;
-  }
-
-  auto context = it->second;
-#ifdef VHE_MMIO_TRAP_DEBUG
-  context->dump_trap_cnt();
-#endif
-  for (uint vcpu = 0; vcpu < ACRN_IO_REQUEST_MAX; ++vcpu)
-    context->signal_ioreq_termination(vcpu);
-
-  vm_map_.erase(it);
-
-  guest_->TeeVmDestroy((int32_t)vmid);
-
-  return 0;
-}
-
-uint64_t VhmServiceImpl::start_vm(uint64_t vmid) {
-  zx::event *vm_ready_event;
-  zx_status_t status;
   {
     std::lock_guard<std::mutex> lock(vm_map_lock_);
 
     auto it = vm_map_.find(vmid);
     if (it == vm_map_.end()) {
+      FXL_LOG(ERROR) << "vmid " << vmid << " not found";
+      return -1;
+    }
+    if (it->second.shutting_down) {
+      FXL_LOG(ERROR) << "vmid " << vmid << " is already shutting down";
+      return -1;
+    }
+
+    it->second.shutting_down = true;
+    context = it->second.context;
+  }
+
+  for (uint32_t vcpu = 0; vcpu < ACRN_IO_REQUEST_MAX; ++vcpu) {
+    context->signal_ioreq_termination(vcpu);
+  }
+  guest_->TeeVmDestroy((int32_t)vmid);
+  context->Shutdown();
+
+  machina::GpuSchedulerServiceImpl* gpu_sched_raw = nullptr;
+  gpu_sched_raw = guest_->GetGpuSchedService();
+  if (gpu_sched_raw) {
+    gpu_sched_raw->destroyGpuSched((int32_t)vmid);
+  } else {
+    FXL_LOG(INFO) << "No active GpuSchedClient to destroy";
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(vm_map_lock_);
+    auto it = vm_map_.find(vmid);
+    if (it != vm_map_.end() && it->second.context == context) {
+      vm_map_.erase(it);
+    }
+  }
+
+  return 0;
+}
+
+uint64_t VhmServiceImpl::start_vm(uint64_t vmid) {
+  std::shared_ptr<VmContext> context;
+  zx_status_t status;
+  {
+    std::lock_guard<std::mutex> lock(vm_map_lock_);
+
+    context = FindActiveVmContextLocked(vmid);
+    if (!context) {
       FXL_LOG(ERROR) << "vmid " << vmid << " not found";
       return -1;
     }
@@ -232,14 +312,16 @@ uint64_t VhmServiceImpl::start_vm(uint64_t vmid) {
       return status;
     }
 
-    vm_ready_event = it->second->get_vm_ready_event();
-    it->second->start_vm();
+    status = context->start_vm();
+    if (status != ZX_OK) {
+      FXL_LOG(ERROR) << "VM - " << vmid
+                     << " launch task post failed, status: " << status;
+      return status;
+    }
   }
 
-  // wait for the UOS VCPU-0 started
-  status = vm_ready_event->wait_one(VmContext::kSignalVmReady,
-                                    zx::deadline_after(zx::sec(5)),
-                                    nullptr);
+  // Keep the existing bounded wait for UOS VCPU-0 startup readiness.
+  status = context->WaitForVmReady(zx::deadline_after(kVmReadyTimeout));
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "VM - " << vmid << " Start Failed, status: " << status;
     return status;
@@ -253,10 +335,10 @@ uint64_t VhmServiceImpl::set_ioreq_buffer(uint64_t vmid,
                                           uint64_t ioreq_buffer) {
   std::lock_guard<std::mutex> lock(vm_map_lock_);
 
-  auto it = vm_map_.find(vmid);
-  if (it != vm_map_.end()) {
+  auto context = FindActiveVmContextLocked(vmid);
+  if (context) {
     auto buf = phys_mem_.as<acrn_ioreq_buffer>(to_offset(ioreq_buffer));
-    it->second->set_ioreq_buffer(buf->ioreq_buf);
+    context->set_ioreq_buffer(buf->ioreq_buf);
     return 0;
   } else {
     FXL_LOG(ERROR) << "vmid " << vmid << " not found";
@@ -269,10 +351,10 @@ uint64_t VhmServiceImpl::set_vm_config(uint64_t vmid,
                                        uint64_t config_size) {
   std::lock_guard<std::mutex> lock(vm_map_lock_);
 
-  auto it = vm_map_.find(vmid);
-  if (it != vm_map_.end()) {
+  auto context = FindActiveVmContextLocked(vmid);
+  if (context) {
     auto config_data = phys_mem_.as<char>(to_offset(config_addr));
-    return it->second->set_vm_config(config_data, config_size);
+    return context->set_vm_config(config_data, config_size);
   } else {
     FXL_LOG(ERROR) << "vmid " << vmid << " not found";
     return -1;
@@ -283,14 +365,14 @@ uint64_t VhmServiceImpl::add_mmio_mapping(uint64_t vmid,
                                           uint64_t mmio_mapping_paddr) {
   std::lock_guard<std::mutex> lock(vm_map_lock_);
 
-  auto it = vm_map_.find(vmid);
-  if (it != vm_map_.end()) {
+  auto context = FindActiveVmContextLocked(vmid);
+  if (context) {
     auto acrn_mapping =
         phys_mem_.as<acrn_mmio_mapping>(to_offset(mmio_mapping_paddr));
 
     auto mapping = std::make_unique<acrn_mmio_mapping>();
     *mapping = *acrn_mapping;
-    it->second->add_mmio_mapping(mapping);
+    context->add_mmio_mapping(mapping);
     return 0;
   } else {
     FXL_LOG(ERROR) << "vmid " << vmid << " not found";
@@ -302,9 +384,9 @@ uint64_t VhmServiceImpl::signal_ioreq_completion(uint64_t vmid,
                                                  uint8_t vcpu_id) {
   std::lock_guard<std::mutex> lock(vm_map_lock_);
 
-  auto it = vm_map_.find(vmid);
-  if (likely(it != vm_map_.end())) {
-    it->second->signal_ioreq_completion(vcpu_id);
+  auto context = FindActiveVmContextLocked(vmid);
+  if (likely(context)) {
+    context->signal_ioreq_completion(vcpu_id);
     return 0;
   } else {
     FXL_LOG(ERROR) << "vmid " << vmid << " not found";
@@ -319,17 +401,17 @@ uint64_t VhmServiceImpl::vm_call(uint64_t vmid,
                                  uint64_t rx_buf_size) {
   std::lock_guard<std::mutex> lock(vm_map_lock_);
 
-  auto it = vm_map_.find(vmid);
-  if (it != vm_map_.end()) {
-    if (!it->second->is_message_listener_ready()) {
+  auto context = FindActiveVmContextLocked(vmid);
+  if (context) {
+    if (!context->is_message_listener_ready()) {
       FXL_LOG(ERROR) << "vmid " << vmid << " message listener not ready";
       return -1;
     }
 
     std::string tx_buf(phys_mem_.as<const char>(to_offset(tx_buf_addr)),
                        tx_buf_size);
-    auto rx_buf = phys_mem_.as<void *>(to_offset(rx_buf_addr));
-    if (it->second->vm_call(tx_buf, rx_buf, &rx_buf_size) != ZX_OK)
+    auto rx_buf = phys_mem_.as<void*>(to_offset(rx_buf_addr));
+    if (context->vm_call(tx_buf, rx_buf, &rx_buf_size) != ZX_OK)
       return -1;
 
     return rx_buf_size;
@@ -344,9 +426,9 @@ void VhmServiceImpl::GetIoRequestVmo(uint16_t vmid,
   std::lock_guard<std::mutex> lock(vm_map_lock_);
   zx::vmo vmo;
 
-  auto it = vm_map_.find(vmid);
-  if (it != vm_map_.end()) {
-    it->second->get_ioreq_vmo(&vmo);
+  auto context = FindActiveVmContextLocked(vmid);
+  if (context) {
+    context->get_ioreq_vmo(&vmo);
     callback(VhmClientStatus::OK, std::move(vmo));
   } else {
     callback(VhmClientStatus::NOT_FOUND, zx::vmo());
@@ -359,9 +441,9 @@ void VhmServiceImpl::RegisterInterruptListener(
     RegisterInterruptListenerCallback callback) {
   std::lock_guard<std::mutex> lock(vm_map_lock_);
 
-  auto it = vm_map_.find(vmid);
-  if (it != vm_map_.end()) {
-    it->second->SetInterruptListener(std::move(handle));
+  auto context = FindActiveVmContextLocked(vmid);
+  if (context) {
+    context->SetInterruptListener(std::move(handle));
     callback(VhmClientStatus::OK);
   } else {
     callback(VhmClientStatus::NOT_FOUND);
@@ -374,9 +456,9 @@ void VhmServiceImpl::RegisterMessageListener(
     RegisterMessageListenerCallback callback) {
   std::lock_guard<std::mutex> lock(vm_map_lock_);
 
-  auto it = vm_map_.find(vmid);
-  if (it != vm_map_.end()) {
-    it->second->SetMessageListener(std::move(handle));
+  auto context = FindActiveVmContextLocked(vmid);
+  if (context) {
+    context->SetMessageListener(std::move(handle));
     callback(VhmClientStatus::OK);
   } else {
     callback(VhmClientStatus::NOT_FOUND);
@@ -389,9 +471,9 @@ void VhmServiceImpl::GetMmioMappings(
     GetMmioMappingsCallback callback) {
   std::lock_guard<std::mutex> lock(vm_map_lock_);
 
-  auto it = vm_map_.find(vmid);
-  if (it != vm_map_.end()) {
-    it->second->GetMmioMappings(std::move(handle));
+  auto context = FindActiveVmContextLocked(vmid);
+  if (context) {
+    context->GetMmioMappings(std::move(handle));
     callback(VhmClientStatus::OK);
   } else {
     callback(VhmClientStatus::NOT_FOUND);
@@ -403,9 +485,9 @@ void VhmServiceImpl::FetchVmConfig(uint16_t vmid,
   std::lock_guard<std::mutex> lock(vm_map_lock_);
   fsl::SizedVmo vmo;
 
-  auto it = vm_map_.find(vmid);
-  if (it != vm_map_.end()) {
-    it->second->get_vm_config(&vmo);
+  auto context = FindActiveVmContextLocked(vmid);
+  if (context) {
+    context->get_vm_config(&vmo);
     callback(VhmClientStatus::OK, std::move(vmo).ToTransport());
   } else {
     callback(VhmClientStatus::NOT_FOUND, std::move(vmo).ToTransport());
@@ -424,9 +506,7 @@ void VhmServiceImpl::WaitForIoRequestCompletion(
   std::shared_ptr<VmContext> context;
   {
     std::lock_guard<std::mutex> lock(vm_map_lock_);
-    auto it = vm_map_.find(vmid);
-    if (it != vm_map_.end())
-      context = it->second;
+    context = FindActiveVmContextLocked(vmid);
   }
 
   if (context) {
@@ -446,9 +526,10 @@ void VhmServiceImpl::SetupChannel(uint16_t vmid,
   zx::channel srv_local, srv_remote;
   std::lock_guard<std::mutex> lock(vm_map_lock_);
 
-  auto it = vm_map_.find(vmid);
-  if (it == vm_map_.end()) {
-    callback(VhmClientStatus::NOT_FOUND, std::move(cli_remote), std::move(srv_remote));
+  auto context = FindActiveVmContextLocked(vmid);
+  if (!context) {
+    callback(VhmClientStatus::NOT_FOUND, std::move(cli_remote),
+             std::move(srv_remote));
     return;
   }
 
@@ -458,7 +539,7 @@ void VhmServiceImpl::SetupChannel(uint16_t vmid,
   status = zx::channel::create(0u, &srv_local, &srv_remote);
   FXL_CHECK(status == ZX_OK);
 
-  status = it->second->SetupVhmChannel(std::move(cli_local), std::move(srv_local));
+  status = context->SetupVhmChannel(std::move(cli_local), std::move(srv_local));
   if (status != ZX_OK) {
     callback(VhmClientStatus::ALREADY_BOUND, zx::channel(), zx::channel());
     return;
@@ -470,27 +551,24 @@ void VhmServiceImpl::SetupChannel(uint16_t vmid,
 
 uint64_t VhmServiceImpl::mmio_trap_dump(uint64_t vmid) {
   std::lock_guard<std::mutex> lock(vm_map_lock_);
-  auto it = vm_map_.find(vmid);
-  if (it == vm_map_.end()) {
+  auto context = FindActiveVmContextLocked(vmid);
+  if (!context) {
     FXL_LOG(ERROR) << "Guest vmid " << vmid << " is not find";
     return -1;
   }
-#ifdef VHE_MMIO_TRAP_DEBUG
-  it->second->dump_trap_cnt();
-#endif
   return 0;
 }
 
 VmContext::VmContext(uint16_t vmid,
                      uint8_t num_vcpus,
                      uint64_t cpu_affinity,
-                     component::ApplicationContext* context,
-                     InterruptController *controller,
+                     component::ApplicationLauncherPtr& launcher,
+                     InterruptController* controller,
                      uint32_t kick_irq)
     : vmid_(vmid),
       num_vcpus_(num_vcpus),
       cpu_affinity_(cpu_affinity),
-      application_context_(context),
+      launcher_(launcher),
       interrupt_controller_(controller),
       kick_irq_(kick_irq) {
   ioreq_event_.resize(ACRN_IO_REQUEST_MAX);
@@ -502,13 +580,50 @@ VmContext::VmContext(uint16_t vmid,
 }
 
 VmContext::~VmContext() {
-  for (uint32_t cpu = 0; cpu < 8; ++cpu) {
-    zx_power_on_cpu(cpu);
+  Shutdown();
+  if (ioreq_) {
+    zx::vmar::root_self().unmap((uintptr_t)ioreq_, PAGE_SIZE);
+    ioreq_ = nullptr;
   }
-  zx::vmar::root_self().unmap((uintptr_t)ioreq_, PAGE_SIZE);
-  if(application_controller_.is_bound()) {
+}
+
+void VmContext::Shutdown() {
+  if (shutdown_started_.exchange(true)) {
+    return;
+  }
+
+  for (uint32_t vcpu = 0; vcpu < ACRN_IO_REQUEST_MAX; ++vcpu) {
+    signal_ioreq_termination(vcpu);
+  }
+  vm_ready_event_.signal(0, kSignalVmShutdown);
+
+  loop_.Shutdown();
+
+  if (application_controller_.is_bound()) {
     application_controller_->KillAndWait();
   }
+
+#ifdef _VHM_USE_CHANNEL_
+  if (vhm_srv_chan_.is_valid()) {
+    vhm_srv_chan_.signal(0, kSignalVhmShutdown);
+  }
+  vhm_cli_chan_.reset();
+  if (vhm_thread_started_) {
+    int result = 0;
+    const zx_time_t join_start = zx_clock_get(ZX_CLOCK_MONOTONIC);
+    const int ret = thrd_join(vhm_thread_, &result);
+    const zx_duration_t join_duration =
+        zx_clock_get(ZX_CLOCK_MONOTONIC) - join_start;
+    FXL_LOG(INFO) << "vhm-sos-thread join waited " << join_duration << " ns ("
+                  << join_duration / ZX_MSEC(1) << " ms), ret=" << ret
+                  << ", result=" << result;
+    if (ret != thrd_success) {
+      FXL_LOG(ERROR) << "vhm-sos-thread join failed";
+    }
+    vhm_thread_started_ = false;
+  }
+  vhm_srv_chan_.reset();
+#endif
 }
 
 void VmContext::Wait(uint8_t vcpu_id) {
@@ -560,17 +675,28 @@ void VmContext::send_interrupt(uint64_t msi_addr, uint64_t msi_data) {
     FXL_LOG(WARNING) << "failed to signal interrupt, id=" << irq;
   }
 #else
+  if (shutdown_started_.load(std::memory_order_acquire)) {
+    return;
+  }
+
   struct vhm_chan_request request;
   request.cmd = VHM_INTR_INJECT;
   request.param.intr_inject.dev_id = msi_addr;
   request.param.intr_inject.evt_id = msi_data;
   utrace(TAG_COMM_ENTER, 1, 4, 1, msi_addr);
-  vhm_cli_chan_.write(0, &request, sizeof(request), NULL, 0);
+  zx_status_t status =
+      vhm_cli_chan_.write(0, &request, sizeof(request), NULL, 0);
+  if (status != ZX_OK && !shutdown_started_.load(std::memory_order_acquire)) {
+    FXL_LOG(ERROR) << "failed to send interrupt to vm:" << vmid_
+                   << ", status:" << status;
+  }
   utrace(TAG_COMM_EXIT, 1, 4, 1, msi_addr);
 #endif
 }
 
-zx_status_t VmContext::vm_call(std::string& req, void* resp, size_t* resp_size) {
+zx_status_t VmContext::vm_call(std::string& req,
+                               void* resp,
+                               size_t* resp_size) {
   FXL_CHECK(resp != nullptr);
   FXL_CHECK(resp_size != nullptr);
   fsl::SizedVmo req_vmo, resp_vmo;
@@ -623,13 +749,25 @@ void VmContext::signal_ioreq_completion(uint8_t vcpu_id) {
   ioreq_event_[vcpu_id].signal(0, kSignalIoreqCompletion);
 #else
   if (is_sideband_chan(vcpu_id)) {
+    if (shutdown_started_.load(std::memory_order_acquire)) {
+      return;
+    }
+
     uint8_t side_chan = VCPU_ID_SIDEBAND_CHANNEL(vcpu_id);
     utrace(TAG_COMM_ENTER, 1, 6, 3, side_chan, 2, vcpu_id);
     struct vhm_chan_request request;
     request.cmd = VHM_IO_REQUEST_ASYNC_RESPONSE;
     request.param.io_req.vcpu_id = vcpu_id;
-    vhm_cli_chan_.write(0, &request, sizeof(request), NULL, 0);
+    zx_status_t status =
+        vhm_cli_chan_.write(0, &request, sizeof(request), NULL, 0);
+    if (status != ZX_OK && !shutdown_started_.load(std::memory_order_acquire)) {
+      FXL_LOG(ERROR) << "failed to send async ioreq response to vm:" << vmid_
+                     << ", status:" << status;
+    }
     utrace(TAG_COMM_EXIT, 1, 6, 3, side_chan, 2, vcpu_id);
+#ifdef WITH_CROSS_VM_DUMP
+    cvmd_mp_set_ticks(CROSS_VM_DUMP_VDEV_NOTIFY_G2H, 12);
+#endif
   } else {
     utrace(TAG_COMM_ENTER, 1, 6, 2, vcpu_id);
     ioreq_event_[vcpu_id].signal(0, kSignalIoreqCompletion);
@@ -638,23 +776,21 @@ void VmContext::signal_ioreq_completion(uint8_t vcpu_id) {
 #endif
 }
 
+#ifdef VHE_MMIO_TRAP_DEBUG
 void VmContext::increase_trap_cnt(uintptr_t addr) {
-  for (auto it = mmio_mappings_.begin(); it != mmio_mappings_.end(); it++) {
-    if (addr >= (*it).acrn_mmio_mapping->base &&
-        addr < (*it).acrn_mmio_mapping->base + (*it).acrn_mmio_mapping->size) {
-      (*it).trap_cnt++;
-      return;
-    }
-  }
-  FXL_LOG(ERROR) << "trap addr:" << std::hex << addr;
-}
+  auto monitor_virtio = machina::Monitor_virtio::GetInstance();
+  FXL_CHECK(monitor_virtio != nullptr);
 
-void VmContext::dump_trap_cnt(void) {
-  for (auto it = mmio_mappings_.begin(); it != mmio_mappings_.end(); it++) {
-    FXL_LOG(INFO) << "hyp trap [" << std::hex << (*it).acrn_mmio_mapping->base << "-" <<
-      (*it).acrn_mmio_mapping->base + (*it).acrn_mmio_mapping->size <<"], cnt:" << std::dec << (*it).trap_cnt;
+  struct virtio_monitor* virtio_monitor_range;
+  virtio_monitor_range = monitor_virtio->FindAddrRange(addr, vmid_);
+  if (virtio_monitor_range) {
+    uint64_t tk;
+    virtio_monitor_range->cur_stage = STAGE_SOS;
+    __asm__ volatile("mrs %0, cntpct_el0" : "=r"(tk));
+    virtio_monitor_range->time = tk;
   }
 }
+#endif
 
 void VmContext::signal_ioreq_termination(uint8_t vcpu_id) {
   ioreq_event_[vcpu_id].signal(0, kSignalIoreqTermination);
@@ -684,42 +820,65 @@ void VmContext::GetMmioMappings(fidl::InterfaceHandle<MappingListener> handle) {
 
   for (auto it = mmio_mappings_.begin(); it != mmio_mappings_.end(); it++) {
     auto success =
-        listener->OnNewMapping((*it).acrn_mmio_mapping->base,
-            (*it).acrn_mmio_mapping->size, (*it).acrn_mmio_mapping->trap_type);
+        listener->OnNewMapping((*it)->base, (*it)->size, (*it)->trap_type);
     FXL_CHECK(success);
   }
 }
 
-void VmContext::start_vm() {
-  async::PostTask(loop_.async(), [this] {
+zx_status_t VmContext::start_vm() {
+  return async::PostTask(loop_.async(), [this] {
+    if (shutdown_started_.load(std::memory_order_acquire)) {
+      return;
+    }
     component::ApplicationLaunchInfo launch_info;
     launch_info.url = "file://uos";
     launch_info.arguments.push_back(std::to_string(vmid_));
-    application_context_->launcher()->CreateApplication(
-        std::move(launch_info), application_controller_.NewRequest());
+    launcher_->CreateApplication(std::move(launch_info),
+                                 application_controller_.NewRequest());
   });
 }
 
+zx_status_t VmContext::WaitForVmReady(zx::time deadline) {
+  zx_signals_t pending = 0;
+  zx_status_t status = vm_ready_event_.wait_one(
+      kSignalVmReady | kSignalVmShutdown, deadline, &pending);
+  if (status != ZX_OK) {
+    return status;
+  }
+  if (pending & kSignalVmShutdown) {
+    return ZX_ERR_CANCELED;
+  }
+  return ZX_OK;
+}
+
 void VmContext::add_mmio_mapping(std::unique_ptr<acrn_mmio_mapping>& mapping) {
-  struct mmio_mapping mmio_mapping;
-  mmio_mapping.acrn_mmio_mapping = std::move(mapping);
-  mmio_mapping.trap_cnt = 0;
-  mmio_mappings_.push_back(std::move(mmio_mapping));
+  mmio_mappings_.push_back(std::move(mapping));
 }
 
 #ifdef _VHM_USE_CHANNEL_
 void VmContext::HandleVhmChannelMsgLoop() {
-  zx_signals_t signals = ZX_CHANNEL_READABLE | ZX_CHANNEL_PEER_CLOSED;
+  zx_signals_t signals =
+      ZX_CHANNEL_READABLE | ZX_CHANNEL_PEER_CLOSED | kSignalVhmShutdown;
   zx_signals_t pending = 0;
   zx_status_t status;
 
   zx_thread_set_priority(kIRQPriority);
   uint32_t cpu_mask = kNormalCpuAffinity;
   _trusty_ioctl(SYS_PLATFORM_FD, SYS_PLATFORM_SET_CUR_THREAD_AFFINITY,
-      (void*) &cpu_mask);
+                (void*)&cpu_mask);
 
-  while ((status = vhm_srv_chan_.wait_one(signals, zx::time::infinite(),
-                                          &pending)) == ZX_OK) {
+  while (!shutdown_started_.load(std::memory_order_acquire)) {
+    status = vhm_srv_chan_.wait_one(signals, zx::time::infinite(), &pending);
+    if (status != ZX_OK) {
+      if (!shutdown_started_.load(std::memory_order_acquire)) {
+        FXL_LOG(ERROR) << "vhm server channel wait failed, status:" << status;
+      }
+      break;
+    }
+    if (pending & kSignalVhmShutdown) {
+      break;
+    }
+
     if (pending & ZX_CHANNEL_READABLE) {
       struct vhm_chan_request request;
       struct vhm_chan_response response;
@@ -743,6 +902,9 @@ void VmContext::HandleVhmChannelMsgLoop() {
       }
       switch (request.cmd) {
         case VHM_IO_REQUEST_ASYNC: {
+#ifdef WITH_CROSS_VM_DUMP
+          cvmd_mp_set_ticks(CROSS_VM_DUMP_VDEV_NOTIFY_G2H, 4);
+#endif
           vcpu_id = request.param.io_req.vcpu_id;
 #ifdef VHE_MMIO_TRAP_DEBUG
           addr = request.param.io_req.addr;
@@ -758,6 +920,9 @@ void VmContext::HandleVhmChannelMsgLoop() {
           interrupt_controller_->Interrupt(kick_irq_);
 #endif
           utrace(TAG_COMM_EXIT, 1, 3, 3, side_chan);
+#ifdef WITH_CROSS_VM_DUMP
+          cvmd_mp_set_ticks(CROSS_VM_DUMP_VDEV_NOTIFY_G2H, 5);
+#endif
           break;
         }
         case VHM_IO_REQUEST: {
@@ -773,8 +938,17 @@ void VmContext::HandleVhmChannelMsgLoop() {
           Wait(vcpu_id);
           response.txid = request.txid;
           response.cmd = request.cmd;
-          vhm_srv_chan_.write(0, &response, sizeof(response), NULL, 0);
+          status = vhm_srv_chan_.write(0, &response, sizeof(response), NULL, 0);
+          if (status != ZX_OK &&
+              !shutdown_started_.load(std::memory_order_acquire)) {
+            FXL_LOG(ERROR) << "Failed to write vhm response to vm: " << vmid_
+                           << ", status:" << status;
+          }
           utrace(TAG_COMM_EXIT, 1, 1, 2, vcpu_id);
+          break;
+        }
+        case VHM_SOS_INTR_INJECT: {
+          interrupt_controller_->Interrupt(uos_exp_irq_);
           break;
         }
         default:
@@ -789,7 +963,7 @@ void VmContext::HandleVhmChannelMsgLoop() {
 
 static int vhm_thread_loop(void* ctx) {
   FXL_CHECK(ctx != nullptr);
-  VmContext *context = (VmContext *)ctx;
+  VmContext* context = (VmContext*)ctx;
   context->HandleVhmChannelMsgLoop();
   return 0;
 }
@@ -804,11 +978,10 @@ zx_status_t VmContext::SetupVhmChannel(zx::channel&& srv, zx::channel&& cli) {
   vhm_srv_chan_ = std::move(srv);
   vhm_cli_chan_ = std::move(cli);
 
-  thrd_t vhm_thread;
-  ret = thrd_create_with_name(&vhm_thread, vhm_thread_loop, this, "vhm-sos-thread");
+  ret = thrd_create_with_name(&vhm_thread_, vhm_thread_loop, this,
+                              "vhm-sos-thread");
   FXL_CHECK(ret == thrd_success);
-  ret = thrd_detach(vhm_thread);
-  FXL_CHECK(ret == thrd_success);
+  vhm_thread_started_ = true;
 
   return ZX_OK;
 }

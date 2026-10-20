@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2018 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -6,6 +8,8 @@
 #include <zircon/syscalls.h>
 
 #include "garnet/bin/guest/guest_config.h"
+#include "garnet/bin/guest/proto/vm_config.pb.h"
+#include "garnet/lib/machina/gpu_scheduler_vcpu_selection.h"
 #include "gtest/gtest.h"
 
 namespace guest {
@@ -38,6 +42,77 @@ TEST(GuestConfigParserTest, DefaultValues) {
   ASSERT_FALSE(config.block_wait());
 }
 
+TEST(GpuVcpuSelectionTest, EmptyListSelectsEveryVcpu) {
+  const std::vector<uint32_t> vcpus;
+
+  EXPECT_TRUE(machina::IsGpuSchedVcpuSelected(vcpus, 0));
+  EXPECT_TRUE(machina::IsGpuSchedVcpuSelected(vcpus, 3));
+}
+
+TEST(GpuVcpuSelectionTest, ConfiguredListSelectsOnlyMatchingVcpus) {
+  const std::vector<uint32_t> vcpus = {1, 3};
+
+  EXPECT_FALSE(machina::IsGpuSchedVcpuSelected(vcpus, 0));
+  EXPECT_TRUE(machina::IsGpuSchedVcpuSelected(vcpus, 1));
+  EXPECT_FALSE(machina::IsGpuSchedVcpuSelected(vcpus, 2));
+  EXPECT_TRUE(machina::IsGpuSchedVcpuSelected(vcpus, 3));
+}
+
+TEST(UosGpuVcpuSelectionTest, EmptyListSelectsEveryVcpu) {
+  nbl_vmm::VmConfig config;
+
+  EXPECT_TRUE(
+      machina::IsGpuSchedVcpuSelected(config.gpu_sched_vcpus(), 0));
+  EXPECT_TRUE(
+      machina::IsGpuSchedVcpuSelected(config.gpu_sched_vcpus(), 3));
+}
+
+TEST(UosGpuVcpuSelectionTest, ConfiguredListSelectsOnlyMatchingVcpus) {
+  nbl_vmm::VmConfig config;
+  config.add_gpu_sched_vcpus(1);
+  config.add_gpu_sched_vcpus(3);
+
+  EXPECT_FALSE(
+      machina::IsGpuSchedVcpuSelected(config.gpu_sched_vcpus(), 0));
+  EXPECT_TRUE(
+      machina::IsGpuSchedVcpuSelected(config.gpu_sched_vcpus(), 1));
+  EXPECT_FALSE(
+      machina::IsGpuSchedVcpuSelected(config.gpu_sched_vcpus(), 2));
+  EXPECT_TRUE(
+      machina::IsGpuSchedVcpuSelected(config.gpu_sched_vcpus(), 3));
+}
+
+TEST(UosGpuVcpuSelectionTest, BoundaryVcpuIdsAreValid) {
+  nbl_vmm::VmConfig config;
+  config.set_num_cpus(4);
+  config.add_gpu_sched_vcpus(0);
+  config.add_gpu_sched_vcpus(3);
+
+  EXPECT_EQ(ZX_OK, machina::ValidateGpuSchedVcpus(
+                       config.gpu_sched_vcpus(), config.num_cpus()));
+}
+
+TEST(UosGpuVcpuSelectionTest, DuplicateVcpuIdsAreInvalid) {
+  nbl_vmm::VmConfig config;
+  config.set_num_cpus(4);
+  config.add_gpu_sched_vcpus(2);
+  config.add_gpu_sched_vcpus(2);
+
+  EXPECT_EQ(ZX_ERR_INVALID_ARGS,
+            machina::ValidateGpuSchedVcpus(config.gpu_sched_vcpus(),
+                                           config.num_cpus()));
+}
+
+TEST(UosGpuVcpuSelectionTest, OutOfRangeVcpuIdIsInvalid) {
+  nbl_vmm::VmConfig config;
+  config.set_num_cpus(4);
+  config.add_gpu_sched_vcpus(4);
+
+  EXPECT_EQ(ZX_ERR_INVALID_ARGS,
+            machina::ValidateGpuSchedVcpus(config.gpu_sched_vcpus(),
+                                           config.num_cpus()));
+}
+
 TEST(GuestConfigParserTest, ParseConfig) {
   GuestConfig config;
   GuestConfigParser parser(&config);
@@ -65,6 +140,116 @@ TEST(GuestConfigParserTest, ParseConfig) {
   ASSERT_EQ(5678, config.balloon_pages_threshold());
   ASSERT_TRUE(config.balloon_demand_page());
   ASSERT_TRUE(config.block_wait());
+}
+
+TEST(GuestConfigParserTest, ParseArbiterGpuVcpus) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(ZX_OK, parser.ParseConfig(
+                       R"JSON({"arbiter-gpu-vcpus":["1","3"]})JSON"));
+  EXPECT_EQ((std::vector<uint32_t>{1, 3}), config.arbiter_gpu().vcpus);
+}
+
+TEST(GuestConfigParserTest, ParseCommaSeparatedArbiterGpuVcpus) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(ZX_OK,
+            parser.ParseConfig(R"JSON({"arbiter-gpu-vcpus":"1,3"})JSON"));
+  EXPECT_EQ((std::vector<uint32_t>{1, 3}), config.arbiter_gpu().vcpus);
+}
+
+TEST(GuestConfigParserTest, ParseWhitespaceSeparatedArbiterGpuVcpus) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(ZX_OK,
+            parser.ParseConfig(R"JSON({"arbiter-gpu-vcpus":"1, 2"})JSON"));
+  EXPECT_EQ((std::vector<uint32_t>{1, 2}), config.arbiter_gpu().vcpus);
+}
+
+TEST(GuestConfigParserTest, RejectNonNumericArbiterGpuVcpu) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  EXPECT_EQ(ZX_ERR_INVALID_ARGS,
+            parser.ParseConfig(R"JSON({"arbiter-gpu-vcpus":"abc"})JSON"));
+  EXPECT_TRUE(config.arbiter_gpu().vcpus.empty());
+}
+
+TEST(GuestConfigParserTest, RejectTrailingJunkInArbiterGpuVcpu) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  EXPECT_EQ(ZX_ERR_INVALID_ARGS,
+            parser.ParseConfig(R"JSON({"arbiter-gpu-vcpus":"1x"})JSON"));
+  EXPECT_TRUE(config.arbiter_gpu().vcpus.empty());
+}
+
+TEST(GuestConfigParserTest, RejectOverflowingArbiterGpuVcpu) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  EXPECT_EQ(
+      ZX_ERR_INVALID_ARGS,
+      parser.ParseConfig(R"JSON({"arbiter-gpu-vcpus":"4294967296"})JSON"));
+  EXPECT_TRUE(config.arbiter_gpu().vcpus.empty());
+}
+
+TEST(GuestConfigParserTest, EmptyArbiterGpuVcpusIsValid) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(ZX_OK,
+            parser.ParseConfig(R"JSON({"arbiter-gpu-vcpus":[]})JSON"));
+  EXPECT_TRUE(config.arbiter_gpu().vcpus.empty());
+  EXPECT_EQ(ZX_OK, machina::ValidateGpuSchedVcpus(
+                       config.arbiter_gpu().vcpus, config.num_cpus()));
+}
+
+TEST(GuestConfigParserTest, MissingArbiterGpuVcpusIsValid) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(ZX_OK, parser.ParseConfig(R"JSON({})JSON"));
+  EXPECT_TRUE(config.arbiter_gpu().vcpus.empty());
+  EXPECT_EQ(ZX_OK, machina::ValidateGpuSchedVcpus(
+                       config.arbiter_gpu().vcpus, config.num_cpus()));
+}
+
+TEST(GuestConfigParserTest, ArbiterGpuVcpuBoundaryIdsAreValid) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(
+      ZX_OK,
+      parser.ParseConfig(
+          R"JSON({"cpus":"4","arbiter-gpu-vcpus":["0","3"]})JSON"));
+  EXPECT_EQ(ZX_OK, machina::ValidateGpuSchedVcpus(
+                       config.arbiter_gpu().vcpus, config.num_cpus()));
+}
+
+TEST(GuestConfigParserTest, ArbiterGpuVcpuMustBeInRange) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(ZX_OK, parser.ParseConfig(
+                       R"JSON({"cpus":"4","arbiter-gpu-vcpus":["4"]})JSON"));
+  EXPECT_EQ(ZX_ERR_INVALID_ARGS,
+            machina::ValidateGpuSchedVcpus(config.arbiter_gpu().vcpus,
+                                           config.num_cpus()));
+}
+
+TEST(GuestConfigParserTest, ArbiterGpuVcpusMustBeUnique) {
+  GuestConfig config;
+  GuestConfigParser parser(&config);
+
+  ASSERT_EQ(ZX_OK, parser.ParseConfig(
+                       R"JSON({"cpus":"4","arbiter-gpu-vcpus":["2","2"]})JSON"));
+  EXPECT_EQ(ZX_ERR_INVALID_ARGS,
+            machina::ValidateGpuSchedVcpus(config.arbiter_gpu().vcpus,
+                                           config.num_cpus()));
 }
 
 TEST(GuestConfigParserTest, ParseArgs) {
@@ -389,9 +574,12 @@ TEST(GuestConfigParserTest, VmemSpec) {
         })JSON"));
 
   const std::vector<machina::VmemSpec> expected = {
-      {"vmem1", 0x40000000, 0x00000000, 0x40000000, machina::MemoryPolicy::kDemand, 0,0},
-      {"vmem2", 0x20000000, 0x40000000, 0x40000000, machina::MemoryPolicy::kCached, 0,0},
-      {"vmem3", 0x30000000, 0x80000000, 0x40000000, machina::MemoryPolicy::kDevice, 1,0},
+      {"vmem1", "", 0x40000000, 0x00000000, 0x40000000,
+       machina::MemoryPolicy::kDemand, 0, 0, "RW"},
+      {"vmem2", "", 0x20000000, 0x40000000, 0x40000000,
+       machina::MemoryPolicy::kCached, 0, 0, "RW"},
+      {"vmem3", "", 0x30000000, 0x80000000, 0x40000000,
+       machina::MemoryPolicy::kDevice, 1, 0, "RW"},
   };
   auto actual = config.vmem();
 

@@ -13,8 +13,13 @@ fidl("fidl") {
     "audio_irq.fidl",
     "shared_irq.fidl",
     "ipc.fidl",
+    "gpu_ping.fidl",
     "rproc.fidl",
     "ipcmessage.fidl",
+    "cross_vm_lock.fidl",
+    "gpu_scheduler.fidl",
+    "interrupt.fidl",
+    "mem_controller.fidl",
   ]
   public_deps = [
     "//garnet/public/lib/mem/fidl",

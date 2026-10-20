@@ -1,0 +1,45 @@
+
+// Copyright 2023 GoldenRiver Technology Co., Ltd.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library machina;
+
+struct SchedIrqResult {
+    uint32 grant_irq;
+    uint32 stop_irq;
+    uint32 lost_irq;
+    uint32 rcvr_irq;
+    uint32 job_irq;
+    uint32 mmu_irq;
+    uint32 gpu_irq;
+    uint32 evt_irq;
+    uint32 pwr_irq;
+};
+
+struct SchedRegResult {
+    vector<uint64> gpu_regions;
+};
+
+struct SchedTimeResult {
+    vector<uint64> timer_period;
+};
+
+struct SchedRsvResult {
+    bool gpu_reserved_mem;
+};
+
+struct SchedAeeInfoResult {
+  uint64 aee_ipa;
+  uint64 aee_size;
+};
+
+[ServiceName="machina.GpuScheduleService"]
+interface GpuScheduleService {
+  1: GetSchedHandle() -> (handle sched);
+  2: GetSchedIrq() -> (SchedIrqResult result);
+  3: GetSchedReg() -> (SchedRegResult result);
+  4: GetSchedTime() -> (SchedTimeResult result);
+  5: GetSchedRsv() -> (SchedRsvResult result);
+  6: GetSchedAeeInfo() -> (SchedAeeInfoResult result);
+};

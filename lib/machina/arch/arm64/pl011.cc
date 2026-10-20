@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -31,20 +33,30 @@ enum class Pl011Register : uint64_t {
 
 // clang-format on
 
-zx_status_t Pl011::Init(Guest* guest, uint64_t addr) {
+zx_status_t Pl011::Init(Guest* guest, uint64_t addr, int32_t vmid,
+                        VmlogStore* logstore) {
+  vmid_ = vmid;
+  if (logstore != nullptr) {
+    logstore_ = logstore;
+    log_sinking_.store(true);
+  }
   return guest->CreateMapping(TrapType::MMIO_SYNC, addr, kPl011Size, 0, this);
+}
+
+zx_status_t Pl011::Init(Guest* guest, uint64_t addr, VmlogStore* logstore) {
+  return Init(guest, addr, -1, logstore);
 }
 
 zx_status_t Pl011::Read(uint64_t addr, IoValue* value) const {
   switch (static_cast<Pl011Register>(addr)) {
     case Pl011Register::CR: {
       fbl::AutoLock lock(&mutex_);
-      value->u16 = control_;
+      value->u32 = control_;
     }
       return ZX_OK;
     case Pl011Register::FR:
     case Pl011Register::IMSC:
-      value->u16 = 0;
+      value->u32 = 0;
       return ZX_OK;
     default:
       FXL_LOG(ERROR) << "Unhandled PL011 address read 0x" << std::hex << addr;
@@ -56,7 +68,7 @@ zx_status_t Pl011::Write(uint64_t addr, const IoValue& value) {
   switch (static_cast<Pl011Register>(addr)) {
     case Pl011Register::CR: {
       fbl::AutoLock lock(&mutex_);
-      control_ = value.u16;
+      control_ = value.u32;
     }
       return ZX_OK;
     case Pl011Register::DR:
@@ -79,9 +91,16 @@ void Pl011::Print(uint8_t ch) {
   {
     fbl::AutoLock lock(&mutex_);
     tx_buffer_[tx_offset_++] = ch;
-    if (tx_offset_ < kBufferSize && ch != '\r')
+    if (tx_offset_ < kBufferSize && ch != '\n')
       return;
-    fprintf(stdout, "%.*s", tx_offset_, tx_buffer_);
+
+    if (log_sinking_.load()) {
+      logstore_->WriteLog((char*)tx_buffer_, tx_offset_);
+    } else if (tx_offset_ == kBufferSize) {
+      fprintf(stdout, "\n[vmid:%d]%.*s", vmid_, tx_offset_, tx_buffer_);
+    } else if (ch == '\n') {
+      fprintf(stdout, "[vmid:%d]%.*s", vmid_, tx_offset_, tx_buffer_);
+    }
     tx_offset_ = 0;
   }
   fflush(stdout);

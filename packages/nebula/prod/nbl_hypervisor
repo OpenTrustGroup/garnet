@@ -1,6 +1,11 @@
 {
     "packages": {
         "sos": "//garnet/bin/guest/sos",
-        "uos": "//garnet/bin/guest/uos"
+        "uos": "//garnet/bin/guest/uos",
+        "guest_manager": "//garnet/bin/guest_manager",
+        "guest_manager_tests": "//garnet/bin/guest_manager/tests",
+        "nebula_logger": "//garnet/bin/nebula_logger",
+        "tools": "//garnet/bin/guest_manager/tools",
+        "features": "//garnet/bin/features"
     }
 }

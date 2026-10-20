@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 
 // Copyright 2016 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
@@ -125,6 +126,9 @@ bool need_svc(const char* url) {
       strcmp(url, "file://netstack") == 0 ||
       strcmp(url, "file://trace_manager") == 0 ||
       strcmp(url, "file://ktrace_provider") == 0 ||
+      strcmp(url, "file://features") == 0 ||
+      strcmp(url, "file:///system/bin/lvgl_v9") == 0 ||
+      strcmp(url, "file://guest_manager") == 0 ||
       strcmp(url, "file://nbl_activity_lifecycle_srv") == 0)
     return true;
 
@@ -434,21 +438,26 @@ JobHolder::JobHolder(JobHolder* parent,
   FXL_CHECK(zx::job::create(parent_job, 0u, &job_) == ZX_OK);
 
 #ifdef __Nebula__
-  zx_policy_basic_t policy[] = {
+  if (label == "sys") {
+    zx_policy_basic_t policy[] = {
         {ZX_POL_TRUSTY, ZX_POL_ACTION_DENY},
-  };
-  zx_policy_basic_t policy2[] = {
+    };
+    zx_policy_basic_t policy2[] = {
         {ZX_POL_NEW_PROCESS, ZX_POL_ACTION_DENY},
-  };
-  zx_job_set_policy(job_.get(), ZX_JOB_POL_ABSOLUTE, ZX_JOB_POL_BASIC, policy,
+    };
+    zx_job_set_policy(job_.get(), ZX_JOB_POL_ABSOLUTE, ZX_JOB_POL_BASIC, policy,
                       countof(policy));
 
-  FXL_CHECK(zx::job::create(job_.get(), 0u, &job_for_child_normal_) == ZX_OK);
-  FXL_CHECK(job_for_child_normal_.duplicate(kChildJobRights, &job_for_child_) == ZX_OK);
+    FXL_CHECK(zx::job::create(job_.get(), 0u, &job_for_child_normal_) == ZX_OK);
+    FXL_CHECK(job_for_child_normal_.duplicate(kChildJobRights,
+                                              &job_for_child_) == ZX_OK);
 
-  fsl::SetObjectName(job_for_child_normal_.get(), "nbl-inner");
-  zx_job_set_policy(job_for_child_normal_.get(), ZX_JOB_POL_ABSOLUTE, ZX_JOB_POL_BASIC, policy2,
-                    countof(policy2));
+    fsl::SetObjectName(job_for_child_normal_.get(), "nbl-inner");
+    zx_job_set_policy(job_for_child_normal_.get(), ZX_JOB_POL_ABSOLUTE,
+                      ZX_JOB_POL_BASIC, policy2, countof(policy2));
+  } else {
+    FXL_CHECK(job_.duplicate(kChildJobRights, &job_for_child_) == ZX_OK);
+  }
 #else
   FXL_CHECK(job_.duplicate(kChildJobRights, &job_for_child_) == ZX_OK);
 #endif

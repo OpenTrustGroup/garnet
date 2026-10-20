@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2020 GoldenRiver Technology Co., Ltd.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -300,7 +302,8 @@ TEST_F(VhmDeviceTest, IrqInjection) {
 }
 
 TEST_F(VhmDeviceTest, IoEventFd) {
-  EXPECT_EQ(device_.Write(/*vcpu_id=*/0, AsyncEventDevice::TriggerEvent, 0), ZX_OK);
+  EXPECT_EQ(device_.Write(/*vcpu_id=*/0, AsyncEventDevice::TriggerEvent, 0),
+            ZX_OK);
   EXPECT_EQ(device_.Write(/*vcpu_id=*/0, AsyncEventDevice::WaitForEvent, 0),
             ZX_OK);
 
@@ -313,7 +316,9 @@ TEST_F(VhmDeviceTest, IoEventFd) {
 
 TEST_F(VhmDeviceTest, IrqFd) {
   uint32_t expected_irq;
-  EXPECT_EQ(device_.Read(/*vcpu_id=*/0, AsyncEventDevice::GetIrqNumber, &expected_irq), ZX_OK);
+  EXPECT_EQ(device_.Read(/*vcpu_id=*/0, AsyncEventDevice::GetIrqNumber,
+                         &expected_irq),
+            ZX_OK);
   EXPECT_EQ(device_.Write(/*vcpu_id=*/0, AsyncEventDevice::TriggerIrq, 0),
             ZX_OK);
 

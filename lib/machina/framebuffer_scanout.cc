@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -33,9 +35,9 @@ zx_status_t FramebufferScanout::Create(const char* path,
   // Map framebuffer VMO.
   uintptr_t fbo;
   size_t size = fb.info.stride * fb.info.pixelsize * fb.info.height;
-  zx_status_t status =
-      zx_vmar_map(zx_vmar_root_self(), ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE,
-                  0, fb.vmo, 0, size, &fbo);
+  zx_status_t status = zx_vmar_map(zx_vmar_root_self(),
+                                   ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE,
+                                   0, fb.vmo, 0, size, &fbo);
   if (status != ZX_OK) {
     return status;
   }

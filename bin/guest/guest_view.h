@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -58,7 +60,8 @@ class ScenicScanout : public machina::GpuScanout,
 class GuestView : public mozart::BaseView {
  public:
   GuestView(
-      machina::GpuScanout* scanout, machina::InputDispatcher* input_dispatcher,
+      machina::GpuScanout* scanout,
+      machina::InputDispatcher* input_dispatcher,
       views_v1::ViewManagerPtr view_manager,
       fidl::InterfaceRequest<views_v1_token::ViewOwner> view_owner_request);
 

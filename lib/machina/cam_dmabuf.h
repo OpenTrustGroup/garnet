@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 The GoldenRiverTek Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -5,9 +7,9 @@
 #ifndef GARNET_LIB_MACHINA_CAMDMABUF_H_
 #define GARNET_LIB_MACHINA_CAMDMABUF_H_
 
-#include <zircon/types.h>
 #include <zircon/ktrace.h>
 #include <zircon/nbl_trace/ktrace.h>
+#include <zircon/types.h>
 
 #include "garnet/lib/machina/guest.h"
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -7,7 +9,6 @@
 #include <stdint.h>
 
 #include "garnet/lib/machina/arch/arm64/gic_v3.h"
-
 
 #define GITS_IIDR_PRODUCTID_SHIFT 24
 #define PRODUCT_ID_MACHINA 0x4d /* ASCII code M */

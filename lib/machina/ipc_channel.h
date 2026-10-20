@@ -1,11 +1,13 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2023 GoldenRiver Technology Co., Ltd.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #pragma once
 
-#include <fuchsia/cpp/machina.h>
 #include <fbl/auto_lock.h>
+#include <fuchsia/cpp/machina.h>
 #include <lib/fidl/cpp/binding.h>
 #include <lib/zx/vmar.h>
 #include <lib/zx/vmo.h>
@@ -15,7 +17,7 @@
 
 namespace machina {
 
-#define FAST_CALL_CMD_INVALID         (0)
+#define FAST_CALL_CMD_INVALID (0)
 #define FAST_CALL_CMD_NOTIFY_RX_READY (0x1)
 #define FAST_CALL_CMD_NOTIFY_TX_DONE  (0x2)
 #define FAST_CALL_CMD_KICK_SERVER     (0x3)
@@ -24,7 +26,7 @@ namespace machina {
 #define VM_SERVER_STATE_STOPPED (0)
 #define VM_SERVER_STATE_RUNNING (1)
 #define VM_SERVER_STATE_PAUSING (2)
-#define VM_SERVER_STATE_PAUSED  (3)
+#define VM_SERVER_STATE_PAUSED (3)
 
 struct fast_call_arg {
   zx_txid_t txid;
@@ -54,7 +56,9 @@ constexpr uint8_t kNumChannels = 5;
 class Guest;
 class IpcChannel {
  public:
-  static zx_status_t Create(Guest* guest, std::unique_ptr<IpcChannel>* out, uint8_t way);
+  static zx_status_t Create(Guest* guest,
+                            std::unique_ptr<IpcChannel>* out,
+                            uint8_t way);
   static zx_status_t Create(Guest* guest,
                             zx::vmo tx_vmo,
                             zx::vmo rx_vmo,
@@ -114,7 +118,7 @@ class IpcRequestHandler : public IpcEventListener {
   void NotifyRxReady(uint8_t chan_id);
   void NotifyTxDone(uint8_t chan_id);
   int32_t VMCall(int vmid, zx_txid_t txid);
-  zx_status_t VMRead(int vmid, zx_txid_t *txid);
+  zx_status_t VMRead(int vmid, zx_txid_t* txid);
   zx_status_t VMWrite(int vmid, zx_txid_t txid, int32_t result);
   void SetVMServerState(int vmid, int server_id, int state);
   uint64_t GetRxReadyStatus();
@@ -122,11 +126,12 @@ class IpcRequestHandler : public IpcEventListener {
   void ClearRxReadyStatus(uint32_t bitmask);
   void ClearTxDoneStatus(uint32_t bitmask);
   zx_status_t CreateMboxDeviceTreeNodes(const DeviceTreeSpec& dtb_spec,
-                                        uintptr_t phys_base, uint32_t node);
+                                        uintptr_t phys_base,
+                                        uint32_t node);
   void FastCallLoop();
   void KickVMServer();
   void OnKickVMServer();
-  //void SetTraceMem();
+  // void SetTraceMem();
   void SetSchedMem();
 
   void SetPowerState(uint32_t vmid, uint32_t state);
@@ -139,9 +144,7 @@ class IpcRequestHandler : public IpcEventListener {
   virtual void OnRxReady(uint8_t chan_id, OnRxReadyCallback callback) override;
   virtual void OnTxDone(uint8_t chan_id, OnTxDoneCallback callback) override;
 
-  void set_name(std::string name) {
-    name_ = name;
-  }
+  void set_name(std::string name) { name_ = name; }
   void set_trace_mem(uint64_t addr, uint64_t size) {
     trace_mem_pa_ = addr;
     trace_mem_sz_ = size;
@@ -151,7 +154,7 @@ class IpcRequestHandler : public IpcEventListener {
     sched_mem_sz_ = size;
   }
 
-  std::array<std::unique_ptr<IpcChannel>, kNumChannels> &chan_array(void) {
+  std::array<std::unique_ptr<IpcChannel>, kNumChannels>& chan_array(void) {
     return chans_;
   }
 
@@ -161,12 +164,22 @@ class IpcRequestHandler : public IpcEventListener {
   void set_tx_done_irq(uint16_t tx_done_irq) { tx_done_irq_ = tx_done_irq; }
   uint64_t get_trace_mem_pa(void) { return trace_mem_pa_; }
   uint64_t get_trace_mem_sz(void) { return trace_mem_sz_; }
-  void set_fast_client(zx::channel fast_client) { fast_client_ = std::move(fast_client); }
-  void set_fast_server(zx::channel fast_server) { fast_server_ = std::move(fast_server); }
-  void set_vm_client(zx::channel vm_client) { vm_client_ = std::move(vm_client); }
-  void set_vm_server(zx::channel vm_server) { vm_server_ = std::move(vm_server); }
-  IpcEventListenerSyncPtr &getIpcEventListernerPtr(void) { return peer_; }
-  fidl::Binding<IpcEventListener> &getIpcEventener(void) { return event_listener_binding_; };
+  void set_fast_client(zx::channel fast_client) {
+    fast_client_ = std::move(fast_client);
+  }
+  void set_fast_server(zx::channel fast_server) {
+    fast_server_ = std::move(fast_server);
+  }
+  void set_vm_client(zx::channel vm_client) {
+    vm_client_ = std::move(vm_client);
+  }
+  void set_vm_server(zx::channel vm_server) {
+    vm_server_ = std::move(vm_server);
+  }
+  IpcEventListenerSyncPtr& getIpcEventListernerPtr(void) { return peer_; }
+  fidl::Binding<IpcEventListener>& getIpcEventener(void) {
+    return event_listener_binding_;
+  };
   int get_mailbox_way(void) { return mailbox_way_; }
   int get_mailbox_vmid(void) { return vmid_; }
   void set_mailbox_vmid(int vmid) { vmid_ = vmid; }

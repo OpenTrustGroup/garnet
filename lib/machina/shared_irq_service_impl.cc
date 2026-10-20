@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
+// Copyright 2025 Goldenriver Inc. All rights reserved.
+// Copyright 2018 The Fuchsia Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
 #include "shared_irq_service_impl.h"
 
 #include "garnet/lib/machina/guest.h"

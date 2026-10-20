@@ -1,10 +1,12 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2023 GoldenRiver Inc. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "shared_irq_client.h"
 #include <trusty_std.h>
 #include <uapi/err.h>
-#include "shared_irq_client.h"
 
 #include "garnet/lib/machina/guest.h"
 #include "garnet/lib/machina/shared_irq.h"

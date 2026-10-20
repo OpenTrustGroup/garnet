@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2023 GoldenRiver Inc. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -31,9 +33,9 @@ class AudioIrq {
                      std::unique_ptr<AudioIrq>* out);
 
   AudioIrq(zx::interrupt interrupt,
-            zx::vmo vmo,
-            const AudioIrqSpecEx& spec,
-            Guest* guest);
+           zx::vmo vmo,
+           const AudioIrqSpecEx& spec,
+           Guest* guest);
   AudioIrq(uint16_t vector, Guest* guest);
   ~AudioIrq();
 
@@ -43,7 +45,11 @@ class AudioIrq {
   void AppendIrqStatus(uint32_t vmid, uint64_t bitmask);
   void ClearIrqStatus(uint32_t vmid, uint32_t bitmask);
 
-  void set_afe_irq_spec(uint32_t irq_status_offset, uint32_t irq_clear_offset, uint64_t bitmask, uint32_t vmid, uint32_t index);
+  void set_afe_irq_spec(uint32_t irq_status_offset,
+                        uint32_t irq_clear_offset,
+                        uint64_t bitmask,
+                        uint32_t vmid,
+                        uint32_t index);
   void update_afe_irq_regs_map();
   const AudioIrqSpecEx& GetAudioIrqSpecEx() const { return spec_; }
 
@@ -53,7 +59,8 @@ class AudioIrq {
   uint32_t GetAfeIRQIndex(uint32_t clear_reg);
 
   void HostTriggerVirqLocked() __TA_REQUIRES(mutex_);
-  void GuestTriggerVirqLocked(uint32_t bitmask, uint32_t vmid) __TA_REQUIRES(mutex_);
+  void GuestTriggerVirqLocked(uint32_t bitmask, uint32_t vmid)
+      __TA_REQUIRES(mutex_);
 
   zx::interrupt interrupt_;
   zx::vmo ctrl_regs_vmo_;
@@ -67,7 +74,7 @@ class AudioIrq {
 
   Guest* guest_ = nullptr;
   fbl::Mutex mutex_;
-//  std::atomic<uint8_t> last_vcpu_;
+  //  std::atomic<uint8_t> last_vcpu_;
 };
 
 }  // namespace machina

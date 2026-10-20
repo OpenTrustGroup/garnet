@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 The GoldenRiverTek Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -17,8 +19,8 @@
 #include <zircon/nbl_trace/nbl_trace.h>
 #include <zircon/syscalls.h>
 
-#include "garnet/lib/machina/fdt_utils.h"
 #include "garnet/lib/machina/cam_dmabuf.h"
+#include "garnet/lib/machina/fdt_utils.h"
 #include "lib/fsl/handles/object_info.h"
 
 #define DUMMY_EVT 0xfff
@@ -37,7 +39,7 @@ static zx_status_t get_root_resource(zx::resource* resource) {
 
 namespace machina {
 
-//static constexpr char kKtraceDevPath[] = "/dev/misc/ktrace";
+// static constexpr char kKtraceDevPath[] = "/dev/misc/ktrace";
 
 // Static methods should be defined outside the class.
 std::shared_ptr<CamDmabuf> CamDmabuf::pinstance_{nullptr};
@@ -69,8 +71,9 @@ zx_status_t CamDmabuf::MapCamDmabuf(Guest& guest, bool is_sos) {
     return status;
   }
 
-  status = zx_vmo_create_physical(root_resource.get(), camdmabuf_mem_pa_,
-                                  camdmabuf_mem_sz_, vmo.reset_and_get_address());
+  status =
+      zx_vmo_create_physical(root_resource.get(), camdmabuf_mem_pa_,
+                             camdmabuf_mem_sz_, vmo.reset_and_get_address());
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to create physical VMO " << status;
     return status;
@@ -88,8 +91,8 @@ zx_status_t CamDmabuf::MapCamDmabuf(Guest& guest, bool is_sos) {
                          ZX_VM_FLAG_PERM_EXECUTE | ZX_VM_FLAG_SPECIFIC |
                          ZX_VM_FLAG_MAP_CONTIGUOUS;
     // stage2 mapping for UOS
-    status = zx_vmar_map(guest.vmar(), map_flags, camdmabuf_mem_pa_, vmo.get(), 0,
-                         camdmabuf_mem_sz_, &pa);
+    status = zx_vmar_map(guest.vmar(), map_flags, camdmabuf_mem_pa_, vmo.get(),
+                         0, camdmabuf_mem_sz_, &pa);
     if (status != ZX_OK) {
       FXL_LOG(ERROR) << "Failed to map trace physical memory " << status;
       return status;
@@ -98,8 +101,8 @@ zx_status_t CamDmabuf::MapCamDmabuf(Guest& guest, bool is_sos) {
 
   // mapping for nebula internal use
   status = zx_vmar_map(zx_vmar_root_self(),
-                       ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE,
-                       0, vmo.get(), 0, camdmabuf_mem_sz_, &camdmabuf_mem_va_);
+                       ZX_VM_FLAG_PERM_READ | ZX_VM_FLAG_PERM_WRITE, 0,
+                       vmo.get(), 0, camdmabuf_mem_sz_, &camdmabuf_mem_va_);
   if (status != ZX_OK) {
     FXL_LOG(ERROR) << "Failed to map trace physical memory " << status;
     return status;
@@ -111,8 +114,8 @@ zx_status_t CamDmabuf::MapCamDmabuf(Guest& guest, bool is_sos) {
   return ZX_OK;
 }
 
-
-zx_status_t CamDmabuf::PatchCamDmabufDts(Guest& guest, uintptr_t guest_phys_base) {
+zx_status_t CamDmabuf::PatchCamDmabufDts(Guest& guest,
+                                         uintptr_t guest_phys_base) {
   uintptr_t dtb_offset = guest.dtb_spec().base - guest_phys_base;
   size_t dtb_size = guest.dtb_spec().size;
 
@@ -139,7 +142,8 @@ zx_status_t CamDmabuf::PatchCamDmabufDts(Guest& guest, uintptr_t guest_phys_base
     offs = fdt_path_offset(dtb, "/reserved-memory");
     offs = fdt_add_subnode(dtb, offs, "grt_dmabuf_heap");
     check_status(offs, "grt_dmabuf_heap");
-    ret = fdt_setprop_string(dtb, offs, "compatible", "mediatek,grt_dmabuf_heap");
+    ret =
+        fdt_setprop_string(dtb, offs, "compatible", "mediatek,grt_dmabuf_heap");
     check_status(ret, "compatible");
     ret = fdt_setprop_cells_u64(dtb, offs, "reg", 2, camdmabuf_mem_pa_,
                                 camdmabuf_mem_sz_);
@@ -149,7 +153,8 @@ zx_status_t CamDmabuf::PatchCamDmabufDts(Guest& guest, uintptr_t guest_phys_base
   } else {
     offs = fdt_add_subnode(dtb, offs, "grt_dmabuf_heap");
     check_status(offs, "grt_dmabuf_heap");
-    ret = fdt_setprop_string(dtb, offs, "compatible", "mediatek,grt_dmabuf_heap");
+    ret =
+        fdt_setprop_string(dtb, offs, "compatible", "mediatek,grt_dmabuf_heap");
     check_status(ret, "compatible");
     ret = fdt_setprop_cells_u64(dtb, offs, "reg", 2, camdmabuf_mem_pa_,
                                 camdmabuf_mem_sz_);
@@ -163,7 +168,8 @@ zx_status_t CamDmabuf::PatchCamDmabufDts(Guest& guest, uintptr_t guest_phys_base
   return ZX_OK;
 }
 
-zx_status_t CamDmabuf::CamDmabufMemFromDtb(Guest& guest, uintptr_t guest_phys_base) {
+zx_status_t CamDmabuf::CamDmabufMemFromDtb(Guest& guest,
+                                           uintptr_t guest_phys_base) {
   auto dtb_spec = guest.dtb_spec();
   uintptr_t dtb_offset = dtb_spec.base - guest_phys_base;
   size_t dtb_size = dtb_spec.size;
@@ -182,7 +188,7 @@ zx_status_t CamDmabuf::CamDmabufMemFromDtb(Guest& guest, uintptr_t guest_phys_ba
     return ZX_ERR_NO_RESOURCES;
 
   offs = fdt_node_offset_by_compatible(dtb, offs, "mediatek,grt_dmabuf_heap");
-  if (offs < 0){
+  if (offs < 0) {
     camdmabuf_mem_pa_ = 0;
     camdmabuf_mem_sz_ = 0;
     return ZX_ERR_NO_RESOURCES;

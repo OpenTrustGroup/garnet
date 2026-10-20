@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2023 GoldenRiver Inc. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -43,7 +45,7 @@ class SharedIrqServiceImpl : public SharedIrqService {
   fidl::BindingSet<SharedIrqService> bindings_;
   SharedIrqListenerSyncPtr listener_;
   const std::vector<SharedIrqSpec>& shared_irq_specs_;
-  Guest *guest_;
+  Guest* guest_;
 };
 
 }  // namespace machina

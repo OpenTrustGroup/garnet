@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2023 GoldenRiver Inc. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -30,14 +32,19 @@ class AudioIrqClient : public AudioIrqListener {
   }
 
   void FastCallLoop();
-  void UpdateAfeIrq(uint32_t irq_nr, uint32_t irq_status_offset, uint32_t irq_clear_offset, uint64_t interested_bitmask, uint32_t vmid, uint32_t index);
+  void UpdateAfeIrq(uint32_t irq_nr,
+                    uint32_t irq_status_offset,
+                    uint32_t irq_clear_offset,
+                    uint64_t interested_bitmask,
+                    uint32_t vmid,
+                    uint32_t index);
   void UpdateAfeIrqRegs(uint32_t vector);
 
  private:
   // |AudioIrqListener|
   virtual void OnNewNoBitmaskAudioIrq(uint32_t irq_nr) override;
   virtual void OnPendingIrqEvent(uint32_t irq_nr,
-                                uint64_t pending_bitmap) override;
+                                 uint64_t pending_bitmap) override;
 
   Guest* guest_;
   AudioIrqServiceSyncPtr svc_;

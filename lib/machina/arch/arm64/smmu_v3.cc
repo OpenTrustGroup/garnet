@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 GoldenRiver Technology Co., Ltd.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -22,7 +24,6 @@ namespace machina {
 #define le64_to_cpus(data)
 #define cpu_to_le32s(data)
 #define cpu_to_le64s(data)
-
 
 static constexpr size_t kSmmuv3Size = 0x80000;
 
@@ -127,19 +128,19 @@ zx_status_t Smmuv3::write_eventq(Evt* evt) {
   zx_status_t r;
 
   if (!smmuv3_eventq_enabled(s)) {
-    FXL_LOG(ERROR) << "smmuv3_eventq_enabled fail" ;
+    FXL_LOG(ERROR) << "smmuv3_eventq_enabled fail";
     return ZX_ERR_IO;
   }
 
   if (smmuv3_q_full(q)) {
-    FXL_LOG(ERROR) << "smmuv3_q_full fail" ;
+    FXL_LOG(ERROR) << "smmuv3_q_full fail";
 
     return ZX_ERR_IO;
   }
 
   r = queue_write(q, evt);
   if (r != ZX_OK) {
-    FXL_LOG(ERROR) << "queue_write fail" ;
+    FXL_LOG(ERROR) << "queue_write fail";
     return r;
   }
 
@@ -906,17 +907,17 @@ static void smmuv3_init_regs(SMMUv3State* s) {
 }
 
 zx_status_t Smmuv3::Read(uint64_t addr, IoValue* value) const {
-    if(!initialized_){
-      auto status = zx_iommu_init_dev(iommu_);
-      FXL_CHECK(status == ZX_OK);
-      initialized_ = true;
-      for (auto& sid : sids_) {
-        auto it = state_.smmu_state.devices.find(sid);
-        if(it != state_.smmu_state.devices.end()) {
-          status = it->second->bti.attach();
-          FXL_CHECK(status == ZX_OK);
-        }
+  if (!initialized_) {
+    auto status = zx_iommu_init_dev(iommu_);
+    FXL_CHECK(status == ZX_OK);
+    initialized_ = true;
+    for (auto& sid : sids_) {
+      auto it = state_.smmu_state.devices.find(sid);
+      if (it != state_.smmu_state.devices.end()) {
+        status = it->second->bti.attach();
+        FXL_CHECK(status == ZX_OK);
       }
+    }
   }
 
   return read_mmio(addr, &value->u64, value->access_size);
@@ -926,7 +927,7 @@ zx_status_t Smmuv3::Write(uint64_t addr, const IoValue& value) {
   return write_mmio(addr, value.u64, value.access_size);
 }
 
-mtk_smmu_type Smmuv3::GetSmmuType(uint64_t paddr){
+mtk_smmu_type Smmuv3::GetSmmuType(uint64_t paddr) {
   switch (paddr) {
     case MM_SMMU_IO_BASE:
       return MM_SMMU;
@@ -941,8 +942,8 @@ mtk_smmu_type Smmuv3::GetSmmuType(uint64_t paddr){
   }
 }
 
-
-Smmuv3::Smmuv3(Guest* guest,uint8_t type) : guest_(guest), async_receiver_(this) {
+Smmuv3::Smmuv3(Guest* guest, uint8_t type)
+    : guest_(guest), async_receiver_(this) {
   zx::resource resource;
   auto status = get_root_resource(&resource);
 
@@ -985,7 +986,6 @@ void Smmuv3::OnNewEvent(async_t* async, const zx_packet_iommu_event_t* event) {
 };
 
 zx_status_t Smmuv3::Init(const VsmmuSpec& spec) {
-
   smmuv3_init_regs(&state_);
   auto status = guest_->CreateMapping(TrapType::MMIO_SYNC, spec.paddr,
                                       kSmmuv3Size, 0, this);

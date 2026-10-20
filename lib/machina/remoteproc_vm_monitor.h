@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 GoldenRiver Inc. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -71,4 +73,4 @@ class RprocVmStateMonitor : public VmStateListener {
   int16_t vmid_;
 };
 
-}
+}  // namespace machina

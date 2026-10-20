@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -274,7 +276,8 @@ static zx_status_t load_device_tree(const int fd,
     return ZX_ERR_BAD_STATE;
   }
   // Add the memory range of the initial RAM disk.
-  ret = fdt_setprop_u64(dtb, off, "linux,initrd-start", kRamdiskOffset + kDRamOffset);
+  ret = fdt_setprop_u64(dtb, off, "linux,initrd-start",
+                        kRamdiskOffset + kDRamOffset);
   if (ret < 0) {
     device_tree_error_msg("linux,initrd-start");
     return ZX_ERR_BAD_STATE;

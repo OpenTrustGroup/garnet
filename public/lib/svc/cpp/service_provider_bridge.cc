@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -25,6 +27,16 @@ ServiceProviderBridge::~ServiceProviderBridge() = default;
 void ServiceProviderBridge::AddBinding(
     fidl::InterfaceRequest<component::ServiceProvider> request) {
   bindings_.AddBinding(this, std::move(request));
+}
+
+void ServiceProviderBridge::Shutdown(fbl::Closure callback) {
+  weak_factory_.InvalidateWeakPtrs();
+  bindings_.CloseAll();
+  backend_.Unbind();
+  backing_dir_.reset();
+  if (callback) {
+    callback();
+  }
 }
 
 void ServiceProviderBridge::AddServiceForName(ServiceConnector connector,

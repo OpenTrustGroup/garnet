@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -5,6 +7,7 @@
 #ifndef LIB_SVC_CPP_SERVICE_PROVIDER_BRIDGE_H_
 #define LIB_SVC_CPP_SERVICE_PROVIDER_BRIDGE_H_
 
+#include <fbl/function.h>
 #include <fbl/ref_ptr.h>
 #include <fs/managed-vfs.h>
 #include <lib/zx/channel.h>
@@ -60,6 +63,7 @@ class ServiceProviderBridge : public component::ServiceProvider {
   }
 
   void AddBinding(fidl::InterfaceRequest<component::ServiceProvider> request);
+  void Shutdown(fbl::Closure callback);
   bool ServeDirectory(zx::channel channel);
 
   zx::channel OpenAsDirectory();

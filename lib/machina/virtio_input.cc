@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -12,6 +14,7 @@
 #include <fbl/alloc_checker.h>
 #include <fbl/auto_call.h>
 #include <fbl/auto_lock.h>
+#include <zircon/syscalls.h>
 
 #include "garnet/lib/machina/bits.h"
 #include "lib/fxl/logging.h"
@@ -177,13 +180,20 @@ constexpr uint32_t kMediaKeyboardLastCode = 0x2bf;
 constexpr uint32_t kButtonMousePrimaryCode = 0x110;
 constexpr uint32_t kButtonMouseSecondaryCode = 0x111;
 constexpr uint32_t kButtonMouseTertiaryCode = 0x112;
+constexpr zx_duration_t kInputStopPollInterval = ZX_MSEC(100);
 
-VirtioInput::VirtioInput(InputEventQueue* event_queue, const PhysMem& phys_mem,
-                         const char* device_name, const char* device_serial)
+VirtioInput::VirtioInput(InputEventQueue* event_queue,
+                         const PhysMem& phys_mem,
+                         const char* device_name,
+                         const char* device_serial)
     : VirtioDeviceBase(phys_mem),
       device_name_(device_name),
       device_serial_(device_serial),
       event_queue_(event_queue) {}
+
+VirtioInput::~VirtioInput() {
+  Stop();
+}
 
 static void SetConfigBit(uint32_t event_code, virtio_input_config_t* config) {
   config->u.bitmap[event_code / 8] |= 1u << (event_code % 8);
@@ -335,6 +345,9 @@ zx_status_t VirtioAbsolutePointer::WriteConfig(uint64_t addr,
 }
 
 zx_status_t VirtioInput::Start() {
+  Stop();
+  stopping_.store(false);
+
   thrd_t thread;
   auto poll_thread = [](void* arg) {
     return reinterpret_cast<VirtioInput*>(arg)->PollEventQueue();
@@ -343,21 +356,37 @@ zx_status_t VirtioInput::Start() {
   if (ret != thrd_success) {
     return ZX_ERR_INTERNAL;
   }
-  ret = thrd_detach(thread);
-  if (ret != thrd_success) {
-    return ZX_ERR_INTERNAL;
-  }
+  thread_ = thread;
+  thread_started_ = true;
   return ZX_OK;
 }
 
+void VirtioInput::Stop() {
+  if (!thread_started_) {
+    return;
+  }
+
+  stopping_.store(true);
+  InputEvent event = {};
+  event.type = InputEventType::BARRIER;
+  event_queue_->PostEvent(event);
+  thrd_join(thread_, nullptr);
+  thread_ = {};
+  thread_started_ = false;
+}
+
 zx_status_t VirtioInput::PollEventQueue() {
-  while (true) {
+  while (!stopping_.load()) {
     InputEvent event = event_queue_->Wait();
+    if (stopping_.load()) {
+      break;
+    }
     zx_status_t status = OnInputEvent(event);
     if (status != ZX_OK) {
       return status;
     }
   }
+  return ZX_OK;
 }
 
 zx_status_t VirtioInput::OnInputEvent(const InputEvent& event) {
@@ -450,10 +479,33 @@ zx_status_t VirtioInput::OnBarrierEvent() {
 
 zx_status_t VirtioInput::SendVirtioEvent(const virtio_input_event_t& event) {
   uint16_t head;
-  event_queue()->Wait(&head);
+  VirtioQueue* queue = event_queue();
+  while (!stopping_.load()) {
+    zx_status_t status = queue->NextAvail(&head);
+    if (status == ZX_OK) {
+      break;
+    }
+    if (status != ZX_ERR_SHOULD_WAIT) {
+      return status;
+    }
+
+    status = zx_object_wait_one(queue->event(),
+                                VirtioQueue::SIGNAL_QUEUE_AVAIL,
+                                zx_deadline_after(kInputStopPollInterval),
+                                nullptr);
+    if (status == ZX_ERR_TIMED_OUT) {
+      continue;
+    }
+    if (status != ZX_OK) {
+      return status;
+    }
+  }
+  if (stopping_.load()) {
+    return ZX_ERR_STOP;
+  }
 
   virtio_desc_t desc;
-  zx_status_t status = event_queue()->ReadDesc(head, &desc);
+  zx_status_t status = queue->ReadDesc(head, &desc);
   if (status != ZX_OK) {
     return status;
   }
@@ -462,9 +514,8 @@ zx_status_t VirtioInput::SendVirtioEvent(const virtio_input_event_t& event) {
   memcpy(event_out, &event, sizeof(event));
 
   // To be less chatty, we'll only send interrupts on barrier events.
-  event_queue()->Return(head, sizeof(event),
-                        VirtioQueue::InterruptAction::SET_FLAGS);
-  return ZX_OK;
+  return queue->Return(head, sizeof(event),
+                       VirtioQueue::InterruptAction::SET_FLAGS);
 }
 
 }  // namespace machina

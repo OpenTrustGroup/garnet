@@ -1,0 +1,34 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("wdt_drv") {
+  output_name = "watchdog"
+
+  sources = [
+    "wdt.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  configs -= [ "//build/config:default_warnings" ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+  ]
+}
+
+package("watchdog") {
+  system_image = true
+
+  deps = [
+    ":wdt_drv",
+  ]
+
+   drivers = [
+     {
+       name = "watchdog.so"
+     },
+   ]
+}

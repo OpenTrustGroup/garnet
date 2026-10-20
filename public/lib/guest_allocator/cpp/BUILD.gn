@@ -1,0 +1,11 @@
+source_set("cpp") {
+  sources = [
+    "guest_allocator.h",
+  ]
+
+  public_deps = [
+    "//zircon/public/lib/fdio",
+  ]
+
+  public_configs = [ "//garnet/public:config" ]
+}

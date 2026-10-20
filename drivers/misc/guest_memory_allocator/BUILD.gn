@@ -1,0 +1,35 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("drv") {
+  output_name = "guest_memory_allocator"
+
+  sources = [
+    "allocator.cc",
+  ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/ddktl",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+    "//zircon/public/lib/fbl",
+    "//garnet/public/lib/fxl",
+    "//garnet/public/lib/guest_allocator/cpp",
+    "//third_party/fdt",
+  ]
+}
+
+package("guest_memory_allocator") {
+  system_image = true
+
+  deps = [
+    ":drv",
+  ]
+
+   drivers = [
+     {
+       name = "guest_memory_allocator.so"
+     },
+   ]
+}

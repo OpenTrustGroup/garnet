@@ -1,0 +1,28 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("drv") {
+  output_name = "i2c-echo"
+
+  sources = [
+    "i2c-echo.c",
+  ]
+
+  deps = [
+    "//garnet/lib/linux",
+  ]
+}
+
+package("i2c-echo") {
+  system_image = true
+
+  deps = [
+    ":drv",
+  ]
+
+   drivers = [
+     {
+       name = "i2c-echo.so"
+     },
+   ]
+}

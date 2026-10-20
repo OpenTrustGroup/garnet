@@ -1,0 +1,54 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+config("disable_warnings") {
+  cflags = [
+    "-Wno-int-conversion",
+    "-Wno-pointer-sign",
+    "-Wno-format",
+    "-Wno-unused-variable",
+    "-Wno-unused-function",
+    "-Wno-incompatible-pointer-types",
+  ]
+}
+
+driver_module("drv") {
+  output_name = "mt8668_i2c"
+
+  sources = [
+    "i2c.c",
+    "../mtk_i2c/mtk_i2c.c",
+    "../mtk_i2c/i2c_env.c",
+    "../mtk_i2c/i2c_platform.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  configs += [ ":disable_warnings" ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+  ]
+
+  include_dirs = [
+    "//garnet/drivers/soc/mt8668/include",
+    "//garnet/drivers/i2c/mtk_i2c",
+  ]
+}
+
+
+package("mt8668_i2c") {
+  system_image = true
+
+  deps = [
+    ":drv",
+  ]
+
+  drivers = [
+    {
+      name = "mt8668_i2c.so"
+    },
+  ]
+}

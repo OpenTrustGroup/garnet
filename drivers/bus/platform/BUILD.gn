@@ -1,0 +1,59 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("platform-bus") {
+  output_name = "platform-bus"
+
+  sources = [
+    "platform-bus.c",
+    "platform-device.c",
+    "platform-i2c.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+    "//third_party/fdt",
+  ]
+
+  include_dirs = [
+    "//garnet/drivers/soc/mt8676/include",
+  ]
+}
+
+driver_module("platform-bus-proxy") {
+  output_name = "platform-bus.proxy"
+
+  sources = [
+    "platform-proxy.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+  ]
+}
+
+package("platform") {
+  system_image = true
+
+  deps = [
+    ":platform-bus",
+    ":platform-bus-proxy",
+  ]
+
+   drivers = [
+     {
+       name = "platform-bus.so"
+     },
+     {
+       name = "platform-bus.proxy.so"
+     },
+   ]
+}

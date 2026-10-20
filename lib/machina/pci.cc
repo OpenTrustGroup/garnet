@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -40,7 +42,7 @@ constexpr uint16_t kPciConfigAddressPortTop = 3;
 constexpr uint16_t kPciConfigDataPortBase = 4;
 constexpr uint16_t kPciConfigDataPortTop = 7;
 
-constexpr uint32_t kMmioAddressMask = ~bit_mask<uint32_t>(4);
+constexpr uint64_t kMmioAddressMask = ~bit_mask<uint64_t>(4);
 
 // PCI capabilities register layout.
 constexpr uint8_t kPciCapTypeOffset = 0;
@@ -53,8 +55,24 @@ constexpr uint8_t kPciCapNextOffset = 1;
 //
 // The device tree and DSDT define interrupts for 12 devices (IRQ 32-43).
 // Adding  additional devices beyond that will require updates to both.
+#ifdef __x86_64__
 constexpr uint32_t kPciGlobalIrqAssigments[PCI_MAX_DEVICES] = {
     32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43};
+
+#else
+/*
+ * 1.The default interrupt numbers are for QEMU platform.
+ * 2.Can also be configured by pci-global-irqs field in SOS lua file.
+ * 3.Ended with -1 and -1 is added automatically.
+ * 4.Must be compatible with interrupt-map field of pci@fdf000000 dts node.
+ */
+int32_t kPciGlobalIrqAssigments[PCI_MAX_DEVICES + 1] = {
+    432, 433, 434, 435, 436, 437,
+    438, 439, 440, 441, 442, 443,
+    444, 445, 446, 447,
+    -1
+};
+#endif
 
 uint32_t PciBar::aspace() const {
   switch (trap_type) {
@@ -66,7 +84,7 @@ uint32_t PciBar::aspace() const {
   }
 }
 
-uint32_t PciBar::base() const {
+uint64_t PciBar::base() const {
   switch (aspace()) {
     case PCI_BAR_ASPACE_MMIO:
       return addr & kMmioAddressMask;
@@ -115,11 +133,13 @@ static constexpr PciDevice::Attributes kRootComplexAttributes = {
     .device_class = (PCI_CLASS_BRIDGE_HOST << 16),
 };
 
-PciBus::PciBus(Guest* guest, InterruptController* interrupt_controller)
+PciBus::PciBus(Guest* guest, InterruptController* interrupt_controller,
+               GicIts* its)
     : guest_(guest),
       ecam_handler_(this),
       port_handler_(this),
       interrupt_controller_(interrupt_controller),
+      gic_its_(its),
       root_complex_(kRootComplexAttributes) {}
 
 zx_status_t PciBus::Init() {
@@ -176,11 +196,12 @@ zx_status_t PciBus::Connect(PciDevice* device) {
     mmio_base_ += bar->size;
   }
 
-  device->command_ = kPciCommandIoEnable | kPciCommandMemEnable;
+  device->command_ = kPciCommandIoEnable;
   device->global_irq_ = kPciGlobalIrqAssigments[slot];
   device_[slot] = device;
+  device->set_msix_device_id(1, slot, 0);
 
-  return device->SetupBarTraps(guest_);
+  return ZX_OK;
 }
 
 // PCI LOCAL BUS SPECIFICATION, REV. 3.0 Section 6.1: All PCI devices must
@@ -320,6 +341,25 @@ zx_status_t PciBus::Interrupt(PciDevice& device) {
   return interrupt_controller_->Interrupt(device.global_irq_);
 }
 
+zx_status_t PciBus::config_pci_global_irqs(std::vector<uint32_t>& irqs) {
+  int i;
+
+  if (irqs.size() > PCI_MAX_DEVICES) {
+      return ZX_ERR_INVALID_ARGS;
+  }
+
+  for (i = 0; i < irqs.size(); i++) {
+      kPciGlobalIrqAssigments[i] = irqs[i];
+      kPciGlobalIrqAssigments[i + 1] = -1;
+  }
+
+  return ZX_OK;
+}
+
+int32_t* PciBus::get_pci_global_irqs() {
+  return kPciGlobalIrqAssigments;
+}
+
 // PCI Local Bus Spec v3.0 Section 6.7: Each capability must be DWORD aligned.
 static inline uint8_t pci_cap_len(const pci_cap_t* cap) {
   return align(cap->len, 4);
@@ -383,6 +423,10 @@ zx_status_t PciDevice::ReadCapability(uint8_t addr, uint32_t* out) const {
         break;
     }
     word |= val << (byte * 8);
+  }
+
+  if (cap->id == kPciCapTypeMsix) {
+    word = ReadMsixCapability(addr - cap_base, word);
   }
 
   *out = word;
@@ -495,6 +539,49 @@ zx_status_t PciDevice::ReadConfig(uint64_t reg, IoValue* value) const {
   return ZX_OK;
 }
 
+zx_status_t PciDevice::WriteCapability(uint8_t addr, uint16_t value) {
+  uint8_t cap_index;
+  uint32_t cap_base;
+  const pci_cap_t* cap = FindCapability(addr, &cap_index, &cap_base);
+  if (cap == nullptr)
+    return ZX_ERR_NOT_FOUND;
+
+  if (cap->id == kPciCapTypeMsix) {
+    return WriteMsixCapability(addr - cap_base, value);
+  }
+
+  return ZX_OK;
+}
+
+static bool valid_bar_address(uint64_t addr) {
+  return addr >= kPciMmioBarPhysBase && addr < kPciMmioBarPhysMax;
+}
+
+zx_status_t PciDevice::HandleBarRealloc(PciBar* bar, const IoValue& value) {
+  uint64_t old;
+  uint64_t new_addr;
+  IoValue* modify = (IoValue*)&value;
+
+  old = pci_bus_addr_to_cpu_addr(bar->valid_addr);
+  new_addr = pci_bus_addr_to_cpu_addr(value.u32);
+  if (!valid_bar_address(new_addr)) {
+    return ZX_OK;
+  }
+  if (old == new_addr) {
+    return ZX_OK;
+  }
+
+  FXL_LOG(INFO) << "pci bar change, old:" << std::hex << old << ", new:" << std::hex << new_addr;
+  bar->valid_addr = new_addr;
+  // transfer new pci bar address back.
+  modify->type = (uint8_t)bar->trap_type;
+  modify->old = old;
+  modify->_new = new_addr;
+  modify->size = bar->size;
+  modify->handler = bar;
+  return ZX_ERR_PCI_BAR_REALLOC;
+}
+
 zx_status_t PciDevice::WriteConfig(uint64_t reg, const IoValue& value) {
   switch (reg) {
     case PCI_CONFIG_COMMAND: {
@@ -503,12 +590,25 @@ zx_status_t PciDevice::WriteConfig(uint64_t reg, const IoValue& value) {
       }
 
       bool fire_pending_irq = false;
+      bool memory_space_enabled = false;
       {
         fbl::AutoLock lock(&mutex_);
+        uint16_t old_command = command_;
         command_ = value.u16;
+
+        if (!(old_command & kPciCommandMemEnable) &&
+            (command_ & kPciCommandMemEnable)) {
+          memory_space_enabled = true;
+        }
+
         // If we have a pending IRQ and this write will enable interrupts for
         // this device, we'll inject that pending IRQ now.
         fire_pending_irq = pending_irq_ && pci_irq_enabled(command_);
+      }
+      if (memory_space_enabled) {
+        auto status = SetupBarTraps(bus_->guest());
+        if (status != ZX_OK)
+          FXL_LOG(WARNING) << "Failed to setup bar traps: " << status;
       }
       if (fire_pending_irq) {
         return Interrupt();
@@ -535,6 +635,14 @@ zx_status_t PciDevice::WriteConfig(uint64_t reg, const IoValue& value) {
       bar->addr &= ~(bar->size - 1);
       return ZX_OK;
     }
+    case PCI_REGISTER_CAP_BASE ... PCI_REGISTER_CAP_TOP:
+      if (value.access_size != 2) {
+        return ZX_ERR_NOT_SUPPORTED;
+      }
+      if (WriteCapability(reg, value.u16) != ZX_ERR_NOT_FOUND)
+        return ZX_OK;
+      // Fall-through if the capability is not-implemented.
+      [[clang::fallthrough]];
     default:
       return pci_write_unimplemented_register();
   }
@@ -549,7 +657,7 @@ zx_status_t PciDevice::SetupBarTraps(Guest* guest) {
     bar->n = i;
     bar->device = this;
 
-    uint64_t addr = bar->base();
+    uint64_t addr = pci_bus_addr_to_cpu_addr(bar->addr);
     uint64_t size = bar->size;
     zx_status_t status =
         guest->CreateMapping(bar->trap_type, addr, size, 0, bar);
@@ -564,6 +672,13 @@ zx_status_t PciDevice::Interrupt() {
   if (!bus_)
     return ZX_ERR_BAD_STATE;
   return bus_->Interrupt(*this);
+}
+
+zx_status_t PciDevice::Interrupt(uint16_t index) {
+  if (!bus_)
+    return ZX_ERR_BAD_STATE;
+  bus_->its()->InjectMsi(msix_device_id_, index);
+  return ZX_OK;
 }
 
 }  // namespace machina

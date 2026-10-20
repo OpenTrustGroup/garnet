@@ -1,0 +1,34 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+config("no-unsued-function") {
+  cflags = [ "-Wno-unused-function" ]
+}
+
+driver_module("imx-i2c-drv") {
+  output_name = "i2c-imx"
+
+  sources = [
+    "i2c-imx.c",
+  ]
+
+  deps = [
+    "//garnet/lib/linux",
+  ]
+
+  configs += [ ":no-unsued-function" ]
+}
+
+package("i2c-imx") {
+  system_image = true
+
+  deps = [
+    ":imx-i2c-drv",
+  ]
+
+   drivers = [
+     {
+       name = "i2c-imx.so"
+     },
+   ]
+}

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -16,8 +18,10 @@
 
 // clang-format off
 
+static constexpr uint8_t kPciCapTypeMsix = 0x11;
+
 #define PCI_DEVICE_INVALID          UINT16_MAX
-#define PCI_MAX_DEVICES             12u
+#define PCI_MAX_DEVICES             16u
 #define PCI_MAX_BARS                2u
 
 // PCI configuration constants.
@@ -48,6 +52,7 @@ namespace machina {
 
 class PciBus;
 class PciDevice;
+class GicIts;
 
 // PCI capability structure.
 //
@@ -69,7 +74,7 @@ typedef struct pci_cap {
 
 struct PciBar : public IoHandler {
   // Register value.
-  uint32_t addr;
+  uint64_t addr;
   // Size of this BAR.
   uint32_t size;
   // The type of trap to create for this region.
@@ -79,18 +84,21 @@ struct PciBar : public IoHandler {
   PciDevice* device;
   // Bar number.
   uint8_t n;
+  // Valid pci bar address.
+  uint64_t valid_addr;
 
   // IoHandler interface.
   zx_status_t Read(uint64_t addr, IoValue* value) const override;
   zx_status_t Write(uint64_t addr, const IoValue& value) override;
 
   uint32_t aspace() const;
-  uint32_t base() const;
+  uint64_t base() const;
 };
 
 /* Stores the state of PCI devices. */
 class PciDevice {
  public:
+  virtual ~PciDevice() = default;
   // Static attributes associated with a device.
   struct Attributes {
     // Device attributes.
@@ -120,8 +128,13 @@ class PciDevice {
   zx_status_t ReadConfig(uint64_t reg, IoValue* value) const;
   zx_status_t WriteConfig(uint64_t reg, const IoValue& value);
 
+  virtual uint32_t ReadMsixCapability(uint32_t offset, uint32_t data) const { return data; };
+  virtual zx_status_t WriteMsixCapability(uint32_t offset, uint16_t data) { return ZX_OK; };
+  zx_status_t HandleBarRealloc(PciBar* bar, const IoValue& value);
+
   // Send the configured interrupt for this device.
   zx_status_t Interrupt();
+  zx_status_t Interrupt(uint16_t index);
 
   // Determines if the given base address register is implemented for this
   // device.
@@ -135,6 +148,14 @@ class PciDevice {
   const PciBar* bar(size_t n) const {
     return is_bar_implemented(n) ? &bar_[n] : nullptr;
   }
+
+  void set_msix_device_id(uint16_t bus, uint8_t dev, uint8_t fn) {
+    msix_device_id_ = (bus << 8) | (dev << 3) | fn;
+  }
+
+  uint32_t msix_device_id() const { return msix_device_id_; }
+
+  virtual bool msix_enabled() { return false; }
 
   // Install a capability list.
   void set_capabilities(const pci_cap_t* caps, size_t num_caps) {
@@ -158,6 +179,8 @@ class PciDevice {
 
   zx_status_t ReadCapability(uint8_t addr, uint32_t* out) const;
 
+  zx_status_t WriteCapability(uint8_t addr, uint16_t value);
+
   const pci_cap_t* FindCapability(uint8_t addr,
                                   uint8_t* cap_index,
                                   uint32_t* cap_base) const;
@@ -178,6 +201,7 @@ class PciDevice {
   PciBus* bus_ = nullptr;
   // IRQ vector assigned by the bus.
   uint32_t global_irq_ = 0;
+  uint32_t msix_device_id_ = 0;
 };
 
 class PciPortHandler : public IoHandler {
@@ -202,7 +226,7 @@ class PciEcamHandler : public IoHandler {
 
 class PciBus {
  public:
-  PciBus(Guest* guest, InterruptController* interrupt_controller);
+  PciBus(Guest* guest, InterruptController* interrupt_controller, GicIts* its = nullptr);
 
   zx_status_t Init();
 
@@ -241,6 +265,12 @@ class PciBus {
 
   PciDevice& root_complex() { return root_complex_; }
 
+  GicIts* its() const { return gic_its_; }
+  Guest* guest() const { return guest_; }
+
+  static zx_status_t config_pci_global_irqs(std::vector<uint32_t>& irqs);
+  static int32_t* get_pci_global_irqs();
+
  private:
   mutable fbl::Mutex mutex_;
 
@@ -255,10 +285,11 @@ class PciBus {
   PciDevice* device_[PCI_MAX_DEVICES] = {};
   // IO APIC for use with interrupt redirects.
   InterruptController* interrupt_controller_ = nullptr;
+  GicIts* gic_its_ = nullptr;
   // Embedded root complex device.
   PciDevice root_complex_;
   // Next mmio window to be allocated to connected devices.
-  uint32_t mmio_base_ = kPciMmioBarPhysBase;
+  uint64_t mmio_base_ = kPciMmioBarPhysBase;
   // Pointer to the next open PCI slot.
   size_t next_open_slot_ = 0;
 };

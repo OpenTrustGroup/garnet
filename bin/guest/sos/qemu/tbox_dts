@@ -1,0 +1,116 @@
+/dts-v1/;
+
+/ {
+	model = "Machina";
+	interrupt-parent = <0x01>;
+	#address-cells = <0x02>;
+	#size-cells = <0x02>;
+
+	chosen {
+	};
+
+	cpus {
+		#size-cells = <0x00>;
+		#address-cells = <0x01>;
+
+		cpu-map {
+
+			socket0 {
+
+				cluster0 {
+
+					core0 {
+						cpu = <0x8004>;
+					};
+
+					core1 {
+						cpu = <0x8003>;
+					};
+
+					core2 {
+						cpu = <0x8002>;
+					};
+
+					core3 {
+						cpu = <0x8001>;
+					};
+				};
+			};
+		};
+
+		cpu@0 {
+			phandle = <0x8004>;
+			reg = <0x00>;
+			compatible = "arm,cortex-a710";
+			device_type = "cpu";
+		};
+
+		cpu@1 {
+			phandle = <0x8003>;
+			reg = <0x01>;
+			compatible = "arm,cortex-a710";
+			device_type = "cpu";
+		};
+
+		cpu@2 {
+			phandle = <0x8002>;
+			reg = <0x02>;
+			compatible = "arm,cortex-a710";
+			device_type = "cpu";
+		};
+
+		cpu@3 {
+			phandle = <0x8001>;
+			reg = <0x03>;
+			compatible = "arm,cortex-a710";
+			device_type = "cpu";
+		};
+	};
+
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0x0 0x0 0x0 0x10000000>;
+	};
+
+	psci {
+		compatible = "arm,psci-0.2";
+		method = "smc";
+		cpu_on = <0xc4000003>;
+		cpu_off = <0x84000002>;
+	};
+
+	timer {
+		compatible = "arm,armv8-timer";
+		always-on;
+		interrupts = <0x01 0x0d 0x04 0x01 0x0e 0x04 0x01 0x0b 0x04 0x01 0x0a 0x04>;
+	};
+
+	clock {
+		compatible = "fixed-clock";
+		clock-frequency = <0x16e3600>;
+		clock-output-names = "clk24mhz";
+		#clock-cells = <0x00>;
+		phandle = <0x02>;
+	};
+
+	gic: interrupt-controller@8000000 {
+		compatible = "arm,gic-v3";
+		#address-cells = <0x2>;
+		#size-cells = <0x02>;
+		#interrupt-cells = <0x03>;
+		ranges;
+		interrupt-controller;
+		reg = <0x0 0x8000000 0x0 0x10000 0x0 0x80a0000 0x0 0xf60000>;
+		phandle = <0x01>;
+
+		its: its@8080000 {
+			compatible = "arm,gic-v3-its";
+			msi-controller;
+			reg = <0x0 0x8080000 0x0 0x20000>;
+		};
+	};
+
+	nebula {
+	};
+};

@@ -1,0 +1,11 @@
+// Copyright 2023 GoldenRiver Technology Co., Ltd.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+library machina;
+
+[ServiceName="machina.GpuPingService"]
+interface GpuPingService {
+  1: GetPingIrq(uint16 vmid) -> (uint32 irq);
+  2: GetFifoBufVmo(uint16 vmid) -> (handle<vmo> fifo_vmo);
+};

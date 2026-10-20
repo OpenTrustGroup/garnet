@@ -12,23 +12,44 @@ source_set("lib") {
     "kernel.h",
     "guest_config.cc",
     "guest_config.h",
+    "guest_features.h",
     "linux.cc",
     "linux.h",
+    "watchdog_bootstrap.cc",
+    "watchdog_bootstrap.h",
     "zircon.cc",
     "zircon.h",
   ]
 
   public_deps = [
+    "//garnet/lib/features:client",
     "//garnet/lib/machina",
     "//garnet/public/lib/fsl",
+    "//garnet/public/lib/fxl",
     "//third_party/fdt",
     "//third_party/rapidjson",
     "//zircon/public/lib/fbl",
     "//zircon/public/lib/mdi",
     "//zircon/trusty/lib/lib/libc-trusty",
+    "//garnet/public/lib/lua:liblua",
+    "//garnet/lib/para_partition",
   ]
+  include_dirs = [
+    "//garnet/public/lib/lua",
+    "//garnet/lib/para_partition",
+  ]
+  configs -= [ "//build/config:no_exceptions" ]
 
   defines = [ "_ALL_SOURCE=1" ]
+}
+
+source_set("vmm_controller_teardown") {
+  visibility = [ ":*" ]
+
+  sources = [
+    "vmm_controller_teardown.cc",
+    "vmm_controller_teardown.h",
+  ]
 }
 
 executable("bin") {
@@ -38,21 +59,17 @@ executable("bin") {
     "main_uos.cc",
     "message_handler.cc",
     "message_handler.h",
-    "tracer.cc",
-    "tracer.h",
+    "vmlog_srv.cc",
+    "vmlog_srv.h",
   ]
 
   deps = [
     ":lib",
+    "//garnet/lib/block_locator",
     "//garnet/bin/guest/proto:vm_config",
-    "//third_party/hee-trusty/nbl_tracer:tracer",
-    "//garnet/lib/measure",
-    "//garnet/lib/trace_converters:chromium",
-    "//garnet/public/lib/tracing/fidl",
-    "//zircon/public/lib/trace-reader",
-    "//zircon/public/lib/trace-provider",
     "//third_party/boringssl",
     "//third_party/hee-trusty/nbl_license_srv/lib:libnbl_nmt_tee",
+    "//garnet/lib/vmlog_store",
   ]
 
   defines = [
@@ -66,23 +83,42 @@ executable("bin_sos") {
   output_name = "guest_sos"
 
   sources = [
-    "main_sos.cc",
+    "main_vmm.cc",
     "tee-smc.h",
     "top.cc",
     "top.h",
-    "rev.cc",
-    "rev.h"
+    "bootloader/bootloader.cc",
+    "bootloader/dummy.cc",
+    "bootloader/linux.cc",
+    "bootloader/lk2.cc",
+    "vmm.cc",
+    "vmm_controller.cc",
+    "vmlog_srv.cc",
+    "vmlog_srv.h",
+    "gzfs_vsock_srv.cc",
+    "gzfs_vsock_srv.h",
+    "host_vsock_endpoint_impl.cc",
+    "host_vsock_endpoint_impl.h",
   ]
 
   deps = [
     ":lib",
+    ":vmm_controller_teardown",
+    "//garnet/lib/block_locator",
+    "//third_party/ree-trusty/libnebula-cpp:nebula-base",
+    "//zircon/public/lib/block-client",
+    "//zircon/public/lib/fdio",
     "//zircon/system/ulib/task-utils:compiler",
-    "//third_party/hee-trusty/nbl_license_srv/lib:libnbl_nmt_tee",
+    "//garnet/public/lib/virtualization/fidl",
+    "//garnet/lib/vmlog_store",
+    "//garnet/bin/suspend:lib",
   ]
 
   defines = [
     "_ALL_SOURCE=1",
-    "_VHM_USE_CHANNEL_"
+    "_VHM_USE_CHANNEL_",
+    "RPROC_NOTIFY_WITH_PHYS_IRQ",
+    "VMLOG_SINKING_USE_NOTIFY_MODE=1",
   ]
 }
 
@@ -93,10 +129,15 @@ executable("guest_unittests") {
   sources = [
     "guest_config-unittest.cc",
     "run_all_unittests.cc",
+    "vmm_controller_teardown_unittest.cc",
   ]
 
   deps = [
     ":lib",
+    "//garnet/lib/features:unittests",
+    "//garnet/bin/features:unittests",
+    ":vmm_controller_teardown",
+    "//third_party/fdt",
     "//third_party/googletest:gtest",
     "//zircon/public/lib/fbl",
   ]

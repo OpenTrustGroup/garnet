@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package nbl_vmm;
+
+message Payload {
+  string name = 1;
+  string filepath = 2;
+  int64 offset = 3;
+  int64 header_size = 4;
+  string partition_name = 5;
+};
+
+message BootloaderRecord {
+  string protocol = 1;
+  repeated Payload payload = 2;
+  uint64 dtb_base = 3;
+  uint64 dtb_size = 4;
+  uint64 entry = 5;
+};

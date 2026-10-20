@@ -1,0 +1,21 @@
+# Copyright 2018 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+source_set("para_partition") {
+  sources = [
+    "parameter_parse.cc",
+    "parameter_parse.h",
+  ]
+
+  public_deps = [
+    "//zircon/public/lib/fbl",
+    "//zircon/public/lib/fs",
+    "//zircon/public/lib/block-client",
+    "//garnet/public/lib/fxl",
+  ]
+
+  deps = [
+    "//garnet/lib/block_locator",
+  ]
+}

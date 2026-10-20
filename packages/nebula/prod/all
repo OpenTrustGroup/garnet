@@ -18,6 +18,7 @@
         "garnet/packages/nebula/prod/nbl_time_srv",
         "garnet/packages/nebula/prod/nbl_trace",
         "garnet/packages/nebula/prod/nbl_hypervisor",
+        "garnet/packages/nebula/prod/smc_communication",
         "garnet/packages/nebula/prod/sqlite",
         "garnet/packages/nebula/prod/zlib"
     ]

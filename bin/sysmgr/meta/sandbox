@@ -1,5 +1,6 @@
 {
     "dev": [
+        "misc",
         "sys/platform/wdt"
       ],
     "system": [ "data/sysmgr" ]

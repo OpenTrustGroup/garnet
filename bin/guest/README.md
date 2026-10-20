@@ -92,3 +92,35 @@ package:
     }
 }
 ```
+
+## Devicetree Feature Switches
+The host bootdata can include a `BOOTDATA_DEVICETREE` item. The guest launcher
+loads feature state through `GuestFeatures`, which uses the asynchronous
+`garnet/lib/features:client` helper and the `features::FeatureProvider`
+service. The `features` service owns the direct `/dev/misc/sysinfo` read and
+keeps device-tree parsing out of `main.cc`. The supported schema follows the
+product feature tree under `/features`.
+
+The parser recognizes the product feature schema:
+
+```dts
+/features/vmlog
+/features/mmio_bus
+/features/mmio_bus/mmio-virtio-block
+/features/pci_bus
+/features/pci_bus/pci-virtio-block
+/features/pci_bus/virtio-cluster
+/features/pci_bus/virtio-spi
+/features/pci_bus/virtio-i2c
+/features/pci_bus/virtio-eint
+/features/pci_bus/virtio-console
+/features/gzfs
+/features/ufs
+```
+
+`/features/mmio_bus/mmio-virtio-block` and
+`/features/pci_bus/pci-virtio-block` control virtio-block setup, and
+`/features/pci_bus/virtio-console` controls virtio-console setup. If a feature
+node or any parent feature node has `status = "disabled"`, that feature is
+disabled. Missing DTB data, a missing `/features` tree, or a missing individual
+feature keeps the historical default of enabling devices.

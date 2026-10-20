@@ -1,14 +1,18 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2018 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "garnet/bin/guest/guest_config.h"
+#include "garnet/lib/para_partition/parameter_parse.h"
+#include "garnet/public/lib/guest_allocator/cpp/guest_allocator.h"
 
+#include <fcntl.h>
 #include <libgen.h>
 #include <unistd.h>
 #include <iostream>
 #include <sstream>
-#include <fcntl.h>
 
 #include <stack>
 #include <tuple>
@@ -16,12 +20,22 @@
 
 #include <zircon/device/block.h>
 
-#include "lib/fxl/files/file.h"
+#include "garnet/lib/machina/gpu_scheduler_vcpu_selection.h"
 #include "lib/fxl/command_line.h"
+#include "lib/fxl/files/file.h"
 #include "lib/fxl/logging.h"
 #include "lib/fxl/strings/string_number_conversions.h"
-#include "third_party/rapidjson/rapidjson/document.h"
-
+extern "C"
+{
+#include <src/lauxlib.h>
+#include <src/lualib.h>
+}
+#ifdef tostring
+#undef tostring
+#endif
+#include <LuaBridge/LuaBridge.h>
+#include <LuaBridge/Vector.h>
+#include "lib/fxl/strings/trim.h"
 // 32 hex characters + 4 hyphens.
 constexpr size_t kGuidStringLen = 36;
 constexpr char kCpuFreqDev[] = "/dev/misc/cpufreq";
@@ -84,7 +98,6 @@ static void print_usage(fxl::CommandLine& cl) {
   std::cerr << "\n";
   // clang-format on
 }
-
 static GuestConfigParser::OptionHandler save_option(std::string* out) {
   return [out](const std::string& key, const std::string& value) {
     if (value.empty()) {
@@ -319,7 +332,7 @@ static zx_status_t parse_shared_irq_spec(const std::string& spec,
 }
 
 static zx_status_t parse_audio_irq_spec(const std::string& spec,
-                                         machina::SharedIrqSpec* out) {
+                                        machina::SharedIrqSpec* out) {
   int ret = sscanf(spec.c_str(), "%d,0x%lx,0x%x,0x%x,0x%lx", &out->vector,
                    &out->ctrl_reg_base, &out->irq_status_offset,
                    &out->irq_clear_offset, &out->interested_bitmask);
@@ -332,22 +345,21 @@ static zx_status_t parse_audio_irq_spec(const std::string& spec,
 }
 
 static GuestConfigParser::OptionHandler parse_ipc_mbox_spec(
-    std::vector<machina::IpcMboxSpec> *out) {
+    std::vector<machina::IpcMboxSpec>* out) {
   return [out](const std::string& key, const std::string& value) {
     machina::IpcMboxSpec ipcmbox;
-	int ret =
-		sscanf(value.c_str(), "%hd,%hd", &ipcmbox.rx_ready_irq, &ipcmbox.tx_done_irq);
-	if (ret != 2) {
-		FXL_LOG(ERROR) << "Invalid ipc-mbox string: " << value;
-		return ZX_ERR_INVALID_ARGS;
-	}
-	out->push_back(std::move(ipcmbox));
+    int ret = sscanf(value.c_str(), "%hd,%hd", &ipcmbox.rx_ready_irq,
+                     &ipcmbox.tx_done_irq);
+    if (ret != 2) {
+      FXL_LOG(ERROR) << "Invalid ipc-mbox string: " << value;
+      return ZX_ERR_INVALID_ARGS;
+    }
+    out->push_back(std::move(ipcmbox));
     return ZX_OK;
   };
 }
 
-static GuestConfigParser::OptionHandler parse_cpufreq(
-    std::string *out) {
+static GuestConfigParser::OptionHandler parse_cpufreq(std::string* out) {
   return [out](const std::string& key, const std::string& value) {
     int fd = open(kCpuFreqDev, O_WRONLY);
     if (fd < 0) {
@@ -358,6 +370,16 @@ static GuestConfigParser::OptionHandler parse_cpufreq(
     *out = value;
     return ZX_OK;
   };
+}
+
+void GuestConfig::setCpufreq(std::string freq)
+{
+  int fd = open(kCpuFreqDev, O_WRONLY);
+  if (fd < 0) {
+    printf("Failed to open:%s errno:%d", kCpuFreqDev, errno);
+  }
+  fdio_ioctl(fd, 0, freq.c_str(), freq.length(), NULL, 0);
+  close(fd);
 }
 
 static GuestConfigParser::OptionHandler save_kernel(
@@ -471,20 +493,20 @@ static GuestConfigParser::OptionHandler parse_vgic_irq(
   };
 }
 
-
-static GuestConfigParser::OptionHandler parse_smmu_sids(std::vector<uint16_t> *out) {
+static GuestConfigParser::OptionHandler parse_smmu_sids(
+    std::vector<uint16_t>* out) {
   return [out](const std::string& key, const std::string& value) {
     if (value.empty()) {
       FXL_LOG(ERROR) << "Option: '" << key << "' expects a value";
       return ZX_ERR_INVALID_ARGS;
     }
 
-    uint32_t sid_start,sid_end;
+    uint32_t sid_start, sid_end;
     int ret = sscanf(value.c_str(), "%i-%i", &sid_start, &sid_end);
 
     if (ret != 2) {
       int ret = sscanf(value.c_str(), "%i", &sid_start);
-      if(ret != 1){
+      if (ret != 1) {
         FXL_LOG(ERROR) << "Invalid sid string: " << value;
         return ZX_ERR_INVALID_ARGS;
       }
@@ -503,7 +525,7 @@ static GuestConfigParser::OptionHandler parse_smmu_sids(std::vector<uint16_t> *o
 }
 
 static GuestConfigParser::OptionHandler parse_irq_monitor_irqs(
-        std::vector<uint16_t> *out) {
+    std::vector<uint16_t>* out) {
   return [out](const std::string& key, const std::string& value) {
     if (value.empty()) {
       FXL_LOG(ERROR) << "Option: '" << key << "' expects a value";
@@ -575,7 +597,8 @@ static GuestConfigParser::OptionHandler parse_vmem(
     return ZX_OK;
   };
 }
-GuestConfigParser::OptionMap GuestConfigParser::GetVsmmuOptionHandlers(machina::VsmmuSpec& spec) {
+GuestConfigParser::OptionMap GuestConfigParser::GetVsmmuOptionHandlers(
+    machina::VsmmuSpec& spec) {
   GuestConfigParser::OptionMap handlers;
   handlers.emplace("paddr", parse_number(&spec.paddr));
   handlers.emplace("interrupt", parse_number(&spec.irq));
@@ -607,7 +630,8 @@ static GuestConfigParser::OptionHandler parse_irq(uint32_t* out) {
   };
 }
 
-static GuestConfigParser::OptionHandler parse_bind_physical_cpu(std::vector<uint32_t> *out) {
+static GuestConfigParser::OptionHandler parse_bind_physical_cpu(
+    std::vector<uint32_t>* out) {
   return [out](const std::string& key, const std::string& value) {
     if (value.empty()) {
       FXL_LOG(ERROR) << "Option: '" << key << "' expects a value";
@@ -626,9 +650,27 @@ static GuestConfigParser::OptionHandler parse_bind_physical_cpu(std::vector<uint
   };
 }
 
+static GuestConfigParser::OptionHandler parse_wakup_irqs(
+    std::vector<uint32_t>* out) {
+  return [out](const std::string& key, const std::string& value) {
+    if (value.empty()) {
+      FXL_LOG(ERROR) << "Option: '" << key << "' expects a value";
+      return ZX_ERR_INVALID_ARGS;
+    }
+    std::stringstream to_split(value);
+    std::string segment;
+    uint32_t irq;
+    while (std::getline(to_split, segment, ',')) {
+      std::istringstream(segment) >> irq;
+      out->push_back(irq);
+    }
+    return ZX_OK;
+  };
+}
+
 static GuestConfigParser::OptionHandler parse_array_u64(
-    std::vector<uint64_t> *out) {
-  return [out](const std::string &key, const std::string &value) {
+    std::vector<uint64_t>* out) {
+  return [out](const std::string& key, const std::string& value) {
     if (value.empty()) {
       FXL_LOG(ERROR) << "Option: '" << key << "' expects a value";
       return ZX_ERR_INVALID_ARGS;
@@ -636,12 +678,60 @@ static GuestConfigParser::OptionHandler parse_array_u64(
 
     std::stringstream to_split(value);
     std::string segment;
-    uint64_t budget;
+    uint64_t v = 0;
     while (std::getline(to_split, segment, ',')) {
-      std::istringstream(segment) >> budget;
-      out->push_back(budget);
+      v = std::stoi(segment, nullptr, 0);
+      out->push_back(v);
     }
 
+    return ZX_OK;
+  };
+}
+
+static GuestConfigParser::OptionHandler parse_array_u32(
+    std::vector<uint32_t> *out) {
+  return [out](const std::string &key, const std::string &value) {
+    if (value.empty()) {
+      FXL_LOG(ERROR) << "Option: '" << key << "' expects a value";
+      return ZX_ERR_INVALID_ARGS;
+    }
+
+    std::stringstream to_split(value);
+    std::vector<uint32_t> values;
+    std::string segment;
+    while (std::getline(to_split, segment, ',')) {
+      uint32_t val;
+      const auto trimmed_segment =
+          fxl::TrimString(segment, " \t\r\n");
+      if (!fxl::StringToNumberWithError<uint32_t>(trimmed_segment, &val)) {
+        FXL_LOG(ERROR) << "Option: '" << key
+                       << "' expects unsigned 32-bit integers; received '"
+                       << segment << "'";
+        return ZX_ERR_INVALID_ARGS;
+      }
+      values.push_back(val);
+    }
+
+    out->insert(out->end(), values.begin(), values.end());
+    return ZX_OK;
+  };
+}
+
+static GuestConfigParser::OptionHandler parse_timesout_u32(
+    std::vector<uint32_t>* out) {
+  return [out](const std::string& key, const std::string& value) {
+    if (value.empty()) {
+      FXL_LOG(ERROR) << "Option: '" << key << "' expects a value";
+      return ZX_ERR_INVALID_ARGS;
+    }
+
+    std::stringstream to_split(value);
+    std::string segment;
+    uint32_t times;
+    while (std::getline(to_split, segment, ',')) {
+      std::istringstream(segment) >> times;
+      out->push_back(times);
+    }
     return ZX_OK;
   };
 }
@@ -669,6 +759,7 @@ GuestConfigParser::OptionMap GuestConfigParser::GetRootOptionHandlers() {
                    parse_number(&cfg_->balloon_pages_threshold_));
   handlers.emplace("display", parse_display(&cfg_->display_));
   handlers.emplace("block-wait", set_flag(&cfg_->block_wait_, true));
+  handlers.emplace("pvblk-enabled", set_flag(&cfg_->pvblk_enabled_, true));
   handlers.emplace("gic", parse_gic(&cfg_->gic_version_));
   handlers.emplace("vmem", parse_vmem(&cfg_->vmem_spec_));
   handlers.emplace("device-tree", parse_device_tree(&cfg_->dtb_spec_));
@@ -683,6 +774,10 @@ GuestConfigParser::OptionMap GuestConfigParser::GetRootOptionHandlers() {
   handlers.emplace("budgets", parse_array_u64(&cfg_->budgets_));
   handlers.emplace("sched-priority", parse_array_u64(&cfg_->sched_priority_));
   handlers.emplace("sched-timeslice", parse_array_u64(&cfg_->sched_timeslice_));
+  handlers.emplace("sched-policy", parse_array_u32(&cfg_->sched_policy_));
+  handlers.emplace("vcpu-priority", parse_array_u32(&cfg_->vcpus_priority_));
+  handlers.emplace("online-vcpu-info", parse_array_u64(&cfg_->online_vcpu_info_));
+  handlers.emplace("ex-vcpu-info", parse_array_u64(&cfg_->ex_vcpu_info_));
   handlers.emplace("shared-irqs",
                    append_option<machina::SharedIrqSpec>(
                        &cfg_->vgic_spec_.shared_irqs, parse_shared_irq_spec));
@@ -691,15 +786,24 @@ GuestConfigParser::OptionMap GuestConfigParser::GetRootOptionHandlers() {
                        &cfg_->vgic_spec_.audio_irqs, parse_audio_irq_spec));
   handlers.emplace("ipc-mbox", parse_ipc_mbox_spec(&cfg_->mbox_spec_));
   handlers.emplace("sched-irq", parse_number(&cfg_->sched_irq_));
-  handlers.emplace("dump-irq", parse_number(&cfg_->dump_irq_));
   handlers.emplace("sched-id", parse_number(&cfg_->sched_id_));
+  handlers.emplace("wakeup-irq", parse_wakup_irqs(&cfg_->wakeup_irqs_));
+  handlers.emplace("dump-irq", parse_number(&cfg_->dump_irq_));
+  handlers.emplace("monitor-irq", parse_number(&cfg_->monitor_irq_));
+  handlers.emplace("smc-irq", parse_number(&cfg_->smc_irq_));
+  handlers.emplace("uos-exp-irq", parse_number(&cfg_->uos_exp_irq_));
+  handlers.emplace("cvm-lock-irq", parse_number(&cfg_->cvm_lock_irq_));
   handlers.emplace("cpufreq", parse_cpufreq(&cfg_->cpufreq_));
   handlers.emplace("gpu-irq", parse_irq(&cfg_->gpu_irq_));
+  handlers.emplace("gpu-ping-irq", parse_irq(&cfg_->gpu_ping_irq_));
   handlers.emplace("vsock-irqs", parse_vgic_irq(&cfg_->vsock_irqs_));
   handlers.emplace("apu-irqs", parse_vgic_irq(&cfg_->apu_irqs_));
   handlers.emplace("cmdq-irqs", parse_vgic_irq(&cfg_->cmdq_irqs_));
-  handlers.emplace("vtee-notifier-irq",
-                   parse_irq(&cfg_->vtee_notifier_irq_));
+  handlers.emplace("vtee-notifier-irq", parse_irq(&cfg_->vtee_notifier_irq_));
+  handlers.emplace("nbl-trace-mem-enable", parse_number(&cfg_->nbl_trace_mem_enable_));
+  handlers.emplace("sos-wdt-timeout", parse_number(&cfg_->sos_wdt_timeout_));
+  handlers.emplace("crossvm-times", parse_timesout_u32(&cfg_->crossvm_times_));
+  handlers.emplace("arbiter-gpu-vcpus", parse_array_u32(&cfg_->arbiter_gpu_.vcpus));
   return handlers;
 }
 
@@ -717,15 +821,18 @@ GuestConfigParser::OptionMap GuestConfigParser::GetVgicOptionHandlers() {
   handlers.emplace("gicr_paddr", parse_number(&cfg_->vgic_spec_.gicr_paddr));
   handlers.emplace("interrupt", parse_vgic_irq(&cfg_->vgic_spec_.irqs));
   handlers.emplace("percpu_interrupt", parse_vgic_irq(&cfg_->vgic_spec_.percpu_irqs));
+  handlers.emplace("interrupt_movable", parse_vgic_irq(&cfg_->vgic_spec_.irqs_movable));
   return handlers;
 }
 
 GuestConfigParser::OptionMap GuestConfigParser::GetRprocOptionHandlers() {
   GuestConfigParser::OptionMap handlers;
-  handlers.emplace("has_ipi_affinity", set_flag(&cfg_->rproc_spec_.has_ipi_affinity, true));
+  handlers.emplace("has_ipi_affinity",
+                   set_flag(&cfg_->rproc_spec_.has_ipi_affinity, true));
   handlers.emplace("ctrl_irq", parse_number(&cfg_->rproc_spec_.ctrl_irq));
   handlers.emplace("local_irqs", parse_vgic_irq(&cfg_->rproc_spec_.local_irqs));
-  handlers.emplace("remote_irqs", parse_vgic_irq(&cfg_->rproc_spec_.remote_irqs));
+  handlers.emplace("remote_irqs",
+                   parse_vgic_irq(&cfg_->rproc_spec_.remote_irqs));
   return handlers;
 }
 
@@ -734,7 +841,8 @@ GuestConfigParser::OptionMap GuestConfigParser::GetIrqMonitorOptionHandlers() {
   handlers.emplace("enable", parse_number(&cfg_->irq_monitor_spec_.enable));
   handlers.emplace("irq-count-threshold",
                    parse_number(&cfg_->irq_monitor_spec_.threshold));
-  handlers.emplace("irqs", parse_irq_monitor_irqs(&cfg_->irq_monitor_spec_.irqs));
+  handlers.emplace("irqs",
+                   parse_irq_monitor_irqs(&cfg_->irq_monitor_spec_.irqs));
   return handlers;
 }
 
@@ -751,21 +859,22 @@ GuestConfigParser::OptionMap GuestConfigParser::GetOptionHandlers(
 
   if (name == kRprocOptionName)
     return GetRprocOptionHandlers();
-// Assuming kVsmmuOptionName represents the key for vsmmu objects
-  if (name.rfind(kVsmmuptionName, 0) == 0 ) {
-      // Only create a new VsmmuSpec when starting to parse a new vsmmu object
-      if (current_vsmmu_spec_index_ == -1 || name != current_vsmmu_name_) {
-        auto& vsmmus = cfg_->vsmmus();
-        vsmmus.emplace_back();  // add new VsmmuSpec object
-        current_vsmmu_spec_index_ = vsmmus.size() - 1;
-        current_vsmmu_name_ = name;
-      }
-      return GetVsmmuOptionHandlers(cfg_->vsmmus().back());
+  // Assuming kVsmmuOptionName represents the key for vsmmu objects
+  if (name.rfind(kVsmmuptionName, 0) == 0) {
+    // Only create a new VsmmuSpec when starting to parse a new vsmmu object
+    if (current_vsmmu_spec_index_ == -1 || name != current_vsmmu_name_) {
+      auto& vsmmus = cfg_->vsmmus();
+      vsmmus.emplace_back();  // add new VsmmuSpec object
+      current_vsmmu_spec_index_ = vsmmus.size() - 1;
+      current_vsmmu_name_ = name;
     }
+    return GetVsmmuOptionHandlers(cfg_->vsmmus().back());
+  }
   return {};
 }
 
-GuestConfigParser::GuestConfigParser(GuestConfig* cfg) : cfg_(cfg) , current_vsmmu_spec_index_(-1){}
+GuestConfigParser::GuestConfigParser(GuestConfig* cfg)
+    : cfg_(cfg), current_vsmmu_spec_index_(-1) {}
 
 GuestConfigParser::~GuestConfigParser() = default;
 
@@ -796,6 +905,47 @@ zx_status_t GuestConfigParser::ParseArgcArgv(int argc, char** argv) {
   return ZX_OK;
 }
 
+zx_status_t GuestConfigParser::ParseVmemsConfig(
+    const rapidjson::Value& vmem_array) {
+  for (rapidjson::SizeType i = 0; i < vmem_array.Size(); i++) {
+    machina::VmemSpec spec;
+    const std::string vmemStr = vmem_array[i].GetString();
+    char namebuf[256];
+
+    int ret = sscanf(vmemStr.c_str(), "%255[^,],%li,%li,%li,%hhu,%hhu", namebuf,
+                     &spec.gpa_base, &spec.hpa_base, &spec.size, &spec.policy,
+                     &spec.is_physmem);
+    spec.name = namebuf;
+    if (ret != 6) {
+      FXL_LOG(ERROR) << "Invalid vmem string: " << vmemStr;
+      return ZX_ERR_INVALID_ARGS;
+    }
+
+    if (spec.gpa_base & (PAGE_SIZE - 1)) {
+      FXL_LOG(ERROR) << "Unaligned vmem gpa_base: " << spec.gpa_base;
+      return ZX_ERR_INVALID_ARGS;
+    }
+
+    if (spec.hpa_base & (PAGE_SIZE - 1)) {
+      FXL_LOG(ERROR) << "Unaligned vmem hpa_base: " << spec.hpa_base;
+      return ZX_ERR_INVALID_ARGS;
+    }
+
+    if (spec.size & (PAGE_SIZE - 1)) {
+      FXL_LOG(ERROR) << "Unaligned vmem size: " << spec.size;
+      return ZX_ERR_INVALID_ARGS;
+    }
+
+    if (spec.policy >= machina::MemoryPolicy::kMax) {
+      FXL_LOG(ERROR) << "Invalid vmem policy: "
+                     << static_cast<uint32_t>(spec.policy);
+      return ZX_ERR_INVALID_ARGS;
+    }
+    cfg_->vmem_spec_.push_back(spec);
+  }
+  return ZX_OK;
+}
+
 zx_status_t GuestConfigParser::ParseProductConfig(const std::string& data) {
   rapidjson::Document doc;
   doc.Parse(data);
@@ -806,56 +956,32 @@ zx_status_t GuestConfigParser::ParseProductConfig(const std::string& data) {
   if (doc.HasMember("device-tree") && doc["device-tree"].IsString()) {
     machina::DeviceTreeSpec dtb;
     const std::string dtbStr = doc["device-tree"].GetString();
-	int ret = sscanf(dtbStr.c_str(), "%lx,%lx", &dtb.base, &dtb.size);
-	if (ret != 2) {
-		FXL_LOG(ERROR) << "Invalid device-tree string: " << doc["device-tree"].GetString();
-		return ZX_ERR_INVALID_ARGS;
-	}
+    int ret = sscanf(dtbStr.c_str(), "%lx,%lx", &dtb.base, &dtb.size);
+    if (ret != 2) {
+      FXL_LOG(ERROR) << "Invalid device-tree string: "
+                     << doc["device-tree"].GetString();
+      return ZX_ERR_INVALID_ARGS;
+    }
     cfg_->dtb_spec_ = fbl::move(dtb);
   }
 
   if (doc.HasMember("vmem") && doc["vmem"].IsArray()) {
-    const rapidjson::Value& vmemArray = doc["vmem"];
-    for(rapidjson::SizeType i = 0; i < vmemArray.Size(); i++) {
-      machina::VmemSpec spec;
-      const std::string vmemStr = vmemArray[i].GetString();
-      char namebuf[256];
+    zx_status_t status = ParseVmemsConfig(doc["vmem"]);
+    if (status != ZX_OK) {
+      return status;
+    }
+  }
 
-    int ret = sscanf(vmemStr.c_str(), "%255[^,],%li,%li,%li,%hhu,%hhu",
-                     namebuf, &spec.gpa_base, &spec.hpa_base, &spec.size, &spec.policy, &spec.is_physmem);
-      spec.name = namebuf;
-      if (ret != 6) {
-        FXL_LOG(ERROR) << "Invalid vmem string: " << vmemStr;
-        return ZX_ERR_INVALID_ARGS;
-      }
-
-      if (spec.gpa_base & (PAGE_SIZE - 1)) {
-        FXL_LOG(ERROR) << "Unaligned vmem gpa_base: " << spec.gpa_base;
-        return ZX_ERR_INVALID_ARGS;
-      }
-
-      if (spec.hpa_base & (PAGE_SIZE - 1)) {
-        FXL_LOG(ERROR) << "Unaligned vmem hpa_base: " << spec.hpa_base;
-        return ZX_ERR_INVALID_ARGS;
-      }
-
-      if (spec.size & (PAGE_SIZE - 1)) {
-        FXL_LOG(ERROR) << "Unaligned vmem size: " << spec.size;
-        return ZX_ERR_INVALID_ARGS;
-      }
-
-      if (spec.policy >= machina::MemoryPolicy::kMax) {
-        FXL_LOG(ERROR) << "Invalid vmem policy: "
-                     << static_cast<uint32_t>(spec.policy);
-        return ZX_ERR_INVALID_ARGS;
-      }
-      cfg_->vmem_spec_.push_back(spec);
+  if (doc.HasMember("vmem_auto") && doc["vmem_auto"].IsArray()) {
+    zx_status_t status = ParseVmemsConfig(doc["vmem_auto"]);
+    if (status != ZX_OK) {
+      return status;
     }
   }
 
   if (doc.HasMember("product") && doc["product"].IsArray()) {
     const rapidjson::Value& productArray = doc["product"];
-    for(rapidjson::SizeType i = 0; i < productArray.Size(); i++) {
+    for (rapidjson::SizeType i = 0; i < productArray.Size(); i++) {
       const rapidjson::Value& item = productArray[i];
       machina::ProductSpec pobj;
 
@@ -875,6 +1001,33 @@ zx_status_t GuestConfigParser::ParseProductConfig(const std::string& data) {
     }
   }
 
+  return ZX_OK;
+}
+
+zx_status_t GuestConfigParser::ParseProductConfigFromLua(const std::string& cfg_path, GuestConfig* cfg)
+{
+  if (cfg_path.empty() || cfg == nullptr) {
+    return ZX_ERR_INVALID_ARGS;
+  }
+  lua_State* L = luaL_newstate();
+  luaL_openlibs(L);
+  luaopen_base(L);
+  luabridge::getGlobalNamespace(L)
+    .beginClass<GuestConfig>("product_config")
+    .addFunction("setVmem", &GuestConfig::setProductVmem)
+    .addFunction("setDeviceTree", &GuestConfig::setDeviceTree)
+    .addFunction("setProductSpec", &GuestConfig::setProductSpec)
+    .addFunction("addRegAccess", &GuestConfig::addRegAccess)
+    .endClass();
+  luabridge::setGlobal(L, cfg, "product_config");
+  int tr = luaL_dofile(L, cfg_path.c_str());
+  FXL_LOG(INFO) << "product_config loading : "<< tr;
+  if (1 == tr) {
+    FXL_LOG(ERROR) << "luaL_dofile error info : "<< lua_tostring(L, -1);
+    lua_close(L);
+    return ZX_ERR_CALL_FAILED;
+  }
+  lua_close(L);
   return ZX_OK;
 }
 
@@ -930,7 +1083,7 @@ zx_status_t GuestConfigParser::ParseConfig(const std::string& data) {
       for (auto& array_member : member.value.GetArray()) {
         if (array_member.IsString()) {
           zx_status_t status =
-            entry->second(member.name.GetString(), array_member.GetString());
+              entry->second(member.name.GetString(), array_member.GetString());
           if (status != ZX_OK) {
             return ZX_ERR_INVALID_ARGS;
           }
@@ -947,6 +1100,161 @@ zx_status_t GuestConfigParser::ParseConfig(const std::string& data) {
     return ZX_ERR_INVALID_ARGS;
   }
 
+  cfg_->ConfigCheck();
+  return ZX_OK;
+}
+
+class DeviceTree {
+ public:
+  DeviceTree() {
+    alloc_fd_ =
+        open("/dev/sys/platform/00:00:f/guest_memory_allocator", O_RDWR);
+    FXL_CHECK(alloc_fd_ > 0);
+  }
+
+  uint64_t getProp(std::string path) {
+    mem_req_t req;
+    strncpy(req.path, path.data(), sizeof(req.path));
+
+    uint64_t prop;
+    auto ret = ioctl_query_prop_with_path(alloc_fd_, &req, &prop);
+    FXL_CHECK(ret > 0);
+
+    return prop;
+  }
+
+  ~DeviceTree() { close(alloc_fd_); }
+
+ private:
+  int alloc_fd_;
+};
+
+static int getSysEnv(lua_State* L) {
+  zx_status_t ret;
+  const char* env = luaL_checkstring(L, 1);
+  const char* default_value = luaL_checkstring(L, 2);
+  char* value = NULL;
+
+  FXL_LOG(INFO) << "getSysEnv for "
+                << fxl::StringPrintf("env:%s, default_value:%s",
+                                          env, default_value);
+  std::unique_ptr<ParaParse> para_parse_ = std::make_unique<ParaParse>();
+  ret = para_parse_->Initialize();
+  if (ret != ZX_OK) {
+    goto err;
+  }
+
+  value = para_parse_->sysenv_get(env);
+  if (!value) {
+    goto err;
+  } else {
+    FXL_LOG(INFO) << "sysenv success, "
+                  << fxl::StringPrintf("env:%s, value is:%s",
+                                          env, value);
+    lua_pushstring(L, value);
+    free(value);
+    goto out;
+  }
+
+err:
+  FXL_LOG(INFO) << "sysenv fail, "
+                << fxl::StringPrintf("env:%s, not found, set to default value:%s",
+                                          env, default_value);
+  lua_pushstring(L, default_value);
+out:
+  para_parse_->DeInit();
+  return 1;
+}
+
+zx_status_t GuestConfigParser::ParseConfigFromLua(const std::string& cfg_path, GuestConfig* cfg)
+{
+  if (cfg_path.empty() || cfg == nullptr) {
+    return ZX_ERR_INVALID_ARGS;
+  }
+  auto device_tree = std::make_unique<DeviceTree>();
+  if (!device_tree) {
+    return ZX_ERR_NO_MEMORY;
+  }
+
+  lua_State* L = luaL_newstate();
+  luaL_openlibs(L);
+  luaopen_base(L);
+
+  lua_register(L, "getSysEnv", getSysEnv);
+
+  luabridge::getGlobalNamespace(L)
+    .beginClass<GuestConfig>("sos_config")
+    .addFunction("setCpus", &GuestConfig::setCpus)
+    .addFunction("setVcpuEntry", &GuestConfig::setVcpuEntry)
+    .addFunction("setBindcpus", &GuestConfig::setBindcpus)
+    .addFunction("setPeriods", &GuestConfig::setPeriods)
+    .addFunction("setBudgets", &GuestConfig::setBudgets)
+    .addFunction("setSchedPriority", &GuestConfig::setSchedPriority)
+    .addFunction("setSchedTimeslice", &GuestConfig::setSchedTimeslice)
+    .addFunction("setSchedPolicy", &GuestConfig::setSchedPolicy)
+    .addFunction("setVcpuPriority", &GuestConfig::setVcpuPriority)
+    .addFunction("setVgicPaddr", &GuestConfig::setVgicPaddr)
+    .addFunction("setVgicIrq", &GuestConfig::setVgicIrqs)
+    .addFunction("setVgicPercpuIrq", &GuestConfig::setVgicPercpuIrqs)
+    .addFunction("setVgicIrqsMovable", &GuestConfig::setVgicIrqsMovable)
+    .addFunction("setIpcMbox", &GuestConfig::setIpcMbox)
+    .addFunction("setSchedIrq", &GuestConfig::setSchedIrq)
+    .addFunction("setSchedId", &GuestConfig::setSchedId)
+    .addFunction("setDumpIrq", &GuestConfig::setDumpIrq)
+    .addFunction("setSmcIrq", &GuestConfig::setSmcIrq)
+    .addFunction("setUosExpIrq", &GuestConfig::setUosExpIrq)
+    .addFunction("setCvmLockIrq", &GuestConfig::setCvmLockIrq)
+    .addFunction("setGpuIrq", &GuestConfig::setGpuIrq)
+    .addFunction("setGpuPingIrq", &GuestConfig::setGpuPingIrq)
+    .addFunction("setWakeupIrq", &GuestConfig::setWakeupIrq)
+    .addFunction("setVteeNotifierIrq", &GuestConfig::setVteeNotifierIrq)
+    .addFunction("setVsockIrqs", &GuestConfig::setVsockIrqs)
+    .addFunction("setApuIrqs", &GuestConfig::setApuIrqs)
+    .addFunction("setTipcVqNotifierIrq", &GuestConfig::setTipcVqNotifierIrq)
+    .addFunction("setVhmIrq", &GuestConfig::setVhmIrq)
+    .addFunction("setGuestReservedMemory", &GuestConfig::setGuestReservedMemory)
+    .addFunction("setPvblkEnabled", &GuestConfig::setPvblkEnabled)
+    .addFunction("setCpufreq", &GuestConfig::setCpufreq)
+    .addFunction("setVsmmu", &GuestConfig::setVsmmu)
+    .addFunction("setCmdqIrqs", &GuestConfig::setCmdqIrqs)
+    .addFunction("setMonitorSpec", &GuestConfig::setMonitorSpec)
+    .addFunction("setNbltraceMemEnable", &GuestConfig::setNbltraceMemEnable)
+    .addFunction("setMemController", &GuestConfig::setMemController)
+    .addFunction("setArbiterGpuEnable", &GuestConfig::setArbiterGpuEnable)
+    .addFunction("setArbiterGpuRegion", &GuestConfig::setArbiterGpuRegion)
+    .addFunction("setArbiterGpuIrqs", &GuestConfig::setArbiterGpuIrqs)
+    .addFunction("setArbiterForTest", &GuestConfig::setArbiterForTest)
+    .addFunction("setArbiterGpuSchedTime", &GuestConfig::setArbiterGpuSchedTime)
+    .addFunction("setArbiterGpuSchedMode", &GuestConfig::setArbiterGpuSchedMode)
+    .addFunction("setArbiterGpuSchedVcpu", &GuestConfig::setArbiterGpuSchedVcpu)
+    .addFunction("setSosWdtTimeout", &GuestConfig::setSosWdtTimeout)
+    .addFunction("setExVcpuInfo", &GuestConfig::setExVcpuInfo)
+    .addFunction("setCrossVmTimes", &GuestConfig::setCrossVmTimes)
+    .addFunction("setCmdline", &GuestConfig::setCmdline)
+    .addFunction("setPciIrqs", &GuestConfig::setPciIrqs)
+    .addFunction("setVmem", &GuestConfig::setVmem)
+    .addFunction("setVmemAuto", &GuestConfig::setVmemAuto)
+    .addFunction("setDeviceTree", &GuestConfig::setDeviceTree)
+    .addFunction("clearNonPhysVmem", &GuestConfig::clearNonPhysVmem)
+    .addFunction("setExVcpuInfo", &GuestConfig::setExVcpuInfo)
+    .addFunction("setOnlineVcpuInfo", &GuestConfig::setOnlineVcpuInfo)
+    .addFunction("setSosWdtTimeout", &GuestConfig::setSosWdtTimeout)
+    .endClass();
+  luabridge::getGlobalNamespace(L)
+    .beginClass<DeviceTree>("device_tree")
+    .addFunction("getProp", &DeviceTree::getProp)
+    .endClass();
+  luabridge::setGlobal(L, cfg, "sos_config");
+  luabridge::setGlobal(L, device_tree.get(), "device_tree");
+  int tr = luaL_dofile(L, cfg_path.c_str());
+  FXL_LOG(INFO) << "sos_config loading : "<< tr;
+  if (1 == tr) {
+    FXL_LOG(ERROR) << "luaL_dofile error info : "<< lua_tostring(L, -1);
+    lua_close(L);
+    return ZX_ERR_CALL_FAILED;
+  }
+  lua_close(L);
+  cfg->ConfigCheck();
   return ZX_OK;
 }
 
@@ -966,4 +1274,72 @@ uint64_t GuestConfig::phys_size() const {
     }
   }
   __builtin_unreachable();
+}
+
+/*
+ * "ipc-mbox" "sched-irq" "dump-irq" "tipc-vq-notifier-irq" "vhm-irq"
+ * is virtual interrupt, Do not allow set passthrough.
+ * */
+void GuestConfig::ConfigCheck() {
+  auto& irqs = vgic_spec_.irqs;
+  auto& irqs_movable = vgic_spec_.irqs_movable;
+
+  for (auto& ipc: mbox_spec_) {
+    {
+      auto irq = std::find(irqs.begin(), irqs.end(), ipc.rx_ready_irq);
+      FXL_CHECK(irq == irqs.end()) << "ipc-mbox can not set passthrough:" << ipc.rx_ready_irq;
+
+      auto movable = std::find(irqs_movable.begin(), irqs_movable.end(), ipc.rx_ready_irq);
+      FXL_CHECK(movable == irqs_movable.end()) << "ipc-mbox can not set movable:" << ipc.rx_ready_irq;
+    }
+    {
+      auto irq = std::find(irqs.begin(), irqs.end(), ipc.tx_done_irq);
+      FXL_CHECK(irq == irqs.end()) << "ipc-mbox can not set passthrough:" << ipc.tx_done_irq;
+
+      auto movable = std::find(irqs_movable.begin(), irqs_movable.end(), ipc.tx_done_irq);
+      FXL_CHECK(movable == irqs_movable.end()) << "ipc-mbox can not set movable:" << ipc.tx_done_irq;
+    }
+  }
+
+  {
+    auto irq = std::find(irqs.begin(), irqs.end(), sched_irq_);
+    FXL_CHECK(irq == irqs.end()) << "sched-irq can not set passthrough:" << sched_irq_;
+
+    auto movable = std::find(irqs_movable.begin(), irqs_movable.end(), sched_irq_);
+    FXL_CHECK(movable == irqs_movable.end()) << "sched-irq can not set movable:" << sched_irq_;
+  }
+
+  {
+    auto irq = std::find(irqs.begin(), irqs.end(), dump_irq_);
+    FXL_CHECK(irq == irqs.end()) << "dump-irq can not set passthrough:" << dump_irq_;
+
+    auto movable = std::find(irqs_movable.begin(), irqs_movable.end(), dump_irq_);
+    FXL_CHECK(movable == irqs_movable.end()) << "dump-irq can not set movable:" << dump_irq_;
+  }
+
+  {
+    auto irq = std::find(irqs.begin(), irqs.end(), tipc_vq_notifier_irq_);
+    FXL_CHECK(irq == irqs.end()) << "tipc-vq-notifier-irq can not set passthrough:"
+                << tipc_vq_notifier_irq_;
+
+    auto movable = std::find(irqs_movable.begin(), irqs_movable.end(), tipc_vq_notifier_irq_);
+    FXL_CHECK(movable == irqs_movable.end()) << "tipc-vq-notifier-irq can not set movable:"
+              << tipc_vq_notifier_irq_;
+  }
+  {
+    auto irq = std::find(irqs.begin(), irqs.end(), vhm_irq_);
+    FXL_CHECK(irq == irqs.end()) << "vhm-irq can not set passthrough:" << vhm_irq_;
+
+    auto movable = std::find(irqs_movable.begin(), irqs_movable.end(), vhm_irq_);
+    FXL_CHECK(movable == irqs_movable.end()) << "vhm-irq can not set movable:" << vhm_irq_;
+  }
+
+  if (mem_controller_enable_) {
+    FXL_CHECK(!mem_controller_cma_compatible_.empty())
+        << "mem-controller requires a CMA compatible";
+  }
+
+  FXL_CHECK(machina::ValidateGpuSchedVcpus(arbiter_gpu_.vcpus, num_cpus_) == ZX_OK)
+      << "arbiter-gpu-vcpus must contain unique IDs less than the configured "
+         "CPU count";
 }

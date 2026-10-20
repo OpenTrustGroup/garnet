@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 GoldenRiver Inc. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -41,6 +43,9 @@ RemoteProcBase::RemoteProcBase(Guest* guest, RprocDeviceSvcSyncPtr svc)
   peer_vmid_ = info.peer_vmid;
   peer_online_ = false;
   vmo_ = std::move(info.shm_vmo);
+
+  FXL_CHECK(!guest_->GetInterruptController()->IsPassthrough(ctrl_irq_))
+            << "ctrl_irq: " << ctrl_irq_;
 
   auto status = vmo_.get_size(&shm_size_);
   FXL_CHECK(status == ZX_OK);
@@ -96,6 +101,7 @@ void RemoteProcBase::peer_offline() {
   chan_.reset();
   peer_online_ = false;
   state_ = RprocState::NOT_READY;
+  peer_connect_state_ = RprocConnectState::NOT_CONNECT;
   notify_ctrl();
 }
 
@@ -147,6 +153,12 @@ async_wait_result_t RemoteProcBase::HandleMsg(
         notify_vqueue(vq_idx);
         break;
       }
+      case RprocCmd::CONNECT_STATE: {
+        peer_connect_state_ = static_cast<RprocConnectState>(msg.arg);
+        notify_ctrl();
+        break;
+      }
+
       default:
         FXL_CHECK(false) << "invalid cmd";
     }
@@ -182,7 +194,15 @@ zx_status_t RemoteProcBase::PatchDeviceTree(const DeviceTreeSpec& dtb_spec,
     return ZX_ERR_IO_DATA_INTEGRITY;
   }
 
-  int rproc_offset = fdt_add_subnode(dtb, 0, path);
+  int rproc_offset = fdt_path_offset(dtb, path);
+  if (rproc_offset >= 0) {
+    fdt_pack(dtb);
+    return ZX_OK;
+  }
+  int root_offset = fdt_path_offset(dtb, "/");
+  check_status(root_offset, "root");
+  const char* node_name = (path[0] == '/') ? path + 1 : path;
+  rproc_offset = fdt_add_subnode(dtb, root_offset, node_name);
   check_status(rproc_offset, "rproc");
 
   std::vector<uint32_t> props;
@@ -290,6 +310,10 @@ zx_status_t RprocHost::Read(uint64_t addr, IoValue* value) const {
       value->u32 = peer_vmid_;
       break;
 
+    case Regs::PEER_CONNECT_STATE:
+      value->u32 = static_cast<uint32_t>(peer_connect_state_);
+      break;
+
     default:
       return ZX_ERR_IO;
   }
@@ -315,6 +339,13 @@ zx_status_t RprocHost::Write(uint64_t addr, const IoValue& value) {
 
     case Regs::KICK: {
       msg.cmd = RprocCmd::KICK;
+      msg.arg = value.u32;
+      SendMsg(&msg, sizeof(msg));
+      break;
+    }
+
+    case Regs::CONNECT_STATE: {
+      msg.cmd = RprocCmd::CONNECT_STATE;
       msg.arg = value.u32;
       SendMsg(&msg, sizeof(msg));
       break;
@@ -354,6 +385,10 @@ zx_status_t RprocRemote::Read(uint64_t addr, IoValue* value) const {
       value->u32 = peer_vmid_;
       break;
 
+    case Regs::PEER_CONNECT_STATE:
+      value->u32 = static_cast<uint32_t>(peer_connect_state_);
+      break;
+
     default:
       return ZX_ERR_IO;
   }
@@ -382,6 +417,13 @@ zx_status_t RprocRemote::Write(uint64_t addr, const IoValue& value) {
 
     case Regs::KICK: {
       msg.cmd = RprocCmd::KICK;
+      msg.arg = value.u32;
+      SendMsg(&msg, sizeof(msg));
+      break;
+    }
+
+    case Regs::CONNECT_STATE: {
+      msg.cmd = RprocCmd::CONNECT_STATE;
       msg.arg = value.u32;
       SendMsg(&msg, sizeof(msg));
       break;

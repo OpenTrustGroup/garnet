@@ -1,0 +1,20 @@
+{
+    "packages": {
+        "platform": "//garnet/drivers/bus/platform",
+        "mt8676": "//garnet/drivers/board/mt8676",
+        "mt8678": "//garnet/drivers/board/mt8678",
+        "mt8668": "//garnet/drivers/board/mt8668",
+        "mt8668_spi": "//garnet/drivers/spi/mt8668_spi",
+        "mt8668_i2c": "//garnet/drivers/i2c/mt8668_i2c",
+        "watchdog": "//garnet/drivers/watchdog/",
+        "mt8676_gpio": "//garnet/drivers/gpio/mt8676_gpio",
+        "mtk_eint": "//garnet/drivers/gpio/mtk_eint",
+        "mt8668_rtc": "//garnet/drivers/rtc/mt8668_rtc",
+        "mt8676_monitor": "//garnet/drivers/monitor/mt8676_monitor",
+        "ufs": "//garnet/drivers/block/ufs/mt8668:ufs",
+        "block": "//garnet/drivers/block/block",
+        "gpt": "//garnet/drivers/block/gpt",
+        "guest_memory_allocator": "//garnet/drivers/misc/guest_memory_allocator",
+        "ramdisk": "//garnet/drivers/block/ramdisk"
+    }
+}

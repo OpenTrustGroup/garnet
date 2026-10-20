@@ -1,12 +1,41 @@
 {
   "dev": [
+    "sys/platform/ramfb",
+    "sys/platform/gpio",
+    "sys/platform/monitor",
+    "sys/platform/64:16:1",
+    "sys/platform/00:00:f",
+    "sys/platform/spi0",
+    "sys/platform/spi1",
+    "sys/platform/spi2",
+    "sys/platform/spi3",
+    "sys/platform/spi4",
+    "sys/platform/spi5",
+    "sys/platform/spi6",
+    "sys/platform/spi7",
     "class/block",
     "class/display",
     "class/ethernet",
     "class/framebuffer",
     "class/input",
     "misc",
-    "sys/platform/wdt"
+    "sys/platform/wdt",
+    "sys/platform/i2c0",
+    "sys/platform/i2c1",
+    "sys/platform/i2c2",
+    "sys/platform/i2c3",
+    "sys/platform/i2c4",
+    "sys/platform/i2c5",
+    "sys/platform/i2c6",
+    "sys/platform/i2c7",
+    "sys/platform/i2c8",
+    "sys/platform/i2c9",
+    "sys/platform/i2c10",
+    "sys/platform/i2c11",
+    "sys/platform/i2c12",
+    "sys/platform/mtk_eint",
+    "sys/platform/rtc"
   ],
-  "system": [ "data" ]
+  "system": [ "data" ],
+  "features": [ "persistent-storage" ]
 }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -19,15 +21,27 @@ VirtioDevice::VirtioDevice(uint8_t device_id,
                            size_t config_size,
                            VirtioQueue* queues,
                            uint16_t num_queues,
-                           const PhysMem& phys_mem)
+                           const PhysMem& phys_mem,
+                           Transport transport,
+                           bool enable_msix)
     : device_id_(device_id),
       device_config_size_(config_size),
       queues_(queues),
       num_queues_(num_queues),
       phys_mem_(phys_mem),
-      pci_(this) {}
+      transport_(transport),
+      use_msix_(enable_msix) {
+  if (transport_ == Transport::PCI)
+    pci_ = std::make_unique<VirtioPci>(this);
+  else
+    mmio_ = std::make_unique<MmioDevice>(this);
 
-VirtioDevice::~VirtioDevice() = default;
+  if (queues_) {
+    for (uint16_t i = 0; i < num_queues_; i++) {
+      queues_[i].set_index(i);
+    }
+  }
+}
 
 zx_status_t VirtioDevice::NotifyGuest() {
   bool interrupt = false;
@@ -39,7 +53,19 @@ zx_status_t VirtioDevice::NotifyGuest() {
   if (!interrupt) {
     return ZX_OK;
   }
-  return pci_.Interrupt();
+  if (transport_ == Transport::PCI)
+    return pci_->Interrupt();
+  return mmio_->Interrupt();
+}
+
+zx_status_t VirtioDevice::NotifyGuest(uint32_t queue_index) {
+  if (transport_ == Transport::PCI) {
+    if (pci_->msix_enabled()) {
+      TriggerMsixInterrupt(queue_index + 1);
+      return ZX_OK;
+    }
+  }
+  return NotifyGuest();
 }
 
 zx_status_t VirtioDevice::Kick(uint16_t kicked_queue) {

@@ -1,0 +1,13 @@
+protocol: "linux"
+
+payload {
+    name: "kernel",
+    filepath: "/dev/misc/ramctl/ramdisk-1/block";
+    offset: 0x80000000,
+}
+
+payload {
+    name: "rootfs",
+    filepath: "/dev/misc/ramctl/ramdisk-0/block";
+    offset: 0x84000000,
+}

@@ -1,0 +1,42 @@
+# Copyright 2026 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+config("no-unused-function") {
+  cflags = [ "-Wno-unused-function" ]
+}
+
+driver_module("mtk_eint_driver") {
+  output_name = "mtk_eint"
+
+  sources = [
+    "mtk_eint.c",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+  include_dirs = [ "include/" ]
+
+  deps = [
+    "//garnet/drivers/board/mt8668:mt8668_eint_hw",
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+  ]
+
+  configs += [ ":no-unused-function" ]
+}
+
+package("mtk_eint") {
+  system_image = true
+
+  deps = [
+    ":mtk_eint_driver",
+  ]
+
+  drivers = [ {
+        name = "mtk_eint.so"
+  } ]
+}

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2016 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -23,6 +25,13 @@ zx_koid_t GetRelatedKoid(zx_handle_t handle) {
   zx_status_t status = zx_object_get_info(handle, ZX_INFO_HANDLE_BASIC, &info,
                                           sizeof(info), nullptr, nullptr);
   return status == ZX_OK ? info.related_koid : ZX_KOID_INVALID;
+}
+
+zx_obj_type_t GetType(zx_handle_t handle) {
+  zx_info_handle_basic_t info;
+  zx_status_t status = zx_object_get_info(handle, ZX_INFO_HANDLE_BASIC, &info,
+                                          sizeof(info), nullptr, nullptr);
+  return status == ZX_OK ? info.type : ZX_OBJ_TYPE_NONE;
 }
 
 std::string GetObjectName(zx_handle_t handle) {

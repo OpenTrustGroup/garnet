@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2016 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -25,6 +27,9 @@ FXL_EXPORT zx_koid_t GetKoid(zx_handle_t handle);
 // the opposite end. Returns |ZX_KOID_INVALID| if the handle is invalid or
 // the object associated with the handle has no related object.
 FXL_EXPORT zx_koid_t GetRelatedKoid(zx_handle_t handle);
+
+// Gets the type of a kernel object.
+FXL_EXPORT zx_obj_type_t GetType(zx_handle_t handle);
 
 // Gets the name of a kernel object.
 FXL_EXPORT std::string GetObjectName(zx_handle_t handle);

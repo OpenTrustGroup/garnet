@@ -1,0 +1,7 @@
+config("headers") {
+  include_dirs = [ "include/" ]
+}
+
+source_set("mt8678") {
+  public_configs = [ ":headers" ]
+}

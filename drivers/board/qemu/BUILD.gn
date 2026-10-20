@@ -1,0 +1,33 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("qemu_board_drv") {
+  output_name = "qemu"
+
+  sources = [
+    "board.cc",
+  ]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/ddktl",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/fbl",
+    "//zircon/public/lib/zx",
+    "//garnet/public/lib/fxl",
+  ]
+}
+
+package("qemu") {
+  system_image = true
+
+  deps = [
+    ":qemu_board_drv",
+  ]
+
+   drivers = [
+     {
+       name = "qemu.so"
+     },
+   ]
+}

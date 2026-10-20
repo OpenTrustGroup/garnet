@@ -1,0 +1,41 @@
+
+config("headers") {
+  include_dirs = [ "include" ]
+}
+
+source_set("linux") {
+  sources = [
+    "binding.cc",
+    "clk.cc",
+    "delay.cc",
+    "device.cc",
+    "gpio.cc",
+    "i2c.cc",
+    "interrupt.cc",
+    "io.cc",
+    "jiffies.cc",
+    "of.cc",
+    "pinctrl.cc",
+    "platform_device.cc",
+    "platform_device.h",
+    "i2c_device.cc",
+    "i2c_device.h",
+    "sched.cc",
+    "singleton.h",
+    "slab.cc",
+    "wait.cc",
+  ]
+
+  defines = [ "_ALL_SOURCE=1" ]
+
+  public_deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/zx",
+    "//zircon/public/lib/fbl",
+    "//third_party/ree-trusty/libnebula-cpp:nebula-base",
+    "//third_party/fdt"
+  ]
+
+  public_configs = [ ":headers" ]
+}

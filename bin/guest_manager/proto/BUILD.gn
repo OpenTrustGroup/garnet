@@ -1,0 +1,8 @@
+import("//third_party/protobuf/proto_library.gni")
+
+proto_library("config") {
+  sources = [
+    "config.proto",
+  ]
+  use_protobuf_full = true
+}

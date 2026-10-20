@@ -5,6 +5,7 @@ proto_library("vm_config") {
     "vm_config.proto",
     "vm_message.proto",
     "rproc.proto",
+    "bootloader.proto",
   ]
   use_protobuf_full = true
 }

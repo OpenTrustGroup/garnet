@@ -1,0 +1,37 @@
+# Copyright 2016 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/package.gni")
+
+executable("bin") {
+  output_name = "ufsinfo"
+
+  sources = [
+    "main.c",
+  ]
+
+  public_deps = [
+    "//garnet/public/lib/app/cpp",
+    "//zircon/public/lib/zx",
+    "//zircon/public/lib/fdio",
+    "//garnet/public/lib/blk_ufsinfo",
+  ]
+
+  include_dirs = [ "//garnet/public/lib",
+  ]
+}
+
+package("ufsinfo") {
+  system_image = true
+
+  deps = [
+    ":bin",
+  ]
+
+  binaries = [
+    {
+      name = "ufsinfo"
+    },
+  ]
+}

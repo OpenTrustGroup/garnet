@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "ufsinfo": "//garnet/bin/ufsinfo"
+    }
+}

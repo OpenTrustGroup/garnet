@@ -1,0 +1,43 @@
+import("//build/config/fuchsia/rules.gni")
+import("//build/package.gni")
+
+driver_module("mt8676_ufs_drv") {
+  output_name = "mt8676_ufs"
+
+  sources = [
+    "../core/ufs_core.c",
+    "../core/ufs_hcd.c",
+    "../core/ufs_interface.c",
+    "../core/ufs_quirks.c",
+    "../core/ufs_utils.c",
+    "../core/ufs_crypto.c",
+    "../ufs.c",
+    "ufs_platform.c"
+  ]
+
+  defines = [ "_ALL_SOURCE=1", "MTK_UFS_8676" ]
+  include_dirs = [ "../include/","../mt8676/","../core/inc/"]
+
+  deps = [
+    "//zircon/public/lib/ddk",
+    "//zircon/public/lib/driver",
+    "//zircon/public/lib/sync",
+    "//zircon/public/lib/pretty",
+    "//zircon/public/lib/zx",
+    "//garnet/public/lib/blk_crypto",
+  ]
+}
+
+package("ufs") {
+  system_image = true
+
+  deps = [
+    ":mt8676_ufs_drv",
+  ]
+
+   drivers = [
+     {
+       name = "mt8676_ufs.so"
+     },
+   ]
+}

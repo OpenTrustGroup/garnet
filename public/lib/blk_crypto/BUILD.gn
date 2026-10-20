@@ -1,0 +1,13 @@
+
+static_library("blk_crypto") {
+  sources = [
+    "blk_crypto.c",
+    "blk_crypto.h",
+  ]
+
+  public_deps = [
+    "//garnet/public/lib/fxl",
+    "//zircon/public/lib/sync",
+    "//zircon/public/lib/zx",
+  ]
+}

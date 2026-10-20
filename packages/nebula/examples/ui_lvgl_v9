@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "lvgl_v9": "//garnet/bin/ui/lvgl_v9"
+    }
+}

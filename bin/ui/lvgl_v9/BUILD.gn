@@ -1,0 +1,33 @@
+# Copyright 2016 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/package.gni")
+
+executable("bin") {
+  output_name = "lvgl_sample_v9"
+
+  sources = [
+    "lvgl_sample_v9.cc",
+  ]
+
+  deps = [
+    "//third_party/lvgl_v9",
+    "//zircon/public/lib/zx",
+  ]
+  
+  public_configs = [
+    "//third_party/lvgl_v9:liblvgl_public_config",
+  ]
+}
+
+package("lvgl_v9") {
+  deps = [
+    ":bin",
+  ]
+  binary = "lvgl_sample_v9"
+  meta = [ {
+    path = rebase_path("meta/sandbox")
+    dest = "sandbox"
+  } ]
+}

@@ -1,0 +1,70 @@
+import("//build/package.gni")
+
+static_library("lib") {
+  sources = [
+    "backend_impl.cc",
+    "transport.cc",
+  ]
+
+  public_deps = [
+    "//garnet/public/lib/spi_transport/cpp",
+    "//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/fxl",
+    "//zircon/public/lib/async-loop",
+    "//third_party/ree-trusty/libnebula-cpp:nebula-base",
+  ]
+}
+
+executable("bin") {
+  output_name = "spi_transport_demo"
+  sources = [
+    "demo.cc",
+  ]
+
+  deps = [
+    ":lib",
+  ]
+}
+
+package("spi_transport") {
+  system_image = true
+  deps = [
+    ":bin",
+  ]
+
+  binaries = [
+    {
+      name = "spi_transport_demo"
+    },
+  ]
+}
+
+executable("unittests") {
+  testonly = true
+  output_name = "spi_transport_tests"
+
+  sources = [
+    "transport-unittest.cc",
+  ]
+
+  deps = [
+    ":lib",
+    "//third_party/googletest:gtest_main",
+  ]
+}
+
+package("spi_transport_tests") {
+  testonly = true
+  system_image = true
+
+  deps = [
+    ":unittests",
+  ]
+
+  tests = [
+    {
+      name = "spi_transport_tests"
+    },
+  ]
+}
+

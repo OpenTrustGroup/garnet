@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "spi_demo": "//garnet/bin/ui/spi_demo"
+    }
+}

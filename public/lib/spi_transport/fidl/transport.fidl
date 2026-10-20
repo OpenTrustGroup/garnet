@@ -1,0 +1,7 @@
+library SpiService;
+
+[ServiceName="SpiService.Transport"]
+interface Transport {
+  1: SetRxChannel(handle<channel> chan) -> ();
+  2: GetTxChannel() -> (handle<channel> chan);
+};

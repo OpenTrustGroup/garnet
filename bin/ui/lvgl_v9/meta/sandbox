@@ -1,0 +1,4 @@
+{
+  "dev": [ "sys/platform/ramfb" ],
+  "system": [ "driver/ramfb" ]
+}

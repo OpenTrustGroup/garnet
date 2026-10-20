@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2017 The Fuchsia Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -11,10 +13,18 @@
 #include <zircon/compiler.h>
 #include <zircon/types.h>
 
-#include "garnet/lib/machina/virtio_pci.h"
-#include "garnet/lib/machina/virtio_queue.h"
+#include "virtio_pci.h"
+#include "virtio_mmio.h"
+#include "virtio_queue.h"
 
 namespace machina {
+
+static constexpr size_t kDeviceStatusReset = 0x0;
+static constexpr size_t kDeviceStatusAcked = 0x01;
+static constexpr size_t kDeviceStatusDriver = 0x02;
+static constexpr size_t kDeviceStatusDriverOk = 0x04;
+static constexpr size_t kDeviceStatusFeatureOk = 0x08;
+static constexpr size_t kDeviceStatusFailed = 0x80;
 
 // Set of features that are supported by the bus transparently for all devices.
 static constexpr uint32_t kVirtioBusFeatures = 1u << VIRTIO_F_RING_EVENT_IDX;
@@ -24,7 +34,8 @@ class VirtioDevice;
 // Interface for all virtio devices.
 class VirtioDevice {
  public:
-  virtual ~VirtioDevice();
+  enum Transport { PCI, MMIO };
+  virtual ~VirtioDevice(){}
 
   // Read a device-specific configuration field.
   virtual zx_status_t ReadConfig(uint64_t addr, IoValue* value) = 0;
@@ -41,6 +52,16 @@ class VirtioDevice {
   // The method for how this notification is delievered is transport
   // specific.
   zx_status_t NotifyGuest();
+  zx_status_t NotifyGuest(uint32_t queue_index);
+
+  // Alloc msix interrupt for virtio queue and configuration.
+  virtual zx_status_t AllocMsixInterrupt(uint16_t index, uint32_t irq) { return ZX_OK; }
+
+  virtual void TriggerMsixInterrupt(uint16_t index) {
+    pci_->Interrupt(index);
+  }
+
+  virtual void ControlNotify(MsixStatus behavior, uint16_t index = 0) {}
 
   const PhysMem& phys_mem() { return phys_mem_; }
   uint16_t num_queues() const { return num_queues_; }
@@ -79,19 +100,40 @@ class VirtioDevice {
     return (features_ & driver_features_ & features) == features;
   }
 
-  PciDevice* pci_device() { return &pci_; }
+  PciDevice* pci_device() {
+    if (transport_ == Transport::PCI)
+      return pci_.get();
+    return NULL;
+  }
+
+  MmioDevice* mmio_device() {
+    if (transport_ == Transport::PCI)
+      return NULL;
+    return mmio_.get();
+  }
+
+  uint16_t device_id() { return device_id_; }
+
+  bool use_msix() const { return use_msix_; }
+
+  virtual VirtioQueue* queue(uint16_t sel) {
+    return NULL;
+  }
 
  protected:
   VirtioDevice(uint8_t device_id,
                size_t config_size,
                VirtioQueue* queues,
                uint16_t num_queues,
-               const PhysMem& phys_mem);
+               const PhysMem& phys_mem,
+               Transport transport = Transport::PCI,
+               bool enable_msix = true);
 
  private:
   // Temporarily expose our state to the PCI transport until the proper
   // accessor methods are defined.
   friend class VirtioPci;
+  friend class MmioDevice;
 
   fbl::Mutex mutex_;
 
@@ -136,8 +178,12 @@ class VirtioDevice {
   // Guest physical memory.
   const PhysMem& phys_mem_;
 
-  // Virtio PCI transport.
-  VirtioPci pci_;
+  // Virtio transport: PCI or MMIO.
+  Transport transport_;
+  // Whether to use MSI-X or legacy INTx.
+  bool use_msix_ = true;
+  std::unique_ptr<VirtioPci> pci_;
+  std::unique_ptr<MmioDevice> mmio_;
 };
 
 template <uint16_t VIRTIO_ID,
@@ -146,12 +192,14 @@ template <uint16_t VIRTIO_ID,
           uint16_t QUEUE_SIZE_MAX = 128>
 class VirtioDeviceBase : public VirtioDevice {
  public:
-  VirtioDeviceBase(const PhysMem& phys_mem)
+  VirtioDeviceBase(const PhysMem& phys_mem, Transport transport = Transport::PCI, bool enable_msix = true)
       : VirtioDevice(VIRTIO_ID,
                      sizeof(config_),
                      queues_,
                      NUM_QUEUES,
-                     phys_mem) {
+                     phys_mem,
+                     transport,
+                     enable_msix) {
     // Advertise support for common/bus features.
     add_device_features(kVirtioBusFeatures);
     for (int i = 0; i < NUM_QUEUES; ++i) {
@@ -160,59 +208,80 @@ class VirtioDeviceBase : public VirtioDevice {
     }
   }
 
+  virtual char const *cfg_name(uint64_t off) const {
+    return NULL;
+  }
+
   zx_status_t ReadConfig(uint64_t addr, IoValue* value) override {
+    printf("virtio device, readcfg@%lu(%s)\n", addr, cfg_name(addr));
+    uint8_t const *buf = reinterpret_cast<uint8_t*>(&config_);
+    buf += addr;
     fbl::AutoLock lock(&config_mutex_);
     switch (value->access_size) {
       case 1: {
-        uint8_t* buf = reinterpret_cast<uint8_t*>(&config_);
-        value->u8 = buf[addr];
+        uint8_t const *buf8 = reinterpret_cast<uint8_t const *>(buf);
+        value->u8 = buf8[0];
         return ZX_OK;
       }
       case 2: {
-        uint16_t* buf = reinterpret_cast<uint16_t*>(&config_);
-        value->u16 = buf[addr / 2];
+        uint16_t const *buf16 = reinterpret_cast<uint16_t const *>(buf);
+        value->u16 = buf16[0];
         return ZX_OK;
       }
       case 4: {
-        uint32_t* buf = reinterpret_cast<uint32_t*>(&config_);
-        value->u32 = buf[addr / 4];
+        uint32_t const *buf32 = reinterpret_cast<uint32_t const *>(buf);
+        value->u32 = buf32[0];
+        return ZX_OK;
+      }
+      case 8: {
+        uint64_t const *buf64 = reinterpret_cast<uint64_t const *>(buf);
+        value->u64 = buf64[0];
         return ZX_OK;
       }
     }
-    FXL_LOG(ERROR) << "Unsupported config read 0x" << std::hex << addr;
+    FXL_LOG(ERROR) << "Unsupported config read at 0x" << std::hex << addr <<
+        ", width: " << std::dec << value->access_size;
     return ZX_ERR_NOT_SUPPORTED;
   }
 
   zx_status_t WriteConfig(uint64_t addr, const IoValue& value) override {
+    printf("virtio device, writecfg@%lu(%s)\n", addr, cfg_name(addr));
+    uint8_t* buf = reinterpret_cast<uint8_t*>(&config_);
+    buf += addr;
     fbl::AutoLock lock(&config_mutex_);
     switch (value.access_size) {
       case 1: {
-        uint8_t* buf = reinterpret_cast<uint8_t*>(&config_);
-        buf[addr] = value.u8;
+        buf[0] = value.u8;
         return ZX_OK;
       }
       case 2: {
-        uint16_t* buf = reinterpret_cast<uint16_t*>(&config_);
-        buf[addr / 2] = value.u16;
+        uint16_t *buf16 = reinterpret_cast<uint16_t*>(buf);
+        buf16[0] = value.u16;
         return ZX_OK;
       }
       case 4: {
-        uint32_t* buf = reinterpret_cast<uint32_t*>(&config_);
-        buf[addr / 4] = value.u32;
+        uint32_t *buf32 = reinterpret_cast<uint32_t*>(buf);
+        buf32[0] = value.u32;
+        return ZX_OK;
+      }
+      case 8: {
+        uint64_t* buf64 = reinterpret_cast<uint64_t*>(buf);
+        buf64[0] = value.u64;
         return ZX_OK;
       }
     }
-    FXL_LOG(ERROR) << "Unsupported config write 0x" << std::hex << addr;
+    FXL_LOG(ERROR) << "Unsupported config write at 0x" << std::hex << addr <<
+        ", width: " << std::dec << value.access_size;
     return ZX_ERR_NOT_SUPPORTED;
   }
 
-  VirtioQueue* queue(uint16_t sel) {
+  VirtioQueue* queue(uint16_t sel) override {
     return sel >= NUM_QUEUES ? nullptr : &queues_[sel];
   }
 
  protected:
   // Mutex for accessing device configuration fields.
-  fbl::Mutex config_mutex_;
+  mutable fbl::Mutex config_mutex_;
   ConfigType config_ __TA_GUARDED(config_mutex_) = {};
 
  private:

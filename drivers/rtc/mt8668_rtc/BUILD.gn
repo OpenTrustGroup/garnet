@@ -1,0 +1,13 @@
+import("//build/package.gni")
+
+package("mt8668_rtc") {
+  system_image = true
+
+  deps = [ "mt6685:mt6685" ]
+
+  drivers = [
+    {
+      name = "mt8668_rtc.so"
+    },
+  ]
+}

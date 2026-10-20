@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "littlefs": "//garnet/bin/littlefs"
+    }
+}

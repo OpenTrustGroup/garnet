@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: BSD-3-Clause
+
+static_library("littlefs") {
+  defines = [
+    "LFS_THREADSAFE",
+    "_ALL_SOURCE=1",
+  ]
+
+  sources = [
+    "bcache.cpp",
+    "vnode.cpp",
+    "littlefs.cpp",
+  ]
+
+  public_deps = [
+    "//third_party/littlefs",
+    "//zircon/public/lib/fbl",
+    "//zircon/public/lib/fs",
+    "//zircon/public/lib/block-client",
+    "//garnet/public/lib/fxl",
+  ]
+}
+

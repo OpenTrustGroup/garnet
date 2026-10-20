@@ -1,0 +1,28 @@
+import("//build/package.gni")
+
+executable("bin") {
+  output_name = "littlefs"
+
+  sources = [
+    "main.cc",
+  ]
+
+  deps = [
+    "//garnet/lib/littlefs",
+    "//zircon/public/lib/async-loop-cpp",
+    "//zircon/public/lib/fbl",
+  ]
+}
+
+package("littlefs") {
+  system_image = true
+  deps = [
+    ":bin",
+  ]
+
+  binaries = [
+    {
+      name = "littlefs"
+    }
+  ]
+}

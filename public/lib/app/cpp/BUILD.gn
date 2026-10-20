@@ -4,6 +4,10 @@
 
 import("//build/nebula/nbl_sdk_library.gni")
 
+config("pic") {
+  cflags = [ "-fPIC" ]
+}
+
 static_library("cpp") {
   sources = [
     "application_context.cc",
@@ -21,6 +25,9 @@ static_library("cpp") {
     "//garnet/public/lib/fxl",
     "//garnet/public/lib/svc/cpp",
   ]
+
+  configs += [ ":pic" ]
+  configs -= [ "//build/config:symbol_visibility_hidden" ]
 }
 
 nbl_sdk_library("app_cpp_sdk") {

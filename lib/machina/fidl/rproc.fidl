@@ -23,7 +23,7 @@ interface VmStateListener {
   2: VmOffline(int16 vmid);
 };
 
-[ServiceName="machina.RprocService"]
+[ServiceName="fuchsia.virtualization.RprocService"]
 interface RprocService {
   1: GetRemoteDevices(int16 vmid) -> (vector<RprocDeviceSvc>? devs);
   2: GetHostDevices(int16 vmid) -> (vector<RprocDeviceSvc>? devs);

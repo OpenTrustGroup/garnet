@@ -1,0 +1,29 @@
+devices {
+    remote_vmid: -1
+    host_vmid: 0
+    ctrl_irq: 178
+    local_irqs: {
+        start: 181
+        length: 10
+    }
+    remote_irqs: {
+        start: 191
+        length: 10
+    }
+    resv_mem: "rproc_reserved"
+}
+
+devices {
+    remote_vmid: -1
+    host_vmid: 1
+    ctrl_irq: 180
+    local_irqs: {
+        start: 221
+        length: 10
+    }
+    remote_irqs: {
+        start: 231
+        length: 10
+    }
+    resv_mem: "rproc_reserved_tbox"
+}

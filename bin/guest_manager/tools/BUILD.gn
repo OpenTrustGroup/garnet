@@ -1,0 +1,34 @@
+import("//build/package.gni")
+
+executable("vmm") {
+  output_name = "vmm"
+
+  sources = [
+    "vmctl.cc",
+  ]
+
+  deps = [
+    "//garnet/public/lib/app/cpp",
+    "//garnet/public/lib/fxl",
+    "//garnet/public/lib/fsl",
+    "//garnet/public/lib/virtualization/fidl",
+    "//zircon/public/lib/async-loop",
+    "//zircon/public/lib/async-loop-cpp",
+  ]
+}
+
+package("tools") {
+  testonly = true
+  system_image = true
+
+  deps = [
+    ":vmm",
+  ]
+
+  binaries = [
+    {
+      name = "vmm"
+    }
+  ]
+}
+

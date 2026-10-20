@@ -1,0 +1,126 @@
+# Copyright 2016 The Fuchsia Authors. All rights reserved.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+import("//build/package.gni")
+
+package("lua") {
+  system_image = true
+
+  deps = [
+    ":lua_bin",
+  ]
+
+  binaries = [ {
+        name = "lua"
+      } ]
+}
+
+source_set("lua_core") {
+  sources = [
+    "src/lapi.c",
+    "src/lcode.c",
+    "src/lctype.c",
+    "src/ldebug.c",
+    "src/ldo.c",
+    "src/ldump.c",
+    "src/lfunc.c",
+    "src/lgc.c",
+    "src/llex.c",
+    "src/lmem.c",
+    "src/lobject.c",
+    "src/lopcodes.c",
+    "src/lparser.c",
+    "src/lstate.c",
+    "src/lstring.c",
+    "src/ltable.c",
+    "src/ltm.c",
+    "src/lundump.c",
+    "src/lvm.c",
+    "src/lzio.c",
+  ]
+}
+
+source_set("lua_lib") {
+  sources = [
+    "src/lauxlib.c",
+    "src/lbaselib.c",
+    "src/lbitlib.c",
+    "src/lcorolib.c",
+    "src/ldblib.c",
+    "src/linit.c",
+    "src/liolib.c",
+    "src/lmathlib.c",
+    "src/loadlib.c",
+    "src/loslib.c",
+    "src/lstrlib.c",
+    "src/ltablib.c",
+    "src/lutf8lib.c",
+  ]
+}
+
+source_set("luabridge") {
+  sources = [
+    "LuaBridge/List.h",
+    "LuaBridge/LuaBridge.h",
+    "LuaBridge/Map.h",
+    "LuaBridge/RefCountedObject.h",
+    "LuaBridge/RefCountedPtr.h",
+    "LuaBridge/UnorderedMap.h",
+    "LuaBridge/Vector.h",
+    "LuaBridge/Array.h",
+    "LuaBridge/detail/CFunctions.h",
+    "LuaBridge/detail/ClassInfo.h",
+    "LuaBridge/detail/Config.h",
+    "LuaBridge/detail/Constructor.h",
+    "LuaBridge/detail/dump.h",
+    "LuaBridge/detail/FuncTraits.h",
+    "LuaBridge/detail/Iterator.h",
+    "LuaBridge/detail/LuaException.h",
+    "LuaBridge/detail/LuaHelpers.h",
+    "LuaBridge/detail/LuaRef.h",
+    "LuaBridge/detail/Namespace.h",
+    "LuaBridge/detail/Stack.h",
+    "LuaBridge/detail/TypeList.h",
+    "LuaBridge/detail/TypeTraits.h",
+    "LuaBridge/detail/Userdata.h",
+  ]
+}
+
+shared_library("liblua") {
+  public_deps = [
+    ":lua_core",
+    ":lua_lib",
+    ":luabridge",
+  ]
+}
+
+executable("lua_bin") {
+  output_name = "lua"
+
+  sources = [
+    "src/lua.c",
+  ]
+
+  deps = [
+    ":liblua",
+    "//zircon/public/lib/linenoise",
+  ]
+
+  defines = [
+    "LUA_USE_POSIX",
+    "LUA_USE_LINENOISE",
+  ]
+}
+
+executable("luac") {
+  sources = [
+    "src/luac.c",
+  ]
+
+  deps = [
+    ":liblua",
+  ]
+
+  defines = [ "LUA_USE_POSIX" ]
+}

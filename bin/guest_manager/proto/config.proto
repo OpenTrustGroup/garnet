@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package guest_manager;
+
+message Config {
+  int32 vmid = 1;
+  string name = 2;
+  string default_cfg = 3;
+  string bootloader = 4;
+  string memory = 5;
+  bool auto_start = 6;
+  int32 log_level = 7;
+  string memory_path = 8;
+  int32 delayed_launch_ms = 9;
+};
+
+message ManagerConfig {
+  repeated Config guest_configs = 1;
+};

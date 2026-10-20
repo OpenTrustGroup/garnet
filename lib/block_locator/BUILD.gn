@@ -1,0 +1,20 @@
+# Copyright 2026 GoldenRiver Technology Co., Ltd.
+# Use of this source code is governed by a BSD-style license that can be
+# found in the LICENSE file.
+
+source_set("block_locator") {
+  sources = [
+    "block_locator.cc",
+    "block_locator.h",
+  ]
+
+  public_deps = [
+    "//zircon/public/lib/fbl",
+    "//zircon/public/lib/zx",
+  ]
+
+  deps = [
+    "//garnet/public/lib/fxl",
+    "//zircon/public/lib/fdio",
+  ]
+}

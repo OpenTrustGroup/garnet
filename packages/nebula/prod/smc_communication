@@ -1,0 +1,5 @@
+{
+    "packages": {
+        "smc_communication": "//garnet/bin/smc_communication"
+    }
+}

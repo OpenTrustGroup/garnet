@@ -1,10 +1,12 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2023 GoldenRiver Technology Co., Ltd.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ipc_channel.h"
 #include <trusty_std.h>
 #include <uapi/err.h>
-#include "ipc_channel.h"
 
 #include "garnet/lib/machina/fdt_utils.h"
 #include "garnet/lib/machina/guest.h"
@@ -26,7 +28,9 @@ static constexpr uint32_t kMapFlags =
     ZX_VM_FLAG_SPECIFIC;
 
 // static
-zx_status_t IpcChannel::Create(Guest* guest, std::unique_ptr<IpcChannel>* out, uint8_t way) {
+zx_status_t IpcChannel::Create(Guest* guest,
+                               std::unique_ptr<IpcChannel>* out,
+                               uint8_t way) {
   auto chan = std::make_unique<IpcChannel>(next_chan_id_, guest, way);
   if (chan == nullptr) {
     return ZX_ERR_NO_MEMORY;
@@ -53,7 +57,8 @@ zx_status_t IpcChannel::Create(Guest* guest,
   return ZX_OK;
 }
 
-IpcChannel::IpcChannel(uint8_t id, Guest* guest, uint8_t way) : id_(id), way_(way) {
+IpcChannel::IpcChannel(uint8_t id, Guest* guest, uint8_t way)
+    : id_(id), way_(way) {
   zx_status_t status = zx::vmo::create(kIpcChannelSize, 0, &tx_vmo_);
   FXL_CHECK(status == ZX_OK);
 
@@ -196,11 +201,16 @@ void IpcRequestHandler::NotifyRxReady(uint8_t chan_id) {
   uint32_t bytes_read;
   uint32_t handles_read;
   zx_status_t read_status;
+  zx_status_t status;
 
   if (!name_.empty())
-    FXL_LOG(INFO) << name_ << ": NotifyRxReady, chan_id=" << (uint32_t) chan_id;
-  fast_client_.call(0, zx::time::infinite(), &args, &bytes_read,
-      &handles_read, &read_status);
+    FXL_LOG(INFO) << name_ << ": NotifyRxReady, chan_id=" << (uint32_t)chan_id;
+  status = fast_client_.call(0, zx::deadline_after(zx::sec(5)), &args,
+                             &bytes_read, &handles_read, &read_status);
+  if (status == ZX_ERR_TIMED_OUT) {
+    FXL_LOG(INFO) << "IpcRequestHandler->NotifyRxReady timeout.";
+    return;
+  }
 }
 
 void IpcRequestHandler::NotifyTxDone(uint8_t chan_id) {
@@ -225,10 +235,16 @@ void IpcRequestHandler::NotifyTxDone(uint8_t chan_id) {
   uint32_t bytes_read;
   uint32_t handles_read;
   zx_status_t read_status;
+  zx_status_t status;
+
   if (!name_.empty())
     FXL_LOG(INFO) << name_ << ": NotifyTxDone, chan_id=" << (uint32_t)chan_id;
-  fast_client_.call(0, zx::time::infinite(), &args, &bytes_read,
-      &handles_read, &read_status);
+  status = fast_client_.call(0, zx::deadline_after(zx::sec(5)), &args,
+                             &bytes_read, &handles_read, &read_status);
+  if (status == ZX_ERR_TIMED_OUT) {
+    FXL_LOG(INFO) << "IpcRequestHandler->NotifyTxDone timeout.";
+    return;
+  }
 }
 
 int32_t IpcRequestHandler::VMCall(int vmid, zx_txid_t txid) {
@@ -254,14 +270,18 @@ int32_t IpcRequestHandler::VMCall(int vmid, zx_txid_t txid) {
   uint32_t handles_read;
   zx_status_t read_status = -1;
   KickVMServer();
-  status = vm_client_.call(0, zx::time::infinite(), &args, &bytes_read,
-      &handles_read, &read_status);
+  status = vm_client_.call(0, zx::deadline_after(zx::sec(5)), &args,
+                           &bytes_read, &handles_read, &read_status);
+  if (status == ZX_ERR_TIMED_OUT) {
+    FXL_LOG(INFO) << "IpcRequestHandler->VMCall timeout.";
+    return ZX_ERR_TIMED_OUT;
+  }
   FXL_CHECK(status == ZX_OK);
 
   return rsp.status;
 }
 
-zx_status_t IpcRequestHandler::VMRead(int vmid, zx_txid_t *txid) {
+zx_status_t IpcRequestHandler::VMRead(int vmid, zx_txid_t* txid) {
   fbl::AutoLock lock(&msg_lock_);
   zx_signals_t signals = ZX_CHANNEL_READABLE | ZX_CHANNEL_PEER_CLOSED;
   zx_signals_t pending = 0;
@@ -277,7 +297,8 @@ zx_status_t IpcRequestHandler::VMRead(int vmid, zx_txid_t *txid) {
     return ZX_ERR_SHOULD_WAIT;
   }
 
-  status = vm_server_.wait_one(signals, zx::deadline_after(zx::sec(5)), &pending);
+  status =
+      vm_server_.wait_one(signals, zx::deadline_after(zx::sec(5)), &pending);
   if (status == ZX_ERR_TIMED_OUT) {
     FXL_LOG(INFO) << "IpcRequestHandler->VMRead timeout.";
     return ZX_ERR_TIMED_OUT;
@@ -291,8 +312,8 @@ zx_status_t IpcRequestHandler::VMRead(int vmid, zx_txid_t *txid) {
 
   FXL_CHECK(pending & ZX_CHANNEL_READABLE);
 
-  status = vm_server_.read(0, &arg, msg_size, &actual_bytes, nullptr, 0,
-      nullptr);
+  status =
+      vm_server_.read(0, &arg, msg_size, &actual_bytes, nullptr, 0, nullptr);
   if (status == ZX_OK) {
     FXL_CHECK(actual_bytes == msg_size);
     *txid = arg.txid;
@@ -306,13 +327,31 @@ zx_status_t IpcRequestHandler::VMRead(int vmid, zx_txid_t *txid) {
   return status;
 }
 
-zx_status_t IpcRequestHandler::VMWrite(int vmid, zx_txid_t txid,
-    int32_t result) {
+zx_status_t IpcRequestHandler::VMWrite(int vmid,
+                                       zx_txid_t txid,
+                                       int32_t result) {
   // TODO support multiple VMs.
   zx_status_t status;
   struct vm_call_rsp rsp;
   rsp.txid = txid;
   rsp.status = result;
+  zx_signals_t signals = ZX_CHANNEL_WRITABLE | ZX_CHANNEL_PEER_CLOSED;
+  zx_signals_t pending = 0;
+
+  status =
+      vm_server_.wait_one(signals, zx::deadline_after(zx::sec(5)), &pending);
+  if (status == ZX_ERR_TIMED_OUT) {
+    FXL_LOG(INFO) << "IpcRequestHandler->VMWrite timeout.";
+    return ZX_ERR_TIMED_OUT;
+  }
+  FXL_CHECK(status == ZX_OK);
+
+  if (pending & ZX_CHANNEL_PEER_CLOSED) {
+    // tell vm server wait for kick.
+    return ZX_ERR_SHOULD_WAIT;
+  }
+
+  FXL_CHECK(pending & ZX_CHANNEL_WRITABLE);
 
   status = vm_server_.write(0, &rsp, sizeof(rsp), NULL, 0);
 
@@ -367,13 +406,13 @@ zx_status_t IpcRequestHandler::CreateMboxDeviceTreeNodes(
 
   guest_->GetGICInterruptCellSize(dtb, cells_size);
 
-  std::string nebula_mbox = "/nebula_mbox@";
+  std::string nebula_mbox = "/nebula-mbox@";
   nebula_mbox += std::to_string(node);
 
   int mbox_offset = fdt_path_offset(dtb, nebula_mbox.c_str());
   if (mbox_offset < 0) {
-	nebula_mbox = "/nebula-mbox@";
-	nebula_mbox += std::to_string(node);
+    nebula_mbox = "/nebula_mbox@";
+    nebula_mbox += std::to_string(node);
     mbox_offset = fdt_path_offset(dtb, nebula_mbox.c_str());
   }
   if (mbox_offset < 0) {
@@ -440,41 +479,41 @@ void IpcRequestHandler::FastCallLoop() {
 
   uint32_t cpu_mask = kNormalCpuAffinity;
   _trusty_ioctl(SYS_PLATFORM_FD, SYS_PLATFORM_SET_CUR_THREAD_AFFINITY,
-      (void*) &cpu_mask);
+                (void*)&cpu_mask);
 
   while ((status = fast_server_.wait_one(signals, zx::time::infinite(),
-      &pending)) == ZX_OK) {
+                                         &pending)) == ZX_OK) {
     if (pending & ZX_CHANNEL_READABLE) {
       struct fast_call_arg arg;
       struct fast_call_rsp rsp;
       uint32_t actual_bytes = 0;
       uint32_t msg_size = sizeof(arg);
-      status = fast_server_.read(0, &arg, msg_size, &actual_bytes, nullptr,
-          0, nullptr);
+      status = fast_server_.read(0, &arg, msg_size, &actual_bytes, nullptr, 0,
+                                 nullptr);
 
       FXL_CHECK(status == ZX_OK);
       FXL_CHECK(actual_bytes == msg_size);
 
-      switch(arg.cmd) {
-      case FAST_CALL_CMD_NOTIFY_RX_READY:
-        OnRxReady(arg.chan_id, NULL);
-        rsp.status = 0;
-        break;
-      case FAST_CALL_CMD_NOTIFY_TX_DONE:
-        OnTxDone(arg.chan_id, NULL);
-        rsp.status = 0;
-        break;
-      case FAST_CALL_CMD_KICK_SERVER:
-        pending_msg_++;
-        OnKickVMServer();
-        rsp.status = 0;
-        break;
-      case FAST_CALL_CMD_SET_POWER_STATE:
-        SetPowerState(arg.chan_id, arg.mbox_state);
-        rsp.status = 0;
-        break;
-      default:
-        rsp.status = -1;
+      switch (arg.cmd) {
+        case FAST_CALL_CMD_NOTIFY_RX_READY:
+          OnRxReady(arg.chan_id, NULL);
+          rsp.status = 0;
+          break;
+        case FAST_CALL_CMD_NOTIFY_TX_DONE:
+          OnTxDone(arg.chan_id, NULL);
+          rsp.status = 0;
+          break;
+        case FAST_CALL_CMD_KICK_SERVER:
+          pending_msg_++;
+          OnKickVMServer();
+          rsp.status = 0;
+          break;
+        case FAST_CALL_CMD_SET_POWER_STATE:
+          SetPowerState(arg.chan_id, arg.mbox_state);
+          rsp.status = 0;
+          break;
+        default:
+          rsp.status = -1;
       }
       rsp.txid = arg.txid;
 
@@ -506,8 +545,14 @@ void IpcRequestHandler::KickVMServer() {
   uint32_t bytes_read;
   uint32_t handles_read;
   zx_status_t read_status;
-  fast_client_.call(0, zx::time::infinite(), &args, &bytes_read,
-      &handles_read, &read_status);
+  zx_status_t status;
+
+  status = fast_client_.call(0, zx::deadline_after(zx::sec(5)), &args,
+                             &bytes_read, &handles_read, &read_status);
+  if (status == ZX_ERR_TIMED_OUT) {
+    FXL_LOG(INFO) << "IpcRequestHandler->KickVMServer timeout.";
+    return;
+  }
 }
 
 void IpcRequestHandler::OnKickVMServer() {
@@ -523,7 +568,7 @@ void IpcRequestHandler::SetSchedMem() {
 
 uint32_t IpcRequestHandler::GetMailboxPowerState(uint32_t vmid) {
   fbl::AutoLock lock(&mutex_);
-  if (vmid == 0) {
+  if (IsAlpsVmid(vmid)) {
     return mbox_state_vm0_;
   } else {
     return mbox_state_vm1_;
@@ -532,7 +577,7 @@ uint32_t IpcRequestHandler::GetMailboxPowerState(uint32_t vmid) {
 
 void IpcRequestHandler::SetPowerState(uint32_t vmid, uint32_t state) {
   fbl::AutoLock lock(&mutex_);
-  if (vmid == 0) {
+  if (IsAlpsVmid(vmid)) {
     mbox_state_vm0_ = state;
   } else {
     mbox_state_vm1_ = state;

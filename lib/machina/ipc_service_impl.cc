@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2023 GoldenRiver Inc. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -8,7 +10,7 @@
 
 #include <stdio.h>
 static int fast_call_loop(void* ctx) {
-  machina::IpcRequestHandler *ipcRequest = (machina::IpcRequestHandler *)ctx;
+  machina::IpcRequestHandler* ipcRequest = (machina::IpcRequestHandler*)ctx;
   ipcRequest->FastCallLoop();
   return 0;
 }
@@ -16,25 +18,21 @@ static int fast_call_loop(void* ctx) {
 namespace machina {
 
 IpcServiceImpl::IpcServiceImpl(
-    component::ApplicationContext* application_context,
+    component::ServiceProviderBridge* bridge,
     Guest* guest,
-    const std::vector<machina::IpcMboxSpec> &ipcmbox)
+    const std::vector<machina::IpcMboxSpec>& ipcmbox)
     : IpcRequestHandler(guest) {
-  application_context->outgoing_services()->AddService<IpcService>(
+  bridge->AddService<IpcService>(
       [this](fidl::InterfaceRequest<IpcService> request) {
         bindings_.AddBinding(this, std::move(request));
       });
 
   for (size_t i = 0; i < ipcmbox.size(); ++i) {
     std::unique_ptr<IpcRequestHandler> ipcRequestHandler =
-      std::make_unique<machina::IpcRequestHandler>(
-        guest,
-        ipcmbox[i],
-        i
-      );
+        std::make_unique<machina::IpcRequestHandler>(guest, ipcmbox[i], i);
     FXL_CHECK(ipcRequestHandler != NULL);
     std::unique_ptr<IpcEnumeratorSyncPtr> ipcEnumeratorSyncPtr =
-                        std::make_unique<machina::IpcEnumeratorSyncPtr>();
+        std::make_unique<machina::IpcEnumeratorSyncPtr>();
     FXL_CHECK(ipcEnumeratorSyncPtr != NULL);
 
     for (uint8_t j = 0; j < kNumChannels; j++) {
@@ -60,9 +58,8 @@ void IpcServiceImpl::EnumerateIpcChannels(
   auto enumerator = enumerator_itor->second.get();
   FXL_CHECK(enumerator->is_bound());
 
-  machina::IpcRequestHandler *ipchandler = NULL;
-  for (auto it = ipchandlermap_.begin();
-            it != ipchandlermap_.end(); ++it) {
+  machina::IpcRequestHandler* ipchandler = NULL;
+  for (auto it = ipchandlermap_.begin(); it != ipchandlermap_.end(); ++it) {
     ipchandler = it->second.get();
     if (ipchandler->get_mailbox_vmid() == vmid)
       break;
@@ -72,17 +69,17 @@ void IpcServiceImpl::EnumerateIpcChannels(
     zx::vmo tx_vmo, rx_vmo;
     auto id = chan->id();
     chan->DuplicateVmoForPeer(&tx_vmo, &rx_vmo);
-    auto success =
-        (*enumerator)->OnNewIpcChannel(id%kNumChannels, std::move(tx_vmo), std::move(rx_vmo));
+    auto success = (*enumerator)
+                       ->OnNewIpcChannel(id % kNumChannels, std::move(tx_vmo),
+                                         std::move(rx_vmo));
     FXL_CHECK(success);
   }
   callback();
 }
 
 void IpcServiceImpl::GetIrqInfo(uint16_t vmid, GetIrqInfoCallback callback) {
-  machina::IpcRequestHandler *ipchandler = NULL;
-  for (auto it = ipchandlermap_.begin();
-            it != ipchandlermap_.end(); ++it) {
+  machina::IpcRequestHandler* ipchandler = NULL;
+  for (auto it = ipchandlermap_.begin(); it != ipchandlermap_.end(); ++it) {
     ipchandler = it->second.get();
     if (ipchandler->get_mailbox_vmid() == vmid)
       break;
@@ -92,9 +89,8 @@ void IpcServiceImpl::GetIrqInfo(uint16_t vmid, GetIrqInfoCallback callback) {
 }
 
 void IpcServiceImpl::GetSchedBuf(uint16_t vmid, GetSchedBufCallback callback) {
-  machina::IpcRequestHandler *ipchandler = NULL;
-  for (auto it = ipchandlermap_.begin();
-            it != ipchandlermap_.end(); ++it) {
+  machina::IpcRequestHandler* ipchandler = NULL;
+  for (auto it = ipchandlermap_.begin(); it != ipchandlermap_.end(); ++it) {
     ipchandler = it->second.get();
     if (ipchandler->get_mailbox_vmid() == vmid)
       break;
@@ -103,10 +99,11 @@ void IpcServiceImpl::GetSchedBuf(uint16_t vmid, GetSchedBufCallback callback) {
   callback(ipchandler->get_sched_mem_pa(), ipchandler->get_sched_mem_sz());
 }
 
-void IpcServiceImpl::SetupFastCallChannel(uint16_t vmid, SetupFastCallChannelCallback callback) {
-  machina::IpcRequestHandler *ipchandler = NULL;
-  for (auto it = ipchandlermap_.begin();
-            it != ipchandlermap_.end(); ++it) {
+void IpcServiceImpl::SetupFastCallChannel(
+    uint16_t vmid,
+    SetupFastCallChannelCallback callback) {
+  machina::IpcRequestHandler* ipchandler = NULL;
+  for (auto it = ipchandlermap_.begin(); it != ipchandlermap_.end(); ++it) {
     ipchandler = it->second.get();
     if (ipchandler->get_mailbox_vmid() == vmid)
       break;
@@ -127,7 +124,7 @@ void IpcServiceImpl::SetupFastCallChannel(uint16_t vmid, SetupFastCallChannelCal
   std::string thread_name = "fastcall-srv-";
   thread_name += std::to_string(vmid);
   int ret = thrd_create_with_name(&thread, fast_call_loop, ipchandler,
-                                    thread_name.c_str());
+                                  thread_name.c_str());
   FXL_CHECK(ret == thrd_success);
   ret = thrd_detach(thread);
   FXL_CHECK(ret == thrd_success);
@@ -136,10 +133,10 @@ void IpcServiceImpl::SetupFastCallChannel(uint16_t vmid, SetupFastCallChannelCal
   callback(std::move(remote_rx), std::move(remote_tx));
 }
 
-void IpcServiceImpl::SetupVMCallChannel(uint16_t vmid, SetupVMCallChannelCallback callback) {
-  machina::IpcRequestHandler *ipchandler = NULL;
-  for (auto it = ipchandlermap_.begin();
-            it != ipchandlermap_.end(); ++it) {
+void IpcServiceImpl::SetupVMCallChannel(uint16_t vmid,
+                                        SetupVMCallChannelCallback callback) {
+  machina::IpcRequestHandler* ipchandler = NULL;
+  for (auto it = ipchandlermap_.begin(); it != ipchandlermap_.end(); ++it) {
     ipchandler = it->second.get();
     if (ipchandler->get_mailbox_vmid() == vmid)
       break;
@@ -162,25 +159,39 @@ void IpcServiceImpl::RegisterIpcEventListener(
     uint16_t vmid,
     fidl::InterfaceHandle<IpcEventListener> handle,
     RegisterIpcEventListenerCallback callback) {
-  machina::IpcRequestHandler *ipc_req_handler = NULL;
-  for (auto it = ipchandlermap_.begin();
-            it != ipchandlermap_.end(); ++it) {
+  machina::IpcRequestHandler* ipc_req_handler = NULL;
+  for (auto it = ipchandlermap_.begin(); it != ipchandlermap_.end(); ++it) {
     ipc_req_handler = it->second.get();
     if (ipc_req_handler->get_mailbox_vmid() == vmid) {
+      uint16_t way = it->first;
       ipc_req_handler->getIpcEventListernerPtr().Bind(std::move(handle));
       callback();
+      FXL_LOG(INFO) << "RegisterIpcEventListener vmid " << vmid
+                    << " way "
+                             << way;
       return;
     }
   }
-  for (auto it = ipchandlermap_.begin();
-            it != ipchandlermap_.end(); ++it) {
+
+  /* if no ready ipc handler can be used, we use vmid as way to alloc one. */
+  int way = vmid;
+  auto it = ipchandlermap_.find(way);
+  if (it != ipchandlermap_.end()) {
     ipc_req_handler = it->second.get();
-    if (ipc_req_handler->get_mailbox_vmid() == -1) {
+    int mbox_vmid = ipc_req_handler->get_mailbox_vmid();
+    if (mbox_vmid == -1) {
       ipc_req_handler->set_mailbox_vmid(vmid);
       ipc_req_handler->getIpcEventListernerPtr().Bind(std::move(handle));
       callback();
-      return;
+      FXL_LOG(INFO) << "RegisterIpcEventListener vmid " << vmid
+                    << " way "
+                       << way;
+    } else {
+      FXL_LOG(ERROR) << "IpcEventListener way " << way
+                        << " already used by vmid " << mbox_vmid;
     }
+  } else {
+    FXL_LOG(ERROR) << "IpcEventListener way " << way << " not found";
   }
 }
 
@@ -192,7 +203,7 @@ void IpcServiceImpl::RegisterIpcEnumerator(
 
   if (it == enumeratormap_.end()) {
     FXL_CHECK(enumeratorsync_.size() > 0);
-    auto &enumer = enumeratorsync_.front();
+    auto& enumer = enumeratorsync_.front();
     FXL_CHECK(enumer != NULL);
     enumer->Bind(std::move(handle));
     enumeratormap_.insert(std::make_pair(vmid, std::move(enumer)));
@@ -204,10 +215,10 @@ void IpcServiceImpl::RegisterIpcEnumerator(
   callback();
 }
 
-void IpcServiceImpl::GetIpcEventListener(uint16_t vmid, GetIpcEventListenerCallback callback) {
-  machina::IpcRequestHandler *ipc_req_handler = NULL;
-  for (auto it = ipchandlermap_.begin();
-            it != ipchandlermap_.end(); ++it) {
+void IpcServiceImpl::GetIpcEventListener(uint16_t vmid,
+                                         GetIpcEventListenerCallback callback) {
+  machina::IpcRequestHandler* ipc_req_handler = NULL;
+  for (auto it = ipchandlermap_.begin(); it != ipchandlermap_.end(); ++it) {
     ipc_req_handler = it->second.get();
     if (ipc_req_handler->get_mailbox_vmid() == vmid)
       break;
@@ -215,7 +226,8 @@ void IpcServiceImpl::GetIpcEventListener(uint16_t vmid, GetIpcEventListenerCallb
   if (ipc_req_handler->get_mailbox_vmid() == vmid)
     callback(ipc_req_handler->getIpcEventener().NewBinding(loop_.async()));
   else
-    FXL_LOG(ERROR) << "GetIpcEventListener vmid " << vmid << " not found";
+    FXL_LOG(ERROR) << "GetIpcEventListener vmid " << vmid
+                   << " not found";
 }
 
 }  // namespace machina

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: BSD-3-Clause
+
 // Copyright 2024 GoldenRiver Inc. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -13,17 +15,15 @@
 #include <thread>
 
 #include "garnet/bin/guest/proto/rproc.pb.h"
-#include "garnet/lib/machina/guest.h"
 #include "garnet/lib/machina/guest_config.h"
 #include "garnet/lib/machina/remoteproc.h"
+#include "garnet/lib/machina/vm_id.h"
 #include "lib/app/cpp/application_context.h"
 #include "lib/async/cpp/task.h"
 #include "lib/fidl/cpp/binding_set.h"
 #include "lib/fxl/logging.h"
 
 namespace machina {
-
-constexpr int16_t kSosVmid = -1;
 
 class RprocManager : public RprocService {
  public:
@@ -223,21 +223,17 @@ class RprocManager : public RprocService {
     async::WaitMethod<VmStateObserver, &VmStateObserver::OnVmDestroyed> waiter_;
   };
 
-  RprocManager(component::ApplicationContext* application_context,
-               Guest* guest);
+  RprocManager(component::ApplicationContext* application_context);
 
   static std::unique_ptr<RprocManager> BuildWithDefaultConfig(
-      component::ApplicationContext* application_context,
-      Guest* guest);
+      component::ApplicationContext* application_context);
 
   static std::unique_ptr<RprocManager> BuildFromFile(
       component::ApplicationContext* application_context,
-      Guest* guest,
       std::string path);
 
   static std::unique_ptr<RprocManager> BuildFromString(
       component::ApplicationContext* application_context,
-      Guest* guest,
       std::string pbtxt);
 
   // |RprocService|
@@ -275,16 +271,23 @@ class RprocManager : public RprocService {
 
   void AddBinding(fidl::InterfaceRequest<RprocService> request);
 
-  async_t* async() { return loop_.async(); }
+  async_t* async() {
+    return loop_.async();
+  }
 
-  RemoteDeviceList& sos_remote_devs() { return remote_devs_[kSosVmid]; }
-  RemoteDeviceList& remote_devs(int16_t vmid) { return remote_devs_[vmid]; }
-  HostDeviceList& host_devs(int16_t vmid) { return host_devs_[vmid]; }
+  RemoteDeviceList& sos_remote_devs() {
+    return remote_devs_[kSosVmid];
+  }
+  RemoteDeviceList& remote_devs(int16_t vmid) {
+    return remote_devs_[vmid];
+  }
+  HostDeviceList& host_devs(int16_t vmid) {
+    return host_devs_[vmid];
+  }
 
  private:
   static std::unique_ptr<RprocManager> Build(
       component::ApplicationContext* application_context,
-      Guest* guest,
       nbl_vmm::RemoteProcConfig& cfg);
 
   fidl::BindingSet<RprocService> bindings_;
